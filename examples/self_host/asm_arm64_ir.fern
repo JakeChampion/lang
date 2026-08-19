@@ -2267,7 +2267,7 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             && !irlower.is_leaksafe_array_field(fdt)
             && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
             && s.has_need("strfldok:sarr:" + sty);
-        if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || (fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)) || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
@@ -2436,6 +2436,12 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         // __fern_arr_dec as k_struct / k_enum — the arm64 transcription of the
         // x86 k_clo arm (clofld-gated, captures leak).
         var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
+        // A string[] field refused only on its READS still gives its BUFFER back
+        // through the shallow arr_dec, gated on the STORE half of the scan's
+        // verdict ("strfldok:arrbuf:<T>") — the x86 k_str_arr_shallow
+        // transcription; see that arm's comment for why the store half is
+        // load-bearing.
+        var k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -2533,7 +2539,7 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    bl __fn___fern_str_arr_free\n");       // deep at rc==1 (elements + buffer); shared -> dec
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbers x10/x11/x12)
-        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr) {
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box / closure box / fn-ptr array buffer (shallow, no element walk)
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");

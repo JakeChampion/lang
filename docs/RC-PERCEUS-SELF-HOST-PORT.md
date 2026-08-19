@@ -9840,3 +9840,73 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
     is flat — so there is no parity target to port to. It wants a native
     measurement and a decision first; `irlower.fern`'s note on the flag-1
     alias-column grow leak being load-bearing still stands.
+- 2026-08-18 (the emitter divergence above, half closed — and the entry above
+  guessed the wrong half): x86-64 and arm64 now take a SHALLOW `__fern_arr_dec`
+  for a `string[]` field the strarrfld scan did not admit, in both per-type
+  helpers. `alloc_flat_fresh_array_arg` 538 -> 424 B/round on both, identically;
+  the `node(...)`-with-an-element-read shape 268 -> 211.
+
+  The rule is retain/release symmetry, not "match wasm" — and the first draft of
+  this entry got the symmetry wrong, which the per-module emit-all fixpoint said
+  by crashing gen1. It claimed the construction-side retain for an array field
+  value is unconditional. It is not: `lower_expr`'s ExprStructLit array arm
+  retains a BARE IDENT naming an rc-tracked slot, and nothing else. A `string[]`
+  field stored from a FIELD READ (`S { xs: t.xs }`) takes no retain at all —
+  `field_access_arr_field_type` admits scalar-element and array-of-struct reads,
+  not `string[]` — so an ungated dec there frees a buffer the source struct
+  still holds. That is the hazard the previous entry looked for by hand and did
+  not find; the compiler's own sources are the witness.
+
+  So the scan's verdict splits, and the two halves gate different things. The
+  READ half gates the ELEMENT walk (`__fern_str_arr_free`), which is what can
+  dangle an element alias. The STORE half — every store a bare ident, a fresh
+  literal, or a proven producer — is what the BUFFER dec needs, because those
+  are exactly the values the field either retained or solely owns.
+  `strfld_reclaim_ok_types_of` now emits that half on its own as
+  `"arrbuf:<T>"`, under the same inert-prefix convention the `arr:` / `sarr:` /
+  `clo:` entries already use, and the register backends gate the shallow dec on
+  it. The deep arm keeps the full admission.
+
+  **The previous entry's suspicion about wasm was RIGHT, and six hand-built
+  probes all failed to show it.** It said wasm's ungated dec frees a buffer the
+  source struct still owns for a `string[]` field sourced from a FIELD READ.
+  Probes for that — a local rebind, a struct-param reassignment, a scope-exit
+  escape, a lasting element alias, a two-struct field copy, and a self-rebind
+  chain — every one of them came back clean, and several never emitted the
+  helper at all (an aliased-out field makes the struct non-reclaimable, so no
+  `__struct_drop_<T>` / `__field_reclaim_<T>` is generated; removing the alias
+  from the same program makes the call appear). The conclusion drawn from that —
+  "the hazard has no witness" — was wrong, and shipping the ungated arm on it
+  cost a red fixpoint. A probe that does not reproduce is evidence about the
+  probe. wasm's own arm is still ungated and still unproven; it is the open
+  question below, not a model to copy.
+
+  The remaining 424 is the element boxes, and closing it means the deep walk on a
+  type the read gate refuses — the same question as the element-read exclusion,
+  now with a second reason to answer it: wasm ALREADY deep-frees `string[]` field
+  elements ungated (`emit_wasm_struct_drop_body` routes any array-kind field with
+  pointer elements to `$__fern_arr_dec_ptr`), which is the behaviour the register
+  backends' "strfldok:arr:" gate exists to refuse, citing a per-module
+  compiler-self-run segfault. One of those two is wrong and neither has been
+  shown to be. That is the next slice, and it is a soundness question rather than
+  a leak one.
+
+  Regression tests:
+  `internal/e2eselfhost/self_host_strarr_field_buffer_release_test.go` (4 cases
+  x 3 backends; each flat case returns the MEASURED bytes per round as its exit
+  code). The two halves are separated by the loop-rebind row: with only the
+  struct-drop arm fixed it still reads 55.
+
+  **The STORE gate has no small test, and not for lack of trying.** Eight probe
+  programs were built for it — the six above plus a two-struct field copy and a
+  `S { ...s, xs: s.xs.append(v) }` accumulator, the shape the compiler's own
+  `EmitState.string_lits` / `RewriteCtx.locals` use — and every one runs clean
+  under the ungated build. What holds this is
+  `TestSelfHostPerModuleEmitAllFixpoint*`: ungated, gen1 dies (exit 4 in the
+  batched emit-all, exit 125 — arena exhausted — self-compiling whole-program,
+  the signature of a buffer handed back to the freelist while live); gated, it
+  is green. Instrumenting the emitter names the 31 refused fields, all of them
+  functional-update accumulators of exactly that shape, so the gate is not
+  guarding a hypothetical. A smaller witness is worth finding; until someone
+  does, do not weaken this gate on the strength of a probe that runs clean.
+  Refs #6544 #6522 #4451.

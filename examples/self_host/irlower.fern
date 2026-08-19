@@ -44689,6 +44689,22 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
                 afi = afi + 1;
             }
             if (aok) { out = out.append("arr:" + at); }
+            // The BUFFER-release admission ("arrbuf:"-prefixed), the store half
+            // of the verdict above. The construction-side retain for a
+            // bare-ident array field value is unconditional, so a type whose
+            // string[] fields are only ever stored a retained or sole-owned
+            // value has a buffer reference to give back at reclaim time even
+            // when an element READ withholds the deep walk. A store the scan
+            // refused is an uncounted alias, and dec'ing that frees a buffer
+            // another owner still holds.
+            var abufok: boolean = true;
+            var abfi: i32 = 0;
+            while (abfi < structs[asi].fields.len()) {
+                if (structs[asi].fields[abfi].type_name == "string[]"
+                    && util.index_of_str(arr_unsafe, "store:" + at + "." + structs[asi].fields[abfi].name) >= 0) { abufok = false; }
+                abfi = abfi + 1;
+            }
+            if (abufok) { out = out.append("arrbuf:" + at); }
         }
         // struct-ARRAY / enum-ARRAY FIELD admissions ("sarr:"-prefixed), read
         // out of the SAME unsafe-mark set (#7067): the backends gate
@@ -45879,7 +45895,17 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                     // the third leg of the circularity: unadmitted meant no
                     // retain, and no retain meant it could not be admitted.
                     match (sl2.field_values[i]) { parser.ExprIdent(_) => { store_ok = true; }, _ => {} }
-                    if (!store_ok) { a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]); }
+                    if (!store_ok) {
+                        a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]);
+                        // The STORE half on its own, under an inert prefixed
+                        // spelling. The plain mark above is pushed for a bad
+                        // store AND for an unsafe READ, and the two gate
+                        // different things: a read hazard costs the ELEMENT
+                        // walk, a store hazard costs the BUFFER dec as well,
+                        // because the stored value is then an uncounted alias
+                        // the construction never retained.
+                        a = push_str_unique(a, "store:" + sl2.type_name + "." + sl2.field_names[i]);
+                    }
                 }
                 a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, a);
                 i = i + 1;
