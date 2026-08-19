@@ -9897,15 +9897,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   code). The two halves are separated by the loop-rebind row: with only the
   struct-drop arm fixed it still reads 55.
 
+  The store half took TWO tries to get right, and the second miss is the more
+  instructive one. Marking only the refused STRUCT-LITERAL stores left the
+  functional-update BASE copy unmarked — `S { ...o, tag: 1 }` copies every field
+  the literal does not override, pointer-for-pointer and with no retain for an
+  array field, so both boxes hold one buffer between them. That shipped, and
+  `TestSelfHostInterpDriverX86_64/range-{continue,break}` segfaulted: the
+  self-host interpreter builds its scopes that way. The reasoning that let it
+  through was "scalar array fields have been dec'd here ungated forever, so the
+  base copy must already be balanced" — an argument, not a measurement, and the
+  third one this slice made and lost. A `...base` literal now marks every
+  `string[]` field of its type store-unsafe.
+
   **The STORE gate has no small test, and not for lack of trying.** Eight probe
   programs were built for it — the six above plus a two-struct field copy and a
   `S { ...s, xs: s.xs.append(v) }` accumulator, the shape the compiler's own
   `EmitState.string_lits` / `RewriteCtx.locals` use — and every one runs clean
   under the ungated build. What holds this is
-  `TestSelfHostPerModuleEmitAllFixpoint*`: ungated, gen1 dies (exit 4 in the
-  batched emit-all, exit 125 — arena exhausted — self-compiling whole-program,
-  the signature of a buffer handed back to the freelist while live); gated, it
-  is green. Instrumenting the emitter names the 31 refused fields, all of them
+  `TestSelfHostPerModuleEmitAllFixpoint*` and
+  `TestSelfHostInterpDriverX86_64`: ungated, gen1 dies (exit 4 in the batched
+  emit-all, exit 125 — arena exhausted — self-compiling whole-program, the
+  signature of a buffer handed back to the freelist while live), and the interp
+  driver segfaults on a plain `for i in 0..10 { continue; }`; gated, both are
+  green. The blast radius of a struct-drop emitter change is EVERY program the
+  compiler emits, so the targeted set for one is the whole
+  `internal/e2eselfhost` package, not a regex over the reclaim tests. Instrumenting the emitter names the 31 refused fields, all of them
   functional-update accumulators of exactly that shape, so the gate is not
   guarding a hypothetical. A smaller witness is worth finding; until someone
   does, do not weaken this gate on the strength of a probe that runs clean.
