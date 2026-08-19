@@ -96,7 +96,7 @@ function main(): i32 { var d: dyn Shape = Sq { s: 3 }; d = Rect { w: 2, h: 6 }; 
 				t.Fatalf("%s: driver failed: %v", tc.name, err)
 			}
 			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: fell back to the AST path (no .Lir_ labels)", tc.name)
+				t.Fatalf("%s: did not lower through the IR (no .Lir_ labels)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var run *exec.Cmd

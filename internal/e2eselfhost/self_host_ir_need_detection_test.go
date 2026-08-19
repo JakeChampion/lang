@@ -69,9 +69,9 @@ function main(): i32 { return f(); }`, 21},
 			}
 			// IR path produces a far smaller binary than the ~40 KB AST map/heap
 			// runtime; a generous bound just confirms the IR path was taken (a
-			// bail would pull the whole AST emitter's runtime in).
+			// bail would refuse the module outright).
 			if len(asm) > 33000 {
-				t.Fatalf("asm is %d bytes — expected the compact IR runtime; the module likely bailed to the AST path", len(asm))
+				t.Fatalf("asm is %d bytes — expected the compact IR runtime; the module likely took a wider runtime", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "need_"+tc.name, string(asm))
 			var cmd *exec.Cmd

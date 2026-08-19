@@ -154,7 +154,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Scalar-field structs via the IR path (struct_make / struct_get, leak-
 		// only): construction + field read, field-order independence, params,
 		// boolean fields. wasm box is [type_id@0, f0@4, …] rc-headered; exit codes
-		// must match. (Update / mutation fall back to AST.)
+		// must match. (Update / mutation still bail.)
 		{"ir-struct-lit-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }", 7, ""},
 		{"ir-struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 40, x: 2 }; return p.x + p.y; }", 42, ""},
 		{"ir-struct-three-fields", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }", 123, ""},
@@ -263,7 +263,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-strarr-ret-param", "function id(a: string[]): string[] { return a; } function main(): i32 { var xs = [\"q\", \"ww\", \"eee\"]; var ys = id(xs); return ys[1].len() + ys.len(); }", 5, ""},
 		// Enums + match: scalar-payload + no-payload variant construction and
 		// match dispatch (variant_is on the type-id @0) with payload binding +
-		// wildcard. Non-scalar payloads (string) bail to AST.
+		// wildcard. Non-scalar payloads (string) bail.
 		{"ir-enum-payload", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(21)); }", 42, ""},
 		{"ir-enum-unit", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }", 9, ""},
 		{"ir-enum-three", "enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }", 22, ""},

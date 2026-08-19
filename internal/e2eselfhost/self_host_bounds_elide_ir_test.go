@@ -121,7 +121,7 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 			want := interpExit(t, interpBin, src)
 			asm := emit(src)
 			if !strings.Contains(asm, ".Lir_") {
-				t.Fatalf("%s: fell back to the AST path (no .Lir_ labels)", tc.name)
+				t.Fatalf("%s: did not lower through the IR (no .Lir_ labels)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "belide_"+tc.name, asm)
 			if code := runExit(t, bin); code != want {

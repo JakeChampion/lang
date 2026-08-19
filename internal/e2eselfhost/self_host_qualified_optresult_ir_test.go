@@ -13,8 +13,9 @@ import (
 // Option/Result construction spellings — `Option.Some(x)`, `Option.None`,
 // `Result.Ok(x)`, `Result.Err(x)` — lower on the IR path alongside the bare
 // forms (`Some(x)` / `Ok(x)` / `None`). A qualified construction that makes the
-// whole module IR-ineligible falls back to the AST emitter, which mis-lowers it
-// as `# unresolved ident: <Enum>`. The qualified forms produce the identical
+// whole module IR-ineligible used to fall back to the AST emitter, which
+// mis-lowered it as `# unresolved ident: <Enum>`; today it is refused outright.
+// The qualified forms produce the identical
 // value as the bare ones (the same op_opt_make / op_opt_none box), so they share a
 // `lower_opt_make_payload` helper.
 //

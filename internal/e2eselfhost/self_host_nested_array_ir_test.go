@@ -74,7 +74,7 @@ var nestedArrayI64IRCases = []struct {
 // `var p = a[i][j]; p.x` lowers), but `expr_struct_type` couldn't recover the
 // element type for a doubly-indexed `a[i][j]` (its ExprIndex arm only matched an
 // ExprIdent/ExprFieldAccess array, never a nested ExprIndex), so the field-read and
-// method-dispatch paths bailed to the AST emitter. #2691 adds the depth-2 ExprIndex
+// method-dispatch paths bailed. #2691 adds the depth-2 ExprIndex
 // case so the innermost struct/enum element type recorded on the T[][] slot is
 // recovered. Each case is oracle-checked against the interpreter and returns <= 126.
 var nestedArrayStructIRCases = []struct {

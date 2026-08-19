@@ -14,7 +14,7 @@ import (
 // instantiate, so it was skipped by both monomorphize_module (receiver methods
 // are skipped) and monomorphize_structs (an array is not a generic struct) —
 // `T` stayed free and the legacy AST array-method dispatch typed the receiver as
-// i32 and mis-dispatched `i32.concat`, dragging the module to the AST emitter.
+// i32 and mis-dispatched `i32.concat`, bailing the module.
 // register_array_method_generics now folds such a method into a bounded free
 // generic `__arrm_concat[T](xs: T[], other: T[])` (receiver as arg0) and
 // mono_expr rewrites `xs.concat(ys)` to `__arrm_concat(xs, ys)`, which the

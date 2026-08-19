@@ -73,7 +73,7 @@ const argAtChurnProg = `function main(): i32 {
 `
 
 // TestSelfHostArgAtIRRoutingX86_64 pins that an arg_at program now takes the IR
-// path rather than falling back to the AST emitter. The path-probe driver
+// path rather than bailing. The path-probe driver
 // resolves no imports, which is fine here — the program has none.
 func TestSelfHostArgAtIRRoutingX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

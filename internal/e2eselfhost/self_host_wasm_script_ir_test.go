@@ -59,7 +59,7 @@ func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 			src := []byte(tc.src)
 			route := strings.TrimSpace(string(runCapture(t, gcc, runner, driverBin, src, "-decide")))
 			if route != "ir" {
-				t.Fatalf("%s routed %q, want \"ir\" — scripts are back on the AST emitter", tc.name, route)
+				t.Fatalf("%s routed %q, want \"ir\" — scripts no longer lower", tc.name, route)
 			}
 			wat := runCapture(t, gcc, runner, driverBin, src)
 			if len(wat) == 0 {

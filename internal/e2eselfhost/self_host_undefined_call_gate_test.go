@@ -162,7 +162,7 @@ function main(): i32 {
 
 	// A local closure called by bare name is the shadow-set arm: `f` names no
 	// module function, so only the enclosing function's binder set keeps the
-	// gate off it. (This shape bails to the AST emitter on `const_func`, so it
+	// gate off it. (This shape bails on `const_func`, so it
 	// pins acceptance, not IR routing.)
 	t.Run("accept-closure", func(t *testing.T) {
 		_, errOut, code, _ := compile(t, "function dbl(n: i32): i32 { return n * 2; }\n"+

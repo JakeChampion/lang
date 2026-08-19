@@ -20,8 +20,8 @@ import (
 // binding uses — so `var x: i64 = inner?` yields a true i64 (the binding routes
 // through lower_i64, which dispatches back into lower_try; an unannotated `var x =
 // inner?` width-tracks i64 via infer_expr_width). string/f64/composite payloads
-// still stay on the AST path. The eligibility assertion below is the proof that
-// each case reaches the IR path rather than the AST fallback.
+// still bail. The eligibility assertion below is the proof that each case
+// reaches the IR path.
 var tryOpIRCases = []struct {
 	name     string
 	src      string

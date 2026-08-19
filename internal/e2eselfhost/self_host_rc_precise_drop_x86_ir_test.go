@@ -609,7 +609,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"struct-array-field-reclaim-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var r = b.xs[1] + b.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
 		// Array-field from an ALIASED VARIABLE (this slice): `Box { v: a }` where
 		// `a` is an rc-tracked scalar-array local. Admitting only a FRESH literal
-		// bails the module to the AST emitter; the alias is admitted via a
+		// bails the module; the alias is admitted via a
 		// Perceus dup (rc_inc) at the construction store, so the struct's
 		// field owns a counted reference. The exit dec-sweep still decs `a`'s slot
 		// and the struct's array field deep-drops at the box's reclamation — the
@@ -667,7 +667,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// store gives the field its counted reference: the source struct's field-drop
 		// and the new struct's field-drop each dec, the inc covers the second owner
 		// (rc 1 →inc 2 →src-field-drop 1 →new-field-drop 0). Routes "ir"; admitting
-		// only a fresh literal / bare ident would bail to AST. Reads back correctly
+		// only a fresh literal / bare ident would bail. Reads back correctly
 		// and the over-release detector stays 0.
 		{"field-copy-scalar-value", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; return s2.xs[1] + s2.n; }`, 23},
 		{"field-copy-scalar-detector", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; var r = s2.xs[1] + s2.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
@@ -906,10 +906,10 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		//   - a scalar-element array payload (i32[]/boolean[]) bound and read as a
 		//     BORROW (`V(xs) => xs[0]` / `xs.len()`) — result stays i32; the array
 		//     isn't returned bare (that would need an array temp the IIFE doesn't
-		//     classify, so it stays gated to AST). The 8-byte-element arrays
+		//     classify, so it stays gated out). The 8-byte-element arrays
 		//     (i64[]/f64[]) are NOT admitted — the StmtMatch payload-binding mark
 		//     doesn't carry the element width, so an element read would mis-width
-		//     (the statement-match path has the same limitation); they stay on AST.
+		//     (the statement-match path has the same limitation); they still bail.
 		// i64 payload returned directly into an i64 result temp; value (7) correct.
 		{"iife-match-i64-payload-value", `enum E { V(i64), W(i64) } function main(): i32 { var x: E = E.V(7); var r: i64 = match (x) { V(a) => a, W(b) => b }; return r as i32; }`, 7},
 		// f64 payload returned directly into an f64 result temp; value (3) correct.
@@ -933,7 +933,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// provably i32 (`p.x` of an i32 field, `s.len()`, `t.0` of an i32 element, an
 		// enum method returning i32, `s[i]` char code, or an i32 COMPOSITION of these).
 		// The default i32 result temp then holds the right value; a non-i32 borrow
-		// result (string field / i64 element / bare payload) stays gated to AST (its
+		// result (string field / i64 element / bare payload) stays gated out (its
 		// temp would mis-classify at the i32 width inferred before the binding is in
 		// scope). The structural classifier proves i32 without a trial scope, recovering
 		// each leaf's type directly from the payload type. The underlying StmtMatch path
@@ -1028,7 +1028,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// string payload (`V(x) => x`), a string struct/enum FIELD (`V(p) => p.name`),
 		// or a string tuple ELEMENT (`V(t) => t.0`) — and the temp is marked a string
 		// slot so the StmtMatch arm-body store/load is a string pointer. (An i64/f64
-		// field/element result still bails to AST — the wide-field StmtMatch store
+		// field/element result still bails — the wide-field StmtMatch store
 		// doesn't round-trip; only the BARE i64/f64 payload is admitted, as before.)
 		// Each case oracle-checks the result string's length as the exit code.
 		// Bare string payload returned: result is the 5-char payload "hello".
@@ -1079,7 +1079,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// returned WHOLE — a bare bound payload `V(q) => q` and/or a fresh same-type
 		// construction in another arm — now types the result temp + the bound local
 		// so a later `p.field` / `match (p)` / `p.0` resolves on the IR path. Each
-		// arm must agree on the composite type (mismatched arms still bail to AST).
+		// arm must agree on the composite type (mismatched arms still bail).
 		//
 		// BARE STRUCT payload returned whole, used via `p.field`. The leak-safe
 		// struct pointer rides one slot; the temp + `p` are marked struct P.

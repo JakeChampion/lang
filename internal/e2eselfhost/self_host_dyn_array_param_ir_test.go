@@ -97,7 +97,7 @@ func TestSelfHostDynArrayParamIRX86_64(t *testing.T) {
 // the `(T) => R` fn-type path (coarse "fn").
 //
 // Runtime dispatch through a dyn-trait-typed fn param is a separate pre-existing
-// gap (the module routes to the AST emitter and miscompiles), so this asserts
+// gap (the module does not lower), so this asserts
 // the module PARSES + COMPILES (non-empty asm), not its exit value.
 func TestSelfHostDynFnTypeParamParsesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

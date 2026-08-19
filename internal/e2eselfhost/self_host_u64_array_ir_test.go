@@ -15,7 +15,7 @@ import (
 // u64 for UNSIGNED element arithmetic — and crucially is_i64_slot now excludes
 // array (pointer) slots, so a u64[] local stays an i32 pointer (the wasm verifier
 // rejects an i32 array pointer stored into an i64 local). u64[] as a struct field
-// stays on the AST path for now (field-tag width dispatch — a separate increment).
+// still bails for now (field-tag width dispatch — a separate increment).
 //
 // Each case is routing-pinned to "ir", oracle-checked against the interpreter,
 // and returns a value <= 120 (cf. the wasmtime exit-code gap #2908).

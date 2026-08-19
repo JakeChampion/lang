@@ -81,7 +81,7 @@ func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 			src := []byte(tc.src + "\n")
 			route := strings.TrimSpace(string(runCapture(t, gcc, runner, driverBin, src, "-decide")))
 			if route != "ir" {
-				t.Fatalf("%s routed %q, want \"ir\" — the construct is back on the AST emitter, which computes it correctly, so only the route shows it", tc.name, route)
+				t.Fatalf("%s routed %q, want \"ir\" — the construct no longer lowers, and the value alone would not show it", tc.name, route)
 			}
 			wat := runCapture(t, gcc, runner, driverBin, src)
 			if len(wat) == 0 {

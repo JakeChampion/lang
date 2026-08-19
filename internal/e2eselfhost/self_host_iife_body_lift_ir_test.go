@@ -114,7 +114,7 @@ func TestSelfHostNestedIifeStaysWholeX86_64(t *testing.T) {
 
 	stdout, stderr, code := runDriver(t, runner, driverBin, []byte(nestedIifeGateSrc), true, "-ir")
 	if strings.Contains(stderr, "FERN_STRICT_IR:") {
-		t.Fatalf("nested value-position desugar bailed to the AST emitter:\n%s", stderr)
+		t.Fatalf("nested value-position desugar bailed:\n%s", stderr)
 	}
 	if code != 0 {
 		t.Fatalf("driver (FERN_STRICT_IR=1) exited %d\n%s", code, stderr)

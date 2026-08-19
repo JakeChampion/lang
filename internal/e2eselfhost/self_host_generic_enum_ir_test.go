@@ -48,8 +48,8 @@ function main(): i32 {
 	// parameter type `Opt[i32]` — not a var annotation at the use site — must pin
 	// the bare `Nn`'s instantiation. Before the fix the argument stayed
 	// un-mangled, monomorphize_enums dropped the generic `Nn` struct, and the
-	// dangling reference dragged the whole module to the AST emitter (and the AST
-	// path then miscompiled it into a SIGSEGV).
+	// dangling reference bailed the whole module (and the AST emitter it then fell
+	// to miscompiled it into a SIGSEGV).
 	{"unit_variant_call_arg", `enum Opt[T] { Sm(T), Nn }
 function get(o: Opt[i32]): i32 { match (o) { Sm(v) => { return v; }, Nn => { return 42; } } }
 function main(): i32 { return get(Nn); }`, 42},

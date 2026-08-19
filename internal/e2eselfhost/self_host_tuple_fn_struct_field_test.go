@@ -39,7 +39,7 @@ var tupleFnStructFieldCases = []struct {
 }
 
 // TestSelfHostTupleFnStructFieldX86_64 — the x86-64 asm.fern fix, through the
-// production driver (asm_ir_run `-ir`; the shape bails to the AST emitter).
+// production driver (asm_ir_run `-ir`).
 func TestSelfHostTupleFnStructFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

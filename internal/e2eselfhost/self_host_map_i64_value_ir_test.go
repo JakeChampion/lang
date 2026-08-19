@@ -15,7 +15,7 @@ import (
 //
 //  1. a wide i64/u64 value (`Map { 1: 5000000007 }`) lowered as op_const_i32 and
 //     TRUNCATED to 32 bits before the 8-byte store (stayed on IR, silently wrong);
-//  2. a CAST value (`x as u64`) forced the whole function to the AST fallback
+//  2. a CAST value (`x as u64`) bailed the whole function
 //     (as_i64/as_u64 has no lower_expr arm), where a chained 64-bit unsigned op
 //     then used a signed shift and diverged once bit 63 was set.
 //
@@ -47,7 +47,7 @@ func TestSelfHostMapI64ValueIRX86_64(t *testing.T) {
 		// (1) wide i64 LITERAL value round-trips full-width. 5000000007 % 1000 == 7
 		// (was 199: 5000000007 truncated to 705032711, %1000 == 711 → exit 199).
 		{"i64-literal", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007 }; var g: i64 = m.get_or(1, 0); return (g % 1000) as i32; }\n"},
-		// (2) u64 CAST value + chained unsigned shift stays on IR (no AST fallback)
+		// (2) u64 CAST value + chained unsigned shift stays on IR (no bail)
 		// and shifts UNSIGNED. 18e18 >> 58 == 62 (was 254: AST path used sarq).
 		{"u64-cast-shift", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }\n"},
 		// (3) i64 value from a VARIABLE, inserted via .insert on a bound map.

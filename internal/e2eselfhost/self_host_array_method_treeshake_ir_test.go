@@ -11,7 +11,7 @@ import (
 // TestSelfHostArrayMethodTreeshakeIR pins that a stdlib-importing program using
 // an array-method call (`ss.join(sep)`, dispatched to std/array's
 // auto-discovered `__method_Array_join` helper) routes the IR path rather than
-// falling back to the AST emitter (#3457).
+// bailing (#3457).
 //
 // The treeshaker prunes the merged module to functions reachable from main
 // before codegen so a stdlib-importing program fits asm_ir's IR budget. It

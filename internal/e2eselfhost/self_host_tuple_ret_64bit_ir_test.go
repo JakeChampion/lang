@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostTupleRet64bitIR is the correctness gate for functions that RETURN
 // a tuple with i64 / f64 elements on the wasm IR backend. Such functions used to
-// bail the whole module to the AST backend: tuple_elems_lowerable only admitted
+// bail the whole module: tuple_elems_lowerable only admitted
 // i32/bool/string/leaf-struct elements. The gate now admits i64/f64 too — tuple
 // boxes already ride uniform 8-byte slots, and the call-site `.N` / destructure
 // paths already recover the i64/f64 element width (op_tuple_get_w) from the

@@ -14,7 +14,7 @@ import (
 // it. This closes a genuine coverage gap: a `f().N` read of a STRUCT- or
 // nested-tuple-typed element of a tuple-returning call had no tag at the call
 // receiver, so expr_struct_type(f().N) was "" and `f().N.field` / `f().N.m()`
-// bailed the whole function to the AST emitter. With the annotation those
+// bailed the whole function. With the annotation those
 // functions route through the IR path (unlike the byte-identical earlier
 // slices, this WIDENS IR routing — verified by the interpreter oracle, and by
 // the `-decide` route being "ir": these programs are not structurally IR-

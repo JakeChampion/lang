@@ -14,7 +14,7 @@ import (
 // Url fields (scheme / host / port), and query_parse (which returns a
 // Map[string, string[]]). std/url's query_parse builds its result on
 // core/map, so until core/map lowered fully through the IR path these
-// programs fell back to the legacy AST emitter. With core/map routing
+// programs bailed to the legacy AST emitter. With core/map routing
 // IR (the __alloc / __ptr_width / __memset / __free / __fern_arr_dec
 // stages), the entire std/url module is IR-eligible — it has zero
 // AST-only functions — so every one of these programs reaches

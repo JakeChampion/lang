@@ -59,7 +59,7 @@ function main(): i32 {
 // path and emitted `call __fn_proc_fork` against a symbol nothing defines —
 // which is why `std/tcp` (whose `tcp_serve_supervised` calls both) could not be
 // self-host compiled. Because they are real ops now, a fork-using module is
-// IR-ELIGIBLE rather than routing to the AST emitter.
+// IR-ELIGIBLE rather than bailing.
 func TestSelfHostProcForkIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -148,7 +148,7 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 
 // TestSelfHostProcForkWasmRejected pins the wasm half: a component has no
 // process model, so fork/reap are error ENDPOINTS (like subprocess / timer_fd),
-// not deferrals to the AST emitter — which would emit a call against nothing and
+// not deferrals — deferring them emitted a call against nothing and
 // surface as an opaque `unknown func` from the loader instead of a diagnostic
 // naming the feature.
 func TestSelfHostProcForkWasmRejected(t *testing.T) {

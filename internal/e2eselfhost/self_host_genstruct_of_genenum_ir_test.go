@@ -11,7 +11,7 @@ import (
 // genStructOfGenEnumIRCase is a self-host program where a generic STRUCT's type
 // argument is a generic ENUM — `Box[Opt[i32]]` — the mirror of the
 // genenum-of-genstruct combo. This was the last composite generic combination on
-// the AST fallback (#3694): the struct monomorphiser ran first and built the
+// still bailing (#3694): the struct monomorphiser ran first and built the
 // malformed key `Box__Opt[i32]` (brackets — the inner `Opt[i32]` is a generic
 // enum the struct pass's mg_ty couldn't mangle), so the clone was dropped and the
 // module bailed. Two struct-pass changes close it: sanitize_key rewrites a

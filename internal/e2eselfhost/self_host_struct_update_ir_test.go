@@ -18,7 +18,7 @@ import (
 // "ir". Two existing tests (self_host_struct_update_test.go,
 // self_host_functional_update_test.go) exercise struct-update but assert ONLY
 // exit codes, which the AST emitter also satisfies — a regression that kicked
-// struct-update onto the AST fallback would pass silently. These cases close that
+// struct-update off the IR path would pass silently. These cases close that
 // gap with the path-probe pin (assert path == "ir") + interp oracle, mirroring
 // self_host_block_expr_ir_test.go.
 //

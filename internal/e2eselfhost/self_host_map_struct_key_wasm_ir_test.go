@@ -21,8 +21,7 @@ import (
 // Because the stdin-only driver doesn't load core/cmp, the derived `K.hash`
 // inlines its field hashes (primitive fields fold value-wise, string fields
 // fold per byte) rather than calling `impl Hash for i32`/`string` — otherwise
-// the unknown `.hash()` call would bail the whole module to the AST backend,
-// which has no struct-key support. Asserts the oracle exit code AND that the
+// the unknown `.hash()` call would bail the whole module. Asserts the oracle exit code AND that the
 // IR struct-key constructor was emitted ($__fern_map_new_struct in the WAT).
 // Exit codes <= 125 (wasi rejects >= 126).
 func TestSelfHostMapStructKeyWasmIR(t *testing.T) {

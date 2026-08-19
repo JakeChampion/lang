@@ -15,7 +15,7 @@ import (
 // rewritten to thread the captured values as arguments — so no closure box is
 // needed and the existing direct-call IR path lowers them. Each case asserts the
 // hardcoded oracle exit code AND (separately) that the program reaches the IR
-// path (emits __lam_0), not the AST fallback.
+// path (emits __lam_0).
 func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -79,7 +79,7 @@ func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { var p = P { x: 42 }; var get = function(): i32 { return p.x; }; return get(); }`, 42},
 		// Wide-value (i64/u64) lambdas with an INFERRED (empty) return type: the
 		// lifted __lam_N carried ret_type "" so eligibility's `lower` bailed on the
-		// i64 return (ret_is_i64 unknown) → the lambda routed to the AST emitter.
+		// i64 return (ret_is_i64 unknown) → the lambda took the module off the IR path.
 		// lift_lambdas now infers the lifted body's return type, so these lower on
 		// the IR path. (An explicit `function(x: i64): i64` return already worked;
 		// the gap was the arrow / inferred-return form.)

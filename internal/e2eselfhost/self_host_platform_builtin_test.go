@@ -16,9 +16,9 @@ import (
 // never declared it. So any signature mentioning it, which is EVERY std/tcp
 // serve entry point (`(HttpRequest, Platform) => HttpResponse`), failed to
 // resolve and `__serve_loop` reported `BAIL lower`. One bailing function drops
-// the whole module to the AST emitter, which cannot emit `tcp_listen` / `poll`
-// at all — so the failure surfaced far from its cause, as `undefined reference
-// to __fn_tcp_listen` at link.
+// the whole module (and the AST emitter it fell to could not emit `tcp_listen`
+// or `poll` at all) — so the failure surfaced far from its cause, as `undefined
+// reference to __fn_tcp_listen` at link.
 //
 // The probe is the assertion: every function of the std/tcp closure must lower,
 // with the serve loop named explicitly so a regression says which one broke.

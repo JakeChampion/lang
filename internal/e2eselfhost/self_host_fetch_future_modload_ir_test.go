@@ -19,8 +19,8 @@ import (
 //
 // The program is compiled via the asm_load_run modload driver and asserted to
 // route the IR path (-decide == "ir"). It is NOT run here: fetch_future performs
-// real TCP I/O (connect to a host:port), which needs a live server; the IR-vs-AST
-// routing — the goal-1 objective (never take the AST fallback) — is what this
+// real TCP I/O (connect to a host:port), which needs a live server; the
+// routing — the goal-1 objective (never bail) — is what this
 // guards. The capture behaviour itself is run end-to-end by
 // TestSelfHostClosurePtrCaptureIRX86_64.
 func TestSelfHostFetchFutureModloadIRX86_64(t *testing.T) {
@@ -56,7 +56,7 @@ function main(): i32 {
 		t.Fatalf("decide: %v", err)
 	}
 	if got := strings.TrimSpace(string(decide)); got != "ir" {
-		t.Fatalf("fetch_future routed %q, want \"ir\" (pointer-capture closure bailed to AST)", got)
+		t.Fatalf("fetch_future routed %q, want \"ir\" (pointer-capture closure bailed)", got)
 	}
 	asm, err := exec.Command(mmc, mainPath, stdlibRoot).Output()
 	if err != nil {

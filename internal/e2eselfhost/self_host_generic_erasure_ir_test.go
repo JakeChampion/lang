@@ -13,7 +13,7 @@ import (
 // type-var spellings: a `(K, V)` tuple return degraded its elements to
 // scalars ("K" != "string"), and a bare `T` return wasn't str-tracked at all.
 // Both made string results silently mis-dispatch (`.len()` read 0) on the IR
-// path AND the legacy AST fallback — native returns the right answer.
+// path AND the legacy AST emitter — native returns the right answer.
 //
 // The fix threads positional "$arg<i>" references through the registries:
 // tuple_ret_fns_of rewrites a type-var ret segment to the first param

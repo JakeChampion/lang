@@ -12,7 +12,7 @@ import (
 // These route a bounded generic `[I: Iterator[i32]]` / `[T, I: Iterator[T]]`
 // reducer over `iter.of(xs)` — where `of[T](xs: T[]): ArrayIter[T]` and
 // `impl[T] Iterator[T] for ArrayIter[T]`. The 2026-06-22 FEATURE-AUDIT recorded
-// `sum` / `count` / `to_array` as routing the legacy AST fallback (decide=ast)
+// `sum` / `count` / `to_array` as ineligible (decide=ast)
 // because the parser type-erased the unbounded `T`, leaving a dangling
 // `ArrayIter[T]` that never lowered. That gap is now closed: targeted promotion
 // of the unbounded `T` (only when it feeds a parametric type AND is bindable

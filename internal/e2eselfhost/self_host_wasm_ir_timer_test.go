@@ -22,7 +22,7 @@ import (
 // preview2 interface) — building on the component-adapter foundation (#4315).
 //
 // The test drives the IR path, asserts the emitted WAT carries the two preview2
-// imports (proving the ops are on the IR path, not the AST fallback), composes
+// imports (proving the ops lowered rather than bailing), composes
 // the core into a component, checks it imports wasi:io/poll +
 // wasi:clocks/monotonic-clock, and runs it: the pollable is created and dropped,
 // exit 0. (It does not block on the pollable — wasm_block is not yet an IR op —
@@ -81,7 +81,7 @@ func TestSelfHostWasmIRTimerPollable(t *testing.T) {
 	}
 
 	// The emitted WAT must carry the two preview2 imports — proof the ops lowered
-	// on the IR path (the AST fallback emits neither).
+	// on the IR path rather than bailing.
 	for _, want := range []string{
 		`"wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration"`,
 		`"wasi:io/poll@0.2.0" "[resource-drop]pollable"`,

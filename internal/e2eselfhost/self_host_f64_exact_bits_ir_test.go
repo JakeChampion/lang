@@ -39,7 +39,7 @@ func TestSelfHostF64ExactBitsIR(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s fell back to the AST path (no .Lir_ labels)", tc.name)
+				t.Fatalf("%s did not lower through the IR (no .Lir_ labels)", tc.name)
 			}
 			if strings.Contains(string(asm), ".double ") {
 				t.Errorf("%s still emits a `.double` directive — should emit exact `.long` bits", tc.name)

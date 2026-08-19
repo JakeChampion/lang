@@ -379,9 +379,9 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// non-async AST-router (#3457).
 		{"map_verbs", langSrcAbs(t, "examples/tests/map_verbs_test.fern"), ""},
 		// crypto + u32 lower fully on the IR path now that remove_dir_all (the
-		// TestRunner.finish cleanup call) lowers there. A bail drags every
-		// std/test module onto the AST emitter, whose u32 arithmetic doesn't
-		// truncate to 32 bits, miscompiling SHA-256 (#3457).
+		// TestRunner.finish cleanup call) lowers there. A bail refuses every
+		// std/test module (and the AST emitter it used to fall to did not
+		// truncate u32 arithmetic to 32 bits, miscompiling SHA-256 — #3457).
 		{"u32_arith", langSrcAbs(t, "examples/tests/u32_arith_test.fern"), ""},
 		{"crypto", langSrcAbs(t, "examples/tests/crypto_test.fern"), ""},
 		{"synthetic_fail", failing, ""},

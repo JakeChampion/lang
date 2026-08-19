@@ -14,7 +14,8 @@ import (
 // pointers and an array of `__mkclo$` env boxes, and calling either through the
 // other's convention crashes. #5787 measured both unprovable shapes — a field
 // built from a PARAM, and one built by `.append` in a LOOP — SIGSEGV'ing on the
-// IR path AND on the AST fallback, with the interpreter returning 7 both times.
+// IR path AND on the AST emitter it then fell to, with the interpreter
+// returning 7 both times.
 //
 // #5790 made both classifications positive evidence, which is what makes a clean
 // error possible: the compiler can now tell "proven closures" from "proven

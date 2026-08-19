@@ -19,7 +19,7 @@ import (
 // dispatch through an array element (the indirect call target comes from a
 // runtime array read), which the constant-index non-capturing case does not.
 // All of it already lowers, so no compiler change — an observability pin against
-// a regression to the AST fallback.
+// a regression off the IR path.
 //
 // The `.append`-built form (`fns = fns.append(() => n)`) is now covered too
 // (#3556): an EMPTY closure-array literal `var fns: (() => i32)[] = []` leaves

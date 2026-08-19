@@ -26,14 +26,15 @@ const storeI64Src = `function main(): i32 {
 // TestSelfHostStoreI64IRX86_64 pins __store_i64 on the self-host x86-64 IR path
 // (#4375 item 2). irlower lowered __load_i64 / __store_i32 / __store_ptr but not
 // __store_i64 — the store half of the 8-byte raw-memory pair was missing, so a
-// program writing an i64 through a raw address bailed to the AST fallback (which
-// lacks the __fn___store_i64 runtime helper) or mis-stored. __store_i64 now
+// program writing an i64 through a raw address bailed the module (the AST
+// emitter it then fell to lacked the __fn___store_i64 runtime helper, or
+// mis-stored). __store_i64 now
 // lowers to op_store_i64 (kind 199): the value routes through lower_i64 (8-byte)
 // and the x86 backend emits an 8-byte movq (shared with store_ptr).
 //
 // Oracle is the NATIVE x86-64 compiler, which implements __store_i64
 // (x86_64.go): a truncating store would diverge from native's full-width one, so
-// IR == native also proves the program took the IR path, not the AST fallback.
+// IR == native also proves the program took the IR path.
 func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

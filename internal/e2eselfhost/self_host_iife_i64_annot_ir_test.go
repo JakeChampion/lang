@@ -23,7 +23,7 @@ import (
 // self_host_structarray_call_field_ir_test.go.
 //
 // (Constant-condition forms like `if (1 < 2) { 5 } else { 9 }` take a separate
-// const-fold path and stay on the AST emitter — correct, just not widened here.)
+// const-fold path and are not widened here.)
 //
 // The later cases pin the other half of the same decision — the per-branch tag
 // if_expr_rt computes, which wider_rt then combines — through the MATCH arm

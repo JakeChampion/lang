@@ -13,14 +13,14 @@ import (
 // the parser.dl_collect_stmt shape `DeferAcc { flags: flags.append(d.on_error) }`
 // over an `i32[]`. Before the fix only a FIELD-READ receiver (`s.flags.append(v)`,
 // via scalar_arr_field_type) was admitted; a bare-ident receiver bailed the
-// whole module to the AST emitter.
+// whole module.
 //
 // `.append`/`.with` clone the receiver into a fresh sole-owned array, so the
 // struct owns the result with NO alias-inc (the receiver is borrowed for the
 // copy), exactly like the field-read and `[…]`-literal cases.
 //
-// Each case asserts the IR path (compact asm, well under the AST-fallback size)
-// and the oracle-pinned exit code, so a routing regression (back to AST) or an
+// Each case asserts the IR path (compact asm, well under the AST path's size)
+// and the oracle-pinned exit code, so a routing regression or an
 // rc/heap-accounting miscompile is caught. The programs are small (well under
 // the eligible_core module-size budget) so they route through IR.
 func TestSelfHostIRScalarArrayAppendFieldX86_64(t *testing.T) {

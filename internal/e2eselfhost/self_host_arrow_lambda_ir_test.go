@@ -19,7 +19,7 @@ import (
 //
 // This complements internal/e2e/arrow_lambda_test.go, which exercises arrow lambdas
 // only through the NATIVE Go backends with NON-capturing lambdas; here every case
-// is routing-pinned to "ir" (so a regression to the AST fallback fails loudly) and
+// is routing-pinned to "ir" (so a regression off the IR path fails loudly) and
 // the capturing cases cover the closure-lift path the native test never touches.
 // Each case is oracle-checked against the interpreter and returns a value <= 120
 // (cf. the wasmtime exit-code gap #2908).

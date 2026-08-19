@@ -12,12 +12,12 @@ import (
 // ..., false => ... }` — through the IR path. The scrutinee is already a 0/1
 // value in a slot (no tag to extract), so each arm compares it to the wanted
 // value, skips on mismatch, runs the body, and exits the match (mirroring the
-// Option-tag arm), rather than bailing to the AST emitter.
+// Option-tag arm), rather than bailing.
 //
 // Each program declares a fresh, non-escaping struct temp whose IR-only reclaim
-// free (`call __fn___fern_arr_dec`; the AST fallback is leak-only and emits none,
-// and no array appears) proves the module took the IR path — a silent AST
-// fallback fails the assertion loudly. `t.x - t.y` pads 0 into the result. Exit
+// free (`call __fn___fern_arr_dec`; a bailing module emits none at all,
+// and no array appears) proves the module took the IR path with the
+// boolean-match lowering exercised. `t.x - t.y` pads 0 into the result. Exit
 // codes pin the matched arm.
 var boolMatchIRCases = []struct {
 	name     string
@@ -65,7 +65,7 @@ func TestSelfHostBoolMatchIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			if bytes.Count(asm, []byte("call __fn___fern_arr_dec")) == 0 {
-				t.Fatalf("%s: no struct free emitted — module fell back to AST, the boolean-match IR path was NOT exercised", tc.name)
+				t.Fatalf("%s: no struct free emitted — the boolean-match IR path was NOT exercised", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

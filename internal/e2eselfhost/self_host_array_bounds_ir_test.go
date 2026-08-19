@@ -57,7 +57,7 @@ func TestSelfHostArrayBoundsIR(t *testing.T) {
 				t.Fatalf("%s: driver failed: %v", tc.name, err)
 			}
 			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: fell back to the AST path (no .Lir_ labels)", tc.name)
+				t.Fatalf("%s: did not lower through the IR (no .Lir_ labels)", tc.name)
 			}
 			if tc.want == 134 && !strings.Contains(string(asm), "__fern_oob_abort") {
 				t.Fatalf("%s: no __fern_oob_abort in emitted asm — bounds check missing", tc.name)

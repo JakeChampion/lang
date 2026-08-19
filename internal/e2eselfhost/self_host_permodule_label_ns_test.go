@@ -15,7 +15,7 @@ import (
 //
 // asm_modload_run's over-budget rescue (emit_per_module_concat: a merged module
 // between 512 and 1500 functions emits per-module so each unit fits the IR
-// budget, rather than dropping the whole program to the AST emitter) writes
+// budget, rather than failing the whole program) writes
 // every unit into ONE assembly file. Each unit starts a fresh EmitState, so
 // asmcore.fresh_label's counter restarts at 0 per unit — and two units that both
 // mint a label collide. GAS's `.L` prefix keeps a symbol out of the symtab; it

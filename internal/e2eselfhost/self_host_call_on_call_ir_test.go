@@ -19,8 +19,8 @@ import (
 // on TOS), then call_indirect — the same shape as the array-element / tuple-
 // element fn-value calls. A callee that returns a CAPTURING lambda (a
 // closure-box-returning fn, tracked in closure_fns) needs the env-passing form
-// and still bails to AST (guarded here only indirectly: those programs route
-// AST, so they are not in this IR-pinned set).
+// and still bails (guarded here only indirectly: those programs come out
+// ineligible, so they are not in this IR-pinned set).
 //
 // Each case is oracle-checked against the interpreter, routing-pinned to "ir",
 // and returns a value <= 126 (wasmtime exit-code truncation, cf. #2908).

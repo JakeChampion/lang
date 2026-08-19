@@ -10,7 +10,7 @@ import (
 // ops on the self-host arm64 IR backend, emitting `bl __fern_tcp_*`. recv/send/
 // close already had arm64 runtime bodies (server side); this adds connect +
 // pollable (socket #198 / connect #203 / identity) and routes all five via the
-// IR. A tcp module is IR-eligible rather than falling back to the AST emitter.
+// IR. A tcp module is IR-eligible rather than bailing.
 //
 // Same loopback round-trip as the x86-64 sibling: the qemu'd client connects to
 // the host Go server (qemu user-mode forwards the socket syscalls to the host),

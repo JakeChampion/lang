@@ -11,9 +11,8 @@ import (
 // strbufIRCases exercise the global string-builder builtins (strbuf_reset /
 // strbuf_append / strbuf_take) on the IR path. They lower to dedicated
 // strbuf_* IR ops (NOT a call_direct, so they sidestep the call eligibility
-// gate that would bail asmcore.EmitState.write to the AST emitter) which
-// each register backend emits as a call into the same __fern_strbuf_* runtime
-// the AST path uses. strbuf_take snapshots the builder into a fresh string box;
+// gate that would bail asmcore.EmitState.write) which each register backend
+// emits as a call into the same __fern_strbuf_* runtime the AST path used. strbuf_take snapshots the builder into a fresh string box;
 // stdout pins the exact accumulated bytes.
 var strbufIRCases = []struct {
 	name, src, want string

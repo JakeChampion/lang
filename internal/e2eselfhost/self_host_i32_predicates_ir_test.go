@@ -10,10 +10,10 @@ import (
 )
 
 // TestSelfHostI32PredicatesIRX86_64 pins that the built-in i32 methods lower on
-// the IR path rather than bailing the module to the legacy AST emitter (#3457).
+// the IR path rather than bailing the module (#3457).
 //
 // asm.fern intercepted these (its ty_is_i32 block) and irlower had no case for
-// them, so ANY program calling one sent its whole module to the AST emitter.
+// them, so ANY program calling one bailed its whole module.
 // Measuring the fallback put 105 of the reachable AST-emit cases in this
 // "ineligible-fn" bucket — the largest category keeping asm.fern alive.
 //
@@ -25,7 +25,7 @@ import (
 //     parts (see the comment on those cases below).
 //
 // Two-part assertion on purpose: the exit code alone would still pass if the
-// program silently fell back to AST, so each case also asserts the emitted asm
+// program took some other route, so each case also asserts the emitted asm
 // carries the IR path's function-scoped `.Lir_main_` labels, which the AST
 // emitter (global `.L0`/`.L1` numbering) never produces.
 //
@@ -140,7 +140,7 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		// arm's receiver dispatch and its fresh-string-receiver reclaim. These cases
 		// pin that it covers every receiver .len() does — the AST guard spans string,
 		// int arrays and string[], so a string-only port would silently leave the
-		// array forms on the AST path.
+		// array forms unlowered.
 		{"is-empty-string-true", "function main(): i32 { var s: string = \"\"; if (s.is_empty()) { return 1; } return 0; }", 1},
 		{"is-empty-string-false", "function main(): i32 { var s: string = \"hi\"; if (s.is_empty()) { return 1; } return 0; }", 0},
 		{"is-empty-i32arr-true", "function main(): i32 { var xs: i32[] = []; if (xs.is_empty()) { return 1; } return 0; }", 1},

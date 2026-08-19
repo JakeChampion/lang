@@ -14,7 +14,7 @@ import (
 // self-host IR path on x86-64 + wasm. Most map to one hardware instruction on
 // every backend (sqrtsd / roundsd / sign-mask on x86, fsqrt / frint* / fabs on
 // arm64, f64.sqrt / floor / ceil / trunc / abs on wasm), so the IR path now
-// lowers them (op_funary) instead of falling back to the AST emitter — the
+// lowers them (op_funary) instead of bailing — the
 // FEATURE-AUDIT "float math builtins" row was self-host-blank.
 //
 // __round_f64 is round-half-away-from-zero (Go's math.Round): one instruction on
@@ -23,9 +23,9 @@ import (
 // below (2.5 -> 3, 99.5 -> 100) are exactly where ties-to-even would diverge.
 //
 // These cases pin routing to the "ir" path via the pathprobe driver. (The older
-// combined test used `-ir`, which silently falls back to AST when the module is
-// not all_eligible, so it never verified the IR path.) The libm transcendentals
-// (log/exp/sin/cos/pow) remain on the AST path — a documented follow-up.
+// combined test used `-ir`, which silently skips the gated fast path when the
+// module is not all_eligible, so it never verified the IR path.) `pow` lowers as
+// an fpow fbin rather than an op_funary, so it is covered elsewhere.
 //
 // Each case casts its f64 result to i32 and returns a non-negative value kept
 // <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked

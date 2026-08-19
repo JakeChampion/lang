@@ -176,7 +176,7 @@ var dynTraitIRCases = []struct {
 		`trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { var p: P = P { n: 2.5 }; var d: dyn F = p; var r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
 	// Regression guard for a non-scalar return that DOES track + route IR: an
 	// array `.len()` on the dispatch result. (A struct-field or Option-match on a
-	// dyn dispatch result currently routes to the AST fallback — a legit
+	// dyn dispatch result currently bails — a legit
 	// IR-subset gap, not a miscompile — so those shapes aren't pinned here.)
 	{"dyn-array-len-chained",
 		`trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { var s: S = S { n: 1 }; var d: dyn Arr = s; return d.make().len(); }`, 3},
@@ -188,7 +188,7 @@ var dynTraitIRCases = []struct {
 	// the wrong width and a string element mis-lowers its chained `.len()`.
 	// (Binding through `var xs: T[] = d.make()` already types the slot, so only
 	// the direct-chain shape is affected. An i64[]/u64[] direct index of a dyn
-	// result routes to the AST fallback today — a legit IR-subset gap, not a
+	// result bails today — a legit IR-subset gap, not a
 	// miscompile — so it is not pinned here and the i64arr registry gets no dyn
 	// entry.)
 	// f64[] element: [2.5, 3.5][1] + 1.0 == 4.5.

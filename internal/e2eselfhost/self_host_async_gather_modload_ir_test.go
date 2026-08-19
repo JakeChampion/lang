@@ -19,11 +19,11 @@ import (
 // mangles the imported EnumDecls + variant-struct enum_owner to match the
 // mangled variant structs. An EnumDecl that keeps bare names leaves
 // monomorphize_enums unable to find the mangled variants, bailing the whole
-// merged program to the AST emitter — where poll / the Future constructor can't
-// be emitted at all).
+// merged program (and the AST emitter it fell to could not emit poll or the
+// Future constructor at all).
 //
 // The driver's `-decide` must report `ir` (the merged program routes the IR
-// path, not AST), and the compiled binary must match the interpreter oracle
+// path), and the compiled binary must match the interpreter oracle
 // (sum of three Ready values = 42). x86-64 only (the loader driver takes argv
 // file paths, so it can't run under the qemu runner — mirrors
 // TestSelfHostStdlibModloadIRX86_64).
@@ -64,7 +64,7 @@ function main(): i32 {
 		t.Fatalf("decide: %v", err)
 	}
 	if got := strings.TrimSpace(string(decide)); got != "ir" {
-		t.Fatalf("gather/std/async routed %q, want \"ir\" (imported generic enum bailed to AST)", got)
+		t.Fatalf("gather/std/async routed %q, want \"ir\" (imported generic enum bailed)", got)
 	}
 
 	// (2) It compiles + runs to the interpreter oracle (42).
