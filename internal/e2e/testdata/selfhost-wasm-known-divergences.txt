@@ -95,20 +95,12 @@
 # on the self-host x86-64 leg, which has no exit cap, since this one still
 # cannot see them.
 
-# `alloc_flat_fresh_array_arg` was here and is now FIXED on THIS LEG ONLY (#6522):
-# the caller's fresh `string[]` argument temp is released at a counted-retain
-# param position, and on wasm that closes the case — 197 B/round to flat. The
-# x86-64 and arm64 legs still print "grows" and keep their rows, because the
-# remaining leak is not in the shared lowering: `$__field_reclaim_<T>` here
-# shallow-decs EVERY array-kind field, while `emit_ir_field_reclaim_one` /
-# `emit_arm64_field_reclaim_one` release a `string[]` field only under the
-# `strfldok:arr:<T>` admission, which this case's `fresh.deps[0].len()` element
-# read withholds. The BUFFER half of that is now fixed on both — they take the
-# shallow dec for a field the scan refused only on its READS — and what keeps
-# them listed is
-# the ELEMENT boxes, which this leg frees ungated (`$__fern_arr_dec_ptr`) and
-# they refuse. See docs/RC-PERCEUS-SELF-HOST-PORT.md §9: one of those two is
-# wrong and neither has been shown to be.
+# `alloc_flat_fresh_array_arg` was here and is now FIXED (#6522) — and so are the
+# x86-64 and arm64 rows, which caught up over three further slices: the string[]
+# field BUFFER release gated on the store half of the strarrfld verdict (#7124),
+# and then the READ half, where `x.f[i].len()` is recognised as a TRANSIENT
+# element borrow rather than a lasting alias, so the deep element walk runs.
+# All three legs measure flat. docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
 
 # --- ACTIVE -----------------------------------------------------------------
 # The reclaim shapes below were fixed in `internal/ir` — the NATIVE compiler —

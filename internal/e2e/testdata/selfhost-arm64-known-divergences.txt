@@ -99,6 +99,14 @@
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
 
+# `alloc_flat_fresh_array_arg` was here and is now FIXED (#6522), the last of the
+# three AL-01 arg-temp rows. It took four slices: the counted-retain arg-temp
+# release (#7121), the string[] field BUFFER release gated on the store half of
+# the strarrfld verdict (#7124), and finally the READ half — `x.f[i].len()` is a
+# TRANSIENT element borrow, not a lasting alias, so it no longer costs the type
+# its admission and the deep element walk runs. 538 -> 424 -> flat, measured
+# identically on both register backends. docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
+
 # --- ACTIVE -----------------------------------------------------------------
 # The reclaim shapes below were fixed in `internal/ir` — the NATIVE compiler —
 # and the self-host compiler carries its own RC implementation, which has not
@@ -118,4 +126,3 @@
 # Every row here must be a live divergence: a listed case that comes back
 # matching native FAILS this leg, so an entry cannot outlive its bug.
 alloc_flat_method_identity_return #6544 self-host prints "grows" where native prints "flat" on all three targets. Shape only — every answer matches, and all three legs diverge identically. The `.len()`-receiver rows are CLOSED, and so is the struct RECEIVER: a borrowing method no longer costs its receiver the deep drop, and an identity-returning one keeps it wherever the result is consumed inline. What still leaks is the chain's INTERMEDIATE view box (22 B/round, needs the outer callee proven borrowing and never-a-view) and the FRESH struct result of a method consumed by a field read (~95 B/round, `b.relabel("fresh-tag-value").tag.len()`). 117 B/round total. RECLAIM half of goal 2, docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
-alloc_flat_fresh_array_arg #6522 self-host prints "grows" where native prints "flat" (values agree: 6737 / 13504 both sides). The caller's fresh `string[]` argument temp IS released now, at a counted-retain param position — that half is done, and it is why the wasm leg no longer lists this case. What still leaks on this leg is one array reference per node: `emit_ir_field_reclaim_one` / `emit_arm64_field_reclaim_one` release a `string[]` field only under the `strfldok:arr:<T>` admission, which this case's `fresh.deps[0].len()` element read withholds, while the shared construction-side retain for a bare-ident array field value is unconditional. The BUFFER half of that is now fixed — both register backends take the shallow dec for a string[] field the scan refused only on its READS ('strfldok:arrbuf:<T>', the store half of the verdict on its own) — which leaves the ELEMENT boxes: 538 -> 424 B/round measured. Closing the rest needs the deep element walk on a type the read gate refuses, which wasm already does ungated and these two refuse; that is a soundness question, not a leak one. RECLAIM half of goal 2, docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
