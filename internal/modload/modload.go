@@ -1062,11 +1062,17 @@ func underlyingErr(err error) error {
 // a set whose membership answers "is module B in module A's
 // import closure?" with a single map lookup.
 //
-// The checker uses this for module-scoped method dispatch: at a
-// call site inside module A, a method declared in module B is
-// callable only if `closures[A][B]` is true. Self-membership
-// keeps the same lookup working when A == B (a module always
-// sees its own methods).
+// The checker uses this for module-scoped method dispatch and for
+// bare-variant resolution: at a site inside module A, a declaration
+// made in module B is nameable only if `closures[A][B]` is true.
+// Self-membership keeps the same lookup working when A == B (a module
+// always sees its own decls).
+//
+// `pub use` targets count as edges alongside `import`. A re-exporting
+// module names the target's decls to re-export them, and a consumer
+// reaches them through the facade (`facade.Kind` resolves to
+// `shapes__Kind`), so a closure built from `import` edges alone would
+// call nameable decls invisible.
 //
 // O(N²) worst case for N modules — fine for the small import
 // graphs lang programs actually have. If that ever stops being
@@ -1080,12 +1086,18 @@ func importClosures(loaded map[string]*module) map[string]map[string]bool {
 		for len(stack) > 0 {
 			cur := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			for _, child := range cur.imports {
-				if closure[child.path] {
-					continue
+			reach := func(child *module) {
+				if child == nil || closure[child.path] {
+					return
 				}
 				closure[child.path] = true
 				stack = append(stack, child)
+			}
+			for _, child := range cur.imports {
+				reach(child)
+			}
+			for _, pu := range cur.pubUses {
+				reach(loaded[pu.childPath])
 			}
 		}
 		out[path] = closure
