@@ -167,14 +167,14 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_chr"
         // i32[] sum / product (#3457): `xs.sum()` / `xs.product()` lower to calls
         // to these Fern helpers. Without them here, calls_only_known treats the
-        // target as an unknown USER function and bails the module to AST.
+        // target as an unknown USER function and bails the module.
         || name == "__fern_arr_i32_sum"
         || name == "__fern_arr_i32_product"
         || name == "__fern_i32_pow"
         // n.gcd(m) / n.lcm(m) (#2649) — pure-scalar Fern helpers, like pow.
         // lcm's own body calls gcd, so both must be recognised here: without
         // the gcd entry, calls_only_known reads lcm's inner call as an unknown
-        // USER function and bails the module to AST.
+        // USER function and bails the module.
         || name == "__fern_i32_gcd"
         || name == "__fern_i32_lcm"
         || name == "__fern_arr_i32_index_of"
@@ -245,8 +245,8 @@ pub function field_reclaim_type(name: string): string {
 // `_f64` return-type suffix (#4375). The family calls a C-ABI (System V /
 // AAPCS64) function pointer with up to four integer/pointer args; the shim
 // bodies are emitted by emit_ir_runtime (x86) / emit_arm64_ir_runtime (arm64),
-// so a module using them stays IR-eligible instead of bailing to the AST path
-// (which never had a body → undefined `__fn___c_call0` link failure). Wasm has
+// so a module using them stays IR-eligible instead of bailing (the AST path
+// never had a body → an undefined `__fn___c_call0` link failure). Wasm has
 // no C-ABI, so wasm_ir_deferrals_ok subtracts the family (native parity: native
 // wasm has no __c_call either).
 pub function is_c_call(name: string): boolean {
@@ -274,7 +274,7 @@ pub function c_call_arity(name: string): i32 {
 // IR path calls (stack-arg ABI). The exit-sweep / reassign release
 // (__fern_rc_dec) maps to __fn___fern_arr_dec — the array release that frees
 // at rc==1 via the size-class freelist — so the IR path reclaims exactly as
-// asm.fern's AST path does.
+// the retired AST path did.
 pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
@@ -2195,7 +2195,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (saved by the entry's _start, gated on the same env need) for an entry whose
     // key matches name + '=', and boxes the value (kernel-immortal bytes, no copy).
     // Transcribed verbatim from asm.fern's emit_runtime (the same body the AST path
-    // calls); gated on the env need; calls __fern_alloc (the heap runtime, present).
+    // called); gated on the env need; calls __fern_alloc (the heap runtime, present).
     // __fern_envp (.bss) is read by both __fern_env and __fern_subprocess (execve's
     // envp), and saved by _start; declare it ONCE when either need is present.
     if (s.has_need("env") || s.has_need("subprocess")) {
@@ -2219,7 +2219,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // box -> ProcessResult struct {shape, stdout@8, stderr@16, exit_code@24}. 3 pipes
     // + fork + execve(cmd, [cmd, args.., NULL], envp); parent writes stdin, reads
     // stdout/stderr to EOF, waits, packs the result; spawn failure -> exit 127.
-    // Transcribed verbatim from asm.fern (the same body the AST path calls), with the
+    // Transcribed verbatim from asm.fern (the same body the AST path called), with the
     // ProcessResult shape via shape_ref (pre-interned before the literal pool). The
     // body is emitted as a few coalesced multi-line writes (not one per asm line) so
     // it adds minimal .text to the large self-host binary — an arm64 R_AARCH64_CALL26
@@ -3219,7 +3219,7 @@ pub function eligible_core(mod: parser.Module): boolean {
 // "defined in THIS module" (module_has_func). Per-module, a call from module A
 // to an imported function in B targets `B__foo`, which is not in A's own
 // `mod.funcs` but IS in the program-wide set; eligibility must accept it as an
-// extern (resolved at link) instead of bailing the module to AST. Passing an
+// extern (resolved at link) instead of bailing the module. Passing an
 // empty `known` recovers the whole-program merged behaviour exactly (every
 // cross-module call is already local in the merged module), so the merged path
 // is byte-for-byte unchanged.
@@ -3301,15 +3301,13 @@ pub function eligible_core_known_impl(mod: parser.Module, known: string[]): bool
     return true;
 }
 
-// strict_ir_on reports whether FERN_STRICT_IR is set (#5646). The IR lowerer's
-// bail-to-AST path is only SAFE when the AST emitter can express the construct;
-// when it cannot, the fallback emits wrong code rather than failing, and nothing
-// notices until a differential test disagrees at a runtime exit code — #5642 cost
-// 46 failing subtests that looked like several unrelated bugs but were one
-// unlowerable operator handed to a backend that does not know it. With this set,
-// a bail is a hard error naming what bailed instead of a silent fall-through, so
-// a newly-unsupported construct fails AT the bail. Off by default: the fallback is
-// still legitimate for constructs the AST emitter genuinely handles.
+// strict_ir_on reports whether FERN_STRICT_IR is set (#5646). A bail refuses the
+// module either way — nothing is left behind the IR path — but the module gate
+// only says "not IR-eligible". With this set the refusal happens AT the bail,
+// naming the function and the reason, so a newly-unlowerable construct produces a
+// diagnostic that points at the construct. #5642 is the worked example: an
+// unlowerable operator in a match scrutinee bailed its enclosing function and
+// surfaced as 46 failing subtests reading like several unrelated bugs.
 function strict_ir_on(): boolean {
     match (env("FERN_STRICT_IR")) {
         Some(_) => { return true; },
@@ -3320,7 +3318,7 @@ function strict_ir_on(): boolean {
 // strict_ir_refuse reports an IR bail as a hard error and exits. Called only when
 // strict_ir_on(); `what` names the function (or module-level gate) that bailed.
 function strict_ir_refuse(what: string): i32 {
-    eprint("FERN_STRICT_IR: " + what + " — the IR path bailed to the AST emitter; strict mode refuses the silent fall-through (#5646)\n");
+    eprint("FERN_STRICT_IR: " + what + " — the IR path bailed here; strict mode reports the bail site rather than a whole-module refusal (#5646)\n");
     exit(3);
     return 0;
 }
@@ -3338,7 +3336,7 @@ function strict_ir_refuse(what: string): i32 {
 // emit_module_funcs's derivation precisely: the fourteen return-type side-tables
 // + interprocedural borrowability come from `all_funcs`, struct layouts from
 // `all_structs`. Without it, every module touching an imported struct (parser →
-// lexer.Token, asm → ir.Op, …) fails the gate and bails to AST even though the
+// lexer.Token, asm → ir.Op, …) fails the gate and bails even though the
 // emit would succeed — the central blocker to routing the bootstrap per-module.
 //
 // Passing all_funcs == mod.funcs and all_structs == mod.structs reproduces
@@ -3481,7 +3479,7 @@ pub function all_eligible(mod: parser.Module): boolean {
 // threaded in (#3451 step 1): a module whose only "unknown" direct calls /
 // function values target functions defined in a SIBLING module of the loaded
 // import set is eligible (those become externs at link), where the bare
-// all_eligible would bail it to AST. An empty `known` is identical to
+// all_eligible would bail it. An empty `known` is identical to
 // all_eligible.
 pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
     return eligible_core_known(mod, known);
@@ -3508,8 +3506,8 @@ pub function all_eligible_known_view(mod: parser.Module, known: string[], all_fu
 // Read-only: it runs exactly the checks eligible_core / all_eligible route on,
 // so it observes the real IR-vs-AST frontier the driver uses — without touching
 // any emit path. It makes that frontier OBSERVABLE per function, so widening the
-// IR subset (goal 1) can see WHICH function, and which category, forces a module
-// to the AST fallback, and prove a construct moved onto the IR path.
+// IR subset (goal 1) can see WHICH function, and which category, keeps a module
+// off the IR path, and prove a construct moved onto it.
 pub function eligibility_report(mod: parser.Module): string {
     var none: string[] = [];
     return eligibility_report_known(mod, none);
@@ -3581,7 +3579,7 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
 // const_funcs_only_known reports whether every function-value reference
 // (const_func) in fd names a function defined in the module — the function-value
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
-// funcref table slot, so such modules fall back to AST.
+// funcref table slot, so such modules bail.
 function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[]): boolean {
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
@@ -5798,9 +5796,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
 // the eligibility check + emit without importing irlower directly. It also
 // injects the built-in struct/enum declarations (FileStat / HeaderMap /
 // JsonValue / the std/time types / …) into the module's struct table — the AST
-// path gets these via parser.module_with_builtins, but the IR path (probe +
+// path got these via parser.module_with_builtins, and the IR path (probe +
 // emit_module_ir) both funnel through here, so this is the single point that
-// keeps the IR path's struct visibility in sync with the AST path's. Without
+// gives the IR path that struct visibility. Without
 // it the IR path can't resolve built-in struct layouts (e.g. std/time's Date)
 // and bails every function that uses one.
 pub function lift_lambdas(mod: parser.Module): parser.Module {
@@ -6610,14 +6608,14 @@ pub function script_normalized(mod: parser.Module): parser.Module {
 // per-function eligibility scan, once in emit) — with a single lowering pass. It
 // lowers each function ONCE into a cache while checking eligibility on that same
 // LowerResult, then, if every function is eligible, emits from the cache (no
-// re-lowering); otherwise it returns "" to signal the caller to fall back to the
-// AST emitter. The eligibility verdict is identical to all_eligible_known's:
+// re-lowering); otherwise it returns "" to signal the caller that the module is
+// ineligible. The eligibility verdict is identical to all_eligible_known's:
 // r.ok plus a call_direct/const_func scan whose only rejections are USER function
 // names (RC-inserted __struct_drop_/__field_reclaim_/__fern_* helper calls all
 // pass is_fern_helper), and those user calls come from the AST — unaffected by
 // the fuller emit-side RC side-tables this path lowers with. So a module that
-// routed IR before still routes IR (byte-identically), one that fell back to AST
-// still falls back — just at half the lowering cost.
+// routed IR before still routes IR (byte-identically), one that was declined is
+// still declined — just at half the lowering cost.
 //
 // emit_module_or_error is the non-AST half of asm.emit_module (#3457 slice 3):
 // the same parse-error / type-check / lambda-lift prologue, then the IR gate —
@@ -6684,7 +6682,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
         consume_safe_params: irlower.consume_safe_params_interproc(im.funcs, bparams),
     };
     // Lower every function once into `cache`, checking eligibility on each result.
-    // Bail (AST fallback) on the first function whose body doesn't lower or whose
+    // Bail on the first function whose body doesn't lower or whose
     // direct calls / function values reference an unknown symbol.
     var cache: irlower.LowerResult[] = [];
     var i: i32 = 0;
@@ -6945,7 +6943,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
 pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
-    // matches the AST path, which gets the same via module_with_builtins.
+    // matches what module_with_builtins supplies.
     // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
     // per-function LowerResult set — indexed by mod.funcs position — reused by
     // emit_module_funcs instead of re-lowering. The caller must have inferred
@@ -7504,7 +7502,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // path arg; the helpers hand it a fresh copy, never their borrowed `path`).
     // This is the #2649 "dependencies are the call graph" model in miniature.
     // io_error is emitted once (bundled), gated on the union of the needs; the
-    // arm64 / AST backends keep the register-ABI hand-asm __fern_io_error. temp_dir
+    // the arm64 backend keeps the register-ABI hand-asm __fern_io_error. temp_dir
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.

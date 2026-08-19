@@ -20,7 +20,7 @@
 // merge phis), `while` (loop-header phi + back edge), and `break` /
 // `continue` (extra edges into the loop exit / header). build_func returns
 // ok=false for any construct outside this subset (floats, strings, structs,
-// arrays, …) so callers can fall back to the AST path. The companion
+// arrays, …) so callers can fall back to the IR path. The companion
 // pipeline is optimise (copy-prop, const-fold, CSE, DCE, branch-simplify,
 // block-merge) → regalloc (linear scan) → emit (ssa_x86 / ssa_arm64).
 
@@ -698,7 +698,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // exit code. A dedicated op (the native backends emit the
                     // exit syscall directly), so calls_all_known doesn't bail
                     // on it as an unknown call. wasm has no SSA lowering yet
-                    // (ssa_wasm.supported() excludes it → AST fallback there).
+                    // (ssa_wasm.supported() excludes it → the IR path there).
                     if (cid.name == "exit" && c.args.len() == 1) {
                         s = build_expr(c.args[0], s);
                         if (!s.ok) { return s; }
@@ -726,7 +726,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // each; the backends emit the runtime + a global byte
                     // buffer). Not generic calls, so calls_all_known doesn't
                     // bail. wasm has no SSA lowering (ssa_wasm rejects them →
-                    // AST fallback). strbuf_take materialises a fresh
+                    // the IR path). strbuf_take materialises a fresh
                     // [len, bytes…] string and resets the buffer.
                     if (cid.name == "strbuf_reset" && c.args.len() == 0) {
                         s = s.fresh();
@@ -747,11 +747,9 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         return s.emit(SInst { kind_tag: 25, result: s.cur_id(), args: sbta, imm: 0, str: "" });
                     }
                     // read_file(path) / write_file(path, content) — the file-I/O
-                    // builtins (the AST backends emit inline open/read/write/close
-                    // syscall sequences). Dedicated SSA ops, each lowering to a
-                    // syscall runtime helper on x86-64 / arm64; wasm has no SSA
-                    // lowering (ssa_wasm.inst_supported rejects them → AST
-                    // fallback). Both results are heap-box pointers:
+                    // builtins. Dedicated SSA ops, each lowering to a syscall
+                    // runtime helper on x86-64 / arm64; wasm has no SSA lowering
+                    // (ssa_wasm.inst_supported rejects them → the IR path). Both results are heap-box pointers:
                     // read_file → Result[string, IoError] (Ok/Err box),
                     // write_file → Result[(), IoError] (Ok/Err box), matched via
                     // the fixed-tag chain like Some/Ok/Err. As dedicated ops they
@@ -777,7 +775,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     }
                     // Option / Result construction: Some(x) / Ok(x) / Err(x) →
                     // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
-                    // tag 1), mirroring the AST backend. None is an ExprIdent
+                    // tag 1), mirroring the register backends' box layout. None is an ExprIdent
                     // (handled below). __opt_payload(box) reads word 1 — used
                     // by the synthesized match-arm binding for Some/Ok/Err.
                     if ((cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") && c.args.len() == 1) {
@@ -809,7 +807,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // __opt_payload(box) — read an Option/Result box's payload
                     // (word 1). Synthesized by synth_match_chain for the
                     // Some/Ok/Err arm binding (so the binding lowers via the
-                    // normal AST path rather than a raw load).
+                    // normal binding path rather than a raw load).
                     if (cid.name == "__opt_payload" && c.args.len() == 1) {
                         s = build_expr(c.args[0], s);
                         if (!s.ok) { return s; }
@@ -1482,7 +1480,7 @@ function build_stmts(body: parser.Stmt[], s: BState): BState {
 // $scrut / $tag are synthetic vars bound by build_match.
 // opt_tag returns the fixed discriminant for an Option/Result variant —
 // Some/Ok = 0, None/Err = 1 — or -1 for a user-defined struct-union variant
-// (whose tag is its struct index). Matches the AST backend's box layout.
+// (whose tag is its struct index). Matches the register backends' box layout.
 function opt_tag(name: string): i32 {
     if (name == "Some" || name == "Ok") { return 0; }
     if (name == "None" || name == "Err") { return 1; }
@@ -1537,7 +1535,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
 // build_match lowers `match (e) { Variant(b) => …, _ => … }` by reading the
 // scrutinee's tag (struct word 0) and dispatching through a synthesized
 // if/else-if chain — so it reuses build_if's merge/phi machinery entirely.
-// A variant pattern naming an unknown struct bails to the AST emitter.
+// A variant pattern naming an unknown struct bails out of the SSA subset.
 function build_match(m: parser.StmtMatch, s: BState): BState {
     var ci: i32 = 0;
     while (ci < m.arms.len()) {
@@ -2087,7 +2085,7 @@ function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
 // a parent param's annotation, a parent `var`'s annotation, or a literal
 // init's inferred type (number → i32, string → string, bool → boolean).
 // Returns "" when uncertain — collect_lambdas then declines to lift (the
-// program falls back to the AST emitter) rather than risk a wrong width.
+// program falls back to the IR path) rather than risk a wrong width.
 function resolve_capture_type(name: string, fd: parser.FuncDecl): string {
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
@@ -2124,7 +2122,7 @@ function resolve_capture_type(name: string, fd: parser.FuncDecl): string {
 // site — but only when every capture's type resolves and none is reassigned in
 // the parent (so by-value-at-call matches by-value-at-creation). An unliftable
 // lambda is simply not emitted; its call lands on an unbuilt name and the
-// program falls back to the AST emitter. Only top-level bindings are scanned.
+// program falls back to the IR path. Only top-level bindings are scanned.
 pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
     var out: parser.FuncDecl[] = [];
     var fi: i32 = 0;
@@ -2156,7 +2154,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             // never reassigned — in the parent (call-time vs
                             // creation-time) or in the body (a copy can't write
                             // back) — and its type must resolve; else don't lift
-                            // (the box's funcaddr → unbuilt name → AST fallback).
+                            // (the box's funcaddr → unbuilt name → the IR path).
                             var lam_assigned: string[] = collect_assigned(lam.body);
                             var ctypes: string[] = [];
                             var ok: boolean = true;
@@ -2170,10 +2168,10 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             if (ok) {
                                 // Copy lam.params into a fresh array before
                                 // appending `__env` — `.push` mutates in place,
-                                // and lam.params is part of the shared AST that
-                                // the AST emitter still uses if the program
-                                // falls back (else it sees a duplicate __env
-                                // param and emits a broken function).
+                                // and lam.params is part of the shared AST the
+                                // IR path lowers if the program falls back (else
+                                // it sees a duplicate __env param and emits a
+                                // broken function).
                                 var eparams: parser.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
@@ -2381,7 +2379,7 @@ pub function build_func_seeded(raw_fd: parser.FuncDecl, structs: parser.StructDe
         // merge left when every path already returned (e.g. an if whose
         // both arms return) — terminate it harmlessly; it's unreachable, so
         // branch_simplify prunes it. A REACHABLE un-returned fall-through is
-        // a genuinely missing return: bail to the AST emitter.
+        // a genuinely missing return: bail out of the SSA subset.
         if (s.cur.preds.len() == 0 && s.cur.id != 0) {
             s = s.kconst(0);
             s = s.set_term(t_ret(s.cur_id()));
@@ -2978,7 +2976,7 @@ pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 // uses_memory reports whether a function contains any heap op (alloc /
 // load_elem / store_elem). The backends don't lower these yet, so the emit
 // path (ssa_emit_run, the CLI's -ssa) skips functions that use memory and
-// falls back to the AST emitter; the interpreter handles them directly.
+// falls back to the IR path; the interpreter handles them directly.
 // binop_is_cmp reports whether a binary operator yields a boolean (i32 0/1)
 // rather than a value of its operands' width. Comparisons and the logical
 // connectives are width-collapsing (i64 operands still give an i32 result), so
@@ -3098,7 +3096,7 @@ pub function compute_isfloat(f: SFunc): i32[] {
 }
 
 // any_float reports whether any function in the program holds an f64 value
-// — the driver uses it to keep float programs on the AST fallback for
+// — the driver uses it to keep float programs off the SSA path for
 // backends that don't lower f64 from the IR yet (currently arm64; the wasm
 // backend self-gates via ssa_wasm.supported, and x86-64 lowers f64).
 pub function any_float(funcs: SFunc[]): boolean {
@@ -3193,7 +3191,7 @@ pub function calls_all_known(f: SFunc, known: string[]): boolean {
             // target a known function. A capturing lambda whose lift was
             // declined (unresolved capture type) leaves a funcaddr to an
             // unbuilt name here, so this fails it and the whole program falls
-            // back to the AST emitter. (call_indirect has no static target.)
+            // back to the IR path. (call_indirect has no static target.)
             if (ins.kind_tag == 11 || ins.kind_tag == 13) {
                 var found: boolean = false;
                 var j: i32 = 0;

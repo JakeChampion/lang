@@ -415,10 +415,9 @@ struct SsaResult { asm: string, ok: boolean }
 // pipeline (build_func → optimise → emit). It is opt-in via -ssa now that the
 // IR path is the production default (issue #4391); it applies only when EVERY
 // function is in the SSA subset (build_func ok) and a `main` exists, otherwise
-// it returns ok=false so the caller falls back to the AST shell (which itself
-// routes eligible modules through the IR path). The SSA backends cover x86-64,
-// arm64, and (a core integer subset of) wasm; arm64-darwin and the wasm binary
-// output forms always fall back. Register allocation is always on for the
+// it returns ok=false so the caller compiles through the ordinary IR path
+// instead. The SSA backends cover x86-64, arm64, and (a core integer subset of)
+// wasm; arm64-darwin and the wasm binary output forms always fall back. Register allocation is always on for the
 // native path.
 function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string, emit: string): SsaResult {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android" && target != "wasm32-wasi") { return SsaResult { asm: "", ok: false }; }
@@ -431,7 +430,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     // (collect_lambdas); they're built like user functions and join the known /
     // ptr_ret sets. A capturing lambda's lifted body references an enclosing
     // local and fails to build (or a call lands on an unbuilt name), so the
-    // whole program falls back to the AST emitter.
+    // whole program falls back to the IR path.
     var lifted: parser.FuncDecl[] = ssa.collect_lambdas(funcs);
     var allfuncs: parser.FuncDecl[] = funcs;
     var lai: i32 = 0;
@@ -450,7 +449,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     // are emitted as calls by build_func; their names join known / ptr_ret so
     // those calls resolve, and the bodies are injected below (only the ones a
     // program actually uses). Without this a program using a map / push / slice
-    // would fail calls_all_known and fall back to the AST emitter.
+    // would fail calls_all_known and fall back to the IR path.
     var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
     var hk: i32 = 0;
     while (hk < hmod.funcs.len()) {
@@ -469,7 +468,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         var r: ssa.BResult = ssa.build_func_seeded(allfuncs[i], structs, seed);
         if (!r.ok) { return SsaResult { asm: "", ok: false }; }
         // A call to a builtin (print, write, …) or any unknown name can't be
-        // lowered — fall back to the AST emitter for the whole program.
+        // lowered — fall back to the IR path for the whole program.
         if (!ssa.calls_all_known(r.func, known)) { return SsaResult { asm: "", ok: false }; }
         if (allfuncs[i].name == "main") { has_main = true; }
         sfuncs = sfuncs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(r.func, ptr_ret), float_ret)));
@@ -1314,7 +1313,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
     // Fill omitted trailing args from default parameter values up front, so the
-    // checker, SSA, interpreter, and AST fallback all see complete calls.
+    // checker, SSA, and interpreter all see complete calls.
     merged = parser.fill_default_args_module(merged);
     // A record-form variant pattern on an IMPORTED enum has no declaration to
     // settle against until the bundle exists; parse_module resolved the
@@ -1940,9 +1939,9 @@ function run(): i32 {
             // docs/SELFHOST-SSA-DECISION.md); -ssa is opt-in/experimental.
             use_ssa = true;
         } else if (a == "-no-ssa") {
-            // Back-compat no-op: the IR/AST path is already the default, so
-            // there is nothing to disable. Accepted so existing invocations
-            // (and the AST-baseline tests) keep working unchanged.
+            // Back-compat no-op: the IR path is already the default, so there
+            // is nothing to disable. Accepted so existing invocations keep
+            // working unchanged.
         } else if (a == "-ssa-scan") {
             // Diagnostic: report every build_func failure + unknown callee across
             // the whole merged program (non-bailing), then exit. Measures
@@ -2284,7 +2283,7 @@ function run(): i32 {
     // via -ssa (experimental): it applies only if every function is in the SSA
     // subset (else it too falls through), covering x86-64 / arm64 / a wasm
     // subset. arm64-darwin and the wasm binary output forms have no SSA
-    // consumer and always use the AST shell.
+    // consumer and always take the IR path.
     if (use_ssa) {
         var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target, emit);
         if (sr.ok) {

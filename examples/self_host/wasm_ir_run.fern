@@ -10,7 +10,7 @@
 // forced-vs-routed: it still catches a gate that declines a module the IR path
 // handles correctly, and a forced emit that diverges from the routed one, but it
 // no longer compares two emitters. A module the gates decline is an ERROR on the
-// routed side rather than an AST fallback.
+// routed side.
 
 import "std/io";
 import "./lexer";
@@ -81,12 +81,12 @@ function run(): i32 {
     // Eligibility must be judged with the builtin structs/enums injected
     // (FileStat / ProcessResult / IoError variants) — a struct-returning builtin
     // like stat() (whose match arm `Ok(s) => s.size` needs the FileStat layout to
-    // lower) is only judged eligible once FileStat is present; otherwise it falls
-    // to the AST path (which has no wasm stat runtime). Inject into a SEPARATE
-    // copy used only for the eligibility decision — `lm` itself stays un-injected
-    // so the monomorphise + post-monomorphize injection below assign struct
-    // type-ids in the exact order the AST path uses (injecting before
-    // monomorphize would renumber user structs and break struct programs).
+    // lower) is only judged eligible once FileStat is present; otherwise it is
+    // refused. Inject into a SEPARATE copy used only for the eligibility decision
+    // — `lm` itself stays un-injected so the monomorphise + post-monomorphize
+    // injection below assign struct type-ids in the order the AST path used
+    // (injecting before monomorphize would renumber user structs and break
+    // struct programs).
     var elm: parser.Module = parser.Module { funcs: lm.funcs, structs: parser.inject_builtin_enums(lm.structs), aliases: lm.aliases, imports: lm.imports, top_stmts: lm.top_stmts, enums: lm.enums, resources: lm.resources, exports: lm.exports, impls: lm.impls, trait_reqs: lm.trait_reqs, trait_decls: lm.trait_decls };
     // Judge eligibility BOTH ways: `lm_ok` is the exact verdict the un-injected
     // module gets (the main-path behaviour — every program that lowered before
@@ -95,7 +95,7 @@ function run(): i32 {
     var lm_ok: boolean = wasm_ir.wasm_eligible(lm);
     var elm_ok: boolean = wasm_ir.wasm_eligible(elm);
     // Monomorphise bounded generics (functions + generic structs/enums) on the
-    // IR path — the same expansion module_with_builtins runs for the AST path.
+    // IR path — the same expansion module_with_builtins runs.
     // Hoisted out of the emit block because it is ALSO what lets an erased-wide-
     // container module qualify: an erased generic `some1[T](x: T): Option[T]`
     // (or `Result` / `T[]`) is promoted to bounded (parser targeted promotion),
@@ -103,7 +103,7 @@ function run(): i32 {
     // concrete `Option[i64]` return. After cloning, no call passes a wide value
     // through a bare-typevar param (each targets a concrete clone), so
     // `module_erased_wide` clears and the module lowers on the wasm IR path
-    // instead of deferring to AST. Non-generic modules no-op (nothing bounded).
+    // instead of being refused. Non-generic modules no-op (nothing bounded).
     var mmod: parser.Module = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm))))));
     // `mono_ok` is the erased-wide-container rescue: only consulted when the raw
     // verdicts both say defer, so every program that already lowered keeps its

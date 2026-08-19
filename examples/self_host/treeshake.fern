@@ -6,7 +6,7 @@
 // helpers (`min`/`max`/`lt`/…) — most of which a given program never uses.
 // That bloats the merged module past asm_ir's 512-function IR budget (and the
 // uninstantiated generics individually bail the IR-eligibility gate), so a
-// stdlib-importing program is forced onto the legacy AST emitter. `treeshake`
+// stdlib-importing program could not compile at all. `treeshake`
 // prunes `mod.funcs` to the functions REACHABLE from `main` (+ top-level
 // statements + WIT exports), so a program that uses only `i32`'s `eq`/`hash`
 // drops the hundreds of unrelated stdlib functions and fits the IR path.
@@ -116,8 +116,8 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
             // `.reverse` / `.flat_map` / `.sort_by` / std/array's distinct,
             // mode, …) dispatches to the auto-discovered `__method_Array_<m>`
             // helper, but the syntax names only `<m>` — so without this the
-            // helper looks unreachable and gets pruned, dropping the whole
-            // module to the AST emitter (the IR path then bails `i32.<m>`).
+            // helper looks unreachable and gets pruned, bailing the whole
+            // module (the IR path then fails on `i32.<m>`).
             // Append the helper's canonical token so ts_kept_name retains it.
             acc = acc.append("__method_Array_" + fa.field);
             return ts_names_expr(fa.obj, acc);

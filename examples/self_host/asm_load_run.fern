@@ -117,16 +117,16 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 
 // emit_per_module_concat compiles a program's modules SEPARATELY (per-module IR
 // units) and concatenates them into one linkable asm stream, routing a program
-// that overflows the merged 512-function IR budget through the IR path instead
-// of the AST emitter (#3457). Each module is under budget, so each unit lowers
+// that overflows the merged 512-function IR budget through the IR path anyway
+// (#3457). Each module is under budget, so each unit lowers
 // on the IR path; the units share a whole-program func/struct view (all_funcs /
 // all_structs) so cross-module calls and imported struct layouts resolve, and
 // only the entry unit emits `_start` + the shared runtime (seeded with the full
 // need roots). `reach` is the reachable-name set: each module is pruned to it
 // first, so unused stdlib functions — which may use per-function constructs the
-// IR path cannot lower yet — do NOT drag the module onto the AST emitter.
-// Returns "" if a REACHABLE module is still not IR-eligible, so such programs
-// fall back to the AST emitter.
+// IR path cannot lower yet — do NOT make the module ineligible.
+// Returns "" if a REACHABLE module is still not IR-eligible; the caller then
+// falls through to the merged IR-or-error emit.
 //
 // Bounded to programs that fit ONE process: the whole-compiler self-compile
 // (~2040 funcs) would accumulate every unit's working set in a single process
@@ -161,7 +161,7 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
     while (idx < parts.len()) {
         // Per-module eligibility against the whole-program view, exactly as the
         // per-module emit lowers. Any ineligible REACHABLE module aborts the whole
-        // concat so the caller uses the AST emitter.
+        // concat so the caller falls through to the merged emit.
         var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
         if (parts[idx].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
         if (!elig) { return ""; }
@@ -187,7 +187,7 @@ function main(): i32 {
     // over local modules + builtins). `-ir-probe` reports the IR-eligibility
     // frontier of the fully-loaded program instead of emitting asm — a
     // per-function breakdown of what lowers through the stack-IR path vs what
-    // bails to the AST emitter (asm_ir.eligibility_report). Unlike the
+    // bails (asm_ir.eligibility_report). Unlike the
     // single-module asm_ir_run probe, this sees the WHOLE program with its
     // stdlib imports flattened in, so it reports the frontier real programs hit.
     var root: string = "";
@@ -203,12 +203,13 @@ function main(): i32 {
     var pm_extra: string[] = [];
     // -treeshake prunes the merged module to functions reachable from main
     // before codegen, so a stdlib-importing program fits asm_ir's IR budget
-    // instead of being dragged onto the AST emitter by unused stdlib. -decide
-    // prints "ir"/"ast" (the path the merged module routes through) and stops,
-    // for observing the treeshake effect without emitting.
+    // instead of being made ineligible by unused stdlib. -decide prints
+    // "ir"/"ast" ("ast" being the probe's historical word for "not IR-eligible")
+    // and stops, for observing the treeshake effect without emitting.
     var do_treeshake: boolean = false;
     // -no-treeshake opts OUT of the default (stdlib-root) prune — for observing
-    // the un-pruned baseline (e.g. a budget-busting program routing AST).
+    // the un-pruned baseline (e.g. a budget-busting program coming out
+    // ineligible).
     var no_treeshake: boolean = false;
     var do_decide: boolean = false;
     // `-target x86_64|arm64` selects the emit backend (#4398 part 1: the fold
@@ -372,7 +373,7 @@ function main(): i32 {
         // function touching a sibling module's struct layout lowers in the gate
         // exactly as it does in emit_module_ir_unit (which already lowers against
         // all_structs) — without the view, every module importing another's
-        // struct bails to AST (#3451).
+        // struct bails (#3451).
         var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
         if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
         if (!elig) {
@@ -457,7 +458,7 @@ function main(): i32 {
     merged = checker.annotate_module(merged);
 
     if (target == "arm64-linux") {
-        // IR-or-error (#3457 slice 5): the arm64 leg has no AST fallback either.
+        // IR-or-error (#3457 slice 5): the arm64 leg has no fallback either.
         // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64
         // .emit_module did and errors where the fallback used to be. Note the arm64
         // merged path shares the 512-function budget (#5949 corrected the old "arm64
@@ -476,8 +477,8 @@ function main(): i32 {
     }
     var mwb: parser.Module = parser.module_with_builtins(merged);
     // OVER the merged 512-function IR budget but small enough to fit one process:
-    // route per-module (each module is under budget → IR) instead of dropping the
-    // whole program to the AST emitter (#3457). The lower bound is the budget the
+    // route per-module (each module is under budget → IR) instead of failing the
+    // whole program (#3457). The lower bound is the budget the
     // merged IR path bails at (asm_ir.emit_module_ir_gated: sm.funcs.len() > 512);
     // the upper bound keeps the whole-compiler self-compile (~2040 funcs, driven
     // through this same default) OUT — a single-process per-module concat of that
@@ -485,7 +486,7 @@ function main(): i32 {
     // `merged` is already treeshaked (above), so its func names are the reachable
     // set the per-module emit prunes each module to; emit_per_module_concat
     // returns "" if a reachable module is genuinely IR-ineligible, so such
-    // programs still reach the AST emitter below.
+    // programs fall through to the merged emit below.
     var nfuncs: i32 = asm_ir.lift_lambdas(mwb).funcs.len();
     if (nfuncs > 512 && nfuncs < 1500) {
         var reach: string[] = [];

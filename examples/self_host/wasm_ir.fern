@@ -1504,7 +1504,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // The clock builtins (monotonic_ns / now_unix_ms / now_ns) DO lower on the
     // wasm IR path now: wasm_ir emits `call $__fern_<clock>` for each op and
     // wasm_ir_run pulls in the preview1 wasi clock_time_get import + the
-    // clock_funcs helpers (the same runtime the AST path uses) when the module
+    // clock_funcs helpers (the same runtime the AST path used) when the module
     // calls any clock builtin (#3893 follow-up). sleep_ms still has no wasm
     // runtime (a WASI poll-based sleep is the deferred #2843 item), so a sleep
     // module stays off the wasm IR path.
@@ -1512,7 +1512,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // $__fern_map_delete returns a [map, existed] tuple box (the wasm tuple ABI,
     // element i at offset i*4) matching the register backends, so the IR
     // tuple-destructure reads it correctly (#2933 — previously it returned just
-    // the box, a different ABI, so a delete module was pinned to the AST path).
+    // the box, a different ABI, so a delete module could not lower here).
     // The global string-builder ops (strbuf_reset / strbuf_append / strbuf_take)
     // now lower on the wasm IR path too: wasm_ir emits `call $__fern_strbuf_<op>`
     // and the runtime (wasm.strbuf_helpers — a growable bump-heap buffer) is pulled
@@ -1538,10 +1538,9 @@ pub function wasm_eligible(mod: parser.Module): boolean {
 // the mod-taking module_emits_op. Byte-identical to the old inline chain (#4652).
 // module_erased_wide: any lowered function passes a 64-bit / f64 value
 // through a bare-typevar (erased-generic) param (LowerResult.erased_wide).
-// The wasm backend types erased param locals i32, so such a module must stay
-// on the AST path — previously an f64-through-erased call emitted
-// type-invalid WAT the wasmtime loader rejects, and (post the register-side
-// widening) an i64 would truncate.
+// The wasm backend types erased param locals i32, so such a module is refused —
+// an f64-through-erased call emitted type-invalid WAT the wasmtime loader
+// rejects, and (post the register-side widening) an i64 would truncate.
 function module_erased_wide(cache: irlower.LowerResult[]): boolean {
     var i: i32 = 0;
     while (i < cache.len()) {
@@ -1637,7 +1636,7 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // FFI __c_call<n>(...) (#4375) is written directly as a builtin call, so
         // its callee ident is collected here. Wasm has no C ABI — there is no
         // __c_call runtime on any wasm path — so reject it with a clean diagnostic
-        // (before this it deferred to the AST emitter, which also has no __c_call
+        // (before this it deferred to the AST emitter, which also had no __c_call
         // and emitted a call to an undefined $__c_call<n>).
         var ci: i32 = 0;
         while (ci < ids.len()) {
@@ -1671,8 +1670,8 @@ pub function wasm_unsupported_message(name: string): string {
 
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
     return true
-        // Total backstop: any function that failed to lower routes the module to
-        // the AST path, so the op-blocklist below need not be exhaustive (#6).
+        // Total backstop: any function that failed to lower refuses the module,
+        // so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
         // i64/u64 `.to_string()` is NO LONGER deferred (#5826): the register
@@ -1682,8 +1681,8 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // The i32 builtin helpers (sum / product / pow / index_of / contains /
         // min / max) are NO LONGER deferred: wasm_ir.arr_i32_helpers emits WAT
         // bodies for them, gated on @uses_arr_i32_helpers. Deferring them was
-        // never a real fallback anyway — the AST path does not implement them
-        // either (xs.sum() emits `i32.const 0` there).
+        // never a real fallback anyway — the AST path did not implement them
+        // either (xs.sum() emitted `i32.const 0` there).
         // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker
@@ -1698,10 +1697,10 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
         // preview1). x86-64 (poll(2)) and arm64 (ppoll(2)) lower it via the IR;
-        // a poll module stays on the wasm AST path. (sleep_ms, by contrast, needs
+        // a poll module is refused on wasm. (sleep_ms, by contrast, needs
         // only a single-clock poll_oneoff and DOES lower on the wasm IR path — see
         // $__fern_sleep_ms; it is no longer deferred.)
-        // timer_fd is NOT deferred to the AST path — it is an error endpoint on
+        // timer_fd is NOT deferred — it is an error endpoint on
         // wasm, rejected before emit by wasm_unsupported_builtin (#4317). It is
         // the native fd-based timerfd, and wasm has no pollable file descriptors;
         // its analog wasm_timer_pollable already lowers. Deferring it only moved
@@ -2296,7 +2295,7 @@ pub function component_io_shims(needs: string[]): string {
 
 // should_use_ir_core is the CHEAP gate the emit dispatch (wasm.emit_module)
 // consults to route a module through the IR: the use_ir default is on AND the
-// module passes the AST-only eligible_core gate, WITHOUT the module_emits_op
+// module passes the AST-walk eligible_core gate, WITHOUT the module_emits_op
 // deferral checks (those need the lowered cache). The dispatch calls this first;
 // only if it passes does it build the LowerResult cache (lower_all_for) ONCE and
 // finish the gate with wasm_ir_deferrals_ok(cache) — so an IR-eligible module is
@@ -4472,8 +4471,8 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 // so it is unchanged.
 pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
     // Infer return types for unannotated functions so the IR path's
-    // ret-type-keyed call tagging matches the AST path (parity with the
-    // x86 IR path in asm_ir.emit_module_ir).
+    // ret-type-keyed call tagging matches what module_with_builtins supplies
+    // (parity with the x86 IR path in asm_ir.emit_module_ir).
     mod = parser.infer_ret_types_module(mod);
     // Emit from the PRE-LOWERED `cache` (cache[fi] <-> mod.funcs[fi], both in
     // mod.funcs order): no second lowering, so the emitted bodies match the
