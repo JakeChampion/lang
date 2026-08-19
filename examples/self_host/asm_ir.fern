@@ -5158,6 +5158,16 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("sleep_ms");
         } else if (o.kind_tag == 125) {  // map_set
+            // vretain (o.width bit 3, #6880): the VALUE is an aliased array and
+            // this runtime stores the pointer with no rc-inc, so the store owes
+            // it a retain — the exit dec-sweep releases every array slot, and
+            // without this the map's column is left naming a freed block.
+            // Emitted before the pops, off the stack top, so the value's own
+            // slot is untouched; __fn___fern_rc_inc is a leaf clobbering only
+            // %rax/%rcx (dead here — this backend keeps values on the stack).
+            if ((o.width / 8) % 2 == 1) {
+                s = s.write("    movq (%rsp), %rax\n    pushq %rax\n    call __fn___fern_rc_inc\n    addq $8, %rsp\n");
+            }
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             // %r8 = derived eq fn for a struct/enum key (o.str = "K.eq"), or
             // 0 for a scalar/string key. __fern_map_set dispatches struct
@@ -5177,8 +5187,8 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // buffer), and an i32/interned key is never fresh → bit 0 = 0 → no
             // overwrite key free: exactly the historical behaviour.
             var r9bits: i32 = 0;
-            if (o.width == 2 || o.width == 3 || o.width == 6 || o.width == 7) { r9bits = r9bits + 1; }
-            if (o.width >= 4) { r9bits = r9bits + 2; }
+            if ((o.width / 2) % 2 == 1) { r9bits = r9bits + 1; }
+            if ((o.width / 4) % 2 == 1) { r9bits = r9bits + 2; }
             if (r9bits != 0) { s = s.write("    movq $" + util.i32_to_string(r9bits) + ", %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
         } else if (o.kind_tag == 126) {  // map_len

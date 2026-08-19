@@ -2686,6 +2686,44 @@ function insert_value_is_ptr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// map_insert_value_retains (#6880): the map-insert VALUE is an ALIASED array,
+// so the register __fern_map_set — which stores the value pointer with no
+// rc-inc of its own — owes it a retain. The frame keeps a counted reference to
+// every array LOCAL and releases it in the exit dec-sweep unconditionally
+// (emit_dec_sweep_except_list decs every is_arr_slot), so an unretained store
+// leaves the map's value column pointing at a buffer the sweep frees, and the
+// next allocation of that size class hands the block out again underneath it.
+// A `Map[string, string[]]` built by a helper — `var a = [v]; return
+// m.insert(k, a);` — is the shape that reads back as an empty value array with
+// no over-release reported: the map's alias was never counted, so the rc
+// machinery cannot see it.
+//
+// Alias shapes only: a literal or a call result is a FRESH sole-owned value
+// that transfers its rc=1 to the map, and retaining one would leak. The shapes
+// and the array-only restriction mirror the native oracle's
+// emitMapSetValueRetain (needsRcIncOnAlias plus mapValKindTag >= 2).
+function map_insert_value_retains(e: parser.Expr, vtype: string, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (map_value_type_is_arr(vtype)) { return true; }
+            var vsl: i32 = s.slot_of(id.name);
+            return vsl >= 0 && s.is_arr_slot(vsl);
+        },
+        parser.ExprFieldAccess(_) => { return map_value_type_is_arr(vtype); },
+        parser.ExprIndex(_) => { return map_value_type_is_arr(vtype); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// map_value_type_is_arr: the "Map[K, V]" value type V names an ARRAY. An
+// unparsed / generic column ("" or a bare type var) reads false, which keeps
+// its inserts on the historical unretained store.
+function map_value_type_is_arr(vtype: string): boolean {
+    if (vtype.len() < 2) { return false; }
+    return vtype[vtype.len() - 2 : vtype.len()] == "[]";
+}
+
 // map_insert_val_is_i64: should a map insert/set VALUE (or a get_or DEFAULT) be
 // lowered as an 8-byte i64/u64? The map's declared value type (map_value_of)
 // answers when the receiver's tag is known, but the FIRST insert of a `Map { … }`
@@ -10324,7 +10362,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             var mswk: i32 = 0;
             if (msvw) { mswk = 1; }
             else if (map_value_of(mtype) == "f64" || expr_is_f64(c.args[1], s)) { mswk = 2; }
-            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), meqfn, mswk));
+            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(mtype), map_insert_value_retains(c.args[1], map_value_of(mtype), s), meqfn, mswk));
         }
         if (fa.field == "len" && c.args.len() == 0) {
             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -10516,7 +10554,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             var emwk: i32 = 0;
             if (emvw) { emwk = 1; }
             else if (map_value_of(emtt) == "f64" || expr_is_f64(c.args[1], s)) { emwk = 2; }
-            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_key_eqfn(emtt), emwk));
+            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)) || insert_value_is_ptr(c.args[1], s), is_fresh_str_temp(c.args[1], s), is_fresh_str_temp(c.args[0], s), map_owncols(emtt), map_insert_value_retains(c.args[1], map_value_of(emtt), s), map_key_eqfn(emtt), emwk));
         }
     }
     // Qualified built-in Option/Result construction:
@@ -27990,9 +28028,10 @@ function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // emit_map_buffers_free routes it to __fern_map_free_vs (register backends free
 // the vals column via __fern_str_arr_free — a rc==1-gated per-element string free
 // — instead of the shallow arr_dec; wasm already deep-releases). SOUNDNESS: the
-// register __fern_map_set stores the value pointer with NO rc-inc, so the map
-// owns no counted ref — freeing a value is safe ONLY when the map is its sole
-// owner, i.e. the value was FRESH at the set site (nothing else references it).
+// register __fern_map_set stores a STRING value pointer with no rc-inc (only an
+// aliased ARRAY value takes one — map_insert_value_retains), so the map owns no
+// counted ref to this column — freeing a value is safe ONLY when the map is its
+// sole owner, i.e. the value was FRESH at the set site (nothing else references it).
 // The freshness predicate (str_local_binding_is_fresh) is purely SYNTACTIC (an
 // int `a+b` matches too), so the declared `Map[K, string]` type gate is required
 // to confirm the column really holds strings before freeing them as such. Keys

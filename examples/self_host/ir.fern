@@ -761,6 +761,13 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // columns keep owncols=0 (their reads still raw-alias — irlower's
 // map_kv_elem_flag 1). wasm ignores bit 2 (its map already frees old buffers
 // on grow).
+// Bit 3 = `vretain` (#6880): the inserted VALUE is an ALIASED array — a local,
+// a param, a struct field, an element — so the register __fern_map_set, which
+// stores the pointer with no rc-inc of its own, must retain it. Without the
+// retain the exit dec-sweep (which releases every array slot) frees the buffer
+// the map's value column still names, and the next same-size-class allocation
+// recycles it under the map. wasm ignores bit 3: $__fern_map_set already
+// retains every `vis` value it is not told to consume.
 // `widekind` (carried in i64_imm) marks an 8-byte VALUE column: 0 = narrow
 // (i32/string pointer), 1 = i64/u64, 2 = f64. The x86-64 and arm64 runtimes store
 // the value 8-byte unconditionally (movq / str x), so they ignore it. On wasm the
@@ -768,11 +775,12 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // (i64/u64) routes to $__fern_map_set_w64 (an 8-byte cell boxed into the i32
 // column); widekind 2 (f64) stays deferred to the AST backend via
 // wasm_ir_deferrals_ok. #5253.
-pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, eqfn: string, widekind: i32): Op {
+pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }
     if (kconsume) { w = w + 2; }
     if (owncols) { w = w + 4; }
+    if (vretain) { w = w + 8; }
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
