@@ -97,6 +97,23 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		// value: the oracle answers 0+1+2, not three copies of the last one.
 		// Celling every read capture would pass every case above and fail this.
 		{"per-iteration-capture-control", `function main(): i32 { var t: i32 = 0; var fs: (() => i32)[] = []; var k: i32 = 0; while (k < 3) { var n: i32 = k; fs = fs.append(() => n); k = k + 1; } for f in fs { t = t + f(); } return t; }`},
+
+		// Both clauses again, in the statement positions the per-statement scan
+		// did not look at. It matched FOUR statement shapes — `var`, assignment,
+		// `return`, expression — and took one field from each, so a lambda in an
+		// `if` / `while` CONDITION, a `for`'s ITERATED expression or a `match`
+		// SCRUTINEE was invisible: the captured name was never celled and the
+		// closure got a private copy. Every one of these answered 1 against the
+		// oracle's 9.
+		//
+		// A statement's own expressions are a fact about the Stmt union, so the
+		// scan reads them from astwalk (fold_stmt_own) rather than from a
+		// hand-written match that can be short by a variant.
+		{"outer-write-for-iter", `function main(): i32 { var n: i32 = 1; var total: i32 = 0; for f in [function (): i32 { return n; }] { n = 9; total = total + f(); } return total; }`},
+		{"lambda-write-for-iter", `function main(): i32 { var n: i32 = 1; var total: i32 = 0; for f in [function (): i32 { n = 9; return 0; }] { total = f(); } return n; }`},
+		{"lambda-write-if-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; if (id((function (): i32 { n = 9; return 1; })()) == 1) { return n; } return 0; }`},
+		{"lambda-write-while-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; var i: i32 = 0; while (i < 1 && id((function (): i32 { n = 9; return 1; })()) == 1) { i = i + 1; } return n; }`},
+		{"lambda-write-match-scrutinee", `enum W { One(i32) } function main(): i32 { var n: i32 = 1; match (W.One((function (): i32 { n = 9; return 1; })())) { W.One(_) => { return n; }, } return 0; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
