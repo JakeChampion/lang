@@ -10968,11 +10968,11 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
     The concat is released; what leaks is the string a USER FUNCTION returned as
     an operand of it. And it has nothing to do with tuples or unions —
     `var sv: string = "v" + util_num(i)` as a plain local leaks the same 32,
-    where native is flat. So it is a self-host parity gap in the #6544 family,
-    one level away from this slice and not this slice's to fix: `is_fresh_str_temp`
-    is being actively reshaped by that work, and a third hand in it would collide
-    with a design that is still moving. Recorded, not routed around — nothing here
-    depends on it.
+    where native is flat. **Closed by the 2026-08-20 entry below**, which found
+    the cause one level further out than `is_fresh_str_temp`: `util_num` never
+    entered the fresh-ret registry at all, because the registry's freshness
+    predicate missed a scalar `.to_string()`. The plain-local form is pinned at
+    0 by `freshret-tostring-concat-operand`.
   - A `Result` element is no longer one. It was measured at 80 and written up
     here as an admission gap a layer above this drop; #7160 then closed that half
     by admitting `Ok`/`Err` as constructions, taking it to 40, and this slice
@@ -11345,3 +11345,71 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   bisecting on that emitted-drop metric rather than on the symptom, which costs
   one stage-2 emit per step instead of a full two-generation build.
   Refs #5674 #5649 #6127 #4451.
+- 2026-08-20: **a helper returning `x.to_string()` never entered the fresh-ret
+  registry**, so every caller's binding leaked the box it moved out (#4353).
+
+  ```
+  function util_num(i: i32): string { return i.to_string(); }
+  ...
+  var sv: string = util_num(i);      // 32 B/round, ZERO __fern_str_free, native flat
+  ```
+
+  Isolated by varying only the callee body, so the caller is a constant:
+
+  | callee body | before |
+  |---|---|
+  | `return i.to_string();` | **32** |
+  | `var t = i.to_string(); return t;` | **32** |
+  | `return "x" + i.to_string();` | 0 |
+  | `return "abc";` | 0 |
+
+  Forcing `collect_str_fresh_ret_call_names` to credit every non-reassigned
+  binding took the direct bind 32 -> 0, so the gap was in the whole-program
+  credit and not downstream: `str_fresh_ret_fns_of` ->
+  `body_has_nonfresh_str_return_reg` -> `str_return_is_fresh` ->
+  `str_local_binding_is_fresh`, whose method arm admits only the
+  fresh-ALLOCATING builtins on a STRING receiver. A scalar `.to_string()` is a
+  different shape and was absent. The codebase already knew: `is_fresh_str_temp`
+  credits it and its comment names `str_local_binding_is_fresh` as the predicate
+  that missed it — #4353 fixed it in `is_fresh_str_temp` only, and the registry
+  consults the one that still missed it.
+
+  `is_fresh_str_temp` tests the receiver with `tostring_recv_is_scalar(fa.obj, s)`,
+  which needs a `LowerState`; `str_fresh_ret_fns_of(funcs)` is a whole-program
+  walk over `FuncDecl`s and has none, which is presumably why the arm was never
+  added there. The fix is the state-free twin `tostring_recv_is_scalar_param`:
+  a receiver ident resolves against the callee's DECLARED params, and only a
+  provably scalar declared type admits. A struct / string / enum / dyn
+  `to_string` may hand back an alias of a live field, so those stay refused —
+  the same reason `tostring_recv_is_scalar` gates on it.
+
+  That means `params: parser.ParamDecl[]` threads through the registry's
+  predicate chain (`str_return_is_fresh`, `str_return_is_fresh_reg`,
+  `str_return_is_fresh_reg_in`, both `body_has_*_str_return_reg`,
+  `str_local_is_fresh_ret`, `strloc_declared_fresh`, `strloc_escapes`). It is a
+  distinct type from the `string[]` lists beside it, so the #7178 crossed-argument
+  failure mode is a compile error here rather than a silent miscompile.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `var sv = util_num(i)` | 32 \| 32 \| 16 | **0** | 0 |
+  | `var sv = "v" + util_num(i)` | 32 \| 32 \| 16 | **0** | 0 |
+  | callee binds to a local first | 32 \| 32 \| 16 | **0** | 0 |
+  | callee returns a concat | 0 | 0 | 0 |
+  | struct-receiver `to_string` | 85 (value) | 85 | 85 |
+  | string-receiver `to_string` | 45 (value) | 45 | 45 |
+
+  A scalar receiver that is a callee LOCAL rather than a param
+  (`var m = n + 1; return m.to_string();`) still refuses — its declared type is
+  not in the signature. That is the conservative direction (a leak, never an
+  over-release) and is the next widening if it shows up in a corpus.
+
+  Deleted on the way: `body_has_nonfresh_str_return` and
+  `body_has_nonfreshrecv_str_return`, dead since the `_reg` variants took over —
+  only their own recursion referenced them, and their doc comments now name the
+  live functions. `str_local_binding_is_fresh` also stopped re-spelling the four
+  method names `str_fresh_alloc_method` encapsulates.
+
+  Regression test: `internal/e2eselfhost/self_host_tostring_freshret_test.go`
+  (6 cases x 3 backends; the three byte gates fail on the parent on all three
+  legs). Refs #4353 #4451.
