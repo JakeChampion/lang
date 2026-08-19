@@ -1240,6 +1240,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 125) {  // map_set
             // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=flags).
             s = s.need("maps");
+            // vretain (o.width bit 3, #6880): the VALUE is an aliased array and
+            // this runtime stores the pointer with no rc-inc, so the store owes
+            // it a retain — the exit dec-sweep releases every array slot, and
+            // without this the map's column is left naming a freed block.
+            // Emitted before the pops, off the stack top, so the value's own
+            // slot is untouched.
+            if ((o.width / 8) % 2 == 1) {
+                s = s.write("    ldr x9, [sp]\n    str x9, [sp, #-16]!\n    bl __fn___fern_rc_inc\n    add sp, sp, #16\n");
+            }
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
             // x4 = per-insert flag bits (mirrors the x86-IR %r9):
             //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
@@ -1252,8 +1261,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // i32/interned keys are never fresh and string/pointer columns never
             // set owncols → x4=0 → old behaviour for the compiler's own maps.
             var x4bits: i32 = 0;
-            if (o.width == 2 || o.width == 3 || o.width == 6 || o.width == 7) { x4bits = x4bits + 1; }
-            if (o.width >= 4) { x4bits = x4bits + 2; }
+            if ((o.width / 2) % 2 == 1) { x4bits = x4bits + 1; }
+            if ((o.width / 4) % 2 == 1) { x4bits = x4bits + 2; }
             s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
             s = map_eqfn_x5(s, o.str);   // x5 = derived K.eq for a struct/enum key, else 0
             s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");

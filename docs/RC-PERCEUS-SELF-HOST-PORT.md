@@ -11047,3 +11047,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   fresh-or-receiver CHAIN in receiver position under a pointer compare, but its
   root walk only recognises an `ExprCall` receiver — a bare `ExprSlice` there is
   not a chain link it follows. Refs #6544 #4451.
+- 2026-08-19: **#6880 — a map insert now retains an ALIASED array VALUE on the
+  register backends.** `__fern_map_set` on x86-64 / arm64 stores the value
+  pointer with no rc-inc of its own, while `emit_dec_sweep_except_list` releases
+  every `is_arr_slot` local unconditionally. So `var a = [v]; return
+  m.insert(k, a);` left the map's value column naming a buffer the sweep freed
+  at the helper's exit, and the next allocation of that size class handed the
+  block out again underneath the map. Nothing in the rc machinery could see it:
+  the map's alias was never counted, so the free was a legitimate rc 1 → 0 and
+  `FERN_SANITIZE=1` reports no over-release. The size class only decides whether
+  the collision is observable — `url_codec`'s `Map[string, string[]]` column
+  reads clean against `__fern_map_get`'s 40-byte Option box and prints `b=0` the
+  moment that box moves to a 32-byte class, which is how it was found.
+
+  `FERN_RC_TRACE=1` on the reduced repro pairs it in three lines — the same
+  block allocated at the `[v]` array literal in the helper, freed by
+  `__fn___fern_arr_dec` at the helper's return, and handed straight to the next
+  `__fern_map_get` Option box while the map still named it.
+
+  The fix mirrors the native oracle's `emitMapSetValueRetain`: alias shapes only
+  (ident / field / element — a literal or a call result is a fresh sole-owned
+  value that transfers its rc=1 to the map, and retaining one would leak), and
+  arrays only (`mapValKindTag >= 2` there, an array-typed value column here).
+  The verdict is recorded by the lowering as `op_map_set`'s new `vretain` bit
+  rather than re-derived per backend. wasm needed nothing: `$__fern_map_set` has
+  always retained a `vis` value it was not told to consume (#3495), so this is
+  the register twin of that fix and closes the divergence.
+
+  Direction of error is one count OVER, never one short: the register map never
+  releases a value column, so an unnecessary retain leaks a buffer that already
+  leaks, and the needed retain is exactly cancelled by the sweep's dec. Measured
+  on the reduced repro, leakcheck goes 312 B / 9 blocks → 376 B / 11 blocks —
+  the two value arrays now leak instead of being freed under the map.
+
+  Not fixed, and not a live bug: struct / tuple / enum / string VALUES take no
+  retain. Their locals are only released under escape-gated reclaim credits and
+  a method argument is an escape, so none of them can dangle the way an array
+  does; native retains them because native's map reclaims them, and the
+  self-host's will owe the same retain when its column reclamation lands. A
+  generic or unparsed value column (`map_value_of` = "" or a bare type var) also
+  takes none unless the value is a bare ident on an array slot.
+
+  Regression test: `internal/e2eselfhost/self_host_map_value_alias_retain_ir_test.go`
+  — 4 programs x 3 legs; the three alias programs fail on the parent on x86-64
+  and arm64, the fresh-value control passes either side, and the wasm leg passes
+  either side as the parity gate it is. Refs #6880 #6875 #6567 #3495 #4451.
