@@ -15,10 +15,15 @@ import (
 // wrongly declined by the IR-built generation, while
 // the native-built generation emitted it through IR. The bail is
 // emit_module_ir_gated's const_func arm: module_has_func could not find the
-// lifted wrapper, because make_wrap_named_func — run inside an IR-built
-// compiler — declared the wrapper under its BASE name (`main`) rather than
-// `main$wrap0` (the lowering defect behind that is #5674; irlower works around
-// it at the one known site). That is what made the #3425 flip diverge.
+// lifted `main$wrap0` wrapper, because the wrapper's FuncDecl box had already
+// been freed and its block recycled (#5674) — try_fn_field_value hands hr.func
+// to funcs.append without a retain, and its scope-exit sweep then deep-dropped
+// hr's fields. That is what made the #3425 flip diverge.
+//
+// The deep drop is withheld now that a bare non-scalar field read in a move
+// position marks the local "NODEEP:" (#6127). HoistResult still routes field
+// reclaim, so it is that marker alone that keeps the wrapper alive, and this
+// test is the only thing holding the rule in place.
 //
 // The failure is self-referential — the IR path miscompiles the code that
 // decides IR eligibility — so it is invisible to every single-generation test.
