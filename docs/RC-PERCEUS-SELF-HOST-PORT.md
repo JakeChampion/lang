@@ -9817,7 +9817,9 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Left open, deliberately, with what each would take:
 
   - **Tuple / Option positions of enum, `Result`, `Map` and nested-`Option`
-    kind** (120 B/round, all three backends). `tuple_field_deep_droppable` and
+    kind.** Re-measured 2026-08-19: the nested-TUPLE half of this row was two
+    unrelated defects, fixed in that day's entry below; what remains is the
+    tagged-union element (40 B/round for `(i, Some(i))`). `tuple_field_deep_droppable` and
     `opt_payload_freefn` both end at string / array / nested-tuple / reclaim-struct;
     an enum position needs a per-variant drop plan (native's
     `enumVariantDropPlan` / `genEnumDropFn`), which is a design pass, not a
@@ -10098,3 +10100,58 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   strands its view box — no method chain involved at all, 47 B/round, more than
   twice the whole `alloc_flat_method_identity_return` row. No conformance case
   covers it. Refs #6544 #4451.
+
+- 2026-08-19: **a nested TUPLE element cost its outer tuple the whole reclaim —
+  two independent defects, and the shape §9 blamed was not the one at fault.**
+  The open item read "tuple / Option positions of enum, `Result`, `Map` and
+  nested-`Option` kind ... an enum position needs a per-variant drop plan
+  (native's `enumVariantDropPlan`), which is a design pass". Measuring first says
+  otherwise: `(i32, (i32, i32))` — no union, no array, every leaf a scalar —
+  leaks 80 | 80 | 48 B/round, and no per-variant plan could be required to free
+  it. Native is flat on every row here.
+
+  **1. Admission.** `tuple_lit_rc_reclaimable` required a nested tuple element to
+  be reclaimable IN ITS OWN RIGHT, i.e. to carry an array. An all-scalar `(i, j)`
+  carries none, answered false, and the element arm turned that into a refusal of
+  the WHOLE outer tuple — the same "I will not free this element" / "I cannot
+  free this tuple" conflation the #4353 slice fixed in the binary and call arms,
+  left behind in the tuple arm. A nested box is an allocation in its own right,
+  so it is a child to free whatever it holds. The predicate is now split:
+  `tuple_lit_elems_admissible` (structural — every element is one the walk frees
+  or safely skips) and `tuple_lit_has_rc_child` (is there anything worth
+  freeing), replacing `tuple_lit_has_array`.
+
+  **2. The read gate.** `rctuple_payload_escapes` routed `t.2.0` — a scalar
+  copied out of a nested tuple element — through `decl_field_type`, which finds
+  no struct for a `(..)` tag and returns `""`. That is not a scalar type name, so
+  the read counted as a bare pointer extraction and disqualified the tuple,
+  though it is a borrow exactly like the struct scalar-field read beside it. A
+  nested tuple element indexes BY POSITION, so it now reads its tag with
+  `tuple_type_elem_tag`.
+
+  Neither fix alone moves every row, which is what made this hard to see: with
+  only the admission fix the two read-through shapes stay at their full pre-fix
+  size, so an experiment that changed one gate and re-measured looked like a null
+  result and pointed away from both.
+
+  | shape | before (x86-64 \| arm64 \| wasm) | after |
+  |---|---|---|
+  | `(i, [i, i+1], (i, i+1))`, nested elem unread | 128 \| 128 \| 80 | **0** |
+  | same, reading `t.2.0` through it | 128 \| 128 \| 80 | **0** |
+  | `(i, (i, i+1))` — no array anywhere | 80 \| 80 \| 48 | **0** |
+  | `(i, [i, i+1], (i, i+1))` with `keep = t.2` | value 89 | 89 |
+  | nested elem beside a bare-ident array | value 28 | 28 |
+
+  Still leaking, and NOT addressed here: a tagged-union element. `(i, Some(i))`
+  churns 40 B/round once the tuple around it is reclaimed — the Option box itself
+  is never released. That is the residue of the original open item; the
+  per-variant payload plan is a further layer on top of it, and neither is what
+  the nested-tuple rows above needed.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_nested_tuple_elem_reclaim_test.go` (5 cases x 3
+  backends). On the parent all 3 byte gates fail on all three legs; with only the
+  admission fix 2 of 3 still fail per leg, so both halves are pinned
+  independently. The 2 safety controls — a whole-element extraction that must
+  still be refused, and a bare-ident array alias beside the nested box — pass
+  either way. Refs #4353 #4451.
