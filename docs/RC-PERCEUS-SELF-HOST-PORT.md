@@ -10480,3 +10480,51 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   all-bare-idents-are-borrows build and still bites: 1 vs 5, 0 vs 2, 0 vs 2. The
   other two counter-using suites (`self_host_str_freshret_ir_test.go`,
   `self_host_self_assign_reuse_ir_test.go`) were unaffected. Refs #6544 #4451.
+
+- 2026-08-19: **a tuple whose ONLY rc child is a tagged union, and the much
+  larger row found while proving it.** The entry above taught
+  `emit_tuple_child_drops` to release a union constructed at an element position,
+  but nothing COUNTED such an element as an rc child, so `tuple_lit_has_rc_child`
+  answered false, the tuple was never admitted, and its own box leaked alongside
+  the union's: 80 | 80 | 40 B/round for `(i, Some(i))` and 80 | 80 | 48 for a
+  user-enum variant (x86-64 | arm64 | wasm; native flat on both).
+
+  The count is driven by the element's **declared tag**, not its expression, and
+  that is what makes it safe rather than merely conservative: a tuple carrying a
+  union position is never all-scalar, so this credit and the shallow
+  scalar-tuple path can never both claim the same local and free its box twice.
+  A name test for `Some` could not offer that guarantee — a user function may be
+  called `Some`. An un-annotated binding yields an empty tag and is left exactly
+  as it was. `tuple_lit_rc_reclaimable` and `tuple_lit_has_rc_child` now take the
+  declared tuple type; the one call site with no declaration (a discarded
+  expression statement) passes `""`.
+
+  | shape | before | after |
+  |---|---|---|
+  | `(i, Some(i))`, union element not matched | 80 \| 80 \| 40 | **0** |
+  | `(i, Tag.Num(i))`, user enum | 80 \| 80 \| 48 | **0** |
+  | bare-ident union element, alias read after | value 2 | 2 |
+
+  **The bigger finding, and the next slice.** Reaching this took forcing three
+  gates open in turn, and two of the three were null results — the admission
+  itself, then `rctuple_payload_escapes`. Forcing BOTH TUPRC gates finally moved
+  it, which narrowed the culprit to `body_unsafe_for`. One probe isolates it: the
+  SAME tuple `(i, [i, i+1], Some(i))` is flat, and goes to **128 B/round** purely
+  by adding `match (t.2)` — an ordinary array read in the same place leaves it
+  flat.
+
+  So a tuple element used as a MATCH SCRUTINEE is treated as an escape, and the
+  whole tuple loses its reclaim — buffer, boxes and all, far more than the 40 B
+  the union box itself costs. `match (t.1) { Some(v) => … }` binding a scalar
+  payload aliases nothing; it is a borrow, exactly like the struct scalar-field
+  read and the nested-tuple positional read already allowed. Before changing it,
+  two things need MEASURING rather than arguing: whether an arm binding a
+  POINTER payload still holds a valid alias after the shallow box dec, and that
+  the reclaim point (the next iteration's rebind) really is after the read.
+  `body_unsafe_for` is shared by every reclaim class, so its blast radius is
+  wider than anything in this run of slices.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_union_only_child_reclaim_test.go` (3 cases x 3
+  backends; both byte gates fail on the parent on all three legs, the aliasing
+  control passes either way). Refs #4353 #4451.
