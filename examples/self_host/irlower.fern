@@ -21753,13 +21753,44 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
 // sole-owned; a bare ident of the same type aliases a live local and must keep
 // its leak-safe skip.
 //
-// Both tests resolve the callee rather than matching its NAME: expr_enum_type
-// checks it against the program's declared variants, and expr_opt_elem_tag
-// against the built-in Option shape. A user function called `Some` therefore
-// answers false, which a name test could not tell apart.
+// expr_enum_type resolves the callee against the program's declared variants;
+// the other two cover the built-in Option and Result constructions.
 function tuple_union_elem_fresh(e: parser.Expr, s: LowerState): boolean {
     if (expr_enum_type(e, s) != "") { return true; }
-    return expr_opt_elem_tag(e, s) != "";
+    if (expr_opt_elem_tag(e, s) != "") { return true; }
+    return expr_builtin_result_ctor(e, s);
+}
+
+// expr_builtin_result_ctor reports whether `e` is a direct `Ok(x)` / `Err(x)`
+// constructing a built-in Result box here — the Result-side twin of
+// expr_opt_elem_tag's `Some` arm.
+//
+// It answers a boolean where expr_opt_elem_tag answers a TAG, and that is the
+// whole reason it exists: a bare `Ok(x)` cannot name the Result's E arm, so no
+// `Result[T, E]` is recoverable from the expression. Freshness does not depend
+// on the tag — the box is [tag, payload], allocated by this construction and
+// aliased nowhere. The PAYLOAD is left alone; releasing that needs the
+// variant's own drop plan.
+//
+// A same-named FREE FUNCTION resolves first and hands back a box this call did
+// not allocate, so is_user_fn takes the element back out of the credit. A
+// same-named user-enum VARIANT never reaches here — expr_enum_type resolves it
+// one line above, and its box is fresh in exactly the same way.
+function expr_builtin_result_ctor(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (c.args.len() != 1) { return false; }
+                    if (cid.name != "Ok" && cid.name != "Err") { return false; }
+                    return !s.is_user_fn(cid.name);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // emit_tuple_type_child_drops is the TYPE-driven sibling of emit_tuple_child_drops:
