@@ -10009,3 +10009,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   two lasting-alias negatives — a `.trim()` view and a bound element — pin that
   the deep walk stays refused for them (asm-checked: `__struct_drop_View` has no
   element walk, `__struct_drop_Node` does). Refs #6544 #6522 #4451.
+- 2026-08-19: `alloc_flat_method_identity_return` re-measured before picking it
+  up, and the row overstated it by 6x. It claimed 117 B/round from two causes;
+  the case measures **20** on x86-64 and arm64 and 29 on wasm.
+
+  Splitting it by deleting lines and re-measuring, rather than reading the entry:
+
+  | half | B/round |
+  | --- | --- |
+  | `b.relabel("fresh-tag-value").tag.len()` — the ~95 the row blamed | **-3** |
+  | `base.drop(2).len()` — the builtin chain | **-1** |
+  | `base.tail(4).to_owned().len()` | **22** |
+
+  So the struct-method half is CLOSED, the builtin chain is CLOSED, and every
+  byte that remains is one shape: a USER method returning a `str` VIEW whose
+  result is consumed by a copying method. The intermediate view box is what
+  nothing frees. The row's "needs the outer callee proven borrowing and
+  never-a-view" describes the builtin chain, which no longer leaks.
+
+  This is the third tracker entry in this area to have lagged the code (#4451 /
+  #4363 / #4346 are the ones CLAUDE.md already names), and the first two hours of
+  a slice are the expensive place to discover it. Refs #6544 #4451.
