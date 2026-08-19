@@ -47613,6 +47613,14 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
             fi = fi + 1;
         }
     }
+    // "PASSTHRU:<fn>:<argidx>" markers ride the same list — a marker can never
+    // collide with a function name, so every membership consumer is unaffected,
+    // and the classifiers that ask whether a CALL yields a closure box can
+    // recognise the generic passthrough that forwards one (expr_is_closure_elem,
+    // arr_elem_is_closure_box).
+    var ptm: string[] = typevar_passthrough_markers_of(funcs);
+    var pmi: i32 = 0;
+    while (pmi < ptm.len()) { out = out.append(ptm[pmi]); pmi = pmi + 1; }
     return out;
 }
 
@@ -47637,14 +47645,6 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.
     var rc: string[] = closure_ret_closure_fns_of(funcs, structs);
     var ri: i32 = 0;
     while (ri < rc.len()) { out = out.append("RETCLO2:" + rc[ri]); ri = ri + 1; }
-    // "PASSTHRU:<fn>:<argidx>" markers for an erased-generic parameter the
-    // function RETURNS unchanged (`id[T](x: T): T`, `pick[T](c, a, b: T): T`).
-    // A fn value at such a parameter is boxed by the lift, and the call hands
-    // that same box back — so the CALL is a closure box, which the read side
-    // (arr_elem_is_closure_box) cannot tell from any other call without this.
-    var pt: string[] = typevar_passthrough_markers_of(funcs);
-    var pi: i32 = 0;
-    while (pi < pt.len()) { out = out.append(pt[pi]); pi = pi + 1; }
     return out;
 }
 
@@ -47774,6 +47774,17 @@ function expr_is_closure_elem(e: parser.Expr, closureset: string[]): boolean {
                 parser.ExprIdent(ecid) => {
                     if (ecid.name.len() > 8 && ecid.name[0:8] == "__mkclo$") { return true; }
                     if (util.index_of_str(closureset, ecid.name) >= 0) { return true; }
+                    // A generic passthrough hands its argument back unchanged and
+                    // the lift boxes a fn value at that parameter unconditionally,
+                    // so the call yields a box. Without this the array holding it
+                    // was not classified a closure array and the caller
+                    // bare-dispatched a box: `fs[0](3)` SIGSEGV'd, no bail.
+                    var pi: i32 = 0;
+                    while (pi < ec.args.len()) {
+                        if (util.index_of_str(closureset, "PASSTHRU:" + ecid.name + ":" + util.i32_to_string(pi)) >= 0
+                                && expr_is_closure_elem(ec.args[pi], closureset)) { return true; }
+                        pi = pi + 1;
+                    }
                 },
                 _ => {}
             }
@@ -47877,6 +47888,61 @@ function body_binds_closurearr_local(body: parser.Stmt[], name: string, closures
     return false;
 }
 
+// iife_arms_closurearr counts the arms of a value-position if/match that yield a
+// closure ARRAY — a closure-array literal, a call to a closurearr-returning fn
+// (`caset`), or a nested if/match whose own arms all do — and answers -1 as soon
+// as one yields anything else. The closureset-side twin of
+// iife_stmts_all_closurearr, for the registry pass that runs before any
+// LowerState exists.
+function iife_arms_closurearr(stmts: parser.Stmt[], closureset: string[], caset: string[], seen: i32): i32 {
+    var n: i32 = seen;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprArray(_) => {
+                        if (!array_lit_is_closurearr(r.value, closureset)) { return 0 - 1; }
+                        n = n + 1;
+                    },
+                    parser.ExprCall(rc) => {
+                        match (rc.callee) {
+                            parser.ExprIdent(rid) => {
+                                if (util.index_of_str(caset, rid.name) < 0) { return 0 - 1; }
+                                n = n + 1;
+                            },
+                            parser.ExprLambda(ril) => {
+                                if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
+                                n = iife_arms_closurearr(ril.body, closureset, caset, n);
+                                if (n < 0) { return 0 - 1; }
+                            },
+                            _ => { return 0 - 1; }
+                        }
+                    },
+                    _ => { return 0 - 1; }
+                }
+            },
+            parser.StmtIf(iff) => {
+                n = iife_arms_closurearr(iff.then_body, closureset, caset, n);
+                if (n < 0) { return 0 - 1; }
+                n = iife_arms_closurearr(iff.else_body, closureset, caset, n);
+                if (n < 0) { return 0 - 1; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    n = iife_arms_closurearr(mm.arms[a].body, closureset, caset, n);
+                    if (n < 0) { return 0 - 1; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
 pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     // The single-closure registry, reused so a `[mk(), …]` element (mk a
     // closure factory) counts as a closure-array element.
@@ -47913,6 +47979,16 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Str
                             match (rcc.callee) {
                                 parser.ExprIdent(rccid) => {
                                     if (util.index_of_str(out, rccid.name) >= 0) { hit = true; }
+                                },
+                                // (e) `return (if (c) { [<closure>] } else { … })` —
+                                // a value-position if/match is an IIFE, so the arrays
+                                // are one level in. EVERY arm has to yield a closure
+                                // array: the caller's binding gets one dispatch ABI,
+                                // and the boxing pass gives the arms uniform boxes on
+                                // exactly the same condition.
+                                parser.ExprLambda(ril) => {
+                                    if (rcc.args.len() == 0 && ril.params.len() == 0
+                                            && iife_arms_closurearr(ril.body, closureset, out, 0) > 0) { hit = true; }
                                 },
                                 _ => {}
                             }
@@ -55060,7 +55136,7 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
                     var pi2: i32 = 0;
                     while (pi2 < c.args.len()) {
                         if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, pi2)
-                                && lift_arg_is_fn_value(c.args[pi2], mfuncs)) {
+                                && lift_arg_is_passthrough_fn_value(c.args[pi2], mfuncs)) {
                             var pr: InlineCloRes = try_fn_field_value(c.args[pi2], fd, pfs, pct, gfns, mfuncs, structs);
                             pfs = pr.funcs; pct = pr.counter; pargs = pargs.append(pr.expr);
                         } else {
@@ -55334,7 +55410,7 @@ function arr_elem_forces_box(e: parser.Expr, fd: parser.FuncDecl, mfuncs: MFuncs
                     var i: i32 = 0;
                     while (i < ec.args.len()) {
                         if (lift_callee_is_typevar_passthrough(mfuncs, ecid.name, i)
-                                && lift_arg_is_fn_value(ec.args[i], mfuncs)) { return true; }
+                                && lift_arg_is_passthrough_fn_value(ec.args[i], mfuncs)) { return true; }
                         i = i + 1;
                     }
                 },
@@ -55612,6 +55688,34 @@ function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: MFuncs): boolean {
     return false;
 }
 
+// lift_arg_is_passthrough_fn_value is lift_arg_is_fn_value through any number of
+// generic passthrough calls: `id(<lambda>)` hands the lambda straight back, so a
+// position holding that call holds a fn value just as much as one holding the
+// lambda. The read side (arr_elem_is_closure_box) already recurses this way, so
+// without it the two sides disagreed about a nested passthrough — the boxing
+// pass left the inner lambda raw and it reached lower_expr asking for a
+// `<fd>$clo` nothing built (#6256).
+function lift_arg_is_passthrough_fn_value(arg: parser.Expr, mfuncs: MFuncs): boolean {
+    if (lift_arg_is_fn_value(arg, mfuncs)) { return true; }
+    match (arg) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
+                                && lift_arg_is_passthrough_fn_value(c.args[i], mfuncs)) { return true; }
+                        i = i + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
 // lift_arg_is_fn_value_declared is lift_arg_is_fn_value for a position whose
 // DECLARED type is already known to be a fn — a user-enum variant field typed
 // "fn". There the zero-arg exclusion the plain predicate makes is unnecessary:
@@ -55861,7 +55965,8 @@ function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
 // that decides whether the existing hoist fires) and holding a fn-VALUED arm.
 // Everything else is left exactly as it was, so no working program changes path.
 // iife_arms_have_lambda reports whether any arm of a value-position if/match
-// yields an inline LAMBDA, which is the only thing the hoist is needed for.
+// yields an inline LAMBDA — directly, or through a generic passthrough call that
+// hands it back unchanged — which is the only thing the hoist is needed for.
 //
 // The two halves of #6256 must not both fire on the same IIFE. An IIFE whose
 // arms are all already-boxed fn values (closure locals) needs no hoist at all:
@@ -55874,30 +55979,53 @@ function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
 // So the hoist takes the lambda-arm case and #6323 takes the boxed-arm case,
 // and a MIXED IIFE (Repro D — one closure-local arm, one lambda) hoists,
 // because the lambda is the binding constraint.
-function iife_arms_have_lambda(stmts: parser.Stmt[]): boolean {
+function iife_arms_have_lambda(stmts: parser.Stmt[], mfuncs: MFuncs): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtReturn(r) => {
-                match (r.value) {
-                    parser.ExprLambda(_) => { return true; },
-                    _ => {}
-                }
+                if (passthrough_arg_has_lambda(r.value, mfuncs)) { return true; }
             },
             parser.StmtIf(iff) => {
-                if (iife_arms_have_lambda(iff.then_body)) { return true; }
-                if (iife_arms_have_lambda(iff.else_body)) { return true; }
+                if (iife_arms_have_lambda(iff.then_body, mfuncs)) { return true; }
+                if (iife_arms_have_lambda(iff.else_body, mfuncs)) { return true; }
             },
             parser.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    if (iife_arms_have_lambda(mm.arms[a].body)) { return true; }
+                    if (iife_arms_have_lambda(mm.arms[a].body, mfuncs)) { return true; }
                     a = a + 1;
                 }
             },
             _ => {}
         }
         i = i + 1;
+    }
+    return false;
+}
+
+// passthrough_arg_has_lambda reports whether `e` is a raw lambda, directly or at
+// the erased-generic parameter of a passthrough call that hands it straight back
+// (`pick(c, v0, <lambda>)`). Nothing has boxed such a lambda, and the expression
+// walk stops at the IIFE that holds it, so only the hoist puts it where the
+// ordinary passes can reach it.
+function passthrough_arg_has_lambda(e: parser.Expr, mfuncs: MFuncs): boolean {
+    match (e) {
+        parser.ExprLambda(_) => { return true; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
+                                && passthrough_arg_has_lambda(c.args[i], mfuncs)) { return true; }
+                        i = i + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
     }
     return false;
 }
@@ -56242,7 +56370,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // IIFE falls through untouched — the existing hoist gets it.
                     if (call.args.len() == 0 && ielam.params.len() == 0
                         && !lambda_has_no_captures(ielam, gfns)
-                        && iife_arms_have_lambda(ielam.body)
+                        && iife_arms_have_lambda(ielam.body, mfuncs)
                         && iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
                         var iar: InlineCloRes = hoist_capturing_iife(ielam, fd, fs, ct, structs, mfuncs);
                         if (iar.counter > ct) {
@@ -56348,7 +56476,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                                 var sa: i32 = 0;
                                 while (sa < sccall.args.len()) {
                                     if (lift_callee_is_typevar_passthrough(mfuncs, scfid.name, sa)
-                                            && lift_arg_is_fn_value(sccall.args[sa], mfuncs)) { has_cap_lam = true; }
+                                            && lift_arg_is_passthrough_fn_value(sccall.args[sa], mfuncs)) { has_cap_lam = true; }
                                     sa = sa + 1;
                                 }
                             },
