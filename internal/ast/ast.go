@@ -1805,8 +1805,8 @@ type Ident struct {
 	// variant of. Stamped by the checker after resolving a
 	// qualified-variant reference (`Color.Red`) or after picking
 	// one of several same-named variants by context. Empty on all
-	// other Idents. The IR's `lookupVariant` prefers a non-empty
-	// EnumName over its global walk, which is the only thing that
+	// other Idents. The IR's `lookupVariantOn` resolves against it
+	// rather than walking every enum, which is the only thing that
 	// keeps variant resolution deterministic when two enums
 	// declare the same variant name.
 	EnumName string

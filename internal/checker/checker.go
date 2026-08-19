@@ -12284,7 +12284,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// "Red"}}. Detect that shape, look up the variant on the
 		// named enum, and rewrite Callee to a plain Ident with
 		// EnumName stamped so the rest of this branch (and the IR's
-		// `lookupVariant`) handle it uniformly with the unqualified
+		// `lookupVariantOn`) handle it uniformly with the unqualified
 		// form. Only fires when the target is a known enum name —
 		// every other FieldAccess (struct field, method call) flows
 		// down the usual path.

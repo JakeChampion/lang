@@ -1340,7 +1340,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					// source can strand an uncounted alias — escapeOwned (a
 					// projection is inc'd, so its container stays reclaimable).
 					if _, isLocal := b.locals[id.Name]; !isLocal {
-						if en, _, _, isVariant := b.lookupVariant(id.Name); isVariant {
+						if en, _, _, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
 							rc := b.enumRcPayloadsEligible(en)
 							for _, a := range s.Args {
 								if rc {
@@ -1778,7 +1778,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// arg (`Nil`) up to the enum local, leaving it permanently ineligible.
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			if _, isLocal := b.locals[id.Name]; !isLocal {
-				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
 					return false
 				}
 			}
@@ -2197,7 +2197,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 			// balanced by the exit-sweep dec, exactly like a struct field). Only
 			// variant-constructor calls.
 			if id, ok := lit.Callee.(*ast.Ident); ok {
-				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
 					for _, a := range lit.Args {
 						mark(a)
 					}
@@ -2698,7 +2698,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				// reuse), and a shadowing local rules out a constructor ref.
 				if callee, ok := v.Callee.(*ast.Ident); ok {
 					if _, isLocal := b.locals[callee.Name]; !isLocal {
-						if _, _, pc, isVar := b.lookupVariant(callee.Name); isVar && pc > 0 {
+						if _, _, pc, isVar := b.lookupVariantOn(callee.Name, callee.EnumName); isVar && pc > 0 {
 							return v
 						}
 					}
@@ -5125,7 +5125,7 @@ func (b *builder) ctorRetainedOperands(n ast.Node, f func(ast.Expr)) {
 			}
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
 					for _, a := range x.Args {
 						f(a)
 					}
