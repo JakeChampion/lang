@@ -5783,10 +5783,9 @@ function str_local_binding_is_fresh(init: parser.Expr): boolean {
             if (str_free_producer_ident(c)) { return true; }
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
-                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "reverse")
-                            && c.args.len() == 0) { return true; }
-                    if (cfa.field == "repeat" && c.args.len() == 1) { return true; }
-                    return false;
+                    if (!str_fresh_alloc_method(cfa.field)) { return false; }
+                    if (cfa.field == "repeat") { return c.args.len() == 1; }
+                    return c.args.len() == 0;
                 },
                 _ => { return false; },
             }
@@ -27218,7 +27217,7 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
 // move-on-return (whose freed intermediates live inside f; its final was moved to
 // the caller and leaked here until now).
 
-// body_has_nonfresh_str_return: any return whose value is NOT a fresh string
+// body_has_nonfresh_str_return_reg: any return whose value is NOT a fresh string
 // producer (str_local_binding_is_fresh — a concat, a string method, or a named
 // producer). A bare `return ident` (an accumulator move-out) is conservatively
 // NOT admitted: proving that ident is a sole-owned local needs the per-callee
@@ -27275,17 +27274,17 @@ function str_call_ret_is_fresh_reg(e: parser.Expr, reg: string[]): boolean {
 // release sound — a local also stored into a struct, passed to a call, or
 // captured has another owner, and the returned pointer would be an alias rather
 // than a handover. A parameter never qualifies: it has no declaration here.
-function str_local_is_fresh_ret(stmts: parser.Stmt[], name: string, reg: string[]): boolean {
+function str_local_is_fresh_ret(stmts: parser.Stmt[], name: string, reg: string[], params: parser.ParamDecl[]): boolean {
     if (name.len() == 0) { return false; }
-    if (!strloc_declared_fresh(stmts, name, reg)) { return false; }
-    return !strloc_escapes(stmts, name, reg);
+    if (!strloc_declared_fresh(stmts, name, reg, params)) { return false; }
+    return !strloc_escapes(stmts, name, reg, params);
 }
 
-function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[]): boolean {
+function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[], params: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (v.name == name) { return str_return_is_fresh_reg(v.init, reg); } },
+            parser.StmtVar(v) => { if (v.name == name) { return str_return_is_fresh_reg(v.init, reg, params); } },
             _ => {}
         }
         i = i + 1;
@@ -27295,7 +27294,7 @@ function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[]
 
 // strloc_escapes: `name` appears somewhere other than its own declaration, an
 // assignment TO it whose value is fresh, and a bare `return name`.
-function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[]): boolean {
+function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], params: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -27307,7 +27306,7 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[]): bool
                 // the base name here too — any of those touching `name` is an
                 // escape, and only the plain self-assign is credited.
                 if (a.target == name) {
-                    if (!str_return_is_fresh_reg(a.value, reg)) { return true; }
+                    if (!str_return_is_fresh_reg(a.value, reg, params)) { return true; }
                 } else if (expr_mentions_name(a.value, name)) { return true; }
             },
             parser.StmtReturn(r) => {
@@ -27318,22 +27317,22 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[]): bool
             parser.StmtExpr(e) => { if (expr_mentions_name(e.value, name)) { return true; } },
             parser.StmtIf(f) => {
                 if (expr_mentions_name(f.cond, name)) { return true; }
-                if (strloc_escapes(f.then_body, name, reg) || strloc_escapes(f.else_body, name, reg)) { return true; }
+                if (strloc_escapes(f.then_body, name, reg, params) || strloc_escapes(f.else_body, name, reg, params)) { return true; }
             },
             parser.StmtWhile(w) => {
                 if (expr_mentions_name(w.cond, name)) { return true; }
-                if (strloc_escapes(w.body, name, reg)) { return true; }
+                if (strloc_escapes(w.body, name, reg, params)) { return true; }
             },
             parser.StmtFor(fo) => {
                 if (expr_mentions_name(fo.iter, name)) { return true; }
-                if (strloc_escapes(fo.body, name, reg)) { return true; }
+                if (strloc_escapes(fo.body, name, reg, params)) { return true; }
             },
             parser.StmtMatch(m) => {
                 if (expr_mentions_name(m.scrutinee, name)) { return true; }
                 var a2: i32 = 0;
                 while (a2 < m.arms.len()) {
                     if (m.arms[a2].has_guard && expr_mentions_name(m.arms[a2].guard, name)) { return true; }
-                    if (strloc_escapes(m.arms[a2].body, name, reg)) { return true; }
+                    if (strloc_escapes(m.arms[a2].body, name, reg, params)) { return true; }
                     a2 = a2 + 1;
                 }
             },
@@ -27344,29 +27343,53 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[]): bool
     return false;
 }
 
-function str_return_is_fresh_reg_in(e: parser.Expr, reg: string[], body: parser.Stmt[]): boolean {
-    if (str_return_is_fresh_reg(e, reg)) { return true; }
+// tostring_recv_is_scalar_param is the state-free twin of tostring_recv_is_scalar,
+// for the whole-program fresh-ret registry: str_fresh_ret_fns_of walks FuncDecls
+// with no LowerState, so a receiver is resolved against the callee's DECLARED
+// params instead of its slots. Only a provably scalar receiver admits — a struct
+// / enum / dyn `to_string` (user-written or @derive) may return an ALIAS of a
+// live field, which is the same reason tostring_recv_is_scalar gates on it.
+// A receiver that is not one of the callee's params answers false: its type is
+// not in the signature, and an unregistered function merely leaks.
+function tostring_recv_is_scalar_param(e: parser.Expr, params: parser.ParamDecl[]): boolean {
     match (e) {
-        parser.ExprIdent(id) => { return str_local_is_fresh_ret(body, id.name, reg); },
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprIdent(id) => {
+            var i: i32 = 0;
+            while (i < params.len()) {
+                if (params[i].name == id.name) { return is_scalar_type_name(params[i].type_name); }
+                i = i + 1;
+            }
+            return false;
+        },
         _ => {}
     }
     return false;
 }
 
-function str_return_is_fresh_reg(e: parser.Expr, reg: string[]): boolean {
-    if (str_return_is_fresh(e)) { return true; }
+function str_return_is_fresh_reg_in(e: parser.Expr, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
+    if (str_return_is_fresh_reg(e, reg, params)) { return true; }
+    match (e) {
+        parser.ExprIdent(id) => { return str_local_is_fresh_ret(body, id.name, reg, params); },
+        _ => {}
+    }
+    return false;
+}
+
+function str_return_is_fresh_reg(e: parser.Expr, reg: string[], params: parser.ParamDecl[]): boolean {
+    if (str_return_is_fresh(e, params)) { return true; }
     return str_call_ret_is_fresh_reg(e, reg);
 }
 
-function body_has_nonfresh_str_return_reg(stmts: parser.Stmt[], reg: string[], body: parser.Stmt[]): boolean {
+function body_has_nonfresh_str_return_reg(stmts: parser.Stmt[], reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!str_return_is_fresh_reg_in(r.value, reg, body)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonfresh_str_return_reg(f.then_body, reg, body) || body_has_nonfresh_str_return_reg(f.else_body, reg, body)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfresh_str_return_reg(w.body, reg, body)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfresh_str_return_reg(fo.body, reg, body)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return_reg(m.arms[a].body, reg, body)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => { if (!str_return_is_fresh_reg_in(r.value, reg, body, params)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_str_return_reg(f.then_body, reg, body, params) || body_has_nonfresh_str_return_reg(f.else_body, reg, body, params)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_str_return_reg(w.body, reg, body, params)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_str_return_reg(fo.body, reg, body, params)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return_reg(m.arms[a].body, reg, body, params)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -27374,12 +27397,12 @@ function body_has_nonfresh_str_return_reg(stmts: parser.Stmt[], reg: string[], b
     return false;
 }
 
-function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string, reg: string[], body: parser.Stmt[]): boolean {
+function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtReturn(r) => {
-                var ok: boolean = str_return_is_fresh_reg_in(r.value, reg, body);
+                var ok: boolean = str_return_is_fresh_reg_in(r.value, reg, body, params);
                 if (!ok) {
                     match (r.value) {
                         parser.ExprIdent(rid) => { ok = rid.name == recv; },
@@ -27394,10 +27417,10 @@ function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string
                 }
                 if (!ok) { return true; }
             },
-            parser.StmtIf(f) => { if (body_has_nonfreshrecv_str_return_reg(f.then_body, recv, reg, body) || body_has_nonfreshrecv_str_return_reg(f.else_body, recv, reg, body)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfreshrecv_str_return_reg(w.body, recv, reg, body)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfreshrecv_str_return_reg(fo.body, recv, reg, body)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshrecv_str_return_reg(m.arms[a].body, recv, reg, body)) { return true; } a = a + 1; } },
+            parser.StmtIf(f) => { if (body_has_nonfreshrecv_str_return_reg(f.then_body, recv, reg, body, params) || body_has_nonfreshrecv_str_return_reg(f.else_body, recv, reg, body, params)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfreshrecv_str_return_reg(w.body, recv, reg, body, params)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfreshrecv_str_return_reg(fo.body, recv, reg, body, params)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshrecv_str_return_reg(m.arms[a].body, recv, reg, body, params)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -27405,25 +27428,27 @@ function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string
     return false;
 }
 
-function str_return_is_fresh(e: parser.Expr): boolean {
+function str_return_is_fresh(e: parser.Expr, params: parser.ParamDecl[]): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
+        // `n.to_string()` on a provably SCALAR receiver is the builtin
+        // decimal-text producer — always a fresh box. is_fresh_str_temp has
+        // credited it since #4353 and its comment names this predicate as the
+        // one that missed it; the miss is why a `f(i) { return i.to_string(); }`
+        // helper never entered the fresh-ret registry and every caller's binding
+        // leaked its result.
+        parser.ExprCall(c) => {
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprFieldAccess(fa) => {
+                        if (fa.field == "to_string" && tostring_recv_is_scalar_param(fa.obj, params)) { return true; }
+                    },
+                    _ => {}
+                }
+            }
+            return str_local_binding_is_fresh(e);
+        },
         _ => { return str_local_binding_is_fresh(e); }
-    }
-    return false;
-}
-function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!str_return_is_fresh(r.value)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonfresh_str_return(f.then_body) || body_has_nonfresh_str_return(f.else_body)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfresh_str_return(w.body)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfresh_str_return(fo.body)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return(m.arms[a].body)) { return true; } a = a + 1; } },
-            _ => {}
-        }
-        i = i + 1;
     }
     return false;
 }
@@ -27432,9 +27457,9 @@ function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
 // alias of a borrowed arg / field / literal. Only free functions: a method key
 // would need the receiver type the string binding can't supply (is_fresh_ret_binding
 // keys a method on recv_type, empty here).
-// body_has_nonfreshrecv_str_return: any return whose value is none of a fresh
+// body_has_nonfreshrecv_str_return_reg: any return whose value is none of a fresh
 // string producer, the bare RECEIVER ident, or a direct SLICE OF THE RECEIVER.
-// It is body_has_nonfresh_str_return widened by the two shapes a borrowing
+// It is body_has_nonfresh_str_return_reg widened by the two shapes a borrowing
 // string method is built from: the identity path `if (n <= 0) { return s; }`
 // and the view path `return s[n:sLen]`.
 //
@@ -27446,36 +27471,6 @@ function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
 // direct return expression over the receiver ident: a slice of a callee LOCAL
 // is a view of a buffer that local's own sweep frees, and a slice bound to a
 // name first could have been stored somewhere else on the way out.
-function body_has_nonfreshrecv_str_return(stmts: parser.Stmt[], recv: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtReturn(r) => {
-                var ok: boolean = str_return_is_fresh(r.value);
-                if (!ok) {
-                    match (r.value) {
-                        parser.ExprIdent(rid) => { ok = rid.name == recv; },
-                        parser.ExprSlice(rsl) => {
-                            match (rsl.array) {
-                                parser.ExprIdent(rsid) => { ok = rsid.name == recv; },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                }
-                if (!ok) { return true; }
-            },
-            parser.StmtIf(f) => { if (body_has_nonfreshrecv_str_return(f.then_body, recv) || body_has_nonfreshrecv_str_return(f.else_body, recv)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfreshrecv_str_return(w.body, recv)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfreshrecv_str_return(fo.body, recv)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshrecv_str_return(m.arms[a].body, recv)) { return true; } a = a + 1; } },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return false;
-}
 
 // The walk is a LEAST FIXPOINT over the bare-name half, for the same reason
 // param_counted_of's is: a function whose returns are all calls cannot be judged
@@ -27503,7 +27498,7 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
     var k: i32 = 0;
     while (k < funcs.len()) {
         if (funcs[k].ret_type == "string" && funcs[k].receiver_type.len() == 0
-                && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body)) {
+                && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body, funcs[k].params)) {
             out = out.append(funcs[k].name);
         }
         // "SFRRECV:<Recv>.<method>" — a string-shaped METHOD whose every return
@@ -27529,7 +27524,7 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
         if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
                 && funcs[k].ret_type == "string"
                 && body_has_return(funcs[k].body)
-                && !body_has_nonfreshrecv_str_return_reg(funcs[k].body, funcs[k].receiver_name, reg, funcs[k].body)) {
+                && !body_has_nonfreshrecv_str_return_reg(funcs[k].body, funcs[k].receiver_name, reg, funcs[k].body, funcs[k].params)) {
             out = out.append("SFRRECV:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
@@ -27565,7 +27560,7 @@ function sfrfresh_names_of(funcs: parser.FuncDecl[], reg: string[], acc: string[
         if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
                 && funcs[k].ret_type == "string") {
             if (body_has_return(funcs[k].body)
-                    && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body)
+                    && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body, funcs[k].params)
                     && !is_str_builtin_method(funcs[k].name)) {
                 cand = push_str_unique(cand, funcs[k].name);
             } else {
