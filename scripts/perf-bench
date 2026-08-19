@@ -18,6 +18,15 @@
 #                        This is what actually runs, so it catches a runtime
 #                        helper getting slower, which .text cannot see.
 #
+# .ir IS A COUNT, NOT A COST. It weights every instruction equally, so the two
+# diverge wherever one instruction is not one instruction's worth of work. The
+# case that has actually bitten: callgrind charges `rep movsb` one Ir per byte
+# copied and nothing for its fixed micro-code start-up, so replacing it with a
+# size-classed copy raised .ir on the small-copy benchmarks by a couple of
+# percent while cutting their wall time by up to 30%. When a change moves .ir
+# and wall time in opposite directions, wall time is the one that is right;
+# say so in the PR and move the baseline.
+#
 # Keyed by architecture because an instruction count is not comparable across
 # ISAs. The two are recorded under separate keys and compared separately.
 #

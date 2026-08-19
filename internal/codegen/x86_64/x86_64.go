@@ -5725,20 +5725,86 @@ func (g *generator) emitSliceRangeRuntime() {
 }
 
 // emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
-// AAPCS-style return-the-dst contract (matches arm64). Uses
-// `rep movsb` for the copy. Simple, correct, and on modern
-// x86-64 CPUs the microcoded fast-string path is competitive
-// with hand-rolled 8-byte loops for the buffer sizes the lang
-// runtime sees (HTTP buffers, JSON, map entries).
+// AAPCS-style return-the-dst contract (matches arm64). Regions must
+// not overlap: each size class reads the tail of the source before
+// writing the head of the destination.
+//
+// Size-classed rather than `rep movsb`, which is nearly all start-up
+// at the lengths this runtime copies — examples/bench/string_build
+// issues 728k calls averaging 80 bytes. Each class covers its whole
+// range with a pair of overlapping accesses, so no length runs a
+// residue loop.
+//
+// `movdqu` is SSE2, well below the Haswell baseline docs/BACKEND-PARITY.md
+// sets.
 func (g *generator) emitMemcpyRuntime() {
 	g.line("")
 	g.line(".globl __fern_memcpy")
 	g.line(".type __fern_memcpy, @function")
 	g.label("__fern_memcpy")
 	g.emit("mov rax, rdi") // save dst for return
-	g.emit("mov rcx, rdx") // count → rcx for `rep movsb`
-	g.emit("cld")          // direction-flag = forward
-	g.emit("rep movsb")    // [rdi++] = [rsi++], rcx times
+	// Smallest class first: the copies this runtime performs most often are
+	// a few bytes long, so they are the ones that must not pay for the
+	// dispatch. Each further test costs the classes above it one compare.
+	g.emit("cmp rdx, 8")
+	g.emit("jb .Lmcp_lt8")
+	g.emit("cmp rdx, 16")
+	g.emit("jb .Lmcp_8_15")
+	g.emit("cmp rdx, 32")
+	g.emit("jbe .Lmcp_16_32")
+	// n > 32: 32 bytes per iteration, then one final 32-byte block
+	// anchored at the END of each operand. r8 / r9 hold those anchors,
+	// so the loop stops as soon as the remaining bytes fit in it.
+	g.emit("lea r8, [rdi + rdx - 32]")
+	g.emit("lea r9, [rsi + rdx - 32]")
+	g.label(".Lmcp_bulk")
+	g.emit("movdqu xmm0, [rsi]")
+	g.emit("movdqu xmm1, [rsi + 16]")
+	g.emit("movdqu [rdi], xmm0")
+	g.emit("movdqu [rdi + 16], xmm1")
+	g.emit("add rsi, 32")
+	g.emit("add rdi, 32")
+	g.emit("cmp rdi, r8")
+	g.emit("jb .Lmcp_bulk")
+	g.emit("movdqu xmm0, [r9]")
+	g.emit("movdqu xmm1, [r9 + 16]")
+	g.emit("movdqu [r8], xmm0")
+	g.emit("movdqu [r8 + 16], xmm1")
+	g.emit("ret")
+	// 16..32 bytes: head and tail 16 each.
+	g.label(".Lmcp_16_32")
+	g.emit("movdqu xmm0, [rsi]")
+	g.emit("movdqu xmm1, [rsi + rdx - 16]")
+	g.emit("movdqu [rdi], xmm0")
+	g.emit("movdqu [rdi + rdx - 16], xmm1")
+	g.emit("ret")
+	g.label(".Lmcp_8_15")
+	g.emit("mov r8, qword ptr [rsi]")
+	g.emit("mov r9, qword ptr [rsi + rdx - 8]")
+	g.emit("mov qword ptr [rdi], r8")
+	g.emit("mov qword ptr [rdi + rdx - 8], r9")
+	g.emit("ret")
+	g.label(".Lmcp_lt8")
+	g.emit("cmp edx, 4")
+	g.emit("jb .Lmcp_lt4")
+	g.emit("mov r8d, dword ptr [rsi]")
+	g.emit("mov r9d, dword ptr [rsi + rdx - 4]")
+	g.emit("mov dword ptr [rdi], r8d")
+	g.emit("mov dword ptr [rdi + rdx - 4], r9d")
+	g.emit("ret")
+	// 1..3 bytes: first, last, and — only when n is 3 — the middle.
+	g.label(".Lmcp_lt4")
+	g.emit("test edx, edx")
+	g.emit("je .Lmcp_done")
+	g.emit("movzx r8d, byte ptr [rsi]")
+	g.emit("movzx r9d, byte ptr [rsi + rdx - 1]")
+	g.emit("mov byte ptr [rdi], r8b")
+	g.emit("mov byte ptr [rdi + rdx - 1], r9b")
+	g.emit("cmp edx, 3")
+	g.emit("jb .Lmcp_done")
+	g.emit("movzx r8d, byte ptr [rsi + 1]")
+	g.emit("mov byte ptr [rdi + 1], r8b")
+	g.label(".Lmcp_done")
 	g.emit("ret")
 	g.line(".size __fern_memcpy, .-__fern_memcpy")
 }
