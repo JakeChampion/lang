@@ -22007,6 +22007,43 @@ function builtin_union_ctor(callee: parser.Expr): boolean {
     return false;
 }
 
+// union_ctor_ident_arg names the LOCAL a built-in union construction takes as its
+// sole payload (`Some(sv)` -> "sv"), or "" when the element is not that shape.
+function union_ctor_ident_arg(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1 || !builtin_union_ctor(c.callee)) { return ""; }
+            match (c.args[0]) {
+                parser.ExprIdent(id) => { return id.name; },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// tuple_union_payload_sole_use: `init` is a tuple literal in which `name` appears
+// ONLY as the sole payload of a built-in union construction. A tuple that also
+// mentions the name anywhere else answers false, so the interlock below never
+// hides a second, genuinely escaping use.
+function tuple_union_payload_sole_use(init: parser.Expr, name: string): boolean {
+    match (init) {
+        parser.ExprTuple(tl) => {
+            var found: boolean = false;
+            var k: i32 = 0;
+            while (k < tl.elements.len()) {
+                if (union_ctor_ident_arg(tl.elements[k]) == name) { found = true; }
+                else if (expr_mentions_name(tl.elements[k], name)) { return false; }
+                k = k + 1;
+            }
+            return found;
+        },
+        _ => {}
+    }
+    return false;
+}
+
 // tuple_union_arg_freefn is the payload half: the release for a construction
 // argument, or "" for one this site cannot prove sole-owned.
 function tuple_union_arg_freefn(arg: parser.Expr, s: LowerState): string {
@@ -22026,6 +22063,17 @@ function tuple_union_arg_freefn(arg: parser.Expr, s: LowerState): string {
         // before: naming its release needs more than the slot's array-ness.
         parser.ExprIdent(id) => {
             if (s.is_strarr_slot(s.slot_of(id.name))) { return ""; }
+            // A bare-ident STRING payload is released only when the LOCAL is
+            // itself credited "STR:", which is the other half of the tuple-element
+            // interlock: the construction retains (rc 2), the local's own
+            // rebind/exit sweep spends one reference and this spends the other.
+            // Without the credit the local's sweep never runs, one dec cannot
+            // reach zero, and the shape leaks either way — so the two halves
+            // hang off the same condition rather than being able to drift apart.
+            if (s.is_str_slot(s.slot_of(id.name))) {
+                if (slot_is_reclaimable_str(s, s.slot_of(id.name))) { return "__fern_str_free"; }
+                return "";
+            }
             if (s.is_arr_slot(s.slot_of(id.name))) { return "__fern_rc_dec"; }
             return "";
         },
@@ -22668,6 +22716,19 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
                 match (v.init) {
                     parser.ExprLambda(_) => {
                         if (util.index_of_str(clo_ok, "OK:" + v.name) >= 0) { skip = true; }
+                    },
+                    // The TUPLE-ELEMENT twin of the closure interlock above, and
+                    // the same arithmetic: the construction retains the payload
+                    // (rc 2), this sweep's string loop decs the local's ref, and
+                    // the element release decs the box's — freed exactly once.
+                    // "TUP:" is credited only for a tuple this pass already
+                    // credited "TUPRC:", so the element release is emitted; and
+                    // tuple_union_payload_sole_use refuses a tuple that mentions
+                    // the name anywhere but that one payload position, so a
+                    // second, genuinely escaping use is never skipped with it.
+                    parser.ExprTuple(_) => {
+                        if (util.index_of_str(clo_ok, "TUP:" + v.name) >= 0
+                            && tuple_union_payload_sole_use(v.init, name)) { skip = true; }
                     },
                     _ => {}
                 }
@@ -30268,6 +30329,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // release (array loop) runs BEFORE the string loop, so the env's dec always
     // precedes the local's free. Lambdas anywhere else still escape-flag.
     var clo_ok: string[] = clo_rc_candidate_names(body, borrowable);
+    // #4353: a fresh string handed to a union element of an rc-tuple this pass
+    // already credited "TUPRC:" is no longer an escape — see the ExprTuple arm of
+    // body_unsafe_for_clo. Tagged into the same list rather than threaded as a
+    // seventh parameter, the way every other credit in this function is carried.
+    var tprc: i32 = 0;
+    while (tprc < out.len()) {
+        if (out[tprc].len() > 6 && out[tprc][0:6] == "TUPRC:") {
+            clo_ok = clo_ok.append("TUP:" + out[tprc][6:out[tprc].len()]);
+        }
+        tprc = tprc + 1;
+    }
     var si: i32 = 0;
     while (si < strs.len()) {
         if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for_clo(body, strs[si], borrowable, clo_ok, recv_borrow)) {

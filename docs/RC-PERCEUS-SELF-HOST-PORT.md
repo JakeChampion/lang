@@ -11247,3 +11247,60 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   backends; the three byte gates fail on the parent on all three legs, and the
   trim + split refusals and the source-liveness case pass either way).
   Refs #6544 #4451.
+
+
+- 2026-08-19: **the bare-ident STRING payload — the tuple was SUPPRESSING the
+  local's own release, and one dec could never close it.** #7168 refused this
+  shape and recorded two readings for why, both wrong: first that the release
+  arm "is never reached", then that the string local "gets no sweep of its own".
+  The emitted code settles it. `var sv = "v" + i.to_string(); var t = (i,
+  Some(sv))`: `sv` is the `__fern_str_concat` result, `__fern_rc_inc`'d once at
+  construction, and stored as the union box's payload. Without the tuple the
+  function emits THREE `__fern_str_free` — the literal, the `to_string` temp and
+  `sv`. With the tuple only the first two survive: the sweep works, and tuple
+  participation takes it away.
+
+  So the shape carries one alloc plus one inc and was offered at most one dec.
+  Forced at the CALL SITE, x86-64:
+
+  | forced | `__fern_str_free` in `churn` | bytes/round |
+  |---|---|---|
+  | neither | 2 | 32 |
+  | the `"STR:"` credit | 3 | 32 |
+  | the element release | 3 | 32 |
+  | **both** | **4** | **0** |
+
+  That is why every single-lever probe returned a null, and it is exactly the
+  discipline the ARRAY twin already uses — read off its asm, `xs` is alloc'd and
+  inc'd and paid for by the local's rebind/exit release AND the payload dec in
+  the reclaim block.
+
+  **The fix is the two halves under one condition.** The credit half is the
+  tuple-element twin of the #4354 closure interlock and sits beside it:
+  `body_unsafe_for_clo` skips a `StmtVar` whose init is a tuple literal, when
+  that tuple is already credited `"TUPRC:"` and `tuple_union_payload_sole_use`
+  confirms the name appears ONLY as a union payload there. The release half is
+  `tuple_union_arg_freefn`'s ident arm, gated on `slot_is_reclaimable_str` — the
+  credit itself — so the two cannot drift apart. Credit without release leaks and
+  release without credit leaks, both measured above.
+
+  `"TUP:"` is tagged into the existing `clo_ok` list rather than threaded as a
+  seventh parameter. #7178 had just fixed two same-typed list parameters of this
+  same function being crossed at all six call sites; adding a third positional
+  `string[]` was the wrong lesson to take from that.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `(i, Some(sv))`, `sv` read after | 32 \| 32 \| 16 | **0** | 0 |
+  | `sv` also assigned to an outer local | 73 (value) | 73 | 73 |
+  | payload carried out of the arm | 5 (value) | 5 | 5 |
+
+  The escape row is the one that shows the interlock declines rather than
+  blanket-credits: it keeps only 2 `__fern_str_free`, because `keep = sv` is a
+  use outside the tuple and the plain escape walk still refuses it.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_str_payload_interlock_test.go` (4 cases x 3
+  backends; the byte gate fails on the parent on all three legs, and the three
+  controls — the escape, the carried-out binding and the untouched array twin —
+  pass either way). Refs #4353 #4451.
