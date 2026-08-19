@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -27,18 +25,7 @@ func TestSelfHostSSALift(t *testing.T) {
 		t.Skip("ssa_lift_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{
-		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
-		"ir.fern", "ssa.fern", "ssa_lift.fern", "ssa_lift_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "ssa_lift_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ssa_lift_run.fern", "ssa_lift_run")
 
 	// Golden report — locks the lift's value flow (both branch arms), the
