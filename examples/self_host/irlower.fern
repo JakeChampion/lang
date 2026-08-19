@@ -22922,7 +22922,7 @@ function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: st
 // `name` argument sits at a CONSUME-SAFE or BORROWABLE position of g, and no other
 // argument lets `name` escape. (Method calls are already safe via the receiver-
 // borrow rule, so only free-call rebinds need this.)
-function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[], consume_safe: string[]): boolean {
+function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var callee_name: string = "";
@@ -22956,12 +22956,12 @@ function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string
 // body_consume_unsafe_for: body_unsafe_for_allow_ret PLUS the consume-rebind
 // relaxation — a `name = g(.., name, ..)` whose callee is consume-safe at name's
 // position(s) is NOT an escape.
-function body_consume_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], consume_safe: string[]): boolean {
+function body_consume_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) { if (stmt_consume_unsafe_for(stmts[i], name, borrowable, consume_safe, recv_borrow)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[], consume_safe: string[]): boolean {
+function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
         parser.StmtReturn(r) => {

@@ -11413,3 +11413,50 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Regression test: `internal/e2eselfhost/self_host_tostring_freshret_test.go`
   (6 cases x 3 backends; the three byte gates fail on the parent on all three
   legs). Refs #4353 #4451.
+- 2026-08-19: **the consume family's two list params were crossed at every call
+  site** — the other half of #7178, and a bug the recv_borrow threading
+  introduced.
+
+  Threading `recv_borrow` through the escape-scan family inserted the parameter
+  after `borrowable` in each SIGNATURE but appended the argument last at each
+  CALL SITE. For the ten functions whose last parameter was `borrowable` those
+  agree. For the four with a trailing list param they do not, and both params are
+  `string[]`, so it type-checks in silence. #7178 fixed `body_unsafe_for_clo`;
+  `is_consume_rebind_call`, `body_consume_unsafe_for` and
+  `stmt_consume_unsafe_for` still had `consume_safe` arriving as `recv_borrow`
+  and back.
+
+  **Conservative, not unsound**, and worth showing why rather than asserting it.
+  `param_is_borrowable` scans a bucket for a `name|flags` record: handed the flat
+  recv_borrow list, no entry contains a `|`, the bar scan runs to end-of-string
+  and the `bar < n` guard rejects — always false. In the other direction
+  `str_method_recv_borrows` asks `index_of_str(recv_borrow, "string." + field)`
+  of a hash-bucket array whose elements are newline-joined records — never an
+  exact match, also always false. Each half silently switched itself off.
+
+  So the cost was SUPPRESSED RECLAIM, and the compiler's own emission is where it
+  shows. Compiling `fern.fern` with the crossed and the corrected compiler, both
+  built from the same commit:
+
+  | | crossed | corrected |
+  | --- | --- | --- |
+  | `__field_reclaim_*` call sites | 1850 | **2584** |
+  | `__fern_arr_dec` | 25787 | **25814** |
+  | total call sites | 122715 | **123490** |
+  | emitted lines | 1705926 | 1709830 |
+
+  All 487 conformance fixtures emit BYTE-IDENTICAL asm under both, and no probe
+  shape distinguishes them — the consume-rebind relaxation only fires on
+  `name = g(.., name, ..)` at a scale the corpus does not reach. The compiler
+  compiling itself is the witness, which is the awkward part: a crossing that
+  changes 734 reclaim sites in the self-host build is invisible to every fixture
+  gate, and the per-module fixpoint would not see it either, since both compilers
+  reproduce themselves.
+
+  The lesson is about the EDIT, not the analysis: a mechanical parameter insert
+  is only safe where the anchor is the last parameter, and four of fourteen
+  signatures here were not. Checking arity would not have caught it; both orders
+  have the same arity and the same types.
+
+  Gate: all three `TestFernFixturesSelfHost` legs green with the corrected
+  compiler (877 s, 420/420/410, zero skips). Refs #6544 #7178 #4451.
