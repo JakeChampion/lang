@@ -969,7 +969,7 @@ function is_defer_flag_name(n: string): boolean {
     if (n.len() <= 5) { return false; }
     if (n[0:5] != "__dfa") { return false; }
     var c: u8 = n[5];
-    return c >= 48 && c <= 57;
+    return c >= b'0' && c <= b'9';
 }
 
 // defer_replay_flag returns the defer flag an `if` condition guards a replay
@@ -1273,12 +1273,12 @@ function split_type_list(csv: string): string[] {
     var depth: i32 = 0;
     var i: i32 = 0;
     while (i <= csv.len()) {
-        if (i == csv.len() || (csv[i] == 44 && depth == 0)) {   // 44 = ','
+        if (i == csv.len() || (csv[i] == b',' && depth == 0)) {
             out = out.append(csv[start : i]);
             start = i + 1;
-        } else if (csv[i] == 40 || csv[i] == 91) {              // '(' '['
+        } else if (csv[i] == b'(' || csv[i] == b'[') {
             depth = depth + 1;
-        } else if (csv[i] == 41 || csv[i] == 93) {              // ')' ']'
+        } else if (csv[i] == b')' || csv[i] == b']') {
             depth = depth - 1;
         }
         i = i + 1;
@@ -1484,7 +1484,7 @@ pub function fn_param_from_spelling(name: string, sp: string): parser.ParamDecl 
     var declined: parser.ParamDecl = parser.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
     var n: i32 = sp.len();
     if (n < 5) { return declined; }
-    if (sp[0] != 40) { return declined; }        // '('
+    if (sp[0] != b'(') { return declined; }
     var depth: i32 = 0;
     var close: i32 = 0 - 1;
     var i: i32 = 0;
@@ -1499,9 +1499,9 @@ pub function fn_param_from_spelling(name: string, sp: string): parser.ParamDecl 
     }
     if (close < 0) { return declined; }
     var j: i32 = close + 1;
-    while (j < n && sp[j] == 32) { j = j + 1; }
+    while (j < n && sp[j] == b' ') { j = j + 1; }
     if (j + 1 >= n) { return declined; }
-    if (sp[j] != 61 || sp[j + 1] != 62) { return declined; }    // "=>"
+    if (sp[j] != b'=' || sp[j + 1] != b'>') { return declined; }
     // Re-split the parameter list without the source's spaces: fn_sig_of splits
     // it on bare commas and matches each part against a type spelling, so a
     // leading space would read `(i64, i32)`'s second position as a pointer.
@@ -1543,13 +1543,13 @@ function tagged_value_start(e: string, pfx: string, name: string): i32 {
     // Prefix first: it discriminates on the first byte for most of the list,
     // where the bar test reads a far offset the entry usually does not reach.
     if (!bytes_at(e, 0, pfx)) { return 0 - 1; }
-    if (e[pl + nl] != 124) { return 0 - 1; }   // 124 = '|'
+    if (e[pl + nl] != b'|') { return 0 - 1; }
     var k: i32 = 0;
     while (k < nl) {
         // A '|' inside `name` would put the entry's first bar before the one
         // tested above, which is a miss — as it was for the decoders that
         // located the bar by scanning.
-        if (name[k] == 124) { return 0 - 1; }
+        if (name[k] == b'|') { return 0 - 1; }
         if (e[pl + k] != name[k]) { return 0 - 1; }
         k = k + 1;
     }
@@ -1684,7 +1684,7 @@ pub function (s: LowerState) fn_arg_width_char(name: string, ai: i32): string {
     if (ai < 0) { return ""; }
     var tag: string = s.fn_value_sig(name, false);
     var us: i32 = 0;
-    while (us < tag.len() && tag[us] != 95) { us = us + 1; }   // 95 = '_'
+    while (us < tag.len() && tag[us] != b'_') { us = us + 1; }
     if (ai >= us) { return ""; }
     var c: string = tag[ai : ai + 1] + "";
     if (c == "w") { return ""; }
@@ -1918,7 +1918,7 @@ pub function (s: LowerState) tuple_elem_tag(i: i32, n: i32): string {
     var start: i32 = 0;
     var k: i32 = 0;
     while (k <= enc.len()) {
-        if (k == enc.len() || (depth == 0 && enc[k] == 44)) {   // end, or top-level ','
+        if (k == enc.len() || (depth == 0 && enc[k] == b',')) {   // end, or top-level ','
             if (idx == n) { return enc[start : k] + ""; }
             idx = idx + 1;
             start = k + 1;
@@ -1943,7 +1943,7 @@ pub function csv_nth(enc: string, n: i32): string {
     var start: i32 = 0;
     var k: i32 = 0;
     while (k <= enc.len()) {
-        if (k == enc.len() || (depth == 0 && enc[k] == 44)) {   // end, or top-level ','
+        if (k == enc.len() || (depth == 0 && enc[k] == b',')) {   // end, or top-level ','
             if (idx == n) { return enc[start : k] + ""; }
             idx = idx + 1;
             start = k + 1;
@@ -2576,7 +2576,7 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
         while (mri < s.sigs.map_ret_fns.len()) {
             var mre: string = s.sigs.map_ret_fns[mri];
             var mrb: i32 = 0;
-            while (mrb < mre.len() && mre[mrb] != 124) { mrb = mrb + 1; }   // '|'
+            while (mrb < mre.len() && mre[mrb] != b'|') { mrb = mrb + 1; }
             if (mrb < mre.len() && mre[0:mrb] == mrkey) { return mre[mrb + 1 : mre.len()] + ""; }
             mri = mri + 1;
         }
@@ -2940,7 +2940,7 @@ pub function dyn_trait_set(ty: string): string[] {
     var start: i32 = 4;
     var i: i32 = 4;
     while (i <= ty.len()) {
-        if (i == ty.len() || ty[i] == 43) {            // '+'
+        if (i == ty.len() || ty[i] == b'+') {
             var part: string = trim_spaces(ty[start:i] + "");
             if (part.len() > 0) { out = out.append(part); }
             start = i + 1;
@@ -3687,7 +3687,7 @@ pub function is_enum_like_name(t: string, structs: parser.StructDecl[]): boolean
     // "(..)" is not a bare enum.
     var ci: i32 = 0;
     while (ci < t.len()) {
-        if (t[ci] == 91) { return false; }   // '['
+        if (t[ci] == b'[') { return false; }
         ci = ci + 1;
     }
     if (t[0:1] == "(") { return false; }
@@ -3883,7 +3883,7 @@ pub function variant_pattern_bare_name(type_name: string): string {
     var bare: string = type_name;
     var i: i32 = 0;
     while (i < type_name.len()) {
-        if (type_name[i] == 46) { bare = type_name[i + 1 : type_name.len()] + ""; }
+        if (type_name[i] == b'.') { bare = type_name[i + 1 : type_name.len()] + ""; }
         i = i + 1;
     }
     return bare;
@@ -3893,7 +3893,7 @@ pub function variant_pattern_qualifier(type_name: string): string {
     var q: string = "";
     var i: i32 = 0;
     while (i < type_name.len()) {
-        if (type_name[i] == 46) { q = type_name[0 : i] + ""; }
+        if (type_name[i] == b'.') { q = type_name[0 : i] + ""; }
         i = i + 1;
     }
     return q;
@@ -13546,7 +13546,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     var pt_is_i64: boolean = pt == "i64" || pt == "u64";
     var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
     var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
-    var pt_is_tuple: boolean = pt.len() > 1 && pt[0] == 40 && tuple_elems_lowerable(pt, s.structs);
+    var pt_is_tuple: boolean = pt.len() > 1 && pt[0] == b'(' && tuple_elems_lowerable(pt, s.structs);
     var pt_is_optgen: boolean = pt.len() >= 8 && (pt[0:7] == "Option[" || pt[0:7] == "Result[");
     if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64" && !pt_is_tuple && !pt_is_optgen) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
@@ -16501,7 +16501,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                     se = se.emit(ir.op_store_local(tcslot));                     // stash box
                                     var tck: i32 = 0;
                                     while (tck < dtrf.len()) {
-                                        if (dtrf[tck] == 49) {                                   // 49 = '1'
+                                        if (dtrf[tck] == b'1') {
                                             se = se.emit(ir.op_load_local(tcslot));              // box
                                             se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
                                             se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); // free the fresh buffer
@@ -16558,7 +16558,7 @@ function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState 
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
     while (ri < rest.len()) {
-        if (rest[ri] == 58 && colon < 0) { colon = ri; }
+        if (rest[ri] == b':' && colon < 0) { colon = ri; }
         ri = ri + 1;
     }
     if (colon < 0) { return s.fail(); }
@@ -16593,7 +16593,7 @@ function split_commas(csv: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= csv.len()) {
-        if (i == csv.len() || csv[i] == 44) {
+        if (i == csv.len() || csv[i] == b',') {
             out = out.append(csv[start : i]);
             start = i + 1;
         }
@@ -17727,11 +17727,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // scalar-only closure stays byte-identical.
         var has_rc_cap: boolean = false;
         var ckj: i32 = 0;
-        while (ckj < clo_kinds.len()) { if (clo_kinds[ckj] != 46) { has_rc_cap = true; } ckj = ckj + 1; }   // 46 = '.'
+        while (ckj < clo_kinds.len()) { if (clo_kinds[ckj] != b'.') { has_rc_cap = true; } ckj = ckj + 1; }
         if (has_rc_cap) {
             var ckk: i32 = 0;
             while (ckk < clo_kinds.len()) {
-                if (clo_kinds[ckk] != 46) {
+                if (clo_kinds[ckk] != b'.') {
                     cvb = cvb.emit(ir.op_load_local(cslot));
                     cvb = cvb.emit(ir.op_const_i32(ckk + 1));
                     cvb = cvb.emit(ir.op_arr_get(32));
@@ -17751,7 +17751,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     var comma: i32 = 0 - 1;
     var ci: i32 = 0;
     while (ci < v.name.len()) {
-        if (v.name[ci] == 44 && comma < 0) { comma = ci; }
+        if (v.name[ci] == b',' && comma < 0) { comma = ci; }
         ci = ci + 1;
     }
     // i64 binding: `var x: i64 = E`, or an init that infers to i64
@@ -17872,11 +17872,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var dp: i32 = 0;
         var ddepth: i32 = 0;
         while (dp <= v.name.len()) {
-            if (dp == v.name.len() || (v.name[dp] == 44 && ddepth == 0)) {
+            if (dp == v.name.len() || (v.name[dp] == b',' && ddepth == 0)) {
                 dnames = dnames.append(v.name[dstart : dp]);
                 dstart = dp + 1;
-            } else if (v.name[dp] == 40) { ddepth = ddepth + 1; }
-            else if (v.name[dp] == 41) { ddepth = ddepth - 1; }
+            } else if (v.name[dp] == b'(') { ddepth = ddepth + 1; }
+            else if (v.name[dp] == b')') { ddepth = ddepth - 1; }
             dp = dp + 1;
         }
         var dn: i32 = dnames.len();
@@ -19570,7 +19570,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     match (fr.iter) { parser.ExprIdent(_) => { for_iter_ident = true; }, _ => {} }
     var fvci: i32 = 0;
     while (fvci < fr.var_name.len()) {
-        if (fr.var_name[fvci] == 44) { for_var_comma = true; }
+        if (fr.var_name[fvci] == b',') { for_var_comma = true; }
         fvci = fvci + 1;
     }
     // `for b in STR` over a string iterable: iterate the bytes via a
@@ -19865,7 +19865,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     var kvcomma: i32 = 0 - 1;
     var kvci: i32 = 0;
     while (kvci < fr.var_name.len()) {
-        if (fr.var_name[kvci] == 44 && kvcomma < 0) { kvcomma = kvci; }
+        if (fr.var_name[kvci] == b',' && kvcomma < 0) { kvcomma = kvci; }
         kvci = kvci + 1;
     }
     if (mslot >= 0 && s.map_type_of(mslot) != "" && kvcomma >= 0) {
@@ -20547,7 +20547,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 var vdot: i32 = 0 - 1;
                 var vld: i32 = 0;
                 while (vld < pv.type_name.len()) {
-                    if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; vdot = vld; }
+                    if (pv.type_name[vld] == b'.') { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; vdot = vld; }
                     vld = vld + 1;
                 }
                 // A QUALIFIED pattern on an imported UNION member
@@ -22567,16 +22567,16 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
     var p: i32 = 0;
     while (p < n) {
         var bar: i32 = p;
-        while (bar < n && e[bar] != 124) { bar = bar + 1; }         // 124 = '|'
+        while (bar < n && e[bar] != b'|') { bar = bar + 1; }
         var end: i32 = bar;
-        while (end < n && e[end] != 10) { end = end + 1; }          // 10 = '\n'
+        while (end < n && e[end] != b'\n') { end = end + 1; }
         if (bar < n && bar - p == nl) {
             var eq: boolean = true;
             var k: i32 = 0;
             while (eq && k < nl) { if (e[p + k] != name[k]) { eq = false; } k = k + 1; }
             if (eq) {
                 var pos: i32 = bar + 1 + idx;
-                return pos < end && e[pos] == 49;                   // 49 = '1'
+                return pos < end && e[pos] == b'1';
             }
         }
         p = end + 1;
@@ -23274,7 +23274,7 @@ function split_semi(s: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        if (s[i] == 59) {   // 59 = ';'
+        if (s[i] == b';') {
             out = out.append(s[start:i] + "");
             start = i + 1;
         }
@@ -23330,20 +23330,20 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     while (opi < st.optret_pending.len()) {
         var ope: string = st.optret_pending[opi];
         var oph: i32 = 0;
-        while (oph < ope.len() && ope[oph] != 35) { oph = oph + 1; }   // 35 = '#'
+        while (oph < ope.len() && ope[oph] != b'#') { oph = oph + 1; }
         var opslot: i32 = util.digits_to_i32(ope[0:oph] + "");
         if (opslot >= st.n_params) {
-            if (oph + 1 < ope.len() && ope[oph + 1] == 98) {   // 98 = 'b'
+            if (oph + 1 < ope.len() && ope[oph + 1] == b'b') {
                 st = emit_scalar_enum_box_free(st, opslot);
-            } else if (oph + 1 < ope.len() && ope[oph + 1] == 101) {   // 101 = 'e'
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b'e') {
                 var eparts: string[] = split_semi(ope[oph + 2 : ope.len()] + "");
                 var emoved: string[] = [];
                 var emi: i32 = 1;
                 while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
                 st = emit_enum_variant_drops_moved(st, opslot, eparts[0], emoved);
-            } else if (oph + 1 < ope.len() && ope[oph + 1] == 115) {   // 115 = 's'
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b's') {
                 st = emit_opt_payload_drop_via(st, opslot, "__fern_str_free");
-            } else if (oph + 1 < ope.len() && ope[oph + 1] == 83) {    // 83 = 'S'
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b'S') {
                 st = emit_opt_payload_drop_via(st, opslot, "__fern_str_arr_free");
             } else {
                 st = emit_opt_payload_drop(st, opslot);
@@ -23366,18 +23366,18 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             if (st.is_closure_local(st.locals[i].slot_name)) { clk = st.clo_cap_kinds_of(st.locals[i].slot_name); }
             var clk_any: boolean = false;
             var clki: i32 = 0;
-            while (clki < clk.len()) { if (clk[clki] != 46) { clk_any = true; } clki = clki + 1; }   // 46 = '.'
+            while (clki < clk.len()) { if (clk[clki] != b'.') { clk_any = true; } clki = clki + 1; }
             if (clk_any) {
                 st = st.emit(ir.op_load_local(i));
                 st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
                 st = st.emit(ir.op_if(0));
                 var clkj: i32 = 0;
                 while (clkj < clk.len()) {
-                    if (clk[clkj] != 46) {
+                    if (clk[clkj] != b'.') {
                         st = st.emit(ir.op_load_local(i));
                         st = st.emit(ir.op_const_i32(clkj + 1));
                         st = st.emit(ir.op_arr_get(32));
-                        if (clk[clkj] == 115) {   // 's' = string capture
+                        if (clk[clkj] == b's') {   // string capture
                             st = st.emit(ir.op_call_direct("__fern_str_free", 1));
                         } else {
                             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -23404,7 +23404,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 st = st.emit(ir.op_if(0));
                 var dakj: i32 = 0;
                 while (dakj < dak.len()) {
-                    if (dak[dakj] == 115) {   // 's' = string-payload dyn cell
+                    if (dak[dakj] == b's') {   // string-payload dyn cell
                         st = st.emit(ir.op_load_local(i));
                         st = st.emit(ir.op_const_i32(dakj));
                         st = st.emit(ir.op_arr_get(32));
@@ -24114,7 +24114,7 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                             if (donor.len() > 0) {
                                 // "dname|dtype" — keep the pair 3-part, consume the bare name.
                                 var xbar: i32 = 0;
-                                while (xbar < donor.len() && donor[xbar] != 124) { xbar = xbar + 1; }
+                                while (xbar < donor.len() && donor[xbar] != b'|') { xbar = xbar + 1; }
                                 pairs = pairs.append(rv.name + "|" + donor);
                                 cons = cons.append(donor[0 : xbar]);
                             }
@@ -24164,7 +24164,7 @@ function xblock_donor_for(pending: string[], recip: string): string {
     while (i < pending.len()) {
         var e: string = pending[i];
         var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }
+        while (bar < e.len() && e[bar] != b'|') { bar = bar + 1; }
         if (bar < e.len() && e[0 : bar] == recip) { return e[bar + 1 : e.len()] + ""; }
         i = i + 1;
     }
@@ -24197,7 +24197,7 @@ function xblock_without(pending: string[], recip: string): string[] {
     while (i < pending.len()) {
         var e: string = pending[i];
         var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }
+        while (bar < e.len() && e[bar] != b'|') { bar = bar + 1; }
         if (!(bar < e.len() && e[0 : bar] == recip)) { out = out.append(e); }
         i = i + 1;
     }
@@ -24374,7 +24374,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 // layout type for the old-field release, #4356 divergence 2)
                 // or "dname|" (tuple donor). Split before dispatching.
                 var xdbar: i32 = 0;
-                while (xdbar < xbd.len() && xbd[xdbar] != 124) { xdbar = xdbar + 1; }
+                while (xdbar < xbd.len() && xbd[xdbar] != b'|') { xdbar = xdbar + 1; }
                 var xbd_name: str = xbd[0 : xdbar];
                 var xbd_type: string = "";
                 if (xdbar < xbd.len()) { xbd_type = xbd[xdbar + 1 : xbd.len()] + ""; }
@@ -26229,7 +26229,7 @@ function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
         var ent: string = s.reclaimable_names[i];
         var st: i32 = tagged_value_start(ent, "BORROW:", callee);
         if (st >= 0 && st < ent.len()) {
-            if (st + ai < ent.len()) { return ent[st + ai] == 49; }   // 49 = '1'
+            if (st + ai < ent.len()) { return ent[st + ai] == b'1'; }
             return false;
         }
         i = i + 1;
@@ -27497,7 +27497,7 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type.len() > 0 && funcs[k].ret_type[0] == 40   // 40 = '('
+        if (funcs[k].ret_type.len() > 0 && funcs[k].ret_type[0] == b'('
                 && funcs[k].receiver_type.len() == 0
                 && body_has_return(funcs[k].body) && !body_has_nonfresh_tuple_return(funcs[k].body)) {
             out = out.append(funcs[k].name);
@@ -27693,7 +27693,7 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
         if (tag == "" || tag == "i64" || tag == "u64" || tag == "f64" || tag == "f32") { return ""; }
         var all_arr: boolean = true;
         var sj: i32 = 0;
-        while (sj < shapes.len()) { if (shapes[sj][k] != 97) { all_arr = false; } sj = sj + 1; }   // 97 = 'a'
+        while (sj < shapes.len()) { if (shapes[sj][k] != b'a') { all_arr = false; } sj = sj + 1; }
         if (all_arr && tag_is_scalar_elem_array(tag)) { flags = flags + "1"; }
         else { flags = flags + "0"; }
         k = k + 1;
@@ -29051,7 +29051,7 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], struct
                 while (pi < acc.len()) {
                     var e: string = acc[pi];
                     var b2: i32 = 0;
-                    while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
+                    while (b2 < e.len() && e[b2] != b'|') { b2 = b2 + 1; }
                     if (b2 <= e.len() && e[0:b2] == v.name) {
                         var out: string[] = [];
                         var oi: i32 = 0;
@@ -29150,7 +29150,7 @@ function collect_dyn_arr_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], 
                 while (pi < acc.len()) {
                     var e: string = acc[pi];
                     var b2: i32 = 0;
-                    while (b2 < e.len() && e[b2] != 124) { b2 = b2 + 1; }
+                    while (b2 < e.len() && e[b2] != b'|') { b2 = b2 + 1; }
                     if (b2 <= e.len() && e[0:b2] == v.name) {
                         var out: string[] = [];
                         var oi: i32 = 0;
@@ -30144,7 +30144,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // credit beside the rebind one. Both are emitted for that half; the
         // match-consumed half gets "RCENUM:" alone.
         var rname: string = rcenums[rei];
-        if (rname.len() > 2 && rname[0] == 83 && rname[1] == 58) {   // "S:"
+        if (rname.len() > 2 && rname[0] == b'S' && rname[1] == b':') {
             var bare: string = rname[2:rname.len()] + "";
             out = out.append("RCENUM:" + bare);
             out = out.append("RCENUMS:" + bare);
@@ -30355,7 +30355,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // each rebind individually (only `g = g.append(<row literal>)` passes)
         // and is otherwise body_unsafe_for, so it subsumes both former checks.
         // The string[] class has worked this way since #4355.
-        if (!(aan.len() > 2 && aan[0] == 83 && aan[1] == 124)   // 83='S' 124='|'
+        if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
             && !arrarr_unsafe_for(body, aan, borrowable, opt_fresh_ret)
             && !arrarr_row_escapes(body, aan)) {
             out = out.append("ARRARR:" + aan);
@@ -30502,7 +30502,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
-        if (!(asts[asti].len() > 2 && asts[asti][0] == 65 && asts[asti][1] == 124)   // 65='A' 124='|'
+        if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
             && !arrstruct_unsafe_for(body, asts[asti], borrowable, structs, msites)
             && !arrarr_row_escapes(body, asts[asti])
             && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs, msites)) {
@@ -30558,7 +30558,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // structarr_unsafe_for validates each rebind individually and is
         // otherwise body_unsafe_for, so it subsumes both former checks.
         // "A|" rows are append-BUILT markers, not candidates.
-        if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == 65 && sarrs2[sa2i][1] == 124)   // 65='A' 124='|'
+        if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
             && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable, fresh_ret)
             && !structarr_elem_escapes(body, sarrs2[sa2i], borrowable)) {
             // Append-built candidates take the SEPARATE STRUCTARRA: credit,
@@ -30600,7 +30600,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (dyi < dyns.len()) {
         var dentry: string = dyns[dyi];
         var dbar: i32 = 0;
-        while (dbar < dentry.len() && dentry[dbar] != 124) { dbar = dbar + 1; }   // 124 = '|'
+        while (dbar < dentry.len() && dentry[dbar] != b'|') { dbar = dbar + 1; }
         var dname: str = dentry[0:dbar];
         if (dname.len() > 0
             && util.index_of_str(reassigned, dname) < 0
@@ -30622,7 +30622,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (dai < darrs.len()) {
         var daentry: string = darrs[dai];
         var dabar: i32 = 0;
-        while (dabar < daentry.len() && daentry[dabar] != 124) { dabar = dabar + 1; }   // 124 = '|'
+        while (dabar < daentry.len() && daentry[dabar] != b'|') { dabar = dabar + 1; }
         var daname: str = daentry[0:dabar];
         if (daname.len() > 0
             && util.index_of_str(reassigned, daname) < 0
@@ -32006,7 +32006,7 @@ function optfresh_entry_payload_is_fresh(e: string): boolean {
     if (e.len() > 9 && bytes_at(e, 0, "ERRFRESH:")) { return false; }
     var i: i32 = e.len() - 2;
     if (i < 0) { return false; }
-    return e[i] == 124 && e[i + 1:e.len()] == "f";   // 124 = '|'
+    return e[i] == b'|' && e[i + 1:e.len()] == "f";
 }
 
 // match_scrutinee_ident: if top-level body statement `st` is a `match (x) { ... }`
@@ -32579,7 +32579,7 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
                         var vname: string = pv.type_name;
                         var vc: i32 = 0;
                         while (vc < pv.type_name.len()) {
-                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
+                            if (pv.type_name[vc] == b'.') { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
                             vc = vc + 1;
                         }
                         // field 0 binding. (Compare against "" / "_" rather than
@@ -32697,7 +32697,7 @@ function match_moved_rc_payloads(st: parser.Stmt, structs: parser.StructDecl[]):
                         var vname: string = pv.type_name;
                         var vc: i32 = 0;
                         while (vc < pv.type_name.len()) {
-                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
+                            if (pv.type_name[vc] == b'.') { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
                             vc = vc + 1;
                         }
                         if (pv.binding != "" && pv.binding != "_") {
@@ -33201,7 +33201,7 @@ function slot_enum_reassign_reclaim(s: LowerState, i: i32): string {
         var r: string = s.reclaimable_names[j];
         if (bytes_at(r, 0, "ENUMRE:")) {
             var k: i32 = 7;
-            while (k < r.len() && r[k] != 58) { k = k + 1; }   // 58 = ':'
+            while (k < r.len() && r[k] != b':') { k = k + 1; }
             if (k < r.len() && k + 1 + nm.len() == r.len() && bytes_at(r, k + 1, nm)) {
                 return r[7:k] + "";
             }
@@ -33454,7 +33454,7 @@ function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
                         var vname: string = pv.type_name;
                         var vc: i32 = 0;
                         while (vc < pv.type_name.len()) {
-                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
+                            if (pv.type_name[vc] == b'.') { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
                             vc = vc + 1;
                         }
                         var is_target: boolean = vname == variant;
@@ -33697,7 +33697,7 @@ function declared_struct_type_of(stmts: parser.Stmt[], name: string, structs: pa
                     var dot: i32 = 0 - 1;
                     var c: i32 = 0;
                     while (c < v.type_name.len()) {
-                        if (v.type_name[c] == 46) { dot = c; }
+                        if (v.type_name[c] == b'.') { dot = c; }
                         c = c + 1;
                     }
                     if (dot > 0) {
@@ -33967,7 +33967,7 @@ function opt_arm_field_moved(st: parser.Stmt, variant: string, sty: string, stru
                         var vname: string = pv.type_name;
                         var vc: i32 = 0;
                         while (vc < pv.type_name.len()) {
-                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
+                            if (pv.type_name[vc] == b'.') { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
                             vc = vc + 1;
                         }
                         if (vname == variant && pv.binding != "" && pv.binding != "_") {
@@ -34679,7 +34679,7 @@ function optaarr_ann_is(type_name: string): boolean {
     if (type_name[type_name.len() - 2 : type_name.len()] != "[]") { return false; }
     var elem: str = type_name[0 : type_name.len() - 2];
     if (elem.len() < 10 || elem[0:7] != "Option[") { return false; }
-    if (elem[elem.len() - 1] != 93) { return false; }   // 93 = ']'
+    if (elem[elem.len() - 1] != b']') { return false; }
     return is_leaksafe_array_field(elem[7 : elem.len() - 1]);
 }
 
@@ -34765,7 +34765,7 @@ function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boole
 function opttup_inner_type(type_name: string): string {
     if (type_name.len() < 9) { return ""; }
     if (type_name[0:7] != "Option[") { return ""; }
-    if (type_name[type_name.len() - 1] != 93) { return ""; }   // 93 = ']'
+    if (type_name[type_name.len() - 1] != b']') { return ""; }
     return type_name[7 : type_name.len() - 1] + "";
 }
 
@@ -35008,7 +35008,7 @@ function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: strin
                             parser.PatVariant(pv) => {
                                 var vn: string = pv.type_name;
                                 var vc: i32 = 0;
-                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == b'.') { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
                                 if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
                                     if (m.arms[ai].has_guard && opttup_arm_expr_escapes(m.arms[ai].guard, pv.binding, inner, structs)) { return true; }
                                     var bi: i32 = 0;
@@ -36154,7 +36154,7 @@ function optstruct_payload_escapes(stmts: parser.Stmt[], name: string, sty: stri
                             parser.PatVariant(pv) => {
                                 var vn: string = pv.type_name;
                                 var vc: i32 = 0;
-                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == b'.') { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
                                 if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
                                     if (m.arms[ai].has_guard && optstruct_arm_expr_escapes(m.arms[ai].guard, pv.binding, sty, structs)) { return true; }
                                     var bi: i32 = 0;
@@ -36326,7 +36326,7 @@ function unmatched_optarr_ann_is(type_name: string): boolean {
     if (optarr_ann_is(type_name)) { return true; }
     if (type_name.len() < 9) { return false; }
     if (type_name[0:7] != "Result[") { return false; }
-    if (type_name[type_name.len() - 1] != 93) { return false; }   // 93 = ']'
+    if (type_name[type_name.len() - 1] != b']') { return false; }
     return is_leaksafe_array_field(opt_payload_type(type_name, "Ok"));
 }
 
@@ -36351,7 +36351,7 @@ function unmatched_optstr_ann_is(type_name: string): boolean {
     if (opttup_inner_type(type_name) == "string") { return true; }
     if (type_name.len() < 9) { return false; }
     if (type_name[0:7] != "Result[") { return false; }
-    if (type_name[type_name.len() - 1] != 93) { return false; }   // 93 = ']'
+    if (type_name[type_name.len() - 1] != b']') { return false; }
     return opt_payload_type(type_name, "Ok") == "string";
 }
 
@@ -36583,7 +36583,7 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
                             parser.PatVariant(pv) => {
                                 var vn: string = pv.type_name;
                                 var vc: i32 = 0;
-                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == b'.') { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
                                 if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
                                     if (m.arms[ai].has_guard && optarr_arm_expr_escapes(m.arms[ai].guard, pv.binding)) { return true; }
                                     var bi: i32 = 0;
@@ -37044,7 +37044,7 @@ function optarrarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean 
                             parser.PatVariant(pv) => {
                                 var vn: string = pv.type_name;
                                 var vc: i32 = 0;
-                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == b'.') { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
                                 if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
                                     if (m.arms[ai].has_guard && optarrarr_arm_expr_escapes(m.arms[ai].guard, pv.binding)) { return true; }
                                     var bi: i32 = 0;
@@ -38364,7 +38364,7 @@ function collect_fresh_arrenum_names(stmts: parser.Stmt[], structs: parser.Struc
 function arrenum_entry_name(entry: string): string {
     var i: i32 = 0;
     while (i < entry.len()) {
-        if (entry[i] == 35) { return entry[0:i] + ""; }   // 35='#'
+        if (entry[i] == b'#') { return entry[0:i] + ""; }
         i = i + 1;
     }
     return "";
@@ -40138,7 +40138,7 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                                 var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors, fresh_ret);
                                 if (donor.len() > 0) {
                                     var dbar: i32 = 0;
-                                    while (dbar < donor.len() && donor[dbar] != 124) { dbar = dbar + 1; }
+                                    while (dbar < donor.len() && donor[dbar] != b'|') { dbar = dbar + 1; }
                                     idxs = idxs.append(k);
                                     donors = donors.append(donor[0 : dbar]);
                                     dtypes = dtypes.append(donor[dbar + 1 : donor.len()]);
@@ -41361,7 +41361,7 @@ function inarm_reuse_match_ok(arms: parser.MatchArm[], enum_name: string, want: 
                 // — while letting a user enum that happens to name a variant
                 // `Ok` / `Some` keep the reuse.
                 var vld: i32 = 0;
-                while (vld < pv.type_name.len()) { if (pv.type_name[vld] == 46) { return false; } vld = vld + 1; }
+                while (vld < pv.type_name.len()) { if (pv.type_name[vld] == b'.') { return false; } vld = vld + 1; }
                 if (variant_enum_owner(structs, pv.type_name) != enum_name) { return false; }
                 if (!enum_variant_reuse_payload_ok(structs, pv.type_name)) { return false; }
                 // The matched variant's SCALAR payload fields are read into temps at
@@ -41948,7 +41948,7 @@ function trmc_variant_name(structs: parser.StructDecl[], raw: string): string {
     var vdot: i32 = 0 - 1;
     var vc: i32 = 0;
     while (vc < raw.len()) {
-        if (raw[vc] == 46) { vdot = vc; }   // 46 = '.'
+        if (raw[vc] == b'.') { vdot = vc; }
         vc = vc + 1;
     }
     if (vdot >= 0) { vname = raw[vdot + 1 : raw.len()] + ""; }
@@ -42505,7 +42505,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (`(A, B)[]`) starts with '(' too but is an array — it takes the generic
     // array move-on-return path (like P[] / string[]), so exclude array types
     // (else tuple_elem_tags chokes on the trailing "[]" and wrongly bails).
-    if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40 && !is_array_type_name(fn.ret_type)) {   // 40 = '('
+    if (fn.ret_type.len() > 0 && fn.ret_type[0] == b'(' && !is_array_type_name(fn.ret_type)) {
         if (!tuple_elems_lowerable(fn.ret_type, structs)) {
             return lower_failed(fn, "returns tuple `" + fn.ret_type + "`, whose elements are not all lowerable");
         }
@@ -42755,7 +42755,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         while (opfi < sg.fn_param_sigs.len()) {
             var opfe: string = sg.fn_param_sigs[opfi];
             var opfb: i32 = 0;
-            while (opfb < opfe.len() && opfe[opfb] != 124) { opfb = opfb + 1; }   // 124 = '|'
+            while (opfb < opfe.len() && opfe[opfb] != b'|') { opfb = opfb + 1; }
             if (opfb < opfe.len() && opfe[0:opfb] == fn.name) { own_pflags = opfe[opfb + 1 : opfe.len()] + ""; }
             opfi = opfi + 1;
         }
@@ -42764,7 +42764,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var ci: i32 = 0;
     while (ci < names.len()) {
         var cloarr: boolean = false;
-        if (ci >= nrecv0 && ci - nrecv0 < own_pflags.len() && own_pflags[ci - nrecv0] == 51) { cloarr = true; }   // 51 = '3'
+        if (ci >= nrecv0 && ci - nrecv0 < own_pflags.len() && own_pflags[ci - nrecv0] == b'3') { cloarr = true; }
         isclosurearr = isclosurearr.append(cloarr);
         ci = ci + 1;
     }
@@ -43052,17 +43052,17 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             var bl: i32 = 0;
             while (bl < buck.len()) {
                 var ble: i32 = bl;
-                while (ble < buck.len() && buck[ble] != 10) { ble = ble + 1; }   // 10 = newline
+                while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
                 var line: string = buck[bl:ble] + "";
                 var bpbar: i32 = 0;
-                while (bpbar < line.len() && line[bpbar] != 124) { bpbar = bpbar + 1; }   // 124 = '|'
+                while (bpbar < line.len() && line[bpbar] != b'|') { bpbar = bpbar + 1; }
                 if (bpbar < line.len()) {
                     // A METHOD key is "<Type>.<method>" and the census can only
                     // see the bare method name, so match on the part after the
                     // last '.'. A free function's key holds no '.' (module
                     // mangling uses '__'), so it still compares whole.
                     var bpdot: i32 = bpbar;
-                    while (bpdot > 0 && line[bpdot - 1] != 46) { bpdot = bpdot - 1; }   // 46 = '.'
+                    while (bpdot > 0 && line[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
                     if (util.index_of_str(lacs, line[bpdot:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + line); }
                 }
                 bl = ble + 1;
@@ -43087,7 +43087,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             var tfe: string = sg.tuple_fresh_ret_fns[tfk];
             if (tfe.len() > 6 && tfe[0:5] == "ARRF:") {
                 var tfbar: i32 = 5;
-                while (tfbar < tfe.len() && tfe[tfbar] != 124) { tfbar = tfbar + 1; }   // 124 = '|'
+                while (tfbar < tfe.len() && tfe[tfbar] != b'|') { tfbar = tfbar + 1; }
                 if (util.index_of_str(dccs, tfe[5:tfbar]) >= 0) { reclaim = reclaim.append("TUPRET:" + tfe[5:tfe.len()]); }
             } else if (tfe.len() > 5 && tfe[0:5] == "MAPF:") {
                 if (util.index_of_str(dccs, tfe[5:tfe.len()]) >= 0) { reclaim = reclaim.append("MAPRET:" + tfe[5:tfe.len()]); }
@@ -44032,7 +44032,7 @@ function irl_is_alnum_byte(b: i32): boolean {
 // register backends give every param), so an 8-byte value moving opaquely through
 // it survives; callers coerce their arg/result at the i64 boundary (#erased-wide).
 pub function is_bare_typevar_name(t: string): boolean {
-    return t.len() == 1 && t[0] >= 65 && t[0] <= 90;
+    return t.len() == 1 && t[0] >= b'A' && t[0] <= b'Z';
 }
 
 // is_erased_typevar: a single-uppercase-letter spelling that is an ERASED
@@ -44190,7 +44190,7 @@ pub function erased_widenable(fn: parser.FuncDecl, structs: parser.StructDecl[])
     if (!declares_typevars(fn)) { return false; }
     if (fn.receiver_type.len() != 0) { return false; }
     // A BARE tuple return `(A, B)` (not a tuple-array `(A,B)[]`).
-    if (!(fn.ret_type.len() > 0 && fn.ret_type[0] == 40 && !is_array_type_name(fn.ret_type))) { return false; }
+    if (!(fn.ret_type.len() > 0 && fn.ret_type[0] == b'(' && !is_array_type_name(fn.ret_type))) { return false; }
     var enames: string[] = [];
     var i: i32 = 0;
     while (i < fn.params.len()) {
@@ -44247,7 +44247,7 @@ pub function resolve_argref_opt_type(t: string, args: parser.Expr[], s: LowerSta
     while (i < t.len()) {
         if (i + 4 <= t.len() && t[i : i + 4] == "$arg") {
             var j: i32 = i + 4;
-            while (j < t.len() && t[j] >= 48 && t[j] <= 57) { j = j + 1; }   // digits
+            while (j < t.len() && t[j] >= b'0' && t[j] <= b'9') { j = j + 1; }
             var an: i32 = util.digits_to_i32(t[i + 4 : j]);
             if (an >= 0 && an < args.len()) { out = out + elem_type_tag(args[an], s); }
             else { out = out + "i32"; }
@@ -45071,12 +45071,12 @@ function strfld_resolve_deferred(names: string[], borrowable: string[]): string[
     var i: i32 = 0;
     while (i < n) {
         var e: string = names[i];
-        if (e.len() > 0 && e[0] == 63) {                                  // 63 = '?'
+        if (e.len() > 0 && e[0] == b'?') {
             var h: i32 = 1;
-            while (h < e.len() && e[h] != 35) { h = h + 1; }              // 35 = '#'
+            while (h < e.len() && e[h] != b'#') { h = h + 1; }
             var c: i32 = h + 1;
             var idx: i32 = 0;
-            while (c < e.len() && e[c] != 58) { idx = idx * 10 + ((e[c] as i32) - 48); c = c + 1; }   // 58 = ':', 48 = '0'
+            while (c < e.len() && e[c] != b':') { idx = idx * 10 + ((e[c] as i32) - 48); c = c + 1; }   // 48 = '0'
             if (c < e.len() && h < e.len()) {
                 if (!param_is_borrowable(borrowable, e[1:h], idx)) {
                     a = push_str_unique(a, e[c + 1:e.len()]);
@@ -46724,7 +46724,7 @@ function strarrfld_fn_binds(fn: parser.FuncDecl, structs: parser.StructDecl[]): 
 // spelling drops straight into local_tuple_elems, where "string" selects string
 // dispatch, a struct name selects field access, and anything else is scalar.
 pub function tuple_elem_tags(rt: string): string {
-    if (rt.len() < 2 || rt[0] != 40) { return ""; }   // 40 = '('
+    if (rt.len() < 2 || rt[0] != b'(') { return ""; }
     var inner: str = rt[1 : rt.len() - 1];
     var out: string = "";
     var depth: i32 = 0;
@@ -46732,10 +46732,10 @@ pub function tuple_elem_tags(rt: string): string {
     var i: i32 = 0;
     var first: boolean = true;
     while (i <= inner.len()) {
-        if (i == inner.len() || (inner[i] == 44 && depth == 0)) {   // 44 = ','
+        if (i == inner.len() || (inner[i] == b',' && depth == 0)) {
             var seg: str = inner[start : i];
-            if (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()]; }   // 32 = ' '
-            if (seg.len() > 0 && seg[seg.len() - 1] == 32) { seg = seg[0 : seg.len() - 1]; }
+            if (seg.len() > 0 && seg[0] == b' ') { seg = seg[1 : seg.len()]; }
+            if (seg.len() > 0 && seg[seg.len() - 1] == b' ') { seg = seg[0 : seg.len() - 1]; }
             if (!first) { out = out + ","; }
             // A declared fn-typed element (the parser coarsens `(T) => R`
             // segments to "fn") holds a closure BOX at runtime — the lift
@@ -46747,8 +46747,8 @@ pub function tuple_elem_tags(rt: string): string {
             else { out = out + seg; }
             first = false;
             start = i + 1;
-        } else if (inner[i] == 91 || inner[i] == 40) { depth = depth + 1; }   // '[' '('
-        else if (inner[i] == 93 || inner[i] == 41) { depth = depth - 1; }   // ']' ')'
+        } else if (inner[i] == b'[' || inner[i] == b'(') { depth = depth + 1; }
+        else if (inner[i] == b']' || inner[i] == b')') { depth = depth - 1; }
         i = i + 1;
     }
     return out;
@@ -46770,7 +46770,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= tags.len()) {
-        if (i == tags.len() || (depth == 0 && tags[i] == 44)) {   // 44 = ','
+        if (i == tags.len() || (depth == 0 && tags[i] == b',')) {
             var t: str = tags[start : i];
             // The ≤32-bit integer scalars (u32 + the sub-word u8) ride
             // one i32 slot exactly like i32 — a sub-word cast wraps the value BEFORE
@@ -46848,8 +46848,8 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             if (!ok_elem && t.len() >= 2 && t[0:1] == "(") { ok_elem = tuple_elems_lowerable(t, structs); }
             if (!ok_elem) { return false; }
             start = i + 1;
-        } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }   // '[' '('
-        else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }   // ']' ')'
+        } else if (tags[i] == b'[' || tags[i] == b'(') { depth = depth + 1; }
+        else if (tags[i] == b']' || tags[i] == b')') { depth = depth - 1; }
         i = i + 1;
     }
     return true;
@@ -46910,9 +46910,9 @@ pub function arrtup_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
-        if (rt.len() >= 5 && rt[0] == 40 && rt[rt.len() - 2 : rt.len()] == "[]") {   // 40 = '('
+        if (rt.len() >= 5 && rt[0] == b'(' && rt[rt.len() - 2 : rt.len()] == "[]") {
             var elem: str = rt[0 : rt.len() - 2];
-            if (elem.len() >= 2 && elem[elem.len() - 1] == 41 && !irl_type_has_var(elem)) {   // 41 = ')'
+            if (elem.len() >= 2 && elem[elem.len() - 1] == b')' && !irl_type_has_var(elem)) {
                 var key: string = funcs[k].name;
                 if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
                 out = out.append(key + "|" + elem);
@@ -46931,16 +46931,16 @@ function irl_type_has_var(ty: string): boolean {
     var start: i32 = 0;
     var i: i32 = 0;
     var inner: string = ty;
-    if (inner.len() >= 2 && inner[0] == 40) { inner = inner[1 : inner.len() - 1] + ""; }   // 40 = '('
+    if (inner.len() >= 2 && inner[0] == b'(') { inner = inner[1 : inner.len() - 1] + ""; }
     while (i <= inner.len()) {
-        if (i == inner.len() || (inner[i] == 44 && depth == 0)) {   // 44 = ','
+        if (i == inner.len() || (inner[i] == b',' && depth == 0)) {
             var seg: str = inner[start : i];
-            if (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()]; }   // 32 = ' '
+            if (seg.len() > 0 && seg[0] == b' ') { seg = seg[1 : seg.len()]; }
             if (irl_looks_type_var(seg)) { return true; }
             start = i + 1;
         } else {
-            if (inner[i] == 40 || inner[i] == 91) { depth = depth + 1; }   // '(' '['
-            if (inner[i] == 41 || inner[i] == 93) { depth = depth - 1; }   // ')' ']'
+            if (inner[i] == b'(' || inner[i] == b'[') { depth = depth + 1; }
+            if (inner[i] == b')' || inner[i] == b']') { depth = depth - 1; }
         }
         i = i + 1;
     }
@@ -46958,7 +46958,7 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
-        if (rt.len() > 0 && rt[0] == 40) {   // 40 = '('
+        if (rt.len() > 0 && rt[0] == b'(') {
             // Free function → bare name; method → qualified "<BaseType>.<method>"
             // (matching the call_direct dispatch label; no "." collision).
             var key: string = funcs[k].name;
@@ -46972,7 +46972,7 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             var ti: i32 = 0;
             var first: boolean = true;
             while (ti <= tags.len()) {
-                if (ti == tags.len() || (tags[ti] == 44 && depth == 0)) {   // 44 = ','
+                if (ti == tags.len() || (tags[ti] == b',' && depth == 0)) {
                     var seg: str = tags[start : ti];
                     if (!first) { rw = rw + ","; }
                     var repl: string = seg + "";
@@ -46986,8 +46986,8 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                     rw = rw + repl;
                     first = false;
                     start = ti + 1;
-                } else if (tags[ti] == 91 || tags[ti] == 40) { depth = depth + 1; }   // '[' '('
-                else if (tags[ti] == 93 || tags[ti] == 41) { depth = depth - 1; }   // ']' ')'
+                } else if (tags[ti] == b'[' || tags[ti] == b'(') { depth = depth + 1; }
+                else if (tags[ti] == b']' || tags[ti] == b')') { depth = depth - 1; }
                 ti = ti + 1;
             }
             out = out.append(key + "|" + rw);
@@ -47011,7 +47011,7 @@ pub function resolve_argref_tuple_tags(tags: string, args: parser.Expr[], s: Low
     var i: i32 = 0;
     var first: boolean = true;
     while (i <= tags.len()) {
-        if (i == tags.len() || (tags[i] == 44 && depth == 0)) {   // 44 = ','
+        if (i == tags.len() || (tags[i] == b',' && depth == 0)) {
             var seg: str = tags[start : i];
             if (!first) { out = out + ","; }
             if (seg.len() > 4 && seg[0:4] == "$arg") {
@@ -47023,8 +47023,8 @@ pub function resolve_argref_tuple_tags(tags: string, args: parser.Expr[], s: Low
             }
             first = false;
             start = i + 1;
-        } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }   // '[' '('
-        else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }   // ']' ')'
+        } else if (tags[i] == b'[' || tags[i] == b'(') { depth = depth + 1; }
+        else if (tags[i] == b']' || tags[i] == b')') { depth = depth - 1; }
         i = i + 1;
     }
     return out;
@@ -47541,7 +47541,7 @@ function variant_payload_field_type(pv: parser.PatVariant, name: string, structs
     var vname: string = pv.type_name;
     var vld: i32 = 0;
     while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
+        if (pv.type_name[vld] == b'.') { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
         vld = vld + 1;
     }
     if (!decl_is_struct(structs, vname)) { return ""; }
@@ -48438,7 +48438,7 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         while (gi < growset.len()) {
             var ge: string = growset[gi];
             var gb: i32 = 0;
-            while (gb < ge.len() && ge[gb] != 124) { gb = gb + 1; }
+            while (gb < ge.len() && ge[gb] != b'|') { gb = gb + 1; }
             if (gb < ge.len() && ge[0:gb] == gkey) { gmask = ge[gb + 1 : ge.len()] + ""; gi = growset.len(); }
             else { gi = gi + 1; }
         }
@@ -48476,7 +48476,7 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // so the call site brackets a surviving argument. Distinct from
             // '1'/'2'/'3' (an array param is never fn/dyn), so the existing
             // consumers are unaffected.
-            else if (pj < gmask.len() && gmask[pj] == 49) { flags = flags + "4"; any = true; }
+            else if (pj < gmask.len() && gmask[pj] == b'1') { flags = flags + "4"; any = true; }
             // A BARE-TYPEVAR (erased-generic) param (`x: T` — a standalone
             // single-uppercase-letter type spelling, the same convention
             // rewrite_typevars_to_argrefs keys on; unbounded type params are
@@ -49012,7 +49012,7 @@ pub function param_counted_at(reg: string[], pfx: string, callee: string, ai: i3
     while (i < reg.len()) {
         var st: i32 = tagged_value_start(reg[i], pfx, callee);
         if (st >= 0 && st < reg[i].len()) {
-            if (st + ai < reg[i].len()) { return reg[i][st + ai] == 49; }   // 49 = '1'
+            if (st + ai < reg[i].len()) { return reg[i][st + ai] == b'1'; }
             return false;
         }
         i = i + 1;
@@ -49678,17 +49678,17 @@ function rc_type_string_array_free(t: string, structs: parser.StructDecl[], seen
     if (t == "string") { return false; }
     if (is_array_type_name(t)) { return false; }
     if (t == "Map" || util.base_type_name(t) == "Map") { return false; }
-    if (t.len() > 1 && t[0] == 40) {   // 40 = '(' — tuple: every element
+    if (t.len() > 1 && t[0] == b'(') {   // tuple: every element
         var tags: string = tuple_elem_tags(t);
         var depth: i32 = 0;
         var start: i32 = 0;
         var i: i32 = 0;
         while (i <= tags.len()) {
-            if (i == tags.len() || (tags[i] == 44 && depth == 0)) {
+            if (i == tags.len() || (tags[i] == b',' && depth == 0)) {
                 if (!rc_type_string_array_free(tags[start : i], structs, seen)) { return false; }
                 start = i + 1;
-            } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }
-            else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }
+            } else if (tags[i] == b'[' || tags[i] == b'(') { depth = depth + 1; }
+            else if (tags[i] == b']' || tags[i] == b')') { depth = depth - 1; }
             i = i + 1;
         }
         return true;
@@ -49732,17 +49732,17 @@ function rc_consumed_drop_wired(t: string, structs: parser.StructDecl[], seen: s
     if (rc_scalar_type_name(t) || t == "string") { return true; }
     if (is_array_type_name(t)) { return rc_consumed_drop_wired(t[0 : t.len() - 2], structs, seen); }
     if (t == "Map" || util.base_type_name(t) == "Map") { return false; }
-    if (t.len() > 1 && t[0] == 40) {
+    if (t.len() > 1 && t[0] == b'(') {
         var tags: string = tuple_elem_tags(t);
         var depth: i32 = 0;
         var start: i32 = 0;
         var i: i32 = 0;
         while (i <= tags.len()) {
-            if (i == tags.len() || (tags[i] == 44 && depth == 0)) {
+            if (i == tags.len() || (tags[i] == b',' && depth == 0)) {
                 if (!rc_consumed_drop_wired(tags[start : i], structs, seen)) { return false; }
                 start = i + 1;
-            } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }
-            else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }
+            } else if (tags[i] == b'[' || tags[i] == b'(') { depth = depth + 1; }
+            else if (tags[i] == b']' || tags[i] == b')') { depth = depth - 1; }
             i = i + 1;
         }
         return true;
@@ -49804,7 +49804,7 @@ pub function consumed_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[
         var hit: boolean = !p.own && rc_seen_has(reassigned, p.name);
         if (hit) {
             var is_struct: boolean = rc_struct_decl_index(structs, p.type_name) >= 0;
-            var is_tuple: boolean = p.type_name.len() > 1 && p.type_name[0] == 40;
+            var is_tuple: boolean = p.type_name.len() > 1 && p.type_name[0] == b'(';
             hit = is_struct || is_tuple;
         }
         if (hit && !rc_consumed_drop_wired(p.type_name, structs, [])) { hit = false; }
@@ -49839,7 +49839,7 @@ function rc_fe_ptr_type(t: string, structs: parser.StructDecl[]): boolean {
     if (t.len() == 0) { return false; }
     if (is_array_type_name(t)) { return true; }
     if (t == "string") { return true; }
-    if (t[0] == 40) { return true; }   // '(' tuple
+    if (t[0] == b'(') { return true; }   // tuple
     if (t.len() >= 3 && t[0:3] == "Map") { return true; }
     if (rc_struct_decl_index(structs, t) >= 0) { return true; }
     if (rc_fe_is_enum_name(structs, t)) { return true; }
@@ -50004,7 +50004,7 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                     var tt: string = rc_fe_expr_type(v.init, st.types_n, st.types_t, structs);
                     var names: string[] = rc_fe_split_csv(v.name);
                     var tys: string[] = [];
-                    if (tt.len() > 2 && tt[0] == 40) { tys = rc_fe_split_csv(tt[1:tt.len() - 1]); }
+                    if (tt.len() > 2 && tt[0] == b'(') { tys = rc_fe_split_csv(tt[1:tt.len() - 1]); }
                     var d: i32 = 0;
                     while (d < names.len()) {
                         var dt: string = "";
@@ -50095,7 +50095,7 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
 function rc_fe_is_destructure(name: string): boolean {
     var i: i32 = 0;
     while (i < name.len()) {
-        if (name[i] == 44) { return true; }
+        if (name[i] == b',') { return true; }
         i = i + 1;
     }
     return false;
@@ -50119,9 +50119,9 @@ function rc_fe_split_csv(s: string): string[] {
         if (split) {
             var piece: str = s[start:i];
             var a: i32 = 0;
-            while (a < piece.len() && piece[a] == 32) { a = a + 1; }
+            while (a < piece.len() && piece[a] == b' ') { a = a + 1; }
             var b: i32 = piece.len();
-            while (b > a && piece[b - 1] == 32) { b = b - 1; }
+            while (b > a && piece[b - 1] == b' ') { b = b - 1; }
             if (b > a) { out = out.append(piece[a:b]); }
             start = i + 1;
         }
@@ -50423,7 +50423,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
         if (!dup && util.index_of_str(st.tainted, nm) < 0) {
             var ok: boolean = false;
             if (is_array_type_name(t)) { ok = true; }
-            else if (t.len() > 0 && t[0] == 40) { ok = true; }                         // tuple
+            else if (t.len() > 0 && t[0] == b'(') { ok = true; }                         // tuple
             else if (t.len() >= 3 && t[0:3] == "Map") { ok = true; }
             else if (rc_struct_decl_index(structs, t) >= 0) { ok = true; }             // user struct
             else if (rc_fe_is_enum_name(structs, t)) { ok = true; }
@@ -50558,7 +50558,7 @@ function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string
             var t: string = types_t[i];
             if (is_array_type_name(t)) { return true; }
             if (t == "string") { return true; }
-            if (t.len() > 0 && t[0] == 40) { return true; }
+            if (t.len() > 0 && t[0] == b'(') { return true; }
             if (rc_struct_decl_index(structs, t) >= 0) { return true; }
             if (rc_fe_is_enum_name(structs, t)) { return true; }
             return false;
@@ -50584,7 +50584,7 @@ function rc_ml_last_use(body: parser.Stmt[], name: string, k: i32): boolean {
 function rc_ml_arr_elem_rc_tracked(t: string, structs: parser.StructDecl[]): boolean {
     if (t.len() == 0) { return false; }
     if (is_array_type_name(t)) { return true; }
-    if (t.len() > 0 && t[0] == 40) { return true; }             // "(" — fn / tuple spelling
+    if (t.len() > 0 && t[0] == b'(') { return true; }             // fn / tuple spelling
     if (rc_struct_decl_index(structs, t) >= 0) { return true; }
     return rc_fe_is_enum_name(structs, t);
 }
@@ -50808,7 +50808,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                                 fi = fi + 1;
                             }
                         }
-                        var rc_field: boolean = is_array_type_name(ft) || ft == "string" || (ft.len() > 0 && ft[0] == 40) || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
+                        var rc_field: boolean = is_array_type_name(ft) || ft == "string" || (ft.len() > 0 && ft[0] == b'(') || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
                         if (rc_field && rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             // native keys the construction-move site on the
                             // consumed IDENT node.
@@ -51255,7 +51255,7 @@ pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
 function reuse_arrow_pos(entry: string): string {
     var i: i32 = 0;
     while (i + 1 < entry.len()) {
-        if (entry[i] == 60 && entry[i + 1] == 45) { return entry[0 : i] + ""; }   // "<-"
+        if (entry[i] == b'<' && entry[i + 1] == b'-') { return entry[0 : i] + ""; }
         i = i + 1;
     }
     return entry;
@@ -51265,7 +51265,7 @@ function reuse_arrow_pos(entry: string): string {
 function reuse_arrow_donor(entry: string): string {
     var i: i32 = 0;
     while (i + 1 < entry.len()) {
-        if (entry[i] == 60 && entry[i + 1] == 45) { return entry[i + 2 : entry.len()] + ""; }
+        if (entry[i] == b'<' && entry[i + 1] == b'-') { return entry[i + 2 : entry.len()] + ""; }
         i = i + 1;
     }
     return "";
@@ -51333,11 +51333,11 @@ function reuse_xblock_pairs(stmts: parser.Stmt[], structs: parser.StructDecl[], 
                     var e: string = pairs[p];
                     // "recip|donor|dtype" — split on the first two '|' (124).
                     var b1: i32 = 0;
-                    while (b1 < e.len() && e[b1] != 124) { b1 = b1 + 1; }
+                    while (b1 < e.len() && e[b1] != b'|') { b1 = b1 + 1; }
                     var recip: str = e[0 : b1];
                     var rest: str = e[b1 + 1 : e.len()];
                     var b2: i32 = 0;
-                    while (b2 < rest.len() && rest[b2] != 124) { b2 = b2 + 1; }
+                    while (b2 < rest.len() && rest[b2] != b'|') { b2 = b2 + 1; }
                     var donor: str = rest[0 : b2];
                     var pos: string = xblock_recip_pos(iff, recip);
                     if (pos.len() > 0) { acc = acc.append(pos + "<-" + donor); }
@@ -51974,7 +51974,7 @@ pub function (s: LowerState) mod_fn_name(name: string): string {
 
 pub function (s: LowerState) is_i64_ret_fn(name: string): boolean {
     var sig: string = s.i64_sig_of(name);
-    return sig.len() >= 1 && (sig[0] == 49 || sig[0] == 50);   // 49 = '1' (i64), 50 = '2' (u64)
+    return sig.len() >= 1 && (sig[0] == b'1' || sig[0] == b'2');   // ret flag: '1' i64, '2' u64
 }
 // is_u64_ret_fn reports whether `name` returns u64 specifically (ret flag '2'),
 // so a call to it directly chained in an unsigned op (`f(a) >> 1`) selects the
@@ -51982,7 +51982,7 @@ pub function (s: LowerState) is_i64_ret_fn(name: string): boolean {
 // unsigned distinction needs its own query. #5159.
 pub function (s: LowerState) is_u64_ret_fn(name: string): boolean {
     var sig: string = s.i64_sig_of(name);
-    return sig.len() >= 1 && sig[0] == 50;   // 50 = '2' (u64)
+    return sig.len() >= 1 && sig[0] == b'2';
 }
 // is_u32_ret_fn reports whether `name` returns u32 (ret flag '3'), so a call to
 // it directly chained in an unsigned op (`f(a) >> 1`, `p.get() / 7`) selects the
@@ -51993,14 +51993,14 @@ pub function (s: LowerState) is_u64_ret_fn(name: string): boolean {
 // in a 64-bit register, so a signed shift already matched there (#5245).
 pub function (s: LowerState) is_u32_ret_fn(name: string): boolean {
     var sig: string = s.i64_sig_of(name);
-    return sig.len() >= 1 && sig[0] == 51;   // 51 = '3' (u32)
+    return sig.len() >= 1 && sig[0] == b'3';
 }
 // is_u8_ret_fn reports whether `name` returns u8 — ret flag '5'. Read by
 // expr_subword_kind's ExprCall arm, which is what lets a saturating binary over
 // u8-returning calls clamp at 255 / 0 rather than at the i32 bounds.
 pub function (s: LowerState) is_u8_ret_fn(name: string): boolean {
     var sig: string = s.i64_sig_of(name);
-    return sig.len() >= 1 && sig[0] == 53;   // 53 = '5' (u8)
+    return sig.len() >= 1 && sig[0] == b'5';
 }
 // is_f64_ret_fn reports whether free function `name` returns f64 (so a call to
 // it is recognised as an f64 value).
@@ -52048,7 +52048,7 @@ pub function (s: LowerState) is_erased_elem_ret_fn(name: string): boolean {
 pub function (s: LowerState) param_is_i64(name: string, idx: i32): boolean {
     var sig: string = s.i64_sig_of(name);
     var pos: i32 = idx + 1;   // skip the ret flag
-    return pos < sig.len() && sig[pos] == 49;   // 49 = '1'
+    return pos < sig.len() && sig[pos] == b'1';
 }
 
 // param_is_f64 reports whether callee `name`'s param `idx` is an f64/f32, so
@@ -52058,7 +52058,7 @@ pub function (s: LowerState) param_is_i64(name: string, idx: i32): boolean {
 pub function (s: LowerState) param_is_f64(name: string, idx: i32): boolean {
     var sig: string = s.i64_sig_of(name);
     var pos: i32 = idx + 1;   // skip the ret flag
-    return pos < sig.len() && sig[pos] == 52;   // 52 = '4'
+    return pos < sig.len() && sig[pos] == b'4';
 }
 
 // callee_param_is_fn reports whether callee `name`'s param `idx` is a function
@@ -52388,10 +52388,10 @@ pub function (s: LowerState) map_ret_type(name: string): string {
 // shape isn't a simple single-type-arg form (nested generics / tuples bail).
 pub function opt_payload_type(rettype: string, variant: string): string {
     var n: i32 = rettype.len();
-    if (n >= 8 && rettype[0:7] == "Option[" && rettype[n - 1] == 93) {   // 93 = ']'
+    if (n >= 8 && rettype[0:7] == "Option[" && rettype[n - 1] == b']') {
         return rettype[7 : n - 1] + "";
     }
-    if (n >= 8 && rettype[0:7] == "Result[" && rettype[n - 1] == 93) {
+    if (n >= 8 && rettype[0:7] == "Result[" && rettype[n - 1] == b']') {
         // Split the inside on the FIRST top-level comma: T , E. Depth counts both
         // `[`/`]` (a nested Option/Result/Map payload) AND `(`/`)` (a tuple
         // payload, e.g. `Result[(i32, i32), string]`), so the comma inside a
@@ -52426,7 +52426,7 @@ pub function opt_payload_type(rettype: string, variant: string): string {
 pub function is_fn_payload_spelling(t: string): boolean {
     var n: i32 = t.len();
     if (n < 5) { return false; }                 // shortest is "()=>X"
-    if (t[0] != 40) { return false; }            // must start with '('
+    if (t[0] != b'(') { return false; }
     // Find the matching ')' for the leading '(' at top depth; reject a
     // top-level comma inside (that's a multi-element tuple, not a param list).
     var depth: i32 = 0;
@@ -52445,9 +52445,9 @@ pub function is_fn_payload_spelling(t: string): boolean {
     if (close < 0) { return false; }
     // After the ')' (skipping spaces) the next two chars must be "=>".
     var j: i32 = close + 1;
-    while (j < n && t[j] == 32) { j = j + 1; }
+    while (j < n && t[j] == b' ') { j = j + 1; }
     if (j + 1 >= n) { return false; }
-    return t[j] == 61 && t[j + 1] == 62;          // '=' '>'
+    return t[j] == b'=' && t[j + 1] == b'>';
 }
 
 // map_key_kind_of returns 1 for an i32-keyed Map type, 0 for string-keyed
@@ -52521,7 +52521,7 @@ pub function map_value_of(typestr: string): string {
     if (typestr.len() < 5 || typestr[0:4] != "Map[") { return ""; }
     var inner: str = typestr[4 : typestr.len() - 1];   // K, V
     var ci: i32 = 0;
-    while (ci < inner.len() && inner[ci] != 44) { ci = ci + 1; }   // first comma
+    while (ci < inner.len() && inner[ci] != b',') { ci = ci + 1; }   // first comma
     if (ci >= inner.len()) { return ""; }
     return trim_spaces(inner[ci + 1 : inner.len()]);
 }
@@ -52532,7 +52532,7 @@ pub function map_key_of(typestr: string): string {
     if (typestr.len() < 5 || typestr[0:4] != "Map[") { return ""; }
     var inner: str = typestr[4 : typestr.len() - 1];   // K, V
     var ci: i32 = 0;
-    while (ci < inner.len() && inner[ci] != 44) { ci = ci + 1; }   // first comma
+    while (ci < inner.len() && inner[ci] != b',') { ci = ci + 1; }   // first comma
     return trim_spaces(inner[0 : ci]);
 }
 
@@ -52612,8 +52612,8 @@ pub function mapiter_type_of_iter_call(e: parser.Expr, s: LowerState): string {
 function trim_spaces(t: string): string {
     var a: i32 = 0;
     var b: i32 = t.len();
-    while (a < b && t[a] == 32) { a = a + 1; }
-    while (b > a && t[b - 1] == 32) { b = b - 1; }
+    while (a < b && t[a] == b' ') { a = a + 1; }
+    while (b > a && t[b - 1] == b' ') { b = b - 1; }
     return t[a : b] + "";
 }
 
@@ -54073,7 +54073,7 @@ function pat_variant_payload_field_s(pv: parser.PatVariant, name: string, struct
     var vname: string = pv.type_name;
     var vld: i32 = 0;
     while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
+        if (pv.type_name[vld] == b'.') { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
         vld = vld + 1;
     }
     if (!decl_is_struct(structs, vname)) { return ""; }
@@ -54100,7 +54100,7 @@ function callee_ret_type(mfuncs: MFuncs, recv_ty: string, fname: string): string
     var base: string = recv_ty;
     var bi: i32 = 0;
     while (bi < recv_ty.len()) {
-        if (recv_ty[bi] == 91) { base = recv_ty[0 : bi] + ""; bi = recv_ty.len(); }
+        if (recv_ty[bi] == b'[') { base = recv_ty[0 : bi] + ""; bi = recv_ty.len(); }
         bi = bi + 1;
     }
     var i: i32 = 0;
@@ -54248,14 +54248,14 @@ function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: par
 // with or without nesting), so enabling its lift would turn a correct AST
 // fallback into a wrong IR build — those stay declined here.
 function tuple_tag_i32_only(t: string): boolean {
-    if (t.len() < 2 || t[0] != 40) { return false; }
+    if (t.len() < 2 || t[0] != b'(') { return false; }
     var elems: string[] = rc_fe_split_csv(tuple_elem_tags(t));
     if (elems.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < elems.len()) {
         var e: string = elems[i];
         if (e == "i32") {}
-        else if (e.len() >= 2 && e[0] == 40 && tuple_tag_i32_only(e)) {}
+        else if (e.len() >= 2 && e[0] == b'(' && tuple_tag_i32_only(e)) {}
         else { return false; }
         i = i + 1;
     }
@@ -54279,15 +54279,15 @@ function map_kv_type(mty: string, want_key: boolean): string {
     var i: i32 = 0;
     var pos: i32 = 0 - 1;
     while (i < inner.len()) {
-        if (inner[i] == 91) { depth = depth + 1; }
-        if (inner[i] == 93) { depth = depth - 1; }
-        if (inner[i] == 44 && depth == 0 && pos < 0) { pos = i; }
+        if (inner[i] == b'[') { depth = depth + 1; }
+        if (inner[i] == b']') { depth = depth - 1; }
+        if (inner[i] == b',' && depth == 0 && pos < 0) { pos = i; }
         i = i + 1;
     }
     if (pos <= 0) { return ""; }
     if (want_key) { return inner[0 : pos] + ""; }
     var vstart: i32 = pos + 1;
-    while (vstart < inner.len() && inner[vstart] == 32) { vstart = vstart + 1; }
+    while (vstart < inner.len() && inner[vstart] == b' ') { vstart = vstart + 1; }
     return inner[vstart : inner.len()] + "";
 }
 
@@ -54319,12 +54319,12 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                     if (didx >= 0) {
                         var tty: string = v.type_name;
                         if (tty.len() == 0) { tty = cap_type_expr(v.init, fd, depth, structs, mfuncs); }
-                        if (tty.len() >= 2 && tty[0] == 40) {
+                        if (tty.len() >= 2 && tty[0] == b'(') {
                             var etags: string[] = rc_fe_split_csv(tuple_elem_tags(tty));
                             if (didx < etags.len()) {
                                 var et: string = etags[didx];
                                 if (et == "i32" || et == "string" || et == "boolean" || et == "i64" || et == "u64" || et == "f64" || et == "u32") { return et; }
-                                if (et.len() >= 2 && et[0] == 40 && tuple_tag_i32_only(et)) { return et; }
+                                if (et.len() >= 2 && et[0] == b'(' && tuple_tag_i32_only(et)) { return et; }
                             }
                         }
                     }
@@ -59074,9 +59074,9 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
         while (q0 < passes0.len()) {
             var entry: string = passes0[q0];
             var b1: i32 = 0;
-            while (b1 < entry.len() && entry[b1] != 124) { b1 = b1 + 1; }
+            while (b1 < entry.len() && entry[b1] != b'|') { b1 = b1 + 1; }
             var b2: i32 = b1 + 1;
-            while (b2 < entry.len() && entry[b2] != 124) { b2 = b2 + 1; }
+            while (b2 < entry.len() && entry[b2] != b'|') { b2 = b2 + 1; }
             var cname: str = entry[0:b1];
             var argi: i32 = util.digits_to_i32(entry[b1 + 1 : b2]);
             var pname: str = entry[b2 + 1 : entry.len()];
@@ -59106,10 +59106,10 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
         while (ei < e_fk.len()) {
             var cmask: string = masks[e_ck[ei]];
             var eargi: i32 = e_argi[ei];
-            if (eargi < cmask.len() && cmask[eargi] == 49) {   // '1'
+            if (eargi < cmask.len() && cmask[eargi] == b'1') {
                 var fmask: string = masks[e_fk[ei]];
                 var ppi: i32 = e_ppi[ei];
-                if (ppi < fmask.len() && fmask[ppi] != 49) {
+                if (ppi < fmask.len() && fmask[ppi] != b'1') {
                     masks = masks.with(e_fk[ei], fmask[0:ppi] + "1" + fmask[ppi + 1 : fmask.len()]);
                     changed = true;
                 }
