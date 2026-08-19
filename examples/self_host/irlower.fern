@@ -25023,92 +25023,76 @@ function tuple_strarr_elem_fresh(e: parser.Expr): boolean {
     return false;
 }
 
-// tuple_lit_rc_reclaimable reports whether `e` is a tuple literal whose every
-// element is either a flat scalar (Number / Bool / Ident), a STRING element —
-// literal or fresh producer (concat / `.to_string()`, tuple_str_elem_fresh);
-// construction str_box's every string element into a fresh sole-owned copy —
-// OR a FRESH array LITERAL (`[..]`), with AT LEAST ONE rc child to free. Such
-// a `(i, [i, i+1])` / `(i, "x" + s)` / `(i, "abc")` builds a fresh sole-owner
-// tuple box whose rc element is itself sole-owned (rc=1, a fresh box aliased
-// nowhere), so a DEEP loop-rebind reclaim — arr_dec / rc-aware str_free each
-// fresh element, then the box — is exactly balanced (#4357 tuple sibling of
-// the fresh-string struct reclaim). A bare array or string IDENT element
-// (`(i, xs)`) is not freed (it aliases a live local, so freeing it would
-// double-release) but does not disqualify the tuple; nor does any other element
-// emit_tuple_child_drops skips. A tuple with NO rc child to free stays on the
-// SHALLOW scalar-tuple path (leak-safe).
+// tuple_lit_rc_reclaimable reports whether `e` is a tuple literal the DEEP
+// loop-rebind reclaim can take. Two independent conditions: every element is one
+// emit_tuple_child_drops handles (tuple_lit_elems_admissible), and at least one
+// of them is an rc child worth freeing (tuple_lit_has_rc_child). Such a
+// `(i, [i, i+1])` / `(i, "x" + s)` / `((i, [i]), j)` builds a fresh sole-owner
+// box whose rc children are themselves sole-owned (rc=1, aliased nowhere), so
+// the deep reclaim — free each fresh child, then the box — is exactly balanced
+// (#4357). A tuple with nothing to free stays on the SHALLOW scalar-tuple path.
 function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
             if (tl.elements.len() == 0) { return false; }
-            var any_arr: boolean = false;
-            var i: i32 = 0;
-            while (i < tl.elements.len()) {
-                match (tl.elements[i]) {
-                    parser.ExprNumber(_) => {},
-                    parser.ExprBool(_) => {},
-                    parser.ExprIdent(_) => {},
-                    // A string LITERAL element: tuple construction str_box's
-                    // every string element into a FRESH copy (even a
-                    // literal), so the copy is a sole-owned rc child the
-                    // deep walk must free.
-                    parser.ExprString(_) => { any_arr = true; },
-                    // A fresh-string producer element (`(i, "x" + s)`): the
-                    // construction copy is likewise fresh and routed through
-                    // the rc-aware __fern_str_free. Any OTHER binary or call —
-                    // scalar arithmetic (`i + 1`), a comparison, a concat the
-                    // freshness test cannot prove — is SKIPPED like a bare
-                    // ident rather than refusing the whole tuple, which is what
-                    // emit_tuple_child_drops already does with it.
-                    parser.ExprBinary(_) => { if (tuple_str_elem_fresh(tl.elements[i])) { any_arr = true; } },
-                    parser.ExprCall(_) => { if (tuple_str_elem_fresh(tl.elements[i])) { any_arr = true; } },
-                    parser.ExprArray(_) => { any_arr = true; },
-                    // A fresh STRUCT-literal element with an rc-array field (`(i, P { xs: [..] })`,
-                    // #4365): the struct box sole-owns its field buffers, so emit_tuple_child_drops
-                    // deep-drops it (__struct_drop_<P>) + frees the box. Only a reclaim-routing
-                    // struct qualifies; any other struct rejects the tuple (safe-leak).
-                    parser.ExprStructLit(slit) => {
-                        if (!decl_is_struct(structs, slit.type_name)) { return false; }
-                        if (!struct_has_reclaim_array_field(structs, slit.type_name)) { return false; }
-                        any_arr = true;
-                    },
-                    // A NESTED tuple LITERAL element (`((i, [i,i+1]), j)`, #4365):
-                    // admitted iff it is itself deep-reclaimable — every element a
-                    // scalar / ident / array / deeper nested tuple literal — so
-                    // emit_tuple_child_drops can recurse into it. A fresh nested box
-                    // is sole-owned, so freeing it (after its own array children)
-                    // is balanced. If it carries an array anywhere, the outer tuple
-                    // qualifies (any_arr). An ident nested element is NOT a literal
-                    // and stays leak-safe (skipped), so recursion only ever chases
-                    // fresh boxes.
-                    parser.ExprTuple(inner) => {
-                        if (!tuple_lit_rc_reclaimable(tl.elements[i], structs)) { return false; }
-                        if (tuple_lit_has_array(inner, structs)) { any_arr = true; }
-                    },
-                    _ => { return false; }
-                }
-                i = i + 1;
-            }
-            return any_arr;
+            return tuple_lit_elems_admissible(tl, structs) && tuple_lit_has_rc_child(tl, structs);
         },
         _ => { return false; }
     }
     return false;
 }
 
-// tuple_lit_has_array reports whether a tuple literal carries a DIRECT or nested
-// rc child anywhere — an array-literal, reclaim-struct, or fresh-string element —
-// the "at least one rc child to free" test that makes a nested tuple worth
-// crediting (a purely-scalar / literal-string nested tuple leaks nothing an rc
-// walk would reclaim, so it stays on the shallow path).
-function tuple_lit_has_array(tup: parser.ExprTuple, structs: parser.StructDecl[]): boolean {
+// tuple_lit_elems_admissible reports whether every element of `tup` is one the
+// deep walk can handle — either FREED (array literal, string literal or fresh
+// producer, nested tuple literal, reclaim-routing struct literal) or safely
+// SKIPPED (scalar, bare ident, any other binary or call: a pointer the walk
+// never touches, so a live local's box is never released under it).
+//
+// "I will not free this element" is not "I cannot free this tuple": only a
+// shape emit_tuple_child_drops would MIS-handle disqualifies the tuple. A
+// struct-literal element is the one such shape — the emitter emits
+// __struct_drop_<T> for it unconditionally, so a type that does not route
+// field reclaim has no such helper and must refuse here.
+function tuple_lit_elems_admissible(tup: parser.ExprTuple, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < tup.elements.len()) {
+        match (tup.elements[i]) {
+            parser.ExprNumber(_) => {},
+            parser.ExprBool(_) => {},
+            parser.ExprIdent(_) => {},
+            parser.ExprString(_) => {},
+            parser.ExprBinary(_) => {},
+            parser.ExprCall(_) => {},
+            parser.ExprArray(_) => {},
+            parser.ExprStructLit(slit) => {
+                if (!decl_is_struct(structs, slit.type_name)) { return false; }
+                if (!struct_has_reclaim_array_field(structs, slit.type_name)) { return false; }
+            },
+            parser.ExprTuple(inner) => { if (!tuple_lit_elems_admissible(inner, structs)) { return false; } },
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// tuple_lit_has_rc_child reports whether a tuple literal carries at least one
+// element the deep walk actually frees: an array literal, a fresh string, a
+// reclaim-routing struct literal, or a NESTED TUPLE LITERAL.
+//
+// A nested tuple counts whatever it contains. Its box is an allocation in its
+// own right, so `(i, (i, j))` — every leaf a scalar — still has a child to free;
+// requiring the INNER to carry an array is what left that shape, and any outer
+// tuple holding one, with no reclaim at all. The shallow scalar-tuple path does
+// not cover it either: expr_scalar_leaf excludes a tuple element by design.
+function tuple_lit_has_rc_child(tup: parser.ExprTuple, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < tup.elements.len()) {
         match (tup.elements[i]) {
             parser.ExprArray(_) => { return true; },
-            parser.ExprTuple(inner) => { if (tuple_lit_has_array(inner, structs)) { return true; } },
-            parser.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
+            parser.ExprTuple(_) => { return true; },
             parser.ExprString(_) => { return true; },
+            parser.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
             parser.ExprBinary(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
             parser.ExprCall(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
             _ => {}
@@ -25470,6 +25454,16 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                         parser.ExprIdent(pid) => {
                             if (pid.name == name && util.is_all_digits(pfa.field)) {
                                 var sty: string = tuple_type_elem_tag(ttype, util.digits_to_i32(pfa.field));
+                                // A NESTED TUPLE element indexes BY POSITION, not by
+                                // struct field name: `t.2.0` copies a scalar out of t's
+                                // tuple element, a borrow exactly like the struct
+                                // scalar-field read below. decl_field_type finds no
+                                // struct for a `(..)` tag and the "" it returns is not
+                                // scalar, so such a read counted as a bare pointer
+                                // extraction and cost the whole tuple its reclaim.
+                                if (sty.len() >= 2 && sty[0:1] == "(" && util.is_all_digits(fa.field)) {
+                                    return !is_scalar_type_name(tuple_type_elem_tag(sty, util.digits_to_i32(fa.field)));
+                                }
                                 var ft: string = decl_field_type(structs, sty, fa.field);
                                 if (is_scalar_type_name(ft)) { return false; }   // scalar struct-field copy
                                 return true;                                     // struct array/pointer field extracted bare
