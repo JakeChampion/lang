@@ -3882,25 +3882,25 @@ func (g *generator) emitStrordLoop(sfx string) {
 	g.emit("csel w4, w2, w3, lt")
 	g.label(loop)
 	g.emit("cmp w4, #0")
-	g.emit("beq " + tail)
+	g.emit("beq %s", tail)
 	g.emit("ldrb w5, [x0], #1")
 	g.emit("ldrb w6, [x1], #1")
 	g.emit("cmp w5, w6")
-	g.emit("bne " + diff)
+	g.emit("bne %s", diff)
 	g.emit("sub w4, w4, #1")
-	g.emit("b " + loop)
+	g.emit("b %s", loop)
 	// First difference decides: byte values are unsigned, so their
 	// difference carries the sign of the byte order.
 	g.label(diff)
 	g.emit("sub w0, w5, w6")
 	g.emit("sxtw x0, w0")
-	g.emit(fmt.Sprintf("ldp x29, x30, [sp], #%d", frame))
+	g.emit("ldp x29, x30, [sp], #%d", frame)
 	g.emit("ret")
 	// Common prefix: the shorter string sorts first.
 	g.label(tail)
 	g.emit("sub w0, w2, w3")
 	g.emit("sxtw x0, w0")
-	g.emit(fmt.Sprintf("ldp x29, x30, [sp], #%d", frame))
+	g.emit("ldp x29, x30, [sp], #%d", frame)
 	g.emit("ret")
 }
 
