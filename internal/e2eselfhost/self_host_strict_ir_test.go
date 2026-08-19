@@ -9,18 +9,20 @@ import (
 	"testing"
 )
 
-// FERN_STRICT_IR (#5646) turns the self-host compiler's IR-to-AST bail into a
-// hard error instead of a silent fall-through.
+// FERN_STRICT_IR (#5646) moves the self-host compiler's refusal from the module
+// gate to the BAIL SITE, naming the function and the reason.
 //
-// The fallback is only SAFE when the AST emitter can express what the IR path
-// declined. When it can't, the fallback emits wrong code and nothing notices
-// until a differential test disagrees at a runtime exit code, far from the
-// cause. #5642 is the worked example: `match (a +? b)` had no `ExprBinary` case
-// in `lower_match`'s scrutinee-type recovery, so the enclosing function bailed
-// to an AST emitter with no checked-operator lowering at all. That surfaced as
-// 46 failing subtests whose symptoms read like several unrelated bugs — wrong
-// match arm taken, payload read as zero, SIGABRT — none of which were
-// checked-arithmetic bugs.
+// The flag was introduced when a bail still fell through to an AST emitter, and
+// that fall-through was only SAFE when the emitter could express what the IR
+// path declined. When it couldn't, the fallback emitted wrong code and nothing
+// noticed until a differential test disagreed at a runtime exit code, far from
+// the cause. #5642 is the worked example: `match (a +? b)` had no `ExprBinary`
+// case in `lower_match`'s scrutinee-type recovery, so the enclosing function
+// bailed to an emitter with no checked-operator lowering at all. That surfaced
+// as 46 failing subtests whose symptoms read like several unrelated bugs —
+// wrong match arm taken, payload read as zero, SIGABRT — none of which were
+// checked-arithmetic bugs. The emitters are gone, so a bail is now a refusal
+// either way; what the flag buys is the diagnostic pointing at the construct.
 //
 // These tests are the tripwire that would have caught it at the bail. Two
 // halves, and both are load-bearing:
@@ -31,9 +33,9 @@ import (
 //   - TestSelfHostStrictIRRefusesBail asserts a real bail DOES refuse, so a
 //     green corpus means the tripwire is armed rather than inert.
 //
-// The corpus also self-certifies its own routing: a program that fell back
-// would exit 3 under the flag, so "strict run succeeded" IS "lowered on the IR
-// path" — no separate path-probe assertion needed.
+// The corpus also self-certifies its own routing: a program that bailed would
+// exit 3 under the flag, so "strict run succeeded" IS "lowered on the IR path"
+// — no separate path-probe assertion needed.
 //
 // The flag is checked in asm_ir.fern, which both backends' eligibility runs
 // through (wasm_ir's `wasm_eligible` calls `asm_ir.eligible_core`), so the
@@ -153,7 +155,7 @@ function main(): i32 {
 	// the binding seeds its return type (mark_closure_opt_ret, gated on the
 	// fn-type annotation) so the payload recovers and the module routes IR. The
 	// unannotated `var f = g` form is deliberately NOT covered — its `f()` call
-	// miscompiles on the IR path, so it stays on the AST fallback.
+	// miscompiles on the IR path, so the lowering leaves it unseeded and bails.
 	{"match-fnlocal-named-opt", `
 function g(): Option[i32] { return Some(7); }
 function main(): i32 {
@@ -211,7 +213,7 @@ function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { re
 	// Branchless i32 min/max/clamp lowered directly on the IR path
 	// (emit_i32_minmax_slots) — no runtime helper, no need/globls plumbing.
 	// Until this existed a scalar `n.min(m)` / `n.max(m)` / `n.clamp(lo, hi)`
-	// bailed the module to the AST emitter (#3457 slice 5). Asymmetric operands
+	// bailed the module (#3457 slice 5). Asymmetric operands
 	// catch an operand-order swap; the two clamp calls exercise the hi and lo
 	// saturating edges.
 	{"i32-min-max-clamp", `
@@ -222,8 +224,7 @@ function main(): i32 {
 }
 `, 21},
 	// xs.first() / xs.last() lowered as the equivalent index read. Until this
-	// existed either one bailed the whole module to the AST emitter (#3457
-	// slice 5). The receivers cover every element kind the intercept admits, and
+	// existed either one bailed the whole module (#3457 slice 5). The receivers cover every element kind the intercept admits, and
 	// each result is CONSUMED so the call's result type has to be recovered too:
 	// a string element through `.len()`, a struct element through `.n`, an
 	// array-of-arrays element through a second `[i]`, and a string[][] element
@@ -255,7 +256,7 @@ function main(): i32 {
 	// xs.index_of(t) / xs.contains(t) on a string[], backed by the
 	// __fern_arr_str_index_of Fern helper (x86 + arm64) and its WAT twin
 	// $__fern_arr_str_index_of (wasm). Until this existed either one bailed the
-	// module to the AST emitter (#3457 slice 5).
+	// module (#3457 slice 5).
 	//
 	// `find` takes both operands as PARAMS, so its body carries no string
 	// literal — the shape that proves the wasm gate pulls $__fern_streq in for
@@ -276,8 +277,8 @@ function main(): i32 {
 `, 14},
 	// The ASCII classifier / case family on a byte receiver, lowered from the one
 	// unsigned-range primitive `(b - lo) <=u span` plus the mask idiom for the two
-	// case conversions. Until this existed every one of them bailed the module to
-	// the AST emitter, where they are hand-written `setbe` / `cmovbe` sequences
+	// case conversions. Until this existed every one of them bailed the module:
+	// they had only the AST emitter's hand-written `setbe` / `cmovbe` sequences
 	// (#3457 slice 5).
 	//
 	// The receivers are the point: a u8-tracked LOCAL (the commonest shape, and
@@ -312,7 +313,7 @@ function main(): i32 {
 `, 94},
 	// b.to_ascii_string() — a fresh 1-char string from a byte. It desugars to
 	// chr(b), which already lowers to the __fern_chr runtime helper, rather than
-	// hand-emitting the two allocations the AST emitter open-codes. The CHAINED
+	// hand-emitting the two allocations the AST emitter open-coded. The CHAINED
 	// receiver is the case that needed more than the desugar: to_ascii_lower /
 	// _upper return a byte, and expr_subword_kind cannot see a call RESULT, so
 	// `b.to_ascii_lower().to_ascii_string()` declined while each half lowered.
@@ -384,7 +385,7 @@ function main(): i32 { return g(Some(Ok(5))) + g(Some(Err(2))) + g(None); }
 	// function — is_array_type only tests the `[]` suffix, so `T[]` counts and the
 	// slot is is_arr — but struct_ret_fns_of recorded no ELEMENT type, because
 	// stripping `[]` from `T[]` leaves the typevar. So `s[i].k` had no struct type
-	// and the CALLER bailed to the AST emitter while the generic function itself
+	// and the CALLER bailed while the generic function itself
 	// lowered fine. A positional "name|$arg<i>" argref now records "the element
 	// type is argument i's element type", resolved at the call site — the same
 	// convention the erased string / array returns use.
@@ -429,8 +430,8 @@ function main(): i32 {
 `, 22},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
-	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
-	// existed either one bailed the module to the AST emitter (#3457 slice 5).
+	// called (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
+	// existed either one bailed the module (#3457 slice 5).
 	//
 	// Every result is CONSUMED, so the result-TYPE recovery is under test too: a
 	// missing one mis-dispatches `.len()` on a string[] rather than bailing. The
@@ -485,7 +486,7 @@ function main(): i32 {
 	// A DIRECT, hand-written IIFE — `(function (): i32 { return 7; })()`.
 	// lower_iife handled only the if/match-EXPRESSION desugars (a StmtIf or
 	// StmtMatch body); a single-`return` body fell through its catch-all and
-	// bailed the module to the AST emitter (#3457 slice 5). Only the shapes the
+	// bailed the module (#3457 slice 5). Only the shapes the
 	// lift leaves inline ever reached it, which is why the gap was narrow: a
 	// bound `var a = (…)()` hoists to __lam_N and lowers, while `return (…)();`
 	// does not — hence `ret()` here, the originally-reported form.
@@ -713,7 +714,7 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 			}
 			on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
 			if strings.Contains(stderr, "FERN_STRICT_IR:") {
-				t.Fatalf("%s bailed to the AST emitter under FERN_STRICT_IR:\n%s", tc.name, stderr)
+				t.Fatalf("%s bailed under FERN_STRICT_IR:\n%s", tc.name, stderr)
 			}
 			if onCode != 0 {
 				t.Fatalf("driver (FERN_STRICT_IR=1) exited %d\n%s", onCode, stderr)
@@ -740,7 +741,7 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 // must be REFUSED, and the flag must name the bail site. Without this, a green
 // corpus is consistent with the flag doing nothing at all.
 //
-// The unset-flag leg no longer asserts a silent AST fallback, because there is
+// The unset-flag leg no longer asserts a silent fallback, because there is
 // none: asm_run.fern routes through asm_ir.emit_module_or_error (#3457 slice 5),
 // so an ineligible module is an error with or without the flag. What the flag
 // still changes — and what this pins — is WHICH error: without it the driver says
@@ -925,7 +926,7 @@ func TestSelfHostStrictIRWasm(t *testing.T) {
 			src := []byte(tc.src)
 			wat, stderr, code := runDriver(t, runner, driverBin, src, true, "-ir")
 			if strings.Contains(stderr, "FERN_STRICT_IR:") {
-				t.Fatalf("%s bailed to the AST emitter under FERN_STRICT_IR:\n%s", tc.name, stderr)
+				t.Fatalf("%s bailed under FERN_STRICT_IR:\n%s", tc.name, stderr)
 			}
 			if code != 0 || len(wat) == 0 {
 				t.Fatalf("driver (FERN_STRICT_IR=1) exited %d with %d bytes\n%s", code, len(wat), stderr)

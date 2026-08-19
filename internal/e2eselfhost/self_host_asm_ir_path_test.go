@@ -29,9 +29,8 @@ import (
 // corpora carry the oracle role now (each checks values, most against
 // `fern -interp`), which is the trade slice 5 accepts.
 //
-// Slice 16 eligibility is pure i32 functions (no params, no user calls, no
-// arrays), so single-function i32 programs exercise the IR path; multi-
-// function / array programs fall back to AST under `-ir` and must still match.
+// Both legs must produce the same exit code, so a case that only one leg's
+// gating admits still has to compile, link and run there.
 func TestSelfHostAsmIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -285,9 +284,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// A match-EXPRESSION (value position) over a STRUCT / TUPLE scrutinee.
 		// Both desugar to a done-flag if-chain wrapped in an IIFE; unlike the enum
 		// (StmtMatch) / literal (`_`-terminated chain) forms, that chain has no
-		// terminal return, so the IIFE lambda used to fall through and bail the IR
-		// path to the AST emitter (#3457 slice 3, #5749's "match-expr over struct"
-		// shape). parse_match_expr now flags these (needs_default_return) so the
+		// terminal return, so the IIFE lambda used to fall through and bail the
+		// module (#3457 slice 3, #5749's "match-expr over struct" shape). parse_match_expr now flags these (needs_default_return) so the
 		// IIFE gets a synthetic terminal return and lowers. struct: 5+1 = 6;
 		// tuple: 3+4 = 7.
 		{"matchexpr-struct", "struct P { x: i32 } function main(): i32 { var p = P { x: 5 }; var r = match (p) { P { x: v } => v + 1 }; return r; }"},
@@ -416,8 +414,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"append-varinit", "function main(): i32 { var a: i32[] = []; a = a.append(7); var b = a.append(35); return b[0] + b[1]; }"},
 		{"append-return-loop", "function trail(xs: i32[]): i32[] { var out: i32[] = []; var i = 0; while (i < xs.len()) { if (xs[i] > 2) { out = out.append(xs[i]); } i = i + 1; } return out.append(99); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(5); a = a.append(3); var r = trail(a); return r.len() * 100 + r[r.len() - 1]; }"},
 		// NB: __alloc_u8 / string_from_bytes_unchecked programs are NOT differential cases —
-		// the standalone asm_ir_run AST fallback references __fern_alloc_u8 without
-		// emitting it (a legacy-driver gap), so the AST side won't link. The IR
+		// the standalone asm_ir_run AST fallback referenced __fern_alloc_u8 without
+		// emitting it (a legacy-driver gap), so the AST side would not link. The IR
 		// path compiles them correctly; they're validated against the native
 		// compiler in TestSelfHostU32WrapIR (alloc-u8 / str-from-bytes).
 		{"compare", "function main(): i32 { return 5 < 10; }"},
@@ -502,9 +500,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { var x = "abcd"; return slen(x); }`},
 		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`},
 		{"str-param-eq", `function same(a: string, b: string): i32 { if (a == b) { return 1; } return 0; } function main(): i32 { return same("k", "k"); }`},
-		// A string-RETURNING function isn't IR-lowered yet (irlower bails), so the
-		// whole module falls back to AST under -ir; must still match.
-		// String-returning functions now route through the IR (str_ret_fns tracks the
+		// String-returning functions route through the IR (str_ret_fns tracks the
 		// result as a string; the box just leaks). Param + concat + return too.
 		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
 		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { var g = shout("hey"); return g.len(); }`},
@@ -766,7 +762,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// variant is a pre-existing struct (no synthetic `__ev` field), so the
 		// match arm binds the WHOLE scrutinee box pointer typed with the variant's
 		// struct name — a later `x.value` then resolves. An `__ev` payload read
-		// here would bail the whole module to AST.
+		// here would bail the whole module.
 		{"union-eval", `struct Num { value: i32 } struct Add { left: i32, right: i32 } type Node = Num | Add; function eval(n: Node): i32 { match (n) { Num(x) => { return x.value; }, Add(a) => { return a.left + a.right; } } return 0; } function main(): i32 { return eval(Num { value: 7 }) * 100 + eval(Add { left: 3, right: 9 }); }`},
 		{"union-multifield", `struct Pt { x: i32, y: i32 } struct Pt3 { x: i32, y: i32, z: i32 } type V = Pt | Pt3; function sum(v: V): i32 { match (v) { Pt(p) => { return p.x + p.y; }, Pt3(q) => { return q.x + q.y + q.z; } } return 0; } function main(): i32 { return sum(Pt { x: 3, y: 4 }) * 100 + sum(Pt3 { x: 1, y: 2, z: 3 }); }`},
 		{"union-field-in-expr", `struct VInt { v: i32 } struct VStr { s: string } type Val = VInt | VStr; function size(x: Val): i32 { match (x) { VInt(i) => { return i.v * 2; }, VStr(s) => { return s.s.len() + 1; } } return -1; } function main(): i32 { return size(VInt { v: 20 }) + size(VStr { s: "abc" }); }`},
@@ -794,9 +790,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// The owning struct is read AFTER the loop — the borrow must not free its
 		// field buffer (the exit-sweep never decs a non-array-marked snapshot).
 		{"struct-strarr-field-forin-after", `struct R { tags: string[] } function main(): i32 { var r = R { tags: ["ab", "cd", "e"] }; var n = 0; for t in r.tags { n = n + t.len(); } return n + r.tags.len(); }`},
-		// A reclaimable scalar-array field (i32[]) STAYS on the AST path — aliasing
-		// it is an RC hazard (deferred to the Perceus self-host port, #3003). The
-		// AST emitter handles it, so the differential still matches.
+		// A reclaimable scalar-array field (i32[]) is NOT admitted — aliasing it is
+		// an RC hazard (deferred to the Perceus self-host port, #3003) — so this
+		// exercises the ungated route on both legs.
 		{"struct-i32arr-field-forin", `struct R { nums: i32[] } function main(): i32 { var r = R { nums: [3, 4] }; var n = 0; for v in r.nums { n = n + v; } return n; }`},
 		// Discarded fresh-ret-CALL local (#3457 follow-up): `var r = mk()` where mk
 		// is fresh-struct-returning (Box is leak-safe, fields are properly rc-
@@ -899,8 +895,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Option[i32]`. The parser now keeps the generic args in the cast op
 		// name (`as_Option[i32]`), so a binding `var x = None as Option[i32]`
 		// rebinds to `var x: Option[i32] = None` (payload type intact) and
-		// lowers through the IR path instead of bailing to the AST backend on
-		// the payload-less `var x: Option = None`. The Some/Ok/[] operands
+		// lowers through the IR path instead of bailing on the payload-less
+		// `var x: Option = None`. The Some/Ok/[] operands
 		// already lowered (they carry their own payload type); these lock in
 		// the bare-None / bare-Err cases plus the non-binding (return / nested)
 		// positions and the array ascription that shares the suffix path.
@@ -1033,7 +1029,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-matchexpr-elem", `function main(): i32 { var k = 1; var t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`},
 		// A struct array field set from an if-/match-EXPRESSION whose every branch is
 		// a fresh array literal (iife_returns_fresh_array): admitted as an owned value
-		// (#3179). An aliased branch stays on the AST path (verified by probe).
+		// (#3179). An aliased branch is refused (verified by probe).
 		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { var c = 5; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`},
 		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { var c = 1; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`},
 		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { var k = 1; var b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`},
@@ -1194,7 +1190,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// ENUM match-EXPRESSION in value position: the same IIFE inlining, with a
 		// StmtMatch body lowered through the full variant dispatch (arms'
 		// `return E` rewritten to a temp store). Unit-variant arms with an i32
-		// result (#2938 follow-up); payload-binding arms still bail to AST.
+		// result (#2938 follow-up); payload-binding arms still bail.
 		{"matchexpr-enum-unit", `enum C { A, B, X } function main(): i32 { var c: C = X; var y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
 		{"matchexpr-enum-first", `enum C { A, B, X } function main(): i32 { var c: C = A; var y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
 		{"matchexpr-enum-in-binary", `enum C { A, B } function main(): i32 { var c: C = A; return match (c) { A => 5, B => 6 } + 100; }`},
@@ -1220,7 +1216,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-str-3arm", `enum C { R, G, B } function pick(c: C): string { return match (c) { R => "red", G => "green", B => "blue" }; } function main(): i32 { return pick(G).len(); }`},
 		{"matchexpr-str-payload", `enum E { N(i32), Z } function f(e: E): string { return match (e) { N(n) => if (n > 0) { "pos" } else { "neg" }, Z => "zero" }; } function main(): i32 { return f(N(5)).len() + f(Z).len(); }`},
 		// f64-valued if / match expressions: the inline temp is an 8-byte f64 temp
-		// (the binding tracks the result as f64). i64 results stay on the AST path.
+		// (the binding tracks the result as f64). i64 results still bail.
 		{"ifexpr-f64", `function main(): i32 { var n = 5; var f = if (n > 3) { 1.5 } else { 2.5 }; return (f * 2.0) as i32; }`},
 		{"ifexpr-f64-return", `function pick(n: i32): f64 { return if (n > 0) { 1.5 } else { 0.5 }; } function main(): i32 { return (pick(5) * 10.0) as i32; }`},
 		{"ifexpr-f64-elseif", `function main(): i32 { var n = 5; var f = if (n > 10) { 1.0 } else if (n > 3) { 2.5 } else { 9.0 }; return (f * 2.0) as i32; }`},
@@ -1306,9 +1302,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"derive-debug-enum-unit", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len(); }`},
 		{"derive-debug-enum-payload", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
 		{"derive-debug-nested", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } @derive(Debug) struct N { p: P, n: i32 } function main(): i32 { return N { p: P { x: 1, name: "z" }, n: 9 }.to_debug().len(); }`},
-		// Out of the IR subset -> falls back to the AST emitter under -ir; must
-		// still match (proves the fallback path is intact).
-		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
+		// A struct method call — the shape that used to be out of the IR subset
+		// and route to the AST emitter under -ir.
+		{"method-dispatch", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
 		// Byte-source builtins (issue #2747) — DETERMINISTIC shapes only, so the
 		// AST and IR paths must agree. random_bytes(n).len() is always n; as_bytes
 		// / bytes byte values on a literal are fixed. (random_i32 + the random byte

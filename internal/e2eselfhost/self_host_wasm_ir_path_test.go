@@ -19,7 +19,7 @@ import (
 // catches a gate that declines a module
 // the IR path handles correctly, and a forced emit that diverges from the routed
 // one; it no longer compares two emitters. A program the gates decline is a
-// refusal on the routed side rather than an AST fallback.
+// refusal on the routed side.
 //
 // First wasm slice: pure i32 (arrays are a follow-up that reuses wasm's
 // linear-memory runtime).
@@ -188,8 +188,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"str-concat-eq", `function main(): i32 { var a = "foo"; var b = "foobar"; if (a + "bar" == b) { return 11; } return 0; }`},
 		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { var x = "abcd"; return slen(x); }`},
 		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`},
-		// String-returning function isn't IR-lowered yet -> module falls back to AST.
-		// String-returning functions now route through the IR (str_ret_fns tracks the
+		// String-returning functions route through the IR (str_ret_fns tracks the
 		// result as a string; the box just leaks). Param + concat + return too.
 		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
 		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { var g = shout("hey"); return g.len(); }`},
@@ -416,9 +415,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// The owning struct is read AFTER the loop — the borrow must not free its
 		// field buffer (the exit-sweep never decs a non-array-marked snapshot).
 		{"struct-strarr-field-forin-after", `struct R { tags: string[] } function main(): i32 { var r = R { tags: ["ab", "cd", "e"] }; var n = 0; for t in r.tags { n = n + t.len(); } return n + r.tags.len(); }`},
-		// A reclaimable scalar-array field (i32[]) STAYS on the AST path — aliasing
-		// it is an RC hazard (deferred to the Perceus self-host port, #3003). The
-		// AST emitter handles it, so the differential still matches.
+		// A reclaimable scalar-array field (i32[]) is NOT admitted — aliasing it is
+		// an RC hazard (deferred to the Perceus self-host port, #3003) — so this
+		// exercises the ungated route on both legs.
 		{"struct-i32arr-field-forin", `struct R { nums: i32[] } function main(): i32 { var r = R { nums: [3, 4] }; var n = 0; for v in r.nums { n = n + v; } return n; }`},
 		{"tuple-str-i32-dotn", `function main(): i32 { var t = ("hello", 7); return t.0.len() + t.1; }`},
 		{"tuple-str-i32-destructure", `function main(): i32 { var (a, b) = ("world", 3); return a.len() + b; }`},
@@ -574,7 +573,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-matchexpr-elem", `function main(): i32 { var k = 1; var t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`},
 		// A struct array field set from an if-/match-EXPRESSION whose every branch is
 		// a fresh array literal (iife_returns_fresh_array): admitted as an owned value
-		// (#3179). An aliased branch stays on the AST path (verified by probe).
+		// (#3179). An aliased branch is refused (verified by probe).
 		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { var c = 5; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`},
 		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { var c = 1; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`},
 		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { var k = 1; var b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`},
@@ -692,7 +691,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"matchexpr-literal", `function main(): i32 { var n = 2; var y = match (n) { 1 => 10, 2 => 20, _ => 0 }; return y; }`},
 		// ENUM match-EXPRESSION in value position (#2938 follow-up): IIFE inlined,
 		// StmtMatch body lowered via the full variant dispatch; unit-variant arms
-		// with an i32 result (payload-binding arms still bail to AST).
+		// with an i32 result (payload-binding arms still bail).
 		{"matchexpr-enum-unit", `enum C { A, B, X } function main(): i32 { var c: C = X; var y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
 		{"matchexpr-enum-in-binary", `enum C { A, B } function main(): i32 { var c: C = A; return match (c) { A => 5, B => 6 } + 100; }`},
 		{"matchexpr-enum-return-arg", `enum C { Red, Green, Blue } function pick(c: C): i32 { return match (c) { Red => 1, Green => 2, Blue => 3 }; } function main(): i32 { return pick(Green) * 10; }`},
@@ -763,8 +762,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// paths must agree on the rendered length. Strings render quoted.
 		{"derive-debug-struct", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`},
 		{"derive-debug-enum", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
-		// Method call -> out of the IR subset; falls back to AST under -ir.
-		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
+		// A struct method call — the shape that used to be out of the IR subset
+		// and route to the AST emitter under -ir.
+		{"method-dispatch", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
 		// string.split(sep) -> string[] (op_str_split). The wasm IR path emits the
 		// narrow str_split_helper ($__fern_str_split + a private $__fern_arr_push)
 		// plus substr_helper; the AST path uses the full strcat_helpers bundle's
