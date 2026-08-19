@@ -103,9 +103,12 @@
 # shallow-decs EVERY array-kind field, while `emit_ir_field_reclaim_one` /
 # `emit_arm64_field_reclaim_one` release a `string[]` field only under the
 # `strfldok:arr:<T>` admission, which this case's `fresh.deps[0].len()` element
-# read withholds. The shared construction-side retain is unconditional either
-# way, so those two legs keep one array reference per node. That asymmetry is
-# the next slice, not a property of this leg.
+# read withholds. The BUFFER half of that is now fixed on both — they take the
+# shallow dec for a field the scan refused only on its READS — and what keeps
+# them listed is
+# the ELEMENT boxes, which this leg frees ungated (`$__fern_arr_dec_ptr`) and
+# they refuse. See docs/RC-PERCEUS-SELF-HOST-PORT.md §9: one of those two is
+# wrong and neither has been shown to be.
 
 # --- ACTIVE -----------------------------------------------------------------
 # The reclaim shapes below were fixed in `internal/ir` — the NATIVE compiler —

@@ -5935,7 +5935,7 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             && !irlower.is_leaksafe_array_field(fdt)
             && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
             && s.has_need("strfldok:sarr:" + sty);
-        if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || (fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)) || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
@@ -6163,6 +6163,22 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // box is solely the field's, rc=1 — no construction inc to balance),
         // no base copies, call-only reads.
         var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
+        // A string[] field the strarrfld scan refused only on its READS still
+        // has a BUFFER to give back. The scan's verdict has two halves and they
+        // gate different things: a read hazard costs the ELEMENT walk
+        // (k_str_arr above), while the buffer dec needs only the STORE half —
+        // "strfldok:arrbuf:<T>", every store into the field either a bare ident
+        // (which lower_expr's ExprStructLit array arm retains) or a fresh
+        // literal / proven producer the field solely owns. Both are a reference
+        // this box holds and must give back.
+        //
+        // The store half is NOT optional, which is what the per-module emit-all
+        // fixpoint said when this arm was first written ungated: a field-read
+        // store (`S { xs: t.xs }`) takes no construction retain, so dec'ing it
+        // frees a buffer the source struct still holds. wasm dec's every
+        // array-kind field here with no gate at all, and that is the open
+        // question §9 records rather than a model to copy.
+        var k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -6258,7 +6274,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    call __fn___fern_str_arr_free\n");         // deep at rc==1 (elements + buffer); shared -> dec; null skipped
             s = s.write("    addq $8, %rsp\n");
             s = s.write("    movq 8(%rsp), %r11\n");                    // reload box (helper may clobber r11)
-        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr) {
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
             s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box / enum box / closure box / fn-ptr array buffer (shallow, no element walk)
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");
