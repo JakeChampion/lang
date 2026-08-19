@@ -26571,7 +26571,8 @@ function collect_str_fresh_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0
-                    && is_fresh_ret_binding(v.init, "", str_fresh_ret)) {
+                    && (is_fresh_ret_binding(v.init, "", str_fresh_ret)
+                        || str_method_ret_is_fresh(v.init, str_fresh_ret))) {
                     a = push_str_unique(a, v.name);
                 }
             },
@@ -27046,6 +27047,52 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
             out = out.append("SFRRECV:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
+    }
+    return sfrfresh_names_of(funcs, reg, out);
+}
+
+// "SFRFRESHNAME:<method>" — the STRICT half of SFRRECV. SFRRECV admits a method
+// that returns its RECEIVER or a view of it, which is exactly what a consuming
+// site's pointer compare exists to sort out at runtime; a BINDING has no such
+// discriminator, so it may only take ownership of a result that is nobody's box
+// but its own. This key says every return is a freshly allocated one:
+// `(s: string) to_owned(): string { return s + ""; }` qualifies, and `trim` /
+// `replace` — both able to hand the receiver straight back — do not.
+//
+// Keyed by METHOD NAME rather than `<Recv>.<method>` because the consumer is an
+// AST scan with no types: a `var t: string = <expr>.m()` cannot say what `<expr>`
+// is. A name is therefore admitted only when every STRING-RETURNING declaration
+// of it is strictly fresh, so no receiver can reach a weaker one. A name that
+// also spells a string BUILTIN is refused outright — `trim` and `replace` lower
+// to ops these declarations never see, and a user type declaring a fresh `trim`
+// must not license the builtin's view.
+function sfrfresh_names_of(funcs: parser.FuncDecl[], reg: string[], acc: string[]): string[] {
+    var cand: string[] = [];
+    var bad: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        // A declaration that does not return `string` is not a hazard: the
+        // binding this key serves is string-typed, so the checker cannot have
+        // resolved it to one. `(c: char) to_upper(): char` sits beside
+        // `(s: string) to_upper(): string` in the stdlib, and counting it would
+        // cost the string method its credit for a call it can never receive.
+        if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
+                && funcs[k].ret_type == "string") {
+            if (body_has_return(funcs[k].body)
+                    && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body)
+                    && !is_str_builtin_method(funcs[k].name)) {
+                cand = push_str_unique(cand, funcs[k].name);
+            } else {
+                bad = push_str_unique(bad, funcs[k].name);
+            }
+        }
+        k = k + 1;
+    }
+    var out: string[] = acc;
+    var c: i32 = 0;
+    while (c < cand.len()) {
+        if (util.index_of_str(bad, cand[c]) < 0) { out = out.append("SFRFRESHNAME:" + cand[c]); }
+        c = c + 1;
     }
     return out;
 }
@@ -31222,6 +31269,27 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
 // declared type `recv_type` (the var annotation) — sound because for a builder
 // method receiver type == return type == the local's type; a mismatch just fails
 // to find the key (conservative, no admission).
+// str_method_ret_is_fresh: `<expr>.m()` where every declaration of `m` in the
+// program returns a freshly allocated string ("SFRFRESHNAME:", which is also
+// what makes the untyped receiver safe here). is_fresh_ret_binding covers the
+// free-call spelling of the same fact; its method arm needs a receiver type this
+// caller has no way to compute, so a source-declared method result went
+// uncredited while the BUILTIN spelling beside it was reclaimed —
+// `var t = b.to_owned()` leaked 47 B/round where `var t = b.to_ascii_upper()`
+// was flat.
+function str_method_ret_is_fresh(e: parser.Expr, fresh_ret: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => { return util.index_of_str(fresh_ret, "SFRFRESHNAME:" + fa.field) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function is_fresh_ret_binding(e: parser.Expr, recv_type: string, fresh_ret: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {

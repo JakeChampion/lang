@@ -10287,3 +10287,59 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   since native is what compiles the self-host driver —
   `TestSelfHostInterpDriverX86_64` plus
   `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #7122 #4353 #7114 #4451.
+- 2026-08-19: **a `var t: string = <expr>.m()` binding earned no reclaim credit
+  when `m` was SOURCE-DECLARED, while the builtin spelling beside it was flat.**
+  Isolating it needed the source string out of the picture first — with a fresh
+  `base` in scope, most of what the earlier five-shape table measured was `base`
+  escaping as a bare-ident operand, not the temp it was attributed to:
+
+  | probe (`var b: string = mkfresh(i);` first) | B/round |
+  | --- | --- |
+  | `b.len()` | -1 |
+  | `var t = b.to_ascii_upper(); t.len()` | **-1** (builtin) |
+  | `var t = b.to_owned(); t.len()` | **47** |
+  | `var t = b.to_upper(); t.len()` | **43** |
+
+  One argument, at the `collect_str_fresh_ret_call_names` call of
+  `is_fresh_ret_binding`. That predicate has always had a method arm, but the
+  string collector passes it an empty receiver type, so the arm returns false for
+  every binding in the program; the struct collector beside it passes
+  `v.type_name` and works.
+
+  The credit reads a new STRICT class, not `SFRRECV:`. SFRRECV admits a method
+  returning its RECEIVER or a view of it — which is exactly what the consuming
+  site's runtime pointer compare exists to sort out, and a binding has no such
+  discriminator. `SFRFRESHNAME:<m>` says every return is a freshly allocated box.
+
+  Keyed by method NAME because the consumer is an AST scan that cannot type
+  `<expr>`, so a name is admitted only when every STRING-RETURNING declaration of
+  it is strictly fresh. Two filters earn their place. Restricting to
+  string-returning declarations is not an optimisation: `(c: char) to_upper(): char`
+  sits beside `(s: string) to_upper(): string` in the stdlib, and counting the
+  collision cost the string method its credit for a call the checker can never
+  resolve to it — that filter alone is the difference between 43 and -5. A name
+  that also spells a string BUILTIN is refused outright, so a user type's fresh
+  `trim` cannot license the builtin's view.
+
+  Measured after: 47 -> -1 and 43 -> -5.
+
+  Two of the four refusal cases have a witness and two do not, which is worth
+  recording rather than blurring. An identity return (`return s`) and a
+  mixed-path return both exit 99 under a compiler that admits them, so those are
+  pinned by fault. A VIEW return and the builtin-name collision are pinned by
+  contract only: freeing an immortal view box is not currently observable, and no
+  probe distinguished them. They stay refused because the contract says so, not
+  because a test caught them.
+
+  A methodological note that cost a build: the first safety battery verified `t`
+  with `t != "..."`, and a bare-ident comparison operand is itself an escape — so
+  `t` was credited in NEITHER direction and the emitted asm was byte-identical
+  under the sound and unsound compilers. Verifying only through borrow positions
+  (`t.starts_with(...)`, `t.index_of(...)`, `t.len()`) is what made the probes
+  discriminate at all.
+
+  Still open on the same shapes, deliberately untouched here: a fresh anonymous
+  temp consumed as a call ARGUMENT or as a method RECEIVER is stranded whether
+  the callee is a builtin or source-declared — `freshfree(mkfresh(i))` and
+  `mkfresh(i).to_ascii_upper()` both leak 46 B/round. That is the next slice, and
+  it is what remains of the 95 / 119 / 143 chain rows. Refs #6544 #4451.
