@@ -11146,3 +11146,54 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   backends; the two byte gates fail on the parent on all three legs, and the two
   controls — the carried-out binding and the still-refused string payload — pass
   either way). Refs #4353 #4451.
+- 2026-08-19: **the intermediate VIEW BOX at a slice receiver**, which closes
+  `base[4:base.len()].to_owned().len()` entirely — the receiver carve-out reading
+  the callee-side proof (#7167) gave the SOURCE its reclaim credit back and left
+  the box behind.
+
+  #7164 releases a fresh-or-receiver chain in receiver position under a runtime
+  pointer compare, but `sfrrecv_chain_root_slot` only walked an `ExprCall` link.
+  A bare `ExprSlice` was not a link it followed. It is the same character as an
+  `SFRRECV:` call — the box is a view over the source's bytes and never the
+  source's own box — so walking through it to the root, and admitting a slice
+  receiver at the release site, is the whole change.
+
+  | leg | before | after |
+  | --- | --- | --- |
+  | x86-64 | 9600 | **0** |
+  | arm64 | 9600 | **0** |
+  | wasm | 48000 | **0** |
+  | wasm, payload 4x wider | 230400 | **0** |
+
+  The wasm rows are the ones that matter: its residual SCALED with the payload
+  because a slice is a copy there and a zero-copy view on the asm-IR path
+  (#4294), so this recovers a whole copy per round rather than a 24-byte header.
+
+  The two guards have DIFFERENT standing at this arm, and both were measured
+  rather than argued:
+
+  | guard | standing at the SLICE arm | why |
+  | --- | --- | --- |
+  | recv_borrow | **witnessed**, exit 97 | a callee returning its receiver hands the view straight back |
+  | the pointer compare | **contract-only** | a slice box is never the source's box, so it cannot fire |
+
+  The compare stays because the `ExprCall` arm it shares does need it — #7164's
+  identity-path probe still exits 97 on a build without it — but recording that
+  it does no work at THIS arm is the point: the same two lines are load-bearing
+  at one caller and inert at the other.
+
+  This made the sibling entry's per-leg gate obsolete. That test split its
+  threshold across backends precisely because the residual differed by leg; with
+  every leg at 0 one tight gate serves all three and catches a regression of
+  either half, so the split and its substitution helper are deleted.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_str_slice_view_release_test.go` (6 cases x 3
+  backends; the two byte gates fail on the parent on all three legs).
+
+  Still open, and now the lead on this shape: a slice OF a slice. On wasm the
+  nested chain measures 60800 -> 48000 — the OUTER copy goes, the inner one
+  stays, because it is the operand of the second slice rather than a receiver at
+  a call, so no receiver-arm release reaches it. Both boxes go on the register
+  backends (9600 -> 0), which is why the nested case pins the VALUE rather than
+  the bytes. Refs #6544 #4451.

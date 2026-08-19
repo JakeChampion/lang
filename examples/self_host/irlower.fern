@@ -8062,6 +8062,11 @@ pub function sfrrecv_chain_root_slot(e: parser.Expr, s: LowerState, depth: i32):
                 _ => {}
             }
         },
+        // `X[a:b]` is a link of exactly the same character as an SFRRECV call:
+        // the box it yields is a view over X's bytes and is never X's own box, so
+        // the chain root is X's root. It reaches the caller unnamed, which is why
+        // it needs releasing at all.
+        parser.ExprSlice(sl) => { return sfrrecv_chain_root_slot(sl.array, s, depth + 1); },
         _ => {}
     }
     return 0 - 1;
@@ -11777,6 +11782,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         if (recv_ok && !is_fresh_str_temp(fa.obj, s)) {
             match (fa.obj) {
                 parser.ExprCall(_) => { prroot = sfrrecv_chain_root_slot(fa.obj, s, 0); },
+                parser.ExprSlice(_) => { prroot = sfrrecv_chain_root_slot(fa.obj, s, 0); },
                 _ => {}
             }
         }

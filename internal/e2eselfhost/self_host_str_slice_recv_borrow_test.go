@@ -31,8 +31,9 @@ import (
 // and `view2` is `trim`'s.
 //
 // Measured on x86-64, two compilers built from the same commit: 64000 -> 9600
-// over 400 rounds. The residual is the intermediate VIEW BOX, a separate
-// question from whether the SOURCE keeps its credit, and is the next lead.
+// over 400 rounds, and the remaining 9600 — the intermediate VIEW BOX — is
+// closed by the ExprSlice receiver release beside this, so the shape is now
+// flat on all three legs.
 const sliceRecvPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -61,18 +62,14 @@ function main(): i32 {
 }`
 }
 
-// The gate is per-leg because the RESIDUAL is not the same object on each.
-// On the register backends a slice is a zero-copy view (#4294), so what is left
-// after this change is the fixed 24-byte view box: measured 246400 -> 9600 on
-// both x86-64 and arm64, a 25x separation, so 65536 has teeth with room to
-// spare. On wasm the slice is a COPY, so the residual scales with the payload:
-// 464000 -> 230400. One threshold cannot carry both without sitting inside a
-// 7% band, and a gate that thin is a flake waiting to happen. Two measured
-// numbers beat one loose one.
-const (
-	sliceRecvLimitRegister = "65536"
-	sliceRecvLimitWasm     = "327680"
-)
+// The gate was per-leg while a RESIDUAL remained — a fixed 24-byte view box on
+// the register backends, a payload-sized copy on wasm, since a slice is
+// zero-copy on the asm-IR path (#4294) and a copy on wasm. The sibling change
+// that releases that box at an ExprSlice receiver takes every leg to 0, so one
+// tight gate now serves all three and catches a regression of EITHER half: lose
+// the source's credit and the leak is ~48 B/round, lose the box release and it
+// is 24 (register) or payload-sized (wasm).
+const sliceRecvLimit = "4096"
 
 // sliceRecvSrc fills in the leg's heap gate. Cases without a gate carry no
 // placeholder and pass through unchanged.
@@ -191,7 +188,7 @@ func TestSelfHostStrSliceRecvBorrowIRX86_64(t *testing.T) {
 
 	for _, tc := range strSliceRecvBorrowCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(sliceRecvSrc(tc.src, sliceRecvLimitRegister)+"\n"))
+			asm := runCapture(t, gcc, runner, driverBin, []byte(sliceRecvSrc(tc.src, sliceRecvLimit)+"\n"))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -221,7 +218,7 @@ func TestSelfHostStrSliceRecvBorrowIRArm64(t *testing.T) {
 
 	for _, tc := range strSliceRecvBorrowCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(sliceRecvSrc(tc.src, sliceRecvLimitRegister)+"\n"), "-target", "arm64-linux")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(sliceRecvSrc(tc.src, sliceRecvLimit)+"\n"), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
@@ -264,7 +261,7 @@ func TestSelfHostStrSliceRecvBorrowWasmIR(t *testing.T) {
 			} else {
 				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
 			}
-			cmd.Stdin = bytes.NewReader([]byte(sliceRecvSrc(tc.src, sliceRecvLimitWasm) + "\n"))
+			cmd.Stdin = bytes.NewReader([]byte(sliceRecvSrc(tc.src, sliceRecvLimit) + "\n"))
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
