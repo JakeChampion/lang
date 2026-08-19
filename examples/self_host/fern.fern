@@ -1908,11 +1908,9 @@ function run(): i32 {
     var pos: string[] = [];
     var use_ssa: boolean = false;
     var mode_scan: boolean = false;
-    // `-O` is accepted for CLI parity with native, and currently does NOTHING
-    // here. Native's `-O` elides assert() checks (constfold.ElideAsserts); this
-    // parser desugars `assert` to a plain `if` carrying no marker, so there is
-    // nothing to key an elision off yet — #7157. Constant folding is NOT what
-    // this flag selects on either compiler: it runs on every build.
+    // `-O` is the release build: it elides every assert() check, matching
+    // native. Constant folding is NOT what this flag selects on either
+    // compiler — that runs on every build.
     var optimize: boolean = false;
     var emit_syms: boolean = false;
     var have_entry: boolean = false;
@@ -1990,7 +1988,7 @@ function run(): i32 {
             if (i >= av.len()) { return usage(); }
             emit = av[i];
         } else if (a == "-O") {
-            optimize = true;   // see the declaration: accepted, inert (#7157)
+            optimize = true;
         } else if (a == "-target") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -2244,10 +2242,11 @@ function run(): i32 {
     // provides. Without it the self-host builds a program native refuses.
     if (package_violations(merged, pkgs)) { return 1; }
 
-    // Constant-fold the program before codegen, on EVERY build — native calls
-    // constfold.Fold unconditionally on all four of its compile paths, and its
-    // `-O` means something else entirely (eliding asserts). Gating this behind
-    // `-O` meant a default self-host build emitted a runtime call for
+    // Constant-fold the program before codegen, on EVERY build. Native gates
+    // no constant folding behind `-O` either — `internal/constfold` runs on
+    // all four of its compile paths and the expression fold in `internal/ir`
+    // likewise — and `-O` there means assert elision, below. Gating this
+    // behind `-O` meant a default self-host build emitted a runtime call for
     // `"ab" + "cd"` where native emitted one literal.
     //
     // Compile-only: applied after -check / -interp / -fmt (which return above
@@ -2256,6 +2255,19 @@ function run(): i32 {
     // the runtime error intact — so it changes only the shape of the emitted
     // code, which is why it needs no flag.
     merged = constfold.fold_module(merged);
+
+    // -O: drop every assert() check, the one thing native spends the flag on
+    // (constfold.ElideAsserts). The condition goes with the check, which is
+    // why asserts must be side-effect-free.
+    //
+    // Placed after the checker and both capability gates so a release build
+    // rejects what a default build rejects. That holds for the gates; it does
+    // NOT yet hold for the checker's own verdict, because every code an
+    // ill-typed assert raises is on is_partial_checker_gap_code's measured
+    // list and so never reaches the build — #7170.
+    if (optimize) {
+        merged = constfold.elide_asserts(merged);
+    }
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred
     // result type so the IR lowering READS the type instead of re-deriving it

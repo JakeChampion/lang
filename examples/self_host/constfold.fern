@@ -271,6 +271,48 @@ pub function fold_module(mod: parser.Module): parser.Module {
     return parser.Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fold_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
+// =================== ASSERT ELISION ====================
+
+// elide_asserts drops every `assert(...)` check from the program — the `-O`
+// release-build behaviour, and the only thing native spends that flag on
+// (internal/constfold.ElideAsserts, #4416). The parser desugars an assert to
+// an `if (!cond) { eprint(…); exit(1); }` stamped with parser.ORIGIN_ASSERT,
+// so the pass filters exactly those out of every statement list.
+//
+// The elision removes the condition's evaluation along with the check, which
+// is why asserts must be side-effect-free — so the driver runs it after the
+// checker and the capability gates. On this compiler that keeps parity with
+// the GATES only: the checker's own verdict on an ill-typed assert does not
+// reach the build, because every code one raises is on the checker's measured
+// partial-gap list (#7170).
+pub function elide_asserts(mod: parser.Module): parser.Module {
+    var funcs: parser.FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts(mod.funcs[i].body, drop_assert) });
+        i = i + 1;
+    }
+    return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts(mod.top_stmts, drop_assert) };
+}
+
+// drop_assert keeps every statement but the assert desugar. The splicing fold
+// carries it into nested blocks, lambda bodies and match arms, so no shape
+// needs a case here.
+function drop_assert(st: parser.Stmt): parser.Stmt[] {
+    var keep: parser.Stmt[] = [st];
+    match (st) {
+        parser.StmtIf(f) => {
+            if (f.origin == parser.ORIGIN_ASSERT) {
+                var gone: parser.Stmt[] = [];
+                return gone;
+            }
+            return keep;
+        },
+        _ => { return keep; }
+    }
+    return keep;
+}
+
 // =================== VALIDATION ====================
 
 // Convenience: parse a source, fold, return the folded module.
@@ -477,6 +519,73 @@ function main(): i32 {
             }
         },
         _ => { return 144; }
+    }
+
+    // -O's assert elision. The desugar is marked by the parser, so the pass
+    // finds it again; a hand-written `if` of the same shape is untouched.
+    var mod15: parser.Module = elide_asserts(fold_source(
+        "function main(): i32 { assert(1 > 2); return 0; }"));
+    if (mod15.funcs[0].body.len() != 1) { return 150; }
+    match (mod15.funcs[0].body[0]) {
+        parser.StmtReturn(_) => { },
+        _ => { return 151; }
+    }
+
+    var mod16: parser.Module = elide_asserts(fold_source(
+        "function main(): i32 { if (1 > 2) { return 3; } return 0; }"));
+    if (mod16.funcs[0].body.len() != 2) { return 152; }
+
+    // The three places a top-level filter misses. Each nests one assert; all
+    // three have to go, and the enclosing statement has to stay.
+    var mod17: parser.Module = elide_asserts(fold_source(
+        "function main(): i32 { while (false) { assert(1 > 2); } return 0; }"));
+    match (mod17.funcs[0].body[0]) {
+        parser.StmtWhile(w) => { if (w.body.len() != 0) { return 160; } },
+        _ => { return 161; }
+    }
+
+    var mod18: parser.Module = elide_asserts(fold_source(
+        "function main(): i32 { var f = function(): i32 { assert(1 > 2); return 1; }; return 0; }"));
+    match (mod18.funcs[0].body[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprLambda(lm) => { if (lm.body.len() != 1) { return 170; } },
+                _ => { return 171; }
+            }
+        },
+        _ => { return 172; }
+    }
+
+    var mod19: parser.Module = elide_asserts(fold_source(
+        "enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"));
+    match (mod19.funcs[0].body[1]) {
+        parser.StmtMatch(mt) => { if (mt.arms[0].body.len() != 0) { return 180; } },
+        _ => { return 181; }
+    }
+
+    // A lambda nested in a lambda: the splice must reach it, and reach it
+    // ONCE — a body visited twice would splice an expanding rewrite twice.
+    var mod20: parser.Module = elide_asserts(fold_source(
+        "function main(): i32 { var f = function(): i32 { var g = function(): i32 { assert(1 > 2); return 1; }; return 2; }; return 0; }"));
+    match (mod20.funcs[0].body[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprLambda(outer) => {
+                    if (outer.body.len() != 2) { return 190; }
+                    match (outer.body[0]) {
+                        parser.StmtVar(iv) => {
+                            match (iv.init) {
+                                parser.ExprLambda(inner) => { if (inner.body.len() != 1) { return 191; } },
+                                _ => { return 192; }
+                            }
+                        },
+                        _ => { return 193; }
+                    }
+                },
+                _ => { return 194; }
+            }
+        },
+        _ => { return 195; }
     }
 
     return 0;

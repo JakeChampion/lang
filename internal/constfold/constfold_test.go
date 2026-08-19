@@ -286,6 +286,19 @@ func countIdents(prog *ast.Program, target string) int {
 			walkExpr(x.Desugared)
 		case *ast.Lambda:
 			walkStmt(x.Body)
+		case *ast.TryOp:
+			walkExpr(x.Inner)
+		case *ast.MatchExpr:
+			walkExpr(x.Tag)
+			for _, arm := range x.Arms {
+				walkExpr(arm.Guard)
+				walkExpr(arm.Body)
+			}
+		case *ast.BlockExpr:
+			for _, st := range x.Stmts {
+				walkStmt(st)
+			}
+			walkExpr(x.Tail)
 		}
 	}
 	walkStmt = func(s ast.Stmt) {
@@ -315,6 +328,30 @@ func countIdents(prog *ast.Program, target string) int {
 			walkExpr(x.Init)
 		case *ast.ExprStmt:
 			walkExpr(x.Expr)
+		// The statement switch had the same blindness the expression one above
+		// was patched for, and it hid the same class of bug: substitution
+		// missed the statement `match` and `defer` entirely, and a `for i in
+		// LOW..HIGH` bound, but no test could see the survivor (#7157).
+		case *ast.Loop:
+			walkStmt(x.Body)
+		case *ast.ForEach:
+			walkExpr(x.Iter)
+			walkExpr(x.RangeHigh)
+			walkStmt(x.Body)
+		case *ast.Destructure:
+			walkExpr(x.Init)
+		case *ast.Defer:
+			walkExpr(x.Expr)
+		case *ast.Match:
+			walkExpr(x.Tag)
+			for _, arm := range x.Arms {
+				walkExpr(arm.Literal)
+				walkExpr(arm.RangeHi)
+				walkExpr(arm.Guard)
+				walkStmt(arm.Body)
+			}
+		case *ast.FuncDecl:
+			walkStmt(x.Body)
 		}
 	}
 	for _, fn := range prog.Funcs {

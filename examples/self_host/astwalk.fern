@@ -413,6 +413,69 @@ pub function map_stmts(stmts: parser.Stmt[], visit: (parser.Expr) => parser.Expr
     return out;
 }
 
+// splice_stmts is the REMOVING sibling of map_stmts. map_stmt rewrites
+// expressions and can only replace a statement with exactly one statement;
+// `visit` here returns a LIST, so a pass can drop a statement (return []),
+// keep it (return [st]) or expand it. `-O`'s assert elision is the first
+// consumer and needs the dropping direction.
+//
+// Two passes, because statements live in two places. map_stmts reaches the
+// ones inside EXPRESSIONS — a lambda body, including one nested in a call
+// argument or a match-arm guard — and splices each lambda's own tree as it
+// goes; splice_own then walks the statement tree proper. Each statement is
+// visited exactly once: map_expr is bottom-up, so an inner lambda is spliced
+// before the outer one, and splice_own never re-enters an expression.
+pub function splice_stmts(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt[] {
+    var mapped: parser.Stmt[] = map_stmts(stmts, function(x: parser.Expr): parser.Expr {
+        match (x) {
+            parser.ExprLambda(lm) => { return parser.ExprLambda { ...lm, body: splice_own(lm.body, visit) }; },
+            _ => { return x; }
+        }
+        return x;
+    });
+    return splice_own(mapped, visit);
+}
+
+// splice_own applies `visit` down one statement tree, post-order. It does NOT
+// descend into expressions: splice_stmts' map pass has already spliced every
+// lambda body, and descending again would splice a nested one twice.
+function splice_own(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var repl: parser.Stmt[] = visit(splice_own_children(stmts[i], visit));
+        var j: i32 = 0;
+        while (j < repl.len()) { out = out.append(repl[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// splice_own_children rebuilds one statement with each statement list it
+// encloses spliced. It does not visit `st` itself; that is splice_own's job,
+// so children are spliced before their parent is judged.
+function splice_own_children(st: parser.Stmt, visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt {
+    match (st) {
+        parser.StmtIf(f) => {
+            return parser.StmtIf { ...f, then_body: splice_own(f.then_body, visit), else_body: splice_own(f.else_body, visit) };
+        },
+        parser.StmtWhile(w) => { return parser.StmtWhile { ...w, body: splice_own(w.body, visit) }; },
+        parser.StmtFor(fo) => { return parser.StmtFor { ...fo, body: splice_own(fo.body, visit) }; },
+        parser.StmtMatch(mt) => {
+            var arms: parser.MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < mt.arms.len()) {
+                arms = arms.append(parser.MatchArm { ...mt.arms[i], body: splice_own(mt.arms[i].body, visit) });
+                i = i + 1;
+            }
+            return parser.StmtMatch { ...mt, arms: arms };
+        },
+        parser.StmtDefer(d) => { return parser.StmtDefer { ...d, action: splice_own_children(d.action, visit) }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
 // ident_of contributes one node's identifier READS. It is the whole of
 // collect_idents_expr that is not the walk.
 function ident_of(e: parser.Expr, acc: string[]): string[] {
