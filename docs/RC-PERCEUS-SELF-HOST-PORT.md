@@ -10461,4 +10461,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Both cases now take their operands as PARAMS, which `slot_is_reclaimable_str`
   refuses outright, so a reclaim in the scoped function can only be the aliased or
   returned box. Still bites: 0 frees in `mk` here, 2 under a compiler that admits
-  the alias. Refs #6544 #4451.
+  the alias.
+
+  CI found two more of the same shape after the first push, so the pattern is
+  worth naming: **an exact-reclaim-count assertion whose program builds its
+  operands as literal-init locals is measuring the gap, not the contract.** Four
+  cases across three files relied on it — `self_host_str_reclaim_ir_test.go`
+  (aliased-not-reclaimed, returned-not-reclaimed),
+  `self_host_str_concat_temp_ir_test.go` (ident-operands-result-only) and
+  `self_host_str_accum_ir_test.go` (accum-nonfresh-reassign-not-reclaimed).
+
+  The remedy is per case, not mechanical. Where the subject is a LOCAL — the
+  aliased result, the returned box, the accumulator — the operands become params
+  or are given a real alias, so the subject stays the only thing a count can be
+  about. Scoping alone would have removed the teeth from the concat case, because
+  params are un-reclaimable regardless and the assertion would then hold for any
+  compiler. Every restatement was re-checked against the
+  all-bare-idents-are-borrows build and still bites: 1 vs 5, 0 vs 2, 0 vs 2. The
+  other two counter-using suites (`self_host_str_freshret_ir_test.go`,
+  `self_host_self_assign_reuse_ir_test.go`) were unaffected. Refs #6544 #4451.
