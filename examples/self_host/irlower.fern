@@ -26692,6 +26692,172 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
 // folding the literal in there made `s = "reset"` read as a fresh rebind and
 // credited an accumulator its own gate pins as un-reclaimable. Return position
 // has no such consumer — a return value is never rebound.
+// str_call_ret_is_fresh_reg: `f(..)` where `f` is already proven to return a
+// freshly-allocated string on every path. `reg` is str_fresh_ret_fns_of's own
+// accumulator, so this is the transitive step its fixpoint is for: a stdlib
+// wrapper like `(s: string) to_upper() { return unicode.to_upper(s); }` returns
+// nothing but a fresh string, and refusing it cost the consuming site its
+// reclaim (43 B/round on `base.to_upper().len()`). Names are the MANGLED
+// whole-program ones on both sides — the registry stores funcs[k].name and the
+// callee reaches here as a plain ident (`unicode__to_upper`), the same spelling
+// the emitted `__fn_` symbol carries.
+function str_call_ret_is_fresh_reg(e: parser.Expr, reg: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return util.index_of_str(reg, cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// str_local_is_fresh_ret: `return out` where `out` is a LOCAL this body built
+// out of nothing but fresh pieces. That is the shape every string builder in the
+// stdlib ends with — `var out = ""` then `out = out + …` in a loop — and
+// refusing it is what stopped the transitive chase at the leaf:
+// `string.to_upper` -> `unicode.to_upper` -> `_map_upper`, which returns exactly
+// this.
+//
+// Positive evidence only, and the local must be INVISIBLE outside its own
+// construction: a declaration whose init is fresh, assignments whose values are
+// fresh (`out + x` is a concat, so the self-reference is fine), and NO other
+// appearance anywhere in the body. That last clause is what keeps the caller's
+// release sound — a local also stored into a struct, passed to a call, or
+// captured has another owner, and the returned pointer would be an alias rather
+// than a handover. A parameter never qualifies: it has no declaration here.
+function str_local_is_fresh_ret(stmts: parser.Stmt[], name: string, reg: string[]): boolean {
+    if (name.len() == 0) { return false; }
+    if (!strloc_declared_fresh(stmts, name, reg)) { return false; }
+    return !strloc_escapes(stmts, name, reg);
+}
+
+function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return str_return_is_fresh_reg(v.init, reg); } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// strloc_escapes: `name` appears somewhere other than its own declaration, an
+// assignment TO it whose value is fresh, and a bare `return name`.
+function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name != name && expr_mentions_name(v.init, name)) { return true; }
+            },
+            parser.StmtAssign(a) => {
+                // `target` is a NAME, so a compound target (`o.f`, `xs[i]`) spells
+                // the base name here too — any of those touching `name` is an
+                // escape, and only the plain self-assign is credited.
+                if (a.target == name) {
+                    if (!str_return_is_fresh_reg(a.value, reg)) { return true; }
+                } else if (expr_mentions_name(a.value, name)) { return true; }
+            },
+            parser.StmtReturn(r) => {
+                var bare: boolean = false;
+                match (r.value) { parser.ExprIdent(rid) => { bare = rid.name == name; }, _ => {} }
+                if (!bare && expr_mentions_name(r.value, name)) { return true; }
+            },
+            parser.StmtExpr(e) => { if (expr_mentions_name(e.value, name)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_mentions_name(f.cond, name)) { return true; }
+                if (strloc_escapes(f.then_body, name, reg) || strloc_escapes(f.else_body, name, reg)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_mentions_name(w.cond, name)) { return true; }
+                if (strloc_escapes(w.body, name, reg)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (expr_mentions_name(fo.iter, name)) { return true; }
+                if (strloc_escapes(fo.body, name, reg)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_mentions_name(m.scrutinee, name)) { return true; }
+                var a2: i32 = 0;
+                while (a2 < m.arms.len()) {
+                    if (m.arms[a2].has_guard && expr_mentions_name(m.arms[a2].guard, name)) { return true; }
+                    if (strloc_escapes(m.arms[a2].body, name, reg)) { return true; }
+                    a2 = a2 + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function str_return_is_fresh_reg_in(e: parser.Expr, reg: string[], body: parser.Stmt[]): boolean {
+    if (str_return_is_fresh_reg(e, reg)) { return true; }
+    match (e) {
+        parser.ExprIdent(id) => { return str_local_is_fresh_ret(body, id.name, reg); },
+        _ => {}
+    }
+    return false;
+}
+
+function str_return_is_fresh_reg(e: parser.Expr, reg: string[]): boolean {
+    if (str_return_is_fresh(e)) { return true; }
+    return str_call_ret_is_fresh_reg(e, reg);
+}
+
+function body_has_nonfresh_str_return_reg(stmts: parser.Stmt[], reg: string[], body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!str_return_is_fresh_reg_in(r.value, reg, body)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_str_return_reg(f.then_body, reg, body) || body_has_nonfresh_str_return_reg(f.else_body, reg, body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_str_return_reg(w.body, reg, body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_str_return_reg(fo.body, reg, body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return_reg(m.arms[a].body, reg, body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string, reg: string[], body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var ok: boolean = str_return_is_fresh_reg_in(r.value, reg, body);
+                if (!ok) {
+                    match (r.value) {
+                        parser.ExprIdent(rid) => { ok = rid.name == recv; },
+                        parser.ExprSlice(rsl) => {
+                            match (rsl.array) {
+                                parser.ExprIdent(rsid) => { ok = rsid.name == recv; },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+                if (!ok) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfreshrecv_str_return_reg(f.then_body, recv, reg, body) || body_has_nonfreshrecv_str_return_reg(f.else_body, recv, reg, body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfreshrecv_str_return_reg(w.body, recv, reg, body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfreshrecv_str_return_reg(fo.body, recv, reg, body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshrecv_str_return_reg(m.arms[a].body, recv, reg, body)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function str_return_is_fresh(e: parser.Expr): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
@@ -26764,12 +26930,33 @@ function body_has_nonfreshrecv_str_return(stmts: parser.Stmt[], recv: string): b
     return false;
 }
 
+// The walk is a LEAST FIXPOINT over the bare-name half, for the same reason
+// param_counted_of's is: a function whose returns are all calls cannot be judged
+// until those callees are, and the stdlib stacks them three deep
+// (`string.to_upper` -> `unicode.to_upper` -> `_ascii_fold` / `_map_upper`).
+// Starting empty and only ever ADDING keeps it monotone, so it settles on the
+// grounded fixpoint and an ungrounded mutual-recursion cycle stays OUT, which is
+// the conservative direction: a missing name costs a leak, never an
+// over-release. Rounds are bounded — the chains are shallow and the bound is a
+// backstop, not the operating point.
 pub function str_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var reg: string[] = [];
+    var round: i32 = 0;
+    while (round < 8) {
+        var next: string[] = str_fresh_ret_fns_round(funcs, reg);
+        if (next.len() == reg.len()) { return next; }
+        reg = next;
+        round = round + 1;
+    }
+    return reg;
+}
+
+function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
         if (funcs[k].ret_type == "string" && funcs[k].receiver_type.len() == 0
-                && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return(funcs[k].body)) {
+                && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body)) {
             out = out.append(funcs[k].name);
         }
         // "SFRRECV:<Recv>.<method>" — a string-shaped METHOD whose every return
@@ -26795,7 +26982,7 @@ pub function str_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
                 && funcs[k].ret_type == "string"
                 && body_has_return(funcs[k].body)
-                && !body_has_nonfreshrecv_str_return(funcs[k].body, funcs[k].receiver_name)) {
+                && !body_has_nonfreshrecv_str_return_reg(funcs[k].body, funcs[k].receiver_name, reg, funcs[k].body)) {
             out = out.append("SFRRECV:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
