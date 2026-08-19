@@ -116,7 +116,7 @@ func describeName(info *checker.Info, hit *nameHit) (string, bool) {
 
 	// Ident hits go through the regular scope-chain resolution.
 	if hit.ident != nil {
-		return describeIdentName(info, hit.enclosing, hit.name)
+		return describeIdentName(info, hit.enclosing, hit.ident)
 	}
 	return "", false
 }
@@ -194,7 +194,8 @@ func exprResolvedType(info *checker.Info, enclosing *ast.FuncDecl, e ast.Expr) a
 	return nil
 }
 
-func describeIdentName(info *checker.Info, enclosing *ast.FuncDecl, name string) (string, bool) {
+func describeIdentName(info *checker.Info, enclosing *ast.FuncDecl, id *ast.Ident) (string, bool) {
+	name := id.Name
 	if enclosing != nil {
 		// Locals win over parameters per the checker's scope chain.
 		if info != nil {
@@ -225,31 +226,32 @@ func describeIdentName(info *checker.Info, enclosing *ast.FuncDecl, name string)
 		if ed, ok := info.Enums[name]; ok {
 			return formatEnumDecl(ed), true
 		}
-		// Bare enum variants (`Red`, `None`) parse as Idents — the
-		// checker resolves them via variantOf without rewriting the
-		// AST. Fall back to a name-keyed sweep of the registered
-		// enums; variant names are unique across enums per the
-		// checker's duplicate check, so the first hit is correct.
-		if enumName, v, ok := lookupVariant(info, name); ok {
+		// Bare enum variants (`Red`, `None`) parse as Idents; the
+		// checker resolves them without rewriting the AST.
+		if enumName, v, ok := variantOfIdent(info, id); ok {
 			return formatEnumVariant(enumName, v), true
 		}
 	}
 	return "", false
 }
 
-// lookupVariant searches every registered enum for a variant whose
-// source name matches. Returns the owning enum's name and the
-// variant. The checker rejects duplicate variant names across
-// enums, so the first hit is the only hit.
-func lookupVariant(info *checker.Info, name string) (string, ast.EnumVariant, bool) {
-	if info == nil {
+// variantOfIdent resolves a bare enum-variant Ident (`Red`, `None`)
+// to the enum the checker picked for it, stamped on Ident.EnumName.
+// Two modules that cannot see each other may each declare the same
+// variant name, so the stamp is the only answer — a name-keyed sweep
+// of info.Enums would attribute the reference to an arbitrary one.
+// ok=false for an Ident the checker did not resolve to a variant.
+func variantOfIdent(info *checker.Info, id *ast.Ident) (string, ast.EnumVariant, bool) {
+	if info == nil || id == nil || id.EnumName == "" {
 		return "", ast.EnumVariant{}, false
 	}
-	for enumName, ed := range info.Enums {
-		for _, v := range ed.Variants {
-			if v.Name == name {
-				return enumName, v, true
-			}
+	ed, ok := info.Enums[id.EnumName]
+	if !ok {
+		return "", ast.EnumVariant{}, false
+	}
+	for _, v := range ed.Variants {
+		if v.Name == id.Name {
+			return id.EnumName, v, true
 		}
 	}
 	return "", ast.EnumVariant{}, false

@@ -103,7 +103,7 @@ func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit, fallb
 		}
 	}
 	if hit.ident != nil {
-		pos, n, srcMod, ok := locateIdentDef(info, prog, hit.enclosing, hit.name)
+		pos, n, srcMod, ok := locateIdentDef(info, prog, hit.enclosing, hit.ident)
 		if ok {
 			return pos, n, declURI(srcMod, fallbackURI), true
 		}
@@ -185,7 +185,8 @@ func locateField(info *checker.Info, enclosing *ast.FuncDecl, fa *ast.FieldAcces
 	return ast.Position{}, "", false
 }
 
-func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDecl, name string) (ast.Position, int, string, bool) {
+func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDecl, id *ast.Ident) (ast.Position, int, string, bool) {
+	name := id.Name
 	if enclosing != nil {
 		if info != nil {
 			for _, v := range info.Locals[enclosing] {
@@ -218,9 +219,9 @@ func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDe
 		if ed, ok := info.Enums[name]; ok {
 			return ed.P, len(name), ed.SourceModule, true
 		}
-		// Bare enum variants (`Red`, `None`) — same fallback as
-		// describeIdentName for the variant case.
-		if enumName, v, ok := lookupVariant(info, name); ok {
+		// Bare enum variants (`Red`, `None`) — resolved off the
+		// checker's stamp, same as describeIdentName.
+		if enumName, v, ok := variantOfIdent(info, id); ok {
 			var srcMod string
 			if ed, ok := info.Enums[enumName]; ok {
 				srcMod = ed.SourceModule

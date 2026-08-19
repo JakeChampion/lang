@@ -84,7 +84,7 @@ func runSemanticTokens(state *docState) semanticTokensResponse {
 		ast.Walk(fd.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Ident:
-				add(x.P, len(x.Name), classifyIdent(state.info, fd, x.Name))
+				add(x.P, len(x.Name), classifyIdent(state.info, fd, x))
 			case *ast.FieldAccess:
 				if x.FieldPos.Line != 0 {
 					add(x.FieldPos, len(x.Field), stProperty)
@@ -128,7 +128,8 @@ func runSemanticTokens(state *docState) semanticTokensResponse {
 	return encodeSemanticTokens(raw)
 }
 
-func classifyIdent(info *checker.Info, enclosing *ast.FuncDecl, name string) int {
+func classifyIdent(info *checker.Info, enclosing *ast.FuncDecl, id *ast.Ident) int {
+	name := id.Name
 	if info != nil {
 		for _, v := range info.Locals[enclosing] {
 			if v.Name == name {
@@ -149,7 +150,7 @@ func classifyIdent(info *checker.Info, enclosing *ast.FuncDecl, name string) int
 		if _, ok := info.Enums[name]; ok {
 			return stEnum
 		}
-		if _, _, ok := lookupVariant(info, name); ok {
+		if _, _, ok := variantOfIdent(info, id); ok {
 			return stEnumMember
 		}
 	}

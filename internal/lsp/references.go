@@ -118,14 +118,13 @@ func collectOccurrences(state *docState, hit *nameHit) []occurrence {
 		}
 	}
 	// Bare enum variants (`Red`, `None`) parse as Idents; the
-	// checker resolves them via variantOf without rewriting the
-	// AST. Route those to collectVariant so the rewrite reaches
-	// the decl + every match-arm pattern, not just the Ident
-	// occurrences collectByName would find.
-	if state.info != nil {
-		if enumName, _, ok := lookupVariant(state.info, hit.name); ok {
-			return collectVariant(state, enumName, hit.name)
-		}
+	// checker resolves them without rewriting the AST, leaving the
+	// enum it picked on Ident.EnumName. Route those to
+	// collectVariant so the rewrite reaches the decl + every
+	// match-arm pattern, not just the Ident occurrences
+	// collectByName would find.
+	if enumName, _, ok := variantOfIdent(state.info, hit.ident); ok {
+		return collectVariant(state, enumName, hit.name)
 	}
 	return collectByName(state, hit.name, false)
 }
@@ -136,8 +135,8 @@ func collectOccurrences(state *docState, hit *nameHit) []occurrence {
 // pattern (Match + MatchExpr), and every call-shaped variant
 // construction (`Some(42)`). The checker doesn't rewrite call-
 // shaped variants to EnumLit either — they stay as Calls with an
-// Ident callee — so we sweep Idents matching the name and check
-// the surrounding context via state.info.
+// Ident callee — so bare-name references are found by sweeping
+// Idents the checker stamped with this enum.
 func collectVariant(state *docState, enumName, variantName string) []occurrence {
 	var out []occurrence
 	if state.info == nil {
@@ -168,7 +167,7 @@ func collectVariant(state *docState, enumName, variantName string) []occurrence 
 				}
 			case *ast.Match:
 				for _, arm := range x.Arms {
-					if !arm.IsWildcard && arm.VariantName == variantName {
+					if !arm.IsWildcard && arm.VariantName == variantName && arm.EnumName == enumName {
 						out = append(out, occurrence{
 							name: variantName, pos: arm.P, sourceModule: fnMod,
 						})
@@ -176,7 +175,7 @@ func collectVariant(state *docState, enumName, variantName string) []occurrence 
 				}
 			case *ast.MatchExpr:
 				for _, arm := range x.Arms {
-					if !arm.IsWildcard && arm.VariantName == variantName {
+					if !arm.IsWildcard && arm.VariantName == variantName && arm.EnumName == enumName {
 						out = append(out, occurrence{
 							name: variantName, pos: arm.P, sourceModule: fnMod,
 						})
@@ -184,9 +183,9 @@ func collectVariant(state *docState, enumName, variantName string) []occurrence 
 				}
 			case *ast.Ident:
 				// Bare-name reference to the variant (`Red`, `None`).
-				// We trust the name match — the checker rejects an
-				// unrelated decl with the same name as the variant.
-				if x.Name == variantName {
+				// The checker's stamp decides: a like-named variant of
+				// an enum this module cannot see is a different symbol.
+				if x.Name == variantName && x.EnumName == enumName {
 					out = append(out, occurrence{
 						name: variantName, pos: x.P, sourceModule: fnMod,
 					})
