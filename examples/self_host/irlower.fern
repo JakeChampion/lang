@@ -45840,7 +45840,27 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
         parser.ExprIndex(ix) => { return strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, strarrfld_scan(ix.array, structs, binds, str_fresh, strarr_producers, a)); },
         parser.ExprSlice(sl) => { return strarrfld_scan(sl.end, structs, binds, str_fresh, strarr_producers, strarrfld_scan(sl.start, structs, binds, str_fresh, strarr_producers, strarrfld_scan(sl.array, structs, binds, str_fresh, strarr_producers, a))); },
         parser.ExprStructLit(sl2) => {
-            if (sl2.has_base) { a = strarrfld_scan(sl2.base, structs, binds, str_fresh, strarr_producers, a); }
+            if (sl2.has_base) {
+                a = strarrfld_scan(sl2.base, structs, binds, str_fresh, strarr_producers, a);
+                // A functional-update BASE copies every field the literal does
+                // not override, pointer-for-pointer. The copy takes no retain
+                // for an array field, so both boxes hold the same buffer with
+                // one reference between them: STORE-unsafe for the buffer dec,
+                // whatever the overrides look like.
+                var bfi: i32 = 0;
+                while (bfi < structs.len()) {
+                    if (structs[bfi].name == sl2.type_name) {
+                        var bfj: i32 = 0;
+                        while (bfj < structs[bfi].fields.len()) {
+                            if (structs[bfi].fields[bfj].type_name == "string[]") {
+                                a = push_str_unique(a, "store:" + sl2.type_name + "." + structs[bfi].fields[bfj].name);
+                            }
+                            bfj = bfj + 1;
+                        }
+                    }
+                    bfi = bfi + 1;
+                }
+            }
             var i: i32 = 0;
             while (i < sl2.field_names.len()) {
                 var fkt: string = decl_field_type(structs, sl2.type_name, sl2.field_names[i]);
