@@ -1609,6 +1609,13 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// Escapes are still caught: a returned tuple takes move-on-return
 		// and one stored into a container is escape-tainted at the sink.
 		return false
+	case *ast.MapLit:
+		// `Map { … }` lowers to a fresh `map_new` plus one `__method_Map_set`
+		// per entry — the same construction `var m = map_new(n)` followed by
+		// inserts produces — so the local owns the handle and aliases nothing.
+		// The entries' own sources are escape-tainted by computeFreeEligible's
+		// MapLit arm, exactly as the insert form's `__method_Map_set` args are.
+		return false
 	case *ast.MakeClosure:
 		// A freshly-built closure (rc=1), like an array literal — it
 		// owns its env, not an alias of a borrowed value. Owned, so the

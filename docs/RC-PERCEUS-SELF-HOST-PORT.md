@@ -10211,3 +10211,79 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   producer does not free the box it hands back; `main` DOES release it at the
   `h().len()` read now that the fresh-return registry sees through `h`, which is
   what the registry is for. Refs #6544 #4451.
+- 2026-08-19: **#7122 — the native map-churn leak was the `Map { … }` LITERAL,
+  and the clamp hid that it is the WHOLE map.** The 2026-08-18 re-measurement
+  above reported native leaking every map churn shape probed at >= 120 B/round
+  where the self-host IR path is flat. It holds, and the shape it holds for is
+  the literal: the same churn spelled `map_new(n)` plus inserts is flat on
+  native, before and after. Uncapped, on a 1000 / 2000 / 4000-round churn, and
+  linear in the rounds on every row (x86-64 | arm64 | wasm):
+
+  | churn shape | before | after |
+  |---|---|---|
+  | `Map[i32, i32]` | 128 \| 128 \| 96 | **0** |
+  | `Map[string, i32]` | 128 \| 144 \| 112 | **0** |
+  | `Map[i32, string]` | 128 \| 144 \| 112 | **0** |
+  | `Map[i32, i32[]]` | 160 \| 160 \| 128 | 0 \| 0 \| 32 |
+  | `Map[i32, Q]` (struct values) | 192 \| 192 \| 144 | **0** |
+
+  `FERN_LEAKCHECK=1` reads the same thing without the bump counter: 104058
+  allocs against 58 frees over the five churns, and allocs == frees afterwards.
+  So the scalar-column row is not a separate bug from the array- / struct-column
+  ones — one cause, and the wider columns leaked more only because the map they
+  hang off was never freed.
+
+  `rhsTainted` had no `*ast.MapLit` arm, so a literal initialiser fell to the
+  conservative "unknown shape is tainted" default and the local was never
+  freeEligible. Both the loop-body reinit drop and the exit sweep then degraded
+  to the flat `__drop_struct_flat_Map`, which frees neither handle, buf nor
+  value column. The literal is `map_new` plus one `__method_Map_set` per entry,
+  which is the construction the insert spelling already gets credit for, so the
+  arm returns false like `ArrayLit` / `StructLit` / `TupleLit`.
+
+  **That admission alone is an over-release, and the aliasing probe caught it.**
+  Every inc-on-set the map's drop is balanced against lived in the `*ast.Call`
+  lowering for `__method_Map_set` — the kind >= 2 value retain, and the string
+  key / value retains in both ABIs. The MapLit arm emits that same call
+  directly, so it stored an aliased local without an inc; harmless while nothing
+  freed the column, a use-after-free the moment the drop landed (`Map { 1: live }`
+  in a loop, then a later map churn reading the recycled buffer: exit 134, and
+  clean under `FERN_RC_FREE_DEBUG=1`, which recycles nothing). The retains are
+  now `emitMapSetRetains`, called from both sites.
+
+  Left open, measured on native x86-64 and each a distinct defect:
+
+  - **`m.get(k)` of a pointer VALUE strands its retain** — 32 B/round on a
+    `Map[i32, i32[]]` read in a match arm, where the same churn without the
+    lookup is flat. `__map_retain_val` incs an rc-tracked value on the way out
+    and the arm binding, borrow-tainted like every match binding, never releases
+    it. Making it a counted owner is the ownership question `consumingBindings`
+    answers for enum payloads, and it has to keep `Some(g) => { keep = g; }`
+    working, so it is a design pass rather than a missing call.
+  - **Overwriting a STRING value in a live map** — 64 B/round. That is
+    `emitMapOverwriteDrop`'s documented refusal (#6242 gives the COW copy no
+    claim on a string or struct value column, so walking it would free what the
+    new handle reads), not an oversight.
+  - **wasm strands 32 B/round of an ARRAY value column**, in the literal and the
+    insert spelling alike, before and after this change. Both natives are flat
+    on the same source, so it is a wasm-side question about the kind-2 column
+    walk; `internal/e2e/map_lit_reclaim_test.go` pins the two spellings at
+    parity there rather than hiding the residual.
+
+  **#4353 item 3 gets its oracle back.** The measurement it was filed against
+  read native as the leakier side and concluded there was nothing to port. With
+  the literal reclaiming, native is flat on the array- and struct-valued map
+  columns where the self-host still churns 40 and 88 B/round (x86-64, same
+  source), so the item is a self-host gap again rather than a shared unknown.
+
+  Regression tests: `internal/e2e/map_lit_reclaim_test.go` (3 programs x 4 legs).
+  The byte gate reads the per-round figure from the 2n delta so a fixed startup
+  cost divides away; the aliasing program is what fails when the admission ships
+  without the retains — exit 5 on both natives, the aliased-value and
+  read-the-value-back cases together, and a two-function reduction of the pair
+  faults outright (exit 134). Gates run: `internal/ir`, `internal/interp`,
+  `internal/checker`, the whole conformance corpus (`TestFernFixtures`), the
+  map / rc / reclaim / alloc / cow / drop e2e selection, `TestWasm`, and —
+  since native is what compiles the self-host driver —
+  `TestSelfHostInterpDriverX86_64` plus
+  `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #7122 #4353 #7114 #4451.
