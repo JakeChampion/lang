@@ -9874,14 +9874,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   question below, not a model to copy.
 
   The remaining 424 is the element boxes, and closing it means the deep walk on a
-  type the read gate refuses — the same question as the element-read exclusion,
-  now with a second reason to answer it: wasm ALREADY deep-frees `string[]` field
-  elements ungated (`emit_wasm_struct_drop_body` routes any array-kind field with
-  pointer elements to `$__fern_arr_dec_ptr`), which is the behaviour the register
-  backends' "strfldok:arr:" gate exists to refuse, citing a per-module
-  compiler-self-run segfault. One of those two is wrong and neither has been
-  shown to be. That is the next slice, and it is a soundness question rather than
-  a leak one.
+  type the read gate refuses — the same question as the element-read exclusion.
+  (That element-read slice landed next and closed this row to flat on all three
+  legs.)
+
+  **This entry also claimed wasm deep-frees `string[]` field elements UNGATED,
+  and that claim does not survive reading the emitted wat.** The source reads
+  that way — `emit_wasm_struct_drop_body` takes no arr gate, and
+  `array_field_elem_is_ptr("string[]")` is true — but the code it emits does not.
+  `__struct_drop_Node` for a strarrfld-ADMITTED type emits `$__fern_arr_dec_ptr`
+  (deep); `__struct_drop_Bag` for `json_array_field`'s `strs: string[]`, which
+  the read gate refuses, emits the flat `$__fern_arr_dec` — on unmodified main,
+  with nothing gating it in the function. Something upstream already
+  differentiates the two and it is not the code path this entry named.
+
+  A follow-up that threaded the `arr:` / `arrbuf:` admissions into both wasm
+  helpers was written and measured: byte-identical output across 200 conformance
+  cases and the whole probe battery, on every shape. A change that cannot be
+  shown to do anything is not worth shipping, so it was dropped. Whoever picks
+  this up should establish what actually selects wasm's deep arm BEFORE assuming
+  a hazard — the premise here was an argument from the source, and the emitted
+  code disagrees with it. Refs #6544 #6522 #4451.
 
   Regression tests:
   `internal/e2eselfhost/self_host_strarr_field_buffer_release_test.go` (4 cases
