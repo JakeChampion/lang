@@ -10746,3 +10746,43 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   gate on arm64 and wasm (x86-64's own column leak masks it there), while the
   aliasing program passes either side, which is its job. Refs #7144 #7122 #7143
   #7114 #4451.
+- 2026-08-19: **a fresh-ALLOCATING string builtin's result was not recognised as a
+  fresh temp**, which is why `mkfresh(i).to_ascii_upper().len()` still read 46
+  after the receiver release took it from 95. `is_fresh_str_temp`'s ExprCall arm
+  admitted a scalar `.to_string()` and a proven fresh-ret free call and nothing
+  else, so the transform's own result was stranded even once the receiver
+  beneath it was freed.
+
+  The runtime bodies settle which builtins qualify, rather than an argument about
+  what the ops "probably" do: `__fern_str_to_upper` is `__raw_alloc(n)` …
+  `__raw_string(p, n)` with no identity path at all, `_reverse` the same, and
+  `_repeat` forces a 1-byte cap so even a zero-length result allocates. `trim`
+  returns a view and `replace` returns the receiver unchanged when the needle is
+  absent, so neither is admitted. `str_fresh_alloc_method` is deliberately
+  SMALLER than `str_borrowing_method` — that one is about what a method does to
+  its RECEIVER and also admits the scalar predicates; this one is about what it
+  RETURNS.
+
+  Widening the predicate alone measured ZERO on the target, because the `.len()`
+  receiver site never consulted it: `lfresh` was an ad-hoc disjunction of its own
+  (concat, SFRLEN call, owned-container index, struct field). Seeding it from
+  `is_fresh_str_temp` and keeping the container arms — which are not temps but die
+  there all the same — is what moved it.
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `w(pre).to_ascii_upper().len()` | 46 | **-2** |
+  | `w(pre).reverse().len()` | 46 | **flat** |
+  | `w(pre).repeat(2).len()` | 46 | **flat** |
+
+  All three return 98 on a base-built compiler. The trim/replace exclusion is
+  CONTRACT-ONLY here and the test says so: adding `trim` to the set does change
+  the emission (one extra `__fern_str_free` in `round`), but no probe turned that
+  into an observable fault — the same standing the view clause had in the binding
+  credit, and unlike the receiver-release site where it exits 97. Recording the
+  difference rather than letting "the predicate is load-bearing" carry across
+  three sites where it is only true at one.
+
+  Still open on this family: the source-declared method twin
+  (`base.to_owned().to_owned().len()` 46, `b.unrel()` 47) is the user-method call
+  site and wants the `SFRFRESHNAME:` registry. Refs #6544 #4451.
