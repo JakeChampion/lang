@@ -29,34 +29,38 @@ var strReclaimIRCases = []struct {
 	src         string
 	expected    int
 	mustReclaim bool
+	// scope names the ONE user function the count is taken in. "" counts the
+	// whole program, which is the same thing for a single-`main` case; a case
+	// whose contract is about which SIDE of a call reclaims has to name it.
+	scope string
 }{
 	// Loop-body fresh concat, used read-only (s.len() is a borrow): reclaimed each
 	// iteration. tag is a loop-invariant literal local (not itself reclaimable —
 	// literals may alias). s = "row" + "!" = "row!" (len 4); sum over 4 iters = 16.
 	{"loop-concat-nonescaping",
 		`function main(): i32 { var tag: string = "row"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = tag + "!"; sum = sum + s.len(); i = i + 1; } return sum; }`,
-		16, true},
+		16, true, ""},
 	// Loop-body fresh .to_ascii_upper() (a fresh copy), non-escaping: reclaimed each iter.
 	// base = "abc" (len 3); s.len() = 3; sum over 4 iters = 12.
 	{"loop-to-upper-nonescaping",
 		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
-		12, true},
+		12, true, ""},
 	// Loop-body chr(..)+"x" concat: chr produces a fresh 1-char string, +"x" a fresh
 	// 2-char one bound to s. s.len() = 2; sum over 4 iters = 8.
 	{"loop-chr-concat",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = chr(65 + (i % 3)) + "x"; sum = sum + s.len(); i = i + 1; } return sum; }`,
-		8, true},
+		8, true, ""},
 	// Non-loop fresh string local, freed at scope exit. s = "hi" + "!" (len 3).
 	{"scope-exit-concat",
 		`function main(): i32 { var s: string = "hi" + "!"; return s.len(); }`,
-		3, true},
+		3, true, ""},
 	// Memory-safety at scale: 5,000,000 iterations of a fresh-concat loop. A leaked
 	// box + buffer per iteration would exhaust the heap; a double-free would corrupt
 	// the freelist and crash / return garbage. exit 0 (sum kept mod 100) with the
 	// reclaim present proves the balance (flat heap, no double-free).
 	{"str-churn-safe",
 		`function main(): i32 { var tag: string = "abcd"; var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var s: string = tag + "ef"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; }`,
-		0, true},
+		0, true, ""},
 	// NEGATIVE: an ALIASED fresh string (`var t = s`) must NOT be reclaimed — t is a
 	// bare-ident alias of s's box, so freeing either would double-free. s is used as
 	// a bare ident (RHS of t's binding) → body_unsafe_for flags it → not in the
@@ -65,53 +69,57 @@ var strReclaimIRCases = []struct {
 	// RESULT contract. No __fern_str_free emitted; value stays correct. 3 + 3 = 6.
 	{"aliased-not-reclaimed",
 		`function main(): i32 { var a: string = "ab"; var b: string = "c"; var s: string = a + b; var t: string = s; return s.len() + t.len(); }`,
-		6, false},
-	// NEGATIVE: a RETURNED fresh string escapes → not reclaimed. Returned through a
-	// helper so main can measure it. h() returns a fresh concat of two ident operands
-	// (x/y, not fresh temps, so no operand reclaim); s escapes, not freed in h.
+		6, false, ""},
+	// NEGATIVE: a RETURNED fresh string escapes its producer → h must not free it.
+	// h() returns a fresh concat of two ident operands (x/y, not fresh temps, so no
+	// operand reclaim); the box is handed to the caller, and freeing it in h would
+	// leave main reading dead bytes. Scoped to h: main DOES release it, at the
+	// `h().len()` read, because h is in the whole-program fresh-return registry —
+	// that caller-side reclaim is the point of the registry, not a violation of
+	// this case.
 	{"returned-not-reclaimed",
 		`function h(): string { var x: string = "xy"; var y: string = "z"; var s: string = x + y; return s; } function main(): i32 { return h().len(); }`,
-		3, false},
+		3, false, "h"},
 	// ANNOTATED i32_to_string in a loop: reclaimed each iter. On the self-host the
 	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),
 	// so it is cleanly reclaimable. i in 0..12 → "0".."11"; sum of digit-lengths =
 	// 10*1 + 2*2 = 14.
 	{"loop-i32-to-string",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s: string = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`,
-		14, true},
+		14, true, ""},
 	// UN-ANNOTATED unambiguous producer (`var s = i32_to_string(i)`, inferred string):
 	// reclaimed too — str_free_producer_ident admits it without the annotation, and
 	// expr_is_str marks the slot. Same value as above (14).
 	{"loop-unannotated-i32-to-string",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`,
-		14, true},
+		14, true, ""},
 	// UN-ANNOTATED chr(..): reclaimed. s.len() == 1 each iter; sum over 5 = 5.
 	{"loop-unannotated-chr",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5) { var s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`,
-		5, true},
+		5, true, ""},
 	// UN-ANNOTATED concat (`var s = tag + "!"`, inferred string): reclaimed too —
 	// the fresh gate is now syntax-only and the is_str type gate (set from the
 	// type-aware expr_is_str) admits the actual string concat. Same as the
 	// annotated case: "row!" len 4 × 4 = 16.
 	{"loop-unannotated-concat",
 		`function main(): i32 { var tag: string = "row"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = tag + "!"; sum = sum + s.len(); i = i + 1; } return sum; }`,
-		16, true},
+		16, true, ""},
 	// UN-ANNOTATED string method (`var s = base.to_ascii_upper()`): reclaimed. len 3 × 4 = 12.
 	{"loop-unannotated-to-upper",
 		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
-		12, true},
+		12, true, ""},
 	// NEGATIVE: an un-annotated INT `var n = a + b` matches the concat SHAPE but is
 	// not is_str, so it is never reclaimed (no __fern_str_free) and stays correct.
 	// Ensures the syntax-only fresh gate is safely filtered by the is_str type gate.
 	{"unannotated-int-add-not-reclaimed",
 		`function main(): i32 { var a: i32 = 3; var b: i32 = 4; var n = a + b; return n; }`,
-		7, false},
+		7, false, ""},
 	// i32_to_string churn at scale: reclaimed per iteration (flat heap; a double
 	// free would corrupt the freelist and crash / return garbage). `ok` stays 0
 	// because every decimal string has len >= 1, so exit 0 proves the balance.
 	{"i32-to-string-churn-safe",
 		`function main(): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < 5000000) { var s: string = i32_to_string(i); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; }`,
-		0, true},
+		0, true, ""},
 }
 
 // TestSelfHostStrReclaimIRX86_64 compiles each case through the self-hosted x86-64
@@ -139,6 +147,9 @@ func TestSelfHostStrReclaimIRX86_64(t *testing.T) {
 			// The bare label `__fn___fern_str_free:` (the helper definition, always
 			// emitted) is not a call, so counting the call form isolates the reclaim.
 			reclaims := countUserStrFreeReclaims(asm)
+			if tc.scope != "" {
+				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+			}
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-string reclaim (call __fn___fern_str_free), found none — the string leaks", tc.name)
 			}

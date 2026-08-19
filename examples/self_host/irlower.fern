@@ -22081,12 +22081,51 @@ function emit_struct_enum_field_payload_drops(se: LowerState, slot: i32, sty: st
 // is emitted as dec + ZERO the slot, so the later exit-sweep harmlessly decs a
 // null on that slot (no LowerState threading needed).
 
+// str_borrowing_method reports whether a string method neither hands its
+// receiver's box out nor returns a view of it: `len` plus the predicates and the
+// fresh-copy transforms, each of which either reads the receiver's bytes or
+// allocates a new buffer. A receiver at one of these is BORROWED for the call
+// and nothing survives it. `.trim()` and `.replace()` are absent on purpose —
+// both can return a VIEW of the receiver, which is a lasting alias.
+function str_borrowing_method(field: string): boolean {
+    return field == "len" || field == "to_ascii_upper" || field == "to_ascii_lower"
+        || field == "reverse" || field == "repeat"
+        || field == "starts_with" || field == "ends_with"
+        || field == "contains" || field == "index_of";
+}
+
+// expr_unsafe_for_view_pos is expr_unsafe_for at a position that only BORROWS a
+// string for the duration of one expression: the escape-scan twin of
+// lower_view_borrowed, called from the same positions the lowerer treats as
+// view-borrowing. A slice of `name` there is a view that dies inside the
+// expression — lower_str_slice_frame puts its box in reserved frame slots no
+// slot_of can name — so the source is READ, not aliased out, and keeps its
+// reclaim credit. Counting it as an escape cost `base[a:b].len()` the whole
+// reclaim of `base`. The bounds are ordinary positions and scan unchanged.
+function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprSlice(sl) => {
+            var src_unsafe: boolean = false;
+            match (sl.array) {
+                parser.ExprIdent(_) => {},
+                _ => { src_unsafe = expr_unsafe_for_view_pos(sl.array, name, borrowable); }
+            }
+            return src_unsafe || expr_unsafe_for(sl.start, name, borrowable)
+                || expr_unsafe_for(sl.end, name, borrowable);
+        },
+        _ => { return expr_unsafe_for(e, name, borrowable); }
+    }
+    return expr_unsafe_for(e, name, borrowable);
+}
+
 // expr_unsafe_for reports whether `name` appears anywhere in `e` in a position
 // that could create a reference outliving a precise drop — i.e. ANY occurrence
 // except a borrow read: the base of an index (`name[i]`), the receiver of a
-// method/field access (`name.m(...)` / `name.f`). A bare ident, a slice base
-// (a view aliases the buffer), a container-literal element, or a lambda capture
-// all escape. A CALL ARGUMENT normally escapes too (the callee might retain it),
+// method/field access (`name.m(...)` / `name.f`), or a slice at one of the
+// view-borrowing positions expr_unsafe_for_view_pos names. A bare ident, a
+// slice anywhere else (the view aliases the buffer and can be carried out), a
+// container-literal element, or a lambda capture all escape. A CALL ARGUMENT
+// normally escapes too (the callee might retain it),
 // EXCEPT a direct bare-ident `name` passed at a *borrowable* param position of a
 // known free function (`borrowable` registry, "callee|flags") — a provably
 // read-only callee cannot retain the arg, so passing it there is a BORROW. The
@@ -22098,13 +22137,23 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
         parser.ExprNumber(_) => { return false; },
         parser.ExprString(_) => { return false; },
         parser.ExprBool(_) => { return false; },
-        parser.ExprBinary(b) => { return expr_unsafe_for(b.left, name, borrowable) || expr_unsafe_for(b.right, name, borrowable); },
+        parser.ExprBinary(b) => {
+            // The string binary ops — concat and the comparisons — read their
+            // operands' bytes and move nothing, which is what lower_expr's
+            // lower_view_borrowed calls at each of them say. Every other op is
+            // arithmetic on scalars, where a slice operand cannot arise.
+            if (b.op == "+" || b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                return expr_unsafe_for_view_pos(b.left, name, borrowable)
+                    || expr_unsafe_for_view_pos(b.right, name, borrowable);
+            }
+            return expr_unsafe_for(b.left, name, borrowable) || expr_unsafe_for(b.right, name, borrowable);
+        },
         parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name, borrowable); },
         parser.ExprIndex(ix) => {
             var base_unsafe: boolean = false;
             match (ix.array) {
                 parser.ExprIdent(_) => { base_unsafe = false; },   // name[i] / other[i]: base read is a borrow
-                _ => { base_unsafe = expr_unsafe_for(ix.array, name, borrowable); }
+                _ => { base_unsafe = expr_unsafe_for_view_pos(ix.array, name, borrowable); }
             }
             return base_unsafe || expr_unsafe_for(ix.index, name, borrowable);
         },
@@ -22123,7 +22172,13 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
                 parser.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         parser.ExprIdent(_) => { callee_unsafe = false; },   // name.method(): receiver is a borrow
-                        _ => { callee_unsafe = expr_unsafe_for(fa.obj, name, borrowable); }
+                        // `name[a:b].len()`: a view receiver at a method that
+                        // cannot retain it borrows the source, exactly as the
+                        // bare-ident receiver above does.
+                        _ => {
+                            if (str_borrowing_method(fa.field)) { callee_unsafe = expr_unsafe_for_view_pos(fa.obj, name, borrowable); }
+                            else { callee_unsafe = expr_unsafe_for(fa.obj, name, borrowable); }
+                        }
                     }
                     // method args stay escapes: method-param borrowability isn't in
                     // the (free-function-keyed) registry (callee_name left "").
@@ -22142,7 +22197,12 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
                     },
                     _ => {}
                 }
-                if (!arg_is_borrow && expr_unsafe_for(c.args[ai], name, borrowable)) { return true; }
+                // The `len(x)` builtin is the free spelling of `.len()` and
+                // lowers through lower_view_borrowed, so a slice argument there
+                // borrows its source too.
+                if (callee_name == "len" && c.args.len() == 1) {
+                    if (expr_unsafe_for_view_pos(c.args[ai], name, borrowable)) { return true; }
+                } else if (!arg_is_borrow && expr_unsafe_for(c.args[ai], name, borrowable)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -28254,11 +28314,7 @@ function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]):
                 },
                 parser.ExprFieldAccess(fa) => {
                     if (strarr_elem_read(fa.obj, name)) {
-                        // element method receiver: read-only / fresh-copy only.
-                        if (!(fa.field == "len" || fa.field == "to_ascii_upper" || fa.field == "to_ascii_lower"
-                                || fa.field == "reverse" || fa.field == "repeat"
-                                || fa.field == "starts_with" || fa.field == "ends_with"
-                                || fa.field == "contains" || fa.field == "index_of")) { return true; }
+                        if (!str_borrowing_method(fa.field)) { return true; }
                     } else {
                         match (fa.obj) {
                             parser.ExprIdent(rid) => {
@@ -44642,12 +44698,7 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
             var callee_name: string = "";
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
-                    // read-only / fresh-copy string methods borrow their
-                    // receiver; any other method may retain it.
-                    if (cfa.field == "len" || cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower"
-                        || cfa.field == "reverse" || cfa.field == "repeat"
-                        || cfa.field == "starts_with" || cfa.field == "ends_with"
-                        || cfa.field == "contains" || cfa.field == "index_of") {
+                    if (str_borrowing_method(cfa.field)) {
                         a = strfld_safe_operand(cfa.obj, a);
                     } else {
                         a = strfld_collect_unsafe(cfa.obj, a);
@@ -45988,16 +46039,9 @@ function fnfld_lookup(binds: string[], name: string): string {
 // module used to cost every `notes` field in the program its reclaim.
 // strarrfld_transient_elem_recv reports whether a method call's callee is
 // `<struct>.<string[] field>[i].<read-only method>` — an ELEMENT borrowed for one
-// call and never bound. The method set is strarr_expr_unsafe's: `len` plus the
-// predicates and the fresh-copy transforms, each of which either reads the
-// receiver's bytes or allocates a new buffer, and none of which hands the
-// receiver's box out. `.trim()` and `.replace()` are absent on purpose — both
-// can return a VIEW of the receiver, which is a lasting alias.
+// call and never bound. str_borrowing_method is the method set.
 function strarrfld_transient_elem_recv(cfa: parser.ExprFieldAccess, structs: parser.StructDecl[], binds: string[]): boolean {
-    if (!(cfa.field == "len" || cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower"
-            || cfa.field == "reverse" || cfa.field == "repeat"
-            || cfa.field == "starts_with" || cfa.field == "ends_with"
-            || cfa.field == "contains" || cfa.field == "index_of")) { return false; }
+    if (!str_borrowing_method(cfa.field)) { return false; }
     match (cfa.obj) {
         parser.ExprIndex(ix) => {
             match (ix.array) {
