@@ -22650,7 +22650,7 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
 // names the lambda captures — the env-build retain makes the capture a counted
 // reference the env sweep releases. Every other statement defers to the plain
 // walker (a lambda in any other position still escape-flags its captures).
-function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], clo_ok: string[]): boolean {
+function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], clo_ok: string[], recv_borrow: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         var skip: boolean = false;
