@@ -29,6 +29,7 @@
 import "./lexer";
 import "./parser";
 import "./util";
+import "./astwalk";
 
 // =================== INT / FOLD HELPERS ====================
 
@@ -99,90 +100,18 @@ function as_string_lit(e: parser.Expr): OptString {
 // look at a parent binary node both operands are already in
 // their folded form.
 pub function fold_expr(e: parser.Expr): parser.Expr {
+    return astwalk.map_expr(e, fold_node);
+}
+
+// fold_node is this pass minus the walk: one node, whose children the
+// post-order map has already folded, collapsed to a literal when it can be.
+// Only the two arithmetic shapes contribute; every other node is its own
+// rebuilt form.
+function fold_node(e: parser.Expr): parser.Expr {
     match (e) {
-        parser.ExprNumber(_) => { return e; },
-        parser.ExprBool(_) => { return e; },
-        parser.ExprString(_) => { return e; },
-        parser.ExprIdent(_) => { return e; },
-        parser.ExprLambda(lm) => {
-            return parser.ExprLambda { ...lm, body: fold_block(lm.body) };
-        },
-        parser.ExprUnknown(_) => { return e; },
-        parser.ExprBinary(b) => {
-            var lhs: parser.Expr = fold_expr(b.left);
-            var rhs: parser.Expr = fold_expr(b.right);
-            return fold_binary(b.op, lhs, rhs);
-        },
-        parser.ExprUnary(u) => {
-            var op: parser.Expr = fold_expr(u.operand);
-            return fold_unary(u.op, op);
-        },
-        parser.ExprCall(c) => {
-            var args: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { args = args.append(fold_expr(c.args[i])); i = i + 1; }
-            return parser.ExprCall { callee: fold_expr(c.callee), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
-        },
-        parser.ExprTuple(t) => {
-            var elems: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                elems = elems.append(fold_expr(t.elements[i]));
-                i = i + 1;
-            }
-            return parser.ExprTuple { elements: elems, line: t.line, col: t.col };
-        },
-        parser.ExprArray(a) => {
-            var elems: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < a.elements.len()) { elems = elems.append(fold_expr(a.elements[i])); i = i + 1; }
-            return parser.ExprArray { ...a, elements: elems };
-        },
-        parser.ExprMapLit(ml) => {
-            var mks: parser.Expr[] = [];
-            var mvs: parser.Expr[] = [];
-            var mi: i32 = 0;
-            while (mi < ml.keys.len()) {
-                mks = mks.append(fold_expr(ml.keys[mi]));
-                mvs = mvs.append(fold_expr(ml.vals[mi]));
-                mi = mi + 1;
-            }
-            return parser.ExprMapLit { keys: mks, vals: mvs, line: ml.line, col: ml.col };
-        },
-        parser.ExprFString(fs) => {
-            var fes: parser.Expr[] = [];
-            var fi: i32 = 0;
-            while (fi < fs.exprs.len()) {
-                if (fs.is_expr[fi]) { fes = fes.append(fold_expr(fs.exprs[fi])); } else { fes = fes.append(fs.exprs[fi]); }
-                fi = fi + 1;
-            }
-            return parser.ExprFString { lits: fs.lits, exprs: fes, is_expr: fs.is_expr, line: fs.line, col: fs.col };
-        },
-        parser.ExprIndex(x) => {
-            return parser.ExprIndex { array: fold_expr(x.array), index: fold_expr(x.index), unchecked: x.unchecked, ty: x.ty };
-        },
-        parser.ExprSlice(sl) => {
-            return parser.ExprSlice {
-                array: fold_expr(sl.array),
-                start: fold_expr(sl.start),
-                end: fold_expr(sl.end),
-                ty: sl.ty
-            };
-        },
-        parser.ExprStructLit(sl) => {
-            var fvs: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                fvs = fvs.append(fold_expr(sl.field_values[i]));
-                i = i + 1;
-            }
-            var folded_base: parser.Expr = sl.base;
-            if (sl.has_base) { folded_base = fold_expr(sl.base); }
-            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvs, has_base: sl.has_base, base: folded_base, line: sl.line, col: sl.col };
-        },
-        parser.ExprFieldAccess(fa) => {
-            return parser.ExprFieldAccess { obj: fold_expr(fa.obj), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
-        }
+        parser.ExprBinary(b) => { return fold_binary(b.op, b.left, b.right); },
+        parser.ExprUnary(u) => { return fold_unary(u.op, u.operand); },
+        _ => { return e; }
     }
     return e;
 }
@@ -246,45 +175,11 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
 // =================== STMT / MODULE FOLDING ====================
 
 function fold_stmt(st: parser.Stmt): parser.Stmt {
-    match (st) {
-        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action), on_error: d.on_error, line: d.line }; },
-        parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col, is_str: v.is_str }; },
-        parser.StmtReturn(r) => { return parser.StmtReturn { value: fold_expr(r.value), line: r.line, col: r.col }; },
-        parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value), line: x.line }; },
-        parser.StmtAssign(a) => { return parser.StmtAssign { target: a.target, value: fold_expr(a.value), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        parser.StmtIf(ifs) => {
-            return parser.StmtIf { ...ifs,
-                cond: fold_expr(ifs.cond),
-                then_body: fold_block(ifs.then_body),
-                else_body: fold_block(ifs.else_body) };
-        },
-        parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
-        },
-        parser.StmtMatch(m) => {
-            var arms: parser.MatchArm[] = [];
-            var i: i32 = 0;
-            while (i < m.arms.len()) {
-                arms = arms.append(parser.MatchArm { pattern: m.arms[i].pattern, body: fold_block(m.arms[i].body), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
-                i = i + 1;
-            }
-            return parser.StmtMatch { ...m, scrutinee: fold_expr(m.scrutinee), arms: arms };
-        },
-        parser.StmtFor(f) => {
-            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body), label: f.label, line: f.line };
-        },
-        parser.StmtBreak(_) => { return st; },
-        parser.StmtContinue(_) => { return st; },
-        parser.StmtUnknown(_) => { return st; }
-    }
-    return st;
+    return astwalk.map_stmt(st, fold_node);
 }
 
 function fold_block(body: parser.Stmt[]): parser.Stmt[] {
-    var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < body.len()) { out = out.append(fold_stmt(body[i])); i = i + 1; }
-    return out;
+    return astwalk.map_stmts(body, fold_node);
 }
 
 pub function fold_module(mod: parser.Module): parser.Module {
