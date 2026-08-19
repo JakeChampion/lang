@@ -657,11 +657,12 @@ function main(): i32 {
 	})
 
 	t.Run("opt-folds-constants", func(t *testing.T) {
-		// -O constant-folds before codegen (constfold.fold_module). Compare on
-		// the AST path (-no-ssa): for a const-only program the folded asm must
-		// differ from the unfolded asm (the fold collapsed the arithmetic) and
-		// still run to the same value. (The SSA optimiser folds constants too,
-		// so the contrast is shown on the AST emitter, which does not.)
+		// -O constant-folds before codegen (constfold.fold_module), and the
+		// op-list fold in ir.fern reaches the same answer on EVERY build. So on
+		// a const-only arithmetic program the two agree byte for byte, and the
+		// assertion is that neither leaves runtime arithmetic behind — an
+		// equality that held because both failed to fold would still show the
+		// imul.
 		srcPath := filepath.Join(dir, "fold.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 2 * 3 + 1; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -670,15 +671,46 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
-		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
-		if string(optAsm) == string(astAsm) {
-			t.Error("-O did not change the emitted code (constant folding not applied)")
+		defAsm, _ := runDriver(t, "-no-ssa", srcPath)
+		if string(optAsm) != string(defAsm) {
+			t.Errorf("-O and the default build disagree on a wholly constant expression;\n"+
+				"one of the two folds is not reaching it:\n--- -O ---\n%s\n--- default ---\n%s", optAsm, defAsm)
+		}
+		for _, arith := range []string{"imulq", "addq %rcx, %rax"} {
+			if strings.Contains(string(defAsm), arith) {
+				t.Errorf("`2 * 3 + 1` still emits %q; constant folding is not applied:\n%s", arith, defAsm)
+			}
 		}
 		progBin := buildBin(t, gcc, dir, "fold", string(optAsm))
 		cmd := exec.Command(progBin)
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 7 {
 			t.Errorf("-O folded program exited %d, want 7", c)
+		}
+	})
+
+	t.Run("opt-folds-literal-concat", func(t *testing.T) {
+		// What -O still reaches that the op-list fold does not: a concat of two
+		// string literals becomes one literal, so no __fern_str_concat call and
+		// no allocation per evaluation. This is the half of #7111 the default
+		// build does not do yet — the assertion is on -O's output rather than on
+		// a diff against the default, so closing that gap does not fail it.
+		srcPath := filepath.Join(dir, "foldconcat.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var s: string = \"ab\" + \"cd\"; return s.len(); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
+		if code != 0 {
+			t.Fatalf("-O emit exited %d, want 0", code)
+		}
+		if n := strings.Count(string(optAsm), "call __fn___fern_str_concat"); n != 0 {
+			t.Errorf("-O left %d __fern_str_concat call site(s) for a literal concat:\n%s", n, optAsm)
+		}
+		progBin := buildBin(t, gcc, dir, "foldconcat", string(optAsm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 4 {
+			t.Errorf("-O folded concat program exited %d, want 4", c)
 		}
 	})
 
