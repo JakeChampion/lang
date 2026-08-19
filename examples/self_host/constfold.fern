@@ -253,22 +253,10 @@ pub function fold_module(mod: parser.Module): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        var fd: parser.FuncDecl = mod.funcs[i];
-        funcs = funcs.append(parser.FuncDecl {
-            name: fd.name,
-            receiver_name: fd.receiver_name,
-            receiver_type: fd.receiver_type,
-            type_params: fd.type_params,
-            params: fd.params,
-            ret_type: fd.ret_type,
-            body: fold_block(fd.body),
-            line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
-            is_pub: fd.is_pub
-       , is_const: fd.is_const });
+        funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
         i = i + 1;
     }
-    return parser.Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fold_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
 
 // =================== ASSERT ELISION ====================
@@ -587,6 +575,16 @@ function main(): i32 {
         },
         _ => { return 195; }
     }
+
+    // fold_module rebuilds every FuncDecl, so it has to carry every field
+    // across. It used to spell them out and reset bound_traits to empty in the
+    // process; the checker and the printer both read that field, and both run
+    // before this pass, so nothing observed the loss — until something after
+    // it does.
+    var mod21: parser.Module = fold_module(parser.parse_module(lexer.tokenize(
+        "function pick[T: Ord](a: T, b: T): T { if (a < b) { return a; } return b; }")));
+    if (mod21.funcs[0].bound_traits.len() != 1) { return 200; }
+    if (mod21.funcs[0].bound_traits[0] != "Ord") { return 201; }
 
     return 0;
 }
