@@ -2000,32 +2000,92 @@ func (g *generator) emitCCallRuntimeSuffixed(n int, suffix string) {
 	g.emit("br x9") // tail-call fn; its ret returns to our caller, result in x0/d0
 }
 
-// emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
-// byte-grain copy. Word-grain bulk path runs in 8-byte chunks
-// since arm64 has 64-bit registers; tail loop handles the
-// residue. Pointers may be unaligned (arm64 allows unaligned
-// access by default in user-mode Linux).
+// emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` — a byte-grain
+// copy. Regions must not overlap: each size class reads the tail of
+// the source before writing the head of the destination.
+//
+// Size-classed rather than an 8-byte loop plus a byte-grain residue.
+// At the lengths this runtime copies, that residue was where most of
+// the instructions went. Each class covers its whole range with a
+// pair of overlapping accesses anchored at the two ends of the
+// operands, so no length runs a residue loop.
+//
+// Pointers may be unaligned (arm64 allows unaligned access by
+// default in user-mode Linux).
 func (g *generator) emitMemcpyRuntime() {
 	g.line("")
 	g.line(".global __fern_memcpy")
 	g.typeDirective("__fern_memcpy")
 	g.label("__fern_memcpy")
-	// r0 = dst (saved for return), r1 = src, r2 = n.
-	g.emit("mov x3, x0") // x3 = dst saved
-	g.label(".Lmcp_word")
+	// x0 = dst (saved in x3 for the return), x1 = src, x2 = n.
+	g.emit("mov x3, x0")
 	g.emit("cmp x2, #8")
-	g.emit("blt .Lmcp_tail")
-	g.emit("ldr x4, [x1], #8")
-	g.emit("str x4, [x0], #8")
-	g.emit("sub x2, x2, #8")
-	g.emit("b .Lmcp_word")
-	g.label(".Lmcp_tail")
-	g.emit("cmp x2, #0")
-	g.emit("beq .Lmcp_done")
-	g.emit("ldrb w4, [x1], #1")
-	g.emit("strb w4, [x0], #1")
-	g.emit("sub x2, x2, #1")
-	g.emit("b .Lmcp_tail")
+	g.emit("b.lo .Lmcp_lt8")
+	g.emit("cmp x2, #16")
+	g.emit("b.lo .Lmcp_8_15")
+	g.emit("cmp x2, #32")
+	g.emit("b.ls .Lmcp_16_32")
+	// n > 32: 32 bytes per iteration, then one final 32-byte block
+	// anchored at the END of each operand. x9 / x10 hold those
+	// anchors, so the loop stops as soon as the rest fits in it.
+	g.emit("add x9, x1, x2")
+	g.emit("sub x9, x9, #32")
+	g.emit("add x10, x0, x2")
+	g.emit("sub x10, x10, #32")
+	g.label(".Lmcp_bulk")
+	g.emit("ldp x4, x5, [x1]")
+	g.emit("ldp x6, x7, [x1, #16]")
+	g.emit("stp x4, x5, [x0]")
+	g.emit("stp x6, x7, [x0, #16]")
+	g.emit("add x1, x1, #32")
+	g.emit("add x0, x0, #32")
+	g.emit("cmp x0, x10")
+	g.emit("b.lo .Lmcp_bulk")
+	g.emit("ldp x4, x5, [x9]")
+	g.emit("ldp x6, x7, [x9, #16]")
+	g.emit("stp x4, x5, [x10]")
+	g.emit("stp x6, x7, [x10, #16]")
+	g.emit("b .Lmcp_done")
+	// 16..32 bytes: head and tail 16 each.
+	g.label(".Lmcp_16_32")
+	g.emit("add x9, x1, x2")
+	g.emit("add x10, x0, x2")
+	g.emit("ldp x4, x5, [x1]")
+	g.emit("ldp x6, x7, [x9, #-16]")
+	g.emit("stp x4, x5, [x0]")
+	g.emit("stp x6, x7, [x10, #-16]")
+	g.emit("b .Lmcp_done")
+	g.label(".Lmcp_8_15")
+	g.emit("add x9, x1, x2")
+	g.emit("add x10, x0, x2")
+	g.emit("ldr x4, [x1]")
+	g.emit("ldr x5, [x9, #-8]")
+	g.emit("str x4, [x0]")
+	g.emit("str x5, [x10, #-8]")
+	g.emit("b .Lmcp_done")
+	g.label(".Lmcp_lt8")
+	g.emit("cmp x2, #4")
+	g.emit("b.lo .Lmcp_lt4")
+	g.emit("add x9, x1, x2")
+	g.emit("add x10, x0, x2")
+	g.emit("ldr w4, [x1]")
+	g.emit("ldr w5, [x9, #-4]")
+	g.emit("str w4, [x0]")
+	g.emit("str w5, [x10, #-4]")
+	g.emit("b .Lmcp_done")
+	// 1..3 bytes: first, last, and — only when n is 3 — the middle.
+	g.label(".Lmcp_lt4")
+	g.emit("cbz x2, .Lmcp_done")
+	g.emit("add x9, x1, x2")
+	g.emit("add x10, x0, x2")
+	g.emit("ldrb w4, [x1]")
+	g.emit("ldrb w5, [x9, #-1]")
+	g.emit("strb w4, [x0]")
+	g.emit("strb w5, [x10, #-1]")
+	g.emit("cmp x2, #3")
+	g.emit("b.lo .Lmcp_done")
+	g.emit("ldrb w4, [x1, #1]")
+	g.emit("strb w4, [x0, #1]")
 	g.label(".Lmcp_done")
 	g.emit("mov x0, x3")
 	g.emit("ret")
