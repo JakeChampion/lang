@@ -5808,12 +5808,33 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     if (util.index_of_str(s.sigs.str_fresh_ret_fns, cid.name) >= 0 && s.slot_of(cid.name) < 0) { return true; }
                 },
+                // A fresh-ALLOCATING string builtin on a string receiver. Their
+                // runtime bodies allocate unconditionally and return the new box
+                // — `__fern_str_to_upper` is `__raw_alloc(n)` … `__raw_string(p, n)`
+                // with no identity path at all, and `__fern_str_repeat` forces a
+                // 1-byte cap so even a zero-length result allocates. Nothing else
+                // names the box, so a consuming site may release it exactly as it
+                // releases a concat temp.
+                parser.ExprFieldAccess(mfa) => {
+                    if (str_fresh_alloc_method(mfa.field) && expr_is_str(mfa.obj, s)) { return true; }
+                },
                 _ => {}
             }
         },
         _ => {}
     }
     return str_local_binding_is_fresh(e);
+}
+
+// str_fresh_alloc_method: a string builtin whose result is ALWAYS a newly
+// allocated box. Strictly smaller than str_borrowing_method, which also admits
+// the predicates (scalar results, no box at all) and is about what a method does
+// to its RECEIVER; this is about what it returns. `trim` returns a view and
+// `replace` returns the receiver unchanged when the needle is absent, so neither
+// belongs here — and `chars` / `lines` / `split` return arrays, not strings.
+function str_fresh_alloc_method(field: string): boolean {
+    return field == "to_ascii_upper" || field == "to_ascii_lower"
+        || field == "reverse" || field == "repeat";
 }
 
 // tostring_recv_is_scalar: the receiver of a `.to_string()` is provably a
@@ -10825,7 +10846,12 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         // length, then release the temp with the rc-aware
         // __fern_str_free — operands stay owned by their locals.
         if (str_recv) {
-            var lfresh: boolean = false;
+            // is_fresh_str_temp is the general answer to "is this receiver a box
+            // nobody else names": a concat, a scalar `.to_string()`, a proven
+            // fresh-ret call, or a fresh-allocating string builtin. The arms
+            // below add the shapes it does not cover — a box extracted from an
+            // owned container, which is not a temp but dies here all the same.
+            var lfresh: boolean = is_fresh_str_temp(fa.obj, s);
             match (fa.obj) {
                 parser.ExprBinary(lrb) => { if (lrb.op == "+") { lfresh = true; } },
                 // A CALL receiver (`f(i).len()`) whose callee is
