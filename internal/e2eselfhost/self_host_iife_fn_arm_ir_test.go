@@ -155,6 +155,13 @@ var iifeFnArmCases = []struct {
 	// The lambda-returning-lambda the tail-return hoist owns: the per-entry
 	// desugar must leave it alone (#5281 regressed exactly this shape).
 	{"curry-tail-return-unchanged", "function curry(a: i32): (i32) => ((i32) => i32) { return ((b: i32) => ((c: i32) => (a + b + c))); } function main(): i32 { var g: (i32) => ((i32) => i32) = curry(1i32); var h: (i32) => i32 = g(2i32); return h(3i32) & 63i32; }", 6},
+
+	// An IIFE arm that yields a passthrough call holding a raw lambda. The
+	// hoist claims a capturing IIFE only when an arm yields a LAMBDA, and this
+	// arm yields a CALL, so nothing walked the arms and the lambda one level in
+	// bailed the module. A passthrough hands its argument straight back, so a
+	// lambda there is an arm lambda. Reduced from fernsmith seed 393.
+	{"arm-passthrough-holds-lambda", "function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 40i32); var n: i32 = 2i32; var t: boolean = false; var xs: ((i32) => i32)[] = [(if (t) { v0 } else { pick(t, v0, ((x: i32) => (x + n))) })]; return xs[0i32](3i32) & 63i32; }", 5},
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms
