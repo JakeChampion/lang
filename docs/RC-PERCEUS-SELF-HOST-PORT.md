@@ -10343,3 +10343,55 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the callee is a builtin or source-declared — `freshfree(mkfresh(i))` and
   `mkfresh(i).to_ascii_upper()` both leak 46 B/round. That is the next slice, and
   it is what remains of the 95 / 119 / 143 chain rows. Refs #6544 #4451.
+
+- 2026-08-19: **a tagged union CONSTRUCTED at a tuple element position is now
+  released — the residue the entry above left open.** `emit_tuple_child_drops`
+  had arms for array, string, nested-tuple and reclaim-struct elements and NONE
+  for a union, so once the tuple around it was reclaimed the union's own box was
+  still never freed. Exactly one leaked box per union element, whatever its
+  payload: 40 | 40 | 16 B/round for one, 80 | 80 | 32 for two (x86-64 | arm64 |
+  wasm; native flat on every row).
+
+  The box is `[tag, payload]` and the construction allocated it, so the shallow
+  `__fern_rc_dec` the array arm already emits is balanced. No new runtime helper
+  — a bare `Option[i32]` LOCAL is allocated by `__fern_arr_box` and freed by
+  `__fern_arr_dec`, so a union box is an ordinary rc box.
+
+  **Construction, not union TYPE, is the admission.** `tuple_union_elem_fresh`
+  answers true only for a built-in `Some`/`Ok`/`Err` box (`expr_opt_elem_tag`) or
+  a user-enum variant ctor (`expr_enum_type`). Both RESOLVE the callee — against
+  the built-in Option shape, and against the program's declared variants — rather
+  than matching its name, so a user function called `Some` answers false where a
+  name test could not tell it apart. A bare IDENT of union type keeps its
+  leak-safe skip: it aliases a live local, and freeing it is an over-release
+  rather than a leak.
+
+  | shape | before | after |
+  |---|---|---|
+  | `(i, [i,i+1], Some(i))` | 40 \| 40 \| 16 | **0** |
+  | two `Option[i32]` elements | 80 \| 80 \| 32 | **0** |
+  | `(i, [i,i+1], Tag.Num(i))`, user enum | 40 \| 40 \| 16 | **0** |
+  | bare-ident `Option` element | value 3 | 3 |
+  | `Some([i, i+2])` — box freed, payload not | value 1 | 1 |
+
+  Deliberately still leaking, each with its measurement:
+
+  - **The union's PAYLOAD.** `Some([i, i+2])` at an element position goes 80 -> 40:
+    the box is freed, its array is not. Releasing it needs the variant's own drop
+    plan (native's `enumVariantDropPlan` / `genEnumDropFn`) — which IS a design
+    pass, and is the part of the old open item that survives. Leaking it is safe
+    where freeing an aliased one would not be.
+  - **A tuple whose ONLY rc child is a union.** `(i, Some(i))` still churns 80
+    B/round: the emitter would now free the box, but `tuple_lit_has_rc_child`
+    does not count a union element, so the tuple is never admitted and its own
+    box leaks too. That predicate takes only `structs`, where deciding this needs
+    the `LowerState` the EMITTER has — the same admission-counting question
+    #7127 and #7139 answered for binaries, calls and nested tuples.
+  - **A bare-ident union element costs its tuple the reclaim** (128 | 128 | 72,
+    native flat). Correct conservatism here, but native reclaims it, so the gap
+    is real.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_union_tuple_elem_reclaim_test.go` (5 cases x 3
+  backends; the 3 byte gates fail on the parent on all three legs, the 2 aliasing
+  controls pass either way). Refs #4353 #4451.

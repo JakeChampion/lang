@@ -21680,6 +21680,17 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
                     s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
                     s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
                     s = s.emit(ir.op_drop());
+                } else if (tuple_union_elem_fresh(tup.elements[k], s)) {
+                    // A freshly CONSTRUCTED tagged union at an element position —
+                    // a built-in Some/Ok/Err box or a user-enum variant. The box
+                    // is [tag, payload], allocated by this construction and
+                    // aliased nowhere, so the shallow dec is balanced. Its
+                    // PAYLOAD is left alone: releasing that needs the variant's
+                    // own drop plan, and leaking it is safe where freeing an
+                    // aliased one would not be.
+                    s = emit_load_tuple_path(s, slot, path_child(path, k));   // union box ptr
+                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    s = s.emit(ir.op_drop());
                 }
             },
             parser.ExprTuple(inner) => {
@@ -21713,6 +21724,21 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
         k = k + 1;
     }
     return s;
+}
+
+// tuple_union_elem_fresh reports whether `e` CONSTRUCTS a tagged union here — a
+// built-in `Some(x)` / `Ok(x)` / `Err(x)`, or a user-enum variant ctor — rather
+// than merely having union type. Construction is what makes the box fresh and
+// sole-owned; a bare ident of the same type aliases a live local and must keep
+// its leak-safe skip.
+//
+// Both tests resolve the callee rather than matching its NAME: expr_enum_type
+// checks it against the program's declared variants, and expr_opt_elem_tag
+// against the built-in Option shape. A user function called `Some` therefore
+// answers false, which a name test could not tell apart.
+function tuple_union_elem_fresh(e: parser.Expr, s: LowerState): boolean {
+    if (expr_enum_type(e, s) != "") { return true; }
+    return expr_opt_elem_tag(e, s) != "";
 }
 
 // emit_tuple_type_child_drops is the TYPE-driven sibling of emit_tuple_child_drops:
