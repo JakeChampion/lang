@@ -440,6 +440,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 			if op.Kind == ir.OpStrEq {
 				g.usesStrcmp = true
 			}
+			if op.Kind == ir.OpStrCmp {
+				g.usesStrord = true
+			}
 			if op.Kind == ir.OpStrConcat {
 				g.usesStrcat = true
 				g.usesAlloc = true
@@ -626,6 +629,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
+	}
+	if g.usesStrord {
+		g.emitStrordRuntime()
 	}
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
@@ -877,6 +883,7 @@ type generator struct {
 	// takes over from the assignment's dec-on-overwrite).
 	usesStrAppend bool
 	usesStrcmp    bool
+	usesStrord    bool
 	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
@@ -2537,6 +2544,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("test eax, eax")
 		g.emit("setz al")
 		g.emit("movzx eax, al")
+		g.push()
+
+	case ir.OpStrCmp:
+		// Three-way ordering: push __fern_strord's signed result
+		// straight through; the IR follows it with a compare
+		// against 0.
+		g.binPop()
+		g.emit("mov rdi, rax")
+		g.emit("mov rsi, rcx")
+		g.callAligned("__fern_strord")
 		g.push()
 
 	case ir.OpStrLen:
@@ -7843,6 +7860,63 @@ func (g *generator) emitStrcmpRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_strcmp, .-__fern_strcmp")
+}
+
+// emitStrordRuntime emits `__fern_strord(a, b)` — the three-way
+// comparator behind `<` / `<=` / `>` / `>=` on strings: the first
+// differing byte's difference, or the length difference when one
+// string is a prefix of the other. Unlike __fern_strcmp it cannot
+// shortcut on unequal lengths or read word-at-a-time: ordering is
+// decided by the FIRST difference, so bytes are read in sequence.
+func (g *generator) emitStrordRuntime() {
+	g.line("")
+	g.line(".globl __fern_strord")
+	g.line(".type __fern_strord, @function")
+	g.label("__fern_strord")
+	// Frame matches __fern_strcmp: two emitStrDataPtr scratch slots
+	// (both operands may be inline at once) plus alignment padding.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emitStrLen("ecx", "rdi") // la
+	g.emitStrLen("edx", "rsi") // lb
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emitStrDataPtr("rsi", "rsi", "[rbp - 32]")
+	// r8d = min(la, lb)
+	g.emit("mov r8d, ecx")
+	g.emit("cmp edx, r8d")
+	g.emit("jae .Lsord_n")
+	g.emit("mov r8d, edx")
+	g.label(".Lsord_n")
+	g.emit("xor r9d, r9d") // i = 0
+	g.label(".Lsord_loop")
+	g.emit("cmp r9d, r8d")
+	g.emit("jae .Lsord_len")
+	g.emit("movzx r10d, byte ptr [rdi + r9]")
+	g.emit("movzx r11d, byte ptr [rsi + r9]")
+	g.emit("cmp r10d, r11d")
+	g.emit("jne .Lsord_diff")
+	g.emit("add r9, 1")
+	g.emit("jmp .Lsord_loop")
+	// First differing byte decides: unsigned byte values, so the
+	// difference has the sign of the byte order.
+	g.label(".Lsord_diff")
+	g.emit("mov eax, r10d")
+	g.emit("sub eax, r11d")
+	g.emit("jmp .Lsord_done")
+	// Common prefix: the shorter string sorts first.
+	g.label(".Lsord_len")
+	g.emit("mov eax, ecx")
+	g.emit("sub eax, edx")
+	g.label(".Lsord_done")
+	// Sign-extend so the three-way result is correct read as either
+	// eax or rax — the compare against 0 that follows may be emitted
+	// at either width.
+	g.emit("movsx rax, eax")
+	g.emit("add rsp, 32")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_strord, .-__fern_strord")
 }
 
 // emitPutsRuntime emits `__fern_puts(s)` — write the string,

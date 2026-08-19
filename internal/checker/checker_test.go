@@ -5962,15 +5962,11 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 }
 
 // TestOneErrorPerMistake: a single bad expression must produce a single
-// diagnostic. `"a" < "b"` produced THREE E009s at the same position — two
-// byte-identical, and a third suggesting `as` for two strings, which is a
-// conversion that does not exist.
-//
-// Two independent causes, both fixed: errfCode now drops a diagnostic
-// identical to one already recorded at that position, and the
-// mixed-integer hint is suppressed unless BOTH operands are integers (the
-// case where a cast can actually help). requireInteger has already said
-// the true thing by then.
+// diagnostic. Two things keep it that way, and each case below pins one:
+// errfCode drops a diagnostic identical to one already recorded at that
+// position (an operator rejecting BOTH operands for the same reason says it
+// once), and the `as` hint is suppressed unless both operands are integers —
+// the only case where a cast can actually help.
 func TestOneErrorPerMistake(t *testing.T) {
 	count := func(src, needle string) int {
 		t.Helper()
@@ -5984,8 +5980,8 @@ func TestOneErrorPerMistake(t *testing.T) {
 		name, src string
 		want      int
 	}{
-		{"string comparison", `function main(): i32 {
-    var a: string = "x"; var b: string = "y";
+		{"boolean comparison", `function main(): i32 {
+    var a: boolean = true; var b: boolean = false;
     if (a < b) { return 1; }
     return 0;
 }`, 1},

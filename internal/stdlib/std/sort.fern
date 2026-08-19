@@ -20,9 +20,9 @@
 //     case-folding `Ord`); a `sort_by` delegation over `string_cmp_ci`.
 //   - `sort_i32_inplace_asc` / `_desc` — `own`-consuming, zero-allocation
 //     insertion sorts (`fip`); no generic consuming equivalent.
-//   - `string_cmp` / `string_cmp_ci` — the byte-lex comparators, exported so
-//     `impl Ord for string` (core/cmp) and callers that need a direct ordering
-//     check (without a full sort) can reuse the tested three-way.
+//   - `string_cmp` / `string_cmp_ci` — three-way comparators for callers that
+//     need one directly (a `sort_by` argument, say) rather than the `<` / `>`
+//     operators.
 //
 // AST-safety contract (shared by every merge sort in this file and by
 // `cmp.sort`): each merge pass materializes its scratch buffer as a FRESH copy
@@ -41,32 +41,15 @@
 import "std/string";
 
 // `sort_key` compares projected keys via `core/cmp`'s `Ord.cmp`, so
-// declare it to register the `.cmp()` method under no-prelude. This
-// closes an import cycle (core/cmp's `impl Ord for string` already
-// calls `sort.string_cmp`), which modload resolves by its load-once
-// dedupe — a program importing only `std/sort` still gets the `Ord`
-// impls transitively, so `sort_key` needs no extra import at the call
-// site.
+// declare it to register the `.cmp()` method under no-prelude.
 import "core/cmp";
 
-// `string_cmp(a, b)` — lexicographic byte-order comparator.
-// Returns -1 / 0 / 1. Lang's `<` / `>` operators only work
-// on numerics; string-array sort needs a dedicated three-way
-// comparator. Compares byte-by-byte up to the shorter
-// length, then breaks ties on length (shorter < longer).
+// `string_cmp(a, b)` — three-way form of the `<` / `>` operators'
+// byte-order comparison, for the comparator-taking sorts. Returns
+// -1 / 0 / 1.
 pub function string_cmp(a: string, b: string): i32 {
-    var n: i32 = a.len();
-    var m: i32 = b.len();
-    var min: i32 = n;
-    if (m < n) { min = m; }
-    var i: i32 = 0;
-    while (i < min) {
-        if (a[i] < b[i]) { return 0 - 1; }
-        if (a[i] > b[i]) { return 1; }
-        i = i + 1;
-    }
-    if (n < m) { return 0 - 1; }
-    if (n > m) { return 1; }
+    if (a < b) { return 0 - 1; }
+    if (a > b) { return 1; }
     return 0;
 }
 

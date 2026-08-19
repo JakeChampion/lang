@@ -1,0 +1,94 @@
+import "std/test";
+import "core/cmp" as cmp;
+import "std/sort";
+// examples/tests/string_ordering_test.fern — the `<` / `<=` / `>` / `>=`
+// operators on strings (#7110). Byte order, ties broken by length: the FIRST
+// differing byte decides, and a string that is a prefix of another sorts
+// first. Not case-folded and not codepoint-ordered, so "Z" < "a".
+//
+// The last group is the load-bearing one: `core/cmp`'s `Ord for string` and
+// `std/sort`'s `string_cmp` are both defined in terms of these operators, so
+// their three-way results must agree with them sign-for-sign. A divergence
+// here means the operator and the generic ordering have drifted apart.
+
+function test_first_diff_byte(): test.TestOutcome { return test.assert_true("abc" < "abd"); }
+function test_first_diff_byte_gt(): test.TestOutcome { return test.assert_true("abd" > "abc"); }
+function test_first_diff_byte_false(): test.TestOutcome { return test.assert_false("abc" < "abb"); }
+
+function test_prefix_sorts_first(): test.TestOutcome { return test.assert_true("ab" < "abc"); }
+function test_prefix_gt(): test.TestOutcome { return test.assert_true("abc" > "ab"); }
+function test_empty_sorts_first(): test.TestOutcome { return test.assert_true("" < "a"); }
+
+function test_equal_not_lt(): test.TestOutcome { return test.assert_false("abc" < "abc"); }
+function test_equal_not_gt(): test.TestOutcome { return test.assert_false("abc" > "abc"); }
+function test_equal_le(): test.TestOutcome { return test.assert_true("abc" <= "abc"); }
+function test_equal_ge(): test.TestOutcome { return test.assert_true("abc" >= "abc"); }
+function test_empty_le_empty(): test.TestOutcome { return test.assert_true("" <= ""); }
+
+// Byte order, not a case-insensitive or locale collation: every uppercase
+// ASCII letter sorts before every lowercase one.
+function test_byte_order_case(): test.TestOutcome { return test.assert_true("Z" < "a"); }
+function test_byte_order_digits(): test.TestOutcome { return test.assert_true("1" < "A"); }
+
+// Non-literal operands, so nothing can constant-fold the comparison away.
+function test_vars(): test.TestOutcome {
+    var a: string = "alpha";
+    var b: string = "beta";
+    return test.assert_true(a < b && b > a && a <= a);
+}
+
+function test_long_operands(): test.TestOutcome {
+    var a: string = "the quick brown fox jumps over the lazy dog";
+    var b: string = "the quick brown fox jumps over the lazy dogs";
+    return test.assert_true(a < b && b > a);
+}
+
+// A computed operand is a fresh owned temp; the lowering has to release it
+// without reading freed bytes.
+function test_computed_operand(): test.TestOutcome {
+    var a: string = "ab";
+    return test.assert_true((a + "c") < "abd" && "abb" < (a + "c"));
+}
+
+// The operators and the generic three-way ordering are one thing.
+function test_ord_agrees_lt(): test.TestOutcome { return test.assert_eq("abc".cmp("abd"), 0 - 1); }
+function test_ord_agrees_gt(): test.TestOutcome { return test.assert_eq("abd".cmp("abc"), 1); }
+function test_ord_agrees_eq(): test.TestOutcome { return test.assert_eq("abc".cmp("abc"), 0); }
+function test_string_cmp_agrees(): test.TestOutcome {
+    return test.assert_true(sort.string_cmp("ab", "abc") < 0 && sort.string_cmp("abc", "ab") > 0);
+}
+function test_sort_matches_operator(): test.TestOutcome {
+    var s = cmp.sort(["pear", "Apple", "banana", "apple"]);
+    var i: i32 = 1;
+    while (i < s.len()) {
+        if (!(s[i - 1] < s[i])) { return test.fail("cmp.sort produced an order the `<` operator disagrees with"); }
+        i = i + 1;
+    }
+    return test.assert_true(s[0] == "Apple");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("string ordering operators");
+    r = r.it("first differing byte",     test_first_diff_byte);
+    r = r.it("first differing byte >",   test_first_diff_byte_gt);
+    r = r.it("first differing byte off", test_first_diff_byte_false);
+    r = r.it("prefix sorts first",       test_prefix_sorts_first);
+    r = r.it("prefix >",                 test_prefix_gt);
+    r = r.it("empty sorts first",        test_empty_sorts_first);
+    r = r.it("equal not <",              test_equal_not_lt);
+    r = r.it("equal not >",              test_equal_not_gt);
+    r = r.it("equal <=",                 test_equal_le);
+    r = r.it("equal >=",                 test_equal_ge);
+    r = r.it("empty <= empty",           test_empty_le_empty);
+    r = r.it("byte order, case",         test_byte_order_case);
+    r = r.it("byte order, digits",       test_byte_order_digits);
+    r = r.it("variable operands",        test_vars);
+    r = r.it("long operands",            test_long_operands);
+    r = r.it("computed operand",         test_computed_operand);
+    r = r.it("Ord agrees, <",            test_ord_agrees_lt);
+    r = r.it("Ord agrees, >",            test_ord_agrees_gt);
+    r = r.it("Ord agrees, ==",           test_ord_agrees_eq);
+    r = r.it("string_cmp agrees",        test_string_cmp_agrees);
+    r = r.it("cmp.sort matches `<`",     test_sort_matches_operator);
+    return r.finish();
+}

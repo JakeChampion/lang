@@ -4412,7 +4412,9 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 	}
 	// String comparison works at runtime regardless of whether the
 	// checker has been run (so REPL evaluations of `"a" == "b"` give
-	// a sensible answer too).
+	// a sensible answer too). Ordering is Go's string compare — byte-
+	// wise with a length tiebreak, the same order the backends'
+	// str.cmp helper produces.
 	if ls, lok := l.(String); lok {
 		if rs, rok := r.(String); rok {
 			switch b.Op {
@@ -4420,6 +4422,14 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 				return Bool(ls == rs), nil
 			case "!=":
 				return Bool(ls != rs), nil
+			case "<":
+				return Bool(ls < rs), nil
+			case "<=":
+				return Bool(ls <= rs), nil
+			case ">":
+				return Bool(ls > rs), nil
+			case ">=":
+				return Bool(ls >= rs), nil
 			}
 		}
 	}

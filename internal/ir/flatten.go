@@ -269,14 +269,15 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		return 2, 0, true
 	case OpAlloc:
 		return 1, 1, true
-	case OpStrEq, OpStrConcat:
+	case OpStrEq, OpStrCmp, OpStrConcat:
 		// Inputs are two two-word string pairs (4 i32s); outputs
-		// depend on op. OpStrEq returns 1 (boolean), OpStrConcat
-		// returns a new (data, len) pair via multi-value wasm.
-		if op.Kind == OpStrEq {
-			return 4, 1, true
+		// depend on op. OpStrEq returns 1 (boolean) and OpStrCmp 1
+		// (the three-way i32); OpStrConcat returns a new (data, len)
+		// pair via multi-value wasm.
+		if op.Kind == OpStrConcat {
+			return 4, 2, true
 		}
-		return 4, 2, true
+		return 4, 1, true
 	case OpStrLen:
 		return 2, 1, true
 	case OpEnumSentinel:

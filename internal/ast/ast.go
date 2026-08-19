@@ -2076,6 +2076,11 @@ type Binary struct {
 	// `!=` are strings, so codegen can lower it to a content-comparing
 	// runtime call instead of a pointer-equality `i32.eq`.
 	IsStringCmp bool
+	// IsStringOrd is set by the checker when both operands of an
+	// ordering operator (`<` `<=` `>` `>=`) are strings, so codegen
+	// lowers it to a three-way byte compare against 0 rather than an
+	// integer compare of the two pointers.
+	IsStringOrd bool
 	// IsFloat is set by the checker when both operands are floats,
 	// so codegen knows to emit f32 instructions instead of i32.
 	IsFloat bool

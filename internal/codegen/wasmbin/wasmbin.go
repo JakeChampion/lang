@@ -2410,6 +2410,16 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return inst.InstCall(body, idx), nil
 
+	// ---- String ordering ----
+	case ir.OpStrCmp:
+		// Stack: (a_data, a_len, b_data, b_len). __str_ord consumes
+		// all four and returns the signed three-way result.
+		idx, ok := ctx.funcIdx["__str_ord"]
+		if !ok {
+			return nil, fmt.Errorf("OpStrCmp: __str_ord helper not registered (scanRuntimeHelpers gap)")
+		}
+		return inst.InstCall(body, idx), nil
+
 	// ---- Enum tag dispatch ----
 	case ir.OpMatchTag:
 		// Stack: [ptr]. Tag is at offset 0. Just an i32.load.

@@ -511,7 +511,7 @@ func (s *stackChecker) step(i int, op Op) {
 
 	// Strings. These take whole string VALUES, so their operands are
 	// pairs wherever the target's ABI makes a string a pair.
-	case OpStrEq:
+	case OpStrEq, OpStrCmp:
 		s.popN(i, op.Kind, 2*s.strSlots(), kInt)
 		s.push(kInt)
 	case OpStrConcat:

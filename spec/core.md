@@ -177,6 +177,7 @@ target's ABI makes a string a pair.
 | Op | Effect | Imm. | Notes |
 | --- | --- | --- | --- |
 | `str.eq` | `s s → i` | | |
+| `str.cmp` | `s s → i` | | Three-way: negative / 0 / positive. Byte order, ties broken by length. |
 | `str.concat` | `s s → s` | | Allocates. |
 | `str.len` | `s → i` | | The single seam a small-string optimisation would change. |
 
