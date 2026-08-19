@@ -21936,7 +21936,7 @@ function emit_tuple_union_elem_drop(st: LowerState, slot: i32, cp: i32[], e: par
     var s: LowerState = st;
     var ename: string = expr_enum_type(e, s);
     var pf: string = "";
-    if (ename == "") { pf = tuple_union_payload_freefn(e); }
+    if (ename == "") { pf = tuple_union_payload_freefn(e, s); }
     if (ename == "" && pf == "") {
         s = emit_load_tuple_path(s, slot, cp);          // union box ptr
         s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -21967,11 +21967,11 @@ function emit_tuple_union_elem_drop(st: LowerState, slot: i32, cp: i32[], e: par
 // admit the same array. A bare ident answers "", keeping its leak: it aliases a
 // live local the site never inc'd. An element that is not a construction at all
 // (a call returning an Option) answers "" for want of a payload expression.
-function tuple_union_payload_freefn(e: parser.Expr): string {
+function tuple_union_payload_freefn(e: parser.Expr, s: LowerState): string {
     match (e) {
         parser.ExprCall(c) => {
             if (c.args.len() != 1 || !builtin_union_ctor(c.callee)) { return ""; }
-            return tuple_union_arg_freefn(c.args[0]);
+            return tuple_union_arg_freefn(c.args[0], s);
         },
         _ => {}
     }
@@ -21994,13 +21994,26 @@ function builtin_union_ctor(callee: parser.Expr): boolean {
 
 // tuple_union_arg_freefn is the payload half: the release for a construction
 // argument, or "" for one this site cannot prove sole-owned.
-function tuple_union_arg_freefn(arg: parser.Expr): string {
+function tuple_union_arg_freefn(arg: parser.Expr, s: LowerState): string {
     match (arg) {
         parser.ExprArray(_) => {
             if (tuple_strarr_elem_fresh(arg)) { return "__fern_str_arr_free"; }
             return "__fern_rc_dec";
         },
         parser.ExprString(_) => { return "__fern_str_free"; },
+        // A bare-ident ARRAY payload (`Some(xs)`). It aliases a live local, but
+        // the construction alias-incs it, so the element's dec spends the box's
+        // own reference and the local's sweep still finds a valid buffer — the
+        // same balance the carried-out arm binding relies on. A string ARRAY is
+        // is_arr too, and a flat dec there would free the buffer and strand
+        // every element box, so it keeps its leak until the walking free is
+        // credited. Any other bare ident (a string, a struct) answers "" as
+        // before: naming its release needs more than the slot's array-ness.
+        parser.ExprIdent(id) => {
+            if (s.is_strarr_slot(s.slot_of(id.name))) { return ""; }
+            if (s.is_arr_slot(s.slot_of(id.name))) { return "__fern_rc_dec"; }
+            return "";
+        },
         _ => {
             if (tuple_str_elem_fresh(arg)) { return "__fern_str_free"; }
         }

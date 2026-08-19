@@ -11092,3 +11092,57 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   — 4 programs x 3 legs; the three alias programs fail on the parent on x86-64
   and arm64, the fresh-value control passes either side, and the wasm leg passes
   either side as the parity gate it is. Refs #6880 #6875 #6567 #3495 #4451.
+
+
+
+- 2026-08-19: **the BARE-IDENT union payload — the array half, and why the string
+  half is not a typing problem.** The entry above refused `Some(xs)` because the
+  release has to be NAMED and the element site has no annotation to tell a
+  bare-ident array (flat dec) from a bare-ident string (which a flat dec would
+  misread as a pointer on the two-word-string backends). The slot carries what
+  the annotation did not: `is_arr_slot`.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `(i, Some(xs))`, `xs` read after | 40 \| 40 \| 24 | **0** | 0 |
+  | `(i, Some(xs))`, `xs` dead after | 40 \| 40 \| 24 | **0** | 0 |
+  | payload carried out of the arm | 72 (value) | 72 | 72 |
+
+  Freeing an aliased payload is balanced because the CONSTRUCTION alias-incs it,
+  so the element's dec spends the box's own reference and the local's own sweep
+  still finds a valid buffer. Both controls check that rather than assert it: one
+  reads `xs` after the tuple, the other reads a binding carried out of the arm
+  past every reclaim point, behind decoy allocations that would be handed the
+  block if the dec had really freed it.
+
+  A string ARRAY is `is_arr` too (`mark_arr` and `mark_strarr` are both set), so
+  it is refused explicitly: a flat dec would free the buffer and strand every
+  element box. `__fern_str_arr_free` is the release that walks them, and crediting
+  it here needs a reachable shape to test — `Option[string[]]` at a tuple element
+  is not IR-eligible, so there is none.
+
+  **The string half is a REACHED but INERT release**, and naming it is not what
+  is missing. Forcing the ident arm to return `__fern_str_free` unconditionally
+  leaves `(i, Some(sv))` at 32 on every backend, and the first reading of that
+  null was "the arm is never reached". The emitted code says otherwise: forcing
+  takes `__fern_str_free` in `churn` from 2 calls to 3. The arm runs, emits its
+  release, and the byte delta does not move — so the remaining 32 is not the
+  payload this arm would free.
+
+  A null result has now been misread three ways in this subsystem in one day —
+  wrong gate, edit did not apply, and here reached-but-inert. Counting the
+  emitted calls distinguishes them and a byte delta does not.
+
+  The ledger for that shape is the place to start: 2 `__fern_arr_box` against 2
+  `__fern_arr_dec` balances the tuple and union boxes, leaving 1
+  `__fern_str_concat` + 1 `__fern_i32_to_string` against 2 `__fern_str_free`.
+  The same string local with NO tuple is flat, so the tuple adds the 32; the
+  candidates are the copy `str_box` makes when a string is stored into the union
+  payload slot, and the producer temp. Nothing here over-releases — no probe has
+  returned 99.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_bare_ident_payload_reclaim_test.go` (4 cases x 3
+  backends; the two byte gates fail on the parent on all three legs, and the two
+  controls — the carried-out binding and the still-refused string payload — pass
+  either way). Refs #4353 #4451.
