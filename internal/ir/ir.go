@@ -154,7 +154,14 @@ const (
 	OpAlloc // (size i32)         → i32 (ptr)
 
 	// String runtime calls.
-	OpStrEq     // (a-ptr, b-ptr)   → i32
+	OpStrEq // (a-ptr, b-ptr)   → i32
+	// OpStrCmp is the three-way byte compare backing `<` `<=` `>`
+	// `>=` on strings: negative when a sorts before b, 0 when equal,
+	// positive when after. Byte-wise, with a length tiebreak — the
+	// order `core/cmp`'s `Ord for string` exposes. Distinct from
+	// OpStrEq, whose helper may shortcut on length and compare
+	// word-at-a-time; ordering has to read bytes in sequence.
+	OpStrCmp    // (a-ptr, b-ptr)   → i32 (signed -/0/+)
 	OpStrConcat // (a-ptr, b-ptr)   → i32 (new ptr)
 	// OpStrLen reads the length of a string. Today every backend
 	// emits an `[ptr - 4]` load (4-byte little-endian length prefix);
@@ -503,6 +510,8 @@ func (k OpKind) String() string {
 		return "alloc"
 	case OpStrEq:
 		return "str.eq"
+	case OpStrCmp:
+		return "str.cmp"
 	case OpStrConcat:
 		return "str.concat"
 	case OpStrLen:
@@ -10330,7 +10339,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if x.IsStringConcat {
 			return ast.StringType{}
 		}
-		if x.IsStringCmp {
+		if x.IsStringCmp || x.IsStringOrd {
 			return ast.BoolType{}
 		}
 		// Comparison ops (`==`, `!=`, `<`, `<=`, `>`, `>=`)
@@ -11014,6 +11023,20 @@ func (b *builder) decStashedStringTemps(slots ...int32) {
 	}
 }
 
+// strOrdOp maps an ordering operator to the signed integer compare
+// applied to OpStrCmp's three-way result.
+func strOrdOp(op string) OpKind {
+	switch op {
+	case "<":
+		return OpLtS
+	case "<=":
+		return OpLeS
+	case ">":
+		return OpGtS
+	}
+	return OpGeS
+}
+
 func (b *builder) binary(n *ast.Binary) error {
 	// Short-circuit operators don't fit the "both sides then op" pattern;
 	// lower them as small if/else chains over the IR.
@@ -11060,7 +11083,7 @@ func (b *builder) binary(n *ast.Binary) error {
 	// is rare, so forgoing the fold there costs nothing measurable
 	// and keeps the wrap semantics correct.
 	subI32 := n.IntWidth == 8
-	if !n.IsStringConcat && !n.IsStringCmp && !n.IsFloat && !subI32 {
+	if !n.IsStringConcat && !n.IsStringCmp && !n.IsStringOrd && !n.IsFloat && !subI32 {
 		if folded, ok := b.maybeFoldArithIdentity(n); ok {
 			return folded
 		}
@@ -11180,6 +11203,25 @@ func (b *builder) binary(n *ast.Binary) error {
 		if n.Op == "!=" {
 			b.emit(Op{Kind: OpNot})
 		}
+		b.decStashedStringTemps(slL, slR)
+		return nil
+	}
+	if n.IsStringOrd {
+		// `a < b` on strings is `str.cmp(a, b) <op> 0`. Same operand
+		// discipline as the equality arm: OpStrCmp reads both operands'
+		// bytes without taking ownership, so an owned temp operand
+		// (`f(x) < "…"`) is stashed and dec'd or its buffer leaks.
+		slL, err := b.stashOwnedStringOperand(n.Left)
+		if err != nil {
+			return err
+		}
+		slR, err := b.stashOwnedStringOperand(n.Right)
+		if err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStrCmp})
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: strOrdOp(n.Op)})
 		b.decStashedStringTemps(slL, slR)
 		return nil
 	}

@@ -2451,7 +2451,13 @@ function check_expr(e: parser.Expr, s: Scope): Type {
         if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
           return t_bool();
         }
-        return t_unknown("comparison op `" + b.op + "` requires matching i32 or f64 operands");
+        // String ordering is byte-wise lexicographic with a length
+        // tiebreak, lowered to the `str_cmp` op — a primitive, like
+        // `==` on strings, not an `Ord` dispatch.
+        if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
+          return t_bool();
+        }
+        return t_unknown("comparison op `" + b.op + "` requires matching i32, f64 or string operands");
       }
       if (b.op == "==" || b.op == "!=") {
         if (type_eq(lt, rt) && !is_unknown(lt)) {
@@ -7044,7 +7050,8 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         if (!is_unknown(olt) && !is_unknown(ort)) {
           var oki_o: boolean = is_integer(olt) && is_integer(ort);
           var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
-          if (!oki_o && !okf_o) {
+          var oks_o: boolean = type_eq(olt, t_string()) && type_eq(ort, t_string());
+          if (!oki_o && !okf_o && !oks_o) {
             if (type_eq(olt, ort) && is_composite_type(olt)) {
               // Ordering two values of the SAME composite type is
               // structural comparison via the type's `Ord` impl —
@@ -7062,7 +7069,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 out = out.append(dg_at("E041", "cannot order values of type " + demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
               }
             } else {
-              out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
+              out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric or string operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
             }
           }
         }

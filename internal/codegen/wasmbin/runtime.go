@@ -871,6 +871,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				needs.add("__fern_str_len")
 				needs.add("__fern_str_byte")
 				needs.add("__str_eq")
+			case ir.OpStrCmp:
+				// __str_ord reads bytes and lengths through the
+				// same two seams as __str_eq.
+				needs.add("__fern_str_len")
+				needs.add("__fern_str_byte")
+				needs.add("__str_ord")
 			case ir.OpStrConcat:
 				// __str_concat allocates a buffer sized by
 				// the sum of the two operand lengths, then
@@ -2082,6 +2088,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrEqBody,
 	},
+	"__str_ord": {
+		// (a_data, a_len, b_data, b_len) → i32, signed three-way.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrOrdBody,
+	},
 	"__str_concat": {
 		// (a_data, a_len, b_data, b_len) → (data, len). Multi-
 		// value return for the two-word ABI.
@@ -3006,6 +3018,91 @@ func buildStrByteBody(_ map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStrOrdBody assembles wasm bytes for __str_ord — the three-way
+// comparator behind `<` / `<=` / `>` / `>=` on strings.
+//
+// Signature: (param $a_data $a_len $b_data $b_len i32) (result i32)
+// Locals (after params): $la (4), $lb (5), $i (6), $n (7), $ca (8).
+//
+// Compares bytes in sequence up to the shorter length and returns the
+// first difference; a common prefix falls through to the length
+// difference, so the shorter string sorts first. None of __str_eq's
+// shortcuts apply — ordering is decided by the FIRST differing byte,
+// so neither a length mismatch nor an identical-pair check can stand
+// in for the scan.
+func buildStrOrdBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	var body []byte
+	// $la / $lb = byte lengths.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 5)
+	// $n = min($la, $lb).
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalSet(body, 7)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 7)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalSet(body, 7)
+	body = inst.InstEnd(body)
+	// Byte loop.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// Common prefix exhausted → the length difference decides.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 7)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 5)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		// $ca = byte(a, i); if it differs from byte(b, i), that
+		// difference is the result.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, strByte)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalTee(body, 9)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 9)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		// $i = $i + 1; continue.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	// Unreachable for the same reason as __str_eq's: every path
+	// through the loop returns or branches back.
+	body = inst.InstUnreachable(body)
+
+	// Six i32 locals: $la, $lb, $i, $n, $ca, $diff.
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildStrEqBody assembles wasm bytes for __str_eq.

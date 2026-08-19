@@ -51597,24 +51597,6 @@ function consuming_match_reuse_block(stmts: parser.Stmt[], structs: parser.Struc
     return acc;
 }
 
-// rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
-// string `<` operator), used to sort the name groups in rc_plan_dump the same
-// way native's sort.Strings orders them.
-function rc_dump_str_lt(a: string, b: string): boolean {
-    var la: i32 = a.len();
-    var lb: i32 = b.len();
-    var n: i32 = la;
-    if (lb < n) { n = lb; }
-    var i: i32 = 0;
-    while (i < n) {
-        var ca: i32 = a[i] as i32;
-        var cb: i32 = b[i] as i32;
-        if (ca != cb) { return ca < cb; }
-        i = i + 1;
-    }
-    return la < lb;
-}
-
 // rc_plan_dump renders THIS function's Perceus decision tables in the pinned
 // cross-compiler dump format (#4482 — the native side is
 // internal/ir/rc_dump.go, format pinned by TestRcPlanDumpFormat): one
@@ -51635,7 +51617,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         var ci: i32 = 0;
         while (ci < cps.len()) {
             var at: i32 = 0;
-            while (at < sorted.len() && rc_dump_str_lt(sorted[at], cps[ci])) { at = at + 1; }
+            while (at < sorted.len() && sorted[at] < cps[ci]) { at = at + 1; }
             var ns: string[] = [];
             var q: i32 = 0;
             while (q < at) { ns = ns.append(sorted[q]); q = q + 1; }
@@ -51661,7 +51643,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         var fi: i32 = 0;
         while (fi < fe.len()) {
             var at: i32 = 0;
-            while (at < fes.len() && rc_dump_str_lt(fes[at], fe[fi])) { at = at + 1; }
+            while (at < fes.len() && fes[at] < fe[fi]) { at = at + 1; }
             var ns: string[] = [];
             var q: i32 = 0;
             while (q < at) { ns = ns.append(fes[q]); q = q + 1; }
@@ -51687,7 +51669,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         var mi: i32 = 0;
         while (mi < ml.len()) {
             var at: i32 = 0;
-            while (at < mls.len() && rc_dump_str_lt(mls[at], ml[mi])) { at = at + 1; }
+            while (at < mls.len() && mls[at] < ml[mi]) { at = at + 1; }
             var ns: string[] = [];
             var q: i32 = 0;
             while (q < at) { ns = ns.append(mls[q]); q = q + 1; }
@@ -51715,7 +51697,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         while (xi < msx.len()) {
             if (util.index_of_str(mss, msx[xi]) < 0) {
                 var at: i32 = 0;
-                while (at < mss.len() && rc_dump_str_lt(mss[at], msx[xi])) { at = at + 1; }
+                while (at < mss.len() && mss[at] < msx[xi]) { at = at + 1; }
                 var ns: string[] = [];
                 var q: i32 = 0;
                 while (q < at) { ns = ns.append(mss[q]); q = q + 1; }
@@ -51743,7 +51725,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         while (ii < asi.len()) {
             if (util.index_of_str(ass, asi[ii]) < 0) {
                 var at: i32 = 0;
-                while (at < ass.len() && rc_dump_str_lt(ass[at], asi[ii])) { at = at + 1; }
+                while (at < ass.len() && ass[at] < asi[ii]) { at = at + 1; }
                 var ns: string[] = [];
                 var q: i32 = 0;
                 while (q < at) { ns = ns.append(ass[q]); q = q + 1; }
@@ -51772,7 +51754,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         while (ri < rsx.len()) {
             if (util.index_of_str(rss, rsx[ri]) < 0) {
                 var at: i32 = 0;
-                while (at < rss.len() && rc_dump_str_lt(rss[at], rsx[ri])) { at = at + 1; }
+                while (at < rss.len() && rss[at] < rsx[ri]) { at = at + 1; }
                 var ns: string[] = [];
                 var q: i32 = 0;
                 while (q < at) { ns = ns.append(rss[q]); q = q + 1; }
@@ -51797,7 +51779,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         var ci2: i32 = 0;
         while (ci2 < rcx.len()) {
             var at: i32 = 0;
-            while (at < rcs.len() && rc_dump_str_lt(rcs[at], rcx[ci2])) { at = at + 1; }
+            while (at < rcs.len() && rcs[at] < rcx[ci2]) { at = at + 1; }
             var ns: string[] = [];
             var q: i32 = 0;
             while (q < at) { ns = ns.append(rcs[q]); q = q + 1; }
@@ -51824,7 +51806,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         while (mi2 < cmx.len()) {
             if (util.index_of_str(cms, cmx[mi2]) < 0) {
                 var at: i32 = 0;
-                while (at < cms.len() && rc_dump_str_lt(cms[at], cmx[mi2])) { at = at + 1; }
+                while (at < cms.len() && cms[at] < cmx[mi2]) { at = at + 1; }
                 var ns: string[] = [];
                 var q: i32 = 0;
                 while (q < at) { ns = ns.append(cms[q]); q = q + 1; }
@@ -51898,7 +51880,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         while (p < pd.idxs.len()) {
             if (pd.idxs[p] == uidx[u]) {
                 var at: i32 = 0;
-                while (at < names.len() && rc_dump_str_lt(names[at], pd.names[p])) { at = at + 1; }
+                while (at < names.len() && names[at] < pd.names[p]) { at = at + 1; }
                 var nn: string[] = [];
                 var q: i32 = 0;
                 while (q < at) { nn = nn.append(names[q]); q = q + 1; }

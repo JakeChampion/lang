@@ -15750,17 +15750,15 @@ function dv_eq_expr(ty: string, lhs: Expr, rhs: Expr): Expr {
 }
 
 // dv_cmp_stmts builds the statements that compute the three-way comparison of
-// one derived-`cmp` field/payload into the i32 local `vn`. A NUMERIC scalar
-// inlines core/cmp's Ord body (`vn = -1 / 1 / 0` via `<` / `>`), so the derive
-// needs no `Ord` impl for that type — which the self-host loader (local +
-// builtin only, no core/std) doesn't provide; a `.cmp()` there would bail the
-// module to the AST emitter. A nominal field delegates to its own (local,
-// derived) `.cmp()`; a string field also keeps `.cmp()` (its Ord routes
-// through sort.string_cmp, not a primitive `<`), so a string-keyed derive(Ord)
-// remains the one shape that still falls back. The inline `<`/`>` form matches
-// core/cmp's numeric `cmp` exactly, so the differential oracle still agrees.
+// one derived-`cmp` field/payload into the i32 local `vn`. A field the ordering
+// OPERATORS handle — a numeric scalar or a string — inlines core/cmp's Ord body
+// (`vn = -1 / 1 / 0` via `<` / `>`), so the derive needs no `Ord` impl for that
+// type, which the self-host loader (local + builtin only, no core/std) does not
+// provide. A nominal field delegates to its own (local, derived) `.cmp()`. The
+// inline form is character-for-character core/cmp's own `cmp` for those types,
+// so the differential oracle still agrees.
 function dv_cmp_stmts(vn: string, ty: string, lhs: Expr, rhs: Expr): Stmt[] {
-    if (dv_is_num_scalar(ty)) {
+    if (dv_is_num_scalar(ty) || ty == "string") {
         var neg1: Expr = e_binary("-", e_number("0", "", false), e_number("1", "", false));
         var out: Stmt[] = [s_var(vn, "i32", e_number("0", "", false))];
         out = out.append(s_if(e_binary("<", lhs, rhs), [s_assign(vn, neg1)], []));

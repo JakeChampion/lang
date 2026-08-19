@@ -568,6 +568,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSliceRange {
 		g.emitSliceRangeRuntime()
 	}
+	if g.usesStrord {
+		g.emitStrordRuntime()
+	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
@@ -3807,6 +3810,98 @@ func (g *generator) emitAsciiRunRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_ascii_run")
+}
+
+// emitStrordRuntime emits `__fern_strord(a, b)` — the three-way
+// comparator behind `<` / `<=` / `>` / `>=` on strings: the first
+// differing byte's difference, or the length difference when one
+// operand is a prefix of the other. Unlike __fern_strcmp it cannot
+// bail on a length mismatch or read word-at-a-time: ordering is
+// decided by the FIRST differing byte, so bytes are read in
+// sequence.
+func (g *generator) emitStrordRuntime() {
+	g.line("")
+	g.line(".global __fern_strord")
+	g.typeDirective("__fern_strord")
+	g.label("__fern_strord")
+	if ast.UseTwoWordStrings(8) {
+		g.emitStrordRuntime2W()
+		return
+	}
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	// Lengths land in w6 / w7 and only move to the loop's w2 / w3
+	// once both byte pointers are materialised — on the two-word
+	// ABI x2 / x3 are still carrying b_data / b_len at this point.
+	g.emitStrLen("w6", "x0")
+	g.emitStrLen("w7", "x1")
+	g.emitStrDataPtr("x0", "x0", 16)
+	g.emitStrDataPtr("x1", "x1", 24)
+	g.emit("mov w2, w6")
+	g.emit("mov w3, w7")
+	g.emitStrordLoop("")
+	g.sizeDirective("__fern_strord")
+	g.line(".ltorg")
+}
+
+// emitStrordRuntime2W is the two-word-ABI variant: (a_data, a_len,
+// b_data, b_len) in (x0, x1, x2, x3), signed three-way result in x0.
+func (g *generator) emitStrordRuntime2W() {
+	// Frame matches __fern_strcmp's 2W form: fp/lr + two 16-byte
+	// inline-spill scratch slots + alignment.
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x1") // save a_len word
+	g.emit("mov x5, x3") // save b_len word
+	g.emitStrLen2W("w6", "x4")
+	g.emitStrLen2W("w7", "x5")
+	// x2 / x3 still hold b_data / b_len here, so the byte lengths
+	// stay in w6 / w7 until both pointers are materialised.
+	g.emitStrDataPtr2W("x0", "x0", "x1", 16)
+	g.emitStrDataPtr2W("x1", "x2", "x3", 32)
+	g.emit("mov w2, w6")
+	g.emit("mov w3, w7")
+	g.emitStrordLoop("2w")
+	g.sizeDirective("__fern_strord")
+	g.line(".ltorg")
+}
+
+// emitStrordLoop emits the byte-compare body both __fern_strord
+// forms share, given byte pointers in x0 / x1 and byte lengths in
+// w2 / w3. `sfx` disambiguates the labels between the two forms.
+func (g *generator) emitStrordLoop(sfx string) {
+	frame := 48
+	if sfx == "2w" {
+		frame = 64
+	}
+	loop := ".Lsord" + sfx + "_loop"
+	diff := ".Lsord" + sfx + "_diff"
+	tail := ".Lsord" + sfx + "_len"
+	// w4 = min(la, lb) — bytes the two strings have in common.
+	g.emit("cmp w2, w3")
+	g.emit("csel w4, w2, w3, lt")
+	g.label(loop)
+	g.emit("cmp w4, #0")
+	g.emit("beq " + tail)
+	g.emit("ldrb w5, [x0], #1")
+	g.emit("ldrb w6, [x1], #1")
+	g.emit("cmp w5, w6")
+	g.emit("bne " + diff)
+	g.emit("sub w4, w4, #1")
+	g.emit("b " + loop)
+	// First difference decides: byte values are unsigned, so their
+	// difference carries the sign of the byte order.
+	g.label(diff)
+	g.emit("sub w0, w5, w6")
+	g.emit("sxtw x0, w0")
+	g.emit(fmt.Sprintf("ldp x29, x30, [sp], #%d", frame))
+	g.emit("ret")
+	// Common prefix: the shorter string sorts first.
+	g.label(tail)
+	g.emit("sub w0, w2, w3")
+	g.emit("sxtw x0, w0")
+	g.emit(fmt.Sprintf("ldp x29, x30, [sp], #%d", frame))
+	g.emit("ret")
 }
 
 func (g *generator) emitStrcmpRuntime() {
@@ -9404,6 +9499,7 @@ type generator struct {
 	usesCCallF32 [5]bool
 	usesCCallF64 [5]bool
 	usesStrcmp   bool
+	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
 	usesMemchr bool
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
@@ -11965,6 +12061,25 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("bl __fern_strcmp")
 		g.emit("cmp x0, #0")
 		g.emit("cset w0, eq")
+		g.push()
+
+	case ir.OpStrCmp:
+		// Three-way ordering: __fern_strord's signed result goes
+		// straight on the stack; the IR follows it with a compare
+		// against 0. Same operand order as OpStrEq.
+		g.usesStrord = true
+		if ast.UseTwoWordStrings(8) {
+			g.emit("ldr x3, [sp], #16") // b_len
+			g.emit("ldr x2, [sp], #16") // b_data
+			g.emit("ldr x1, [sp], #16") // a_len
+			g.emit("ldr x0, [sp], #16") // a_data
+			g.emit("bl __fern_strord")
+			g.push()
+			break
+		}
+		g.emit("ldr x1, [sp], #16")
+		g.emit("ldr x0, [sp], #16")
+		g.emit("bl __fern_strord")
 		g.push()
 
 	// -------- floats (f32 / f64) --------

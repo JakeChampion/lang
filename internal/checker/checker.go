@@ -13071,14 +13071,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// operand concats too (#4813) — concat READS both operands and
 			// produces a fresh OWNED string, so borrowing views in is safe
 			// and the result is a plain `string`.
-			isStrOrString := func(t ast.Type) bool {
-				switch t.(type) {
-				case ast.StringType, ast.StrType:
-					return true
-				}
-				return false
-			}
-			if isStrOrString(lt) && isStrOrString(rt) {
+			if isStringLike(lt) && isStringLike(rt) {
 				n.IsStringConcat = true
 				return ast.StringType{}
 			}
@@ -13290,6 +13283,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					return ast.BoolType{}
 				}
 			}
+			// String ordering is byte-wise lexicographic with a length
+			// tiebreak — the same total order `core/cmp`'s `Ord for string`
+			// exposes to generics. Primitive rather than an `Ord` dispatch:
+			// `==` on strings is primitive too, and routing `<` through the
+			// stdlib impl would make the operator depend on `core/cmp`
+			// being imported.
+			if isStringLike(lt) && isStringLike(rt) {
+				n.IsStringOrd = true
+				return ast.BoolType{}
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
@@ -13306,7 +13309,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
 				// A cast cannot help operands that are not integers at all --
-				// `"a" < "b"` has no `as` that makes it work -- and requireInteger
+				// `true < false` has no `as` that makes it work -- and requireInteger
 				// above has already said the true thing. Suggesting `as` there
 				// sends the reader to write a conversion that does not exist.
 				if isInteger(lt) && isInteger(rt) {
@@ -13347,14 +13350,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// A `str` view compares freely with `string` (and other
 			// views) — comparison READS both operands' bytes (#4813);
 			// after erasure both sides are the same string comparison.
-			strLike := func(t ast.Type) bool {
-				switch t.(type) {
-				case ast.StringType, ast.StrType:
-					return true
-				}
-				return false
-			}
-			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(strLike(lt) && strLike(rt)) {
+			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
 			}
 			// Composite-type equality. `==` / `!=` on a struct or
@@ -13392,7 +13388,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// `str` view operand (#4813) compares contents the same way —
 			// without the flag the backends would pointer-compare the
 			// boxes and a trimmed view would never equal its literal.
-			if strLike(lt) && strLike(rt) {
+			if isStringLike(lt) && isStringLike(rt) {
 				n.IsStringCmp = true
 			}
 			// Float-vs-float equality has to lower to f32.eq /
@@ -15370,6 +15366,17 @@ func isFloat(t ast.Type) bool {
 func isInteger(t ast.Type) bool {
 	_, ok := t.(ast.NumberType)
 	return ok
+}
+
+// isStringLike reports whether t is `string` or a `str` view. The two share
+// a box shape after the LowerWith erasure (#4813), so every operator that
+// READS bytes — concat, `==`, ordering — accepts either on either side.
+func isStringLike(t ast.Type) bool {
+	switch t.(type) {
+	case ast.StringType, ast.StrType:
+		return true
+	}
+	return false
 }
 
 // hasHandleDecl reports whether the program defines a top-level

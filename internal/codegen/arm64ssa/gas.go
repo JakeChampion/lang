@@ -492,6 +492,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__alloc":              emitAllocHelper,
 	"__free":               emitFreeHelper,
 	"__str_eq":             emitStrEqHelper,
+	"__str_ord":            emitStrOrdHelper,
 	"__str_concat":         emitStrConcatHelper,
 	"__fern_str_dec":       emitStrDecHelper,
 	"__fern_arr_dec":       emitArrDecHelper,
@@ -2266,6 +2267,38 @@ func emitStrEqHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_streq_neq:")
 	w("\tmov x0, #0")
+	w("\tret")
+}
+
+// emitStrOrdHelper writes __str_ord(a, b) -> i32: the three-way byte compare
+// behind `<` / `<=` / `>` / `>=` on strings — the first differing byte's
+// difference, or the length difference when one is a prefix of the other.
+// Unlike __str_eq it cannot bail on a length mismatch: ordering is decided by
+// the FIRST difference. Lengths live at [ptr-4]. Leaf.
+func emitStrOrdHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_ord"))
+	w("\tldur w2, [x0, #-4]") // la
+	w("\tldur w3, [x1, #-4]") // lb
+	w("\tcmp w2, w3")
+	w("\tcsel w4, w2, w3, lo") // n = min(la, lb), unsigned
+	w("\tmov w5, #0")          // i = 0
+	w(".Lssa_strord_loop:")
+	w("\tcmp w5, w4")
+	w("\tb.hs .Lssa_strord_len")
+	w("\tldrb w6, [x0, x5]")
+	w("\tldrb w7, [x1, x5]")
+	w("\tcmp w6, w7")
+	w("\tb.ne .Lssa_strord_diff")
+	w("\tadd w5, w5, #1")
+	w("\tb .Lssa_strord_loop")
+	w(".Lssa_strord_diff:")
+	w("\tsub w0, w6, w7")
+	w("\tsxtw x0, w0")
+	w("\tret")
+	w(".Lssa_strord_len:")
+	w("\tsub w0, w2, w3")
+	w("\tsxtw x0, w0")
 	w("\tret")
 }
 

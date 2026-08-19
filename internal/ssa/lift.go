@@ -518,15 +518,19 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		l.out.AddOpNoResult(l.cur, OpStoreF, addr, val)
-	case ir.OpStrEq:
+	case ir.OpStrEq, ir.OpStrCmp:
 		if len(l.stack) < 2 {
-			return fmt.Errorf("ssa.LiftFromIR: OpStrEq at op[%d] needs 2 operands", i)
+			return fmt.Errorf("ssa.LiftFromIR: %s at op[%d] needs 2 operands", op.Kind, i)
 		}
 		b := l.stack[len(l.stack)-1]
 		a := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		v := l.out.AddOp(l.cur, OpCall, a, b)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_eq"
+		helper := "__str_eq"
+		if op.Kind == ir.OpStrCmp {
+			helper = "__str_ord"
+		}
+		l.cur.Ops[len(l.cur.Ops)-1].Str = helper
 		l.stack = append(l.stack, v)
 	case ir.OpStrConcat:
 		if len(l.stack) < 2 {
