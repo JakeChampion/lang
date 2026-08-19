@@ -22120,6 +22120,20 @@ function str_borrowing_method(field: string): boolean {
         || field == "contains" || field == "index_of";
 }
 
+// binop_operand_unsafe_for is expr_unsafe_for at a string binary operator's
+// operand. A BARE IDENT there is a borrow, for the same reason the index base
+// and the method receiver already are: concat copies both operands' bytes into a
+// new box and the comparisons read them, so neither retains. Flagging it cost
+// every `return s + ""` its param's borrowability, so a caller could not release
+// the temp it had just passed in.
+function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprIdent(_) => { return false; },
+        _ => { return expr_unsafe_for_view_pos(e, name, borrowable); }
+    }
+    return expr_unsafe_for_view_pos(e, name, borrowable);
+}
+
 // expr_unsafe_for_view_pos is expr_unsafe_for at a position that only BORROWS a
 // string for the duration of one expression: the escape-scan twin of
 // lower_view_borrowed, called from the same positions the lowerer treats as
@@ -22169,8 +22183,8 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
             // lower_view_borrowed calls at each of them say. Every other op is
             // arithmetic on scalars, where a slice operand cannot arise.
             if (b.op == "+" || b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                return expr_unsafe_for_view_pos(b.left, name, borrowable)
-                    || expr_unsafe_for_view_pos(b.right, name, borrowable);
+                return binop_operand_unsafe_for(b.left, name, borrowable)
+                    || binop_operand_unsafe_for(b.right, name, borrowable);
             }
             return expr_unsafe_for(b.left, name, borrowable) || expr_unsafe_for(b.right, name, borrowable);
         },
