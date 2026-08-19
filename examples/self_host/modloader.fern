@@ -50,16 +50,6 @@ pub function base_name(path: string): string {
     return path[start:path.len()] + "";
 }
 
-// contains reports membership of `name` in `xs`.
-function contains(xs: string[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
 // rel_path strips a leading import-relative `./` so the path joins cleanly
 // onto the entry directory: "./lexer" → "lexer", "std/io" → "std/io".
 function rel_path(path: string): string {
@@ -77,7 +67,7 @@ function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): s
     while (i < mod.imports.len()) {
         var path: string = mod.imports[i].path;
         var name: string = base_name(path);
-        if (!contains(seen, name)) { out = out.append(path); }
+        if (!util.has_str(seen, name)) { out = out.append(path); }
         i = i + 1;
     }
     return out;
@@ -375,7 +365,7 @@ pub function load_imports(dir: string, entry: parser.Module): flatten.LoadedModu
         var from: string = queue_dirs[qi];
         qi = qi + 1;
         var name: string = base_name(path);
-        if (contains(seen, name)) { continue; }
+        if (util.has_str(seen, name)) { continue; }
         seen = seen.append(name);
         var r: Resolved = resolve_module(from, path, name);
         if (r.ok) {

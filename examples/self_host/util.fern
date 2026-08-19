@@ -672,3 +672,21 @@ pub function arr_push_cliff_report(who: string, code: i32): i32 {
         None => { return code; }
     }
 }
+
+// str_join_range concatenates parts[lo..hi) by balanced divide-and-conquer.
+// A left fold (out = out + parts[i]) copies the whole accumulator on every
+// append → O(total²) when emitting a large program; this splits the range in
+// half and merges, so each of the log n levels copies O(total) → O(total·log n)
+// overall. (Array push is amortised O(1), but string concat is O(len), so the
+// emit hot path collects chunks in a string[] and joins once through here.)
+pub function str_join_range(parts: string[], lo: i32, hi: i32): string {
+    var n: i32 = hi - lo;
+    if (n <= 0) { return ""; }
+    if (n == 1) { return parts[lo]; }
+    var mid: i32 = lo + n / 2;
+    return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
+}
+
+pub function str_join_chunks(parts: string[]): string {
+    return str_join_range(parts, 0, parts.len());
+}
