@@ -10,7 +10,7 @@ import (
 )
 
 // nestedClosureIRCases are nested capturing lambdas — a lambda whose body
-// DEFINES another lambda. These bailed to the AST emitter for two reasons,
+// DEFINES another lambda. These bailed for two reasons,
 // both fixed here:
 //
 //  1. Capture analysis (astwalk.collect_idents_expr's ExprLambda case) recursed

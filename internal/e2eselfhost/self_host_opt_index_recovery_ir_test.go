@@ -16,7 +16,7 @@ import (
 // to the `_` arm, resolved to "", and bailed the enclosing function. Both
 // now route through the shared `arr_tag_of`.
 //
-// The bail was invisible before `FERN_STRICT_IR`: the AST emitter happens to
+// The bail was invisible before `FERN_STRICT_IR`: the AST emitter happened to
 // compile all four shapes correctly, so the exit codes agreed and only the
 // routing differed. That is the whole point of the flag — these are the gaps a
 // differential exit-code test cannot see, because there is nothing wrong with

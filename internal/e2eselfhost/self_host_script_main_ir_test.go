@@ -27,7 +27,7 @@ import (
 // emitter once it is gone.
 //
 // The assertion is deliberately two-part: the exit code alone would still pass if
-// the program silently fell back to AST, so each case also asserts the emitted asm
+// the program took some other route, so each case also asserts the emitted asm
 // carries the IR shape (`call __fn_main`), which the AST no-main path never emits.
 func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

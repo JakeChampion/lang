@@ -13,7 +13,7 @@ import (
 // over the fd set), reading the SELF-HOST array layout (len at [ptr+0],
 // element i at [ptr+(i+1)*8]). Because it's a real op — not a
 // `call_direct` to an unknown `poll` symbol — a `poll`-using module is
-// now IR-ELIGIBLE rather than falling back to the AST emitter (which
+// now IR-ELIGIBLE rather than bailing (the AST emitter it used to fall to
 // can't emit `poll` at all).
 //
 // The case polls an EMPTY fd set, which returns -1 without a syscall —

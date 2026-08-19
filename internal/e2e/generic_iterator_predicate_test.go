@@ -23,8 +23,8 @@ import (
 // return" / "A≠T" framings were symptoms of which cases happened to sit in a
 // condition, not a codegen bug. With if/while/for conditions now walked, `any` /
 // `all` lower on the IR path; `find` (called in a `match` scrutinee, a position
-// the lift pass still leaves to the AST emitter) runs correctly via the AST
-// fallback — both produce the oracle result on every backend.
+// the lift pass still leaves alone) is not routing-pinned here — both produce
+// the oracle result on every backend.
 var predicateAdapterPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }

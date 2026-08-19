@@ -14,7 +14,7 @@ import (
 // reports the ELEMENT type "P" for a `P[]`-returning call (it strips the `[]` for
 // `mk()[i].field` recovery, #3035). That made `decl_is_struct` true, so `.len()`
 // was mis-routed to a (nonexistent) `P.len` user method and the whole module
-// bailed to the AST emitter. A struct-array LOCAL was already fine (its arr slot
+// bailed the module. A struct-array LOCAL was already fine (its arr slot
 // reports ""), so only the direct-call form was affected — the exact shape
 // std/regex's `regex_count` (`regex_find_all(p, t).len()`) uses. The fix treats
 // an array-source receiver as the builtin array length regardless of the

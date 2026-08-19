@@ -12,7 +12,7 @@ import (
 // TestSelfHostIREligibilityProbe exercises the asm_ir_run driver's `-ir-probe`
 // flag, which prints asm_ir.eligibility_report(mod) instead of emitting asm: a
 // per-function breakdown of what lowers through the stack-IR path vs what bails
-// to the AST emitter, plus the module verdict the `-ir` path routes on.
+// out, plus the module verdict the `-ir` path routes on.
 //
 // This makes the IR-subset frontier OBSERVABLE — the prerequisite for goal-1
 // widening work, which otherwise can't tell whether a construct moved onto the

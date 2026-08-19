@@ -13,7 +13,7 @@ import (
 // (wasm) op — no runtime helper. The program's `return 99` is never reached, so
 // the exit code proves exit ran with the right argument. These programs are
 // heap-free, so the IR path emits ~1 KB vs the ~35 KB AST runtime — the size
-// check confirms the IR path was taken (a silent AST fallback would be huge).
+// check confirms the IR path was taken.
 var exitIRCases = []struct {
 	name string
 	src  string

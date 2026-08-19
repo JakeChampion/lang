@@ -14,7 +14,7 @@ import (
 // function value already lowered there (`[inc]`, `Box { f: inc }` → const_func),
 // but a lambda literal did not: the lift walk (lift_expr_walk) only recursed
 // into call-argument positions, so a lambda inside an array / struct literal was
-// never hoisted and the module bailed to the AST emitter. lift_expr_walk now
+// never hoisted and the module bailed. lift_expr_walk now
 // recurses into ExprArray and ExprStructLit, hoisting each no-capture lambda
 // element to a top-level __lam_N (leaving a bare fn-name → const_func), exactly
 // like a no-capture call arg.

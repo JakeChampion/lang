@@ -11,7 +11,7 @@ import (
 //
 // Every fallible filesystem builtin that returns no value has this shape
 // (write_file, remove_file, create_dir_all, remove_dir_all), so the arm is
-// ordinary source. It bailed the whole module to the AST emitter, because the
+// ordinary source. It bailed the whole module, because the
 // arm's payload-type gate accepted every payload spelling except the one that
 // carries nothing: `void` fell through to `s.fail()`. A `_` binder took a
 // different path and lowered, which is why the existing filesystem IR tests —

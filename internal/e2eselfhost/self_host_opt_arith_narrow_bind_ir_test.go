@@ -20,7 +20,7 @@ import (
 // returned false and the whole module bailed to the legacy AST emitter. #2691 adds
 // iife_arm_returns_narrowed_payload_arith (the arith sibling), reusing the existing
 // iife_payload_arith_kind classifier. i64 only — the f64 arith-then-narrow result
-// temp is not yet width-lowered in the IIFE path, so it stays on the AST path (a
+// temp is not yet width-lowered in the IIFE path, so it still bails (a
 // separate follow-up). Each case is oracle-checked against the interpreter and
 // returns <= 126. Mirrors self_host_opt_unused_wide_bind_ir_test.go.
 var optArithNarrowBindIRCases = []struct {

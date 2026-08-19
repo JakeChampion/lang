@@ -59,12 +59,12 @@ var cloArrayFieldCallCases = []struct {
 	// Two args (pins the (args+1)-slot cleanup).
 	{"two-arg", "struct Reg { hs: ((i32, i32) => i32)[] } function main(): i32 { var r = Reg { hs: [(a: i32, b: i32) => a * b] }; return r.hs[0](6, 7); }", 42},
 	// Regression: a plain (non-struct) local closure array direct call stays
-	// correct — it lowers on the IR path and never touches the AST fallback.
+	// correct — it lowers on the IR path rather than bailing.
 	{"local-array-regress", "function main(): i32 { var n: i32 = 2; var hs: (() => i32)[] = [() => n, () => n + 1]; return hs[0]() + hs[1](); }", 5},
 }
 
 // TestSelfHostCloArrayFieldCallIRX86_64 — the x86-64 asm.fern fix, through the
-// production driver (asm_ir_run `-ir`; the shape bails to the AST emitter).
+// production driver (asm_ir_run `-ir`).
 func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -142,14 +142,14 @@ func TestSelfHostCloArrayFieldRoutesIR(t *testing.T) {
 		{"clo-field-arg", "struct R { hs: ((i32) => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var r = R { hs: [(x: i32) => x + n] }; return r.hs[0](4); }"},
 		// The proof survives a rebind of the local it comes from: the closure
 		// credit is re-established by the ASSIGNMENT. Without that the field is
-		// unproven and the module drops to the AST emitter, which returns 0 for
-		// this program on wasm.
+		// unproven and the module bails (the AST emitter it once fell to returned 0 for
+		// this program on wasm).
 		{"clo-field-rebound", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; var r: R = R { hs: a }; return r.hs[0](); }"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir-probe")
 			if !strings.Contains(string(out), "module: IR") {
-				t.Errorf("routed to the AST emitter, want the IR path:\n%s", out)
+				t.Errorf("module is not IR-eligible, want the IR path:\n%s", out)
 			}
 		})
 	}

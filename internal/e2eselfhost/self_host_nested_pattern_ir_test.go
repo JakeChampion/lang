@@ -15,8 +15,8 @@ import (
 // only flat arms. These cases route each program through the self-host
 // x86-64 driver (asm_run.fern) and assert the compiled binary agrees with
 // the interpreter oracle — the desugared Option/Result matches lower via
-// whichever path the driver picks (the IR path bails Option/Result
-// scrutinees to the AST emitter, which is expected and still correct).
+// whichever path the driver picks (the IR path bails on Option/Result
+// scrutinees, which is expected and still correct).
 //
 // Scope matches the self-host's single-payload variant model: nesting at
 // the one payload slot (`Some(Ok(n))`), including deep nesting, flat

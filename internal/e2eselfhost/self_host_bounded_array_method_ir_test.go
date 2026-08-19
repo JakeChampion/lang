@@ -76,7 +76,7 @@ function main(): i32 { var e: i32[] = []; match (e.peak()) { Some(v) => { return
 }
 
 // TestSelfHostBoundedArrayMethodIR — bounded-receiver generic array methods
-// route the self-host IR path (not the AST fallback) and run correctly,
+// route the self-host IR path rather than bailing, and run correctly,
 // cross-checked against the interpreter oracle.
 func TestSelfHostBoundedArrayMethodIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

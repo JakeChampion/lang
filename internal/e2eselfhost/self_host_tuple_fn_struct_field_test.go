@@ -7,7 +7,7 @@ import (
 
 // tupleFnStructFieldCases pin the DIRECT call of a fn-valued TUPLE ELEMENT that
 // lives in a struct field — `s.p.N(args)`. The struct-field tuple makes the
-// enclosing function IR-ineligible, so it bails to the legacy AST emitter
+// enclosing function IR-ineligible, so it used to bail to the legacy AST emitter
 // (asm.fern / asm_arm64.fern). There, emit_call routed an ExprFieldAccess
 // callee straight to emit_method_call; a NUMERIC field ("N", a tuple index) is
 // not a method name, so it found no method and returned the -1 sentinel (exit

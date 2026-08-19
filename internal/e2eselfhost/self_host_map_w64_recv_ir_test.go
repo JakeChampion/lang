@@ -15,7 +15,7 @@ import (
 //     predicates resolved the receiver via expr_map_type_tag only (a local's
 //     annotation or a map-returning call), so these shapes width-tracked 32 /
 //     signed even though the lowering site stored the column full-width —
-//     a silent wrong answer (113, want 62), NOT an AST fallback. Fixed by
+//     a silent wrong answer (113, want 62), NOT a bail. Fixed by
 //     get_or_recv_map_type (struct-field / tuple-element / array-element
 //     receiver resolution) + the expr_map_type_tag 64-bit value-tag inference.
 //

@@ -21,7 +21,7 @@ import (
 // read loop, for-in iteration, an f64[] param, expression-valued elements, and
 // f64[]-returning functions (bound + directly indexed) — every f64-array shape
 // the IR lowers (arr_make / arr_get / arr_set width 64 -> 8-byte stride +
-// f64.load/store on wasm). f64-array slices still stay on the AST path by design
+// f64.load/store on wasm). f64-array slices still bail by design
 // (the wasm __fern_arr_slice helper copies 4-byte elements); the whole-module
 // eligibility gate bails them.
 func TestSelfHostF64ArrayWasmIR(t *testing.T) {

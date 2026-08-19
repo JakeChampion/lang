@@ -11,8 +11,9 @@ import (
 
 // #4375 item 1: the FFI __c_call<n> family (call a C-ABI function pointer with
 // up to four integer/pointer args) now lowers on the self-hosted x86-64 IR path.
-// Before this, a module using __c_call bailed to the AST emitter, which emitted
-// `call __fn___c_call0` with no body — an undefined-reference link failure, so
+// Before this, a module using __c_call bailed, and the AST emitter it fell to
+// emitted `call __fn___c_call0` with no body — an undefined-reference link
+// failure, so
 // std/jni was uncompilable by the self-host. The shim (emit_ccall_shim1) is
 // entered like any stack-ABI callee — the generic call_direct emit reverses the
 // args so arg0/fn is on top (param0 @ 16(%rbp), a_i @ (24+8i)(%rbp)) — and

@@ -11,8 +11,8 @@ import (
 // IR path. temp_dir makes a uniquely-named /tmp/<prefix>-<monotonic_ns> directory
 // (mkdirat) and returns Result[string, IoError]; it had a full AST runtime but no
 // IR lowering, so any module using it (std/test's must_temp_dir → result_assertions
-// / helpers) was dragged to the AST emitter (#3457). It now lowers to op_temp_dir →
-// the same recursive __fern_temp_dir runtime the AST path calls (which also pulls
+// / helpers) bailed the module (#3457). It now lowers to op_temp_dir →
+// the same recursive __fern_temp_dir runtime the AST path called (which also pulls
 // in __fern_monotonic_ns). The program creates a temp dir, sanity-checks the path,
 // removes it (exercising remove_dir_all too), and exits 0; the test also pins that
 // the IR path was taken ($__fern_temp_dir in the emitted asm).

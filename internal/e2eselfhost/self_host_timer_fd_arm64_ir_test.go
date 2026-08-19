@@ -10,7 +10,7 @@ import (
 // ops on the self-host arm64 IR backend, emitting `bl __fn___fern_timer_fd` (the
 // timerfd_create/settime #85/#86 mirror), `bl __fern_wasm_timer_pollable` (-1),
 // and `bl __fern_wasm_pollable_drop` (0). A module using them is IR-eligible
-// rather than falling back to the AST emitter (which can't emit them).
+// rather than bailing.
 //
 // Same two programs as the x86-64 sibling: (a) a 1 ms timerfd polled with a
 // 500 ms budget returns index 0 (also exercises slice-2 arm64 poll over a REAL

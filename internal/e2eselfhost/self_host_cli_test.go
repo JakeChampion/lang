@@ -422,7 +422,7 @@ function main(): i32 {
 
 	t.Run("emit-ssa-array", func(t *testing.T) {
 		// An array program is in the SSA subset on x86-64: the opt-in -ssa
-		// path compiles it through the heap-aware backend. The IR/AST baseline
+		// path compiles it through the heap-aware backend. The IR baseline
 		// is the default (== -no-ssa) now that the IR path is production and
 		// -ssa is opt-in (issue #4391). The -ssa output must differ from it.
 		srcPath := filepath.Join(dir, "ssa_arr.fern")
@@ -434,9 +434,9 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("emit exited %d, want 0", code)
 		}
-		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
-		if string(ssaAsm) == string(astAsm) {
-			t.Error("-ssa fell back to AST for an array program (expected the SSA heap backend)")
+		baseAsm, _ := runDriver(t, "-no-ssa", srcPath)
+		if string(ssaAsm) == string(baseAsm) {
+			t.Error("-ssa fell back to the IR path for an array program (expected the SSA heap backend)")
 		}
 		progBin := buildBin(t, gcc, dir, "ssa_arr", string(ssaAsm))
 		cmd := exec.Command(progBin)
@@ -450,9 +450,9 @@ function main(): i32 {
 		// A program using push + slice pulls in the injected runtime helpers
 		// (__ssa_arr_push / __ssa_arr_slice). try_ssa must inject those helper
 		// bodies AND admit their names to the known set; otherwise calls_all_known
-		// rejects the call and the whole program falls back to the AST emitter.
-		// Asserting the opt-in -ssa output differs from -no-ssa (AST) proves
-		// the SSA path (with injected helpers) was taken.
+		// rejects the call and the whole program falls back to the IR path.
+		// Asserting the opt-in -ssa output differs from -no-ssa proves the SSA
+		// path (with injected helpers) was taken.
 		srcPath := filepath.Join(dir, "ssa_helpers.fern")
 		src := "function main(): i32 { var a = [1, 2]; a = a.append(3); var b = a[1:3]; return b[0] + b[1] + b.len() + a.len(); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -462,9 +462,9 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("emit exited %d, want 0", code)
 		}
-		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
-		if string(ssaAsm) == string(astAsm) {
-			t.Error("-ssa fell back to AST for a push/slice program (runtime helpers not injected)")
+		baseAsm, _ := runDriver(t, "-no-ssa", srcPath)
+		if string(ssaAsm) == string(baseAsm) {
+			t.Error("-ssa fell back to the IR path for a push/slice program (runtime helpers not injected)")
 		}
 		progBin := buildBin(t, gcc, dir, "ssa_helpers", string(ssaAsm))
 		cmd := exec.Command(progBin)
@@ -477,7 +477,7 @@ function main(): i32 {
 	t.Run("ssa-opt-in", func(t *testing.T) {
 		// The IR path is the DEFAULT now; SSA is opt-in via -ssa (issue #4391).
 		// For an in-subset program the default output must equal the -no-ssa
-		// (AST/IR) output and differ from the explicit -ssa output — proving the
+		// output and differ from the explicit -ssa output — proving the
 		// default routes through the IR path and -ssa opts into the SSA backend.
 		srcPath := filepath.Join(dir, "default_ir.fern")
 		src := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
@@ -488,8 +488,8 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("default emit exited %d, want 0", code)
 		}
-		ast, _ := runDriver(t, "-no-ssa", srcPath)
-		if string(def) != string(ast) {
+		baseline, _ := runDriver(t, "-no-ssa", srcPath)
+		if string(def) != string(baseline) {
 			t.Error("default codegen differs from -no-ssa (IR path is not the default)")
 		}
 		explicit, _ := runDriver(t, "-ssa", srcPath)
@@ -499,8 +499,8 @@ function main(): i32 {
 	})
 
 	t.Run("ssa-fallback", func(t *testing.T) {
-		// A program outside the SSA subset falls back from -ssa to the AST/IR
-		// shell transparently: the -ssa output is byte-identical to the -no-ssa
+		// A program outside the SSA subset falls back from -ssa to the IR path
+		// transparently: the -ssa output is byte-identical to the -no-ssa
 		// output, so opting into SSA never emits wrong code for programs it
 		// can't yet lower. An `enum` match is one such construct build_func
 		// still declines (floats, struct spread, and int-literal match — the
@@ -510,12 +510,12 @@ function main(): i32 {
 			t.Fatalf("write src: %v", err)
 		}
 		ssaOut, code1 := runDriver(t, "-ssa", srcPath)
-		astOnly, code2 := runDriver(t, "-no-ssa", srcPath)
+		baseline, code2 := runDriver(t, "-no-ssa", srcPath)
 		if code1 != 0 || code2 != 0 {
 			t.Fatalf("emit exited %d / %d, want 0", code1, code2)
 		}
-		if string(ssaOut) != string(astOnly) {
-			t.Errorf("-ssa did not fall back cleanly for an out-of-subset program (output differs from -no-ssa AST)")
+		if string(ssaOut) != string(baseline) {
+			t.Errorf("-ssa did not fall back cleanly for an out-of-subset program (output differs from -no-ssa)")
 		}
 	})
 
@@ -540,7 +540,7 @@ function main(): i32 {
 			return cmd.ProcessState.ExitCode()
 		}
 
-		// Core program: -ssa WAT differs from -no-ssa (AST) WAT.
+		// Core program: -ssa WAT differs from the -no-ssa (IR) WAT.
 		coreSrc := "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + fib(i); i = i + 1; } return s; }\n"
 		corePath := filepath.Join(dir, "wasm_core.fern")
 		if err := os.WriteFile(corePath, []byte(coreSrc), 0o644); err != nil {
@@ -550,9 +550,9 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
-		astWat, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", corePath)
-		if string(ssaWat) == string(astWat) {
-			t.Error("-ssa -target wasm fell back to AST for a core program (expected the SSA wasm backend)")
+		baseWat, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", corePath)
+		if string(ssaWat) == string(baseWat) {
+			t.Error("-ssa -target wasm fell back to the IR path for a core program (expected the SSA wasm backend)")
 		}
 		if got := runWat(t, "wasm_core", ssaWat); got != 88 {
 			t.Errorf("SSA wasm core program exited %d, want 88", got)
@@ -560,39 +560,39 @@ function main(): i32 {
 
 		// Heap program (array): the SSA wasm backend covers alloc / load_elem
 		// / store_elem now, so this also compiles through SSA — WAT differs
-		// from the -no-ssa (AST) output and runs to its value.
+		// from the -no-ssa output and runs to its value.
 		arrSrc := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
 		arrPath := filepath.Join(dir, "wasm_arr.fern")
 		if err := os.WriteFile(arrPath, []byte(arrSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		defArr, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", arrPath)
-		astArr, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", arrPath)
-		if string(defArr) == string(astArr) {
-			t.Error("-ssa -target wasm fell back to AST for an array program (expected the SSA heap backend)")
+		baseArr, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", arrPath)
+		if string(defArr) == string(baseArr) {
+			t.Error("-ssa -target wasm fell back to the IR path for an array program (expected the SSA heap backend)")
 		}
 		if got := runWat(t, "wasm_arr", defArr); got != 75 {
 			t.Errorf("SSA wasm array program exited %d, want 75", got)
 		}
 
 		// String build (concat) compiles through SSA now: WAT differs from the
-		// -no-ssa (AST) output and runs to its value.
+		// -no-ssa output and runs to its value.
 		catSrc := "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }\n"
 		catPath := filepath.Join(dir, "wasm_cat.fern")
 		if err := os.WriteFile(catPath, []byte(catSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		defCat, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", catPath)
-		astCat, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", catPath)
-		if string(defCat) == string(astCat) {
-			t.Error("-ssa -target wasm fell back to AST for a string-concat program (expected the SSA concat helper)")
+		baseCat, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", catPath)
+		if string(defCat) == string(baseCat) {
+			t.Error("-ssa -target wasm fell back to the IR path for a string-concat program (expected the SSA concat helper)")
 		}
 		if got := runWat(t, "wasm_cat", defCat); got != 6 {
 			t.Errorf("SSA wasm string-concat program exited %d, want 6", got)
 		}
 
 		// print compiles through SSA now and appends a trailing newline (Fern's
-		// print semantics), matching the AST emitter. WAT differs from -no-ssa,
+		// print semantics), matching the IR path. WAT differs from -no-ssa,
 		// exits 42, and writes "hi from wasm\n" to stdout.
 		prSrc := "function main(): i32 { print(\"hi from wasm\"); return 6 * 7; }\n"
 		prPath := filepath.Join(dir, "wasm_print.fern")
@@ -600,9 +600,9 @@ function main(): i32 {
 			t.Fatalf("write src: %v", err)
 		}
 		defPr, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", prPath)
-		astPr, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", prPath)
-		if string(defPr) == string(astPr) {
-			t.Error("-ssa -target wasm fell back to AST for a print program (expected the SSA print helper)")
+		basePr, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", prPath)
+		if string(defPr) == string(basePr) {
+			t.Error("-ssa -target wasm fell back to the IR path for a print program (expected the SSA print helper)")
 		}
 		prWatPath := filepath.Join(dir, "wasm_print.wat")
 		if err := os.WriteFile(prWatPath, defPr, 0o644); err != nil {
@@ -625,9 +625,9 @@ function main(): i32 {
 			t.Fatalf("write src: %v", err)
 		}
 		defCap, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", capPath)
-		astCap, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", capPath)
-		if string(defCap) == string(astCap) {
-			t.Error("-ssa -target wasm fell back to AST for a capturing-lambda program (expected the SSA closure path)")
+		baseCap, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", capPath)
+		if string(defCap) == string(baseCap) {
+			t.Error("-ssa -target wasm fell back to the IR path for a capturing-lambda program (expected the SSA closure path)")
 		}
 		if got := runWat(t, "wasm_cap", defCap); got != 15 {
 			t.Errorf("SSA wasm capturing-lambda program exited %d, want 15", got)
@@ -639,7 +639,7 @@ function main(): i32 {
 		// try_ssa first; it used to append `__env` to the lambda's params in
 		// place, corrupting the AST the fallback emitter then reused (duplicate
 		// $__env → invalid WAT). Guard it: a while-true + capturing-lambda
-		// program falls back to the AST emitter (-ssa WAT == -no-ssa WAT) and
+		// program falls back to the IR path (-ssa WAT == -no-ssa WAT) and
 		// runs correctly.
 		fbSrc := "function main(): i32 { var n = 5; var f = function (z: i32): i32 { return z + n; }; var r = f(2); var i = 0; while (true) { i = i + 1; if (i >= r) { return r; } } }\n"
 		fbPath := filepath.Join(dir, "wasm_fb.fern")
@@ -647,8 +647,8 @@ function main(): i32 {
 			t.Fatalf("write src: %v", err)
 		}
 		defFb, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", fbPath)
-		astFb, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", fbPath)
-		if string(defFb) != string(astFb) {
+		baseFb, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", fbPath)
+		if string(defFb) != string(baseFb) {
 			t.Error("-ssa -target wasm corrupted the AST for a fallback program (try_ssa has a side effect)")
 		}
 		if got := runWat(t, "wasm_fb", defFb); got != 7 {

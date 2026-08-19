@@ -42,7 +42,7 @@ const wideToStringProg = `function main(): i32 {
 `
 
 // TestSelfHostWideToStringWasmIR builds the wasm IR driver once and checks both
-// halves of the change: the module no longer defers to the AST emitter, and the
+// halves of the change: the module no longer bails, and the
 // WAT formatters render the same digits the native interpreter does.
 func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -108,7 +108,7 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	t.Run("routing", func(t *testing.T) {
 		wat := emit(t, wideToStringProg, false)
 		if !isIREmittedWAT(t, wat) {
-			t.Error("a wide .to_string() module still routes to the AST emitter")
+			t.Error("a wide .to_string() module still does not lower through the IR")
 		}
 	})
 

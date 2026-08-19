@@ -74,7 +74,7 @@ func TestSelfHostLoopLocalCaptureIRX86_64(t *testing.T) {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
 			if !strings.Contains(string(asm), tc.irWitness) {
-				t.Fatalf("%s: emitted asm missing %q — the loop-local capture fell back to the AST path", tc.name, tc.irWitness)
+				t.Fatalf("%s: emitted asm missing %q — the loop-local capture did not lower through the IR", tc.name, tc.irWitness)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

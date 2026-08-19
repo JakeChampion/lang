@@ -2279,7 +2279,7 @@ pub function component_io_shims(needs: string[]): string {
     // signature like the two above — they REPLACE the preview1 helper bodies
     // ($__fern_now_ns and friends, emitted for mode 0), keeping the same
     // function names and i64/i32 results so the IR's call sites are identical
-    // either way. Same substitution the AST path makes via its `if (io)` split.
+    // either way. Same substitution the AST path made via its `if (io)` split.
     if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
         o = o + clock_funcs_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
     }

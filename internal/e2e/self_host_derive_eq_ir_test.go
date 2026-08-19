@@ -95,7 +95,7 @@ func TestNativeDeriveEq(t *testing.T) {
 
 // TestSelfHostDeriveEqIRX86_64 routes each case through the self-hosted x86-64
 // IR driver, pins routing to "ir" (the synthesiser's scalar `==` keeps the
-// derived eq off the AST fallback), and oracle-checks the exit code.
+// derived eq IR-eligible), and oracle-checks the exit code.
 func TestSelfHostDeriveEqIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
