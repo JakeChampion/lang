@@ -44,6 +44,29 @@ func uriToPath(uri string) (string, bool) {
 	return p, true
 }
 
+// requestModule returns the canonical module path naming the document
+// a request was made against — the same string modload stamps on the
+// decls it loads from that file. Empty when the URI has no filesystem
+// path (the playground's opaque URIs, single-file mode), which leaves
+// the module filter inert.
+func requestModule(uri string) string {
+	p, ok := uriToPath(uri)
+	if !ok {
+		return ""
+	}
+	return p
+}
+
+// inModule reports whether a node stamped with sourceModule belongs to
+// the document the request named. Every module of a workspace program
+// shares one (line, col) space and ast.Position carries no filename, so
+// a position search that skips this check answers a request for one
+// file out of another. An unstamped node ("" — single-file programs,
+// literate tangles, checker-synthesised decls) is in scope everywhere.
+func inModule(sourceModule, requested string) bool {
+	return requested == "" || sourceModule == "" || sourceModule == requested
+}
+
 // pathToURI is the inverse — used to attribute cross-module
 // definitions back to a file:// URI the editor can open.
 func pathToURI(p string) string {

@@ -18,8 +18,8 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-18 over seeds 0..511 (the leg's default corpus): 507 agree,
-# 0 diverge, 5 compile gaps — all of them the `<fn>$clo not defined` class
+# Measured 2026-08-19 over seeds 0..511 (the leg's default corpus): 508 agree,
+# 0 diverge, 4 compile gaps — all of them the `<fn>$clo not defined` class
 # (#6256), so every other category in the census below is empty.
 #
 # This is the only place the figure is derived. Quote it from here and re-sweep
@@ -32,7 +32,8 @@
 #
 # That caution cuts both ways, and every run since has gone the other way: 204
 # agree / 308 gaps, then 263 / 249 (#6237 + #6246), 291 / 221 (#6261), 311 / 201
-# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151, 504 / 8, 507 / 5.
+# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151, 504 / 8, 507 / 5,
+# 508 / 4.
 # One bail can cost far more than the seed that exposes it — an if-expression
 # whose branches are 64-bit took the whole MODULE off the IR path, and fernsmith
 # emits if-expressions everywhere, so a single missing branch in one classifier
@@ -57,17 +58,29 @@
 # The class is NOT one mechanism, which is the standing lesson here: grouping by
 # message is what made the first reduction fix the wrong thing. #6256's sweep
 # separated the survivors by instrumenting `lower_expr`'s `ExprLambda` arm. The
-# fn-valued-capture row (s0356, s0172) left with #6861; five remain:
+# fn-valued-capture row (s0356, s0172) left with #6861; four remain:
 #
-#   2  generic-passthrough arm values never walked                (s0393, s0215)
+#   1  a fn-typed LOCAL bound from a passthrough call, whose declared
+#      signature StmtVar drops, so the IIFE hoist cannot build the
+#      capture parameter and declines                             (s0393)
 #   2  the array gate failed by a passthrough arm, not a nested
 #      IIFE — same gate as the closed s0017, different failure    (s0042, s0211)
 #   1  nested IIFEs in non-array fn-value position                (s0199)
 #
-# HAZARD on the passthrough rows: `expr_is_closure_box` has no `PASSTHRU:` branch
-# (unlike `arr_elem_is_closure_box`), so boxing a passthrough arm leaves the
-# destination unmarked and converts a safe bail into a SIGSEGV. The destination
-# side has to move first.
+# s0215 left when the passthrough rule reached both sides: the boxing pass now
+# descends a passthrough nested in another, and the closure-ARRAY registry
+# recognises a passthrough element (and a returned value-position if/match).
+# That ordering was load-bearing — widening the boxing alone turns safe bails
+# into SIGSEGVs, because a destination that does not read the element as a box
+# bare-dispatches one. `expr_is_closure_box`, the non-array arm-value twin, still
+# has no `PASSTHRU:` branch, so the same hazard stands for whatever needs it next.
+#
+# s0393 is a decline, not a miss: `cap_param_for` recovers a fn-typed capture's
+# signature from a lambda initialiser or a `__mkclo$` target, and `var v0:
+# (i32) => i32 = pick(…)` is neither — the parser reads the annotation's return
+# into `v_fn_ret` and then stores only the coarse "fn" tag on the StmtVar, so
+# there is nothing exact left to reconstruct from. Carrying that return on the
+# binding is what would admit it.
 #
 # Read a moved count as a reordering before a regression: this class grew
 # 71 → 78 → 90 while nothing about it changed, purely because seeds that used to

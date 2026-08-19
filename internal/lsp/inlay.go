@@ -30,16 +30,21 @@ const inlayHintKindType = 1
 
 // runInlayHints walks the cached AST + checker info for var
 // declarations whose Type is nil (un-annotated, `var x = 7`) and
-// emits a ghost ": Type" right after the name. Only hints whose
-// position falls inside the requested LSP range are returned —
-// editors only ask about the visible viewport.
-func runInlayHints(state *docState, rng Range) []inlayHint {
+// emits a ghost ": Type" right after the name. Only hints from the
+// requested document whose position falls inside the requested LSP
+// range are returned — editors only ask about the visible viewport,
+// and a workspace program's Locals table spans every module.
+func runInlayHints(state *docState, uri string, rng Range) []inlayHint {
 	if state == nil || state.prog == nil || state.info == nil {
 		return []inlayHint{}
 	}
+	mod := requestModule(uri)
 	out := []inlayHint{}
 	for fd, vars := range state.info.Locals {
 		if fd == nil {
+			continue
+		}
+		if !inModule(fd.SourceModule, mod) {
 			continue
 		}
 		for _, v := range vars {

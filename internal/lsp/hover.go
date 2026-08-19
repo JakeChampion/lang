@@ -32,12 +32,12 @@ type markupContent struct {
 // symbol tables and returns a hover response. Returns nil when there's
 // no recognised name at the position or no useful info to show — the
 // LSP wire protocol treats a null result as "no hover".
-func runHover(state *docState, pos Position) *hoverResult {
+func runHover(state *docState, uri string, pos Position) *hoverResult {
 	if state == nil || state.prog == nil {
 		return nil
 	}
 	line, col := lspToInternalPos(pos)
-	hit := findNameAt(state.prog, line, col)
+	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return nil
 	}

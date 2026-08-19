@@ -37,17 +37,8 @@ func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 	if state == nil || state.prog == nil {
 		return []documentSymbol{}
 	}
-	keep := func(srcMod string) bool {
-		if srcMod == "" {
-			return true // single-file program or unstamped (in-scope)
-		}
-		// Workspace mode: keep decls from THIS file only.
-		path, ok := uriToPath(uri)
-		if !ok {
-			return true
-		}
-		return srcMod == path
-	}
+	mod := requestModule(uri)
+	keep := func(srcMod string) bool { return inModule(srcMod, mod) }
 	out := []documentSymbol{}
 	for _, fd := range state.prog.Funcs {
 		if fd == nil || !keep(fd.SourceModule) {

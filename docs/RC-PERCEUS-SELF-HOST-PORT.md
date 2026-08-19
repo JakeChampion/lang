@@ -10613,3 +10613,437 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   safety controls — pointer payload bound, pointer payload carried out, and a
   whole-element extraction that must stay refused — pass either way).
   Refs #4353 #4451.
+
+- 2026-08-19: **a `Result` constructed at a tuple element position leaked its
+  box, and the #4353 survey re-measured against a native oracle that is valid
+  again.** `emit_tuple_child_drops`' union arm asks `tuple_union_elem_fresh`
+  whether an element CONSTRUCTS a tagged union here, and that was answered by
+  `expr_opt_elem_tag`, which returns a TAG. A bare `Ok(x)` cannot name the
+  Result's E arm, so nothing recovers a `Result[T, E]` from the expression and
+  every `Ok` / `Err` element answered "not a construction". The rest of the
+  tuple reclaimed around it — `(i, [i, i+1], Ok(i))` measured the same 40 as
+  `(i, Ok(i))`, which is what isolates the union box as the only thing leaking.
+
+  `expr_builtin_result_ctor` asks freshness directly: a one-argument `Ok` /
+  `Err` whose name is not a free function in this module. `is_user_fn` is
+  load-bearing — a shadowing `function Ok(...)` hands back a box the call did
+  not allocate, and `keep` still holds it. A same-named user-enum VARIANT never
+  reaches the predicate; `expr_enum_type` resolves it one line above.
+
+  Widening the same predicate to `Some` was measured and reverted as inert:
+  `Some([i, i+1])` at an element position is already credited, and the two
+  shapes where `expr_opt_elem_tag` could not name the payload —
+  `Option[(i32, i32)]` and `Option[Q]` at a tuple element — are not IR-eligible
+  at all, so there is no reachable program the widening would move.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_result_elem_reclaim_test.go` (6 cases x 3
+  backends; the three byte gates fail on the parent on all three legs, the three
+  safety controls — a shadowed `Ok`, a bare-ident element, and an `Ok` payload
+  bound and carried out of the loop — pass either way).
+
+  **Survey re-measured on this commit's parent**, `__heap_bump_bytes()` delta
+  per round as x86-64 | arm64 | wasm, native x86-64 alongside, all with
+  `__rc_underflow_count()` clean. The two `#7123` items the issue calls closed
+  are confirmed closed; the numbers in `#7123`'s own table predate `#7143` and
+  should not be quoted.
+
+  | churn shape | self-host | native | status |
+  |---|---|---|---|
+  | `(i, Some(i))` | 0 \| 0 \| 0 | 0 | closed |
+  | `(i, Tag.Num(i))`, user enum | 0 \| 0 \| 0 | 0 | closed |
+  | `(i, Ok(i))` / `(i, Err(i))` | 40 \| 40 \| 16 | 0 | **closed by this entry** |
+  | `(i, Some([i, i+1]))` | 40 \| 40 \| 24 | 0 | closed by the union-PAYLOAD entry below |
+  | `(i, Tag.Nums([i, i+1]))` | 40 \| 40 \| 24 | 0 | closed by the union-PAYLOAD entry below |
+  | `(i, Map { 1: i, 2: i+1 })` | 168 \| 168 \| 1 | 0 | open |
+  | `Some(Some(i))` | 80 \| 80 \| 32 | 0 | open |
+  | `Some(Ok(i))` | 80 \| 80 \| 32 | 0 | open |
+  | `Some(Tag.Num(i))` | 80 \| 80 \| 40 | 0 | open |
+  | `Some(Map { … })` | not IR-eligible | 128 | native leaks — no oracle |
+  | `Map[i32, string]` literal | 0 \| 0 \| 0 | 0 | closed |
+  | `Map[i32, i32[]]` literal | 80 \| 80 \| 48 | 0 | open — item 3 |
+  | `Map[i32, Q]` literal | 96 \| 96 \| 64 | 0 | open — item 3 |
+  | concrete `(i32, i32[])[]` producer | 0 \| 0 \| 0 | 0 | closed |
+  | erased-generic `(i32, T)[]` producer | 120 \| 120 \| 72 | 0 | open — #6299 |
+
+  So the map-column half of item 3 is a self-host parity gap again, as the
+  correction on #4353 says: native is flat on both non-string column shapes
+  after #7143. `Some(Map { … })` is the one row where native is the leakier
+  side, so it has no oracle.
+
+  What the remaining rows have in common is that each needs the release to know a
+  VARIANT's payload layout — native's `enumVariantDropPlan` / `genEnumDropFn` —
+  and freeing an element by its declared type instead is the over-admission this
+  subsystem has taken three times in a week. The erased-generic producer is the
+  same shortfall one level up: its return type carries a type var, so there is no
+  element tuple to walk until the call site's instantiation is available (#6299).
+
+  This paragraph also said the self-host has no per-variant plan to consult, and
+  took the two union-PAYLOAD rows down with that reasoning. It has one:
+  `emit_enum_variant_drops` runtime-dispatches a user enum's variant and releases
+  that variant's rc payload fields, and `emit_opt_payload_drop_via` does the
+  built-in side. Those two rows were an unreached call away, not a design pass —
+  see the union-PAYLOAD entry below. That says nothing about the `Some(Some(i))`
+  / `Some(Ok(i))` / `Some(Tag.Num(i))` rows, which are Option LOCALS on a
+  different path and were not investigated here; they stay open on their own
+  evidence.
+
+  Two shapes are not IR-eligible at all and so cannot be measured on the
+  self-host side: a nested `Option` at a tuple element (`(i32, Option[Option[i32]])`)
+  and `Option[Map[…]]`. Refs #4353 #4451.
+- 2026-08-19: **#7144 — `match (m.get(k))` now pays back the reference the
+  lookup retained.** `m.get(k)` hands the caller a COUNTED reference to the
+  map's value: `__map_retain_val` for the kinds the column reclaims
+  (`mapValKindTag >= 2` — arrays, and values with a generated deep drop), a
+  string retain `emitMapGetRebox` emits itself on every ABI. The
+  match-scrutinee reclaim freed the rebuilt `Option[V]` box and left that count
+  outstanding, so the map's own column drop took the value from 2 to 1 and its
+  storage was stranded — one value per lookup, unbounded in a loop. Per round
+  over a 1000 / 2000-round churn (x86-64 | arm64 | wasm):
+
+  | churn shape | before | after |
+  |---|---|---|
+  | `Map[i32, i32[]]`, statement match | 32 \| 32 \| 32 | **0** |
+  | `Map[i32, i32[]]`, expression match | 32 \| 32 \| 32 | **0** |
+  | `Map[i32, Q]` (struct values) | 64 \| 64 \| 48 | **0** |
+  | `Map[i32, Option[i32]]` | 16 \| 16 \| 16 | **0** |
+  | `Map[i32, (i32, i32)]` | 16 \| 16 \| 16 | **0** |
+  | `Map[string, i32[]]` (boxed key) | 32 \| 32 \| 32 | **0** |
+  | `Map[i32, Q[]]` | 96 \| 96 \| 80 | **0** |
+  | `Map[i32, string]` | 64 \| 64 \| 64 | 64 \| **0** \| **0** |
+  | `Map[i32, Col]` (payloadless enum), `Map[i32, i64]` | 0 | 0 |
+  | the same churns with no lookup (control) | 0 | 0 |
+
+  The control row is what identifies the lookup rather than the map — #7122 had
+  already made the map itself flat. The x86-64 string cell is NOT this bug: that
+  column is valKind 1, which the map's drop does not reclaim at all, and it
+  reads 64 B/round with or without a lookup. The test pins the string row as
+  parity with the no-lookup churn for that reason, not as zero.
+
+  **The fix is a verdict the LOWERING records, not a rule the drop re-derives.**
+  `mapGetReboxSizes` becomes `mapGetRebox`, carrying the box size, the
+  `Option[V]` type and a `counted` bit from `mapGetHandsCountedValue` — so the
+  retain side and the release side cannot disagree about which values carry a
+  count. A counted payload takes the deep `emitOwnedEnumDrop` the fresh-enum
+  scrutinee next door already uses; a borrowed one keeps the shallow free,
+  because releasing it would free storage the map still owns.
+
+  **No confinement gate, and the reason is that this drop cannot free anything.**
+  The sibling `reclaimableMatchScrutinee` refuses an arm binding that escapes,
+  because its payload is sole-owned and its deep drop frees it. Here the payload
+  has two owners — the map's count and the lookup's — so the reclaim releases the
+  lookup's and the map keeps its. The shape is one count over, never one short,
+  which is the direction that cannot dangle. Measured rather than argued: six
+  aliasing programs (binding escaping to an outer local, escaping while the
+  owning map is destroyed in the same arm, returned out of the function, stored
+  into a struct, re-inserted into its own map, and aliasing a live local) each
+  read their value AFTER the owning map died with a churn burst in between, and
+  all six agree with `-interp` on x86-64, arm64 and wasm, with
+  `__rc_underflow_count()` 0 and nothing reported under `FERN_RC_FREE_DEBUG=1` +
+  `FERN_RC_UNDERFLOW_TRAP=1`.
+
+  **Still open and measured, separate cause:** an escaping arm binding
+  (`Some(g) => { keep = g; }`) leaks 32 B/round, unchanged either side of this
+  fix. The assignment emits neither an alias inc nor an overwrite dec — it is
+  lowered as a move — so the count the binding takes over is never released. The
+  same shape spelled `keep = m.get_or(k, fb)` is flat, which is what places the
+  cause at the move-site assignment rather than at the lookup.
+
+  Regression test: `internal/e2e/map_get_reclaim_test.go` — 3 programs x 4 legs;
+  the byte gate fails on the parent on all three backends and the string-parity
+  gate on arm64 and wasm (x86-64's own column leak masks it there), while the
+  aliasing program passes either side, which is its job. Refs #7144 #7122 #7143
+  #7114 #4451.
+- 2026-08-19: **a fresh-ALLOCATING string builtin's result was not recognised as a
+  fresh temp**, which is why `mkfresh(i).to_ascii_upper().len()` still read 46
+  after the receiver release took it from 95. `is_fresh_str_temp`'s ExprCall arm
+  admitted a scalar `.to_string()` and a proven fresh-ret free call and nothing
+  else, so the transform's own result was stranded even once the receiver
+  beneath it was freed.
+
+  The runtime bodies settle which builtins qualify, rather than an argument about
+  what the ops "probably" do: `__fern_str_to_upper` is `__raw_alloc(n)` …
+  `__raw_string(p, n)` with no identity path at all, `_reverse` the same, and
+  `_repeat` forces a 1-byte cap so even a zero-length result allocates. `trim`
+  returns a view and `replace` returns the receiver unchanged when the needle is
+  absent, so neither is admitted. `str_fresh_alloc_method` is deliberately
+  SMALLER than `str_borrowing_method` — that one is about what a method does to
+  its RECEIVER and also admits the scalar predicates; this one is about what it
+  RETURNS.
+
+  Widening the predicate alone measured ZERO on the target, because the `.len()`
+  receiver site never consulted it: `lfresh` was an ad-hoc disjunction of its own
+  (concat, SFRLEN call, owned-container index, struct field). Seeding it from
+  `is_fresh_str_temp` and keeping the container arms — which are not temps but die
+  there all the same — is what moved it.
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `w(pre).to_ascii_upper().len()` | 46 | **-2** |
+  | `w(pre).reverse().len()` | 46 | **flat** |
+  | `w(pre).repeat(2).len()` | 46 | **flat** |
+
+  All three return 98 on a base-built compiler. The trim/replace exclusion is
+  CONTRACT-ONLY here and the test says so: adding `trim` to the set does change
+  the emission (one extra `__fern_str_free` in `round`), but no probe turned that
+  into an observable fault — the same standing the view clause had in the binding
+  credit, and unlike the receiver-release site where it exits 97. Recording the
+  difference rather than letting "the predicate is load-bearing" carry across
+  three sites where it is only true at one.
+
+  Still open on this family: the source-declared method twin
+  (`base.to_owned().to_owned().len()` 46, `b.unrel()` 47) is the user-method call
+  site and wants the `SFRFRESHNAME:` registry. Refs #6544 #4451.
+- 2026-08-19: **the fresh anonymous receiver at a SOURCE-DECLARED method, and the
+  chain of them.** The builtin twin lands in `lower_str_method`; this is the
+  primitive-method dispatch, which already stashed its ARGUMENTS through
+  `stash_fresh_str_arg` and never its receiver.
+
+  The warrant did not need inventing. `recv_borrow_fns_of` already computes the
+  callee-side proof — the plain `"<Type>.<method>"` key means `body_unsafe_for`
+  found no escape of the receiver — but it was gated to STRUCT receivers, because
+  the marker it feeds is the struct deep drop. A string receiver earns the same
+  key on `body_unsafe_for` alone: the two field-hazard predicates beside it are
+  about carrying a FIELD of the receiver out, and a string has none.
+
+  That gate turns out to refuse exactly the right three shapes, all witnessed:
+
+  | callee | admitted | exit under a compiler that skips the proof |
+  | --- | --- | --- |
+  | `return s + ""` | yes | ok |
+  | `return s` (identity) | no | **97** |
+  | `return s[2:s.len()]` (view) | no | **97** |
+  | receiver moved into a struct the callee returns a field of | no | **97** |
+
+  The VIEW row is worth noting against the two entries above: the same question
+  was CONTRACT-ONLY at the binding-credit and fresh-alloc-builtin sites — no probe
+  distinguished it — and here it has a witness, because `body_unsafe_for` is the
+  thing doing the refusing and the receiver really is freed. Three sites, three
+  different standings for what looks like one predicate; recording it rather than
+  letting "load-bearing" generalise.
+
+  The first case list assumed a CHAIN would follow for free and it did not:
+  `w(pre).copies().copies().len()` still leaked 272 B/round, because
+  `is_fresh_str_temp` did not recognise a source-declared method result as a fresh
+  temp — only builtins and fresh-ret free calls. Admitting the `SFRFRESHNAME:`
+  class (every return a freshly allocated box, so it cannot be handing the
+  receiver or a view back) closed it, and closed the rest of the family with it:
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `var u = w(pre).copies(); u.len()` | 46 | **-2** |
+  | `var u = w(pre).unrel(); u.len()` | 47 | **-1** |
+  | `w(pre).copies().copies().len()` | 272 | **flat** |
+  | `mkfresh(i).to_owned().to_owned().len()` | 143 | **-2** |
+  | `base.to_owned().to_owned().len()` | 46 | **-2** |
+  | `base[4:base.len()].to_owned().len()` | 119 | **70** |
+
+  The last row is what remains of the family and is now the lead. Refs #6544 #4451.
+- 2026-08-19: **a fresh-or-receiver CHAIN in receiver position, released under a
+  runtime pointer compare** — the live half of
+  `alloc_flat_method_identity_return`, and with it the last listed self-host
+  divergence on any leg. `base.tail(4).to_owned()` materialises a view box over
+  `base`'s bytes that nobody names, and the receiver release above could not take
+  it: `is_fresh_str_temp` refuses a chain, and must keep refusing, because `tail`
+  has an identity path (`if (n <= 0) { return s; }` ) on which the
+  "intermediate" IS the root's own box. Which path ran is a runtime fact, so no
+  static predicate settles it.
+
+  What settles it is the discriminator the `.len()` site already uses: a box the
+  chain freshly allocated is never the root's pointer. The release is emitted
+  under a compare against `sfrrecv_chain_root_slot`'s root, and the identity path
+  simply does not take it. The outer callee still has to be `recv_borrow` proven
+  — that is what says the CALL did not carry the receiver into its own result,
+  and it is why the `.ident()` shape is refused outright rather than guarded.
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `base.tail(4).to_owned().len()` | 22 | **-1** |
+  | `base.tail(4).unrel().len()` | 22 | **-1** |
+  | `base.tail(4).to_owned().to_owned().len()` | 21 | **-2** |
+  | `base.tail(4).tail(1).to_owned().len()` | 47 | **22** |
+  | `base.to_owned().len()` (control) | -1 | -1 |
+
+  The fourth row is a deliberate partial and not a miss: `tail` is not itself
+  `recv_borrow` proven — it returns `s` on one path and a view of `s` on another
+  — so at the INNER call nothing is released and only the outer view box goes.
+  Halving it is exactly what the proof licenses; the other half needs `tail`'s
+  own shape admitted, which is a different question from this one.
+
+  The pointer compare is WITNESSED: `base.tail(0).to_owned()` takes the identity
+  path, and a build with the compare removed frees what `base` still holds and
+  exits 97. Its neighbour is NOT a witness and the test says so: the
+  `n >= sLen` path returns a LITERAL `""` whose pointer also differs from the
+  root, so the compare admits it and the release does run on a static — safe, but
+  by a different guard, `__fern_str_view_free`'s view case skipping a box base
+  outside the arena. That case passes with the compare removed too.
+
+  `alloc_flat_method_identity_return` now prints `flat` on x86-64, arm64 and wasm
+  and is delisted from all three known-divergence files, which leaves **zero
+  listed divergences on every leg** (the remaining lines in those files are all
+  commentary). Delisting is part of this change rather than follow-up: the
+  fixture gate fails a listed fixture that starts PASSING, by design.
+
+  Regression test: `internal/e2eselfhost/self_host_str_chain_receiver_test.go`
+  (7 cases x 3 backends). Thresholds there are calibrated rather than inherited
+  — the leak is 24 B/round, so the 32768-over-400-rounds gate the sibling suites
+  use would not have caught it; measured 9600 -> 0 per flat case. Refs #6544 #4451.
+
+
+
+- 2026-08-19: **the union PAYLOAD at a tuple element, and why freeing it is safe
+  even when an arm carries it out.** #7147 gave the element its box dec and left
+  the payload, on the grounds that releasing it needed the variant's own drop
+  plan. The self-host already HAD that plan — `emit_enum_variant_drops` for a
+  user enum (the sibling of native's `enumVariantDropPlan` / `genEnumDropFn`) and
+  `emit_opt_payload_drop_via` for a built-in `Some`/`Ok`/`Err`. Nothing needed
+  designing; the element site only had to reach for it.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `(i, Some([i, i+2]))` | 40 \| 40 \| 24 | **0** | 0 |
+  | `(i, Tag.Buf([i, i+2]))`, user enum | 40 \| 40 \| 24 | **0** | 0 |
+  | payload carried out of the arm | 40 \| 40 \| 24 | **0** | 32 |
+  | user enum with a non-droppable sibling variant | 40 \| 40 \| 24 | **0** | 0 |
+  | `(i, Ok([i, i+2]))`, Result | 40 | **0** | 0 |
+
+  What the payload costs is decided by the SAME freshness rule the sibling
+  element arms use one level up, so `(i, [a, b])` and `(i, Some([a, b]))` admit
+  the same array. Reaching for `rcpayload_option_cand` instead was tried and
+  abandoned: its un-annotated path wants number LITERALS, and no annotation
+  reaches this site, so `Some([i, i+2])` classified as nothing.
+
+  **The third row is the one worth reading.** An arm that does `keep = v` carries
+  the payload past every reclaim point, and the payload is released anyway — the
+  escaping binding RETAINS it, so the element's dec spends the tuple's own
+  reference rather than the last one. That is measured, not argued: the control
+  reads the carried-out pointer after decoy allocations that would be handed the
+  payload's block if it had really been freed, and gets the same 66 as native.
+  Byte-flat and value-correct at once is the evidence; either alone would not be.
+
+  **A user enum needs no whole-enum gate here, and must not be name-matched.**
+  The first cut gated the variant dispatch on `enum_all_variants_rc_droppable`
+  and let everything else fall through to the built-in `Some`/`Ok`/`Err` path,
+  which found its payload by matching the callee's NAME. Both halves were wrong,
+  and self-review then measurement caught them:
+
+  - The predicate admits the LOCAL consume path. It is not a safety requirement
+    of `emit_enum_variant_payload_drops`, which releases the fields whose types
+    it can name and silently skips the rest — a leak, not a corruption. Gating on
+    it cost the fourth row above its reclaim for a reason that belonged to a
+    different site.
+  - With the gate in place, a user enum carrying a variant spelled `Some` fell
+    THROUGH to the built-in path and had `op_opt_payload` applied to a user-enum
+    box. That measured correct (40 → 0) purely because both boxes are
+    `[tag, payload]` for a single-field variant. A reclaim resting on a layout
+    coincidence reached by a name test is what the admission side had always
+    avoided — it resolves a user variant through `expr_enum_type` and a
+    shadowing free function through `expr_builtin_result_ctor`'s `is_user_fn`,
+    precisely so a user `Some` or `Ok` cannot be mistaken for the built-in one.
+    The name test in `builtin_union_ctor` is only safe because that admission
+    ran first, which its comment now says out loud.
+
+  Dispatching on the resolved enum TYPE fixes both at once: every user enum takes
+  variant dispatch, the built-in path is only consulted when the element is not a
+  user enum at all, and the coincidence stops being load-bearing.
+
+  **Two residuals and one that closed under us.**
+  - A BARE-IDENT payload (`Some(xs)`) keeps its 40. Admitting it was measured —
+    it goes to 0 and stays balanced, so the construction does alias-inc it — but
+    the release has to be NAMED, and this site has no annotation to tell a
+    bare-ident array (flat dec) from a bare-ident string (which a flat dec would
+    misread as a pointer on the two-word-string backends). The blocker is typing
+    the payload, not owning it; a slot-type source would close it.
+  - A string payload built by concatenation goes 64 → 32, and the entry first
+    written here blamed "the producer temp" for the remaining 32. That was wrong,
+    and the two #6544 commits above are what exposed it: both widened
+    `is_fresh_str_temp` and neither moved the number. Isolating the operand does:
+
+    | payload | bytes |
+    |---|---|
+    | `Some("v" + "w")` | 0 |
+    | `Some("v" + i.to_string())` | 0 |
+    | `Some("v" + util_num(i))`, `util_num` a source function | 32 |
+
+    The concat is released; what leaks is the string a USER FUNCTION returned as
+    an operand of it. And it has nothing to do with tuples or unions —
+    `var sv: string = "v" + util_num(i)` as a plain local leaks the same 32,
+    where native is flat. So it is a self-host parity gap in the #6544 family,
+    one level away from this slice and not this slice's to fix: `is_fresh_str_temp`
+    is being actively reshaped by that work, and a third hand in it would collide
+    with a design that is still moving. Recorded, not routed around — nothing here
+    depends on it.
+  - A `Result` element is no longer one. It was measured at 80 and written up
+    here as an admission gap a layer above this drop; #7160 then closed that half
+    by admitting `Ok`/`Err` as constructions, taking it to 40, and this slice
+    takes the remaining 40 — the payload. `(i, Ok([i, i+2]))` is 40 on the
+    rebased base and **0** with both, native flat. Pinned by
+    `result-array-payload`.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_union_payload_reclaim_test.go` (8 cases x 3
+  backends; the five byte gates fail on the parent on all three legs, and the
+  three controls — carried-out validity, a bare-ident payload, and an immortal
+  `.rodata` literal that must not be freed — pass either way). Refs #4353 #4451.
+- 2026-08-19: **the escape scan's receiver carve-out now reads the callee-side
+  proof, not just the builtin list**, so a slice receiver at a SOURCE-DECLARED
+  method stops costing its source the whole reclaim credit.
+  `base[4:base.len()].to_owned().len()` measured 70 with each half — the slice
+  alone, the `to_owned` alone — already flat.
+
+  `expr_unsafe_for`'s ExprFieldAccess arm treats a non-ident receiver as a borrow
+  only when `str_borrowing_method` names the field, and that is a closed list of
+  BUILTINS. Every source-declared method fell through to the plain scan, where a
+  slice is an alias, so `base` escaped. `recv_borrow` already carries the
+  warrant: the plain `"<Type>.<method>"` key means `body_unsafe_for` found
+  nothing carrying the receiver out, which admits `to_owned` (`return s + ""`)
+  and refuses `trim` (`return s[low:high]`).
+
+  The registry is threaded through the scan family — 13 signatures, 169 call
+  sites — and is EMPTY inside `recv_borrow_fns_of` itself, the same Level-1
+  treatment `borrowable` already documents, so computing the proof cannot consult
+  it. `reclaimable_names_of` already took `recv_borrow` as a parameter, so the
+  one entry point that decides a string local's `STR:` credit needed no new
+  plumbing.
+
+  The proof is WITNESSED, and the shape that witnesses it is not the obvious
+  one. Every probe where the view and the source die together passes even under a
+  compiler that admits any method name, because the release lands after the last
+  read either way. What faults is the view RETURNED past its source's scope:
+
+  | probe | admit-anything build |
+  | --- | --- |
+  | `v = base[a:b].view2()`, both read below | ok |
+  | `return base[a:b].view2()`, read by the caller | **96** (freed and reused bytes) |
+
+  A first attempt at a TYPE CHECK here was deleted as dead code rather than kept
+  as a guard. The key can only be spelled `string.<method>` — the scan runs on
+  bare AST — so a same-named method on another type answers to it, and
+  restricting the receiver to an `ExprSlice` looked like the fix. It cannot
+  change any verdict: admitting a receiver only routes it to
+  `expr_unsafe_for_view_pos`, which differs from `expr_unsafe_for` on `ExprSlice`
+  alone and delegates straight to it otherwise, so a non-slice receiver reaches
+  the same answer either way. Removing the restriction measured identically on
+  every probe, including the struct-name-collision one built to break it.
+
+  | leg | before | after | what is left |
+  | --- | --- | --- | --- |
+  | x86-64 | 246400 | **9600** | the 24-byte view box, fixed size |
+  | arm64 | 246400 | **9600** | same |
+  | wasm | 464000 | **230400** | a payload-sized COPY |
+
+  (400 rounds, wide payload.) The wasm column is the finding worth carrying
+  forward: its residual SCALES with the payload where the register backends' does
+  not, because a slice is a zero-copy view on the asm-IR path (#4294) and a copy
+  on wasm. So the register legs keep a 25x separation and wasm only 2x, which is
+  why the regression test gates them at different numbers rather than picking one
+  loose threshold that would sit inside a 7% band on both.
+
+  Regression test: `internal/e2eselfhost/self_host_str_slice_recv_borrow_test.go`
+  (6 cases x 3 backends). The improvement case fails on the parent on all three
+  legs; the witness above is checked against a build that skips the proof.
+
+  Next on this shape: the intermediate view box itself. #7164 releases a
+  fresh-or-receiver CHAIN in receiver position under a pointer compare, but its
+  root walk only recognises an `ExprCall` receiver — a bare `ExprSlice` there is
+  not a chain link it follows. Refs #6544 #4451.

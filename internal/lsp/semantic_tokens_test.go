@@ -7,7 +7,7 @@ import (
 func semanticTokensFor(src string) semanticTokensResponse {
 	s := NewServer()
 	s.updateDoc("file:///t", src)
-	return runSemanticTokens(s.docs["file:///t"])
+	return runSemanticTokens(s.docs["file:///t"], "file:///t")
 }
 
 func TestSemanticTokens_LegendMatchesIota(t *testing.T) {

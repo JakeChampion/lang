@@ -12,7 +12,7 @@ import (
 func hoverFor(src string, line, col int) *hoverResult {
 	s := NewServer()
 	s.updateDoc("file:///t", src)
-	return runHover(s.docs["file:///t"], Position{Line: line, Character: col})
+	return runHover(s.docs["file:///t"], "file:///t", Position{Line: line, Character: col})
 }
 
 func TestHover_LocalVar(t *testing.T) {

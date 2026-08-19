@@ -373,33 +373,53 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string) bool {
 	return true
 }
 
-// reclaimableMapGetScrutinee reports the data size of the `Option[V]` box a
-// just-lowered `m.get(k)` scrutinee allocated, and whether the match may free
-// it once dispatch is done.
+// reclaimableMapGetScrutinee reports what a just-lowered `m.get(k)` scrutinee
+// allocated, and whether the match may reclaim it once dispatch is done.
 //
 // The box is emitMapGetRebox's own — allocated per call at rc=1, dead as soon
 // as the arms have read the payload, and dec'd by nothing, so `match
-// (m.get(k))` in a loop stranded one box per lookup. The size comes from
-// mapGetReboxSizes rather than from re-deriving the lowering's dispatch
-// condition, so a call that took some other route has no entry and is left
-// alone. On a miss the slot holds the shared None sentinel, which the free's
-// is_unique gate declines.
+// (m.get(k))` in a loop stranded one box per lookup. The plan comes from
+// mapGetRebox rather than from re-deriving the lowering's dispatch condition,
+// so a call that took some other route has no entry and is left alone. On a
+// miss the slot holds the shared None sentinel, which the reclaim's is_unique
+// gate declines.
 //
-// The free must stay SHALLOW (emitFreshBoxFreeSized). A pointer payload here
-// is the MAP's value: only the kinds __map_retain_val covers, plus the string
-// retain emitMapGetRebox emits, hand the caller a counted reference, so a deep
-// drop would release a value the map still owns. An `@` binding is refused
-// outright — it binds the box pointer itself to a user name.
-func (b *builder) reclaimableMapGetScrutinee(tag ast.Expr, hasAtBinding bool) (int32, bool) {
+// The plan's `counted` half decides SHALLOW versus DEEP. A pointer payload is
+// the MAP's value, so a deep drop is only admissible for the kinds
+// mapGetHandsCountedValue names: there the reclaim releases the lookup's own
+// reference and the map keeps its. For every other kind the payload is
+// borrowed and the reclaim must stay shallow (emitFreshBoxFreeSized) or it
+// frees storage the map still owns. An `@` binding is refused outright — it
+// binds the box pointer itself to a user name.
+func (b *builder) reclaimableMapGetScrutinee(tag ast.Expr, hasAtBinding bool) (mapGetReboxPlan, bool) {
 	if !ast.RcFreeEnabled || hasAtBinding {
-		return 0, false
+		return mapGetReboxPlan{}, false
 	}
 	call, ok := tag.(*ast.Call)
 	if !ok {
-		return 0, false
+		return mapGetReboxPlan{}, false
 	}
-	size, lowered := b.mapGetReboxSizes[call]
-	return size, lowered
+	plan, lowered := b.mapGetRebox[call]
+	return plan, lowered
+}
+
+// emitMapGetScrutineeReclaim releases a `m.get(k)` scrutinee box once the
+// match is done with it.
+//
+// A counted payload takes the DEEP drop — the same emitOwnedEnumDrop the fresh
+// enum scrutinee next door uses — which dec's the value the lookup retained
+// before freeing the box. Without it the retain outlived the map: the column
+// drop took the array from 2 to 1 and its buffer was stranded, one per lookup
+// (#7144). The dec cannot free the map's own reference, so this is a release
+// of the lookup's count, not of the value.
+//
+// A borrowed payload keeps the shallow free.
+func (b *builder) emitMapGetScrutineeReclaim(slot int32, plan mapGetReboxPlan) {
+	if plan.counted {
+		b.emitOwnedEnumDrop(slot, plan.optType, true)
+		return
+	}
+	b.emitFreshBoxFreeSized(slot, plan.boxSize)
 }
 
 // reclaimablePairFormPayload reports whether a PAIR-FORM match's payload

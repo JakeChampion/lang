@@ -1204,8 +1204,14 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		// TypeRefs is a parser-recorded side table the LSP uses
 		// for hover / definition on type annotations. Merging
 		// them here means cross-module type queries find the
-		// right TypeRef for the entry module's source.
-		combined.TypeRefs = append(combined.TypeRefs, mod.prog.TypeRefs...)
+		// right TypeRef for the entry module's source. Stamp the
+		// declaring module on each: ast.Position carries no
+		// filename, so that is the only thing telling two
+		// modules' entries apart once they share a table.
+		for _, tr := range mod.prog.TypeRefs {
+			tr.SourceModule = p
+			combined.TypeRefs = append(combined.TypeRefs, tr)
+		}
 		// TodoSites is carried over from the ENTRY module only:
 		// ast.Position has no filename, so `todo` positions from
 		// imported modules could not be attributed to their file
