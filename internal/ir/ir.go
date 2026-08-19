@@ -4766,11 +4766,11 @@ type builder struct {
 	// default is NumberType (i32); float-typed bindings record
 	// FloatType so wasm declares the local as f32.
 	scratchType map[int32]ast.Type
-	// mapGetReboxSizes records, per `m.get(k)` call node, the data size of
-	// the `Option[V]` box emitMapGetRebox allocated for it. Written by the
-	// lowering and read by a consumer that can reclaim the box (the match
-	// scrutinee path), so the two cannot disagree about which calls got one.
-	mapGetReboxSizes map[*ast.Call]int32
+	// mapGetRebox records, per `m.get(k)` call node, what emitMapGetRebox
+	// built for it. Written by the lowering and read by a consumer that can
+	// reclaim the box (the match scrutinee path), so the two cannot disagree
+	// about which calls got one.
+	mapGetRebox map[*ast.Call]mapGetReboxPlan
 	// nextSlot is the index the next synthetic scratch slot
 	// will use. Starts at len(params)+len(user locals) and only
 	// ever grows, so reusing a binding name across two match
@@ -5210,7 +5210,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		out:                  out,
 		locals:               map[string]int32{},
 		scratchType:          map[int32]ast.Type{},
-		mapGetReboxSizes:     map[*ast.Call]int32{},
+		mapGetRebox:          map[*ast.Call]mapGetReboxPlan{},
 		ptrW:                 ptrW,
 		dynRcSupported:       dynRcSupported,
 		emitLineMarkers:      emitLineMarkers,
@@ -8071,10 +8071,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 			reclaimScrut bool
 			scrutEnum    ast.EnumType
 		)
-		// A `m.get(k)` scrutinee's rebuilt Option box is reclaimed SHALLOW
-		// instead (reclaimableMapGetScrutinee): its payload belongs to the map,
-		// so the deep drop above would release a live value.
-		mapGetBox, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, anyArmAtBinding(n.Arms))
+		// A `m.get(k)` scrutinee's rebuilt Option box is reclaimed by
+		// emitMapGetScrutineeReclaim instead, which reads its own SHALLOW /
+		// DEEP verdict off the lowering: the payload is the map's value, and
+		// only a lookup that retained it may release it.
+		mapGetPlan, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, anyArmAtBinding(n.Arms))
 		// Consuming match: the scrutinee is an OWN (consuming) parameter. The
 		// arms move its pointer payloads into bindings (reclaimed downstream),
 		// so after the match the box is freed SHALLOW (buffer only, no payload
@@ -8121,7 +8122,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if reclaimScrut {
 			defer b.pushScrutineeDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
 		} else if reclaimMapGet && !pairFormScrutinee {
-			defer b.pushScrutineeDrop(func() { b.emitFreshBoxFreeSized(ptrSlot, mapGetBox) })()
+			defer b.pushScrutineeDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -8372,7 +8373,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if reclaimScrut {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		} else if reclaimMapGet && !pairFormScrutinee {
-			b.emitFreshBoxFreeSized(ptrSlot, mapGetBox)
+			b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan)
 		}
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
@@ -8945,13 +8946,13 @@ func (b *builder) expr(e ast.Expr) error {
 				atBinding = true
 			}
 		}
-		mapGetBox, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, atBinding)
+		mapGetPlan, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, atBinding)
 		// An arm body is an expression, but a `{ … return … }` value block
 		// can still leave the function — see the statement form.
 		if reclaimScrut {
 			defer b.pushScrutineeDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
 		} else if reclaimMapGet {
-			defer b.pushScrutineeDrop(func() { b.emitFreshBoxFreeSized(ptrSlot, mapGetBox) })()
+			defer b.pushScrutineeDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -9042,7 +9043,7 @@ func (b *builder) expr(e ast.Expr) error {
 		if reclaimScrut {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		} else if reclaimMapGet {
-			b.emitFreshBoxFreeSized(ptrSlot, mapGetBox)
+			b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan)
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
@@ -19109,6 +19110,30 @@ func (b *builder) freeDiscardedSetKeyCell(cellSlot, preLen int32, kType ast.Type
 	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 }
 
+// mapGetReboxPlan is what emitMapGetRebox built for one `m.get(k)` call: the
+// data size and type of the rebuilt `Option[V]` box, and whether the lowering
+// handed the caller a COUNTED reference to the map's value.
+type mapGetReboxPlan struct {
+	boxSize int32
+	optType ast.EnumType
+	counted bool
+}
+
+// mapGetHandsCountedValue reports whether lowering `m.get(k)` for a value type
+// gives the caller a reference of its own: the kinds `__map_retain_val` bumps
+// (mapValKindTag >= 2 — arrays and values with a generated deep drop) plus a
+// string, which emitMapGetRebox retains itself on every ABI. Every other value
+// is handed out borrowed, so releasing one would free storage the map still
+// owns. Shared by the retain side and the match-scrutinee release, so the two
+// cannot disagree about which values carry a count.
+func (b *builder) mapGetHandsCountedValue(vType ast.Type) bool {
+	if mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 {
+		return true
+	}
+	_, isStr := vType.(ast.StringType)
+	return isStr
+}
+
 // emitMapGetRebox lowers `m.get(k)` by reboxing the helper's
 // uniform `Option[usize]` return into a consumer-shaped
 // `Option[V]`. The helper (`__map_get_impl`) always returns
@@ -19170,7 +19195,11 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	b.emit(Op{Kind: OpElse})
 	// --- tag == 0 (Some): build the user-shaped Option<V>.
 	offsets, size := payloadLayout([]ast.Type{vType}, 1, b.ptrW)
-	b.mapGetReboxSizes[n] = size
+	b.mapGetRebox[n] = mapGetReboxPlan{
+		boxSize: size,
+		optType: ast.EnumType{Name: "Option", Args: []ast.Type{vType}},
+		counted: b.mapGetHandsCountedValue(vType),
+	}
 	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
 	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})

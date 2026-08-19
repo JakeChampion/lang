@@ -10683,3 +10683,66 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Two shapes are not IR-eligible at all and so cannot be measured on the
   self-host side: a nested `Option` at a tuple element (`(i32, Option[Option[i32]])`)
   and `Option[Map[…]]`. Refs #4353 #4451.
+- 2026-08-19: **#7144 — `match (m.get(k))` now pays back the reference the
+  lookup retained.** `m.get(k)` hands the caller a COUNTED reference to the
+  map's value: `__map_retain_val` for the kinds the column reclaims
+  (`mapValKindTag >= 2` — arrays, and values with a generated deep drop), a
+  string retain `emitMapGetRebox` emits itself on every ABI. The
+  match-scrutinee reclaim freed the rebuilt `Option[V]` box and left that count
+  outstanding, so the map's own column drop took the value from 2 to 1 and its
+  storage was stranded — one value per lookup, unbounded in a loop. Per round
+  over a 1000 / 2000-round churn (x86-64 | arm64 | wasm):
+
+  | churn shape | before | after |
+  |---|---|---|
+  | `Map[i32, i32[]]`, statement match | 32 \| 32 \| 32 | **0** |
+  | `Map[i32, i32[]]`, expression match | 32 \| 32 \| 32 | **0** |
+  | `Map[i32, Q]` (struct values) | 64 \| 64 \| 48 | **0** |
+  | `Map[i32, Option[i32]]` | 16 \| 16 \| 16 | **0** |
+  | `Map[i32, (i32, i32)]` | 16 \| 16 \| 16 | **0** |
+  | `Map[string, i32[]]` (boxed key) | 32 \| 32 \| 32 | **0** |
+  | `Map[i32, Q[]]` | 96 \| 96 \| 80 | **0** |
+  | `Map[i32, string]` | 64 \| 64 \| 64 | 64 \| **0** \| **0** |
+  | `Map[i32, Col]` (payloadless enum), `Map[i32, i64]` | 0 | 0 |
+  | the same churns with no lookup (control) | 0 | 0 |
+
+  The control row is what identifies the lookup rather than the map — #7122 had
+  already made the map itself flat. The x86-64 string cell is NOT this bug: that
+  column is valKind 1, which the map's drop does not reclaim at all, and it
+  reads 64 B/round with or without a lookup. The test pins the string row as
+  parity with the no-lookup churn for that reason, not as zero.
+
+  **The fix is a verdict the LOWERING records, not a rule the drop re-derives.**
+  `mapGetReboxSizes` becomes `mapGetRebox`, carrying the box size, the
+  `Option[V]` type and a `counted` bit from `mapGetHandsCountedValue` — so the
+  retain side and the release side cannot disagree about which values carry a
+  count. A counted payload takes the deep `emitOwnedEnumDrop` the fresh-enum
+  scrutinee next door already uses; a borrowed one keeps the shallow free,
+  because releasing it would free storage the map still owns.
+
+  **No confinement gate, and the reason is that this drop cannot free anything.**
+  The sibling `reclaimableMatchScrutinee` refuses an arm binding that escapes,
+  because its payload is sole-owned and its deep drop frees it. Here the payload
+  has two owners — the map's count and the lookup's — so the reclaim releases the
+  lookup's and the map keeps its. The shape is one count over, never one short,
+  which is the direction that cannot dangle. Measured rather than argued: six
+  aliasing programs (binding escaping to an outer local, escaping while the
+  owning map is destroyed in the same arm, returned out of the function, stored
+  into a struct, re-inserted into its own map, and aliasing a live local) each
+  read their value AFTER the owning map died with a churn burst in between, and
+  all six agree with `-interp` on x86-64, arm64 and wasm, with
+  `__rc_underflow_count()` 0 and nothing reported under `FERN_RC_FREE_DEBUG=1` +
+  `FERN_RC_UNDERFLOW_TRAP=1`.
+
+  **Still open and measured, separate cause:** an escaping arm binding
+  (`Some(g) => { keep = g; }`) leaks 32 B/round, unchanged either side of this
+  fix. The assignment emits neither an alias inc nor an overwrite dec — it is
+  lowered as a move — so the count the binding takes over is never released. The
+  same shape spelled `keep = m.get_or(k, fb)` is flat, which is what places the
+  cause at the move-site assignment rather than at the lookup.
+
+  Regression test: `internal/e2e/map_get_reclaim_test.go` — 3 programs x 4 legs;
+  the byte gate fails on the parent on all three backends and the string-parity
+  gate on arm64 and wasm (x86-64's own column leak masks it there), while the
+  aliasing program passes either side, which is its job. Refs #7144 #7122 #7143
+  #7114 #4451.
