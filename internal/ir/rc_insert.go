@@ -308,7 +308,7 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 // bindingNames / bindingTypes are parallel per-arm slices: the statement and
 // expression forms carry different arm types (*ast.MatchArm vs
 // *ast.MatchExprArm).
-func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]string, bindingTypes [][]ast.Type, resultType ast.Type) (ast.EnumType, bool) {
+func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]string, bindingTypes [][]ast.Type, armRegions [][]ast.Node, resultType ast.Type) (ast.EnumType, bool) {
 	if !ast.RcFreeEnabled {
 		return ast.EnumType{}, false
 	}
@@ -328,14 +328,49 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 			if bt == nil || !ast.IsPointerType(bt) {
 				continue
 			}
+			name := ""
+			if a < len(bindingNames) && i < len(bindingNames[a]) {
+				name = bindingNames[a][i]
+			}
 			// `_` extracts nothing, so no binding outlives the free.
-			if a < len(bindingNames) && i < len(bindingNames[a]) && bindingNames[a][i] == "_" {
+			if name == "_" {
+				continue
+			}
+			// A NAMED pointer binding the arm cannot let escape is dead by the
+			// time the join frees the box, which is the same property `_` has
+			// syntactically — proven here instead. Without this the whole match
+			// was refused, so `match (mk()) { Ok(s) => { … } }` over a fresh
+			// call leaked the box AND its payload every iteration; the reclaim
+			// is a deep drop, so admitting the arm releases both.
+			if name != "" && a < len(armRegions) && b.bindingConfinedInAll(armRegions[a], name) {
 				continue
 			}
 			return ast.EnumType{}, false
 		}
 	}
 	return et, true
+}
+
+// bindingConfinedInAll reports whether `name` is confined in EVERY node of an
+// arm's region — its guard as well as its body, since a guard runs before the
+// body and can let the pointer out just as easily.
+//
+// An empty region is NOT confined. That is what refuses an `@`-binding arm:
+// the call sites hand those an empty region because the at-name binds the box
+// POINTER itself, which the join is about to free.
+func (b *builder) bindingConfinedInAll(region []ast.Node, name string) bool {
+	if len(region) == 0 {
+		return false
+	}
+	for _, n := range region {
+		if n == nil {
+			continue
+		}
+		if !b.bindingConfinedToArm(n, name) {
+			return false
+		}
+	}
+	return true
 }
 
 // reclaimableMapGetScrutinee reports the data size of the `Option[V]` box a
@@ -386,7 +421,7 @@ func (b *builder) reclaimableMapGetScrutinee(tag ast.Expr, hasAtBinding bool) (i
 //     "an aliased return is rc>=2 via the return-transfer inc, and the free is
 //     is_unique-gated"; with no box there is no such inc to lean on, so the
 //     payload's freshness has to be proven outright;
-//   - the binding is CONFINED to its arm (pairFormPayloadConfined), so the
+//   - the binding is CONFINED to its arm (bindingConfinedToArm), so the
 //     pointer cannot outlive the release.
 //
 // The release itself is emitOwnedSlotDrop — the same type-directed deep drop
@@ -399,7 +434,7 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if _, ok := b.freshPairFormEnumResultType(tag); !ok {
 		return false
 	}
-	return b.pairFormPayloadConfined(body, name)
+	return b.bindingConfinedToArm(body, name)
 }
 
 // freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
@@ -438,7 +473,7 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 	return et, true
 }
 
-// pairFormPayloadConfined reports whether every mention of `name` in `body` is
+// bindingConfinedToArm reports whether every mention of `name` in `body` is
 // a plain read THROUGH the value — the target of a field access, the base of
 // an index, or an argument to a call that provably neither retains it nor
 // hands it back — and so cannot let the pointer outlive the arm.
@@ -450,7 +485,7 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 // have, while a missed escape is a use-after-free. A shadowing declaration
 // inside the arm errs the same safe way: its uses are attributed to the
 // binding, so anything the shadow does with the name suppresses the release.
-func (b *builder) pairFormPayloadConfined(body ast.Stmt, name string) bool {
+func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 	if body == nil {
 		return false
 	}
@@ -493,7 +528,7 @@ func (b *builder) pairFormPayloadConfined(body ast.Stmt, name string) bool {
 // hands it back — so an occurrence there cannot let a pointer outlive the
 // caller's next statement. `x.len()` is the shape that motivates it: the
 // checker rewrites it to `__method_Array_len(x)`, so the receiver sits in an
-// argument list and matched none of pairFormPayloadConfined's read shapes.
+// argument list and matched none of bindingConfinedToArm's read shapes.
 //
 // The gate is the stage-(b) arg-temp reclaim's, asked per argument: that path
 // decs a fresh temp immediately after the same call, which is sound exactly
@@ -3574,4 +3609,28 @@ func genStructFlatDropFn(name string, sd *ast.StructDecl, ptrW int) (*Func, bool
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}, true
+}
+
+// armConfinementRegion is the set of nodes a match arm's payload binding may
+// legitimately appear in — its guard and its body. Both match forms build it
+// the same way; only the body's static type differs (a *Block statement, or
+// the arm's value expression), and ast.Walk takes either.
+//
+// An arm carrying an `@` binding gets an EMPTY region, which
+// bindingConfinedInAll reads as "not confined". The at-name binds the
+// scrutinee BOX, so admitting such an arm would free a pointer the user still
+// holds — a different escape from the payload one this region reasons about,
+// and not one the walk would see.
+func armConfinementRegion(atBinding string, guard ast.Expr, body ast.Node) []ast.Node {
+	if atBinding != "" {
+		return nil
+	}
+	region := make([]ast.Node, 0, 2)
+	if guard != nil {
+		region = append(region, guard)
+	}
+	if body != nil {
+		region = append(region, body)
+	}
+	return region
 }

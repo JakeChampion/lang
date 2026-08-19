@@ -8119,11 +8119,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
 			bns := make([][]string, 0, len(n.Arms))
 			bts := make([][]ast.Type, 0, len(n.Arms))
+			regions := make([][]ast.Node, 0, len(n.Arms))
 			for _, arm := range n.Arms {
 				bns = append(bns, arm.Bindings)
 				bts = append(bts, arm.BindingTypes)
+				regions = append(regions, armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body))
 			}
-			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, nil)
+			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, regions, nil)
 		}
 		// The join release below is only reached by falling out of the
 		// match, so an arm that returns / breaks / continues has to emit it
@@ -8939,11 +8941,13 @@ func (b *builder) expr(e ast.Expr) error {
 		// pointer result could alias an extracted payload, so it's left alone.
 		bns := make([][]string, 0, len(n.Arms))
 		bts := make([][]ast.Type, 0, len(n.Arms))
+		regions := make([][]ast.Node, 0, len(n.Arms))
 		for _, arm := range n.Arms {
 			bns = append(bns, arm.Bindings)
 			bts = append(bts, arm.BindingTypes)
+			regions = append(regions, armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body))
 		}
-		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bns, bts, resultType)
+		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bns, bts, regions, resultType)
 		atBinding := false
 		for _, arm := range n.Arms {
 			if arm.AtBinding != "" {
