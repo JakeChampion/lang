@@ -9965,3 +9965,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   controls pass either way). Gates: the whole `internal/e2eselfhost` package,
   which is the targeted set for a change to what the compiler emits for its own
   sources. Refs #4353 #4451.
+- 2026-08-19: **#6522 — `alloc_flat_fresh_array_arg` is FLAT on all three
+  backends.** The last 424 B/round were the element boxes, withheld by the READ
+  half of the strarrfld admission, and the fix is a line irlower already knew how
+  to draw: `strarr_expr_unsafe` separates a TRANSIENT element receiver from a
+  lasting alias for a `string[]` LOCAL, and `strarrfld_scan` never drew it for a
+  FIELD. `x.f[i].len()` and its read-only siblings no longer mark the field.
+
+  Transient is the same vocabulary the local side uses — `len`, the predicates
+  (`starts_with` / `ends_with` / `contains` / `index_of`) and the fresh-copy
+  transforms (`to_ascii_upper` / `to_ascii_lower` / `reverse` / `repeat`).
+  `.trim()` and `.replace()` stay out: both can return a VIEW over the
+  receiver's buffer, which outlives the call and is exactly what the deep free
+  would dangle.
+
+  Measured: the conformance case 424 -> flat on x86-64 and arm64 (it was already
+  flat on wasm), and `node(...)` with an element read 211 -> flat.
+
+  Two mistakes worth the space, both found by instrumenting rather than reading.
+  The new branch was UNREACHABLE at first: `.len()` is in both vocabularies, so
+  the existing whole-array branch matched first and walked the index expression,
+  marking the very field the element came out of — the transient test has to run
+  BEFORE the `cfa.field == "len"` one. Then, when the measurement still did not
+  move, printing the refusing mark named `MARK typed Node.deps` in one run, where
+  re-reading the scan had already failed twice to find it.
+
+  Regression tests:
+  `internal/e2eselfhost/self_host_strarr_field_transient_read_test.go` (3 cases
+  x 3 backends): the transient positive reports 98 without the change, and the
+  two lasting-alias negatives — a `.trim()` view and a bound element — pin that
+  the deep walk stays refused for them (asm-checked: `__struct_drop_View` has no
+  element walk, `__struct_drop_Node` does). Refs #6544 #6522 #4451.

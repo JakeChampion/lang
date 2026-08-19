@@ -45805,6 +45805,34 @@ function fnfld_lookup(binds: string[], name: string): string {
 // and what every mark used to be. Two structs sharing a field name no longer
 // share its verdict: a `mk(notes) { Other { notes: notes } }` elsewhere in the
 // module used to cost every `notes` field in the program its reclaim.
+// strarrfld_transient_elem_recv reports whether a method call's callee is
+// `<struct>.<string[] field>[i].<read-only method>` — an ELEMENT borrowed for one
+// call and never bound. The method set is strarr_expr_unsafe's: `len` plus the
+// predicates and the fresh-copy transforms, each of which either reads the
+// receiver's bytes or allocates a new buffer, and none of which hands the
+// receiver's box out. `.trim()` and `.replace()` are absent on purpose — both
+// can return a VIEW of the receiver, which is a lasting alias.
+function strarrfld_transient_elem_recv(cfa: parser.ExprFieldAccess, structs: parser.StructDecl[], binds: string[]): boolean {
+    if (!(cfa.field == "len" || cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower"
+            || cfa.field == "reverse" || cfa.field == "repeat"
+            || cfa.field == "starts_with" || cfa.field == "ends_with"
+            || cfa.field == "contains" || cfa.field == "index_of")) { return false; }
+    match (cfa.obj) {
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprFieldAccess(ffa) => {
+                    var oty: string = fnfld_obj_type(ffa.obj, structs, binds);
+                    if (oty.len() == 0) { return false; }
+                    return decl_field_type(structs, oty, ffa.field) == "string[]";
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
@@ -45817,8 +45845,30 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "len") {
-                        // `x.f.len()` is the one tolerated borrow: skip marking
+                    // The transient ELEMENT receiver is tested FIRST: `.len()` is
+                    // in both vocabularies, and the whole-array branch below would
+                    // otherwise take `x.f[i].len()` and walk the index expression,
+                    // marking the field the element came out of.
+                    if (strarrfld_transient_elem_recv(cfa, structs, binds)) {
+                        // `x.f[i].len()` and its read-only siblings: the ELEMENT
+                        // is borrowed for the length of one call and never bound,
+                        // so the field's elements stay solely the struct's — the
+                        // same transient-vs-lasting line strarr_expr_unsafe draws
+                        // for a string[] LOCAL, which this scan did not draw for a
+                        // FIELD. Skip marking the receiver field; keep walking the
+                        // index expression and everything beneath the field.
+                        match (cfa.obj) {
+                            parser.ExprIndex(cix) => {
+                                a = strarrfld_scan(cix.index, structs, binds, str_fresh, strarr_producers, a);
+                                match (cix.array) {
+                                    parser.ExprFieldAccess(ffa2) => { a = strarrfld_scan(ffa2.obj, structs, binds, str_fresh, strarr_producers, a); },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                    } else if (cfa.field == "len") {
+                        // `x.f.len()` is the other tolerated borrow: skip marking
                         // the receiver FIELD, but keep walking beneath it.
                         match (cfa.obj) {
                             parser.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, a); },
