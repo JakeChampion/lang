@@ -80,7 +80,7 @@ function main(): i32 {
 }
 
 // A `return` of the binding is the other escape, and it is what makes the
-// whitelist in pairFormPayloadConfined worth having: the name appears in a
+// whitelist in bindingConfinedToArm worth having: the name appears in a
 // position the walk does not recognise, so the release is declined.
 func TestPairFormPayloadKeptWhenBindingReturned(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
