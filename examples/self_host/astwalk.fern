@@ -277,6 +277,142 @@ pub function fold_stmt_own_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Exp
     return acc;
 }
 
+// ---- the rewriting fold -------------------------------------------------
+//
+// map_expr / map_stmt / map_stmts are fold_expr's rewriting twin: where the
+// fold threads an accumulator out, these thread a NEW TREE out. They are the
+// shared spine for the hand-written `Expr -> Expr` recursions the same way the
+// fold is for the collectors, and they converge on native's
+// ast.RewriteProgramExprs (internal/ast/walk.go).
+//
+// POST-ORDER, like native's: a node's children are rewritten first, and `visit`
+// then sees the REBUILT node. A consumer that must inspect a child before it is
+// rewritten needs a pre-order variant, which no consumer has needed yet.
+//
+// EXPRESSIONS are replaced; STATEMENTS are rebuilt but never replaced — again
+// native's split. A statement's shape is decided by the parser and the desugars;
+// what a rewrite pass changes is the expressions in its slots.
+//
+// Every node is rebuilt with a functional update (`{ ...x, field: … }`) rather
+// than a field-by-field literal. That is not brevity: a field-by-field rebuild
+// has to be revisited every time a node gains a field, and the hand-written
+// rewriters it replaces spell out between five and nine fields each.
+//
+// The `sugar` fields (StmtIf.sugar, StmtMatch.sugar) are the arms as WRITTEN,
+// which only the printer reads, and they are carried through unrewritten — a
+// rewrite of the compile path must not rewrite the author's source shape.
+pub function map_expr(e: parser.Expr, visit: (parser.Expr) => parser.Expr): parser.Expr {
+    match (e) {
+        parser.ExprNumber(_) => { return visit(e); },
+        parser.ExprIdent(_) => { return visit(e); },
+        parser.ExprString(_) => { return visit(e); },
+        parser.ExprBool(_) => { return visit(e); },
+        parser.ExprUnknown(_) => { return visit(e); },
+        parser.ExprBinary(b) => {
+            return visit(parser.ExprBinary { ...b, left: map_expr(b.left, visit), right: map_expr(b.right, visit) });
+        },
+        parser.ExprUnary(u) => { return visit(parser.ExprUnary { ...u, operand: map_expr(u.operand, visit) }); },
+        parser.ExprCall(c) => {
+            var args: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { args = args.append(map_expr(c.args[i], visit)); i = i + 1; }
+            return visit(parser.ExprCall { ...c, callee: map_expr(c.callee, visit), args: args });
+        },
+        parser.ExprArray(a) => {
+            var els: parser.Expr[] = [];
+            var j: i32 = 0;
+            while (j < a.elements.len()) { els = els.append(map_expr(a.elements[j], visit)); j = j + 1; }
+            return visit(parser.ExprArray { ...a, elements: els });
+        },
+        parser.ExprTuple(t) => {
+            var tel: parser.Expr[] = [];
+            var k: i32 = 0;
+            while (k < t.elements.len()) { tel = tel.append(map_expr(t.elements[k], visit)); k = k + 1; }
+            return visit(parser.ExprTuple { ...t, elements: tel });
+        },
+        parser.ExprIndex(ix) => {
+            return visit(parser.ExprIndex { ...ix, array: map_expr(ix.array, visit), index: map_expr(ix.index, visit) });
+        },
+        parser.ExprSlice(sl) => {
+            return visit(parser.ExprSlice { ...sl, array: map_expr(sl.array, visit), start: map_expr(sl.start, visit), end: map_expr(sl.end, visit) });
+        },
+        parser.ExprStructLit(st) => {
+            var fv: parser.Expr[] = [];
+            var m: i32 = 0;
+            while (m < st.field_values.len()) { fv = fv.append(map_expr(st.field_values[m], visit)); m = m + 1; }
+            // `base` is only a real expression when has_base; the slot is
+            // otherwise whatever the parser left there.
+            var nb: parser.Expr = st.base;
+            if (st.has_base) { nb = map_expr(st.base, visit); }
+            return visit(parser.ExprStructLit { ...st, field_values: fv, base: nb });
+        },
+        parser.ExprFieldAccess(fa) => { return visit(parser.ExprFieldAccess { ...fa, obj: map_expr(fa.obj, visit) }); },
+        parser.ExprLambda(lm) => { return visit(parser.ExprLambda { ...lm, body: map_stmts(lm.body, visit) }); },
+        parser.ExprMapLit(ml) => {
+            var ks: parser.Expr[] = [];
+            var vs: parser.Expr[] = [];
+            var n: i32 = 0;
+            while (n < ml.keys.len()) { ks = ks.append(map_expr(ml.keys[n], visit)); n = n + 1; }
+            var n2: i32 = 0;
+            while (n2 < ml.vals.len()) { vs = vs.append(map_expr(ml.vals[n2], visit)); n2 = n2 + 1; }
+            return visit(parser.ExprMapLit { ...ml, keys: ks, vals: vs });
+        },
+        parser.ExprFString(fs) => {
+            // The three arrays are parallel, one entry per PART: a part with
+            // is_expr false is literal text and its `exprs` slot is filler, not
+            // an expression to rewrite.
+            var xs: parser.Expr[] = [];
+            var q: i32 = 0;
+            while (q < fs.exprs.len()) {
+                if (fs.is_expr[q]) { xs = xs.append(map_expr(fs.exprs[q], visit)); }
+                else { xs = xs.append(fs.exprs[q]); }
+                q = q + 1;
+            }
+            return visit(parser.ExprFString { ...fs, exprs: xs });
+        }
+    }
+    return visit(e);
+}
+
+// map_stmt rebuilds one statement with every expression it reaches rewritten,
+// including the ones inside the blocks it encloses.
+pub function map_stmt(st: parser.Stmt, visit: (parser.Expr) => parser.Expr): parser.Stmt {
+    match (st) {
+        parser.StmtVar(v) => { return parser.StmtVar { ...v, init: map_expr(v.init, visit) }; },
+        parser.StmtReturn(r) => { return parser.StmtReturn { ...r, value: map_expr(r.value, visit) }; },
+        parser.StmtExpr(x) => { return parser.StmtExpr { ...x, value: map_expr(x.value, visit) }; },
+        parser.StmtAssign(a) => { return parser.StmtAssign { ...a, value: map_expr(a.value, visit) }; },
+        parser.StmtIf(f) => {
+            return parser.StmtIf { ...f, cond: map_expr(f.cond, visit), then_body: map_stmts(f.then_body, visit), else_body: map_stmts(f.else_body, visit) };
+        },
+        parser.StmtWhile(w) => { return parser.StmtWhile { ...w, cond: map_expr(w.cond, visit), body: map_stmts(w.body, visit) }; },
+        parser.StmtFor(fo) => { return parser.StmtFor { ...fo, iter: map_expr(fo.iter, visit), body: map_stmts(fo.body, visit) }; },
+        parser.StmtMatch(mt) => {
+            var arms: parser.MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < mt.arms.len()) {
+                var g: parser.Expr = mt.arms[i].guard;
+                if (mt.arms[i].has_guard) { g = map_expr(mt.arms[i].guard, visit); }
+                arms = arms.append(parser.MatchArm { ...mt.arms[i], body: map_stmts(mt.arms[i].body, visit), guard: g });
+                i = i + 1;
+            }
+            return parser.StmtMatch { ...mt, scrutinee: map_expr(mt.scrutinee, visit), arms: arms };
+        },
+        parser.StmtDefer(d) => { return parser.StmtDefer { ...d, action: map_stmt(d.action, visit) }; },
+        parser.StmtBreak(_) => { return st; },
+        parser.StmtContinue(_) => { return st; },
+        parser.StmtUnknown(_) => { return st; }
+    }
+    return st;
+}
+
+pub function map_stmts(stmts: parser.Stmt[], visit: (parser.Expr) => parser.Expr): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(map_stmt(stmts[i], visit)); i = i + 1; }
+    return out;
+}
+
 // ident_of contributes one node's identifier READS. It is the whole of
 // collect_idents_expr that is not the walk.
 function ident_of(e: parser.Expr, acc: string[]): string[] {
@@ -334,47 +470,29 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
 // subst_ident_expr returns `e` with every identifier READ named `from`
 // rewritten to `to`. Used to rewrite an `@`-binding reference (`n`) to the
 // cached scrutinee local in a match-arm guard, where the whole-value binding
-// isn't yet in scope. Structural mirror of collect_idents_expr; unhandled
-// leaves pass through unchanged.
+// isn't yet in scope.
+//
+// It walks over map_expr, so the rename reaches every node rather than the
+// eight this used to spell out. The five it missed were not exotic: a guard
+// mentioning `n` inside a struct literal, a slice, a map literal, an f-string
+// or a lambda kept the original name, and lowering then failed to resolve it
+// (`FERN_STRICT_IR: function value n not defined`) on a program native
+// compiles and runs.
 pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.Expr {
-    match (e) {
-        parser.ExprIdent(id) => {
-            if (id.name == from) { return parser.ExprIdent { name: to, line: id.line, col: id.col }; }
-            return e;
-        },
-        parser.ExprBinary(b) => {
-            return parser.ExprBinary { op: b.op, left: subst_ident_expr(b.left, from, to), right: subst_ident_expr(b.right, from, to), line: b.line, col: b.col };
-        },
-        parser.ExprUnary(u) => {
-            return parser.ExprUnary { op: u.op, operand: subst_ident_expr(u.operand, from, to), line: u.line, col: u.col };
-        },
-        parser.ExprCall(c) => {
-            var nargs: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { nargs = nargs.append(subst_ident_expr(c.args[i], from, to)); i = i + 1; }
-            return parser.ExprCall { callee: subst_ident_expr(c.callee, from, to), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
-        },
-        parser.ExprFieldAccess(fa) => {
-            return parser.ExprFieldAccess { obj: subst_ident_expr(fa.obj, from, to), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
-        },
-        parser.ExprIndex(x) => {
-            return parser.ExprIndex { array: subst_ident_expr(x.array, from, to), index: subst_ident_expr(x.index, from, to), unchecked: x.unchecked, ty: x.ty };
-        },
-        parser.ExprArray(a) => {
-            var na: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < a.elements.len()) { na = na.append(subst_ident_expr(a.elements[i], from, to)); i = i + 1; }
-            return parser.ExprArray { ...a, elements: na };
-        },
-        parser.ExprTuple(t) => {
-            var nt: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) { nt = nt.append(subst_ident_expr(t.elements[i], from, to)); i = i + 1; }
-            return parser.ExprTuple { elements: nt, line: t.line, col: t.col };
-        },
-        _ => { return e; }
+    // Nested so the rename pair rides the closure rather than an extra
+    // parameter on every recursive call — the same spelling the fold's
+    // consumers use.
+    function subst_one(x: parser.Expr): parser.Expr {
+        match (x) {
+            parser.ExprIdent(id) => {
+                if (id.name == from) { return parser.ExprIdent { ...id, name: to }; }
+                return x;
+            },
+            _ => { return x; }
+        }
+        return x;
     }
-    return e;
+    return map_expr(e, subst_one);
 }
 
 // assign_target_of contributes what a statement reads that is not an

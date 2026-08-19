@@ -714,6 +714,43 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("opt-folds-guard-concat", func(t *testing.T) {
+		// A match arm's GUARD rides the ARM, not the statement's own
+		// expressions, so a rewrite that rebuilt arms field by field had to
+		// remember it — constfold's did not, and copied every guard through
+		// unfolded. Routing the pass through astwalk's map fold made the
+		// coverage complete by construction, and this is the shape that shows
+		// it: the literal concat in the guard is the one thing the op-list
+		// fold cannot reach, so before the change it survived to a runtime
+		// __fern_str_concat call.
+		srcPath := filepath.Join(dir, "foldguard.fern")
+		src := "enum E { A(string) }\n" +
+			"function main(): i32 {\n" +
+			"    var e: E = E.A(\"abcd\");\n" +
+			"    match (e) {\n" +
+			"        E.A(s) when s == (\"ab\" + \"cd\") => { return 7; },\n" +
+			"        _ => { return 9; },\n" +
+			"    }\n" +
+			"    return 0;\n" +
+			"}\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
+		if code != 0 {
+			t.Fatalf("-O emit exited %d, want 0", code)
+		}
+		if n := strings.Count(string(optAsm), "call __fn___fern_str_concat"); n != 0 {
+			t.Errorf("-O left %d __fern_str_concat call site(s) in a match-arm guard:\n%s", n, optAsm)
+		}
+		progBin := buildBin(t, gcc, dir, "foldguard", string(optAsm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 7 {
+			t.Errorf("-O folded-guard program exited %d, want 7", c)
+		}
+	})
+
 	t.Run("opt-folds-hex-constants", func(t *testing.T) {
 		// A hex operand in a folded binop must carry its value (#4341):
 		// as_int_lit used the decimal-only digits_to_i32, which stops at the

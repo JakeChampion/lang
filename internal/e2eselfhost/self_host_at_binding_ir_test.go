@@ -51,6 +51,47 @@ function f(b: Box): i32 {
   };
 }
 function main(): i32 { return f(Full(3)); }`},
+	// The guard reaches `n` through a node the rename used to walk past.
+	// astwalk.subst_ident_expr spelled out eight expression kinds and
+	// wildcarded the rest, so a struct literal, a slice or a lambda in the
+	// guard kept the ORIGINAL name — which is not in scope yet, because the
+	// whole-value bind is prepended to the arm BODY. Lowering then could not
+	// resolve it and the whole module fell off the IR path
+	// ("function value n not defined"), on programs native compiles and runs.
+	{"guard_at_in_struct_literal", `enum Box { Full(i32), Empty }
+struct H { b: Box }
+function unwrap(h: H): i32 { match (h.b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
+function f(b: Box): i32 {
+  match (b) {
+    n @ Full(v) when unwrap(H { b: n }) > 0 => { return v + 4; },
+    Full(v) => { return v; },
+    Empty => { return 0; },
+  }
+  return 0;
+}
+function main(): i32 { return f(Full(3)); }`},
+	{"guard_at_in_lambda", `enum Box { Full(i32), Empty }
+function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
+function f(b: Box): i32 {
+  match (b) {
+    n @ Full(v) when (function (): i32 { return total(n); })() > 0 => { return v + 5; },
+    Full(v) => { return v; },
+    Empty => { return 0; },
+  }
+  return 0;
+}
+function main(): i32 { return f(Full(3)); }`},
+	{"guard_at_in_slice", `enum Box { Full(i32), Empty }
+function one(b: Box): i32[] { match (b) { Full(v) => { return [v]; }, Empty => { return []; } } return []; }
+function f(b: Box): i32 {
+  match (b) {
+    n @ Full(v) when one(n)[0:1].len() == 1 => { return v + 6; },
+    Full(v) => { return v; },
+    Empty => { return 0; },
+  }
+  return 0;
+}
+function main(): i32 { return f(Full(3)); }`},
 	{"struct_whole_and_fields", `struct Point { x: i32, y: i32 }
 function f(p: Point): i32 {
   match (p) {
