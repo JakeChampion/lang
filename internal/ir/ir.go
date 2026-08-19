@@ -8333,14 +8333,29 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.emit(Op{Kind: OpNot})
 				b.brTo(outerArmD, true)
 			}
+			// The borrowed payload binding is dead once the arm body ends, and
+			// it is the only reference to a value the callee freshly
+			// allocated. An arm that LEAVES the match early — the ordinary
+			// `match (mk()) { Some(s) => { return s.len(); } … }` — branches
+			// straight past the join below, so registering the release as a
+			// pending scrutinee drop is what makes it reachable: every exit
+			// path funnels through emitRcDecLocalsAtExitExcept, which replays
+			// them, and the loop-depth bound gives `break` / `continue` the
+			// same treatment the box release already gets.
+			//
+			// Exactly one release runs on each path: an early exit replays it
+			// and never reaches the join, and a fall-through pops the entry
+			// unemitted and takes the join.
+			popPayRelease := func() {}
+			if payReleaseSlot >= 0 {
+				slot, ty := payReleaseSlot, payReleaseType
+				popPayRelease = b.pushScrutineeDrop(func() { b.emitOwnedSlotDrop(slot, ty) })
+			}
 			if err := b.stmt(arm.Body); err != nil {
+				popPayRelease()
 				return err
 			}
-			// The borrowed payload binding is dead now, and it is the only
-			// reference to a value the callee freshly allocated. A `return`
-			// inside the body skips this and leaks as before — safe, and the
-			// binding would have escaped anyway (pairFormPayloadConfined
-			// rejects a body that mentions the name in a return).
+			popPayRelease()
 			if payReleaseSlot >= 0 {
 				b.emitOwnedSlotDrop(payReleaseSlot, payReleaseType)
 			}
