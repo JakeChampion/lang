@@ -64,21 +64,21 @@ var strReclaimIRCases = []struct {
 	// NEGATIVE: an ALIASED fresh string (`var t = s`) must NOT be reclaimed — t is a
 	// bare-ident alias of s's box, so freeing either would double-free. s is used as
 	// a bare ident (RHS of t's binding) → body_unsafe_for flags it → not in the
-	// reclaim set. The concat operands are bare IDENTS (a/b), not fresh temps, so
-	// emit_str_concat_reclaim does not free them either; this isolates the aliased-
-	// RESULT contract. No __fern_str_free emitted; value stays correct. 3 + 3 = 6.
+	// reclaim set. The concat operands are PARAMS, which slot_is_reclaimable_str
+	// refuses outright, so a reclaim anywhere in `mk` can only be s or t and the
+	// aliased-RESULT contract is isolated. Value stays correct: 3 + 3 = 6.
 	{"aliased-not-reclaimed",
-		`function main(): i32 { var a: string = "ab"; var b: string = "c"; var s: string = a + b; var t: string = s; return s.len() + t.len(); }`,
-		6, false, ""},
+		`function mk(a: string, b: string): i32 { var s: string = a + b; var t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
+		6, false, "mk"},
 	// NEGATIVE: a RETURNED fresh string escapes its producer → h must not free it.
-	// h() returns a fresh concat of two ident operands (x/y, not fresh temps, so no
-	// operand reclaim); the box is handed to the caller, and freeing it in h would
-	// leave main reading dead bytes. Scoped to h: main DOES release it, at the
-	// `h().len()` read, because h is in the whole-program fresh-return registry —
-	// that caller-side reclaim is the point of the registry, not a violation of
-	// this case.
+	// The box is handed to the caller, and freeing it in h would leave main reading
+	// dead bytes. The operands are PARAMS so nothing else in h is reclaimable, and
+	// the count is scoped to h: main DOES release the result at the `h(...).len()`
+	// read, because h is in the whole-program fresh-return registry — that
+	// caller-side reclaim is the point of the registry, not a violation of this
+	// case.
 	{"returned-not-reclaimed",
-		`function h(): string { var x: string = "xy"; var y: string = "z"; var s: string = x + y; return s; } function main(): i32 { return h().len(); }`,
+		`function h(x: string, y: string): string { var s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
 		3, false, "h"},
 	// ANNOTATED i32_to_string in a loop: reclaimed each iter. On the self-host the
 	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),

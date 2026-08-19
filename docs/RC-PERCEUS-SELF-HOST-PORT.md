@@ -10395,3 +10395,70 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `internal/e2eselfhost/self_host_union_tuple_elem_reclaim_test.go` (5 cases x 3
   backends; the 3 byte gates fail on the parent on all three legs, the 2 aliasing
   controls pass either way). Refs #4353 #4451.
+- 2026-08-19 (correcting the entry above): that entry's closing note said a fresh
+  anonymous temp is stranded as a call ARGUMENT or a method RECEIVER, "whether
+  the callee is a builtin or source-declared". Both halves of that are wrong.
+  There are TWO gaps, not one, and neither is about builtin-vs-source.
+
+  **Argument position — the release exists; borrowability refused it.** The
+  refusal does not turn on the callee's return type, but on the parameter
+  appearing at all:
+
+  | callee, argument is the temp `mkfresh(i)` | B/round |
+  | --- | --- |
+  | `scalarret(s): i32 { return s.len(); }` | -1 |
+  | `unrelated(s): string { return "xx"; }` — param absent from the return | -1 |
+  | `derived(s): string { return s + ""; }` — param IS the concat operand | **46** |
+
+  And the cause is not a return rule: `stmt_unsafe_for`'s StmtReturn arm already
+  defers to `expr_unsafe_for`. It is the blanket BARE-IDENT rule. `expr_unsafe_for`
+  carves out the index base (`name[i]`) and the method receiver (`name.m()`) as
+  borrow reads and never carved out a concat operand — so `return s + ""`, the
+  most ordinary fresh-string body there is, escaped its own parameter.
+
+  Concat copies both operands' bytes into a new box and the comparisons read
+  them; neither retains, which is the same argument `lower_view_borrowed` already
+  makes by treating both as view-borrowing positions. Measured after:
+  `derived(mkfresh(i)).len()` **46 -> -2**.
+
+  One predicate closed the whole argument-position family, including a shape that
+  looks unrelated: `var b = mkfresh(i); var z = freshfree(b);` went 46 -> -1,
+  because once `freshfree`'s parameter is borrowable the bare-ident ARGUMENT at a
+  borrowable position stops escaping under the Level-2 rule that was already
+  there.
+
+  **Receiver position — no release at all.** Here the method's body makes no
+  difference; only its result type does, so this is a missing emission site and
+  not a borrowability question:
+
+  | receiver is the temp `mkfresh(i)` | B/round |
+  | --- | --- |
+  | `mkfresh(i).len()` — scalar-returning | -1 |
+  | `mkfresh(i).unrel()` — string-returning, receiver absent from every return | **47** |
+  | `mkfresh(i).deriv()` — string-returning, `return s + ""` | **46** |
+  | `var u = mkfresh(i).to_ascii_upper()` — string-returning builtin | **46** |
+  | `mkfresh(i).to_ascii_upper().len()` — both gaps at once | **95** |
+
+  That one is still open and is the next slice.
+
+  Two notes on probing this, because the first attempt at each measured nothing.
+  A safety probe must pass the temp DIRECTLY (`keep(w(pre))`): passing a named
+  local exercises nothing, because the caller-side release only ever applies to
+  the fresh temps `is_fresh_str_temp` admits, so an all-bare-idents-are-borrows
+  compiler passed every probe unchanged. And the refusal probes must verify their
+  result through borrow positions only — the earlier `t != "..."` form is itself
+  an escape, which suppresses the very credit under test.
+
+  Two cases in `self_host_str_reclaim_ir_test.go` went red on this, and the asm
+  says why. `aliased-not-reclaimed` and `returned-not-reclaimed` both isolate
+  their contract by relying on the concat operands being un-reclaimable LITERAL
+  locals — exactly the assumption this change removes. The aliased result `s` and
+  its alias `t` are still untouched: the four frees are the two literal locals, at
+  their binding cow-guard and at scope exit. That is the pre-existing
+  `collect_litstr_local_names` path (#6582) becoming reachable, not new
+  behaviour, and it is safe — 200k rounds re-reading the literals after the free
+  are value-exact with no underflow on x86-64, and the arm64 and wasm legs agree.
+  Both cases now take their operands as PARAMS, which `slot_is_reclaimable_str`
+  refuses outright, so a reclaim in the scoped function can only be the aliased or
+  returned box. Still bites: 0 frees in `mk` here, 2 under a compiler that admits
+  the alias. Refs #6544 #4451.
