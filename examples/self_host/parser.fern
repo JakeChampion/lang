@@ -8995,9 +8995,16 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
 // appears as an expression is the OBJECT of an associated call — `T.default()`
 // in a monomorphised generic body — so substituting any matching ExprIdent
 // rewrites it to `Concrete.default()`, which then resolves like any associated
-// call (issue #2779 item 3). Recurses through the expression shapes a generic
-// body can carry; other leaves pass through. Struct-literal TYPE names are left
-// alone (the struct-literal monomorphiser, ms_expr, mangles `Box` → `Box__C`).
+// call (issue #2779 item 3). Struct-literal TYPE names are left alone (the
+// struct-literal monomorphiser, ms_expr, mangles `Box` → `Box__C`).
+//
+// Every COMPOSITE shape recurses. The list used to stop at ExprIndex, so a
+// `T.zero()` inside an array literal, a tuple, a slice or a lambda kept the
+// type-parameter name into the clone and the module fell off the IR path
+// ("function value T not defined"). It cannot reuse astwalk.map_expr, which
+// exists for exactly this: astwalk imports parser, so the dependency would
+// cycle. Only ExprMapLit / ExprFString stay out, and only because Par.verbatim
+// builds them for `-fmt` alone — the compile path never sees one.
 function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
     match (e) {
         ExprIdent(id) => {
@@ -9060,6 +9067,20 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
         ExprBinary(b) => { return ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: subst_expr(u.operand, tparams, cts), line: u.line, col: u.col }; },
         ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts), unchecked: ix.unchecked, ty: ix.ty }; },
+        ExprSlice(sl2) => { return ExprSlice { ...sl2, array: subst_expr(sl2.array, tparams, cts), start: subst_expr(sl2.start, tparams, cts), end: subst_expr(sl2.end, tparams, cts) }; },
+        ExprArray(ar) => {
+            var ne: Expr[] = [];
+            var ai: i32 = 0;
+            while (ai < ar.elements.len()) { ne = ne.append(subst_expr(ar.elements[ai], tparams, cts)); ai = ai + 1; }
+            return ExprArray { ...ar, elements: ne };
+        },
+        ExprTuple(tp) => {
+            var nt: Expr[] = [];
+            var ti: i32 = 0;
+            while (ti < tp.elements.len()) { nt = nt.append(subst_expr(tp.elements[ti], tparams, cts)); ti = ti + 1; }
+            return ExprTuple { ...tp, elements: nt };
+        },
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: subst_stmts(lm.body, tparams, cts) }; },
         _ => { return e; }
     }
     return e;
