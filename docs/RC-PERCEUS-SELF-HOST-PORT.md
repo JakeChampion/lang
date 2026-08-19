@@ -11197,3 +11197,53 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   a call, so no receiver-arm release reaches it. Both boxes go on the register
   backends (9600 -> 0), which is why the nested case pins the VALUE rather than
   the bytes. Refs #6544 #4451.
+- 2026-08-19: **a SLICE receiver at a string BUILTIN**, which was two bugs
+  stacked — the gate refused it, and the drain behind the gate could not have
+  released it anyway.
+
+  `lower_str_method` already stashed and drained a fresh receiver, gated on
+  `is_fresh_str_temp`. That predicate refuses a slice, correctly for the question
+  it answers: a slice aliases its source's bytes. The warrant that applies here
+  is `str_borrowing_method` — every method in that set reads the receiver's bytes
+  and returns a scalar or a freshly allocated string, never the receiver or a
+  view of it. `trim` / `replace` / `chars` / `lines` / `split` sit outside it
+  precisely because they can alias, and they keep the leak.
+
+  The second bug is the one worth remembering: `free_stashed_str_args` emits
+  `__fern_str_free`, which SKIPS an immortal rc by design. So even a slice
+  receiver that had been stashed would have drained to nothing on the backends
+  where a slice is a zero-copy immortal view. The receiver drain now uses
+  `__fern_str_view_free`, which frees the 24-byte box alone. Fixing only the gate
+  would have measured zero and looked like the gate was not the cause.
+
+  | method | x86-64 | wasm |
+  | --- | --- | --- |
+  | `starts_with` | 9600 → **0** | 48000 → **0** |
+  | `ends_with` | 9600 → **0** | 48000 → **0** |
+  | `contains` | 9600 → **0** | 48000 → **0** |
+  | `index_of` | 9600 → **0** | 48000 → **0** |
+  | `to_ascii_upper` | 9600 → **0** | 48000 → **0** |
+
+  The two columns are different objects: a 24-byte view box on the register
+  backends, a payload-sized copy on wasm, where a slice is not zero-copy.
+
+  **`.len()` is NOT covered and is the next lead.** It never reaches
+  `lower_str_method` — `is_str_builtin_method` excludes it and it has its own
+  receiver-release path — and on the register backends a slice there is a FRAME
+  box that never touches the heap, so it already measures 0. On wasm it still
+  strands 48000. Closing it means touching the path every `<expr>.len()` takes,
+  where the register lowering currently allocates nothing, so the risk is turning
+  a free operation into an allocate-and-free. Its own slice, not a rider.
+
+  How this was found is worth recording: the previous entry's nested-slice
+  residual looked like a nested-chain problem, and a sweep across the borrowing
+  builtins showed it was not — `.len()` was flat on the register backends and
+  every OTHER builtin leaked 9600, which is not what a nesting bug looks like.
+  Measuring the whole set rather than the one shape that led there is what
+  separated them.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_str_slice_builtin_recv_test.go` (6 cases x 3
+  backends; the three byte gates fail on the parent on all three legs, and the
+  trim + split refusals and the source-liveness case pass either way).
+  Refs #6544 #4451.
