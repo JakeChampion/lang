@@ -16,7 +16,7 @@ import (
 // ident widening (is_i32_scalar_slot) wrongly REJECTED a u32 scalar: some
 // var-decl paths record a u32 local's type tag in local_struct_type ("u32"), and
 // is_i32_scalar_slot's struct-type exclusion fired on that bogus tag, leaving
-// `u64 + u32` stuck on the AST path. #2691 admits a u32 scalar (the authoritative
+// `u64 + u32` unlowerable. #2691 admits a u32 scalar (the authoritative
 // is_u32_slot signal) before the heap-type exclusions, and the widen zero-extends
 // it (op_int_extend(is_u32_slot)). Each case narrows the u64 result with `as i32`
 // (valid wasm exit code in [0,126)) and is oracle-checked against the interpreter.

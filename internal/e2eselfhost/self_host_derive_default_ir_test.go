@@ -16,7 +16,7 @@ import (
 // Each field gets its type's zero: i32 → 0, string → "", boolean → false.
 //
 // Scope (issue #2779 item 2): concrete leaf-safe structs (scalar / string /
-// boolean fields). Nested-struct composition is RC-tracked → AST fallback,
+// boolean fields). Nested-struct composition is RC-tracked → still bails,
 // and enum Default is a follow-up (a safe miss, like enum Eq/Ord derive).
 // The inline `trait Default` keeps the program valid for the native
 // compiler too (the self-host discards trait decls).

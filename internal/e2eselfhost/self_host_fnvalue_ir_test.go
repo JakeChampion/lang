@@ -13,7 +13,7 @@ import (
 // top-level function used as a value lowers to const_func (a funcref-table
 // index), a call through a "fn"-typed local/param lowers to call_indirect, and
 // the module grows a $fn<N> signature type + (table)/(elem) segment
-// (fn_support_section). The register backends still bail such modules to AST
+// (fn_support_section). The register backends still bail such modules
 // (all_eligible keeps the !module_uses_fn_values restriction), so this is
 // wasm-only. Results pinned to hardcoded oracle exit codes.
 func TestSelfHostFnValueIR(t *testing.T) {

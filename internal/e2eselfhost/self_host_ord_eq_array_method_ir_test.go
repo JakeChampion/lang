@@ -12,10 +12,10 @@ import (
 // (`xs.is_sorted()`, `xs.equal(ys)`, `xs.starts_with(p)`, `xs.ends_with(s)`,
 // `xs.index_of_last(t)`) on the self-host IR path. These are bounded-receiver
 // generic array methods — `(xs: T[]) is_sorted[T: cmp.Ord]()` etc. — so they
-// exercise the fold that routes a bounded receiver through IR (rather than the
-// AST fallback). Each is read-only over its inputs, so it is correct on the
-// self-host IR path as well as native; the assertions below would catch both a
-// wrong result and an accidental AST fallback (the `-decide` check).
+// exercise the fold that routes a bounded receiver through IR. Each is read-only
+// over its inputs, so it is correct on the self-host IR path as well as native;
+// the assertions below would catch both a wrong result and an accidental bail
+// (the `-decide` check).
 //
 // One element type per program here; the folded-method monomorphiser emits one
 // clone per (generic name, element type), and the multi-element-type case is

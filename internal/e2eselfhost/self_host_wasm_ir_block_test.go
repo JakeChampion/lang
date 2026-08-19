@@ -22,8 +22,8 @@ import (
 // can't resolve a preview2 interface) — building on the timer-pollable foundation.
 //
 // The test drives the IR path, asserts the emitted WAT carries the
-// [method]pollable.block preview2 import (proving the op is on the IR path, not
-// the AST fallback), composes the core into a component, checks it imports
+// [method]pollable.block preview2 import (proving the op lowered rather than
+// bailing), composes the core into a component, checks it imports
 // wasi:io/poll + wasi:clocks/monotonic-clock, and runs it: subscribe a short
 // timer, block on it, drop it, exit 0.
 func TestSelfHostWasmIRBlock(t *testing.T) {
@@ -82,7 +82,7 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 	}
 
 	// The emitted WAT must carry the three preview2 imports — proof the ops
-	// lowered on the IR path (the AST fallback emits none).
+	// lowered on the IR path rather than bailing.
 	for _, want := range []string{
 		`"wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration"`,
 		`"wasi:io/poll@0.2.0" "[method]pollable.block"`,

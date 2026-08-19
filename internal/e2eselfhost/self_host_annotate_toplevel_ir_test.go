@@ -100,7 +100,7 @@ func TestSelfHostAnnotateTopLevelIR_X86_64(t *testing.T) {
 			// the AST no-main path inlines the statements into `_start` instead, so
 			// this is what distinguishes a genuinely IR-lowered script.
 			if !strings.Contains(string(asm), "call __fn_main") {
-				t.Fatalf("%s: emitted asm has no `call __fn_main` — the script fell back to the AST emitter", tc.name)
+				t.Fatalf("%s: emitted asm has no `call __fn_main` — the script did not lower through the IR", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "anntop_"+tc.name, string(asm))
 			argv := append(append([]string{}, runner...), progBin)

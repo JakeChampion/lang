@@ -14,7 +14,7 @@ import (
 // accumulated into an i64) to the self-host IR path on x86-64 + wasm. lower_i64
 // must accept more than leaves that are ALREADY i64 (an i64 slot/literal/cast
 // or an i64-returning call): a plain i32 identifier hitting `return s.fail()`
-// bails the whole module to the legacy AST emitter. #2691 widens lower_i64's
+// bails the whole module. #2691 widens lower_i64's
 // ExprIdent arm: an i32-scalar slot (is_i32_scalar_slot) is lowered as an i32 and
 // sign/zero-extended to i64 (op_int_extend; zero-extend for u32, sign-extend for
 // signed i32 / subword). Because the ExprBinary arm recurses through lower_i64,

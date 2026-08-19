@@ -46,7 +46,7 @@ function main(): i32 { return f(); }`
 		t.Fatalf("driver failed: %v", err)
 	}
 	// IR-path proof: the inline iterator-box alloc is present, and the module did
-	// NOT fall back to the large AST map runtime (the AST path on a bail emits the
+	// NOT pull in the large map runtime (the AST path on a bail emitted the
 	// full ~40KB+ map runtime; the IR path is far smaller for this program).
 	if !strings.Contains(string(asm), "movq $16, %rdi") {
 		t.Fatal("map_iter did not reach the IR path (no inline iterator-box alloc in asm)")

@@ -66,13 +66,13 @@ func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
 			}
-			// The AST fallback pre-declares `$__lit0` scratch locals; the IR
+			// The AST fallback pre-declared `$__lit0` scratch locals; the IR
 			// emitter does not. Its absence proves the module lowered on the IR
 			// path (the point of #5464) rather than deferring to the AST emitter
-			// that miscompiled it — a value-correct AST fallback would still be a
+			// that miscompiled it — a value-correct fallback would still have been a
 			// regression here.
 			if strings.Contains(string(wat), "$__lit0") {
-				t.Errorf("%s deferred to the AST path (found $__lit0); expected IR lowering", tc.name)
+				t.Errorf("%s did not lower through the IR (found $__lit0)", tc.name)
 			}
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

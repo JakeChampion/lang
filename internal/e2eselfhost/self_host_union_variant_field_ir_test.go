@@ -16,8 +16,9 @@ import (
 // flattened decl name is the MANGLED "rows__Row". The match-lowering used to strip
 // the qualifier to the bare "Row", which matches only a same-module ENUM variant —
 // for an imported union member it missed decl_is_struct and BAILED the whole
-// function to the AST emitter, where the untyped payload's `r.cells.len()` on a
-// `string[]` field mis-dispatched to an undefined `i32__len`. The lowering now tries
+// function (and on the AST emitter it fell to, the untyped payload's
+// `r.cells.len()` on a `string[]` field mis-dispatched to an undefined
+// `i32__len`). The lowering now tries
 // the '.'->'__' mangled form first, so the member lowers through the IR path AND
 // binds `r` typed "rows__Row" — so `r.cells.len()` dispatches as a string[] read.
 // (This widening flips the self-host's own `parser.*` matches to IR too; the extra
@@ -52,7 +53,7 @@ pub function mk_blank(): Line { return Blank {  }; }
 	// count() matches the qualified imported-union members and reads the string[]
 	// field's length off the bound payload — the case that used to bail. The
 	// zero-field variant is matched with `_` (a binding on a zero-field struct
-	// trips the module's field-count bail and would drag it to AST for an
+	// trips the module's field-count bail and would refuse it for an
 	// unrelated reason, masking the qualified-pattern behaviour under test).
 	entrySrc := `import "./uvrows";
 
@@ -93,7 +94,7 @@ function main(): i32 {
 	}
 
 	if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
-		t.Errorf("decide = %q, want \"ir\" (qualified imported-union match still bails to AST)", strings.TrimSpace(out))
+		t.Errorf("decide = %q, want \"ir\" (qualified imported-union match still bails)", strings.TrimSpace(out))
 	}
 
 	asm, _ := runDriver(entry, root)

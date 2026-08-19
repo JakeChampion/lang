@@ -63,7 +63,7 @@ func TestSelfHostX86ScaleProbe(t *testing.T) {
 
 	// nfn stays UNDER the 512-function merged-bundle budget (#3425). asm_run.fern
 	// routes IR-or-error now (#3457 slice 5), so an over-budget program is a hard
-	// error there rather than a silent drop to the AST emitter — and the budget is
+	// error there rather than a silent fall-through — and the budget is
 	// a property of the single-module merged path, not of the x86 encoder this test
 	// probes. 500 exercises the same scale (a ~130 KB asm text) without changing
 	// what is under test; a genuinely over-budget program is compiled by the

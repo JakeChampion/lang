@@ -19,10 +19,10 @@ import (
 // returning function (the opt-type is recovered via opt_ret_fns). main also
 // declares a fresh, non-escaping struct temp `t` (field-read only) which the IR
 // path reclaims with a shallow box free; `t.<a> - t.<b>` pads 0 into the result.
-// The AST fallback is leak-only and NEVER frees a struct, and no case uses an
+// A module that bails emits nothing at all, and no case uses an
 // array — so the presence of `call __fn___fern_arr_dec` proves the module took
-// the IR path (a silent AST fallback fails the assertion loudly rather than
-// passing on the AST handling the same program). Exit codes pin the matched value.
+// the IR path with the struct-payload lowering exercised, rather than
+// some narrower route. Exit codes pin the matched value.
 var optStructPayloadIRCases = []struct {
 	name     string
 	src      string
@@ -72,11 +72,11 @@ func TestSelfHostOptStructPayloadIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			// No array appears, and the AST fallback never frees a struct, so a
+			// No array appears, so a
 			// struct free proves the IR path lowered this module (incl. the
 			// Option/Result struct-payload match).
 			if bytes.Count(asm, []byte("call __fn___fern_arr_dec")) == 0 {
-				t.Fatalf("%s: no struct free emitted — module fell back to AST, the Option/Result struct-payload IR path was NOT exercised", tc.name)
+				t.Fatalf("%s: no struct free emitted — the Option/Result struct-payload IR path was NOT exercised", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

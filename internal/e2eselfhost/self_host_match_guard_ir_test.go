@@ -14,7 +14,7 @@ import (
 // emits `lower_expr(guard)` + a not/br_if skip and propagates `.ok`, so the
 // module stays IR-eligible — for both the enum-payload-variant arm and the
 // literal-match arm. No existing self-host test exercises a `when` guard at all,
-// so a regression that kicked guarded matches onto the AST emitter would pass
+// so a regression that kicked guarded matches off the IR path would pass
 // silently. These cases close that gap with the path-probe pin (assert path ==
 // "ir") + interp oracle, mirroring self_host_block_expr_ir_test.go.
 //

@@ -14,7 +14,7 @@ import (
 // extractors over objects, strings, booleans, arrays, nesting, and
 // null. std/json builds its DOM on core/map (`map_new` / `.insert`),
 // so until core/map lowered fully through the IR path these programs
-// fell back to the legacy AST emitter. With core/map routing IR (the
+// bailed to the legacy AST emitter. With core/map routing IR (the
 // __alloc / __ptr_width / __memset / __free / __fern_arr_dec stages),
 // the whole read path — json_parse, __json_p_*, and the json_get_*
 // extractors — is IR-eligible. The encode path (json_encode → the

@@ -5,8 +5,8 @@
 // the IR path only — since #3457 slice 5 this driver has no AST leg at all,
 // so `-ir` selects a fast path rather than an emitter. The companion Go test
 // (self_host_asm_ir_path_test.go) pipes each program through both ways and
-// asserts identical exit codes — proving the IR path is behaviour-equivalent
-// to the production AST path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3).
+// asserts identical exit codes — originally the IR-vs-AST differential
+// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3), now a gated-vs-ungated one.
 //
 // `-target arm64-linux` selects the arm64 backends instead (#4398 part 1): the IR
 // path via asm_arm64_ir.emit_module_ir, and IR-or-error via
@@ -44,7 +44,7 @@ function run(): i32 {
     // defined in SIBLING modules of the loaded import set, supplied here via
     // repeated `-ir-extern <name>`. Threaded into eligibility so a direct call /
     // function value to such a name is admitted as an extern (resolved at link)
-    // instead of bailing the module to AST — modelling the per-module path
+    // instead of bailing the module — modelling the per-module path
     // where every cross-module call targets a sibling's `__fn_*` symbol.
     var known: string[] = [];
     // `unit` selects per-module translation-unit emit (#3451 step 1/3):
@@ -142,7 +142,7 @@ function run(): i32 {
         sp = sp + 1;
     }
     // `-ir-probe`: report the IR-eligibility frontier instead of emitting asm —
-    // a per-function breakdown of what lowers vs what bails to the AST path.
+    // a per-function breakdown of what lowers vs what bails.
     if (probe) {
         print(asm_ir.eligibility_report_known(lm, known));
         return 0;
@@ -194,7 +194,7 @@ function run(): i32 {
     if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm_inf, false, true, ns, [], all_funcs, all_structs, 0, 0 - 1, [])); return 0; }
     var emitted: string = "";
     // #4394 lever 3: the fused gate+emit lowers each function once (was: gate
-    // lowered all, then emit re-lowered all). "" means ineligible → AST fallback.
+    // lowered all, then emit re-lowered all). "" means ineligible.
     if (use_ir) { emitted = asm_ir.emit_module_ir_gated(lm, known); }
     if (emitted == "") {
         // IR-or-error (#3457 slice 5). This was the AST fallback; it is now a

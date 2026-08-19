@@ -16,7 +16,7 @@ import (
 //	e as Option[T]   -> as_Option[T]   a plain ascription; the tag IS the type
 //
 // Only the downcast was enumerated, so `match (None as Option[i32])` resolved to
-// "" and bailed the enclosing function to the AST emitter. Its sibling
+// "" and bailed the enclosing function. Its sibling
 // ascription shapes — `var x = None as Option[i32]`, `return None as
 // Option[i32]` — already lowered, because they bind or return through an
 // annotation that carries the payload type. The value-position match is the one

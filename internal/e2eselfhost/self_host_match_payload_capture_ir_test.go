@@ -12,9 +12,9 @@ import (
 // payload binding capture resolution (cap_type_in_stmts' StmtMatch arm): a
 // lambda capturing a `Some(v)` / `Ok(v)` / `Err(v)` payload binding used to
 // resolve cap_type "" (the binding is not a `var`), so the closure lift
-// declined and the whole module fell to the AST path — where a capturing
-// lambda in a struct fn FIELD miscompiles (silent wrong values: native 20
-// read back as 4). The binding now resolves from the scrutinee's Option /
+// declined and the whole module bailed — and on the AST emitter it then fell
+// to, a capturing lambda in a struct fn FIELD miscompiled (silent wrong values:
+// native 20 read back as 4). The binding resolves from the scrutinee's Option /
 // Result type spelling (opt_payload_type), so these shapes lower via the IR
 // path (asserted via the .Lir_ label witness) and compute the native values,
 // including a `string` payload whose captured var must dispatch `.len()`
@@ -98,7 +98,7 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
 			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: emitted asm has no IR-path labels — the payload capture fell back to the AST path", tc.name)
+				t.Fatalf("%s: emitted asm has no IR-path labels — the payload capture did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

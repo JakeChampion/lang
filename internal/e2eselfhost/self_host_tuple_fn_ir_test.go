@@ -73,13 +73,13 @@ var tupleFnIRCases = []struct {
 	// (`var inner = t.0; inner.0(37)`): the binding transfers the inner
 	// element tags (mark_tuple_elems from the "(…)"-shaped element tag), so
 	// the inner "clo" element dispatches env-first. (The DIRECT chain
-	// `t.0.0(37)` remains a deferred edge — it still bails to the AST path.)
+	// `t.0.0(37)` remains a deferred edge — it still bails.)
 	{"nested-tuple-clo-via-binding", "function main(): i32 { var n = 5; var t = ((function (x: i32): i32 { return x + n; }, 1), 2); var inner = t.0; return inner.0(37); }", 42},
 	// Scalar sibling of the nested transfer (pins the tag hand-off shape).
 	{"nested-tuple-scalar-via-binding", "function main(): i32 { var t = ((7, 1), 2); var inner = t.0; return inner.0 + 35; }", 42},
 	// A scalar-returning CALL as a tuple element (`(add(1,2), 4)`): admitted
 	// by the el_call_ok gate (callee in no nonscalar/wide registry); before,
-	// ANY call element made the construction bail to the AST path (#5051).
+	// ANY call element made the construction bail (#5051).
 	{"scalar-call-elem", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { var u = (add(1, 2), 4); return u.0 + u.1 + 35; }", 42},
 	// A closure tuple-element CALL as an element of ANOTHER tuple literal
 	// (`(t.0(3), t.1)`): the el_call_ok FieldAccess-digits arm.

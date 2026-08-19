@@ -2102,8 +2102,8 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 
 pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // Infer return types for unannotated functions so the IR path's
-    // ret-type-keyed call tagging matches the AST path (parity with the
-    // x86 IR path in asm_ir.emit_module_ir).
+    // ret-type-keyed call tagging matches what module_with_builtins supplies
+    // (parity with the x86 IR path in asm_ir.emit_module_ir).
     mod = parser.infer_ret_types_module(mod);
     s = asmcore.EmitState { ...s, funcs: mod.funcs };
     s = s.write("    .globl _start\n");

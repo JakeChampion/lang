@@ -14,7 +14,7 @@ import (
 // __ptr_width, stage 2 __memset + __free, stage 3 the __fern_arr_dec /
 // __fern_drop_arr_ptr no-op value-release helpers), all 32 core/map functions
 // route IR, so a map program reaches "module: IR" through the bundling driver —
-// it no longer falls back to the legacy AST emitter. Each case asserts the
+// it no longer bails. Each case asserts the
 // modload -ir-probe verdict is "module: IR" AND the compiled binary matches the
 // interpreter oracle. x86-64 only (the loader driver takes argv file paths, like
 // the other modload tests). Results are <= 126.

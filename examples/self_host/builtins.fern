@@ -73,7 +73,7 @@ struct HttpResponse { status: i32, body: string, headers: HeaderMap }
 // checker's builtin struct table; the self-host had no declaration at all, so
 // a signature mentioning it — `(HttpRequest, Platform) => HttpResponse`, which
 // is every std/tcp serve entry point — could not resolve and `__serve_loop`
-// bailed to the AST emitter, which cannot emit tcp_listen / poll either
-// (#5686). Phase 1 carries a single `version: i32` placeholder so the struct
+// bailed — and the AST emitter it then fell to could not emit tcp_listen /
+// poll either (#5686). Phase 1 carries a single `version: i32` placeholder so the struct
 // has a well-defined ABI without zero-sized-struct edge cases.
 struct Platform { version: i32 }

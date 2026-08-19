@@ -21,7 +21,7 @@ import (
 // convention), so the scrutinee recovers its instantiation and the arms
 // rewrite. The fix restores VALUE correctness on whichever backend path the
 // module lowers on; the param cases reach the IR path (asserted), the
-// closure-local case stays on the AST path (value only).
+// closure-local case still bails (value only).
 func TestSelfHostFnValueEnumScrutineeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -53,7 +53,7 @@ func TestSelfHostFnValueEnumScrutineeIRX86_64(t *testing.T) {
 			`enum Opt[T] { Non, Has(T) } function run(f: (i32) => Opt[i32], k: i32): i32 { match (f(k)) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { return run(function (k: i32): Opt[i32] { if (k > 0) { return Has(k); } return Non; }, 0); }`,
 			42, true},
 		// Fn-value LOCAL (closure) returning a generic enum, matched directly.
-		// The local closure keeps the module on the AST path, but the fix
+		// The local closure still bails the module, but the fix
 		// restores the correct value there.
 		{"fn-local-generic-enum-scrutinee",
 			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = function (k: i32): Opt[i32] { if (k > 0) { return Has(k * 6); } return Non; }; match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } }`,
@@ -70,7 +70,7 @@ func TestSelfHostFnValueEnumScrutineeIRX86_64(t *testing.T) {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
 			if tc.wantIR && !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: emitted asm has no IR-path labels — the fn-value enum scrutinee fell back to the AST path", tc.name)
+				t.Fatalf("%s: emitted asm has no IR-path labels — the fn-value enum scrutinee did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

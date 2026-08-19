@@ -13,7 +13,7 @@
 //
 // IR-or-error (#3457 slice 5): this driver no longer imports `asm.fern`, so a
 // module the IR gate declines is a hard error here instead of a silent fall
-// back to the legacy AST emitter. That is what makes the AST emitter
+// back to the legacy AST emitter. That is what made the AST emitter
 // deletable — and this is the driver with the widest reach, built by ~390 test
 // files across internal/e2eselfhost and internal/e2e, so it is also the reroute
 // that proves the per-function IR subset covers the corpus rather than the

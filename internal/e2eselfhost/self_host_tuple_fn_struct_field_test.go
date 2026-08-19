@@ -7,7 +7,7 @@ import (
 
 // tupleFnStructFieldCases pin the DIRECT call of a fn-valued TUPLE ELEMENT that
 // lives in a struct field — `s.p.N(args)`. The struct-field tuple makes the
-// enclosing function IR-ineligible, so it bails to the legacy AST emitter
+// enclosing function IR-ineligible, so it used to bail to the legacy AST emitter
 // (asm.fern / asm_arm64.fern). There, emit_call routed an ExprFieldAccess
 // callee straight to emit_method_call; a NUMERIC field ("N", a tuple index) is
 // not a method name, so it found no method and returned the -1 sentinel (exit
@@ -39,7 +39,7 @@ var tupleFnStructFieldCases = []struct {
 }
 
 // TestSelfHostTupleFnStructFieldX86_64 — the x86-64 asm.fern fix, through the
-// production driver (asm_ir_run `-ir`; the shape bails to the AST emitter).
+// production driver (asm_ir_run `-ir`).
 func TestSelfHostTupleFnStructFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

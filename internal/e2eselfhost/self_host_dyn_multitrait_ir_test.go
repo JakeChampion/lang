@@ -55,7 +55,7 @@ var dynMultiTraitIRCases = []struct {
 // TestSelfHostDynMultiTraitIRX86_64 routes each multi-trait case through the
 // self-hosted x86-64 driver (asm_run) and asserts the exit code, AND probes the
 // routing (asm_pathprobe_run) to pin each case to the "ir" path — proving the
-// multi-trait `dyn A + B` value flows through IR lowering (not an AST fallback).
+// multi-trait `dyn A + B` value flows through IR lowering.
 func TestSelfHostDynMultiTraitIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

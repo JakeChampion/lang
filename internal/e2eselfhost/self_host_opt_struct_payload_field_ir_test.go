@@ -18,8 +18,9 @@ import (
 // eligibility predicate is_leaksafe_opt_field rejected any non-scalar payload, so
 // such a field bailed the whole module to the legacy AST emitter. #2691 adds the
 // structs-aware is_leaksafe_opt_field_d so an Option[Struct]/Result[Struct,…] field
-// is admitted. ENUM payloads stay excluded (the legacy AST backend miscompiles an
-// Option[enum] field — see the negative pin below). Each case is oracle-checked
+// is admitted. ENUM payloads stay excluded (the pin's rationale cited the legacy
+// AST backend miscompiling an Option[enum] field — see the negative pin below).
+// Each case is oracle-checked
 // against the interpreter and returns <= 126. Mirrors self_host_nested_array_ir_test.go.
 var optStructPayloadFieldIRCases = []struct {
 	name string
@@ -76,7 +77,9 @@ func TestSelfHostOptStructPayloadFieldIRX86_64(t *testing.T) {
 	}
 
 	// Negative pin: an Option[enum] struct field must NOT be admitted to the IR
-	// path (the legacy AST backend miscompiles it; the widening is struct-only).
+	// path — the widening is struct-only. The probe's "ast" verdict means
+	// "ineligible"; nothing is behind it any more, so this pins a refusal.
+	// irlower's opt_payload_ok_dv records why the pin itself is unresolved.
 	t.Run("opt-enum-field-stays-ast", func(t *testing.T) {
 		src := []byte(`enum Color { Red, Blue } struct Box { c: Option[Color] } function main(): i32 { var b = Box { c: Some(Blue) }; match (b.c) { Some(x) => { return 2; }, None => { return 0; } } }` + "\n")
 		path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))

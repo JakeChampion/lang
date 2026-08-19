@@ -12,7 +12,7 @@ import (
 // about IR eligibility (#5649).
 //
 // It did not. Any module that passed a bare named function as a value was
-// wrongly routed to the legacy AST emitter by the IR-built generation, while
+// wrongly declined by the IR-built generation, while
 // the native-built generation emitted it through IR. The bail is
 // emit_module_ir_gated's const_func arm: module_has_func could not find the
 // lifted wrapper, because make_wrap_named_func — run inside an IR-built

@@ -9,11 +9,11 @@ import (
 
 // strSplitIRCases are string.split(sep) / str_split(s, sep) programs that must
 // route through the self-hosted x86-64 IR path (asm_ir.emit_module_ir) rather
-// than the legacy AST emitter. Before op_str_split, a `.split(sep)` dispatched
+// rather than bailing. Before op_str_split, a `.split(sep)` dispatched
 // as `call_direct("string.split")` — an unknown callee that calls_only_known
-// rejected, kicking the whole module to the AST fallback. Now split lowers to
+// rejected, bailing the whole module. Now split lowers to
 // the dedicated op, so these stay on the IR path. This is the eligibility proof
-// that pairs with the AST-vs-IR differential cases in TestSelfHostAsmIRPath
+// that pairs with the differential cases in TestSelfHostAsmIRPath
 // (split-*), which prove the chosen path computes the right answer.
 var strSplitIRCases = []struct {
 	name string

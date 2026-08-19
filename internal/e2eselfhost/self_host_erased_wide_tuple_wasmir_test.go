@@ -72,7 +72,7 @@ func TestSelfHostErasedWideTupleWasm(t *testing.T) {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
 			}
 			if strings.Contains(string(wat), "$__lit0") {
-				t.Errorf("%s deferred to the AST path (found $__lit0); expected IR lowering", tc.name)
+				t.Errorf("%s did not lower through the IR (found $__lit0)", tc.name)
 			}
 			watFile := filepath.Join(dir, "tup_"+tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

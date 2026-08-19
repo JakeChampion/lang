@@ -91,7 +91,7 @@ function main(): i32 {
 		t.Fatalf("-decide failed: %v", err)
 	}
 	if got := strings.TrimSpace(string(decideOut)); got != "ir" {
-		t.Fatalf("over-budget program routed %q, want \"ir\" (IR path over the AST emitter)", got)
+		t.Fatalf("over-budget program routed %q, want \"ir\" (the per-module rescue must keep it IR-eligible)", got)
 	}
 
 	// Correctness: the emitted asm links + runs to exit 0.

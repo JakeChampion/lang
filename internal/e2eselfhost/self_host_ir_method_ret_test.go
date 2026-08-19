@@ -7,7 +7,7 @@ import (
 // TestSelfHostIRMethodReturnEligible locks in the IR-coverage widening for
 // methods returning structs / tuples. The struct/tuple return registries used
 // to record only free functions, so `var p = obj.mk()` for a struct/tuple-
-// returning method fell back to AST (the call site couldn't type p, and a
+// returning method bailed (the call site couldn't type p, and a
 // struct method-call result's `p.x` bails). It probes asm_ir.all_eligible (the
 // unified driver's `elig` mode) on method-returning programs and encodes the
 // per-case results in the exit code (a*10 + b == 11 when both are eligible).

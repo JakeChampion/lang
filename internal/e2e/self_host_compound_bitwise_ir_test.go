@@ -14,7 +14,7 @@ import (
 // (internal/parser/parser.go) has always desugared all ten compound forms to
 // `x = x <op> y`, but the self-host parser's `is_compound` recognised only the
 // arithmetic five (`+= -= *= /= %=`) — so a program using `x &= y` parsed wrong
-// and the module bailed to the AST emitter. parser.fern now mirrors the native
+// and the module bailed. parser.fern now mirrors the native
 // set exactly, so the bitwise/shift forms desugar to the already-IR-eligible
 // binary ops (`& | ^ << >>` all lower through lower_expr) and the whole module
 // routes IR.

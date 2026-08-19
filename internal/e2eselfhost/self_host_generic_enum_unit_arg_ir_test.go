@@ -76,7 +76,7 @@ func TestSelfHostGenericEnumUnitArgIRX86_64(t *testing.T) {
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
 			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: emitted asm has no IR-path labels — the generic-enum unit-variant arg fell back to the AST path", tc.name)
+				t.Fatalf("%s: emitted asm has no IR-path labels — the generic-enum unit-variant arg did not lower through the IR", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

@@ -123,7 +123,7 @@ function main(): i32 {
 // self-hosted x86-64 compiler and oracle-checks the exit code. The scalar-
 // returning verbs (`contains` → boolean, `index_of` → i32) lower on the IR path;
 // `distinct` returns a generic `struct[]`, which (over a struct element type)
-// rides the AST fallback — both produce the right answer, so this asserts
+// is not routing-pinned here — both produce the right answer, so this asserts
 // behaviour rather than the routing tag (which differs by case, as in the
 // predicate-adapter gate). The native legs above pin cross-backend correctness.
 func TestSelfHostEqVerbsIRX86_64(t *testing.T) {

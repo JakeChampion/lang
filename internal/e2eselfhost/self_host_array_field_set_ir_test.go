@@ -87,7 +87,7 @@ function main(): i32 { var t: T = T { items: [], n: 0 }; t.items = [P { x: 4 }, 
 
 // TestSelfHostArrayFieldSetIRWasm routes each case through the wasm IR path and
 // runs it under wasmtime. The `-decide` probe assertion is the important half:
-// it is what would catch a silent return of these programs to the AST emitter.
+// it is what would catch these programs silently leaving the IR path.
 func TestSelfHostArrayFieldSetIRWasm(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -103,7 +103,7 @@ func TestSelfHostArrayFieldSetIRWasm(t *testing.T) {
 			src := []byte(tc.src + "\n")
 			route := strings.TrimSpace(string(runCapture(t, gcc, runner, driverBin, src, "-decide")))
 			if route != "ir" {
-				t.Fatalf("%s routed %q, want \"ir\" — array-field assignment is back on the AST emitter", tc.name, route)
+				t.Fatalf("%s routed %q, want \"ir\" — array-field assignment no longer lowers", tc.name, route)
 			}
 			wat := runCapture(t, gcc, runner, driverBin, src)
 			if len(wat) == 0 {

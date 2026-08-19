@@ -16,11 +16,12 @@ import (
 // must lower on the self-host x86-64 IR path. The client half (tcp_connect / send /
 // recv / close / pollable) already lowered; tcp_listen / tcp_accept bailed the IR
 // path (irlower had no op for them, asmcore didn't type them), so std/tcp's serve
-// loop routed to the legacy AST backend — which has no x86 __fern_tcp_listen body,
-// so it wouldn't link. This drives a poll-driven one-shot server through the
+// loop bailed — and the legacy AST backend it fell to had no x86
+// __fern_tcp_listen body, so it wouldn't link. This drives a poll-driven one-shot
+// server through the
 // self-host x86-64 IR driver (asm_run) end-to-end: compile → link → serve one real
 // TCP connection → respond → exit 42. A successful run PROVES the IR path was taken,
-// since the AST fallback cannot emit the listen/accept helpers.
+// since nothing else emits the listen/accept helpers.
 //
 // Poll-driven (like internal/e2e's native TestPollDrivenTcpServerX86_64) so accept
 // and recv never block the test: poll the listener before accept, the connection

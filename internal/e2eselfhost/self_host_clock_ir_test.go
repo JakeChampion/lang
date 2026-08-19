@@ -107,7 +107,7 @@ func TestSelfHostClockIRWasm(t *testing.T) {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
 			// IR routing: the clock op must lower to `call $__fern_<clock>`
-			// (wasm_ir's op arm), not bail to the AST emitter.
+			// (wasm_ir's op arm), not bail.
 			if !bytes.Contains(wat, []byte("call $"+tc.helper)) {
 				t.Fatalf("%s: emitted wat has no `call $%s` — clock builtin did not lower through the wasm IR path", tc.name, tc.helper)
 			}

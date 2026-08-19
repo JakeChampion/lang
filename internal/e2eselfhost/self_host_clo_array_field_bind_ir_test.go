@@ -9,7 +9,7 @@ import (
 // closure-array element loaded from a struct field — issue #5160 defect #2
 // (the segfault sibling of the direct-call defect #1 that
 // TestSelfHostCloArrayFieldCallIR* covers). These lower on the IR path (NOT the
-// AST fallback): the struct-field closure array `r.hs` is `fn[]`, whose element
+// bailing): the struct-field closure array `r.hs` is `fn[]`, whose element
 // is a closure BOX, but before the fix irlower bound the element / the whole
 // array as a plain scalar/array local, so the subsequent `f()` / `fns[i]()` /
 // `for h in r.hs { h() }` emitted a bare `call *reg` on the box POINTER — jumping

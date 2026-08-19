@@ -6,9 +6,9 @@ import (
 
 // TestSelfHostJoinIR pins `xs.join(sep)` on a string[] receiver lowering through
 // the self-host x86-64 IR path (#5328). Before this, irlower never intercepted
-// `.join`, so any module using it fell back to the legacy AST emitter; now it
+// `.join`, so any module using it bailed; now it
 // lowers to a call of the __fern_arr_str_join runtime helper (the same Fern
-// function the AST path calls). Each case is a native-oracle exit-code
+// function the AST path called). Each case is a native-oracle exit-code
 // differential: the native interpreter (which reaches `.join` via std/array's
 // __method_Array_join) is the source of truth, and the self-host-IR-compiled
 // binary must match. The single-program `asm_ir_run -ir` driver resolves no

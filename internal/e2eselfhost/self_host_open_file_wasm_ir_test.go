@@ -11,7 +11,7 @@ import (
 // TestSelfHostOpenFileWasmIR covers the streaming file-I/O intrinsics
 // open_writer / open_appender / open_reader (op_open_file, returning a bare fd) +
 // Writer.write (op_writer_write) on the self-host WASM IR path (#4372 file half).
-// Before this they deferred to the AST emitter, which has no fs-open runtime. Now
+// Before this they deferred to the AST emitter, which had no fs-open runtime. Now
 // wasm_ir emits $__fern_open_file (path_open under preopen fd 3, mapping the openat
 // flags to WASI oflags/rights/fdflags) and $__fern_writer_write (fd_write). Runs
 // under wasmtime with `--dir=.::/` granting the run dir as fd 3, and verifies the

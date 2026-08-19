@@ -13,7 +13,7 @@ import (
 // path. read_dir lists a directory's base-name children (openat+getdents64,
 // skipping . / ..) and returns Result[string[], IoError]; it had a full AST
 // runtime (__fn___fern_read_dir) but no IR lowering, so any user (std/test's
-// assert_eq_dir_listing) was dragged to the AST emitter (#3457). It now lowers to
+// assert_eq_dir_listing) bailed the module (#3457). It now lowers to
 // op_read_dir -> the Fern __fn___fern_read_dir runtime (boxing a
 // string[] via __fern_arr_box). The program makes a temp dir, writes two files,
 // read_dirs it, asserts the count is 2, removes the tree, and exits 0 — exercising

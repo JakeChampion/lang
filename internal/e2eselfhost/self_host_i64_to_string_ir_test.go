@@ -23,8 +23,8 @@ import (
 //
 // These cases pin the IR path: each routes "ir" through the self-hosted x86-64
 // loader (asm_load_run) with the real stdlib root and matches the native
-// interpreter. (std/u64's `to_string` currently routes the legacy AST fallback —
-// a separate, out-of-IR-subset concern — so the high-bit u64 case here calls
+// interpreter. (std/u64's `to_string` does not lower — a separate,
+// out-of-IR-subset concern — so the high-bit u64 case here calls
 // core/int's `__int_to_string_u64` directly, which does lower on the IR path.)
 var i64ToStringIRCases = []struct {
 	name string

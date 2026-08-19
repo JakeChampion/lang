@@ -12,8 +12,8 @@ import (
 // nestedTupleIRCases widen the self-host IR subset: a tuple element that is itself
 // a tuple — `(1, (2, 3))`, accessed `t.1.1` — now lowers on the IR path. Before,
 // the tuple-element tag encoding split on commas, so any element whose own tag
-// contained a comma (a nested tuple) was rejected and the whole module fell back
-// to the AST emitter. The fix makes the tag decoders (`tuple_elem_tag`, `csv_nth`)
+// contained a comma (a nested tuple) was rejected and the whole module bailed.
+// The fix makes the tag decoders (`tuple_elem_tag`, `csv_nth`)
 // depth-aware — counting `(`/`[` … `)`/`]` so inner commas don't split the outer
 // tag — adds an `ExprTuple` arm to `elem_type_tag` (a nested element gets its own
 // `(t0,t1,…)` spelling), admits a tuple element at construction (it is a leak-only

@@ -14,9 +14,9 @@ import (
 // path: a bare top-level fn name (`Pending(41, step)`, slice 5) and a capturing
 // lambda LITERAL written directly in payload position (slice 5b). A nested fn
 // BOUND to a local and then referenced by name (`function resume(..){..}; return
-// Pend(c, resume);`) bailed to the AST emitter: the var-bound lambda was left for
+// Pend(c, resume);`) bailed the module: the var-bound lambda was left for
 // closure_lift_one, which only lifts call-only closures, so a value-used binding
-// was never boxed and the module fell back to AST.
+// was never boxed.
 //
 // Two irlower changes fix it: (1) lambda_captures only treats an ENCLOSING LOCAL
 // as a capture (enum constructors / I/O builtins that are free in the body are no
@@ -25,7 +25,7 @@ import (
 // every fn-value carries — gated on a value-use analysis so a call-ONLY binding
 // is still left to closure_lift_one's cheaper direct-call lift (boxing it would
 // regress closure-calls-closure). Captures must be i32 (or absent); a string /
-// pointer capture still declines and the module bails to AST (a later slice).
+// pointer capture still declines and the module bails (a later slice).
 var nestedFnValueIRCases = []struct {
 	name string
 	src  string

@@ -14,8 +14,8 @@ import (
 // so the bundler must map alias -> prefix when flattening qualified references.
 // Before this, the self-host parser dropped the `as` clause entirely, so flatten
 // didn't recognise `io` as a module qualifier and `io.bytes_writer_new()`
-// mis-lowered (`i32.bytes_writer_new` / `const_func[io]`), dragging the whole
-// module to the AST emitter. Now `parse_import` captures the alias and flatten's
+// mis-lowered (`i32.bytes_writer_new` / `const_func[io]`), bailing the whole
+// module. Now `parse_import` captures the alias and flatten's
 // resolve_prefix maps `io` -> `io_buffered`.
 //
 // Asserts the emitted asm calls the alias-resolved mangled symbol

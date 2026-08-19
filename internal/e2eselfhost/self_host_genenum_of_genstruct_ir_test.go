@@ -15,7 +15,7 @@ import (
 // the enum monomorphiser, but the enum/Option annotation `Opt[Box[i32]]` was
 // left with the un-mangled inner `Box[i32]` (mg_ty only recursed into the args
 // of a generic-STRUCT base), so the enum pass saw a composite arg it couldn't
-// key and the module bailed to the AST emitter. The fix makes the struct pass's
+// key and the module bailed. The fix makes the struct pass's
 // mg_ty recurse into the args of a NON-generic-struct generic base too
 // (`Opt[Box[i32]]` → `Opt[Box__i32]`), so the enum pass then sees a plain
 // nominal arg `Box__i32` it keys the usual way. Native monomorphises these, so

@@ -893,7 +893,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 
 	// The same Err variant, but on the AST emitter rather than the IR one.
 	// An fs shape normally lowers through the IR leg; padding the module past
-	// eligible_core's 512-function budget pushes it onto the AST fallback,
+	// eligible_core's 512-function budget pushed it onto the AST fallback,
 	// whose variant boxes are 4-byte-slotted instead of 8. The boxer emitted
 	// one layout for both consumers, so this leg read the path out of the id
 	// slot; before that it stored the raw wasi error code here and there was
@@ -2370,7 +2370,7 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	t.Run("now-to-string", func(t *testing.T) {
 		// Formatting the clock reading composes the wall-clock import with the
 		// wide `.to_string()` formatter (#5826) — the shape that used to bail
-		// the whole component to the AST emitter. The value moves, so the
+		// the whole component. The value moves, so the
 		// assertion is on its shape: epoch-ms is 13 digits through the year
 		// 2286, all of them decimal.
 		comp := build(t, `function main(): i32 {

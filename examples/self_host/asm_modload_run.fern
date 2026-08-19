@@ -117,8 +117,8 @@ function provided_audit(): i32 {
 // struct's field layout in this WHOLE-PROGRAM struct view, so a compiler function
 // touching a built-in type (e.g. a `match` on read_file's Result, an IoError
 // field) lowers correctly — without it the per-module-built compiler miscompiles
-// every built-in-typed code path (the AST path gets the same via
-// module_with_builtins). Enum-variant structs (enum_owner set) live in
+// every built-in-typed code path (module_with_builtins supplies the same view
+// to the merged path). Enum-variant structs (enum_owner set) live in
 // bmod.structs after parse, so appending those covers builtins.fern's own enums.
 function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl[] {
     var out: parser.StructDecl[] = base;
@@ -259,11 +259,10 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 //
 // Without it, a stdlib-importing program whose merged closure crosses the
 // budget dropped to the AST emitter (deleted since; #3457) — which could not
-// emit tcp_listen / poll /
-// tcp_pollable at all, so the flagship edge-handler program (std/http +
-// std/tcp + a `handle` function) compiled to asm with a dozen dangling
-// `__fn_` symbols and failed at LINK, even though every one of its functions
-// lowers on the IR path.
+// emit tcp_listen / poll / tcp_pollable at all, so the flagship edge-handler
+// program (std/http + std/tcp + a `handle` function) compiled to asm with a
+// dozen dangling `__fn_` symbols and failed at LINK, even though every one of
+// its functions lowers on the IR path.
 //
 // The struct view is extended with builtin_view, exactly as run_per_module
 // does: a unit touching a built-in type (Option / Result / IoError /
@@ -276,8 +275,8 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // asm_arm64_ir.emit_module_ir_unit_arm64, anything else the x86-64
 // asm_ir.emit_module_ir_unit. The other per-module routes here were already
 // target-aware; this one was not, so the arm64 merged leg had no over-budget
-// rescue and dropped straight to the (since-deleted) AST emitter for the whole single-process
-// band x86 served via IR (#3457 slice 5).
+// rescue and dropped straight to the (since-deleted) AST emitter for the whole
+// single-process band x86 served via IR (#3457 slice 5).
 function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string): string {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
     var infmods: parser.Module[] = [];
@@ -342,11 +341,11 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
         if (parts[idx].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
         if (!elig) {
-            // Name the module that forced the whole program back to the AST
-            // emitter. Without this the fallback is silent and the failure
+            // Name the module that took the whole program off the per-module
+            // route. Without this the decline is silent and the failure
             // resurfaces as an undefined `__fn_` at link, with nothing
             // pointing at which unit could not lower.
-            eprint("per-module concat: module not IR-eligible, falling back to the AST emitter: " + parts[idx].ns + "\n");
+            eprint("per-module concat: module not IR-eligible: " + parts[idx].ns + "\n");
             return "";
         }
         var extra: string[] = [];
@@ -477,9 +476,8 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // emit_per_module_spawned is the over-ceiling sibling of emit_per_module_concat:
 // it emits the per-module IR units in BATCHES of child processes and streams the
 // results to stdout, so a program too big for a single-process concat still takes
-// the IR path instead of dropping to the AST emitter. This is what removes the
-// whole-compiler self-compile's dependence on the legacy AST emitter (#3457
-// slice 3).
+// the IR path. This is what removed the whole-compiler self-compile's dependence
+// on the legacy AST emitter (#3457 slice 3).
 //
 // WHY PROCESSES. The per-window emit's net working set (~0.4 GB) is not
 // reclaimed within a process, so emitting all ~35 whole-compiler units in one
@@ -550,7 +548,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
         if (hi > units.len()) { hi = units.len(); }
         var rc: i32 = spawn_batch(self_exe, entry_path, tmp, lo, hi, target, cache_dir);
         if (rc != 0) {
-            eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the AST emitter\n");
+            eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the merged IR emit\n");
             var ce1: i32 = 0;
             match (remove_dir_all(tmp)) { Err(rr1) => { ce1 = 1; }, Ok(_) => { }, }
             return 1;
@@ -1106,10 +1104,10 @@ function main(): i32 {
                 // Same single-process over-budget rescue the x86 leg below has:
                 // a merged bundle past the 512-function IR budget but small
                 // enough for one process routes per-module (each module is under
-                // budget -> IR) instead of dropping the whole program to the AST
-                // emitter. arm64 lacked this, so the whole band went AST here
-                // while x86 served it via IR — the asymmetry that has to close
-                // before the arm64 AST emitter can be deleted (#3457 slice 5).
+                // budget -> IR) instead of failing the whole program. arm64
+                // lacked this, so the whole band went AST here while x86 served
+                // it via IR — the asymmetry that had to close before the arm64
+                // AST emitter could be deleted (#3457 slice 5).
                 // Link-verified end to end by TestSelfHostPerModuleConcatArm64;
                 // the first attempt (#5937) emitted a dangling __fn_i32__gcd and
                 // was reverted, which is why that test asserts through the LINK.
@@ -1147,23 +1145,21 @@ function main(): i32 {
                 return 0;
             }
             // OVER the merged 512-function IR budget: route per-module (each
-            // module is under budget → IR) instead of dropping the whole program
-            // to the AST emitter (#3457 / #5676's rescue, which asm_load_run had
-            // and this driver did not). The lower bound is the budget the merged
-            // IR path bails at (asm_ir.emit_module_ir_gated: sm.funcs.len() > 512).
+            // module is under budget → IR) instead of failing the whole program
+            // (#3457 / #5676's rescue, which asm_load_run had and this driver did
+            // not). The lower bound is the budget the merged IR path bails at
+            // (asm_ir.emit_module_ir_gated: sm.funcs.len() > 512).
             //
             // Above `single_process_max` a single-process concat exhausts the
             // arena, so the emit is orchestrated across BATCHES of child
             // processes instead (emit_per_module_spawned). Both routes fall back
-            // to the AST emitter on failure, so a program that routed AST before
-            // still does.
+            // to the merged IR-or-error emit below on failure.
             //
             // The reachable set comes from treeshaking the merged module HERE
             // rather than treeshaking the emit input: pruning is only needed to
             // keep unused stdlib functions (which may use constructs the IR path
-            // cannot lower yet) from dragging a module onto the AST emitter. The
-            // AST fallback below still sees the untouched merged module, so a
-            // program that routed AST before routes AST byte-identically now.
+            // cannot lower yet) from making a module ineligible. The merged emit
+            // below still sees the untouched module.
             // MEASURED single-process ceiling (2026-07-29). The 21
             // duplicate-symbol errors a >=1500-function concat used to hit are
             // FIXED (the `.weak`-dedup pair), and at 1958 merged funcs — the

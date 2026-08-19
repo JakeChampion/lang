@@ -24,13 +24,14 @@
 //     need one directly (a `sort_by` argument, say) rather than the `<` / `>`
 //     operators.
 //
-// AST-safety contract (shared by every merge sort in this file and by
-// `cmp.sort`): each merge pass materializes its scratch buffer as a FRESH copy
-// (an `.append` loop), never `var dst = src;`. On the self-host AST emitter path
-// (the >512-function-bundle fallback) there is no Perceus, so `.with` writes
-// through an alias in place — an aliased merge reads its own writes and
-// corrupts. Verified empirically (#5397). Do NOT "optimize" any of these back
-// to an aliased copy-on-write buffer.
+// Aliasing rule (shared by every merge sort in this file and by `cmp.sort`):
+// each merge pass materializes its scratch buffer as a FRESH copy (an `.append`
+// loop), never `var dst = src;`, so no merge ever reads a slot it has already
+// overwritten. Append-only output cannot alias its input on any backend. The
+// rule was forced by the self-host AST emitter, which had no Perceus and wrote
+// `.with` through an alias in place, corrupting an aliased merge (#5397); that
+// emitter is deleted (#3457/#5972) and the shape stays because it is the correct
+// one. Do NOT "optimize" any of these back to an aliased copy-on-write buffer.
 //
 // No prelude: a program `import "std/sort";` explicitly. The generic sorts live
 // in `core/cmp`, so reach for `cmp.sort` via `import "core/cmp";`.
@@ -179,8 +180,8 @@ pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
 // Merging appends into a fresh array rather than writing through `.with`, so no
 // merge ever reads a slot it has already overwritten. That retires the
 // fresh-copy-per-pass rule the old body carried: it was written for the
-// self-host AST emitter, which has since been deleted (#3457/#5972), and
-// append-only output cannot alias its input on any backend regardless.
+// self-host AST emitter, deleted since (#3457/#5972), and append-only output
+// cannot alias its input on any backend regardless.
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
@@ -328,10 +329,8 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
 // time, not O(n log n) times), then the elements and their keys are merge-
 // sorted together in lockstep by the precomputed i32 key. Stable bottom-up
 // merge sort, O(n log n) (#4387 item 3); the input is not mutated. Each merge
-// pass materializes fresh `dstv` / `dstk` copies — REQUIRED on the self-host
-// AST emitter path this currently lowers via (a closure-typed param over a
-// generic `T[]` isn't yet IR-eligible there), where an aliased buffer would
-// corrupt (see the file-header AST-safety contract).
+// pass materializes fresh `dstv` / `dstk` copies, so no merge reads a slot it
+// has already overwritten (see the file-header aliasing rule).
 pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
     var srcv: T[] = arr;
     var srck: i32[] = [];
@@ -390,7 +389,7 @@ pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
 // up merge sort, O(n log n); the input is not mutated (equal keys keep
 // input order — the merge takes from the right run only on a STRICT
 // `.cmp(...) < 0`). Fresh scratch copies per pass — see the file-header
-// AST-safety contract.
+// aliasing rule.
 pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
     var srcv: T[] = arr;
     var srck: K[] = [];

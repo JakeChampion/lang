@@ -12,7 +12,7 @@ import (
 // backend. Like the f64-array test it pins each program's IR result to a
 // hardcoded oracle (the wasm AST backend's i64-array layout differs, so this is
 // not an AST-vs-IR differential). First i64-array slice: literals, indexed read,
-// and i64[] params; writes / for-in / returns / slices stay on the AST path.
+// and i64[] params; writes / for-in / returns / slices still bail.
 func TestSelfHostI64ArrayIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host i64-array wasm IR e2e")

@@ -15,7 +15,7 @@ import (
 // bails only on a 64-bit-width condition. while loops are exercised for exit
 // codes throughout self_host_asm_run_test.go (while-sum, while-early-return, the
 // print loops, …), but NONE of those assert the routing, so a regression that
-// kicked while onto the AST emitter would pass silently. These cases close that
+// kicked while off the IR path would pass silently. These cases close that
 // gap with the path-probe pin (assert path == "ir") + interp oracle, mirroring
 // self_host_block_expr_ir_test.go.
 //

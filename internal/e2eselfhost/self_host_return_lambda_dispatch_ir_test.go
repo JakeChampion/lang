@@ -18,8 +18,8 @@ import (
 //     the caller called env-first -> SIGSEGV;
 //   - two branch-divergent CAPTURING returns unified to the wrong box -> wrong value;
 //   - a lambda return alongside a match-payload closure return bailed the whole
-//     module to the AST emitter, which then mis-lowered the CALLER's enum ctor
-//     `E.V(<lambda>)` as an unresolved ident -> SIGSEGV.
+//     module (and the AST emitter it fell to mis-lowered the CALLER's enum ctor
+//     `E.V(<lambda>)` as an unresolved ident -> SIGSEGV).
 //
 // The self-host sources contain no bare lambda returns, so the desugar never fires
 // during the self-compile (byte-identical fixpoint). Found via differential
@@ -41,7 +41,7 @@ var returnLambdaDispatchIRCases = []struct {
 	{"two-capturing-else", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { var g = pick(0, 6); return g(); }", 7},
 	// Sequential two returns in one block (no if), non-capturing.
 	{"seq-two-noncapturing", "function pick(): () => i32 { if (true) { return () => 3; } return () => 9; } function main(): i32 { var g = pick(); return g(); }", 3},
-	// D — match-bound payload return + inline lambda sibling (was AST fallback -> SIGSEGV).
+	// D — match-bound payload return + inline lambda sibling (was a bail -> SIGSEGV on the AST emitter).
 	{"match-payload-lambda-sibling", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 0; } } } function main(): i32 { var n: i32 = 6; var g = pick(Box.W(() => n), 1); return g(); }", 6},
 	// D — same, fall-through returns the inline lambda.
 	{"match-payload-lambda-fallthrough", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 42; } } } function main(): i32 { var n: i32 = 6; var g = pick(Box.W(() => n), 0); return g(); }", 42},

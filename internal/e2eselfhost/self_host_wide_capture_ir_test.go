@@ -23,10 +23,9 @@ import (
 // see is an i64[] — pointer-shaped, which cap_slot_ok already accepted.
 //
 // Each case asserts the `-decide` route is "ir" AND the answer, because a
-// regression here would not be silent in the same way as most: the module no
-// longer falls back to a working AST emitter, it fails to build. The route
-// assertion is what distinguishes "lowered on the IR path" from "lowered some
-// other way" if a fallback is ever reintroduced.
+// regression here would not be silent in the same way as most: with nothing
+// behind the IR path, the module fails to build. The route assertion is what
+// distinguishes "lowered on the IR path" from "lowered some other way".
 //
 // The i32 controls are the same programs with a narrow capture — they lowered
 // before this change and must keep lowering, which is what isolates the width as

@@ -15,7 +15,7 @@ import (
 // struct-field index reads), and returns 1 + 10 + 7 = 18. v is reclaimable, so
 // both arrays AND the box are deep-dropped: main has no arrays, so the count of
 // __fern_arr_dec calls is 3 (fs + is + box), which also proves the module took
-// the IR path (a bail to AST — leak-only — would emit none).
+// the IR path (a bail would emit none).
 func TestSelfHostF64I64StructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -13,7 +13,7 @@ import (
 // (irlower.fern's StmtVar arm emits op_tuple_get reads into the freshly-bound
 // locals — no bail), but the existing TestSelfHostTupleDestructure* assert only
 // exit codes, which the legacy AST emitter also satisfies. So a silent regression
-// that kicked destructuring onto the AST fallback would pass undetected — and the
+// that kicked destructuring off the IR path would pass undetected — and the
 // `let (a, b)` form has a documented history of hanging the self-host compiler,
 // exactly the kind of frontier that warrants a hard IR-path pin.
 //
@@ -58,7 +58,7 @@ func TestSelfHostTupleDestructureIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			if bytes.Count(asm, []byte("call __fn___fern_arr_dec")) == 0 {
-				t.Fatalf("%s: no struct free emitted — module fell back to AST, the tuple-destructure IR path was NOT exercised", tc.name)
+				t.Fatalf("%s: no struct free emitted — the tuple-destructure IR path was NOT exercised", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

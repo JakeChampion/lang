@@ -20,8 +20,8 @@ import (
 // lowering is a separate follow-up.)
 //
 // Two shapes: a free function returning i32[] (sum = 1+2+4 = 7) and one returning
-// string[] (count = 3). Size checks prove the IR path was taken (the AST fallback
-// pulls in the ~35 KB runtime); exit codes pin correctness.
+// string[] (count = 3). Size checks prove the IR path was taken (the AST path
+// pulled in a ~35 KB runtime); exit codes pin correctness.
 func TestSelfHostForInCallResultIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

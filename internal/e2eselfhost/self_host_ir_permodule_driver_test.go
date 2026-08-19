@@ -122,7 +122,7 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 // → eligible_core_known_main_view) must lower each function against the WHOLE-
 // PROGRAM struct view (all_structs), exactly as emit_module_funcs does — not the
 // module's own structs. Without it, a module that touches a SIBLING module's
-// struct LAYOUT fails the gate and bails to AST even though the per-module emit
+// struct LAYOUT fails the gate and bails even though the per-module emit
 // (which already lowers against all_structs) would succeed.
 //
 // The program is the minimal trigger: `point` defines a struct + constructor,

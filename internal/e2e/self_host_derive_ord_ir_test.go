@@ -88,7 +88,7 @@ func TestNativeDeriveOrd(t *testing.T) {
 
 // TestSelfHostDeriveOrdIRX86_64 routes each case through the self-hosted x86-64
 // IR driver, pins routing to "ir" (the synthesiser's inline numeric compare
-// keeps the derived cmp off the AST fallback), and oracle-checks the exit code.
+// keeps the derived cmp IR-eligible), and oracle-checks the exit code.
 func TestSelfHostDeriveOrdIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

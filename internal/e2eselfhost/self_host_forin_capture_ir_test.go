@@ -11,10 +11,10 @@ import (
 // TestSelfHostForinCaptureIRX86_64 pins the for-in binder capture resolution
 // (cap_type_in_stmts' StmtFor arm): a lambda capturing a for-in loop binder
 // used to resolve cap_type "" (the binder has no `var` declaration), so the
-// closure lift declined and the whole module fell to the AST path — where a
-// capturing lambda in a struct fn FIELD miscompiles (silent wrong values:
-// the struct-field shape returned 3 for native's 15, the nested two-binder
-// shape 27 for 81, the map-keys shape 1 for 16). The binder now resolves
+// closure lift declined and the whole module bailed — and on the AST emitter
+// it then fell to, a capturing lambda in a struct fn FIELD miscompiled (silent
+// wrong values: the struct-field shape returned 3 for native's 15, the nested
+// two-binder shape 27 for 81, the map-keys shape 1 for 16). The binder resolves
 // from the iterated expression — an ident iterating a declared T[] binds a
 // T, `m.keys()` / `m.values()` bind the receiver Map's key / value type —
 // so these shapes lower via the IR path (asserted via the .Lir_ label
@@ -36,8 +36,8 @@ func TestSelfHostForinCaptureIRX86_64(t *testing.T) {
 		src  string
 		want int
 		// irWitness: the emitted asm must carry IR-path labels (the shape
-		// must not fall back to the AST emitter, where the struct-fn-field
-		// capture miscompiles). "" skips the check.
+		// must lower rather than bail; the struct-fn-field capture used to
+		// miscompile on the emitter it fell to). "" skips the check.
 		irWitness string
 	}{
 		{"forin-binder-fn-field",
@@ -106,7 +106,7 @@ function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); v
 				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
 			}
 			if tc.irWitness != "" && !strings.Contains(string(asm), tc.irWitness) {
-				t.Fatalf("%s: emitted asm missing %q — the for-in capture shape fell back to the AST path", tc.name, tc.irWitness)
+				t.Fatalf("%s: emitted asm missing %q — the for-in capture shape did not lower through the IR", tc.name, tc.irWitness)
 			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

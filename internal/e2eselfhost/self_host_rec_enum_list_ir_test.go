@@ -19,7 +19,7 @@ import (
 // `List`), genuine deep structural recursion over that payload (a function that
 // recurses on the enum value nested inside the enum), and the multi-node drop on
 // function exit. All of it already lowers, so no compiler change — this is an
-// observability pin against a regression to the AST fallback.
+// observability pin against a regression off the IR path.
 //
 // Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
 // against the interpreter; every result stays <= 120 (the wasm exit-code clamp,

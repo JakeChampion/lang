@@ -98,15 +98,11 @@ pub struct EmitState {
     // BORROWED (the caller still owns them), so the callee must not
     // release them. Set per function after the params are bound.
     n_params: i32,
-    // use_ir: when set, emit_module (x86-64) routes a fully-IR-eligible module
-    // through the stack-IR code path (asm_ir.emit_module_ir) instead of the
-    // AST emitter — the IR rebuild's parallel-path migration
-    // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3). Now DEFAULT ON: the x86-64
-    // self-host default emits from the IR (with asm.fern's array layout + full
-    // Perceus RC) for the i32 + arrays subset; mixed / out-of-subset modules
-    // (strings, structs, methods, …) fall back to the AST emitter, so the
-    // compiler itself still compiles via AST and the byte-identical fixpoint
-    // holds. Only asm.fern reads this — arm64 / wasm keep their AST paths.
+    // use_ir: the parallel-path migration's IR opt-in
+    // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3), left on. Nothing routes
+    // around it any more — the AST emitters are gone and every backend is
+    // IR-or-error — so the remaining readers (wasm_ir.should_use_ir_core, the
+    // `-ir` drivers) only ever see it set.
     use_ir: boolean,
     // str_ns: per-module namespace for string-literal `.rodata` labels, for
     // per-module translation-unit emit (#3451 step 3 / #3455). Empty (the
@@ -1320,40 +1316,37 @@ pub function (s: EmitState) mark_arr_i32_product(): EmitState {
     return s.need("arr_i32_product");
 }
 
-// str_chars's helper builds the result array with `.append()`. On the AST path
-// that lowers to __fern_arr_push; on the IR path the ownership analysis sees `r`
-// as a sole-owner local being reassigned and uses the reclaim-on-grow variant
-// __fern_arr_push_owned, so both symbols must be present. The AST emit path has no
-// close_needs, so mark both directly; runtime_need_deps declares the same edges
-// for the IR path's close_needs (arr_push_owned → arr_push).
+// str_chars's helper builds the result array with `.append()`, which the
+// ownership analysis lowers to the reclaim-on-grow __fern_arr_push_owned (`r` is
+// a sole-owner local being reassigned) rather than plain __fern_arr_push, so both
+// symbols must be present. Marked directly here; runtime_need_deps declares the
+// same edges for close_needs (arr_push_owned → arr_push).
 pub function (s: EmitState) mark_str_chars(): EmitState {
     return s.need("heap").need("arr_push").need("arr_push_owned").need("str_chars");
 }
 
 // str_lines's helper calls str_split (split on '\n') and arr_slice (drop the
-// trailing empty entry). The AST emit path has no close_needs, so mark the
-// transitive deps directly — same shape as mark_arr_str_join. runtime_need_deps
-// declares the same edges for the IR path's close_needs.
+// trailing empty entry), marked as transitive deps directly — same shape as
+// mark_arr_str_join. runtime_need_deps declares the same edges for close_needs.
 pub function (s: EmitState) mark_str_lines(): EmitState {
-    // str_lines calls str_split, which now (a Fern helper) builds its string[]
-    // with .append() → arr_push / arr_push_owned. AST has no close_needs, so mark
-    // those transitive deps directly (the IR path closes them via runtime_need_deps).
+    // str_split (a Fern helper) builds its string[] with .append() → arr_push /
+    // arr_push_owned, so mark those transitive deps here too.
     return s.need("heap").need("str_split").need("arr_push").need("arr_push_owned").need("arr_slice").need("str_lines");
 }
 
-// str_bytes's helper builds the result array with `.append()`. On the AST path
-// that lowers to __fern_arr_push; on the IR path the ownership analysis uses the
-// reclaim-on-grow variant __fern_arr_push_owned (sole-owner local reassigned), so
-// both symbols must be present. The AST emit path has no close_needs, so mark both
-// directly; runtime_need_deps declares the same edges (arr_push_owned → arr_push).
+// str_bytes's helper builds the result array with `.append()`, which the
+// ownership analysis lowers to the reclaim-on-grow __fern_arr_push_owned
+// (sole-owner local reassigned) rather than plain __fern_arr_push, so both
+// symbols must be present. Marked directly here; runtime_need_deps declares the
+// same edges (arr_push_owned → arr_push).
 pub function (s: EmitState) mark_str_bytes(): EmitState {
     return s.need("heap").need("arr_push").need("arr_push_owned").need("str_bytes");
 }
 
-// str_split's Fern helper builds the result string[] with .append() (AST:
-// __fern_arr_push; IR sole-owner local: __fern_arr_push_owned) — same pairing as
-// str_chars. Mark both directly on the AST path; runtime_need_deps declares the
-// same edges for the IR close_needs.
+// str_split's Fern helper builds the result string[] with .append()
+// (__fern_arr_push_owned for the sole-owner local, __fern_arr_push otherwise) —
+// same pairing as str_chars. Marked directly here; runtime_need_deps declares the
+// same edges for close_needs.
 pub function (s: EmitState) mark_str_split(): EmitState {
     return s.need("heap").need("arr_push").need("arr_push_owned").need("str_split");
 }
@@ -1534,7 +1527,7 @@ pub function rt_src_arr_i32_index_of(): string {
     return "function __fern_arr_i32_index_of(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
 }
 
-// rt_src_arr_i32_min / _max back `xs.min()` / `.max()` on the AST path. The
+// rt_src_arr_i32_min / _max backed `xs.min()` / `.max()` on the AST path. The
 // call site handles the empty array (→ None) and wraps the result in
 // Option[i32], so these helpers take a NON-EMPTY borrowed array and return the
 // extremum i32 — the same clean Tier 1 reduce-with-comparison shape as
@@ -1558,8 +1551,7 @@ pub function rt_src_arr_i32_min_max_opt(): string {
 
 // rt_src_str_to_i32 backs `str_to_i32(s)` — parse a borrowed string into an
 // i32 (#2649). Written with `for b in s` (string byte iteration + break, both
-// IR-eligible) rather than s[i] indexing so it lowers cleanly on the IR path as
-// well as the AST path. Optional leading '-', then decimal digits, stopping at
+// IR-eligible) rather than s[i] indexing so it lowers cleanly on the IR path. Optional leading '-', then decimal digits, stopping at
 // the first non-digit (empty / non-numeric → 0) — matching the hand-written
 // helper it replaces. The string param is read-only (never returned/stored), so
 // borrow analysis keeps it borrowed: no RC free of the caller's string.
@@ -1837,7 +1829,7 @@ pub function is_enum_recv(name: string, s: EmitState): boolean {
 // (`T[]`, `i32[]`, …). Such a method (e.g. std/json's element-poly
 // `(xs: T[]) to_json[T: Json]()`) is NOT a concrete struct/enum dispatch
 // candidate — a value's runtime shape pointer never names an array method —
-// so the runtime shape-dispatch in the AST backends must skip it. Without this
+// so the runtime shape-dispatch in the AST backends had to skip it. Without this
 // the array `to_json`, whose base receiver name `T` (a type parameter) passes
 // is_enum_recv's permissive default, would be picked as the enum fallback for
 // EVERY `.to_json()` call and corrupt non-array receivers (#2766). Distinct

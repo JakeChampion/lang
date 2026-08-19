@@ -53,7 +53,7 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 		t.Fatal("self-host compiler emitted 0 bytes for the HTTP handler program")
 	}
 	if !strings.Contains(asm, ".Lir") {
-		t.Fatal("no .Lir labels — the program routed through the AST emitter, which cannot emit tcp_listen/poll")
+		t.Fatal("no .Lir labels — the program did not lower through the IR")
 	}
 	// buildBin fails the test on a link error, which is the point: an undefined
 	// __fern_* or a doubly-defined __fern_shp_* both surface here.
@@ -67,7 +67,7 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 // Worth pinning because the shape invites the opposite conclusion: the driver's
 // arm64 branch returns `asm_arm64.emit_module` directly, with none of the
 // budget arithmetic or concat rescue the x86 branch below carries, which reads
-// like an unconditional drop to the AST emitter. It is not — `emit_module`
+// like a branch that cannot route IR at all. It is not — `emit_module`
 // tries `all_eligible` first, and unlike x86 the arm64 merged IR path has no
 // 512-function budget, so it takes programs the x86 path has to rescue.
 // (It emits the whole closure rather than the treeshaken subset, so its output
@@ -96,7 +96,7 @@ function main(): i32 {
 				t.Fatal("self-host compiler emitted 0 bytes for -target arm64")
 			}
 			if !strings.Contains(asm, ".Lir") {
-				t.Error("routed through the arm64 AST emitter: the merged arm64 IR path " +
+				t.Error("did not lower through the arm64 IR path, which " +
 					"carries no function budget, so an over-budget program should still " +
 					"reach it (#3457)")
 			}
@@ -132,7 +132,7 @@ function main(): i32 {
 `
 		asm, progDir := compileSourceModload(t, runner, driverBin, src)
 		if !strings.Contains(asm, ".Lir") {
-			t.Error("http-parse dropped to the AST emitter: with the rescue's gate removed, " +
+			t.Error("http-parse did not lower through the IR: with the rescue's gate removed, " +
 				"every over-budget program in the window routes per-module IR (#3457)")
 		}
 		bin := buildBin(t, gcc, progDir, "http_parse", asm)

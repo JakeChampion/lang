@@ -11,7 +11,7 @@ import (
 
 // coreIntRadixIRCases pin core/int's int_to_string_radix (i32 -> base-N string)
 // on the self-host IR path (x86-64 + wasm). This is the to-string direction the
-// parse-only audit (#3515) left on the AST path — but int_to_string_radix does
+// parse-only audit (#3515) left unlowered — but int_to_string_radix does
 // NOT use __memcpy / usize (unlike int_to_string / __int_to_string_u64): it
 // builds its result with __alloc_u8 + .with + string_from_bytes_unchecked, the same
 // IR-eligible builder std/hex / std/base64 use. So it lowers through IR, and

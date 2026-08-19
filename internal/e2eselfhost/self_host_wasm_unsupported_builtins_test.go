@@ -12,8 +12,8 @@ import (
 // TestSelfHostWasmUnsupportedBuiltins pins the wasm ERROR ENDPOINTS: builtins
 // with no wasm meaning at all, which both wasm drivers must reject before emit
 // with a clean diagnostic — non-zero exit, a message naming the feature on
-// stderr, and NO WAT — rather than routing to the AST emitter, which has no
-// runtime for them and emits a call against a symbol nothing defines.
+// stderr, and NO WAT — rather than emitting a call against a symbol nothing
+// defines, which is what deferring them used to produce.
 //
 //   - subprocess (#4320) — child-process spawning, unsupportable on wasm/WASI.
 //   - timer_fd (#4317) — the native fd-based CLOCK_MONOTONIC timerfd. wasm has

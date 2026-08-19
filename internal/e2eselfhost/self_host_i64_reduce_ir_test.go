@@ -38,7 +38,7 @@ function main(): i32 {
 
 // TestSelfHostI64MeanReduceIRPathX86_64 first probes (via asm_pathprobe_run)
 // that the program is fully IR-eligible — so a future change that silently
-// kicked it off the IR path would fail here, not pass on the AST fallback —
+// kicked it off the IR path would fail here —
 // then runs it through the self-hosted x86-64 driver and asserts exit 7.
 func TestSelfHostI64MeanReduceIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

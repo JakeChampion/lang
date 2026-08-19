@@ -124,7 +124,7 @@ function __str_to_bytes(s: string): u8[] {
 // the legacy self-host AST backend has the SAME u32-overflow bug, so the IR
 // path now intentionally diverges from (is more correct than) it. For an
 // overflow program the AST path's answer differs, so IR == native also proves
-// the program took the IR path rather than the AST fallback.
+// the program took the IR path.
 func TestSelfHostU32WrapIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -205,8 +205,8 @@ func TestSelfHostU32WrapIR(t *testing.T) {
 		// SHA-256("") byte 0 (0xe3) — the single-block padding path.
 		{"sha256-empty-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("")); return d[0] as i32; }`},
 		// __alloc_u8 + .with + u8-element read, and string_from_bytes_unchecked. (Not in the
-		// IR≡AST differential test: the legacy asm_ir_run AST fallback references
-		// __fern_alloc_u8 without emitting it, so its link fails there; the IR
+		// IR≡AST differential test: the legacy asm_ir_run AST fallback referenced
+		// __fern_alloc_u8 without emitting it, so its link failed there; the IR
 		// path compiles them, validated here against native.)
 		{"alloc-u8", `function main(): i32 { var m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
 		{"str-from-bytes", `function main(): i32 { var m: u8[] = __alloc_u8(2); m = m.with(0, 72); m = m.with(1, 73); var s: string = string_from_bytes_unchecked(m); return s.len() * 100 + (s[0] as i32); }`},

@@ -12,7 +12,7 @@ import (
 //
 // Before this slice, make_clo_func declined any capture whose type was not i32
 // (`cap_type(..) != "i32"`) and hardcoded each capture-read var as i32, so such
-// a closure bailed the module to the AST emitter. In the self-host's
+// a closure bailed the module. In the self-host's
 // `-no-pie -static` binary every heap / code address fits in 32 bits, so a
 // pointer-shaped capture rides the SAME 32-bit env-box slot as an i32 (exactly
 // like a `string[]` element, which also uses the 32-bit arr_get path). The fix:

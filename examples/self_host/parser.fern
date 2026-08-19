@@ -2150,7 +2150,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             // generic args, so a binding `var x = None as Option[i32]` rebound
             // to the payload-less `var x: Option = None` — which the self-host
             // IR path can't size (a bare `None` has no statically-known payload
-            // type), bailing the whole module to the AST backend (#2669). The
+            // type), bailing the whole module (#2669). The
             // generic suffix only matters for a payload-less operand like
             // `None` (a `Some(e)` / `[e]` operand carries its own type), but
             // preserving it is uniformly correct and the cast still lowers as a
@@ -5894,7 +5894,7 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
 // tag "fn"), the spelling of R when R is a concrete STRUCT type — the sibling
 // of the `ret_arr` bit. It lets a fn-value PARAM `g: () => P` carry enough to
 // resolve `g().field` (struct_ret_fns gets a `g|P` entry in lower_func), so the
-// call-result field read lowers on the IR path instead of bailing to AST
+// call-result field read lowers on the IR path instead of bailing
 // (#3640 slice A). Empty for non-struct returns (the common fn-value case).
 
 // consume_array_suffix swallows trailing `[]` suffix(es) after a type and
@@ -6649,7 +6649,7 @@ function parse_type_param_list(p: Par): (TpList, Par) {
                 // bracketed type-arg list after the trait name — consume the
                 // balanced `[ … ]` (possibly nested) so the bound parses and
                 // the function stays on the monomorphisation / IR path rather
-                // than mis-parsing at the `[` and bailing to AST.
+                // than mis-parsing at the `[` and bailing.
                 if (p.peek_punct() == "[") {
                     var depth: i32 = 0;
                     var bgo: boolean = true;
@@ -6905,8 +6905,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // return-type-directed instantiation (mono_var_init) — the annotated-var
         // context a no-argument generic CONSTRUCTOR is always used in. Without
         // promotion its erased body's generic struct literal (`Box { xs: [] }`)
-        // can't lower and drags the module to the AST emitter (std/set's set_new
-        // → segfault). Builtin returns (Option[T] / Result[T,E]) are erased-safe
+        // can't lower, so the whole module bails (std/set's set_new → segfault). Builtin returns (Option[T] / Result[T,E]) are erased-safe
         // and stay unpromoted: feeds_user_parametric excludes their bases, so a
         // `find[T,I](): Option[T]` — bindable from NO call site — is untouched.
         var ret_bindable: boolean = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
@@ -6920,7 +6919,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // in an erased container can't be read back unambiguously. Monomorphising
         // to a CONCRETE container (`some1__i64(x: i64): Option[i64]`) makes every
         // backend lower it via the existing container path, so the wasm module no
-        // longer defers to AST. The bare-scalar-param gate excludes `map`/`filter`
+        // longer bails. The bare-scalar-param gate excludes `map`/`filter`
         // (ARRAY params — the wide value rides an i32 array pointer, never trips
         // the erased-wide gate, and promoting them would over-monomorphise the
         // stdlib). `x: T` is bindable from the call arg, so the clone's T resolves.
@@ -7537,8 +7536,9 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // HttpResponse` signature in std/tcp. builtins.fern declares it for the
     // import-driven driver; this entry covers the paths that never read that
     // file (asm_load_run's stdlib-root loading), where its absence made
-    // std/tcp's __serve_loop bail to the AST emitter — which cannot emit
-    // tcp_listen / poll, so the failure surfaced as a link error (#5686).
+    // std/tcp's __serve_loop bail — and the AST emitter it then fell to could
+    // not emit tcp_listen / poll, so the failure surfaced as a link error
+    // (#5686).
     // Phase 1 carries the single `version: i32` placeholder native registers.
     if (!struct_declared(structs, "Platform")) {
         var pltf: StructFieldDecl[] = [];
@@ -7847,8 +7847,7 @@ function first_bracket(s: string): i32 {
 // and requiring it made parse_type_ref read `(clo,i32)` as a ONE-element
 // tuple — so tuple_type_elem_tag returned "clo,i32", the `t.K.N(args)` /
 // `arr[i].N(args)` closure-element dispatch missed its "clo" tag, and the
-// call fell through to bogus method dispatch (`i32.0`), bailing the module
-// to the legacy AST path (which miscompiles those shapes).
+// call fell through to bogus method dispatch (`i32.0`), bailing the module.
 function split_top_commas(s: string): string[] {
     var out: string[] = [];
     var depth: i32 = 0;
@@ -8216,8 +8215,8 @@ function binds_to_key(tparams: string[], binds: MEnv): string {
 // generic constructor from its call-site annotation — `var b: Box[i32] =
 // mk()` binds mk[T]()'s `T` (which appears ONLY in the `Box[T]` return) from
 // the `Box[i32]` annotation. Without it such a call stays the un-monomorphised
-// template (T unbound), whose `Box { xs: [] }` can't lower and drags the
-// module to the AST emitter (std/set's `set_new` → segfault). Returns "" when
+// template (T unbound), whose `Box { xs: [] }` can't lower, so the module
+// bails (std/set's `set_new` → segfault). Returns "" when
 // still incomplete (the call then stays generic, as before).
 function infer_inst_ret(fd: FuncDecl, args: Expr[], expected_ret: string, env: MEnv, funcs: MFns): string {
     if (fd.type_params.len() == 0) { return ""; }
@@ -8495,7 +8494,7 @@ function mono_infer(e: Expr, env: MEnv, funcs: MFns): string {
                     // flows into any bounded generic it's passed to
                     // (`var s = iter.fold(..); assert_eq(s, 6)`), keying a
                     // spurious clone `assert_eq__A` whose `A.eq` / `A.to_string`
-                    // can't resolve — dragging the module to the AST emitter. A
+                    // can't resolve — bailing the module. A
                     // bare type variable is never a usable concrete type, so
                     // report "unknown" (the other, concrete-literal arg still
                     // binds the call at `i32`).
@@ -8508,8 +8507,8 @@ function mono_infer(e: Expr, env: MEnv, funcs: MFns): string {
                     // generic call like `assert_eq(x.to_string(), y.to_string())`
                     // bind its `T = string` from a computed (non-literal) argument
                     // — without it, neither arg infers a type, the call stays the
-                    // uninstantiated template, and the whole module is dragged to
-                    // the AST emitter (#3457: the std/u32 wrapping test's
+                    // uninstantiated template, and the whole module bails
+                    // (#3457: the std/u32 wrapping test's
                     // `rotr_roundtrip` asserts two computed `.to_string()`s).
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return "string"; }
                     // Generic array method `recv.m(args)` whose receiver is an
@@ -8824,8 +8823,8 @@ function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
 // return mk(); }` bind mk's type params from the `Box[i32]` expected type (via
 // infer_inst_ret) so a no-argument constructor monomorphises instead of staying
 // a template. (A return-only type param is now promoted, so the template is
-// DROPPED — an unresolved call site would be an undefined reference, not just an
-// AST fallback, which is why every expected-type position must resolve it.)
+// DROPPED — an unresolved call site would be an undefined reference, not merely
+// a refused lowering, which is why every expected-type position must resolve it.)
 // Falls through to plain mono_expr when there is no expected type, the callee
 // isn't a bounded generic, or the instantiation still can't be resolved — a
 // strict superset of mono_expr for this position.
@@ -9253,15 +9252,15 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
 // `concat` etc.) has no struct to instantiate and is skipped by both
 // monomorphize_module (receiver methods are skipped) and
 // monomorphize_structs (an array is not a generic struct), so its `T`
-// stays a free var. The legacy AST array-method dispatch then types the
-// receiver as i32 and mis-dispatches `i32.m`, dragging the module to the
-// AST emitter. register_array_method_generics folds such a method into a
+// stays a free var. The legacy AST array-method dispatch then typed the
+// receiver as i32 and mis-dispatched `i32.m`. register_array_method_generics
+// folds such a method into a
 // bounded free generic `__arrm_m[T](xs: T[], args): R` (receiver as
 // arg0) and DROPS the method decl; mono_expr's array-method arm rewrites
 // each `xs.m(ys)` call to `__arrm_m(xs, ys)`, and the existing
 // free-generic worklist clones one concrete `__arrm_m__<elem>` per
 // element type — so generic array methods ride the proven free-generic
-// monomorphiser instead of the i32-mis-dispatching AST path.
+// monomorphiser instead of that i32 mis-dispatch.
 
 // looks_type_var reports whether `s` names a generic type variable: a
 // single uppercase letter (T / U / K / V …), the spelling the stdlib's
@@ -10627,7 +10626,7 @@ function fn_spelling_ret(t: string): string {
 // mangled clone name (`Opt__i32`); a fn type (`(i32) => i32`) sanitises to a
 // symbol-safe token (native parity). Returns "" for an arg this pass still
 // can't key (an array, tuple, generic struct, or a method-bearing /
-// non-generic enum), so the enclosing instantiation bails to AST cleanly.
+// non-generic enum), so the enclosing instantiation bails cleanly.
 function ge_targ_mangle(arg: string, enums: EnumDecl[], funcs: FuncDecl[]): string {
     if (arg.len() == 0) { return ""; }
     if (pk_is_fn_spelling(arg)) { return fn_key_sanitize(arg); }
@@ -10798,8 +10797,8 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             // `get(o: Opt[i32])` flows `Opt[i32]` into `Non`). This is the
             // call-site analogue of `var o: Opt[i32] = Non`; without it the bare
             // `Non` stayed un-rewritten, then monomorphize_enums dropped the
-            // generic `Non` struct and the dangling reference dragged the module
-            // to the AST emitter (#5247).
+            // generic `Non` struct and the dangling reference bailed the module
+            // (#5247).
             var calleeFn: string = "";
             if (vname.len() > 0 && genum_owner_of_variant(enums, funcs.decls, vname) < 0) { calleeFn = vname; }
             var nargs: Expr[] = [];
@@ -11460,7 +11459,7 @@ pub function monomorphize_enums(mod: Module): Module {
                         // field shape — type_name "fn" with the result on fn_ret —
                         // so the IR path recognises it as a fn payload (a raw
                         // spelling in type_name trips the per-function IR
-                        // eligibility, bailing the whole function to AST).
+                        // eligibility, bailing the whole function).
                         if (pk_is_fn_spelling(f_ty)) {
                             f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), mod.enums, mod.funcs);
                             ins = me_collect_anno(f_ret, mod.enums, mod.funcs, ins);
@@ -12635,9 +12634,9 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
     // lists in the body behind never-true guards; lower_try recognises the
     // guard idents and replays the guarded statements at the `?` failure edge
     // (plain defers first, then errdefers — native's TryOp order). The guards
-    // are ordinary always-0 flags, so on every backend that does NOT know the
-    // markers (the legacy AST emitters) these blocks are dead code and the
-    // lowering is behaviourally unchanged.
+    // are ordinary always-0 flags, so on any consumer that does NOT know the
+    // markers these blocks are dead code and the lowering is behaviourally
+    // unchanged.
     body = body.append(s_var("__dfa_tryall", "", e_number("0", "", false)));
     body = body.append(s_var("__dfa_tryerr", "", e_number("0", "", false)));
     var k: i32 = 0;
@@ -12981,8 +12980,8 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 //
 // `for i in LOW..HIGH` parses to a StmtFor whose iter is the synthetic
 // `__range(LOW, HIGH)` call (see parse_stmt). The IR path lowers that directly
-// (irlower.lower_range_for); but the AST emitters, the SSA backend, and the
-// tree-walking interpreter don't know `__range` — left untouched, they emit a
+// (irlower.lower_range_for); but the SSA backend and the tree-walking
+// interpreter don't know `__range` — left untouched, they emit a
 // `call __fn___range` (a link error) or mis-evaluate the iter. So for those
 // consumers we desugar the `__range` for-iter into a counting while-loop built
 // from existing nodes:
@@ -13000,7 +12999,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 // native RC free-list reclaim that corrupts a freshly-built array placed in a
 // struct-literal field (cf. #2759).
 //
-// This runs in module_with_builtins (AST emitters), interp.eval_module, and
+// This runs in module_with_builtins, interp.eval_module, and
 // ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
 // `__range` shape for lower_range_for.
 function iter_range_args(iter: Expr): Expr[] {
@@ -14167,7 +14166,7 @@ pub function infer_ret_types_module(mod: Module): Module {
 // `mk(args)`. `f` used as a value (`return f`, `g(f)`), reassigned, or
 // re-declared in a nested scope is left alone (the const-call semantics still
 // apply). The native compiler already handles this; this is a self-host-only
-// fix that lands on BOTH the IR and AST paths (both consume this module). The
+// fix, applied to every consumer of this module. The
 // compiler source uses no such bindings, so the pass is fixpoint-neutral.
 
 // CFScan counts a name's VALUE uses (as a plain value) and CALL uses (as a
@@ -15781,7 +15780,7 @@ function dv_cmp_stmts(vn: string, ty: string, lhs: Expr, rhs: Expr): Stmt[] {
 // needs NO `impl Hash for <primitive>`. The stdin-only self-host drivers
 // (wasm_ir_run / asm_run, which parse a single source with no core/cmp loaded)
 // don't provide those impls, so a primitive `.hash()` call would resolve to an
-// unknown function and BAIL the whole module to the AST backend (the exact gap
+// unknown function and BAIL the whole module (the exact gap
 // that kept struct/enum Map keys off the wasm self-host hash map — #2671). A
 // NOMINAL field/payload delegates to its own (local, derived) `.hash()`. The
 // only law the Map relies on is `a == b ⇒ a.hash() == b.hash()`, which the

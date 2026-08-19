@@ -12,7 +12,7 @@ import (
 // TestSelfHostErasedWideContainerWasm pins the CONTAINER half of the erased-wide
 // close. A single-type-arg builtin container return of an erased type var —
 // `some1[T](x: T): Option[T]` or `dup[T](x: T): T[]` — passing a 64-bit / f64
-// value now LOWERS on the wasm IR path instead of deferring to the AST emitter.
+// value now LOWERS on the wasm IR path instead of being refused.
 //
 // Unlike the pass-through (#5586) and tuple (#5593) slices, a container's box
 // LAYOUT shifts with payload width (an Option is 8B/payload-@4 for i32 but
@@ -112,7 +112,7 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 		// (result_two_bare_vars) promotes BOTH vars — T from the arg, E from the
 		// call-site annotation via infer_inst_ret. The concrete clone
 		// okg__i64_string returns Result[i64, string], so the wide Ok round-trips on
-		// the wasm IR path where the erased two-var Result deferred to AST. 5e9/1e9 =
+		// the wasm IR path where the erased two-var Result was refused. 5e9/1e9 =
 		// 5, +37 = 42.
 		{"result2-ok-wide-explicit",
 			okg + ` function main(): i32 { var a: Result[i64, string] = okg[i64, string](5000000000 as i64); var r: i64 = 0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return (r / 1000000000) as i32 + 37; }`,
@@ -164,7 +164,7 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
 			}
 			if strings.Contains(string(wat), "$__lit0") {
-				t.Errorf("%s deferred to the AST path (found $__lit0); expected IR lowering", tc.name)
+				t.Errorf("%s did not lower through the IR (found $__lit0)", tc.name)
 			}
 			watFile := filepath.Join(dir, "cont_"+tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

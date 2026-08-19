@@ -23,10 +23,10 @@ import (
 // Corpus contract:
 //   - native-valid: the program runs under `fern -interp` (that run IS the
 //     expected behaviour — no expectations are hardcoded here);
-//   - IR-eligible: every self-host driver takes the IR path, never the silent
-//     AST fallback. The x86-64 leg enforces this per fixture via the driver's
-//     `-ir-probe` report ("module: IR"), so an eligibility regression fails
-//     loudly instead of quietly testing the legacy AST backend;
+//   - IR-eligible: every self-host driver takes the IR path rather than
+//     refusing the module. The x86-64 leg enforces this per fixture via the
+//     driver's `-ir-probe` report ("module: IR"), so an eligibility regression
+//     fails loudly;
 //   - deterministic stdout and an exit code <= 125 (WASI proc_exit range);
 //   - no stdin, no argv, no filesystem/network.
 

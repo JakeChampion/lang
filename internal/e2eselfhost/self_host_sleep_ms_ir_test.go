@@ -17,7 +17,7 @@ import (
 // observable only by exit code, so the program just returns a sentinel after
 // sleeping — proving the op lowered and the helper linked. wasm is excluded:
 // there is no wasm sleep runtime (a WASI poll-based sleep is the deferred
-// #2843 item), so a sleep module stays on the wasm AST path.
+// #2843 item), so a sleep module is refused on wasm.
 var sleepMsIRCases = []struct {
 	name, src string
 	exit      int

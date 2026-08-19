@@ -176,8 +176,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"to-string-zero", `function main(): i32 { var z = (0).to_string(); if (z[0] != 48) { return 84; } return z.len(); }`},
 		{"to-string-concat", `function main(): i32 { var m = "n=" + (7).to_string(); return m.len(); }`},
 		{"to-string-identity", `function main(): i32 { var s = "hi"; var t = s.to_string(); return t.len(); }`},
-		// String-returning function isn't IR-lowered yet -> module falls back to AST.
-		// String-returning functions now route through the IR (str_ret_fns tracks the
+		// String-returning functions route through the IR (str_ret_fns tracks the
 		// result as a string; the box just leaks). Param + concat + return too.
 		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
 		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { var g = shout("hey"); return g.len(); }`},
@@ -326,9 +325,9 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// The owning struct is read AFTER the loop — the borrow must not free its
 		// field buffer (the exit-sweep never decs a non-array-marked snapshot).
 		{"struct-strarr-field-forin-after", `struct R { tags: string[] } function main(): i32 { var r = R { tags: ["ab", "cd", "e"] }; var n = 0; for t in r.tags { n = n + t.len(); } return n + r.tags.len(); }`},
-		// A reclaimable scalar-array field (i32[]) STAYS on the AST path — aliasing
-		// it is an RC hazard (deferred to the Perceus self-host port, #3003). The
-		// AST emitter handles it, so the differential still matches.
+		// A reclaimable scalar-array field (i32[]) is NOT admitted — aliasing it is
+		// an RC hazard (deferred to the Perceus self-host port, #3003) — so this
+		// exercises the ungated route on both legs.
 		{"struct-i32arr-field-forin", `struct R { nums: i32[] } function main(): i32 { var r = R { nums: [3, 4] }; var n = 0; for v in r.nums { n = n + v; } return n; }`},
 		{"tuple-str-i32-dotn", `function main(): i32 { var t = ("hello", 7); return t.0.len() + t.1; }`},
 		{"tuple-str-i32-destructure", `function main(): i32 { var (a, b) = ("world", 3); return a.len() + b; }`},
@@ -484,7 +483,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"tuple-matchexpr-elem", `function main(): i32 { var k = 1; var t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`},
 		// A struct array field set from an if-/match-EXPRESSION whose every branch is
 		// a fresh array literal (iife_returns_fresh_array): admitted as an owned value
-		// (#3179). An aliased branch stays on the AST path (verified by probe).
+		// (#3179). An aliased branch is refused (verified by probe).
 		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { var c = 5; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`},
 		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { var c = 1; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`},
 		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { var k = 1; var b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`},

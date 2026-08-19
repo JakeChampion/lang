@@ -11,7 +11,7 @@ import (
 // the value with a 32-bit element read (op_arr_get(32)) and no width/sign/f64
 // mark on the binding — so an i64/u64/f64-valued map iterated to truncated
 // (and, for u64, signed) garbage ON the IR path (a silent wrong answer, not
-// an AST fallback: measured 113/199/146/255 against interp oracles 62/7/18/5
+// a bail: measured 113/199/146/255 against interp oracles 62/7/18/5
 // on a pre-fix driver). The fix reads the full 8-byte element (arr_get_i64
 // for i64/u64; arr_get width 64 — f64.load — for f64) and marks the binding
 // i64/u64/f64, so body uses route through the 64-bit/float ops with the right

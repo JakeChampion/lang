@@ -14,7 +14,7 @@ import (
 // "is this call's target defined here?" check (calls_only_known /
 // const_funcs_only_known) always sees it. Per-module, a call from module A to an
 // imported function in B targets B's `__fn_*` symbol, which is NOT in A's own
-// module — so the bare check would bail A to the AST emitter. Step 1 threads the
+// module — so the bare check would bail A. Step 1 threads the
 // set of symbols defined SOMEWHERE in the loaded import graph into the per-
 // function check so such a call is admitted as an extern (resolved at link)
 // rather than bailing.
@@ -51,7 +51,7 @@ func TestSelfHostIRExternProbe(t *testing.T) {
 
 	t.Run("cross-module-call-admitted-as-extern", func(t *testing.T) {
 		// `mystery` is not defined in this module. Without -ir-extern it is an
-		// unknown call and the module bails to AST; declaring it extern (defined
+		// unknown call and the module bails; declaring it extern (defined
 		// in a sibling module) admits the call and the module is IR-eligible.
 		prog := "function main(): i32 { return mystery(3); }"
 

@@ -60,7 +60,7 @@ func TestSelfHostMapLiteralX86_64(t *testing.T) {
 
 	// Path probe: a `Map { … }` literal now routes through the IR path (the
 	// chained map_new().insert()… expression lowers via expr_map_kind), not the
-	// AST fallback. Exit-code correctness alone wouldn't prove this — the AST
+	// not by bailing. Exit-code correctness alone wouldn't prove this — the AST
 	// path produced the same values — so assert the routing directly.
 	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
 	if err != nil {

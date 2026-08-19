@@ -18,7 +18,7 @@ import (
 // leak with the struct, matching the AST path's exit codes). It used a depth cap
 // to avoid looping on cyclic type graphs, which also rejected legitimate
 // self-referential structs — a `next: Node[]` field recurses into Node forever
-// until the cap trips, bailing the whole module to the AST emitter. The gate now
+// until the cap trips, bailing the whole module. The gate now
 // threads a `visiting` set and treats a back-edge to a struct already on the
 // proof path as leak-safe (a leak-only back-pointer introduces no unsafe field),
 // so self-referential and mutually-recursive structs route the IR path while the

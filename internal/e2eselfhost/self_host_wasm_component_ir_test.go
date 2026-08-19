@@ -137,7 +137,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/monotonic-clock@0.2.0 now"}},
 		// A no-I/O component has no import to satisfy the byte source, so the
-		// gate refuses random there. It used to fall back to the AST emitter,
+		// gate refuses random there. It used to bail to the AST emitter,
 		// which emitted a PREVIEW1 random_get no component framing can wire —
 		// its `if (io)` split treated "not io" as "preview1 command core". The
 		// old row recorded that output while saying in as many words that it was
@@ -163,7 +163,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 
 		// The filesystem pair, last of component_shape's categories to move.
 		// Their mode-2 bodies box a real IoError variant rather than the raw
-		// wasi error code the AST fallback still stores (#5795), and fs sits
+		// wasi error code the AST fallback stored (#5795), and fs sits
 		// last in the import order, which is the slot component_full_io_fs /
 		// _fs_write / _fs_rw alias.
 		{"io-read-file", true, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`, true,

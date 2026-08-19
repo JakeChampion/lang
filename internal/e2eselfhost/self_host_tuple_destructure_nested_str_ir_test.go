@@ -11,7 +11,7 @@ import (
 
 // tupleDestructureNestedStrIRCases pin the two #5306 gaps — string elements of
 // a tuple destructure that miscompiled ON the IR path (silent wrong answers,
-// not AST fallbacks; native/interp is the oracle):
+// not bails; native/interp is the oracle):
 //
 //  1. NESTED destructure: `var (p, c) = t; var (s, b) = p` over
 //     ((string, i32), i32) read the string element empty (11 → 9). The

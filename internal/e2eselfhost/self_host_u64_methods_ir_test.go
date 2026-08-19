@@ -11,10 +11,10 @@ import (
 // std/u64's RECEIVER methods (min / max / clamp / to_string) on the self-host IR
 // path. The importless #2904 / u64-IR families exercise the unsigned u64
 // operators and inlined free functions, but a program that `import`s std/u64 and
-// calls its *methods* used to route the legacy AST fallback: the self-host
+// calls its *methods* used to bail: the self-host
 // method dispatcher (`expr_recv_prim_type`) classified ANY 64-bit receiver as
 // "i64", so a u64 receiver dispatched to a nonexistent "i64.<m>" label and
-// bailed the whole module to AST (calls_only_known). The fix adds a u64 branch
+// bailed the whole module (calls_only_known). The fix adds a u64 branch
 // (mirroring method_recv_tyname) and lowers the u64 receiver full-width.
 //
 // These pin that std/u64's method surface now lowers on IR — each routes "ir"

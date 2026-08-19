@@ -58,7 +58,7 @@ func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			if !strings.Contains(string(asm), ".Lir_") {
-				t.Fatalf("%s: fell back to the AST path (no .Lir_ labels)", tc.name)
+				t.Fatalf("%s: did not lower through the IR (no .Lir_ labels)", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

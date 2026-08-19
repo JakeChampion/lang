@@ -17,12 +17,12 @@ import (
 // (expr_is_f64), the construction loop routes an i64 element through lower_i64,
 // and op_tuple_make_k stores each element at its own width. So a wide LOCAL or
 // wide ARITHMETIC element lowered while only the CALL form bailed the whole
-// enclosing module to the AST emitter.
+// enclosing module.
 //
 // Each case asserts BOTH halves of what the fix has to deliver:
 //
 //   - path: the module must lower on the IR path (the coverage half — goal 1).
-//     A change that merely produced the right answer via the AST fallback
+//     A change that merely produced the right answer by some other route
 //     would satisfy the value check while losing exactly what this is for.
 //   - value: the tuple element must read back correctly, checked against the
 //     same computation spelled without the tuple, so it asserts agreement

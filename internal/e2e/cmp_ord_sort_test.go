@@ -17,7 +17,7 @@ import (
 // compare, where an unbounded `[T]` would erase to one pointer-compare clone and
 // mis-order. The inline cases pin the routing over a primitive `impl Ord for
 // i32` (the i32[] return genuinely lowers on the IR path) and a user `Ord`
-// struct (genuine genericity, struct[] return rides the AST fallback — both
+// struct (genuine genericity; the struct[] return is not routing-pinned) — both
 // produce the right answer); a native module test exercises the shipped
 // `std/array` body over i32 / string / a user struct.
 var ordSortCases = []struct {
@@ -131,7 +131,7 @@ function main(): i32 {
 
 // TestSelfHostOrdSortIRX86_64 drives each inline Ord-sort case through the
 // self-hosted x86-64 compiler and oracle-checks the exit code. The i32[] cases
-// lower on the IR path; the struct[] cases ride the AST fallback (the generic
+// lower on the IR path; the struct[] cases are not routing-pinned (the generic
 // struct[] return) — both produce the right answer, so this asserts behaviour
 // (as the Eq-verb `distinct` case does). The native legs above pin cross-backend
 // correctness.

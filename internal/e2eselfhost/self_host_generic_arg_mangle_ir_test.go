@@ -14,7 +14,7 @@ import (
 // re-attaches the suffix verbatim, so `find(): Option[Flag]` kept `Option[Flag]`
 // while the struct declaration became `lib__Flag`. Nothing then resolves the
 // payload type of the match binder, so `f.<field>` on it cannot lower and the
-// whole module bails to the AST emitter.
+// whole module bails.
 //
 // This is the SAME defect the tuple case was fixed for — `(string, Box)` keeping
 // an unmangled `Box`, which dispatched a non-existent `Box.method` — so it is a

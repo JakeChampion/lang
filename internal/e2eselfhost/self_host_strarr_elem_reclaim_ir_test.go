@@ -246,7 +246,7 @@ function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow() != 0) { ret
 
 	// (A borrowed-element STORE case — `var xs: string[] = [nm]` — cannot be
 	// exercised here: a bare-ident element in a string[] literal/append bails
-	// the whole module to the AST emitter today, so the IR-path collector's
+	// the whole module today, so the IR-path collector's
 	// element-freshness gate is defence-in-depth for when that subset widens,
 	// not a reachable shape.)
 }

@@ -11,7 +11,7 @@ import (
 // slot) in the NIf arm and the struct payload binding in the NMatch arm. The IR
 // lowerer allocates slots by name function-wide, so before the fix both `m`s
 // collapsed onto one slot with conflicting type metadata (is_arr AND struct) and
-// `lower_func` bailed to the AST emitter (`g: BAIL lower`). With lower_block
+// `lower_func` bailed (`g: BAIL lower`). With lower_block
 // retiring the locals a block introduces on exit, the NIf arm's `m` is retired
 // before the NMatch arm binds its `m`, so each gets a distinct, correctly-typed
 // slot and `g` lowers through the IR. main() exercises both arms: g(NIf,b) joins

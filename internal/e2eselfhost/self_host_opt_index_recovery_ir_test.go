@@ -13,10 +13,10 @@ import (
 // Both scrutinee resolvers — the value-position one and the StmtMatch one —
 // enumerated only `ExprIdent` and a named-field `ExprFieldAccess` as the base of
 // `<base>[i]`. A nested index (`aoa[i][j]`) and a tuple element (`t.N[i]`) fell
-// to the `_` arm, resolved to "", and bailed the enclosing function to the AST
-// emitter. Both now route through the shared `arr_tag_of`.
+// to the `_` arm, resolved to "", and bailed the enclosing function. Both
+// now route through the shared `arr_tag_of`.
 //
-// The bail was invisible before `FERN_STRICT_IR`: the AST emitter happens to
+// The bail was invisible before `FERN_STRICT_IR`: the AST emitter happened to
 // compile all four shapes correctly, so the exit codes agreed and only the
 // routing differed. That is the whole point of the flag — these are the gaps a
 // differential exit-code test cannot see, because there is nothing wrong with

@@ -53,7 +53,7 @@ const readAllStdinIRBigProg = `function main(): i32 {
 func bigStdinInput() []byte { return bytes.Repeat([]byte("x"), 3145728) }
 
 // TestSelfHostReadAllStdinIRRoutingX86_64 pins that a read_all_stdin program
-// now takes the IR path rather than falling back to the AST emitter. The
+// now takes the IR path rather than bailing. The
 // path-probe driver resolves no imports, which is fine here — the program has
 // none.
 func TestSelfHostReadAllStdinIRRoutingX86_64(t *testing.T) {
