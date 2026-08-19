@@ -214,6 +214,30 @@ same code(s) the Go checker does — restricted to
   shadowing local isn't flagged) emit E036 for a bare, unqualified
   reference to one — a qualified `Enum.Variant` is an `ExprFieldAccess`,
   so it's not flagged. Fires only on reference, matching the Go checker.
+
+  **Not module-scoped, unlike the Go checker since #6951.** Native narrows
+  the candidates to the enums the referring module can name, so a user enum
+  cannot make another module's bare reference ambiguous;
+  `ambiguous_variants(mod.enums)` runs over the whole bundled program and
+  still reports those. Measured on the file-based checker driver: the #6951
+  repro (`import "core/int"` + `enum Opt { Some, None }`) draws 5 E036 from
+  the self-host and none from native.
+
+  Observable behaviour agrees — E036 is in `is_partial_checker_gap_code`, so
+  the self-host compiled these programs before the change and native does
+  now — and `conformance/cases/module_scoped_variant` +
+  `shadowed_builtin_variant` pass all three self-host fixture legs. It is
+  the unfiltered `-check` code set that differs, which no differential
+  currently covers (both corpora are cross-module only for stdlib imports,
+  and neither declares a colliding enum).
+
+  Closing it needs module attribution the self-host AST does not carry:
+  `parser.EnumDecl` and `parser.FuncDecl` gaining a source module (107
+  `FuncDecl {` literal sites), `flatten` stamping it, and the modloader's
+  import graph reaching `check_module` as a closure table. Note the
+  self-host is already half-way there by accident — `mangle_enum_decls`
+  renames an imported module's variants to `<mod>__Variant`, so only entry
+  and built-in variants share a namespace at all.
 - **Slice 22 (done): structural match-arm errors** (E026, E028).
   `match_diags` walks each `match` (no types needed): E026 when a wildcard
   `_` arm isn't last, E028 when a variant pattern repeats one an earlier
