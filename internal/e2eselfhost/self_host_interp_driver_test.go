@@ -102,6 +102,25 @@ var interpProgs = []struct {
 	{"range-in-lambda-var", "function main(): i32 { var f = function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }; return f(); }", 6},
 	{"range-in-lambda-nested", "function run(f: () => i32): i32 { return f(); }\n" +
 		"function main(): i32 { return run(function(): i32 { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }); }", 6},
+	// `defer` inside a LAMBDA. lower_defers found its actions through
+	// dl_expr_kids, whose `_` arm reports no children for an ExprLambda —
+	// structurally, because a lambda's children are statements, not expressions.
+	// So the defer was never lowered at parse time and the interpreter, which
+	// sees no StmtDefer, dropped it (#7174). A lambda is its own scope: the
+	// action runs when the LAMBDA returns.
+	{"defer-in-lambda", "function run(f: () => i32): i32 { return f(); }\n" +
+		"function main(): i32 { return run(function(): i32 { var n = 0; defer { n = n + 7; } return n; }); }", 0},
+	{"defer-in-lambda-runs", "function run(f: () => i32): i32 { return f(); }\n" +
+		"function main(): i32 { var out = 0; var r = run(function(): i32 { defer { out = out + 7; } return 1; }); return out + r; }", 8},
+	// The enclosing function ALSO defers: the two scopes must not merge, and the
+	// lambda's action must run at the lambda's exit, before main's.
+	{"defer-in-lambda-and-fn", "function run(f: () => i32): i32 { return f(); }\n" +
+		"function main(): i32 { var log = 0; defer { log = log * 10; }\n" +
+		"    var r = run(function(): i32 { defer { log = log + 3; } return 1; });\n" +
+		"    if (log != 3) { return 90; } return r; }", 1},
+	// A value block is NOT a scope of its own — it is inlined, so its defer
+	// belongs to the enclosing function and must still be hoisted there.
+	{"defer-in-value-block", "function main(): i32 { var out = 0; var v = (function(): i32 { defer { out = out + 5; } return 1; })(); return out + v; }", 6},
 	// The lambda hangs off a match arm's statement, which the arm walk reaches
 	// but the expression descent has to finish.
 	{"range-in-lambda-match-arm", "enum E { A(i32) }\n" +

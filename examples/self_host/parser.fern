@@ -11642,6 +11642,63 @@ function dl_stmts_have_defer(stmts: Stmt[]): boolean {
     return false;
 }
 
+// dl_stmts_have_defer_deep is the pre-scan for the SCOPE-aware pass: it also
+// reports a defer sitting inside a lambda body. dl_stmts_have_defer
+// deliberately does not — the collect walk it guards must not reach into a
+// lambda, whose defers are a scope of their own — but the early-out in
+// lower_defers_func has to, or a function whose only defer is in a lambda is
+// returned unchanged and that lambda is never lowered (#7174).
+function dl_stmts_have_defer_deep(stmts: Stmt[]): boolean {
+    if (dl_stmts_have_defer(stmts)) { return true; }
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (dl_stmt_has_lambda_defer(stmts[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function dl_stmt_has_lambda_defer(st: Stmt): boolean {
+    match (st) {
+        StmtVar(v) => { return dl_expr_has_lambda_defer(v.init); },
+        StmtReturn(r) => { return dl_expr_has_lambda_defer(r.value); },
+        StmtExpr(x) => { return dl_expr_has_lambda_defer(x.value); },
+        StmtAssign(a) => { return dl_expr_has_lambda_defer(a.value); },
+        StmtIf(f) => {
+            return dl_expr_has_lambda_defer(f.cond) || dl_stmts_have_defer_deep(f.then_body) || dl_stmts_have_defer_deep(f.else_body);
+        },
+        StmtWhile(w) => { return dl_expr_has_lambda_defer(w.cond) || dl_stmts_have_defer_deep(w.body); },
+        StmtFor(fo) => { return dl_expr_has_lambda_defer(fo.iter) || dl_stmts_have_defer_deep(fo.body); },
+        StmtMatch(m) => {
+            if (dl_expr_has_lambda_defer(m.scrutinee)) { return true; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard && dl_expr_has_lambda_defer(m.arms[i].guard)) { return true; }
+                if (dl_stmts_have_defer_deep(m.arms[i].body)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        StmtDefer(d) => { return dl_stmt_has_lambda_defer(d.action); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function dl_expr_has_lambda_defer(e: Expr): boolean {
+    match (e) {
+        ExprLambda(lm) => { return dl_stmts_have_defer_deep(lm.body); },
+        _ => { }
+    }
+    var kids: Expr[] = dl_expr_kids(e);
+    var i: i32 = 0;
+    while (i < kids.len()) {
+        if (dl_expr_has_lambda_defer(kids[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function dl_stmt_has_defer(st: Stmt): boolean {
     match (st) {
         StmtDefer(_) => { return true; },
@@ -12608,12 +12665,34 @@ pub function hoist_local_funcs_module(mod: Module): Module {
 function lower_defers_func(fn: FuncDecl): FuncDecl {
     // The walks below REBUILD every expression they pass, and on a function with
     // no `defer` they throw the copy away. This pre-scan allocates nothing, so
-    // the rebuild is confined to the functions that need it.
-    if (!dl_stmts_have_defer(fn.body)) { return fn; }
+    // the rebuild is confined to the functions that need it. It looks INSIDE
+    // lambda bodies too, because a function whose only defer sits in one still
+    // has work to do — see dl_stmts_have_defer_deep.
+    if (!dl_stmts_have_defer_deep(fn.body)) { return fn; }
+    return FuncDecl { ...fn, body: lower_defers_body(fn.body) };
+}
+
+// lower_defers_body is the per-SCOPE half of the pass. Every lambda body is a
+// scope of its own — its defers run when IT yields, not when the enclosing
+// function returns — so each is lowered here first, with its own `__defret` /
+// `__dfaN` locals, and only then is the enclosing body collected. That holds
+// for a value block too: its `return` yields the block's value, so its defers
+// run at that point, which is what native does.
+//
+// Doing this at parse time also puts the replayed actions in front of irlower's
+// capture rewrite. Lowering only after lambda lifting (irlower.fern:58608) left
+// an assignment inside a deferred action writing a stack local instead of the
+// captured env slot — the deferred code ran and its result was discarded
+// (#7174).
+function lower_defers_body(body0: Stmt[]): Stmt[] {
+    // Inner scopes first: each ordinary lambda in `body0` is lowered on its own
+    // before this scope collects, so the collect below sees no lambda defers.
+    var src: Stmt[] = dl_lower_lambda_bodies(body0);
+    if (!dl_stmts_have_defer(src)) { return src; }
     var empty: Stmt[] = [];
     var emptyf: i32[] = [];
-    var cr: DeferAcc = dl_collect_stmts(fn.body, empty, emptyf);
-    if (cr.actions.len() == 0) { return fn; }
+    var cr: DeferAcc = dl_collect_stmts(src, empty, emptyf);
+    if (cr.actions.len() == 0) { return src; }
     // cleanup_all = plain defers (every return + falloff); cleanup_err =
     // errdefers (only on a None/Err return). For a defer-only function
     // cleanup_err is empty and this is byte-identical to the old lowering.
@@ -12648,12 +12727,82 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
     var noelse: Stmt[] = [];
     body = body.append(s_if(e_ident("__dfa_tryall"), cleanup, noelse));
     body = body.append(s_if(e_ident("__dfa_tryerr"), cleanup_err, noelse));
-    return FuncDecl {
-        name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
-        type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body, line: fn.line, col: fn.col,
-        import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, fbip: fn.fbip, fip_allowance: fn.fip_allowance, ret_str: fn.ret_str, async: fn.async,
-        is_pub: fn.is_pub
-   , is_const: fn.is_const };
+    return body;
+}
+
+// dl_lower_lambda_bodies lowers the defers of every lambda in `stmts`, each as
+// its own scope — a value block's callee lambda included, since native runs its
+// defers when the block yields rather than hoisting them to the enclosing
+// function. dl_expr_has_defer's value-block case, which looks THROUGH one to
+// report a defer for the enclosing collect, is left as-is: after this pass the
+// body it inspects holds no StmtDefer, so it reports nothing and the enclosing
+// scope is unaffected.
+function dl_lower_lambda_bodies(stmts: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(dl_ll_stmt(stmts[i])); i = i + 1; }
+    return out;
+}
+
+// dl_ll_stmt carries the walk through one statement: its own expressions via
+// dl_ll_expr, and any statement list it encloses via dl_lower_lambda_bodies.
+function dl_ll_stmt(st: Stmt): Stmt {
+    match (st) {
+        StmtVar(v) => { return StmtVar { ...v, init: dl_ll_expr(v.init) }; },
+        StmtReturn(r) => { return StmtReturn { ...r, value: dl_ll_expr(r.value) }; },
+        StmtExpr(x) => { return StmtExpr { ...x, value: dl_ll_expr(x.value) }; },
+        StmtAssign(a) => { return StmtAssign { ...a, value: dl_ll_expr(a.value) }; },
+        StmtIf(f) => {
+            return StmtIf { ...f, cond: dl_ll_expr(f.cond), then_body: dl_lower_lambda_bodies(f.then_body), else_body: dl_lower_lambda_bodies(f.else_body) };
+        },
+        StmtWhile(w) => { return StmtWhile { ...w, cond: dl_ll_expr(w.cond), body: dl_lower_lambda_bodies(w.body) }; },
+        StmtFor(fo) => { return StmtFor { ...fo, iter: dl_ll_expr(fo.iter), body: dl_lower_lambda_bodies(fo.body) }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var g: Expr = m.arms[i].guard;
+                if (m.arms[i].has_guard) { g = dl_ll_expr(m.arms[i].guard); }
+                arms = arms.append(MatchArm { ...m.arms[i], body: dl_lower_lambda_bodies(m.arms[i].body), guard: g });
+                i = i + 1;
+            }
+            return StmtMatch { ...m, scrutinee: dl_ll_expr(m.scrutinee), arms: arms };
+        },
+        StmtDefer(d) => { return StmtDefer { ...d, action: dl_ll_stmt(d.action) }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function dl_ll_expr(e: Expr): Expr {
+    match (e) {
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: lower_defers_body(lm.body) }; },
+        ExprCall(c) => {
+            if (dl_is_value_block(c)) { return dl_vb_rebuild(c, lower_defers_body(dl_vb_body(c))); }
+            return dl_ll_expr_kids(e);
+        },
+        _ => { return dl_ll_expr_kids(e); }
+    }
+    return e;
+}
+
+// dl_vb_body is the statement list of a value block's callee lambda.
+function dl_vb_body(c: ExprCall): Stmt[] {
+    match (c.callee) {
+        ExprLambda(l) => { return l.body; },
+        _ => { var none: Stmt[] = []; return none; }
+    }
+    var none2: Stmt[] = [];
+    return none2;
+}
+
+function dl_ll_expr_kids(e: Expr): Expr {
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return e; }
+    var nk: Expr[] = [];
+    var i: i32 = 0;
+    while (i < kids.len()) { nk = nk.append(dl_ll_expr(kids[i])); i = i + 1; }
+    return dl_expr_with_kids(e, nk);
 }
 
 pub function lower_defers_module(mod: Module): Module {
