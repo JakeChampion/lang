@@ -1271,7 +1271,7 @@ function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function strip_semi(s: string): string {
-    if (s.len() > 0 && s[s.len() - 1] == 59) { return s[0:s.len() - 1] + ""; }   // ';'
+    if (s.len() > 0 && s[s.len() - 1] == b';') { return s[0:s.len() - 1] + ""; }
     return s;
 }
 
@@ -1368,7 +1368,7 @@ function split_commas(csv: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= csv.len()) {
-        if (i == csv.len() || csv[i] == 44) {
+        if (i == csv.len() || csv[i] == b',') {
             out = out.append(csv[start : i]);
             start = i + 1;
         }
@@ -1403,7 +1403,7 @@ function print_struct_destructure(v: parser.StmtVar): string {
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
     while (ri < rest.len()) {
-        if (rest[ri] == 58 && colon < 0) { colon = ri; }
+        if (rest[ri] == b':' && colon < 0) { colon = ri; }
         ri = ri + 1;
     }
     if (colon < 0) { return "var " + v.name + " = " + print_expr(v.init) + ";"; }
@@ -1562,7 +1562,7 @@ function join_plus(bounds: string): string {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= bounds.len()) {
-        if (i == bounds.len() || bounds[i] == 43) {
+        if (i == bounds.len() || bounds[i] == b'+') {
             if (out.len() > 0) { out = out + " + "; }
             out = out + bounds[start : i];
             start = i + 1;

@@ -26,7 +26,7 @@ function last_slash(p: string): i32 {
     var i: i32 = 0;
     var last: i32 = 0 - 1;
     while (i < p.len()) {
-        if (p[i] == 47) { last = i; }
+        if (p[i] == b'/') { last = i; }
         i = i + 1;
     }
     return last;
@@ -52,7 +52,7 @@ function module_name(import_path: string): string {
 // root, when one is configured).
 function is_local(import_path: string): boolean {
     if (import_path.len() == 0) { return false; }
-    return import_path[0] == 46;   // '.'
+    return import_path[0] == b'.';
 }
 
 // join_path builds `<dir>/<name>.fern` (or `<name>.fern` if dir empty).

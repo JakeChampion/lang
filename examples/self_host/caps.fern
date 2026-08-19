@@ -141,7 +141,7 @@ pub function capability_of(name: string): string {
 // whole builtin registry, so an I/O-shaped addition cannot silently dodge the
 // classification.
 pub function classified(name: string): boolean {
-    if (name.len() >= 2 && name[0] == 95 && name[1] == 95) { return true; }   // `__` internal
+    if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') { return true; }   // internal
     if (capability_of(name).len() > 0) { return true; }
     if (util.has_str(ungated(), name)) { return true; }
     return util.has_str(frontend_ungated(), name);

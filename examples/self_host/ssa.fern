@@ -967,7 +967,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var ccn: string = "";
                     var cpi: i32 = 0;
                     while (cpi <= cap_csv.len()) {
-                        if (cpi == cap_csv.len() || cap_csv[cpi] == 44) {
+                        if (cpi == cap_csv.len() || cap_csv[cpi] == b',') {
                             if (ccn.len() > 0) { argvals = argvals.append(s.get_var(ccn)); }
                             ccn = "";
                         } else { ccn = ccn + cap_csv[cpi : cpi + 1]; }
@@ -1333,7 +1333,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                 while (dci <= v.name.len()) {
                     var d_end: boolean = dci == v.name.len();
                     var d_comma: boolean = false;
-                    if (!d_end) { if (v.name[dci] == 44) { d_comma = true; } }
+                    if (!d_end) { if (v.name[dci] == b',') { d_comma = true; } }
                     if (d_end || d_comma) {
                         s = s.kconst(didx);
                         var deidx: i32 = s.cur_id();
@@ -2069,7 +2069,7 @@ function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
                 var nm: string = "";
                 var ci: i32 = 0;
                 while (ci <= v.name.len()) {
-                    if (ci == v.name.len() || v.name[ci] == 44) {
+                    if (ci == v.name.len() || v.name[ci] == b',') {
                         if (nm.len() > 0) { out = out.append(nm); }
                         nm = "";
                     } else { nm = nm + v.name[ci : ci + 1]; }
@@ -2244,7 +2244,7 @@ pub function is_ptr_type(tn: string): boolean {
     if (tn.len() == 0) { return false; }
     if (tn == "string") { return true; }   // strings are byte-array pointers
     if (tn == "fn") { return true; }        // function value — a code pointer
-    return tn[tn.len() - 1] == 93;          // ']' — array types
+    return tn[tn.len() - 1] == b']';          // array types
 }
 
 // is_struct_type reports whether `name` names a declared struct.

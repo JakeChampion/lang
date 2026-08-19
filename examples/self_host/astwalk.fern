@@ -527,12 +527,12 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 function append_bound_name(acc: string[], name: string): string[] {
     var has_comma: boolean = false;
     var ci: i32 = 0;
-    while (ci < name.len()) { if (name[ci] == 44) { has_comma = true; } ci = ci + 1; }
+    while (ci < name.len()) { if (name[ci] == b',') { has_comma = true; } ci = ci + 1; }
     if (!has_comma) { return acc.append(name); }
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= name.len()) {
-        if (i == name.len() || name[i] == 44) {
+        if (i == name.len() || name[i] == b',') {
             var piece: string = name[start : i] + "";
             if (piece.len() > 0) { acc = acc.append(piece); }
             start = i + 1;
