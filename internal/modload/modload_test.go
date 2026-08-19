@@ -705,6 +705,37 @@ function main(): i32 { return facade.add5(10) + facade.BONUS; }`,
 	}
 }
 
+// A re-export target is in the re-exporting module's import closure, and so
+// in every consumer's. `facade.Kind` names shapes' decl, so a closure built
+// from `import` edges alone would report the decl the consumer just named as
+// invisible — and the checker's module-scoped rules (method dispatch,
+// bare-variant resolution #6951) read that closure.
+func TestLoadPubUseExtendsImportClosure(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"shapes.fern": `pub enum Kind { Text, Binary }`,
+		"facade.fern": `pub use "./shapes".{Kind};`,
+		"main.fern": `import "./facade";
+function main(): i32 { var k: facade.Kind = Text; return 0; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("pub use of an enum should load: %v", err)
+	}
+	mainAbs, _ := filepath.Abs(filepath.Join(dir, "main.fern"))
+	facadeAbs, _ := filepath.Abs(filepath.Join(dir, "facade.fern"))
+	shapesAbs, _ := filepath.Abs(filepath.Join(dir, "shapes.fern"))
+	if !prog.ModuleImports[facadeAbs][shapesAbs] {
+		t.Errorf("closure[facade] should contain shapes (pub use target)")
+	}
+	if !prog.ModuleImports[mainAbs][shapesAbs] {
+		t.Errorf("closure[main] should contain shapes (through facade's re-export)")
+	}
+	// The edge is directional: shapes knows nothing of the module re-exporting it.
+	if prog.ModuleImports[shapesAbs][facadeAbs] {
+		t.Errorf("closure[shapes] should not reach up to facade")
+	}
+}
+
 // A `pub use` of a transitively-re-exported name resolves through the
 // chain to the ultimate original mangled name.
 func TestLoadPubUseTransitive(t *testing.T) {
