@@ -61,6 +61,19 @@ function main(): i32 { var fs: ((i32) => i32)[] = gen(false, 5i32); return fs[0i
 function gen(c: boolean, p1: i32): ((i32) => i32)[] { var t: boolean = c; var s: boolean = !c; return (if (t) { [((x: i32) => x)] } else { [pick(s, ((y: i32) => (y + p1)), ((z: i32) => 9i32)), ((w: i32) => 7i32)] }); }
 function main(): i32 { var fs: ((i32) => i32)[] = gen(false, 5i32); return (fs[0i32](3i32) + fs[1i32](0i32)) & 63i32; }`}, // 15
 
+	// The capture side. Hoisting the IIFE means carrying its captures as
+	// ordinary parameters, and cap_param_for will only build one from an EXACT
+	// signature — a lambda initialiser or a `__mkclo$` target. `var v0: (i32) =>
+	// i32 = pick(…)` is neither, so it declined and the module bailed. The
+	// signature was not unrecoverable, it was dropped: the parser reads the
+	// annotation's return into `v_fn_ret` and then stored only the coarse "fn"
+	// tag on the StmtVar. Carrying that return pairs it with the annotated
+	// params of the lambda the passthrough forwards, which is exact. Reduced
+	// from fernsmith seed 393.
+	{"iife_capture_bound_from_passthrough", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+function gen(p0: i32): i32 { var v0: (i32) => i32 = pick(true, ((a: i32) => 45i32), ((b: i32) => 46i32)); var v1: ((i32) => i32)[] = [(if (false) { v0 } else { pick(false, v0, ((x: i32) => (x + p0))) })]; return v1[0i32](1i32); }
+function main(): i32 { return gen(3i32) & 63i32; }`}, // 4
+
 	// The control: one passthrough deep, built and consumed in the same
 	// function, which both sides already agreed on.
 	{"array_elem_single_passthrough_control", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }

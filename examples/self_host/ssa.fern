@@ -1510,7 +1510,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                         var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0 }];
                         binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0 }, args: oargs, line: 0, col: 0, type_argc: 0, ty: "" };
                     }
-                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false });
+                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false, fn_ret: "" });
                 }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
@@ -1590,12 +1590,12 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var i_name: string = "$i" + uid;
 
     // var $arrN = arr;
-    var decl_arr: parser.Stmt = parser.StmtVar { name: arr_name, type_name: "", init: fr.iter, line: 0, col: 0, is_str: false };
+    var decl_arr: parser.Stmt = parser.StmtVar { name: arr_name, type_name: "", init: fr.iter, line: 0, col: 0, is_str: false, fn_ret: "" };
     // var $iN = 0 - 1;   (sentinel: the top-of-body increment yields 0 first)
     var decl_i: parser.Stmt = parser.StmtVar { name: i_name, type_name: "",
         init: parser.ExprBinary { line: 0, col: 0, op: "-",
             left: parser.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false };
+            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false, fn_ret: "" };
 
     // guard: $iN + 1 < $arrN.len()
     var guard: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "<",
@@ -1628,19 +1628,19 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         var vargs: parser.Expr[] = [];
         vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         wbody = wbody.append(bind_k);
         wbody = wbody.append(bind_v);
     } else {
         var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
             init: parser.ExprIndex {
                 array: parser.ExprIdent { name: arr_name, line: 0, col: 0 },
-                index: parser.ExprIdent { name: i_name, line: 0, col: 0 }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false };
+                index: parser.ExprIdent { name: i_name, line: 0, col: 0 }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;
@@ -2182,7 +2182,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
                                     var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: util.i32_to_string(cj + 1), line: 0, col: 0, ty: "" };
-                                    ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false });
+                                    ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false, fn_ret: "" });
                                     cj = cj + 1;
                                 }
                                 var bk: i32 = 0;

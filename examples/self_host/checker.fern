@@ -7503,7 +7503,7 @@ function e055_diag(e: parser.Expr, s: Scope): Diag[] {
 // skip them here to avoid a duplicate diagnostic; this fills the composite
 // gap that anchor check deliberately left open. The annotation's element
 // type is matched with the union-widening `type_assignable`, so a
-// heterogeneous-but-widening literal — e.g. `var xs: Stmt[] = [StmtVar{…},
+// heterogeneous-but-widening literal — e.g. `var xs: Stmt[] = [StmtVar{…, fn_ret: ""},
 // StmtReturn{…}]`, ubiquitous in this very compiler — stays clean. Mirrors
 // the Go checker, which checks each element against the expected element
 // type and reports at the offending element.
@@ -13025,7 +13025,7 @@ function annotate_arm_scope(arm: parser.MatchArm, s: Scope): Scope {
 function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
   match (st) {
     parser.StmtVar(v) => {
-      return parser.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str };
+      return parser.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
     },
     parser.StmtReturn(r) => {
       return parser.StmtReturn { value: annotate_expr(r.value, s), line: r.line, col: r.col };
