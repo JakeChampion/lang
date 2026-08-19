@@ -12,19 +12,23 @@
 // the production constfold pass.
 //
 // Scope:
-//   - i32 arithmetic: + - * / %     (skips / and % on zero
+//   - integer arithmetic: + - * / %  (skips / and % on zero
 //     divisor; leaves the original binary node so the runtime
 //     can surface the error)
-//   - i32 comparisons: < <= > >= == !=  →  bool literal
+//   - integer comparisons: < <= > >= == !=  →  bool literal
 //   - bool: && ||  →  bool literal (no short-circuit because we
 //     fold only when both sides are already constant; partial-
 //     constant short-circuit is a later pass)
 //   - bool: !   →  bool literal
-//   - i32 unary `-` →  i32 literal
+//   - integer unary `-` →  integer literal
 //   - String concatenation `a + b` when both sides are literals
 //   - Recurses through every container variant (Call args, Array
 //     elements, Index, If cond/branches, While cond/body, etc.)
 //     so nested foldings cascade in a single pass.
+//
+// Arithmetic is evaluated in i64 and the operands' declared width decides
+// whether the answer may be emitted — see fits. This pass runs on EVERY
+// build, so a fold that changes the answer is a miscompile.
 
 import "./lexer";
 import "./parser";
@@ -33,15 +37,44 @@ import "./astwalk";
 
 // =================== INT / FOLD HELPERS ====================
 
-// Parse the digit run captured by the lexer back into an i32.
-// No suffix handling — same simplification the interp uses.
-// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
+// A folded literal is built in the shape the PARSER produces. A number
+// literal's TEXT never carries a sign — irlower.literal_is_i64 classifies by
+// its LENGTH and says so — so a negative result is unary minus over the
+// magnitude, exactly as `-5` is parsed. Emitting the sign inline made an
+// 11-character "-2147483648", which literal_is_i64 read as an i64 and the i32
+// return path then declined: `return 0 - 2147483647 - 1`, which is how std/i32
+// spells i32::MIN because it is the only way to spell it, stopped lowering.
+//
+// The magnitude comes from i64_to_string with its sign stripped rather than
+// from negating the value, so INT64_MIN — which has no negation — needs no
+// case of its own.
+function lit_int(v: i64, suffix: string): parser.Expr {
+    var s: string = util.i64_to_string(v);
+    if (v >= 0) { return num_lit(s, suffix); }
+    return parser.ExprUnary { op: "-", operand: num_lit(s[1:s.len()], suffix), line: 0, col: 0 };
+}
 
-// i32_to_string now lives in util.fern (imported as `util`); the
-// fold uses util.i32_to_string to render a folded literal. See SH-020.
+function num_lit(text: string, suffix: string): parser.Expr {
+    return parser.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, line: 0, col: 0 };
+}
 
-function lit_i32(n: i32): parser.Expr {
-    return parser.ExprNumber { text: util.i32_to_string(n), suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+// fits reports whether `v` is representable in the type a literal's SUFFIX
+// names. Folding runs on every build, over ordinary user arithmetic, so a fold
+// that changes the answer is a miscompile rather than a missed optimisation:
+// `2147484527u32 % 861u32` is 713, and reading those operands as signed i32
+// answered -677 (#6261's fixture, which this predicate is what keeps green).
+//
+// i64 / u64 are declined rather than folded in range. Downstream, a literal's
+// width is re-derived from its text LENGTH (irlower.literal_is_i64), so a
+// folded 64-bit result would be re-read at whatever width its digit count
+// implies — an answer this pass cannot control. Floats are not integers, and a
+// char literal carries its source spelling in `raw`, which a rebuilt literal
+// would lose. Declining leaves the runtime op, which is always right.
+function fits(v: i64, suffix: string): boolean {
+    if (suffix == "" || suffix == "i32") { return v >= 0 - 2147483648i64 && v <= 2147483647i64; }
+    if (suffix == "u32") { return v >= 0 && v <= 4294967295i64; }
+    if (suffix == "u8") { return v >= 0 && v <= 255i64; }
+    return false;
 }
 
 function lit_bool(b: boolean): parser.Expr {
@@ -54,21 +87,35 @@ function lit_string(s: string): parser.Expr {
 
 // Optional-Int sentinel: Fern-port has no Option in the stdlib
 // (no generics in our parser stub). Encode "absent" as the
-// boolean `ok` field; consumers check that first.
-struct OptInt { ok: boolean, v: i32 }
+// boolean `ok` field; consumers check that first. The value is i64 and the
+// literal's suffix rides alongside, because folding has to know the declared
+// width to decide whether its answer is representable — see fits.
+struct OptInt { ok: boolean, v: i64, suffix: string }
 
 function as_int_lit(e: parser.Expr): OptInt {
     match (e) {
         parser.ExprNumber(n) => {
-            if (n.is_float) { return OptInt { ok: false, v: 0 }; }
-            // lit_to_i32 (hex/binary-aware): digits_to_i32 stopped at the
+            if (n.is_float) { return OptInt { ok: false, v: 0, suffix: "" }; }
+            // lit_to_i64 (hex/binary-aware): digits_to_i32 stopped at the
             // `x`/`b` prefix and read every `0x`/`0b` operand as 0, so `-O`
-            // mis-folded `0x10 + 1` to 1 (#4341, constfold sibling).
-            return OptInt { ok: true, v: util.lit_to_i32(n.text) };
+            // mis-folded `0x10 + 1` to 1 (#4341, constfold sibling). The i64
+            // accumulation is what lets fits see a u32-range literal's real
+            // value instead of the wrapped one.
+            return OptInt { ok: true, v: util.lit_to_i64(n.text), suffix: n.suffix };
         },
-        _ => { return OptInt { ok: false, v: 0 }; }
+        parser.ExprUnary(u) => {
+            // The negated form lit_int produces, so a chain still folds all the
+            // way: `0 - 2147483647 - 1` needs the inner fold's result to be
+            // readable by the outer one.
+            if (u.op == "-") {
+                var inner: OptInt = as_int_lit(u.operand);
+                if (inner.ok) { return OptInt { ok: true, v: 0 - inner.v, suffix: inner.suffix }; }
+            }
+            return OptInt { ok: false, v: 0, suffix: "" };
+        },
+        _ => { return OptInt { ok: false, v: 0, suffix: "" }; }
     }
-    return OptInt { ok: false, v: 0 };
+    return OptInt { ok: false, v: 0, suffix: "" };
 }
 
 struct OptBool { ok: boolean, v: boolean }
@@ -117,20 +164,30 @@ function fold_node(e: parser.Expr): parser.Expr {
 }
 
 function fold_binary(op: string, lhs: parser.Expr, rhs: parser.Expr): parser.Expr {
-    // i32 arithmetic + comparison + equality.
+    var unfolded: parser.Expr = parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 };
+    // Integer arithmetic + comparison + equality, evaluated in i64 so a u32
+    // operand keeps its value. Both operands must name the SAME type: mixing
+    // widths is the checker's business, and picking one of them here would
+    // decide it arbitrarily. Both must also be representable in it, or the
+    // parse already wrapped and every answer below is built on the wrong
+    // number.
     var li: OptInt = as_int_lit(lhs);
     var ri: OptInt = as_int_lit(rhs);
-    if (li.ok && ri.ok) {
-        if (op == "+") { return lit_i32(li.v + ri.v); }
-        if (op == "-") { return lit_i32(li.v - ri.v); }
-        if (op == "*") { return lit_i32(li.v * ri.v); }
+    if (li.ok && ri.ok && li.suffix == ri.suffix && fits(li.v, li.suffix) && fits(ri.v, ri.suffix)) {
+        var sfx: string = li.suffix;
+        // An arithmetic result that overflows its width is NOT folded: the
+        // runtime op wraps and this pass does not, so folding it would change
+        // the answer. Comparisons cannot overflow, so they always fold.
+        if (op == "+") { return fold_arith(li.v + ri.v, sfx, unfolded); }
+        if (op == "-") { return fold_arith(li.v - ri.v, sfx, unfolded); }
+        if (op == "*") { return fold_arith(li.v * ri.v, sfx, unfolded); }
         if (op == "/") {
-            if (ri.v == 0) { return parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 }; }
-            return lit_i32(li.v / ri.v);
+            if (ri.v == 0) { return unfolded; }
+            return fold_arith(li.v / ri.v, sfx, unfolded);
         }
         if (op == "%") {
-            if (ri.v == 0) { return parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 }; }
-            return lit_i32(li.v % ri.v);
+            if (ri.v == 0) { return unfolded; }
+            return fold_arith(li.v % ri.v, sfx, unfolded);
         }
         if (op == "<") { return lit_bool(li.v < ri.v); }
         if (op == "<=") { return lit_bool(li.v <= ri.v); }
@@ -157,13 +214,23 @@ function fold_binary(op: string, lhs: parser.Expr, rhs: parser.Expr): parser.Exp
         if (op == "!=") { return lit_bool(ls.v != rs.v); }
     }
     // Nothing to fold — rebuild with folded children.
-    return parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 };
+    return unfolded;
+}
+
+// fold_arith emits the folded literal, or leaves the expression alone when the
+// value is not representable in the operands' type.
+function fold_arith(v: i64, suffix: string, unfolded: parser.Expr): parser.Expr {
+    if (!fits(v, suffix)) { return unfolded; }
+    return lit_int(v, suffix);
 }
 
 function fold_unary(op: string, operand: parser.Expr): parser.Expr {
     if (op == "-") {
         var oi: OptInt = as_int_lit(operand);
-        if (oi.ok) { return lit_i32(0 - oi.v); }
+        // The operand of a unary minus is a MAGNITUDE, so it is the negated
+        // result that has to be representable — 2147483648 alone does not fit
+        // i32, but `-2147483648` is exactly i32::MIN.
+        if (oi.ok && fits(0 - oi.v, oi.suffix)) { return lit_int(0 - oi.v, oi.suffix); }
     }
     if (op == "!") {
         var ob: OptBool = as_bool_lit(operand);
@@ -331,6 +398,85 @@ function main(): i32 {
             }
         },
         _ => { return 93; }
+    }
+
+    // Unsigned operands fold with UNSIGNED semantics, because the arithmetic
+    // runs in i64 and a u32 literal keeps its value there. Read as signed i32
+    // this answered -677 (#6261's fixture value). The suffix rides onto the
+    // folded literal, so the result is still a u32.
+    var mod10: parser.Module = fold_source("var a = 2147484527u32 % 861u32; return 0;");
+    match (mod10.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprNumber(n) => {
+                    if (n.text != "713") { return 100; }
+                    if (n.suffix != "u32") { return 101; }
+                },
+                _ => { return 102; }
+            }
+        },
+        _ => { return 103; }
+    }
+
+    // A result outside the operands' width is NOT folded: `5u32 - 10u32` wraps
+    // to 4294967291 at runtime and this pass does not wrap, so folding it to
+    // -5 would change the answer.
+    var mod11: parser.Module = fold_source("var a = 5u32 - 10u32; return 0;");
+    match (mod11.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprBinary(b) => { if (b.op != "-") { return 110; } },
+                _ => { return 111; }
+            }
+        },
+        _ => { return 112; }
+    }
+
+    // Same rule one width up on the signed side: `2000000000 + 2000000000`
+    // overflows i32, so it stays a runtime add.
+    var mod12: parser.Module = fold_source("var a = 2000000000 + 2000000000; return 0;");
+    match (mod12.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprBinary(b) => { if (b.op != "+") { return 120; } },
+                _ => { return 121; }
+            }
+        },
+        _ => { return 122; }
+    }
+
+    // Mixed widths are the checker's business — folding would have to pick one
+    // of the two types, so it picks neither.
+    var mod13: parser.Module = fold_source("var a = 5u32 + 5; return 0;");
+    match (mod13.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprBinary(b) => { if (b.op != "+") { return 130; } },
+                _ => { return 131; }
+            }
+        },
+        _ => { return 132; }
+    }
+
+    // i32::MIN: the one magnitude with no i32 representation, so it is spelled
+    // `0 - 2147483647 - 1`. The chain folds all the way, and the sign lands on
+    // a unary minus rather than in the literal's text — where its 11 characters
+    // would read as an i64 (irlower.literal_is_i64 classifies by LENGTH).
+    var mod14: parser.Module = fold_source("var a = 0 - 2147483647 - 1; return 0;");
+    match (mod14.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprUnary(u) => {
+                    if (u.op != "-") { return 140; }
+                    match (u.operand) {
+                        parser.ExprNumber(n) => { if (n.text != "2147483648") { return 141; } },
+                        _ => { return 142; }
+                    }
+                },
+                _ => { return 143; }
+            }
+        },
+        _ => { return 144; }
     }
 
     return 0;

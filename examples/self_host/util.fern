@@ -164,6 +164,48 @@ pub function lit_to_i32(s: string): i32 {
     return digits_to_i32(s);
 }
 
+// lit_to_i64 is the i64-accumulating sibling of lit_to_i32: same `0x`/`0X`,
+// `0b`/`0B` and leading-`-` handling, but accumulating in 64 bits so a literal
+// past i32 range (`4294967295`, the u32 maximum) keeps its value instead of
+// wrapping to the matching signed i32 bit pattern. constfold reads literals
+// through this one, because it has to decide whether a value fits its declared
+// width and cannot do that from an already-wrapped number.
+pub function lit_to_i64(s: string): i64 {
+    if (s.len() == 0) { return 0; }
+    var neg: boolean = false;
+    var start: i32 = 0;
+    if (s[0] == 45) { neg = true; start = 1; }
+    if (start + 1 < s.len() && s[start] == 48 && (s[start + 1] == 120 || s[start + 1] == 88)) {
+        var acc: i64 = 0;
+        var i: i32 = start + 2;
+        while (i < s.len()) {
+            var b: i32 = s[i] as i32;
+            var d: i32 = 0 - 1;
+            if (b >= 48 && b <= 57) { d = b - 48; }
+            else if (b >= 97 && b <= 102) { d = b - 97 + 10; }
+            else if (b >= 65 && b <= 70) { d = b - 65 + 10; }
+            if (d < 0) { break; }
+            acc = acc * 16 + (d as i64);
+            i = i + 1;
+        }
+        if (neg) { return 0 - acc; }
+        return acc;
+    }
+    if (start + 1 < s.len() && s[start] == 48 && (s[start + 1] == 98 || s[start + 1] == 66)) {
+        var bacc: i64 = 0;
+        var bi: i32 = start + 2;
+        while (bi < s.len()) {
+            var bb: i32 = s[bi] as i32;
+            if (bb != 48 && bb != 49) { break; }
+            bacc = bacc * 2 + ((bb - 48) as i64);
+            bi = bi + 1;
+        }
+        if (neg) { return 0 - bacc; }
+        return bacc;
+    }
+    return digits_to_i64(s);
+}
+
 pub function digits_to_i32(s: string): i32 {
     if (s.len() == 0) { return 0; }
     var neg: boolean = false;
