@@ -2887,7 +2887,21 @@ type MatchArm struct {
 	// match for every other stage, and without this the formatter had
 	// nothing left to reprint but that lowering — writing `__nest0` into
 	// the user's source, permanently under `-fmt -w`. The walk skips it.
-	Sub []*MatchArm
+	// EnumName and VariantIndex are the arm's RESOLUTION: the enum the
+	// pattern's variant belongs to, and its ordinal in that enum's
+	// declaration. Stamped by the checker, which computes both while
+	// validating the arm against the scrutinee's enum and used to throw
+	// them away — every later stage then re-derived them from the
+	// scrutinee's static type instead (#6964).
+	//
+	// The checker is the SINGLE stamping point, and it runs after every
+	// desugar and again after monomorphisation, so a synthesised arm gets
+	// them too and a clone cannot carry an instantiation's stale enum name.
+	// EnumName == "" therefore means "not an enum-variant arm" — a wildcard,
+	// or a tuple / struct / literal pattern — never "not yet resolved".
+	EnumName     string
+	VariantIndex int
+	Sub          []*MatchArm
 	// AltCont marks an arm that continues the previous one's or-pattern
 	// alternative list: `A | B => …` parses to one arm per alternative,
 	// with the guard and body CLONED into each, and nothing else records
@@ -2964,6 +2978,10 @@ type MatchExprArm struct {
 	// reachability check must not call it unreachable. It still counts
 	// for exhaustiveness: the copy is what makes the inner match total.
 	FallConsumed bool
+	// EnumName / VariantIndex mirror MatchArm's — see there. Stamped by
+	// the checker on the expression form's arms for the same reason.
+	EnumName     string
+	VariantIndex int
 	// Sub mirrors MatchArm.Sub: the payload sub-patterns as written,
 	// parallel to Bindings. Printer-only, walk-skipped.
 	Sub []*MatchExprArm

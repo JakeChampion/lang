@@ -132,12 +132,13 @@ func (b *builder) detectTrmc() *trmcShape {
 		if !ok || ret.Value == nil {
 			return nil
 		}
-		// Scrutinee-relative, like the two match lowerings: a variant name
-		// two enums share has a different ordinal in each.
-		_, scrutVarIdx, _, ok := b.lookupVariantOn(arm.VariantName, b.scrutineeEnumName(m.Tag))
-		if !ok {
+		// The checker's stamped resolution, like the two match lowerings.
+		// TRMC is an optimisation, so an unresolved arm declines the
+		// transform rather than failing the build.
+		if arm.EnumName == "" {
 			return nil
 		}
+		scrutVarIdx := arm.VariantIndex
 		ta := trmcArm{
 			scrutVarIdx:  scrutVarIdx,
 			bindings:     arm.Bindings,
