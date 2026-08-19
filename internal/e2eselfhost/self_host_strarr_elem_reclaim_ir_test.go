@@ -52,7 +52,15 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 		inUser := false
 		for _, ln := range strings.Split(asm, "\n") {
 			if strings.HasPrefix(ln, "__fn_") && strings.HasSuffix(ln, ":") {
-				inUser = !strings.HasPrefix(ln, "__fn___fern_")
+				// The per-type RC helpers are compiler-generated runtime, not the
+				// user's frame. __struct_drop_<T> / __field_reclaim_<T> element-walk
+				// a `string[]` FIELD the strarrfld scan admitted, which is a
+				// different reclaim decision from the SARR local credit these rows
+				// measure — conflating them made a `Box { rows: xs }` case read as
+				// "build element-walked xs" when build does nothing of the kind.
+				inUser = !strings.HasPrefix(ln, "__fn___fern_") &&
+					!strings.HasPrefix(ln, "__fn___struct_drop_") &&
+					!strings.HasPrefix(ln, "__fn___field_reclaim_")
 				continue
 			}
 			if inUser && strings.Contains(ln, "call "+helper) {
