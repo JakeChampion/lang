@@ -10653,8 +10653,8 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | `(i, Some(i))` | 0 \| 0 \| 0 | 0 | closed |
   | `(i, Tag.Num(i))`, user enum | 0 \| 0 \| 0 | 0 | closed |
   | `(i, Ok(i))` / `(i, Err(i))` | 40 \| 40 \| 16 | 0 | **closed by this entry** |
-  | `(i, Some([i, i+1]))` | 40 \| 40 \| 24 | 0 | open — union PAYLOAD |
-  | `(i, Tag.Nums([i, i+1]))` | 40 \| 40 \| 24 | 0 | open — union PAYLOAD |
+  | `(i, Some([i, i+1]))` | 40 \| 40 \| 24 | 0 | closed by the union-PAYLOAD entry below |
+  | `(i, Tag.Nums([i, i+1]))` | 40 \| 40 \| 24 | 0 | closed by the union-PAYLOAD entry below |
   | `(i, Map { 1: i, 2: i+1 })` | 168 \| 168 \| 1 | 0 | open |
   | `Some(Some(i))` | 80 \| 80 \| 32 | 0 | open |
   | `Some(Ok(i))` | 80 \| 80 \| 32 | 0 | open |
@@ -10671,14 +10671,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   after #7143. `Some(Map { … })` is the one row where native is the leakier
   side, so it has no oracle.
 
-  What the remaining rows have in common is the reason none of them is another
-  arm on an existing walk. Every one needs the release to know a VARIANT's
-  payload layout — native's `enumVariantDropPlan` / `genEnumDropFn` — and the
-  self-host has no per-variant plan to consult; freeing an element by its
-  declared type instead is the over-admission this subsystem has taken three
-  times in a week. The erased-generic producer is the same shortfall one level
-  up: its return type carries a type var, so there is no element tuple to walk
-  until the call site's instantiation is available (#6299).
+  What the remaining rows have in common is that each needs the release to know a
+  VARIANT's payload layout — native's `enumVariantDropPlan` / `genEnumDropFn` —
+  and freeing an element by its declared type instead is the over-admission this
+  subsystem has taken three times in a week. The erased-generic producer is the
+  same shortfall one level up: its return type carries a type var, so there is no
+  element tuple to walk until the call site's instantiation is available (#6299).
+
+  This paragraph also said the self-host has no per-variant plan to consult, and
+  took the two union-PAYLOAD rows down with that reasoning. It has one:
+  `emit_enum_variant_drops` runtime-dispatches a user enum's variant and releases
+  that variant's rc payload fields, and `emit_opt_payload_drop_via` does the
+  built-in side. Those two rows were an unreached call away, not a design pass —
+  see the union-PAYLOAD entry below. That says nothing about the `Some(Some(i))`
+  / `Some(Ok(i))` / `Some(Tag.Num(i))` rows, which are Option LOCALS on a
+  different path and were not investigated here; they stay open on their own
+  evidence.
 
   Two shapes are not IR-eligible at all and so cannot be measured on the
   self-host side: a nested `Option` at a tuple element (`(i32, Option[Option[i32]])`)
@@ -10880,3 +10888,100 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (7 cases x 3 backends). Thresholds there are calibrated rather than inherited
   — the leak is 24 B/round, so the 32768-over-400-rounds gate the sibling suites
   use would not have caught it; measured 9600 -> 0 per flat case. Refs #6544 #4451.
+
+
+
+- 2026-08-19: **the union PAYLOAD at a tuple element, and why freeing it is safe
+  even when an arm carries it out.** #7147 gave the element its box dec and left
+  the payload, on the grounds that releasing it needed the variant's own drop
+  plan. The self-host already HAD that plan — `emit_enum_variant_drops` for a
+  user enum (the sibling of native's `enumVariantDropPlan` / `genEnumDropFn`) and
+  `emit_opt_payload_drop_via` for a built-in `Some`/`Ok`/`Err`. Nothing needed
+  designing; the element site only had to reach for it.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `(i, Some([i, i+2]))` | 40 \| 40 \| 24 | **0** | 0 |
+  | `(i, Tag.Buf([i, i+2]))`, user enum | 40 \| 40 \| 24 | **0** | 0 |
+  | payload carried out of the arm | 40 \| 40 \| 24 | **0** | 32 |
+  | user enum with a non-droppable sibling variant | 40 \| 40 \| 24 | **0** | 0 |
+  | `(i, Ok([i, i+2]))`, Result | 40 | **0** | 0 |
+
+  What the payload costs is decided by the SAME freshness rule the sibling
+  element arms use one level up, so `(i, [a, b])` and `(i, Some([a, b]))` admit
+  the same array. Reaching for `rcpayload_option_cand` instead was tried and
+  abandoned: its un-annotated path wants number LITERALS, and no annotation
+  reaches this site, so `Some([i, i+2])` classified as nothing.
+
+  **The third row is the one worth reading.** An arm that does `keep = v` carries
+  the payload past every reclaim point, and the payload is released anyway — the
+  escaping binding RETAINS it, so the element's dec spends the tuple's own
+  reference rather than the last one. That is measured, not argued: the control
+  reads the carried-out pointer after decoy allocations that would be handed the
+  payload's block if it had really been freed, and gets the same 66 as native.
+  Byte-flat and value-correct at once is the evidence; either alone would not be.
+
+  **A user enum needs no whole-enum gate here, and must not be name-matched.**
+  The first cut gated the variant dispatch on `enum_all_variants_rc_droppable`
+  and let everything else fall through to the built-in `Some`/`Ok`/`Err` path,
+  which found its payload by matching the callee's NAME. Both halves were wrong,
+  and self-review then measurement caught them:
+
+  - The predicate admits the LOCAL consume path. It is not a safety requirement
+    of `emit_enum_variant_payload_drops`, which releases the fields whose types
+    it can name and silently skips the rest — a leak, not a corruption. Gating on
+    it cost the fourth row above its reclaim for a reason that belonged to a
+    different site.
+  - With the gate in place, a user enum carrying a variant spelled `Some` fell
+    THROUGH to the built-in path and had `op_opt_payload` applied to a user-enum
+    box. That measured correct (40 → 0) purely because both boxes are
+    `[tag, payload]` for a single-field variant. A reclaim resting on a layout
+    coincidence reached by a name test is what the admission side had always
+    avoided — it resolves a user variant through `expr_enum_type` and a
+    shadowing free function through `expr_builtin_result_ctor`'s `is_user_fn`,
+    precisely so a user `Some` or `Ok` cannot be mistaken for the built-in one.
+    The name test in `builtin_union_ctor` is only safe because that admission
+    ran first, which its comment now says out loud.
+
+  Dispatching on the resolved enum TYPE fixes both at once: every user enum takes
+  variant dispatch, the built-in path is only consulted when the element is not a
+  user enum at all, and the coincidence stops being load-bearing.
+
+  **Two residuals and one that closed under us.**
+  - A BARE-IDENT payload (`Some(xs)`) keeps its 40. Admitting it was measured —
+    it goes to 0 and stays balanced, so the construction does alias-inc it — but
+    the release has to be NAMED, and this site has no annotation to tell a
+    bare-ident array (flat dec) from a bare-ident string (which a flat dec would
+    misread as a pointer on the two-word-string backends). The blocker is typing
+    the payload, not owning it; a slot-type source would close it.
+  - A string payload built by concatenation goes 64 → 32, and the entry first
+    written here blamed "the producer temp" for the remaining 32. That was wrong,
+    and the two #6544 commits above are what exposed it: both widened
+    `is_fresh_str_temp` and neither moved the number. Isolating the operand does:
+
+    | payload | bytes |
+    |---|---|
+    | `Some("v" + "w")` | 0 |
+    | `Some("v" + i.to_string())` | 0 |
+    | `Some("v" + util_num(i))`, `util_num` a source function | 32 |
+
+    The concat is released; what leaks is the string a USER FUNCTION returned as
+    an operand of it. And it has nothing to do with tuples or unions —
+    `var sv: string = "v" + util_num(i)` as a plain local leaks the same 32,
+    where native is flat. So it is a self-host parity gap in the #6544 family,
+    one level away from this slice and not this slice's to fix: `is_fresh_str_temp`
+    is being actively reshaped by that work, and a third hand in it would collide
+    with a design that is still moving. Recorded, not routed around — nothing here
+    depends on it.
+  - A `Result` element is no longer one. It was measured at 80 and written up
+    here as an admission gap a layer above this drop; #7160 then closed that half
+    by admitting `Ok`/`Err` as constructions, taking it to 40, and this slice
+    takes the remaining 40 — the payload. `(i, Ok([i, i+2]))` is 40 on the
+    rebased base and **0** with both, native flat. Pinned by
+    `result-array-payload`.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_union_payload_reclaim_test.go` (8 cases x 3
+  backends; the five byte gates fail on the parent on all three legs, and the
+  three controls — carried-out validity, a bare-ident payload, and an immortal
+  `.rodata` literal that must not be freed — pass either way). Refs #4353 #4451.
