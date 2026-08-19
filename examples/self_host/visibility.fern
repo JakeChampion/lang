@@ -33,12 +33,9 @@ import "./checker";
 // slicing — a slice is a `str` view of the path, and this outlives it.
 function import_quals(mod: parser.Module): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < mod.imports.len()) {
-        var im: parser.Import = mod.imports[i];
+    for im in mod.imports {
         if (im.alias.len() > 0) { out = out.append(im.alias); }
         else { out = out.append(base_name_of(im.path)); }
-        i = i + 1;
     }
     return out;
 }
@@ -82,37 +79,24 @@ function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
 // the declarations, since most are exported.
 function private_keys(loaded: flatten.LoadedModule[]): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < loaded.len()) {
-        var lm: flatten.LoadedModule = loaded[i];
-        var fi: i32 = 0;
-        while (fi < lm.mod.funcs.len()) {
-            var f: parser.FuncDecl = lm.mod.funcs[fi];
+    for lm in loaded {
+        for f in lm.mod.funcs {
             if (!f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
                 out = out.append(lm.name + "." + f.name);
             }
-            fi = fi + 1;
         }
-        var si: i32 = 0;
-        while (si < lm.mod.structs.len()) {
-            var sd: parser.StructDecl = lm.mod.structs[si];
+        for sd in lm.mod.structs {
             // A variant defers to its enum, so it contributes no key of its own.
             if (!sd.is_pub && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
                 out = out.append(lm.name + "." + sd.name);
             }
-            si = si + 1;
         }
-        var ei: i32 = 0;
-        while (ei < lm.mod.enums.len()) {
-            if (!lm.mod.enums[ei].is_pub) { out = out.append(lm.name + "." + lm.mod.enums[ei].name); }
-            ei = ei + 1;
+        for en in lm.mod.enums {
+            if (!en.is_pub) { out = out.append(lm.name + "." + en.name); }
         }
-        var ai: i32 = 0;
-        while (ai < lm.mod.aliases.len()) {
-            if (!lm.mod.aliases[ai].is_pub) { out = out.append(lm.name + "." + lm.mod.aliases[ai].name); }
-            ai = ai + 1;
+        for al in lm.mod.aliases {
+            if (!al.is_pub) { out = out.append(lm.name + "." + al.name); }
         }
-        i = i + 1;
     }
     return out;
 }
@@ -125,18 +109,12 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
 // picks it out.
 function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < loaded.len()) {
-        var lm: flatten.LoadedModule = loaded[i];
-        var fi: i32 = 0;
-        while (fi < lm.mod.funcs.len()) {
-            var f: parser.FuncDecl = lm.mod.funcs[fi];
+    for lm in loaded {
+        for f in lm.mod.funcs {
             if (f.is_const && !f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
                 out = out.append(lm.name + "." + f.name);
             }
-            fi = fi + 1;
         }
-        i = i + 1;
     }
     return out;
 }
@@ -148,18 +126,12 @@ function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: 
     var quals: string[] = import_quals(src);
     if (quals.len() == 0) { return out; }
     var refs: astwalk.QualRef[] = [];
-    var i: i32 = 0;
-    while (i < src.funcs.len()) {
-        var bi: i32 = 0;
-        while (bi < src.funcs[i].body.len()) {
-            refs = astwalk.collect_qualrefs_stmt(src.funcs[i].body[bi], quals, refs);
-            bi = bi + 1;
+    for fd in src.funcs {
+        for st in fd.body {
+            refs = astwalk.collect_qualrefs_stmt(st, quals, refs);
         }
-        i = i + 1;
     }
-    var ri: i32 = 0;
-    while (ri < refs.len()) {
-        var r: astwalk.QualRef = refs[ri];
+    for r in refs {
         var key: string = r.qual + "." + r.name;
         if (util.has_str(priv, key)) {
             var kw: string = "function";
@@ -171,7 +143,6 @@ function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: 
                 col: r.col
             });
         }
-        ri = ri + 1;
     }
     return out;
 }
@@ -187,17 +158,10 @@ pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]):
     var priv_consts: string[] = private_const_keys(loaded);
     var out: checker.Diag[] = module_diags(entry, loaded, priv, priv_consts);
     var td: checker.Diag[] = type_diags(entry, loaded, priv);
-    var ti: i32 = 0;
-    while (ti < td.len()) { out = out.append(td[ti]); ti = ti + 1; }
-    var i: i32 = 0;
-    while (i < loaded.len()) {
-        var ds: checker.Diag[] = module_diags(loaded[i].mod, loaded, priv, priv_consts);
-        var di: i32 = 0;
-        while (di < ds.len()) { out = out.append(ds[di]); di = di + 1; }
-        var ts: checker.Diag[] = type_diags(loaded[i].mod, loaded, priv);
-        var si: i32 = 0;
-        while (si < ts.len()) { out = out.append(ts[si]); si = si + 1; }
-        i = i + 1;
+    for d in td { out = out.append(d); }
+    for lm in loaded {
+        for d in module_diags(lm.mod, loaded, priv, priv_consts) { out = out.append(d); }
+        for d in type_diags(lm.mod, loaded, priv) { out = out.append(d); }
     }
     return out;
 }
