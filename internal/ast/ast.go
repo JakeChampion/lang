@@ -3793,8 +3793,9 @@ type Program struct {
 	// "what type is at this position?" because ast.Type values are
 	// positionless; without this table, type-annotation hover
 	// (`var c: Color`) and goto-def on type names can't work.
-	// Modload prepends per-module-mangled forms during loading;
-	// the checker leaves it alone.
+	// Modload merges every loaded module's entries into this one
+	// table, stamping each with its SourceModule; the checker
+	// leaves it alone.
 	TypeRefs []TypeRef
 }
 
@@ -3807,6 +3808,13 @@ type Program struct {
 type TypeRef struct {
 	P    Position
 	Name string
+	// SourceModule is the canonical module path whose source
+	// carried this reference — same string modload stamps on
+	// FuncDecl / StructDecl / EnumDecl. Every module's entries
+	// merge into one table, and Position has no filename, so
+	// without it a `(line, col)` lookup cannot tell which file a
+	// type reference came from. Empty for a single-file parse.
+	SourceModule string
 }
 
 // ConstDecl is a top-level `const NAME[: T] = expr;` declaration.

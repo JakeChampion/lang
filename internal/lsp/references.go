@@ -25,7 +25,7 @@ func runReferences(state *docState, uri string, pos Position) []Location {
 		return []Location{}
 	}
 	line, col := lspToInternalPos(pos)
-	hit := findNameAt(state.prog, line, col)
+	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return []Location{}
 	}
@@ -48,7 +48,7 @@ func runRename(state *docState, uri string, pos Position, newName string) *works
 		return nil
 	}
 	line, col := lspToInternalPos(pos)
-	hit := findNameAt(state.prog, line, col)
+	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return nil
 	}
@@ -414,7 +414,11 @@ func collectByName(state *docState, name string, _ bool) []occurrence {
 	// Type-annotation references (`var c: Color`).
 	for _, tr := range state.prog.TypeRefs {
 		if tr.Name == name {
-			out = append(out, occurrence{name: name, pos: tr.P})
+			out = append(out, occurrence{
+				name:         name,
+				pos:          tr.P,
+				sourceModule: tr.SourceModule,
+			})
 		}
 	}
 	return out

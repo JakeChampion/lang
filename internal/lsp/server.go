@@ -281,7 +281,7 @@ func (s *Server) handleHover(raw json.RawMessage) (any, *rpcError) {
 		if !ok {
 			return nil, nil
 		}
-		r := runHover(state.lit.tangled, tpos)
+		r := runHover(state.lit.tangled, p.TextDocument.URI, tpos)
 		if r == nil {
 			return nil, nil
 		}
@@ -291,7 +291,7 @@ func (s *Server) handleHover(raw json.RawMessage) (any, *rpcError) {
 		}
 		return r, nil
 	}
-	if r := runHover(state, p.Position); r != nil {
+	if r := runHover(state, p.TextDocument.URI, p.Position); r != nil {
 		return r, nil
 	}
 	return nil, nil // null hover = "nothing to show here"
@@ -345,9 +345,9 @@ func (s *Server) handleCompletion(raw json.RawMessage) (any, *rpcError) {
 		}
 		// Completion items are plain insertions (no doc-positioned text
 		// edits), so only the query position needs translating.
-		return runCompletion(state.lit.tangled, tpos), nil
+		return runCompletion(state.lit.tangled, p.TextDocument.URI, tpos), nil
 	}
-	return runCompletion(state, p.Position), nil
+	return runCompletion(state, p.TextDocument.URI, p.Position), nil
 }
 
 func (s *Server) handleInlayHint(raw json.RawMessage) (any, *rpcError) {
@@ -359,7 +359,7 @@ func (s *Server) handleInlayHint(raw json.RawMessage) (any, *rpcError) {
 	if !ok {
 		return []inlayHint{}, nil
 	}
-	return runInlayHints(state, p.Range), nil
+	return runInlayHints(state, p.TextDocument.URI, p.Range), nil
 }
 
 func (s *Server) handleDocumentSymbol(raw json.RawMessage) (any, *rpcError) {
@@ -391,7 +391,7 @@ func (s *Server) handleSemanticTokens(raw json.RawMessage) (any, *rpcError) {
 	if !ok {
 		return semanticTokensResponse{Data: []int{}}, nil
 	}
-	return runSemanticTokens(state), nil
+	return runSemanticTokens(state, p.TextDocument.URI), nil
 }
 
 func (s *Server) handleReferences(raw json.RawMessage) (any, *rpcError) {

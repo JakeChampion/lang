@@ -43,12 +43,12 @@ type completionItem struct {
 // Completion items are not filtered against any prefix here — that's
 // the client's job. Returning the full list also makes the MVP work
 // against editors that pre-fetch completions on file open.
-func runCompletion(state *docState, pos Position) *completionList {
+func runCompletion(state *docState, uri string, pos Position) *completionList {
 	if state == nil || state.prog == nil {
 		return &completionList{Items: []completionItem{}}
 	}
 	line, col := lspToInternalPos(pos)
-	enclosing := enclosingFunc(state.prog, line, col)
+	enclosing := enclosingFunc(state.prog, requestModule(uri), line, col)
 
 	items := []completionItem{}
 
@@ -121,9 +121,10 @@ func runCompletion(state *docState, pos Position) *completionList {
 }
 
 // enclosingFunc returns the FuncDecl whose body contains the given
-// 1-based (line, col). Used by completion + signature help to scope
-// candidates and look up the active function. Returns nil for
-// positions outside any function (top-level / between decls).
+// 1-based (line, col) in the module named by mod (see requestModule).
+// Used by completion to scope candidates to the function the cursor
+// is in. Returns nil for positions outside any function (top-level /
+// between decls).
 //
 // "Contains" is approximated via "body starts at-or-before the line
 // and the next top-level decl starts after it" — the AST doesn't
@@ -131,13 +132,16 @@ func runCompletion(state *docState, pos Position) *completionList {
 // invariant that lang functions can't nest top-level decls
 // inside their bodies. Local functions are skipped by checking
 // IsLocal=false on each top-level entry.
-func enclosingFunc(prog *ast.Program, line, col int) *ast.FuncDecl {
+func enclosingFunc(prog *ast.Program, mod string, line, col int) *ast.FuncDecl {
 	if prog == nil {
 		return nil
 	}
 	var best *ast.FuncDecl
 	for _, fd := range prog.Funcs {
 		if fd == nil || fd.Body == nil || fd.IsLocal {
+			continue
+		}
+		if !inModule(fd.SourceModule, mod) {
 			continue
 		}
 		if fd.P.Line > line {

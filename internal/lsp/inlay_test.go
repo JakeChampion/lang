@@ -9,7 +9,7 @@ func inlayHintsFor(src string) []inlayHint {
 	s := NewServer()
 	s.updateDoc("file:///t", src)
 	// Wide range covering the whole document.
-	return runInlayHints(s.docs["file:///t"], Range{
+	return runInlayHints(s.docs["file:///t"], "file:///t", Range{
 		Start: Position{Line: 0, Character: 0},
 		End:   Position{Line: 9999, Character: 0},
 	})
@@ -47,7 +47,7 @@ func TestInlayHints_FiltersByRange(t *testing.T) {
 	s := NewServer()
 	s.updateDoc("file:///t", src)
 	// Only ask about line 2 (the y declaration).
-	got := runInlayHints(s.docs["file:///t"], Range{
+	got := runInlayHints(s.docs["file:///t"], "file:///t", Range{
 		Start: Position{Line: 2, Character: 0},
 		End:   Position{Line: 2, Character: 100},
 	})
