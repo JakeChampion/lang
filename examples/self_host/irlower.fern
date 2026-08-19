@@ -16234,7 +16234,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                 // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
                 parser.ExprTuple(dte) => {
                     if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
-                    else if (tuple_lit_rc_reclaimable(es.value, s.structs)) {
+                    else if (tuple_lit_rc_reclaimable(es.value, "", s.structs)) {
                         // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);` or
                         // the nested `((w, [w, w+1]), w);` — #4365): every element
                         // scalar-shaped, a DIRECT array literal, or a nested tuple
@@ -25131,11 +25131,11 @@ function tuple_strarr_elem_fresh(e: parser.Expr): boolean {
 // box whose rc children are themselves sole-owned (rc=1, aliased nowhere), so
 // the deep reclaim — free each fresh child, then the box — is exactly balanced
 // (#4357). A tuple with nothing to free stays on the SHALLOW scalar-tuple path.
-function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+function tuple_lit_rc_reclaimable(e: parser.Expr, ttype: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
             if (tl.elements.len() == 0) { return false; }
-            return tuple_lit_elems_admissible(tl, structs) && tuple_lit_has_rc_child(tl, structs);
+            return tuple_lit_elems_admissible(tl, structs) && tuple_lit_has_rc_child(tl, ttype, structs);
         },
         _ => { return false; }
     }
@@ -25185,7 +25185,7 @@ function tuple_lit_elems_admissible(tup: parser.ExprTuple, structs: parser.Struc
 // requiring the INNER to carry an array is what left that shape, and any outer
 // tuple holding one, with no reclaim at all. The shallow scalar-tuple path does
 // not cover it either: expr_scalar_leaf excludes a tuple element by design.
-function tuple_lit_has_rc_child(tup: parser.ExprTuple, structs: parser.StructDecl[]): boolean {
+function tuple_lit_has_rc_child(tup: parser.ExprTuple, ttype: string, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < tup.elements.len()) {
         match (tup.elements[i]) {
@@ -25194,12 +25194,33 @@ function tuple_lit_has_rc_child(tup: parser.ExprTuple, structs: parser.StructDec
             parser.ExprString(_) => { return true; },
             parser.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
             parser.ExprBinary(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
-            parser.ExprCall(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
+            // A CALL at a union-typed position: emit_tuple_child_drops releases
+            // the box there, so the tuple has a child worth freeing. The declared
+            // TAG is what makes this countable, and it is also what keeps the
+            // credit disjoint from the shallow scalar-tuple path — a tuple
+            // carrying a union position is never all-scalar, so the two can
+            // never both credit the same local and double-free its box.
+            parser.ExprCall(_) => {
+                if (tuple_str_elem_fresh(tup.elements[i])) { return true; }
+                if (tuple_elem_tag_is_union(tuple_type_elem_tag(ttype, i), structs)) { return true; }
+            },
             _ => {}
         }
         i = i + 1;
     }
     return false;
+}
+
+// tuple_elem_tag_is_union reports whether a tuple element's declared TAG names a
+// tagged union — built-in `Option[..]` / `Result[..]`, or a declared enum. An
+// empty tag (an un-annotated binding, or a discarded expression statement with
+// no declaration at all) answers false, so those sites keep their prior
+// admission unchanged.
+function tuple_elem_tag_is_union(tag: string, structs: parser.StructDecl[]): boolean {
+    if (tag.len() >= 7 && tag[0:7] == "Option[") { return true; }
+    if (tag.len() >= 7 && tag[0:7] == "Result[") { return true; }
+    if (tag == "") { return false; }
+    return decl_is_enum(structs, tag);
 }
 
 // tuple_type_is_all_scalar reports whether `t` is a tuple TYPE annotation
@@ -25368,7 +25389,7 @@ function collect_fresh_rc_tuple_names(stmts: parser.Stmt[], structs: parser.Stru
 function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (tuple_lit_rc_reclaimable(v.init, structs)) { return push_str_unique(acc, v.name); }
+            if (tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return push_str_unique(acc, v.name); }
             return acc;
         },
         parser.StmtIf(iff) => {
@@ -25438,7 +25459,7 @@ function stmt_assigns_fresh_rc_tuple(st: parser.Stmt, name: string, ttype: strin
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target != name) { return true; }
-            return tuple_lit_rc_reclaimable(a.value, structs)
+            return tuple_lit_rc_reclaimable(a.value, ttype, structs)
                 && tuple_arg_payload_fresh(ttype, a.value, structs);
         },
         parser.StmtIf(f) => {
@@ -25470,7 +25491,7 @@ function collect_sweepable_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.Str
     match (st) {
         parser.StmtVar(v) => {
             if (v.type_name.len() < 2 || v.type_name[0:1] != "(") { return acc; }
-            if (!tuple_lit_rc_reclaimable(v.init, structs)) { return acc; }
+            if (!tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return acc; }
             if (!tuple_arg_payload_fresh(v.type_name, v.init, structs)) { return acc; }
             return push_str_unique(acc, v.name);
         },
