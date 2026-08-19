@@ -10613,3 +10613,73 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   safety controls — pointer payload bound, pointer payload carried out, and a
   whole-element extraction that must stay refused — pass either way).
   Refs #4353 #4451.
+
+- 2026-08-19: **a `Result` constructed at a tuple element position leaked its
+  box, and the #4353 survey re-measured against a native oracle that is valid
+  again.** `emit_tuple_child_drops`' union arm asks `tuple_union_elem_fresh`
+  whether an element CONSTRUCTS a tagged union here, and that was answered by
+  `expr_opt_elem_tag`, which returns a TAG. A bare `Ok(x)` cannot name the
+  Result's E arm, so nothing recovers a `Result[T, E]` from the expression and
+  every `Ok` / `Err` element answered "not a construction". The rest of the
+  tuple reclaimed around it — `(i, [i, i+1], Ok(i))` measured the same 40 as
+  `(i, Ok(i))`, which is what isolates the union box as the only thing leaking.
+
+  `expr_builtin_result_ctor` asks freshness directly: a one-argument `Ok` /
+  `Err` whose name is not a free function in this module. `is_user_fn` is
+  load-bearing — a shadowing `function Ok(...)` hands back a box the call did
+  not allocate, and `keep` still holds it. A same-named user-enum VARIANT never
+  reaches the predicate; `expr_enum_type` resolves it one line above.
+
+  Widening the same predicate to `Some` was measured and reverted as inert:
+  `Some([i, i+1])` at an element position is already credited, and the two
+  shapes where `expr_opt_elem_tag` could not name the payload —
+  `Option[(i32, i32)]` and `Option[Q]` at a tuple element — are not IR-eligible
+  at all, so there is no reachable program the widening would move.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_result_elem_reclaim_test.go` (6 cases x 3
+  backends; the three byte gates fail on the parent on all three legs, the three
+  safety controls — a shadowed `Ok`, a bare-ident element, and an `Ok` payload
+  bound and carried out of the loop — pass either way).
+
+  **Survey re-measured on this commit's parent**, `__heap_bump_bytes()` delta
+  per round as x86-64 | arm64 | wasm, native x86-64 alongside, all with
+  `__rc_underflow_count()` clean. The two `#7123` items the issue calls closed
+  are confirmed closed; the numbers in `#7123`'s own table predate `#7143` and
+  should not be quoted.
+
+  | churn shape | self-host | native | status |
+  |---|---|---|---|
+  | `(i, Some(i))` | 0 \| 0 \| 0 | 0 | closed |
+  | `(i, Tag.Num(i))`, user enum | 0 \| 0 \| 0 | 0 | closed |
+  | `(i, Ok(i))` / `(i, Err(i))` | 40 \| 40 \| 16 | 0 | **closed by this entry** |
+  | `(i, Some([i, i+1]))` | 40 \| 40 \| 24 | 0 | open — union PAYLOAD |
+  | `(i, Tag.Nums([i, i+1]))` | 40 \| 40 \| 24 | 0 | open — union PAYLOAD |
+  | `(i, Map { 1: i, 2: i+1 })` | 168 \| 168 \| 1 | 0 | open |
+  | `Some(Some(i))` | 80 \| 80 \| 32 | 0 | open |
+  | `Some(Ok(i))` | 80 \| 80 \| 32 | 0 | open |
+  | `Some(Tag.Num(i))` | 80 \| 80 \| 40 | 0 | open |
+  | `Some(Map { … })` | not IR-eligible | 128 | native leaks — no oracle |
+  | `Map[i32, string]` literal | 0 \| 0 \| 0 | 0 | closed |
+  | `Map[i32, i32[]]` literal | 80 \| 80 \| 48 | 0 | open — item 3 |
+  | `Map[i32, Q]` literal | 96 \| 96 \| 64 | 0 | open — item 3 |
+  | concrete `(i32, i32[])[]` producer | 0 \| 0 \| 0 | 0 | closed |
+  | erased-generic `(i32, T)[]` producer | 120 \| 120 \| 72 | 0 | open — #6299 |
+
+  So the map-column half of item 3 is a self-host parity gap again, as the
+  correction on #4353 says: native is flat on both non-string column shapes
+  after #7143. `Some(Map { … })` is the one row where native is the leakier
+  side, so it has no oracle.
+
+  What the remaining rows have in common is the reason none of them is another
+  arm on an existing walk. Every one needs the release to know a VARIANT's
+  payload layout — native's `enumVariantDropPlan` / `genEnumDropFn` — and the
+  self-host has no per-variant plan to consult; freeing an element by its
+  declared type instead is the over-admission this subsystem has taken three
+  times in a week. The erased-generic producer is the same shortfall one level
+  up: its return type carries a type var, so there is no element tuple to walk
+  until the call site's instantiation is available (#6299).
+
+  Two shapes are not IR-eligible at all and so cannot be measured on the
+  self-host side: a nested `Option` at a tuple element (`(i32, Option[Option[i32]])`)
+  and `Option[Map[…]]`. Refs #4353 #4451.
