@@ -11057,7 +11057,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		return nil
 	case "||":
 		// `a || b` → `if a then 1 else b`. The truthy branch
-		// normalises a to 1 the way the AST emitter does.
+		// normalises a to 1: `||` yields 0/1, not a's value.
 		if err := b.expr(n.Left); err != nil {
 			return err
 		}

@@ -67,11 +67,11 @@ function main(): i32 { return f(); }`, 21},
 			if len(asm) == 0 {
 				t.Fatalf("driver produced no asm")
 			}
-			// IR path produces a far smaller binary than the ~40 KB AST map/heap
-			// runtime; a generous bound just confirms the IR path was taken (a
-			// bail would refuse the module outright).
+			// The IR path produces a far smaller binary than the ~40 KB map/heap
+			// runtime a coarse need set pulls in; a generous bound confirms the
+			// per-need gating held.
 			if len(asm) > 33000 {
-				t.Fatalf("asm is %d bytes — expected the compact IR runtime; the module likely took a wider runtime", len(asm))
+				t.Fatalf("asm is %d bytes — expected the compact IR runtime; the need gating pulled in more than the module uses", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "need_"+tc.name, string(asm))
 			var cmd *exec.Cmd
