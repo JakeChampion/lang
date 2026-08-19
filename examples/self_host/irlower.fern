@@ -8461,7 +8461,26 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     // because their results carry views into the receiver's bytes — all four
     // still lower here, and all four keep the leak rather than risk the alias.
     var rslots: i32[] = [];
-    if (str_borrowing_method(field) && is_fresh_str_temp(recv, s)) {
+    // A SLICE receiver is a box nobody names either — `base[a:b].starts_with(..)`
+    // materialises one and the op is done with it once it returns.
+    // is_fresh_str_temp refuses it (a slice aliases its source's bytes, which is
+    // the question it answers), but str_borrowing_method is the warrant that
+    // matters here: every method in that set reads the receiver's bytes and hands
+    // back a scalar or a freshly allocated string, never the receiver or a view of
+    // it. `trim` / `replace` / `chars` / `lines` / `split` are outside it precisely
+    // because they can alias, and they keep the leak.
+    var rview: boolean = false;
+    var rtake: boolean = false;
+    if (str_borrowing_method(field)) {
+        rtake = is_fresh_str_temp(recv, s);
+        if (!rtake) {
+            match (recv) {
+                parser.ExprSlice(_) => { rtake = true; rview = true; },
+                _ => {}
+            }
+        }
+    }
+    if (rtake) {
         var rn: string = "$srcv" + util.i32_to_string(p.locals.len());
         p = p.add_local(rn);
         var rslot: i32 = p.slot_of(rn);
@@ -8469,10 +8488,10 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
         p = p.emit(ir.op_load_local(rslot));
         rslots = rslots.append(rslot);
     }
-    if (field == "to_ascii_upper") { return free_stashed_str_args(p.emit(ir.op_str_to_upper()), rslots); }
-    if (field == "to_ascii_lower") { return free_stashed_str_args(p.emit(ir.op_str_to_lower()), rslots); }
+    if (field == "to_ascii_upper") { return free_stashed_recv(p.emit(ir.op_str_to_upper()), rslots, rview); }
+    if (field == "to_ascii_lower") { return free_stashed_recv(p.emit(ir.op_str_to_lower()), rslots, rview); }
     if (field == "trim") { return p.emit(ir.op_str_trim()); }
-    if (field == "reverse") { return free_stashed_str_args(p.emit(ir.op_str_reverse()), rslots); }
+    if (field == "reverse") { return free_stashed_recv(p.emit(ir.op_str_reverse()), rslots, rview); }
     if (field == "chars") { return p.emit(ir.op_str_chars()); }
     if (field == "lines") { return p.emit(ir.op_str_lines()); }
     p = lower_expr(args[0], p);
@@ -8482,15 +8501,15 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
         if (!p.ok) { return p; }
         return p.emit(ir.op_str_replace());
     }
-    if (field == "repeat") { return free_stashed_str_args(p.emit(ir.op_str_repeat()), rslots); }
+    if (field == "repeat") { return free_stashed_recv(p.emit(ir.op_str_repeat()), rslots, rview); }
     if (field == "split") { return p.emit(ir.op_str_split()); }
-    if (field == "starts_with") { return free_stashed_str_args(p.emit(ir.op_str_starts_with()), rslots); }
-    if (field == "ends_with") { return free_stashed_str_args(p.emit(ir.op_str_ends_with()), rslots); }
-    if (field == "index_of") { return free_stashed_str_args(p.emit(ir.op_str_index_of()), rslots); }
+    if (field == "starts_with") { return free_stashed_recv(p.emit(ir.op_str_starts_with()), rslots, rview); }
+    if (field == "ends_with") { return free_stashed_recv(p.emit(ir.op_str_ends_with()), rslots, rview); }
+    if (field == "index_of") { return free_stashed_recv(p.emit(ir.op_str_index_of()), rslots, rview); }
     // contains: index_of(sub) >= 0
     p = p.emit(ir.op_str_index_of());
     p = p.emit(ir.op_const_i32(0));
-    return free_stashed_str_args(p.emit(ir.op_bin("ge_s", 0, false)), rslots);
+    return free_stashed_recv(p.emit(ir.op_bin("ge_s", 0, false)), rslots, rview);
 }
 
 // lower_arr_str_join lowers `xs.join(sep)` on a string[] receiver to a call of the
@@ -22650,7 +22669,7 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
 // names the lambda captures — the env-build retain makes the capture a counted
 // reference the env sweep releases. Every other statement defers to the plain
 // walker (a lambda in any other position still escape-flags its captures).
-function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], clo_ok: string[]): boolean {
+function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], clo_ok: string[], recv_borrow: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         var skip: boolean = false;
@@ -26334,6 +26353,25 @@ function stash_fresh_str_arg(s: LowerState, arg: parser.Expr, callee: string, ai
 // Net-zero on the operand stack (load -> free -> drop), so the call's result —
 // live beneath — is untouched; __fern_str_free is rc-aware, so a box that
 // turned out to be retained only decs.
+// free_stashed_recv drains the RECEIVER stash. A view box needs
+// __fern_str_view_free, not __fern_str_free: the latter skips an immortal rc by
+// design, so draining a slice receiver through it strands the box it was meant
+// to release. On wasm the same slot holds a payload-sized COPY with an ordinary
+// rc, and both helpers free it — the distinction only bites on the backends
+// where a slice is zero-copy.
+function free_stashed_recv(s: LowerState, slots: i32[], view: boolean): LowerState {
+    if (!view) { return free_stashed_str_args(s, slots); }
+    var st: LowerState = s;
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        st = st.emit(ir.op_load_local(slots[i]));
+        st = st.emit(ir.op_call_direct("__fern_str_view_free", 1));
+        st = st.emit(ir.op_drop());
+        i = i + 1;
+    }
+    return st;
+}
+
 function free_stashed_str_args(s: LowerState, slots: i32[]): LowerState {
     var st: LowerState = s;
     var i: i32 = 0;
