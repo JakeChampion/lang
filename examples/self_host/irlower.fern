@@ -21790,13 +21790,8 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
                     // A freshly CONSTRUCTED tagged union at an element position —
                     // a built-in Some/Ok/Err box or a user-enum variant. The box
                     // is [tag, payload], allocated by this construction and
-                    // aliased nowhere, so the shallow dec is balanced. Its
-                    // PAYLOAD is left alone: releasing that needs the variant's
-                    // own drop plan, and leaking it is safe where freeing an
-                    // aliased one would not be.
-                    s = emit_load_tuple_path(s, slot, path_child(path, k));   // union box ptr
-                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    s = s.emit(ir.op_drop());
+                    // aliased nowhere, so the shallow dec is balanced.
+                    s = emit_tuple_union_elem_drop(s, slot, path_child(path, k), tup.elements[k]);
                 }
             },
             parser.ExprTuple(inner) => {
@@ -21876,6 +21871,103 @@ function expr_builtin_result_ctor(e: parser.Expr, s: LowerState): boolean {
         _ => { return false; }
     }
     return false;
+}
+
+// emit_tuple_union_elem_drop releases the tagged-union element at `cp`, and where
+// the construction proves its PAYLOAD sole-owned, that payload first. The box is
+// always freed; what varies is how much of what it points at goes with it.
+//
+//   - A USER enum takes the same runtime variant dispatch a consumed-by-match
+//     enum local gets: read the tag, release that variant's rc payload fields,
+//     then free the box. It needs no enum_all_variants_rc_droppable gate — that
+//     predicate admits the LOCAL consume path, and the emitter simply releases
+//     nothing for a field whose type it cannot name, which leaks rather than
+//     corrupts. Dispatching on the resolved enum TYPE is also what keeps a user
+//     variant spelled `Some` off the built-in path below, where the Option
+//     payload offset would only fit it by coincidence.
+//   - A built-in Some/Ok/Err whose payload is FRESH by the same rule the sibling
+//     element arms use (tuple_union_payload_freefn) takes that payload's release
+//     through op_opt_payload.
+//   - Anything else keeps the shallow dec, leaking the payload as before. A leak
+//     is what an unproven payload is owed: freeing an aliased one is unrecoverable
+//     where leaking it is merely wasteful.
+//
+// The payload is released BEFORE the box in every case, so no read chases through
+// an already-freed box.
+function emit_tuple_union_elem_drop(st: LowerState, slot: i32, cp: i32[], e: parser.Expr): LowerState {
+    var s: LowerState = st;
+    var ename: string = expr_enum_type(e, s);
+    var pf: string = "";
+    if (ename == "") { pf = tuple_union_payload_freefn(e); }
+    if (ename == "" && pf == "") {
+        s = emit_load_tuple_path(s, slot, cp);          // union box ptr
+        s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        s = s.emit(ir.op_drop());
+        return s;
+    }
+    // Both deep releases read the box through a SLOT, so hoist the element
+    // pointer into a temp; each zeroes it after freeing, leaving any later
+    // sweep a null to dec.
+    var hn: string = "$tue" + util.i32_to_string(s.locals.len());
+    s = s.add_local(hn);
+    var h: i32 = s.slot_of(hn);
+    s = emit_load_tuple_path(s, slot, cp);              // union box ptr
+    s = s.emit(ir.op_store_local(h));
+    if (ename != "") { return emit_enum_variant_drops(s, h, ename); }
+    return emit_opt_payload_drop_via(s, h, pf);
+}
+
+// tuple_union_payload_freefn names the runtime helper that fully releases the
+// payload of a built-in `Some(x)` / `Ok(x)` / `Err(x)` at a tuple element, or ""
+// when this site cannot prove the payload sole-owned. Only reached for an
+// element that is NOT a user enum, so the ctor names below cannot be a user
+// variant that merely shares the spelling.
+//
+// It asks the payload expression exactly what emit_tuple_child_drops asks an
+// ELEMENT expression one level up — the freshness question is the same question
+// about the same kind of expression, so `(i, [a, b])` and `(i, Some([a, b]))`
+// admit the same array. A bare ident answers "", keeping its leak: it aliases a
+// live local the site never inc'd. An element that is not a construction at all
+// (a call returning an Option) answers "" for want of a payload expression.
+function tuple_union_payload_freefn(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1 || !builtin_union_ctor(c.callee)) { return ""; }
+            return tuple_union_arg_freefn(c.args[0]);
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// builtin_union_ctor reports whether `callee` names a built-in Option/Result
+// constructor, bare (`Some`) or qualified (`Option.Some`). A NAME test is enough
+// only because admission ran first: tuple_union_elem_fresh resolves a user
+// variant through expr_enum_type and a shadowing free function through
+// expr_builtin_result_ctor's is_user_fn, so neither reaches this far.
+function builtin_union_ctor(callee: parser.Expr): boolean {
+    match (callee) {
+        parser.ExprIdent(id) => { return id.name == "Some" || id.name == "Ok" || id.name == "Err"; },
+        parser.ExprFieldAccess(fa) => { return fa.field == "Some" || fa.field == "Ok" || fa.field == "Err"; },
+        _ => {}
+    }
+    return false;
+}
+
+// tuple_union_arg_freefn is the payload half: the release for a construction
+// argument, or "" for one this site cannot prove sole-owned.
+function tuple_union_arg_freefn(arg: parser.Expr): string {
+    match (arg) {
+        parser.ExprArray(_) => {
+            if (tuple_strarr_elem_fresh(arg)) { return "__fern_str_arr_free"; }
+            return "__fern_rc_dec";
+        },
+        parser.ExprString(_) => { return "__fern_str_free"; },
+        _ => {
+            if (tuple_str_elem_fresh(arg)) { return "__fern_str_free"; }
+        }
+    }
+    return "";
 }
 
 // emit_tuple_type_child_drops is the TYPE-driven sibling of emit_tuple_child_drops:
