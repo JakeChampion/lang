@@ -476,6 +476,54 @@ function main(): i32 {
                             ir.op_end(), ir.op_return()];
     out = out + "pw_while_true_in_optimize: " + render(ir.optimize_ops(pw_loop)) + "\n";
 
+    // 17. Folding THROUGH a width normalise. The lowering wraps every i32 /
+    //     u32 / sub-word arithmetic result back into its type's width, so a
+    //     nested constant expression arrives with one of those ops sitting
+    //     between the constant the fold just produced and the op that consumes
+    //     it. `1 + 2 * 3` is the shape: without this the pass folds the `mul`,
+    //     then stops on `const 1 ; const 6 ; int_cast ; add` and ships a
+    //     runtime add of two constants.
+    var wc_nested: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_const_i32(3),
+                              ir.op_bin("mul", 0, false), ir.op_int_cast("i32"),
+                              ir.op_bin("add", 0, false), ir.op_int_cast("i32")];
+    out = out + "wc_nested: " + render(ir.fold_const_binaries(wc_nested)) + "\n";
+
+    // 17a. `as u8` masks rather than merely disappearing — a u8 arithmetic
+    //      result folds to the value the interpreter's per-width wrap gives.
+    var wc_u8: ir.Op[] = [ir.op_const_i32(300), ir.op_int_cast("u8")];
+    out = out + "wc_u8_masks: " + render(ir.fold_const_binaries(wc_u8)) + "\n";
+
+    // 17b. `as u32` / u32_wrap zero-extend, so a NEGATIVE constant is refused:
+    //      the result is 2^32 + v, which no i32 constant carries. u32's max
+    //      lowers as exactly this pair (`const_i32 -1 ; u32_wrap`), so a fold
+    //      here would turn it into -1.
+    var wc_u32: ir.Op[] = [ir.op_const_i32(9), ir.op_int_cast("u32")];
+    out = out + "wc_u32: " + render(ir.fold_const_binaries(wc_u32)) + "\n";
+    var wc_u32_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_int_cast("u32")];
+    out = out + "wc_u32_neg_refused: " + render(ir.fold_const_binaries(wc_u32_neg)) + "\n";
+    var wc_wrap: ir.Op[] = [ir.op_const_i32(9), ir.op_u32_wrap()];
+    out = out + "wc_u32_wrap: " + render(ir.fold_const_binaries(wc_wrap)) + "\n";
+    var wc_wrap_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_u32_wrap()];
+    out = out + "wc_u32_wrap_neg_refused: " + render(ir.fold_const_binaries(wc_wrap_neg)) + "\n";
+
+    // 17c. int_extend / int_wrap CHANGE the width and are refused: on wasm they
+    //      change the value's type (i64.extend_i32_s / i32.wrap_i64), so a
+    //      dropped one leaves an i64 consumer reading an i32.
+    var wc_ext: ir.Op[] = [ir.op_const_i32(9), ir.op_int_extend(false)];
+    out = out + "wc_int_extend_refused: " + render(ir.fold_const_binaries(wc_ext)) + "\n";
+    var wc_narrow: ir.Op[] = [ir.op_const_i32(9), ir.op_int_wrap(false)];
+    out = out + "wc_int_wrap_refused: " + render(ir.fold_const_binaries(wc_narrow)) + "\n";
+
+    // 17d. The shared readability predicate still gates it: a hex text constant
+    //      is not folded through a cast any more than through a binary.
+    var wc_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_int_cast("i32")];
+    out = out + "wc_hex_refused: " + render(ir.fold_const_binaries(wc_hex)) + "\n";
+
+    // 17e. An opaque operand keeps its cast — this folds constants, it does not
+    //      delete width normalisation.
+    var wc_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_int_cast("i32")];
+    out = out + "wc_opaque_refused: " + render(ir.fold_const_binaries(wc_opaque)) + "\n";
+
     write(out);
 
     // Exit code: 0 when the fixpoint held.
