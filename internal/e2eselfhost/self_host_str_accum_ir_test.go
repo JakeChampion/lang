@@ -77,13 +77,16 @@ var strAccumIRCases = []struct {
 		`function build(n: i32): string { var s: string = "start"; var i: i32 = 0; while (i < n) { s = s + "z"; if (s.len() > 8) { return s; } i = i + 1; } return s; } function main(): i32 { return build(100).len(); }`,
 		9, true},
 	// NEGATIVE: a NON-FRESH reassignment (`s = "reset"`, a literal alias) must exclude
-	// the accumulator — freeing a later s could double-free the literal-shared box. No
-	// loop operand is a bare IDENT x (not a fresh temp), so emit_str_concat_reclaim
-	// frees no operand either; this isolates the accumulator-exclusion contract. No
-	// __fern_str_free emitted; value stays correct. Reaches len 5 ("reset") kept.
+	// the accumulator — freeing a later s could double-free the literal-shared box.
+	// The loop operand x is ALIASED by kx, which is what keeps it un-reclaimable and
+	// leaves the accumulator as the only thing a reclaim could be about. A bare
+	// literal-init local would no longer serve: a concat operand is a borrow, so an
+	// x used only there earns the ordinary literal-local reclaim and the count stops
+	// isolating this contract. 0 sites here, 2 under a compiler that frees x.
+	// "reset" (5) + x (1) = 6.
 	{"accum-nonfresh-reassign-not-reclaimed",
-		`function main(): i32 { var x: string = "x"; var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } s = "reset"; return s.len(); }`,
-		5, false},
+		`function main(): i32 { var x: string = "x"; var kx: string = x; var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } s = "reset"; return s.len() + kx.len(); }`,
+		6, false},
 }
 
 // TestSelfHostStrAccumIRX86_64 compiles each case through the self-hosted x86-64

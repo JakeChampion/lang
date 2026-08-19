@@ -41,13 +41,18 @@ var strConcatTempIRCases = []struct {
 		0, -1},
 	// Ident operands, result consumed inline by .len(): the fresh RESULT temp
 	// is released (the #4365 value-consuming-receiver reclaim — exactly ONE
-	// __fern_str_free site), while the aliased operands a/b are never freed
-	// (a count of 3 — result + both operands — would be the over-release this
-	// case exists to catch; the exit code proves the values survive).
-	// "ab"+"cde" = len 5.
+	// __fern_str_free site), while the ALIASED operands a/b are never freed;
+	// the exit code proves the values survive.
+	//
+	// a and b are aliased by ka/kb, which is what makes them un-reclaimable and
+	// what this case is about. Bare literal-init locals would no longer serve:
+	// a concat operand is a borrow, so `var a = "ab"` used only there earns the
+	// ordinary literal-local reclaim and the count stops isolating the alias
+	// contract. Aliased: 1 site here, 5 under a compiler that frees the operands.
+	// ("ab"+"cde").len() + 2 + 3 = 10.
 	{"ident-operands-result-only",
-		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; return (a + b).len(); }`,
-		5, 1},
+		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; var ka: string = a; var kb: string = b; return (a + b).len() + ka.len() + kb.len(); }`,
+		10, 1},
 	// A scalar `.to_string()` operand (`"n" + w.to_string()`) is the builtin
 	// fresh producer — freed after the concat (#4353 concat-temp finding: it
 	// was the one producer is_fresh_str_temp missed, leaking the temp per
