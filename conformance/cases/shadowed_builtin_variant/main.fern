@@ -1,0 +1,44 @@
+// A user enum may name its variants after Option's / Result's. The two
+// enums coexist: a match arm means the variant of ITS scrutinee, so bare
+// arms stay legal on both, and a construction says which enum it means.
+//
+// Declaring the enum used to be enough to break the program outright.
+// Every loaded module shared one flat variant table, so `Some` / `None`
+// here made core/int's own bare `return None;` ambiguous and the build
+// failed pointing into stdlib source (#6951). Bare-variant resolution is
+// module-scoped now, so core/int keeps resolving its own references and
+// only THIS module sees both candidates.
+//
+// The fixture harness prepends `import "core/int";` to every case, which
+// is what made this shape unlandable as a conformance case at all.
+enum Opt { Some(i32), None }
+enum Outcome { Ok(i32), Err(i32) }
+
+function opt_of(o: Opt): i32 {
+    match (o) { Some(v) => { return v; }, None => { return 5; } }
+}
+
+function outcome_of(r: Outcome): i32 {
+    match (r) { Ok(v) => { return v; }, Err(e) => { return e * 100; } }
+}
+
+// The genuine builtins, matched with the same bare arm names in the same
+// program — the scrutinee is the only thing telling the two apart.
+function builtin_opt(o: Option[i32]): i32 {
+    match (o) { Some(v) => { return v; }, None => { return 7; } }
+}
+
+function builtin_res(r: Result[i32, i32]): i32 {
+    match (r) { Ok(v) => { return v; }, Err(e) => { return e * 1000; } }
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    total = total + opt_of(Opt.Some(1));        // 1
+    total = total + opt_of(Opt.None);           // 6
+    total = total + outcome_of(Outcome.Ok(2));  // 8
+    total = total + builtin_opt(Option.Some(3));   // 11
+    total = total + builtin_opt(Option.None);      // 18
+    total = total + builtin_res(Result.Ok(4));     // 22
+    return total;
+}

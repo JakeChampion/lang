@@ -2914,11 +2914,14 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	const libEnum = "pub enum Kind { Text, Number }\n"
 	const otherEnum = "pub enum Kind { Text, Blah }\n"
 
+	// lib imports other, so both Kinds are candidates for lib's own bare
+	// `Text` — an ambiguity lib can actually resolve, and the only kind
+	// #6951 still reports.
 	t.Run("prefers the reader's own module", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
-			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
-				"function main(): i32 { return lib.pick() + other.n(); }\n",
-			"lib.fern": libEnum + "pub function pick(): i32 {\n" +
+			"main.fern": "import \"./lib\";\n" +
+				"function main(): i32 { return lib.pick(); }\n",
+			"lib.fern": "import \"./other\";\n" + libEnum + "pub function pick(): i32 {\n" +
 				"    var k: Kind = Text;\n    return 0;\n}\n",
 			"other.fern": otherEnum + "pub function n(): i32 { return 0; }\n",
 		}, "main.fern")

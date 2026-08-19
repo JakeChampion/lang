@@ -944,10 +944,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// Register every enum declaration. Variant names are recorded
 	// in variantOf so an unqualified `Some(x)` or `Red` can be
 	// rewritten into a typed *EnumLit during expression checking.
-	// Two enums declaring the same variant name (e.g. `Color.Red`
-	// and `Status.Red`) coexist — the bare `Red` becomes ambiguous
-	// and must be qualified at the use site (`Color.Red`); the
-	// resolution helpers below produce the disambiguation error.
+	// The table spans every loaded module, so entries are filtered
+	// by declaring module at each use site (visibleVariants); two
+	// enums a single module can see that declare one variant name
+	// (`Color.Red` and `Status.Red`) make the bare `Red` ambiguous
+	// there, and the resolution helpers below say so.
 	for _, ed := range prog.Enums {
 		if _, dup := c.info.Enums[ed.Name]; dup {
 			c.errfCode(ed.P, "E006", "enum %q redeclared", ed.Name)
@@ -963,9 +964,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			}
 			seen[v.Name] = true
 			c.variantOf[v.Name] = append(c.variantOf[v.Name], variantRef{
-				enumName: ed.Name,
-				index:    i,
-				payloads: v.Payloads,
+				enumName:  ed.Name,
+				index:     i,
+				payloads:  v.Payloads,
+				srcModule: ed.SourceModule,
 			})
 		}
 	}
@@ -5420,13 +5422,12 @@ type checker struct {
 	mapErrReported   bool
 
 	// variantOf maps a variant's bare name (`Some`, `Err`, `Red`) to
-	// every enum that declares it. Built during the enum
-	// registration pass. Most names have exactly one entry — the
-	// IDE / IR pretend the map is `[string]variantRef`. When two
-	// enums declare the same variant (e.g. `Color.Red` and
-	// `Status.Red` coexist), the unqualified reference is
-	// ambiguous and the user must qualify with `Color.Red`. The
-	// resolution helpers below pick the right entry from the slice.
+	// every enum that declares it, across every loaded module. Built
+	// during the enum registration pass. Most names have exactly one
+	// entry — the IDE / IR pretend the map is `[string]variantRef`.
+	// Read it through visibleVariants, never directly: entries the
+	// referring module cannot name are not candidates there, and two
+	// entries it can name make the bare reference ambiguous.
 	variantOf map[string][]variantRef
 
 	// Closure-capture plumbing. While checking a local function body,
@@ -6037,19 +6038,49 @@ type variantRef struct {
 	enumName string
 	index    int
 	payloads []ast.Type
+	// srcModule is the declaring enum's SourceModule, mirrored here so
+	// visibleVariants can filter without a second lookup. "" for the
+	// built-in enums, which every module sees.
+	srcModule string
+}
+
+// visibleVariants narrows the whole-program variantOf entries for
+// `name` to the enums the module being checked can actually name, per
+// the import closure modload recorded (docs/PRELUDE-TO-MODULES.md).
+//
+// Every other namespace is already scoped this way — modload mangles
+// each module's types and functions to `<mod>__name`, and moduleSees
+// gates nominal and method references. Variant names are the one kind
+// modload leaves bare, so without this filter a `Kind { Text }` in any
+// loaded module made every other module's bare `Text` ambiguous, and
+// the diagnostic landed on source its author could not edit (#6951).
+//
+// A built-in enum's SourceModule is "", which moduleSees treats as
+// universal, so Option / Result / IoError / JsonValue stay candidates
+// everywhere by construction.
+func (c *checker) visibleVariants(name string) []variantRef {
+	all := c.variantOf[name]
+	from := c.currentModule()
+	var out []variantRef
+	for _, vr := range all {
+		if c.moduleSees(from, vr.srcModule) {
+			out = append(out, vr)
+		}
+	}
+	return out
 }
 
 // resolveVariant looks up a variant reference by name and (optional)
-// enum qualifier. Returns the matching variantRef and ok=true. If
-// `enumName` is non-empty, only the entry on that specific enum
-// matches — used for `Color.Red`-style qualified references. If
-// `enumName` is empty (the bare `Red` / `Some(x)` form), there must
-// be exactly one candidate; multiple candidates means the call site
-// has to disambiguate. multi reports whether the bare-name lookup
-// hit more than one entry — the caller uses it to produce a
+// enum qualifier among the variants visible here. Returns the matching
+// variantRef and ok=true. If `enumName` is non-empty, only the entry on
+// that specific enum matches — used for `Color.Red`-style qualified
+// references. If `enumName` is empty (the bare `Red` / `Some(x)` form),
+// there must be exactly one candidate; multiple candidates means the
+// call site has to disambiguate. multi reports whether the bare-name
+// lookup hit more than one entry — the caller uses it to produce a
 // "qualify with `<E>.<v>`" hint.
 func (c *checker) resolveVariant(name, enumName string) (variantRef, bool, bool) {
-	cands := c.variantOf[name]
+	cands := c.visibleVariants(name)
 	if enumName != "" {
 		for _, vr := range cands {
 			if vr.enumName == enumName {
@@ -6100,11 +6131,11 @@ func (c *checker) enumHintName(name string) string {
 	return demangle(name)
 }
 
-// variantEnumList returns a human-readable list of enum names that
-// declare `name`. Used in the "ambiguous variant" diagnostic so the
-// user sees every candidate, not just the first one.
+// variantEnumList returns a human-readable list of the enum names that
+// declare `name` and are visible here. Used in the "ambiguous variant"
+// diagnostic so the user sees every candidate, not just the first one.
 func (c *checker) variantEnumList(name string) string {
-	cands := c.variantOf[name]
+	cands := c.visibleVariants(name)
 	if len(cands) == 0 {
 		return ""
 	}
@@ -6131,7 +6162,7 @@ func (c *checker) variantEnumList(name string) string {
 // suggestion is spellable where the reader is standing, rather than
 // whichever candidate the map happened to list first.
 func (c *checker) variantQualifierHint(name string) string {
-	cands := c.variantOf[name]
+	cands := c.visibleVariants(name)
 	if len(cands) == 0 {
 		return ""
 	}

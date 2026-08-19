@@ -1,0 +1,7 @@
+// `Wrap` sits at index 2 here and index 0 in ./b, so resolving one
+// module's constructor against the other's enum builds a real-but-wrong
+// tag rather than failing to find one.
+enum Kind { Pad0, Pad1, Wrap(i32) }
+
+pub function mk(v: i32): Kind { return Wrap(v); }
+pub function get(k: Kind): i32 { match (k) { Wrap(v) => { return v; }, _ => { return -1; } } }

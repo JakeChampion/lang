@@ -361,6 +361,18 @@ sites. `ast.Program.LoadedStdlibPaths` records what was loaded, so a module
 pulled in twice (directly + transitively) dedupes rather than redeclaring its
 methods.
 
+**Enum variant names are the exception to the mangling**, and the checker
+scopes them instead. `enum Kind { Text }` keeps a bare `Text` in the merged
+program, so the checker resolves a bare variant reference only among the enums
+the referring module can name — `ModuleImports` (the import closure, `pub use`
+targets included) is the test, applied by `visibleVariants` in
+`internal/checker/checker.go`. Two such enums make the reference ambiguous
+(E036) and it must be qualified; an enum in a module outside that closure is
+not a candidate at all. Built-in enums carry no `SourceModule` and count
+everywhere. Without this a `Kind { Text }` anywhere in the program made every
+module's bare `Text` ambiguous, including stdlib source the author cannot edit
+(#6951).
+
 That dedupe also closed an older bug: an explicit `import "std/foo";` of a
 module that transitively imports another (e.g. `std/json` → `core/int`) sent
 bare-name method dispatch (`(n).to_string()`) through the mangled
