@@ -34,6 +34,28 @@ func countUserCalls(asm []byte, callee string) int {
 	return count
 }
 
+// countCallsInFn counts `call <callee>` sites inside ONE user function
+// `__fn_<fn>`, for a contract about where a release lands rather than whether
+// the program contains one at all. A caller-side reclaim and a callee-side one
+// are different verdicts, and a whole-output count cannot tell them apart.
+func countCallsInFn(asm []byte, fn string, callee string) int {
+	needle := []byte("call " + callee)
+	label := []byte("__fn_" + fn + ":")
+	count := 0
+	inFn := false
+	for _, line := range bytes.Split(asm, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && line[0] != '.' && bytes.HasSuffix(trimmed, []byte(":")) {
+			inFn = bytes.Equal(trimmed, label)
+			continue
+		}
+		if inFn && bytes.Contains(line, needle) {
+			count++
+		}
+	}
+	return count
+}
+
 // countUserStrFreeReclaims counts user-code `call __fn___fern_str_free`
 // sites (see countUserCalls for the helper-body exclusion rationale).
 func countUserStrFreeReclaims(asm []byte) int {

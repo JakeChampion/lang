@@ -10155,3 +10155,59 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   independently. The 2 safety controls — a whole-element extraction that must
   still be refused, and a bare-ident array alias beside the nested box — pass
   either way. Refs #4353 #4451.
+- 2026-08-19 (correcting the five-shape table two entries up): `base[4:base.len()].len()`
+  does NOT strand its view box. The box is frame-allocated exactly as designed — the
+  emitted x86-64 loop reads `leaq -88(%rbp)` and nothing else — and what the 47
+  B/round buys is the SOURCE. `base` is a fresh concat rebound each iteration,
+  and the emitted loop for the control shape `base.len()` carries the cow-guarded
+  `__fern_str_free` of the superseded box while the slice shape carries no
+  release at all.
+
+  `expr_unsafe_for` is why: its ExprSlice arm counted every slice as an escape
+  ("a slice creates a VIEW that aliases the source buffer"), so `base` lost its
+  "STR:" credit and neither the loop-rebind release nor the exit sweep ever freed
+  it. That verdict is right for a slice that can be carried out of the
+  expression, and wrong for one consumed inside it — which is a line the LOWERER
+  already draws. `lower_view_borrowed` marks the six positions where a view is
+  read and discarded (concat and comparison operands, the `len(x)` builtin
+  argument, the `.len()` method receiver, an index base, an outer slice's base),
+  and `lower_str_slice_frame` puts the box for one in reserved `!view!` frame
+  slots `slot_of` cannot name. `expr_unsafe_for_view_pos` is that same list asked
+  as an escape question, and it is called from the same six positions.
+
+  Measured over 400 rounds of a 170-byte producer, x86-64 / arm64 / wasm:
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `base[4:12].len()` | 80000 / 80000 / 83200 | 0 / 0 / 9600 |
+  | `base[0:8] == pre` | 80000 / 80000 / 83200 | 0 / 0 / 9600 |
+  | `(base[0:8] + "!").len()` | 80000 / 80000 / 83200 | 0 / 0 / 9600 |
+  | `len(base[4:12])` | 80000 / 80000 / 83200 | 0 / 0 / 9600 |
+  | `base[4:12][1]` | 80000 / 80000 / 83200 | 0 / 0 / 9600 |
+  | `base[4:20][2:6].len()` | 80000 / 80000 / 92800 | 0 / 0 / 19200 |
+
+  The wasm residual is the view itself: a wasm slice COPIES rather than viewing,
+  so its cost scales with the window and there is no frame form to remove it.
+  That is a separate shape, not a leftover of this one.
+
+  Two boundaries were probed against a deliberately unsound compiler (every
+  slice a borrow) rather than argued: a RETURNED view and a view passed to a
+  retaining callee both read recycled bytes under it and are exit-97 there, so
+  they must keep escaping — and `.trim()` on a slice is in the same class,
+  because trim returns a view of its receiver. `str_borrowing_method` is the set
+  that does not (it also replaced three inline copies of the same nine names).
+  Those probes are the refusal half of
+  `internal/e2eselfhost/self_host_str_slice_borrow_test.go`; note the padding
+  there is deliberately the SAME length as the source, because an earlier version
+  with differently-sized padding passed against the unsound compiler — a freed
+  buffer nothing has reused still reads correctly.
+
+  Not runnable locally in this container: the stage-2 self-compile exits 125 on
+  BOTH this branch and its base, at the same 1m32, so that is the 16 GiB arena
+  against 15 GB of RAM and not a signal about a change.
+
+  Separately, `returned-not-reclaimed` in `self_host_str_reclaim_ir_test.go` now
+  counts inside `h` rather than program-wide. The case's contract is that a
+  producer does not free the box it hands back; `main` DOES release it at the
+  `h().len()` read now that the fresh-return registry sees through `h`, which is
+  what the registry is for. Refs #6544 #4451.
