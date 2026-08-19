@@ -3055,6 +3055,26 @@ pub function is_leaksafe_array_field(t: string): boolean {
         || is_subword_array_type(t);
 }
 
+// counted_retain_array_param is the ARRAY tier's candidacy test for a
+// COUNTED-RETAIN parameter. It is deliberately NOT is_leaksafe_array_field,
+// which asks a different question: whether a struct FIELD of this type may be
+// released ELEMENT-BLIND. Both backends read that one to choose a shallow field
+// release over a deep one (asm_ir / asm_arm64_ir `k_scalar`), so widening it
+// would make a `string[]` field free its buffer and strand every element in it.
+//
+// The counted position needs no such property. The release there is the
+// caller's post-call dec on a temp the CALLEE has retained, so it takes rc 2 ->
+// 1 and frees nothing; the elements go when the retaining struct drops. Element
+// blindness only matters when the dec is the LAST reference, and a counted
+// classification is precisely what rules that out.
+//
+// `string[]` is the pointer-element array this admits. Struct- and enum-element
+// arrays are not here: their reclaim goes through is_struct_array_field_type /
+// is_enum_array_field_type, whose drop paths this slice did not measure.
+pub function counted_retain_array_param(t: string): boolean {
+    return is_leaksafe_array_field(t) || t == "string[]";
+}
+
 // is_float_array_type_name reports whether the declared type name `t` is a
 // FLOAT array — one whose elements ride the 8-byte-stride f64 layout that
 // mark_f64arr tracks. Both `f64[]` and `f32[]` do: a scalar `f32` lowers to a
@@ -9718,6 +9738,9 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     var ai: i32 = 0;
     var lat_slots: i32[] = [];
     var laa_slots: i32[] = [];
+    // Pointer-element array temps release DEEP, so they stash apart from the
+    // element-blind laa_slots above.
+    var lsa_slots: i32[] = [];
     while (ai < c.args.len()) {
         // A bare function-name argument at a "fn"-typed param
         // position is a function VALUE (a function pointer):
@@ -9864,15 +9887,28 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             // memory. Array- and struct-returning callees lower through other
             // paths that never reach this block today; stating the requirement
             // here keeps that an invariant rather than an accident.
-            var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai)
-                || arr_param_counted_at(sc.sigs.param_counted, cid.name, ai);
-            if (arrlit_arg && sc.ok && arg_releasable) {
+            var counted_pos: boolean = arr_param_counted_at(sc.sigs.param_counted, cid.name, ai);
+            var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai) || counted_pos;
+            // A POINTER-element producer temp (`keep(mk(i), i)` on a `string[]`,
+            // #6544) rides the COUNTED position and only that one. The dec here
+            // is element-blind, which is safe exactly while it is not the last
+            // reference: counted means the callee retained the array and will
+            // deep-free it on its own drop, so this takes rc 2 -> 1. At a merely
+            // BORROWABLE position nothing holds a second reference, the same dec
+            // would free the buffer at rc 1, and every element box in it would be
+            // stranded — so those keep today's safe leak.
+            var ptrarr_arg: boolean = false;
+            if (sc.ok && counted_pos && !arrlit_arg) {
+                ptrarr_arg = owned_fresh_call_callee(c.args[ai], "STRARR:", sc).len() > 0;
+            }
+            if ((arrlit_arg || ptrarr_arg) && sc.ok && arg_releasable) {
                 var laan: string = "$laa" + util.i32_to_string(sc.locals.len());
                 sc = sc.add_local(laan);
                 var laas: i32 = sc.slot_of(laan);
                 sc = sc.emit(ir.op_store_local(laas));
                 sc = sc.emit(ir.op_load_local(laas));
-                laa_slots = laa_slots.append(laas);
+                if (ptrarr_arg) { lsa_slots = lsa_slots.append(laas); }
+                else { laa_slots = laa_slots.append(laas); }
             }
         }
         if (!sc.ok) { return sc; }
@@ -9960,6 +9996,23 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         scr = scr.emit(ir.op_call_direct("__fern_rc_dec", 1));
         scr = scr.emit(ir.op_drop());
         lfa = lfa + 1;
+    }
+    // The pointer-element arg temps: __fern_str_arr_free, not the dec above.
+    // It is rc-aware in BOTH directions — rc > 1 decs and returns, rc == 1
+    // walks the elements before the buffer — which is what makes it the right
+    // release here rather than merely the safe one. The counted classification
+    // does NOT promise the callee stored the array: arrparam_uses_ok_stmts
+    // credits a use that never stores at all, and on that path the temp is the
+    // last reference. An element-blind dec there frees the buffer and strands
+    // every element box in it (the missing half measured 192 B/round of the
+    // 248 this shape leaked). Deferring to rc keeps both paths right without
+    // the analysis having to tell them apart.
+    var lfs: i32 = 0;
+    while (lfs < lsa_slots.len()) {
+        scr = scr.emit(ir.op_load_local(lsa_slots[lfs]));
+        scr = scr.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+        scr = scr.emit(ir.op_drop());
+        lfs = lfs + 1;
     }
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
     // str_ret_argref >= 0) returns i64 on wasm — the uniform 8-byte
@@ -47974,6 +48027,22 @@ function str_result_cannot_alias(ret: string, structs: parser.StructDecl[]): boo
     return is_scalar_type_name(ret) || decl_is_struct(structs, ret) || decl_is_enum(structs, ret);
 }
 
+// arr_result_cannot_alias: the ARRAY tier's half of the same question, and now
+// the same answer. The tier used to demand a CONCRETE SCALAR result, which was
+// stricter than both the string tier above and native, and it is the second of
+// the two gates that held #6522's row — widening the element type alone left
+// `node(wide(n), deps_of(n), n)` at 248 B/round, unchanged.
+//
+// A STRUCT or ENUM result is the shape this tier exists for: it CONTAINS the
+// argument, so the callee's counted store and the caller's post-call release net
+// to the one reference the result owns. What must still be refused is a result
+// that can BE the argument — the parameter's own array type handed straight back
+// out — because the release fires immediately after the call.
+function arr_result_cannot_alias(ret: string, ptype: string, structs: parser.StructDecl[]): boolean {
+    if (ret == ptype) { return false; }
+    return owned_scalar_field_type(ret) || decl_is_struct(structs, ret) || decl_is_enum(structs, ret);
+}
+
 pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], sfok: string[]): string[] {
     var reg: string[] = [];
     var round: i32 = 0;
@@ -47983,23 +48052,13 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         var k: i32 = 0;
         while (k < funcs.len()) {
             var fn: parser.FuncDecl = funcs[k];
-            // ARRAY tier. A CONCRETE SCALAR result is required: the release
-            // fires immediately after the call, so a pointer-shaped return that
-            // BE's or CONTAINS the argument — `both(d, k)` building a struct
-            // from `d` and handing `d` back out of it — would leave the caller
-            // reading freed memory. This is stricter than the string tier below
-            // and than native.
-            //
-            // It is NOT what #6522's row is stuck behind, though this comment
-            // said so until it was measured: lifting the guard entirely moves
-            // `node(wide(n), deps_of(n), n)` not at all. That row's argument is
-            // a `string[]`, and is_leaksafe_array_field admits only
-            // SCALAR-element arrays, so it never becomes a candidate here in the
-            // first place. Widening the tier to pointer-element arrays is that
-            // row's slice; the release for one is a shallow arr_dec (the callee
-            // struct retains it and deep-frees on its own drop), not the deep
-            // free the element-owning paths use.
-            var scalar_result: boolean = owned_scalar_field_type(fn.ret_type);
+            // ARRAY tier. Two gates, and #6522's row was behind BOTH — which is
+            // why measuring either one alone kept saying the other was innocent.
+            // counted_retain_array_param decides the element type (the row's
+            // argument is a `string[]`, which was not a candidate at all), and
+            // arr_result_cannot_alias decides the result (the row's callee
+            // returns a struct, which the old CONCRETE-SCALAR rule refused).
+            // Lifting one and not the other leaves the row exactly where it was.
             var aflags: string = "";
             var aany: boolean = false;
             var sflags: string = "";
@@ -48008,8 +48067,8 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
-                if (scalar_result
-                    && is_leaksafe_array_field(fn.params[pj].type_name)
+                if (arr_result_cannot_alias(fn.ret_type, fn.params[pj].type_name, structs)
+                    && counted_retain_array_param(fn.params[pj].type_name)
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ACNT:", structs, sfok)) { aok = true; }
                 if (aok) { aflags = aflags + "1"; aany = true; } else { aflags = aflags + "0"; }

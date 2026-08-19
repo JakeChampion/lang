@@ -468,6 +468,133 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-arr-arg-pointer-result-safe", 0)
 
+	// The POINTER-ELEMENT array at the same counted position (#6544 / #6522).
+	// `is_leaksafe_array_field` admitted only SCALAR-element arrays, so a
+	// `string[]` argument never became a candidate in param_counted_of at all —
+	// neither the result guard nor the use-walk ever got a say, which is what
+	// three successive readings of this row mistook for something else.
+	// Measured 248 B/round before, against native flat, on the identical source.
+	//
+	// The release is the SHALLOW arr_dec, not the deep __fern_str_arr_free the
+	// read-reclaim gives a "STRARR:" container. That is the whole reason the
+	// pointer element is safe here: `keep` retains the array in the struct it
+	// builds, so the dec takes rc 2 -> 1 and frees nothing, and the elements go
+	// when that struct drops. An element-blind free would only be wrong if this
+	// dec were the LAST reference — which the counted classification is exactly
+	// what rules out.
+	run(t, `struct Node { deps: string[], k: i32 }
+function w(n: i32): string { return "a-string-well-past-the-inline-threshold" + ""; }
+function mk(n: i32): string[] { var out: string[] = []; for i in 0..3 { out = out.append(w(n)); } return out; }
+function keep(deps: string[], k: i32): i32 { var nd: Node = Node { deps: deps, k: k }; return nd.k + nd.deps.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = (acc + keep(mk(i), i)) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { acc = (acc + keep(mk(j), j)) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "counted-retain-strarr-arg-flat", 0)
+
+	// The same pointer-element array where the callee does NOT retain it: `size`
+	// only reads. Nothing here proves a second owner exists, so a shallow dec
+	// would be the last reference and would free the buffer element-blind,
+	// stranding every string in it. The values are re-read after the call so an
+	// over-release shows as a wrong answer rather than only as bytes.
+	run(t, `function w(n: i32): string { return "a-string-well-past-the-inline-threshold" + ""; }
+function mk(n: i32): string[] { var out: string[] = []; for i in 0..3 { out = out.append(w(n)); } return out; }
+function size(deps: string[]): i32 { return deps.len(); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var live: string[] = mk(i);
+        if (size(live) != 3) { bad = 1; }
+        if (live[0].len() != 39) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "strarr-arg-borrowed-not-retained-safe", 0)
+
+	// The result guard, relaxed to the STRING tier's rule (#6522). The array
+	// tier demanded a CONCRETE SCALAR result, which is stricter than both the
+	// string tier and native. A STRUCT result is the shape this tier exists for:
+	// it CONTAINS the argument, so the callee's counted store and the caller's
+	// post-call release net to the one reference the returned struct owns.
+	//
+	// This is the row #6522 named — `node(wide(n), deps_of(n), n)`, how every
+	// tree, graph and AST gets built. Widening the element type alone did NOT
+	// move it (248 B/round before and after); it needed both halves, which is
+	// what the port log's plan for this slice understated.
+	run(t, `struct Node { name: string, deps: string[], mtime: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold" + ""; }
+function deps_of(n: i32): string[] { var out: string[] = []; for i in 0..3 { out = out.append(wide(n)); } return out; }
+function node(name: string, deps: string[], mtime: i32): Node { return Node { name: name, deps: deps, mtime: mtime }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var nd: Node = node(wide(i), deps_of(i), i); acc = (acc + nd.deps.len()) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { var n2: Node = node(wide(j), deps_of(j), j); acc = (acc + n2.deps.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "counted-retain-strarr-struct-result-flat", 0)
+
+	// The struct result HANDED BACK OUT: the returned struct is kept and its
+	// array field re-read after the release fired, with a long string built
+	// between the reads so a wrongly freed buffer is really recycled first. The
+	// elements are compared, not just counted — the release is deep, so an
+	// over-release shows up as a wrong element rather than a wrong length.
+	run(t, `struct Node { deps: string[], k: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold" + ""; }
+function deps_of(n: i32): string[] { var out: string[] = []; for i in 0..3 { out = out.append(wide(n)); } return out; }
+function node(deps: string[], k: i32): Node { return Node { deps: deps, k: k }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 2000) {
+        var nd: Node = node(deps_of(i), i);
+        var churn: string = "another-long-string-to-recycle-the-block" + "";
+        if (churn.len() != 40) { bad = 1; }
+        if (nd.deps.len() != 3) { bad = 1; }
+        if (nd.deps[0].len() != 39) { bad = 1; }
+        if (nd.deps[2].len() != 39) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-strarr-struct-result-read-safe", 0)
+
+	// The SCALAR-element array at a struct result — the same relaxation, the
+	// other element kind, values re-read after the release.
+	run(t, `struct Node { deps: i32[], k: i32 }
+function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function node(deps: i32[], k: i32): Node { return Node { deps: deps, k: k }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var nd: Node = node(mk(i), i);
+        if (nd.deps.len() != 3) { bad = 1; }
+        if (nd.deps[0] != i || nd.deps[2] != i + 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-arr-struct-result-read-safe", 0)
+
 	// REFUSED on the PARAMETER: `hand` returns its argument, so the appearance
 	// in return position is not a counted store and the param is never credited.
 	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }

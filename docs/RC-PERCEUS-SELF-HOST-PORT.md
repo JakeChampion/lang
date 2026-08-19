@@ -9605,3 +9605,58 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (rc 2 -> 1). The scalar-result guard is a separate question and, on the
   evidence above, not one worth spending the row's budget on. Refs #6544 #6522
   #7061 #4451.
+
+- 2026-08-18: **#6522 — the row was behind BOTH gates, which is why measuring
+  either one alone kept exonerating the other.** The previous entry restated the
+  slice as "widen the ARRAY tier to POINTER-element arrays". That is half of it.
+
+  Widening the element type alone moves `node(wide(n), deps_of(n), n)` from
+  248 B/round to 248. The callee returns a `Node`, and the tier also demanded a
+  CONCRETE SCALAR result — stricter than the string tier beside it and than
+  native. Two gates, and every measurement that lifted one found the row still
+  stuck and blamed the other. Both are lifted here:
+
+  - `counted_retain_array_param` — the tier's own candidacy predicate, admitting
+    `string[]`. Deliberately NOT a widening of `is_leaksafe_array_field`: both
+    backends read that one to choose a SHALLOW field release over a deep one
+    (`k_scalar`), so adding `string[]` there would make a `string[]` FIELD free
+    its buffer and strand every element.
+  - `arr_result_cannot_alias` — the result guard, now the string tier's rule. A
+    struct or enum result CONTAINS the argument, which is the shape the tier
+    exists for. A result of the parameter's own array type is still refused.
+
+  **The release is `__fern_str_arr_free`, not the element-blind `arr_dec`** — and
+  the reason corrects a claim I made while planning this. The plan said a shallow
+  dec is safe because the counted case never actually frees. It does:
+  `arrparam_uses_ok_stmts` credits a parameter whose use never stores at all, and
+  on that path the temp is the last reference, so `arr_dec` frees the buffer and
+  strands the elements. That is the missing 192 B/round of the 248 — measured,
+  after the element widening landed the buffer half. `__fern_str_arr_free` is
+  rc-aware in BOTH directions (rc > 1 decs, rc == 1 walks then frees), so it is
+  right on both paths without the analysis having to tell them apart.
+
+  Pointer-element temps ride the COUNTED position only. At a merely borrowable
+  one nothing holds a second reference and the same release would be the last —
+  those keep the safe-leak floor.
+
+  Measured, x86-64, B/round, native flat on all three:
+
+  | shape | before | after |
+  |---|---:|---:|
+  | `keep(mk(i), i) -> i32`, `string[]` arg | 248 | 0 |
+  | `node(wide(n), deps_of(n), n) -> Node` (#6522's row) | 248 | 0 |
+  | `keep(mk(i), i) -> i32`, `i32[]` arg (control) | 0 | 0 |
+
+  Tests: `counted-retain-strarr-arg-flat`,
+  `counted-retain-strarr-struct-result-flat`,
+  `counted-retain-strarr-struct-result-read-safe`,
+  `counted-retain-arr-struct-result-read-safe`, and
+  `strarr-arg-borrowed-not-retained-safe` for the position that must stay
+  refused. Refs #6544 #6522 #7061 #4451.
+
+  Known and NOT addressed here: `arrparam_uses_ok_stmts`'s statement/expression
+  walkers return true from their `_` arms without recursing, so a map literal or
+  f-string carrying the parameter is credited with no store proof. That was
+  harmless while the release was a scalar buffer dec and is worth a look now that
+  pointer elements are admitted — it is a pre-existing hole in the credit walk,
+  not something this slice introduced.
