@@ -10055,3 +10055,46 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   not rooted at a bare-local method chain), and no conformance case covers the
   shape. That is a bigger and simpler target than the intermediate-link slice.
   Refs #6544 #4451.
+- 2026-08-19: isolating the `base[4:…].to_owned().len()` shape the previous entry
+  named turned up four more, all simpler and two of them bigger than the AL-01
+  row that led here. Each is one line in a loop over a fresh `base`, measured
+  with `__heap_bump_bytes` (x86-64 / arm64 / wasm):
+
+  | shape | B/round |
+  | --- | --- |
+  | `base.to_owned().len()` | **-1** |
+  | `base.to_upper().len()` | **43** / 43 / 37 |
+  | `base[4:base.len()].len()` | **47** / 47 / 71 |
+  | `base.to_owned().to_owned().len()` | **46** |
+  | `base[4:base.len()].to_owned().len()` | **119** |
+
+  The lead is the FIRST TWO ROWS, and the emitted asm names the cause in one
+  read. `base.to_owned().len()` emits `call __fn_string__to_owned` followed by
+  `call __fn___fern_str_view_free` — the SFRRECV release. `base.to_upper().len()`
+  emits `call __fn_string__to_upper` and NOTHING after it.
+
+  Both are stdlib SOURCE-DECLARED receiver methods on `string`, so both are
+  candidates for the SFRRECV admission; only one passes it, and their bodies say
+  why:
+
+      pub function (s: string) to_owned(): string { return s + ""; }
+      pub function (s: string) to_upper(): string { return unicode.to_upper(s); }
+
+  The admission is `!body_has_nonfreshrecv_str_return(body, receiver_name)`. A
+  direct concat is a provable fresh return; a call into another module is not,
+  so `to_upper` is refused even though `unicode.to_upper` only ever returns a
+  fresh string itself (`_ascii_fold(...)` / `_map_upper(s)` — both fresh, and
+  both calls again).
+
+  So the slice is to let that walk accept a CALL whose callee the whole-program
+  fresh-string registry already proves fresh. It has to iterate to a fixpoint,
+  the way `param_counted_of` does, because the registry is being built in the
+  same pass — `to_upper` cannot be admitted until `unicode.to_upper` is, which
+  cannot be admitted until `_ascii_fold` and `_map_upper` are. Worth 43 B/round
+  on this shape alone, and it is the same missing transitivity every one of the
+  `.to_upper()` / `.to_lower()` / `.reverse()` stdlib wrappers will hit.
+
+  The third row is its own finding: a bare SLICE read, `base[4:base.len()].len()`,
+  strands its view box — no method chain involved at all, 47 B/round, more than
+  twice the whole `alloc_flat_method_identity_return` row. No conformance case
+  covers it. Refs #6544 #4451.
