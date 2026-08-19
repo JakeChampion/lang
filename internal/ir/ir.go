@@ -9726,6 +9726,9 @@ func (b *builder) expr(e ast.Expr) error {
 		boxK := isStringForBoxing(n.KeyType, b.ptrW) || mapKeyKindTag(n.KeyType, b.ptrW) == 2
 		boxV := isWideScalar(n.ValueType) || isStringForBoxing(n.ValueType, b.ptrW)
 		for _, ent := range n.Entries {
+			if err := b.emitMapSetRetains(ent.Key, ent.Value, n.KeyType, n.ValueType); err != nil {
+				return err
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 			if err := b.pushMapMethodArg(ent.Key, n.KeyType, boxK, "__maplit_k"); err != nil {
 				return err
@@ -13077,108 +13080,13 @@ func (b *builder) callBody(n *ast.Call) error {
 	// value; struct keys themselves are not yet rc-reclaimed either —
 	// a bounded leak, no corruption — tracked as a follow-up). See #2671.
 	keyKind3 := len(n.TypeArgs) >= 1 && mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 3
-	// Map-value reclamation (write side): retain an aliased
-	// array-typed value (valKind 2/3) before it's stored, so the
-	// map co-owns it and map_drop's free balances the source
-	// local's exit-sweep dec. Fresh values (literals / call
-	// results) aren't aliases (needsRcIncOnAlias == false) and
-	// transfer their rc=1 to the map with no inc — preventing an
-	// over-count leak. Idempotent alias exprs (Ident / field /
-	// index) are safe to re-evaluate for the inc; the set below
-	// re-reads the same pointer. Runs before the wide/generic
-	// dispatch so both set lowerings are covered uniformly.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 &&
-		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 &&
-		needsRcIncOnAlias(n.Args[2], b) {
-		if err := b.expr(n.Args[2]); err != nil {
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 {
+		var vType ast.Type
+		if len(n.TypeArgs) >= 2 {
+			vType = n.TypeArgs[1]
+		}
+		if err := b.emitMapSetRetains(n.Args[1], n.Args[2], n.TypeArgs[0], vType); err != nil {
 			return err
-		}
-		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-		b.emit(Op{Kind: OpDrop})
-	}
-	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
-	// set retain: a string value's heap buffer is co-owned by the
-	// map's boxed (data, len) cell, so retain an aliased string
-	// before it's stored (__fern_str_inc), balancing the
-	// __fern_str_dec at map drop / overwrite. Fresh strings (concat
-	// / literal / call) aren't aliases (needsRcIncOnAlias == false
-	// before #1665's widening; afterwards every string is) → still
-	// no-op via the str_inc sentinel guards on literals + inline
-	// strings. Strings stay valKind 1 at runtime (unchanged) — the
-	// retain is driven by the static type, not the stored tag.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(n.Args[2], b) {
-		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
-			if err := b.expr(n.Args[2]); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
-			b.emit(Op{Kind: OpDrop, Width: WidthString})
-		}
-	}
-	// Map[K, string] (native single-word) set retain: x86_64 stores
-	// the string data pointer directly in the kv slot — __fern_rc_inc
-	// bumps the buffer's L2 rc header at data-8. Literals short-circuit
-	// on the 0x80000000 sentinel (prereq 2). Alias-shape check inlined
-	// since needsRcIncOnAlias returns false for strings on ptrW=8.
-	// Gated to non-two-word natives — arm64 stores strings boxed (the
-	// IR runs with TwoWordOverride=true) and rc_inc on a cell pointer
-	// would bump the cell's rc, not the string's. arm64 takes the
-	// boxed __fern_str_inc branch above (Slice 7), which retains the
-	// cell-pointed (data, len) instead of the cell itself.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
-			switch n.Args[2].(type) {
-			case *ast.Ident, *ast.FieldAccess, *ast.Index:
-				if err := b.expr(n.Args[2]); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-				b.emit(Op{Kind: OpDrop})
-			}
-		}
-	}
-	// Map[string, V] (two-word ABI — wasm + arm64-TwoWordOverride)
-	// set KEY retain: the key column co-owns an aliased string
-	// key's buffer (boxed (data, len) cell), so __fern_str_inc it,
-	// balancing the __fern_str_dec in the __drop_map_str_keys walk
-	// at map drop. Fresh keys (concat / literal / call) are moved
-	// in with no inc. Either way the boxed key carries exactly one
-	// owned reference, which is what lets freeDiscardedSetKeyCell
-	// release it unconditionally when the set turns out to be an
-	// overwrite and the runtime keeps the key it already had.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
-		ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(n.Args[1], b) {
-		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
-			if err := b.expr(n.Args[1]); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
-			b.emit(Op{Kind: OpDrop, Width: WidthString})
-		}
-	}
-	// Map[string, V] (native single-word) set KEY retain: x86_64 stores
-	// the string data pointer directly in the key column slot —
-	// __fern_rc_inc bumps the buffer's L2 rc header at data-8. Literals
-	// short-circuit on the 0x80000000 sentinel (prereq 2). Alias-shape
-	// check inlined since needsRcIncOnAlias returns false for strings on
-	// ptrW=8. Gated to non-two-word natives — arm64 stores keys boxed
-	// (the IR runs with TwoWordOverride=true) so rc_inc on the cell
-	// pointer would bump the cell's rc, not the key string's. arm64
-	// takes the boxed __fern_str_inc branch above (Slice 8), which
-	// retains the cell-pointed (data, len) instead of the cell itself.
-	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
-		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
-			switch n.Args[1].(type) {
-			case *ast.Ident, *ast.FieldAccess, *ast.Index:
-				if err := b.expr(n.Args[1]); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-				b.emit(Op{Kind: OpDrop})
-			}
 		}
 	}
 	// Overwrite reclamation: `m.set(k, v)` REPLACES any existing value at
@@ -18916,6 +18824,132 @@ func (b *builder) freeLookupKeyCell(cellSlot int32, keyArg ast.Expr, kType ast.T
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", I32: 1})
 	b.emit(Op{Kind: OpDrop})
+}
+
+// emitMapSetRetains emits the retain an entry store owes for an ALIASED key or
+// value, so the column co-owns what it holds and the map's drop is balanced.
+// Shared by `m.set(k, v)` and by the `Map { … }` literal, whose entries store
+// through the same helper and so owe the same references.
+// A nil kType / vType — a half the checker left unannotated — takes no retain.
+func (b *builder) emitMapSetRetains(keyArg, valArg ast.Expr, kType, vType ast.Type) error {
+	if vType != nil {
+		if err := b.emitMapSetValueRetain(valArg, vType); err != nil {
+			return err
+		}
+	}
+	if kType != nil {
+		if err := b.emitMapSetKeyRetain(keyArg, kType); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builder) emitMapSetValueRetain(valArg ast.Expr, vType ast.Type) error {
+	// Map-value reclamation (write side): retain an aliased
+	// array-typed value (valKind 2/3) before it's stored, so the
+	// map co-owns it and map_drop's free balances the source
+	// local's exit-sweep dec. Fresh values (literals / call
+	// results) aren't aliases (needsRcIncOnAlias == false) and
+	// transfer their rc=1 to the map with no inc — preventing an
+	// over-count leak. Idempotent alias exprs (Ident / field /
+	// index) are safe to re-evaluate for the inc; the set that
+	// follows re-reads the same pointer. Runs before the wide/generic
+	// dispatch so both set lowerings are covered uniformly.
+	if mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 &&
+		needsRcIncOnAlias(valArg, b) {
+		if err := b.expr(valArg); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
+	// set retain: a string value's heap buffer is co-owned by the
+	// map's boxed (data, len) cell, so retain an aliased string
+	// before it's stored (__fern_str_inc), balancing the
+	// __fern_str_dec at map drop / overwrite. Fresh strings (concat
+	// / literal / call) aren't aliases (needsRcIncOnAlias == false
+	// before #1665's widening; afterwards every string is) → still
+	// no-op via the str_inc sentinel guards on literals + inline
+	// strings. Strings stay valKind 1 at runtime (unchanged) — the
+	// retain is driven by the static type, not the stored tag.
+	if ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(valArg, b) {
+		if _, isStr := vType.(ast.StringType); isStr {
+			if err := b.expr(valArg); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+			b.emit(Op{Kind: OpDrop, Width: WidthString})
+		}
+	}
+	// Map[K, string] (native single-word) set retain: x86_64 stores
+	// the string data pointer directly in the kv slot — __fern_rc_inc
+	// bumps the buffer's L2 rc header at data-8. Literals short-circuit
+	// on the 0x80000000 sentinel (prereq 2). Alias-shape check inlined
+	// since needsRcIncOnAlias returns false for strings on ptrW=8.
+	// Gated to non-two-word natives — arm64 stores strings boxed (the
+	// IR runs with TwoWordOverride=true) and rc_inc on a cell pointer
+	// would bump the cell's rc, not the string's. arm64 takes the
+	// boxed __fern_str_inc branch above (Slice 7), which retains the
+	// cell-pointed (data, len) instead of the cell itself.
+	if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		if _, isStr := vType.(ast.StringType); isStr {
+			switch valArg.(type) {
+			case *ast.Ident, *ast.FieldAccess, *ast.Index:
+				if err := b.expr(valArg); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builder) emitMapSetKeyRetain(keyArg ast.Expr, kType ast.Type) error {
+	// Map[string, V] (two-word ABI — wasm + arm64-TwoWordOverride)
+	// set KEY retain: the key column co-owns an aliased string
+	// key's buffer (boxed (data, len) cell), so __fern_str_inc it,
+	// balancing the __fern_str_dec in the __drop_map_str_keys walk
+	// at map drop. Fresh keys (concat / literal / call) are moved
+	// in with no inc. Either way the boxed key carries exactly one
+	// owned reference, which is what lets freeDiscardedSetKeyCell
+	// release it unconditionally when the set turns out to be an
+	// overwrite and the runtime keeps the key it already had.
+	if ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(keyArg, b) {
+		if _, isStr := kType.(ast.StringType); isStr {
+			if err := b.expr(keyArg); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+			b.emit(Op{Kind: OpDrop, Width: WidthString})
+		}
+	}
+	// Map[string, V] (native single-word) set KEY retain: x86_64 stores
+	// the string data pointer directly in the key column slot —
+	// __fern_rc_inc bumps the buffer's L2 rc header at data-8. Literals
+	// short-circuit on the 0x80000000 sentinel (prereq 2). Alias-shape
+	// check inlined since needsRcIncOnAlias returns false for strings on
+	// ptrW=8. Gated to non-two-word natives — arm64 stores keys boxed
+	// (the IR runs with TwoWordOverride=true) so rc_inc on the cell
+	// pointer would bump the cell's rc, not the key string's. arm64
+	// takes the boxed __fern_str_inc branch above (Slice 8), which
+	// retains the cell-pointed (data, len) instead of the cell itself.
+	if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		if _, isStr := kType.(ast.StringType); isStr {
+			switch keyArg.(type) {
+			case *ast.Ident, *ast.FieldAccess, *ast.Index:
+				if err := b.expr(keyArg); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+		}
+	}
+	return nil
 }
 
 // pushMapMethodArg evaluates one argument to a Map method,
