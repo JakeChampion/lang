@@ -10030,3 +10030,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   This is the third tracker entry in this area to have lagged the code (#4451 /
   #4363 / #4346 are the ones CLAUDE.md already names), and the first two hours of
   a slice are the expensive place to discover it. Refs #6544 #4451.
+- 2026-08-19 (correcting the entry above): that entry said BOTH halves the
+  `alloc_flat_method_identity_return` row named were closed, and attributed the
+  live 22 B/round to the builtin chain `base.drop(2).len()`. The total (20, not
+  117) and the ~95 struct-method half being closed are right. The rest is wrong,
+  and isolating each link says so:
+
+  | shape | B/round | links |
+  | --- | --- | --- |
+  | `base.drop(2).len()` | -1 | one |
+  | `base.tail(4).len()` | -1 | one |
+  | `base.tail(4).to_owned().len()` | **22** | two |
+
+  A one-link chain is flat because SFRRECV releases the RESULT. The 22 appears
+  only with a second link, and it is the `tail(4)` view box in the MIDDLE — which
+  is precisely what the row said ("the chain's INTERMEDIATE view box … needs the
+  outer callee proven borrowing and never-a-view") and what the SFRRECV comment
+  in irlower says ("INTERMEDIATE links still leak"). That guidance is live, not
+  stale; only the ~95 half had been fixed out from under the text.
+
+  Separately measured while isolating it: `base[4:base.len()].to_owned().len()`
+  — an inline SLICE consumed by a copying method — leaks **119 B/round**, five
+  times the conformance row's whole cost. SFRRECV does not reach it (the chain is
+  not rooted at a bare-local method chain), and no conformance case covers the
+  shape. That is a bigger and simpler target than the intermediate-link slice.
+  Refs #6544 #4451.
