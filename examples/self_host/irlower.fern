@@ -25712,6 +25712,23 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
     }
     return false;
 }
+// rctuple_scrutinee_is_elem_read reports whether `e` is exactly `name.<i>` — a
+// positional read of one element of the candidate tuple local, and nothing more.
+// Anything wrapping it (a call, an index, the bare local) is not this shape.
+function rctuple_scrutinee_is_elem_read(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            if (!util.is_all_digits(fa.field)) { return false; }
+            match (fa.obj) {
+                parser.ExprIdent(id) => { return id.name == name; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
     match (st) {
         parser.StmtVar(v) => { return rctuple_esc_expr(v.init, name, ttype, structs); },
@@ -25739,7 +25756,18 @@ function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs:
             return false;
         },
         parser.StmtMatch(m) => {
-            if (rctuple_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
+            // A scrutinee that is EXACTLY `name.<i>` reads that element's tag and
+            // copies its payload into the arm binding; it stores the box nowhere,
+            // so it is a BORROW rather than the bare pointer extraction
+            // rctuple_esc_expr sees in a non-scalar element read. The reclaim
+            // frees the tuple's own children and its box but never a union
+            // element's PAYLOAD, so a binding taken from one stays valid.
+            //
+            // Only that exact shape. `match (t)` on the whole tuple, or an
+            // element handed through a call, still walks as an escape — those
+            // hand the pointer somewhere the reclaim cannot see.
+            if (!rctuple_scrutinee_is_elem_read(m.scrutinee, name)
+                    && rctuple_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && rctuple_esc_expr(m.arms[ai].guard, name, ttype, structs)) { return true; }
