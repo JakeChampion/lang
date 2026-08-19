@@ -433,7 +433,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                         var mm: string = s.get_var_type(mrt + "#" + fa2.field);
                         if (mm.len() > 2 && mm[0:2] == "m:") {
                             var mrest: str = mm[2 : mm.len()];
-                            var mcolon: i32 = index_of_byte(mrest, 58);
+                            var mcolon: i32 = index_of_byte(mrest, b':');
                             if (mcolon >= 0) { return mrest[mcolon + 1 : mrest.len()] + ""; }
                         }
                     }
@@ -482,7 +482,7 @@ pub function fn_sym(fd: parser.FuncDecl): string {
 // value ("fnval") or a capturing lambda binding ("fn:…|…").
 function is_boxed_fnty(t: string): boolean {
     if (t == "fnval") { return true; }
-    if (t.len() > 3 && t[0:3] == "fn:" && index_of_byte(t, 124) >= 0) { return true; }
+    if (t.len() > 3 && t[0:3] == "fn:" && index_of_byte(t, b'|') >= 0) { return true; }
     return false;
 }
 
@@ -579,7 +579,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // lambda binding "fn:…|…" holds its box in the var, so it took the
             // get_var path above.)
             var idfn: string = s.get_var_type(id.name);
-            if (idfn.len() > 3 && idfn[0:3] == "fn:" && index_of_byte(idfn, 124) < 0) {
+            if (idfn.len() > 3 && idfn[0:3] == "fn:" && index_of_byte(idfn, b'|') < 0) {
                 return emit_fn_box(s, idfn[3 : idfn.len()]);
             }
             if (idfn.len() >= 4 && idfn[0:4] == "gfn:") {
@@ -951,7 +951,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var cfnty: string = s.get_var_type(cid.name);
                     if (cfnty.len() > 3 && cfnty[0:3] == "fn:") {
                         var crest: str = cfnty[3 : cfnty.len()];
-                        var cbar: i32 = index_of_byte(crest, 124);   // '|'
+                        var cbar: i32 = index_of_byte(crest, b'|');
                         if (cbar >= 0) { callee_name = crest[0 : cbar] + ""; cap_csv = crest[cbar + 1 : crest.len()] + ""; }
                         else { callee_name = crest + ""; }
                     }
@@ -988,7 +988,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var um: string = s.get_var_type(urt + "#" + fa.field);
                         if (um.len() > 2 && um[0:2] == "m:") {
                             var urest: str = um[2 : um.len()];
-                            var ucolon: i32 = index_of_byte(urest, 58);   // ':' before ret type
+                            var ucolon: i32 = index_of_byte(urest, b':');   // before ret type
                             var usym: string = urest + "";
                             if (ucolon >= 0) { usym = urest[0 : ucolon] + ""; }
                             s = build_expr(fa.obj, s);
@@ -1323,7 +1323,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // Tuple destructuring `var (a, b, …) = t` — the parser joins the
             // names as "a,b,…". Build the tuple once, then bind each name to
             // its positional element (element i at offset i, no prefix).
-            if (index_of_byte(v.name, 44) >= 0) {
+            if (index_of_byte(v.name, b',') >= 0) {
                 s = build_expr(v.init, s);
                 if (!s.ok) { return s; }
                 var dtptr: i32 = s.cur_id();
@@ -1616,7 +1616,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     // the loop variable means map iteration: bind each via __ssa_map_key_at /
     // _val_at on $arrN ($arrN is a Map here, so the guard's `.len()` resolved
     // to the entry count). A plain name iterates an array element by index.
-    var comma: i32 = index_of_byte(fr.var_name, 44);   // ','
+    var comma: i32 = index_of_byte(fr.var_name, b',');
     if (comma >= 0) {
         var kname: str = fr.var_name[0:comma];
         var vname: str = fr.var_name[comma + 1 : fr.var_name.len()];
@@ -1779,10 +1779,10 @@ function contains_str(xs: string[], n: string): boolean {
     return false;
 }
 // index_of_byte returns the first index of byte b in s, or -1.
-function index_of_byte(s: string, b: i32): i32 {
+function index_of_byte(s: string, b: u8): i32 {
     var i: i32 = 0;
     while (i < s.len()) {
-        if ((s[i] as i32) == b) { return i; }
+        if (s[i] == b) { return i; }
         i = i + 1;
     }
     return 0 - 1;
