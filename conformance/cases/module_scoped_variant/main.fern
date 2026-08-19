@@ -1,0 +1,20 @@
+// Two sibling modules declaring the same enum name with the same variant
+// name, neither importing the other. A bare variant reference resolves
+// among the enums its OWN module can name (#6951), so each `Wrap(v)` is
+// unambiguous where it is written and the two never compete.
+//
+// Before that, one library declaring `Kind { Text }` made every other
+// module's bare reference ambiguous, so two dependencies that had never
+// heard of each other could not be used in the same program.
+//
+// The ordinals differ on purpose. The lowering resolved a bare
+// constructor by scanning every enum in the program over a Go map, safe
+// only while the checker rejected ambiguous bare names (#6944); once they
+// resolve, the scan hands back whichever enum it reaches first and the
+// answer varies between compiles of identical source.
+import "./a";
+import "./b";
+
+function main(): i32 {
+    return a.get(a.mk(7)) * 10 + b.get(b.mk(9));   // 79, or 69 on a wrong tag
+}

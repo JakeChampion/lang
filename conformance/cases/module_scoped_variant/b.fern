@@ -1,0 +1,4 @@
+enum Kind { Wrap(i32), Pad1, Pad2 }
+
+pub function mk(v: i32): Kind { return Wrap(v); }
+pub function get(k: Kind): i32 { match (k) { Wrap(v) => { return v; }, _ => { return -1; } } }
