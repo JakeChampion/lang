@@ -2145,9 +2145,9 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 // Width and signedness ride from the BINARY op, not the operands: a folded
 // `const` inherits the width the binary was going to produce. Only i32-width
 // signed arithmetic folds — is_foldable_binary_kind excludes the float ops and
-// the unsigned compares, and this skips anything whose operands carry source
-// TEXT (op_const_i32_text), because that text is what the wide-literal path
-// splices into a 64-bit immediate and folding would discard it.
+// the unsigned compares, and const_i32_readable admits a source-text operand
+// only when its digits round-trip through i32, so the wide-literal path's text
+// (a hex or full-u32 immediate the fold would discard) is left alone.
 //
 // Division and remainder by zero are NOT folded, and deliberately: Fern's
 // division is total (`x / 0 == 0`, docs/INTEGER-SEMANTICS.md) but the fold
@@ -2262,6 +2262,19 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
                 changed = true;
                 folded = true;
             }
+            // `const ; <width normalise>` — the wrap the lowering emits after
+            // every i32 arithmetic op. Folding through it is what lets a NESTED
+            // constant expression collapse: the pass otherwise sees
+            // `const 1 ; const 6 ; int_cast ; add` and stops one step short.
+            if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])) {
+                var wf: WidthFold = fold_width_op(cur[i + 1], const_i32_value(cur[i]));
+                if (wf.ok) {
+                    out = out.append(op_const_i32(wf.v));
+                    i = i + 2;
+                    changed = true;
+                    folded = true;
+                }
+            }
             // A decided `if`: splice the arm that runs and drop the rest, including
             // the condition and the scope itself. Only a VOID if — every scope this
             // lowering opens is void, and a typed one would carry a value out of its
@@ -2339,6 +2352,42 @@ pub function const_i32_readable(o: Op): boolean {
 pub function const_i32_value(o: Op): i32 {
     if (o.kind_tag == 1) { return o.i32_imm; }
     return util.digits_to_i32(o.str);
+}
+
+// WidthFold answers `const K ; <width op>`: ok when the pair collapses to a
+// single constant, v the value it collapses to.
+struct WidthFold {
+    ok: boolean,
+    v: i32,
+}
+
+// fold_width_op evaluates a SAME-WIDTH normalising op — int_cast (`as i32` /
+// `as u32` / `as u8`) and u32_wrap — over the readable i32 constant `v`.
+//
+// The lowering emits one of these after every i32 / u32 / sub-word arithmetic
+// op to wrap the result back into the type's width (irlower's "Plain-i32
+// wrap"), which puts one between a folded constant and the op that would
+// consume it: `1 + 2 * 3` lowers to `const 1 ; const 2 ; const 3 ; mul ;
+// int_cast ; add ; int_cast`, and without this the fold stops after the `mul`
+// with a runtime `add` of two constants left in the program.
+//
+// int_extend / int_wrap are deliberately absent: they CHANGE the width, and on
+// wasm they change the value's type (i64.extend_i32_s / i32.wrap_i64), so
+// dropping one leaves an i64 consumer reading an i32.
+//
+// `as u32` and u32_wrap refuse a negative constant — zero-extending it yields
+// 2^32 + v, which no i32 constant can carry (`u32` max lowers as exactly that
+// pair). `as u8` masks, and `as i32` is identity on a value already an i32.
+function fold_width_op(o: Op, v: i32): WidthFold {
+    if (o.kind_tag == 10) {
+        if (v < 0) { return WidthFold { ok: false, v: 0 }; }
+        return WidthFold { ok: true, v: v };
+    }
+    if (o.kind_tag != 9) { return WidthFold { ok: false, v: 0 }; }
+    if (o.str == "i32") { return WidthFold { ok: true, v: v }; }
+    if (o.str == "u8") { return WidthFold { ok: true, v: v & 255 }; }
+    if (o.str == "u32" && v >= 0) { return WidthFold { ok: true, v: v }; }
+    return WidthFold { ok: false, v: 0 };
 }
 
 // fold_would_divide_by_zero guards the two ops whose zero divisor has a

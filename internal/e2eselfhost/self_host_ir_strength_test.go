@@ -183,7 +183,25 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"pi_nested_cascade: const_i32 5 ; drop ; return\n" +
 		"pi_idempotent=1\n" +
 		// End to end: `while (true)` keeps its body and loses its exit test.
-		"pw_while_true_in_optimize: loop ; const_i32 7 ; drop ; br 0 ; end ; return\n"
+		"pw_while_true_in_optimize: loop ; const_i32 7 ; drop ; br 0 ; end ; return\n" +
+		// Folding through the width normalise the lowering emits after every
+		// i32 / u32 / sub-word arithmetic op. wc_nested is `1 + 2 * 3`: the
+		// int_cast between the folded `mul` and the `add` is what used to
+		// leave a runtime add of two constants in every default build. The
+		// refusals are the load-bearing half — a negative constant through
+		// `as u32` is 2^32 + v (which is how u32's max lowers), and
+		// int_extend / int_wrap change the value's wasm TYPE, so neither
+		// pair may collapse to an i32 constant.
+		"wc_nested: const_i32 7\n" +
+		"wc_u8_masks: const_i32 44\n" +
+		"wc_u32: const_i32 9\n" +
+		"wc_u32_neg_refused: const_i32 -1 ; int_cast\n" +
+		"wc_u32_wrap: const_i32 9\n" +
+		"wc_u32_wrap_neg_refused: const_i32 -1 ; u32_wrap\n" +
+		"wc_int_extend_refused: const_i32 9 ; int_extend\n" +
+		"wc_int_wrap_refused: const_i32 9 ; int_wrap\n" +
+		"wc_hex_refused: const_i32_text 0x10 ; int_cast\n" +
+		"wc_opaque_refused: load_local 0 ; int_cast\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
