@@ -333,6 +333,116 @@ func TestWorkspace_ImportedSyntaxErrorDoesNotLandOnTheEntry(t *testing.T) {
 	}
 }
 
+// collidingVariantWorkspace builds a workspace whose modules `a` and
+// `b` each declare `Kind { Text }`. Neither imports the other, so
+// neither bare `Text` is ambiguous where it is written — but the
+// entry's program holds both enums at once, which is what the LSP
+// resolves names against. Returns the server, the entry URI, and the
+// (1-based) line/col of a.fern's `Text`.
+func collidingVariantWorkspace(t *testing.T) (*Server, string, int, int) {
+	t.Helper()
+	dir := t.TempDir()
+	aSrc := "pub enum Kind { Text }\n" +
+		"pub function ka(): Kind { return Text; }\n"
+	// b's use sits on its own line so the two bare `Text`s never
+	// share a source position — the hit under test has to be a's.
+	bSrc := "pub enum Kind { Text }\n" +
+		"pub function kb(): Kind {\n" +
+		"    return Text;\n" +
+		"}\n"
+	mainSrc := "import \"./a\";\n" +
+		"import \"./b\";\n" +
+		"function main(): i32 { var x: a.Kind = a.ka(); var y: b.Kind = b.kb(); return 0; }\n"
+	writeFile(t, filepath.Join(dir, "a.fern"), aSrc)
+	writeFile(t, filepath.Join(dir, "b.fern"), bSrc)
+	mainPath := filepath.Join(dir, "main.fern")
+	writeFile(t, mainPath, mainSrc)
+
+	s := NewServer()
+	s.EnableWorkspace()
+	s.SetPublisher(func(string, any) {})
+	mainURI := pathToURI(mainPath)
+	open, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
+			URI: mainURI, LanguageID: "fern", Text: mainSrc,
+		}}),
+	})
+	s.HandleMessage(open)
+	state := s.docs[mainURI]
+	if state == nil || state.prog == nil {
+		t.Fatalf("workspace did not load")
+	}
+	if len(state.diags) != 0 {
+		t.Fatalf("fixture should type-check clean, got %+v", state.diags)
+	}
+	line := 2
+	col := strings.Index(strings.Split(aSrc, "\n")[1], "return Text") + len("return ") + 1
+	return s, mainURI, line, col
+}
+
+// A variant name declared by two mutually invisible modules must
+// resolve to the enum the checker stamped on the reference. The
+// symbol tables are Go maps, so a name-keyed sweep picks a different
+// enum from run to run — hence the repeats.
+func TestWorkspace_VariantHoverNamesTheStampedEnum(t *testing.T) {
+	s, mainURI, line, col := collidingVariantWorkspace(t)
+	state := s.docs[mainURI]
+	hit := findNameAt(state.prog, line, col)
+	if hit == nil || hit.ident == nil {
+		t.Fatalf("expected an Ident hit on a.fern's `Text`, got %+v", hit)
+	}
+	if hit.ident.EnumName != "a__Kind" {
+		t.Fatalf("checker stamped %q on a's `Text`, want a__Kind", hit.ident.EnumName)
+	}
+	for i := 0; i < 50; i++ {
+		got, ok := describeName(state.info, hit)
+		if !ok {
+			t.Fatalf("run %d: no description for a's `Text`", i)
+		}
+		if !strings.Contains(got, "a__Kind") {
+			t.Fatalf("run %d: hover = %q, want a's enum", i, got)
+		}
+	}
+	if got := classifyIdent(state.info, hit.enclosing, hit.ident); got != stEnumMember {
+		t.Errorf("semantic token = %d, want stEnumMember (%d)", got, stEnumMember)
+	}
+}
+
+// Find-all-references on a variant must not sweep in the like-named
+// variant of an enum the referring module cannot see.
+func TestWorkspace_VariantReferencesStayInTheirEnum(t *testing.T) {
+	s, mainURI, line, col := collidingVariantWorkspace(t)
+	state := s.docs[mainURI]
+	for i := 0; i < 50; i++ {
+		locs := runReferences(state, mainURI, Position{Line: line - 1, Character: col - 1})
+		if len(locs) != 2 {
+			t.Fatalf("run %d: %d references, want 2 (a's decl + a's use): %+v", i, len(locs), locs)
+		}
+		for _, l := range locs {
+			if !strings.HasSuffix(l.URI, "a.fern") {
+				t.Fatalf("run %d: reference in %s, want a.fern only", i, l.URI)
+			}
+		}
+	}
+}
+
+// Go-to-definition on the same reference lands on a's declaration.
+func TestWorkspace_VariantDefinitionPicksTheStampedEnum(t *testing.T) {
+	s, mainURI, line, col := collidingVariantWorkspace(t)
+	state := s.docs[mainURI]
+	for i := 0; i < 50; i++ {
+		loc := runDefinition(state, mainURI, Position{Line: line - 1, Character: col - 1})
+		if loc == nil {
+			t.Fatalf("run %d: no definition for a's `Text`", i)
+		}
+		if !strings.HasSuffix(loc.URI, "a.fern") {
+			t.Fatalf("run %d: definition in %s, want a.fern", i, loc.URI)
+		}
+	}
+}
+
 func TestUriToPath_RejectsNonFileScheme(t *testing.T) {
 	if _, ok := uriToPath("inmemory:///x.fern"); ok {
 		t.Errorf("expected uriToPath to reject non-file scheme")
