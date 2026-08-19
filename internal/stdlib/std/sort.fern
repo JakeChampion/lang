@@ -36,10 +36,10 @@
 // No prelude: a program `import "std/sort";` explicitly. The generic sorts live
 // in `core/cmp`, so reach for `cmp.sort` via `import "core/cmp";`.
 
-// std/sort's case-insensitive string comparison dispatches
-// (string) `.to_lower()` — declare std/string so the receiver
-// method registers under no-prelude.
-import "std/string";
+// `string_cmp_ci` folds each BYTE through `(u8) .to_ascii_lower()`, which
+// lives in std/i32 — declare it so the receiver method registers under
+// no-prelude rather than arriving by luck through core/cmp's own imports.
+import "std/i32";
 
 // `sort_key` compares projected keys via `core/cmp`'s `Ord.cmp`, so
 // declare it to register the `.cmp()` method under no-prelude.
@@ -54,9 +54,11 @@ pub function string_cmp(a: string, b: string): i32 {
     return 0;
 }
 
-// `string_cmp_ci(a, b)` — same as string_cmp but ASCII case-
-// folded per byte. Useful as the ordering for case-insensitive
-// sort.
+// `string_cmp_ci(a, b)` — `string_cmp`'s ordering with each ASCII
+// letter case-folded first. Stays a byte loop rather than delegating
+// to the operators: they compare raw bytes, and folding both operands
+// into fresh lowercase strings first would allocate twice per
+// comparison, inside a sort's O(n log n) inner loop.
 pub function string_cmp_ci(a: string, b: string): i32 {
     var n: i32 = a.len();
     var m: i32 = b.len();
@@ -331,6 +333,11 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
 // merge sort, O(n log n) (#4387 item 3); the input is not mutated. Each merge
 // pass materializes fresh `dstv` / `dstk` copies, so no merge reads a slot it
 // has already overwritten (see the file-header aliasing rule).
+//
+// This body IS `sort_key` with `K` fixed to `i32` — `impl Ord for i32` is `<` /
+// `>`, so the two order identically, stability included — and it stays spelled
+// out rather than delegating because the self-host cannot yet monomorphise a
+// generic that FORWARDS its closure parameter to another generic (#7187).
 pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
     var srcv: T[] = arr;
     var srck: i32[] = [];
