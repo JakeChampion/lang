@@ -10528,3 +10528,40 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `internal/e2eselfhost/self_host_union_only_child_reclaim_test.go` (3 cases x 3
   backends; both byte gates fail on the parent on all three legs, the aliasing
   control passes either way). Refs #4353 #4451.
+- 2026-08-19: **the fresh anonymous RECEIVER at a string builtin method was never
+  released — a missing emission site, not a borrowability question.**
+  `lower_str_method` (irlower.fern) lowers its receiver with `lower_expr` and
+  emits the op; nothing frees the temp. `.len()` was always flat because it has
+  its own release path, which is what made this read as a property of the METHOD
+  rather than a missing SITE. The method's body is irrelevant here — a
+  source-declared `.unrel()` whose receiver appears in no return leaks 47 exactly
+  as `.deriv()` leaks 46.
+
+  The fix reuses the argument side's park/drain pair verbatim
+  (`stash_fresh_str_arg`'s store+reload, `free_stashed_str_args`' net-zero
+  load/free/drop under the live result), gated on `is_fresh_str_temp(recv)` and
+  `str_borrowing_method(field)`.
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `var u = w(pre).to_ascii_upper(); u.len()` | 46 | **-2** |
+  | `w(pre).contains("wide")` | 46 | **flat** |
+  | `var u = w(pre).reverse(); u.len()` | 46 | **flat** |
+  | `mkfresh(i).to_ascii_upper().len()` | 95 | **46** |
+
+  `str_borrowing_method` is LOAD-BEARING at this site, which is worth recording
+  because the same predicate's view clause was contract-only in the binding-credit
+  slice. Here the receiver's buffer is what a view points into, so freeing it is
+  directly observable: `w(pre).trim()` and `w(pre).replace("QQQQ", "R")` — the
+  latter returns the receiver unchanged when the needle is absent — both exit 97
+  under a compiler that releases the receiver anyway. `chars` / `lines` / `split`
+  are excluded for the same reason and keep the leak.
+
+  The last row is the remaining half, and it is a THIRD instance of the same
+  root rather than anything new: `mkfresh(i).to_ascii_upper()` is itself a fresh
+  temp, and `is_fresh_str_temp` does not know it — its ExprCall arm admits a
+  scalar `.to_string()` and a fresh-ret free call, not a fresh-allocating string
+  builtin. Widening it there would also reach concat operands, map inserts and
+  call arguments, so it is its own slice rather than a rider on this one. The
+  source-declared method twin (`b.deriv()`, 46) is a different call site again
+  (the user-method path) and needs the `SFRFRESHNAME:` registry. Refs #6544 #4451.

@@ -8376,10 +8376,31 @@ pub function str_method_argc(field: string): i32 {
 pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Expr[], s: LowerState): LowerState {
     var p: LowerState = lower_expr(recv, s);
     if (!p.ok) { return p; }
-    if (field == "to_ascii_upper") { return p.emit(ir.op_str_to_upper()); }
-    if (field == "to_ascii_lower") { return p.emit(ir.op_str_to_lower()); }
+    // A fresh anonymous RECEIVER (`mkfresh(i).to_ascii_upper()`) is dead the
+    // moment the op has read it, exactly as a fresh ARGUMENT is dead after the
+    // call — but nothing released it, so the temp leaked at every string method
+    // except `.len()`, which has its own path. Stash it and drain after the op,
+    // reusing the argument side's park/drain pair.
+    //
+    // str_borrowing_method is the warrant: those methods read the receiver's
+    // bytes or allocate a new buffer and hand neither the receiver's box nor a
+    // view of it back. `trim` and `replace` are outside it because both can
+    // return the receiver, and `chars` / `lines` / `split` were never in it
+    // because their results carry views into the receiver's bytes — all four
+    // still lower here, and all four keep the leak rather than risk the alias.
+    var rslots: i32[] = [];
+    if (str_borrowing_method(field) && is_fresh_str_temp(recv, s)) {
+        var rn: string = "$srcv" + util.i32_to_string(p.locals.len());
+        p = p.add_local(rn);
+        var rslot: i32 = p.slot_of(rn);
+        p = p.emit(ir.op_store_local(rslot));
+        p = p.emit(ir.op_load_local(rslot));
+        rslots = rslots.append(rslot);
+    }
+    if (field == "to_ascii_upper") { return free_stashed_str_args(p.emit(ir.op_str_to_upper()), rslots); }
+    if (field == "to_ascii_lower") { return free_stashed_str_args(p.emit(ir.op_str_to_lower()), rslots); }
     if (field == "trim") { return p.emit(ir.op_str_trim()); }
-    if (field == "reverse") { return p.emit(ir.op_str_reverse()); }
+    if (field == "reverse") { return free_stashed_str_args(p.emit(ir.op_str_reverse()), rslots); }
     if (field == "chars") { return p.emit(ir.op_str_chars()); }
     if (field == "lines") { return p.emit(ir.op_str_lines()); }
     p = lower_expr(args[0], p);
@@ -8389,15 +8410,15 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
         if (!p.ok) { return p; }
         return p.emit(ir.op_str_replace());
     }
-    if (field == "repeat") { return p.emit(ir.op_str_repeat()); }
+    if (field == "repeat") { return free_stashed_str_args(p.emit(ir.op_str_repeat()), rslots); }
     if (field == "split") { return p.emit(ir.op_str_split()); }
-    if (field == "starts_with") { return p.emit(ir.op_str_starts_with()); }
-    if (field == "ends_with") { return p.emit(ir.op_str_ends_with()); }
-    if (field == "index_of") { return p.emit(ir.op_str_index_of()); }
+    if (field == "starts_with") { return free_stashed_str_args(p.emit(ir.op_str_starts_with()), rslots); }
+    if (field == "ends_with") { return free_stashed_str_args(p.emit(ir.op_str_ends_with()), rslots); }
+    if (field == "index_of") { return free_stashed_str_args(p.emit(ir.op_str_index_of()), rslots); }
     // contains: index_of(sub) >= 0
     p = p.emit(ir.op_str_index_of());
     p = p.emit(ir.op_const_i32(0));
-    return p.emit(ir.op_bin("ge_s", 0, false));
+    return free_stashed_str_args(p.emit(ir.op_bin("ge_s", 0, false)), rslots);
 }
 
 // lower_arr_str_join lowers `xs.join(sep)` on a string[] receiver to a call of the
