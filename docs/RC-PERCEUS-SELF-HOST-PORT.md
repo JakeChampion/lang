@@ -10528,6 +10528,7 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `internal/e2eselfhost/self_host_union_only_child_reclaim_test.go` (3 cases x 3
   backends; both byte gates fail on the parent on all three legs, the aliasing
   control passes either way). Refs #4353 #4451.
+
 - 2026-08-19: **the fresh anonymous RECEIVER at a string builtin method was never
   released — a missing emission site, not a borrowability question.**
   `lower_str_method` (irlower.fern) lowers its receiver with `lower_expr` and
@@ -10565,3 +10566,50 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   call arguments, so it is its own slice rather than a rider on this one. The
   source-declared method twin (`b.deriv()`, 46) is a different call site again
   (the user-method path) and needs the `SFRFRESHNAME:` registry. Refs #6544 #4451.
+
+- 2026-08-19: **matching on a tuple element cost the whole tuple its reclaim,
+  and the gate was not the one the union-only-child entry named.**
+  `rctuple_esc_stmt` walked a match scrutinee through `rctuple_esc_expr`, whose
+  `ExprFieldAccess` arm reports a non-scalar `name.<i>` read as a bare pointer
+  extraction. So `match (t.2)` looked like an escape and the tuple lost buffer,
+  element boxes and its own box — far more than the union box at that position.
+
+  `(i, [i, i+1], Some(i))` is FLAT and goes to 128 | 128 | 72 B/round purely by
+  adding `match (t.2)`; an ordinary array read in the same place leaves it flat.
+  `(i, Some(i))` with a match is 80 | 80 | 40. Native flat on both.
+
+  **Correcting the union-only-child entry:** it said the gate was
+  `body_unsafe_for`. It is not. That claim came from a forcing edit that never
+  took effect — an early `return` inserted inside the function rather than at
+  the call site — and the resulting null was read as information about the gate
+  instead of about the edit. Forcing each gate separately AT THE CALL SITE
+  gives:
+
+  | case | neither | body_unsafe_for | rctuple_payload_escapes | both |
+  |---|---|---|---|---|
+  | `(i, Some(i))` + match | 80 | 80 | **0** | 0 |
+  | `(i, [i,i+1], Some(i))` + match | 128 | 128 | **0** | 0 |
+
+  So `rctuple_payload_escapes` accounts for both rows and `body_unsafe_for` for
+  neither — which also means the blast radius is tuple-shaped, not shared by
+  every reclaim class as that entry warned. A null result can mean "wrong gate"
+  OR "the edit did not apply"; the two have to be told apart before either is
+  believed.
+
+  The fix admits ONE shape: a scrutinee that is exactly `name.<i>`. It reads the
+  element's tag and copies its payload into the arm binding, storing the box
+  nowhere. `match (t)` on the whole tuple, or an element handed through a call,
+  still walks as an escape. Arm guards and bodies are walked unchanged.
+
+  That a binding survives is measured, not argued: the reclaim frees the tuple's
+  own children and its box but never a union element's PAYLOAD, so an arm binding
+  an `i32[]` out of `Some(..)` stays valid even when it is carried out of the
+  loop and read afterwards (`pointer-payload-carried-out-safe`, value 90 on
+  native and all three backends, before and after).
+
+  Regression test:
+  `internal/e2eselfhost/self_host_match_elem_borrow_reclaim_test.go` (5 cases x 3
+  backends; both byte gates fail on the parent on all three legs, the three
+  safety controls — pointer payload bound, pointer payload carried out, and a
+  whole-element extraction that must stay refused — pass either way).
+  Refs #4353 #4451.
