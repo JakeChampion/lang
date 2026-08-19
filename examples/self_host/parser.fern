@@ -12672,12 +12672,17 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
     return FuncDecl { ...fn, body: lower_defers_body(fn.body) };
 }
 
-// lower_defers_body is the per-SCOPE half of the pass. Every lambda body is a
-// scope of its own — its defers run when IT yields, not when the enclosing
-// function returns — so each is lowered here first, with its own `__defret` /
-// `__dfaN` locals, and only then is the enclosing body collected. That holds
-// for a value block too: its `return` yields the block's value, so its defers
-// run at that point, which is what native does.
+// lower_defers_body is the per-SCOPE half of the pass. An ordinary lambda body
+// is a scope of its own — its defers run when IT returns, not when the
+// enclosing function does — so each is lowered here first, with its own
+// `__defret` / `__dfaN` locals, and only then is the enclosing body collected.
+//
+// A VALUE BLOCK is excluded: despite matching the same shape (a zero-arg call
+// of a zero-param lambda) it is not a call at all but the desugar of an
+// if-/match-expression or comprehension, which irlower inlines. Lowering one as
+// a scope puts `__defret` locals inside it and irlower then refuses it outright
+// ("did not lower: immediately-invoked value block"). Its defers belong to the
+// enclosing function, which is why dl_expr_has_defer looks through one.
 //
 // Doing this at parse time also puts the replayed actions in front of irlower's
 // capture rewrite. Lowering only after lambda lifting (irlower.fern:58608) left
@@ -12730,13 +12735,11 @@ function lower_defers_body(body0: Stmt[]): Stmt[] {
     return body;
 }
 
-// dl_lower_lambda_bodies lowers the defers of every lambda in `stmts`, each as
-// its own scope — a value block's callee lambda included, since native runs its
-// defers when the block yields rather than hoisting them to the enclosing
-// function. dl_expr_has_defer's value-block case, which looks THROUGH one to
-// report a defer for the enclosing collect, is left as-is: after this pass the
-// body it inspects holds no StmtDefer, so it reports nothing and the enclosing
-// scope is unaffected.
+// dl_lower_lambda_bodies lowers the defers of every ORDINARY lambda in `stmts`,
+// each as its own scope. A value block's callee lambda is skipped — it is an
+// inlined if-/match-expression desugar, not a call, so its defers belong to the
+// enclosing function — but the walk still enters it to reach ordinary lambdas
+// nested inside.
 function dl_lower_lambda_bodies(stmts: Stmt[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
@@ -12778,7 +12781,7 @@ function dl_ll_expr(e: Expr): Expr {
     match (e) {
         ExprLambda(lm) => { return ExprLambda { ...lm, body: lower_defers_body(lm.body) }; },
         ExprCall(c) => {
-            if (dl_is_value_block(c)) { return dl_vb_rebuild(c, lower_defers_body(dl_vb_body(c))); }
+            if (dl_is_value_block(c)) { return dl_vb_rebuild(c, dl_lower_lambda_bodies(dl_vb_body(c))); }
             return dl_ll_expr_kids(e);
         },
         _ => { return dl_ll_expr_kids(e); }

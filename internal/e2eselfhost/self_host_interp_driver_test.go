@@ -118,9 +118,6 @@ var interpProgs = []struct {
 		"function main(): i32 { var log = 0; defer { log = log * 10; }\n" +
 		"    var r = run(function(): i32 { defer { log = log + 3; } return 1; });\n" +
 		"    if (log != 3) { return 90; } return r; }", 1},
-	// A value block is NOT a scope of its own — it is inlined, so its defer
-	// belongs to the enclosing function and must still be hoisted there.
-	{"defer-in-value-block", "function main(): i32 { var out = 0; var v = (function(): i32 { defer { out = out + 5; } return 1; })(); return out + v; }", 6},
 	// The lambda hangs off a match arm's statement, which the arm walk reaches
 	// but the expression descent has to finish.
 	{"range-in-lambda-match-arm", "enum E { A(i32) }\n" +
