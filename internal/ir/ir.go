@@ -5510,29 +5510,29 @@ func needsImplicitReturn(ops []Op) bool {
 	return last != OpReturn && last != OpReturnVoid
 }
 
-// lookupVariant looks for a variant with the given name across
-// every enum in the program. Returns the owning enum's name, the
-// variant index, and the payload count.
-//
-// The scan is over a Go map, so with two enums declaring one variant
-// name the winner varies per process — DO NOT use this where a wrong
-// answer is possible. Match arms in particular are resolved against
-// the SCRUTINEE, not globally, so an arm name that is ambiguous across
-// the program is still legitimate; they read the checker's stamped
-// MatchArm.EnumName / VariantIndex instead of looking anything up.
-func (b *builder) lookupVariant(name string) (enumName string, varIdx int, payloadCount int, ok bool) {
-	return b.lookupVariantOn(name, "")
+// scrutineeEnumName is the enum a match's scrutinee statically has, or ""
+// when it is not an enum type. Arms are resolved against it: a variant name
+// two enums share resolves to a different ordinal in each, and the arm means
+// the scrutinee's. "" preserves the global-scan behaviour for the shapes that
+// have no static enum type.
+func (b *builder) scrutineeEnumName(scrut ast.Expr) string {
+	if et, isEnum := b.exprStaticType(scrut).(ast.EnumType); isEnum {
+		return et.Name
+	}
+	return ""
 }
 
-// lookupVariantOn resolves a variant by name, optionally restricted
-// to a specific enum. The checker stamps `Ident.EnumName` when it
-// resolves a qualified reference (`Color.Red`) or when an
-// unqualified bare name is unambiguous; passing it back here makes
-// the IR's resolution deterministic even when two enums declare the
-// same variant. The `enumName == ""` fallback keeps every legacy
-// caller (match-arm lookup, indirect-call dispatch) working: the
-// checker has already rejected ambiguous unqualified references, so
-// any name that reaches the IR with no qualifier is single-owner.
+// lookupVariantOn resolves a variant by name, restricted to a specific
+// enum when one is known. Every caller must supply the qualifier it has:
+// `Ident.EnumName` for a constructor reference (the checker stamps it
+// with the enum it resolved to) and scrutineeEnumName for a match arm.
+// Two enums in different modules may both declare a name (#6951), so an
+// unrestricted lookup falls back to scanning a Go map and its winner
+// varies per process.
+//
+// `enumName == ""` therefore means "no qualifier was available" — a
+// scrutinee with no static enum type, or an Ident the checker left
+// unstamped — and keeps the legacy scan for those.
 func (b *builder) lookupVariantOn(name, enumName string) (foundEnum string, varIdx int, payloadCount int, ok bool) {
 	if enumName != "" {
 		if ed, ok := b.info.Enums[enumName]; ok {
@@ -8740,7 +8740,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// Payload-less variant in expression position (`Red`,
 		// `EOF`). We construct an enum object containing just the
 		// tag — no payloads to store.
-		if enumName, varIdx, payloadCount, isVariant := b.lookupVariant(n.Name); isVariant && payloadCount == 0 {
+		if enumName, varIdx, payloadCount, isVariant := b.lookupVariantOn(n.Name, n.EnumName); isVariant && payloadCount == 0 {
 			if _, isLocal := b.locals[n.Name]; !isLocal {
 				return b.emitEnumNew(nil, enumName, varIdx, 0, nil)
 			}
@@ -12645,7 +12645,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// Variant constructor: lower to a heap-allocated tagged-union
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
-	if enumName, varIdx, payloads, isVariant := b.lookupVariant(id.Name); isVariant {
+	if enumName, varIdx, payloads, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			return b.emitEnumNew(n, enumName, varIdx, payloads, n.Args)
 		}
@@ -14383,7 +14383,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	if _, isLocal := b.locals[callee.Name]; isLocal {
 		return false, nil // shadowed by a local — not a constructor ref
 	}
-	enumName, varIdx, payloadCount, isVariant := b.lookupVariant(callee.Name)
+	enumName, varIdx, payloadCount, isVariant := b.lookupVariantOn(callee.Name, callee.EnumName)
 	if !isVariant || payloadCount == 0 {
 		return false, nil // payloadless ⇒ static sentinel, no box to reuse
 	}
@@ -15038,7 +15038,7 @@ func (b *builder) consumingReuseCtor(arm *ast.MatchArm, et ast.EnumType) *ast.Ca
 	if !ok {
 		return nil
 	}
-	cenum, _, payloadCount, ok := b.lookupVariant(cid.Name)
+	cenum, _, payloadCount, ok := b.lookupVariantOn(cid.Name, cid.EnumName)
 	if !ok || cenum != et.Name || payloadCount == 0 {
 		return nil
 	}
@@ -15815,7 +15815,7 @@ func (b *builder) constructionMovesIdent(e ast.Expr, name string) bool {
 	switch x := e.(type) {
 	case *ast.Call:
 		if id, ok := x.Callee.(*ast.Ident); ok && x.Method == nil {
-			if _, _, _, isVar := b.lookupVariant(id.Name); isVar {
+			if _, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar {
 				return any(x.Args)
 			}
 		}

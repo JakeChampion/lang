@@ -157,7 +157,7 @@ func (b *builder) detectTrmc() *trmcShape {
 			if !ok {
 				return nil
 			}
-			cenum, cVarIdx, cPayloadCount, ok := b.lookupVariant(cid.Name)
+			cenum, cVarIdx, cPayloadCount, ok := b.lookupVariantOn(cid.Name, cid.EnumName)
 			if !ok || cenum != retEnum.Name || cPayloadCount != len(ctor.Args) || cPayloadCount == 0 {
 				return nil
 			}

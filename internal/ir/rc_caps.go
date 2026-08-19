@@ -279,7 +279,7 @@ func (b *builder) enumRcPayloadsEligibleForValue(e ast.Expr) bool {
 		if !ok {
 			return false
 		}
-		en, _, _, isVar := b.lookupVariant(id.Name)
+		en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName)
 		if !isVar {
 			return false
 		}
