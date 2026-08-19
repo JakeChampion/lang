@@ -686,19 +686,19 @@ function main(): i32 { return f(5); }`,
 			},
 		},
 		{
-			// MAP LOCAL divergence (widened bug-hunt PIN — the #2704 conservative
-			// area): `var m: Map[..] = Map{..}` desugars at PARSE time to a
-			// map_new().insert()... chain. Native's freeEligible is conservative
-			// about the resulting map local and leaves it to the exit sweep
-			// (empty); the self-host recognises `Map` as an eligible type and
-			// precise-drops it at last use (1=m). Both sound — the self-host is
-			// simply more aggressive — so this is pinned, not "fixed" (matching
-			// native here would REMOVE a valid self-host optimisation).
+			// MAP LOCAL divergence: `var m: Map[..] = Map{..}` desugars at PARSE
+			// time to a map_new().insert()... chain. Both compilers now admit
+			// the map local (freeEligible agrees, so it is not pinned); they
+			// still differ on WHERE it dies — native leaves it to the exit
+			// sweep (empty) where the self-host precise-drops at last use
+			// (1=m). Both sound, the self-host simply more aggressive, so the
+			// remaining row is pinned rather than "fixed": matching native
+			// would REMOVE a valid self-host optimisation.
 			name: "fe-map-strkey-local",
 			src: `function f(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("a", 0) + m.get_or("b", 0); }
 function main(): i32 { return f(); }`,
 			diverge: map[string]map[string]divergence{
-				"f": {"freeEligible": {native: "", selfhost: "m"}, "preciseDrops": {native: "", selfhost: "1=m"}},
+				"f": {"preciseDrops": {native: "", selfhost: "1=m"}},
 			},
 		},
 		{
