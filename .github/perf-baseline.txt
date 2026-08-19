@@ -71,7 +71,7 @@ x86_64/tokenize.ir	169070089
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
 aarch64/array_append.text	584
-aarch64/array_append.ir	71008054
+aarch64/array_append.ir	69046974
 aarch64/array_index.text	555
 aarch64/array_index.ir	63698033
 aarch64/call_overhead.text	165
@@ -89,14 +89,14 @@ aarch64/map_string.ir	223648093	2
 aarch64/sort_inplace.text	860
 aarch64/sort_inplace.ir	132740196
 aarch64/sort_ints.text	2676
-aarch64/sort_ints.ir	115263483
+aarch64/sort_ints.ir	108054243
 aarch64/string_build.text	1259
-aarch64/string_build.ir	242431740
+aarch64/string_build.ir	180495540
 aarch64/string_scan.text	1606
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	542
-aarch64/string_slice.ir	167280114
+aarch64/string_slice.ir	164760114
 aarch64/struct_drop.text	1925
-aarch64/struct_drop.ir	692820288
+aarch64/struct_drop.ir	681300288
 aarch64/tokenize.text	989
 aarch64/tokenize.ir	176490114
