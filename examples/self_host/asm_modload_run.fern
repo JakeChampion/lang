@@ -196,7 +196,7 @@ function dedupe_weak_into(asm_text: string, seen_in: string[]): string[] {
     var state: i32 = 0;
     while (i < n) {
         var j: i32 = i;
-        while (j < n && asm_text[j] != 10) { j = j + 1; }   // 10 = '\n'
+        while (j < n && asm_text[j] != b'\n') { j = j + 1; }
         var line: string = asm_text[i:j] + "";
         var drop: boolean = false;
         if (state == 1) { drop = true; state = 2; }
@@ -637,7 +637,7 @@ function nth_field_i32(s: string, n: i32): i32 {
     var i: i32 = 0;
     var f: i32 = 0;
     while (f < n && i < s.len()) {
-        if (s[i] == 58) { f = f + 1; }   // 58 = ':'
+        if (s[i] == b':') { f = f + 1; }
         i = i + 1;
     }
     return util.digits_to_i32(s[i:s.len()] + "");
@@ -1037,7 +1037,7 @@ function main(): i32 {
         else if (a[ai] == "-unit-range" && ai + 1 < a.len()) {
             var urng: string = a[ai + 1];
             var uci: i32 = 0;
-            while (uci < urng.len() && urng[uci] != 58) { uci = uci + 1; }  // 58 = ':'
+            while (uci < urng.len() && urng[uci] != b':') { uci = uci + 1; }
             unit_lo = util.digits_to_i32(urng);
             if (uci + 1 <= urng.len()) { unit_hi = util.digits_to_i32(urng[uci + 1:urng.len()]); }
             ai = ai + 1;
@@ -1050,7 +1050,7 @@ function main(): i32 {
             // the colon for HI.
             var rng: string = a[ai + 1];
             var ci: i32 = 0;
-            while (ci < rng.len() && rng[ci] != 58) { ci = ci + 1; }  // 58 = ':'
+            while (ci < rng.len() && rng[ci] != b':') { ci = ci + 1; }
             pm_lo = util.digits_to_i32(rng);
             if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(rng[ci + 1:rng.len()]); }
             ai = ai + 1;

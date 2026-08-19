@@ -98,7 +98,7 @@ pub function encode(u: UnitObj): string {
 function scan_int(s: string, pos: i32): IntsAt {
     var p: i32 = pos;
     var v: i32 = 0;
-    while (p < s.len() && s[p] != 10) {          // 10 = '\n'
+    while (p < s.len() && s[p] != b'\n') {
         if ((s[p] as i32) >= 48 && (s[p] as i32) <= 57) { v = v * 10 + ((s[p] as i32) - 48); }
         p = p + 1;
     }

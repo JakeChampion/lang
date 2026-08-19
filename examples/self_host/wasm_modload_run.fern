@@ -384,7 +384,7 @@ function main(): i32 {
             // "LO:HI" — digits_to_i32 stops at ':' for LO; slice past it for HI.
             var rng: string = a[ai + 1];
             var ci: i32 = 0;
-            while (ci < rng.len() && rng[ci] != 58) { ci = ci + 1; }  // 58 = ':'
+            while (ci < rng.len() && rng[ci] != b':') { ci = ci + 1; }
             pm_lo = util.digits_to_i32(rng);
             if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(rng[ci + 1:rng.len()]); }
             ai = ai + 1;

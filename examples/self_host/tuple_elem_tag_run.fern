@@ -20,8 +20,8 @@ import "./util";
 function ref_trim(s: string): string {
     var a: i32 = 0;
     var b: i32 = s.len();
-    while (a < b && s[a] == 32) { a = a + 1; }
-    while (b > a && s[b - 1] == 32) { b = b - 1; }
+    while (a < b && s[a] == b' ') { a = a + 1; }
+    while (b > a && s[b - 1] == b' ') { b = b - 1; }
     return s[a:b] + "";
 }
 function ref_elem_tag(t: string, n: i32): string {
@@ -33,7 +33,7 @@ function ref_elem_tag(t: string, n: i32): string {
     var idx: i32 = 0;
     var i: i32 = 0;
     while (i <= inner.len()) {
-        if (i == inner.len() || (depth == 0 && inner[i] == 44)) {
+        if (i == inner.len() || (depth == 0 && inner[i] == b',')) {
             if (idx == n) { return ref_trim(inner[start : i]); }
             idx = idx + 1;
             start = i + 1;

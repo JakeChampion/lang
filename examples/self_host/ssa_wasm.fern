@@ -32,20 +32,6 @@
 import "./ssa";
 import "./util";
 
-// str_join_range / str_join_chunks: balanced divide-and-conquer concat, so
-// emitting a large module is O(total·log n) rather than the O(total²) of a
-// left fold (string concat copies the whole accumulator). Mirrors ssa_x86.
-function str_join_range(parts: string[], lo: i32, hi: i32): string {
-    var n: i32 = hi - lo;
-    if (n <= 0) { return ""; }
-    if (n == 1) { return parts[lo]; }
-    var mid: i32 = lo + n / 2;
-    return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
-}
-function str_join_chunks(parts: string[]): string {
-    return str_join_range(parts, 0, parts.len());
-}
-
 // loc returns the WAT operand that reads SSA value v (a wasm local read).
 // SSA value ids are dense 0..nvals-1 and map 1:1 to wasm local indices:
 // params occupy 0..nparams-1 (wasm function params) and the rest are the
@@ -355,7 +341,7 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
     }
     chunks = chunks.append("    ))\n");           // close loop + exit
     chunks = chunks.append("    (unreachable))\n"); // every path returns / loops
-    return str_join_chunks(chunks);
+    return util.str_join_chunks(chunks);
 }
 
 // inst_supported reports whether this backend can lower an instruction
@@ -608,7 +594,7 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
         chunks = chunks.append(emit_func(funcs[i], fnnames));
         i = i + 1;
     }
-    out = out + str_join_chunks(chunks);
+    out = out + util.str_join_chunks(chunks);
     out = out + "  (func $_start (call $proc_exit (call $__fn_main)))\n";
     out = out + "  (export \"_start\" (func $_start))\n";
     out = out + ")\n";

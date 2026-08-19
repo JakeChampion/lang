@@ -369,8 +369,8 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             var it: string = op.str;
             var iok: boolean = it.len() > 0;
             var istart: i32 = 0;
-            if (it.len() > 0 && it[0] == 45) { istart = 1; if (it.len() == 1) { iok = false; } }
-            var ishex: boolean = it.len() > istart + 1 && it[istart] == 48 && (it[istart + 1] == 120 || it[istart + 1] == 88);
+            if (it.len() > 0 && it[0] == b'-') { istart = 1; if (it.len() == 1) { iok = false; } }
+            var ishex: boolean = it.len() > istart + 1 && it[istart] == b'0' && (it[istart + 1] == b'x' || it[istart + 1] == b'X');
             var idi: i32 = istart;
             if (ishex) { idi = istart + 2; if (it.len() <= idi) { iok = false; } }
             while (idi < it.len()) {

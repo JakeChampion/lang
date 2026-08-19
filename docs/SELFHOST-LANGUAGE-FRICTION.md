@@ -1,6 +1,6 @@
 # What the language does to the self-hosted compiler
 
-An analysis of `examples/self_host/` (91 files, 167,213 lines) asking one
+An analysis of `examples/self_host/` (91 files, 172,450 lines) asking one
 question: **which parts of Fern make writing the self-hosted compiler harder
 than it needs to be?** Not "which parts of the self-host are badly written" —
 that is `docs/SELF-HOST-AUDIT.md`, and its findings are largely structural
@@ -58,9 +58,9 @@ What a 167k-line compiler written in a modern language uses, counted across
 | Wildcard `_ =>` match arms | — | **2,364** of 8,606 arms (27%) |
 | Locals with a written type annotation | inference exists | **17,084** of 17,727 (96%) |
 
-The single largest file, `irlower.fern`, is **56,702 lines** and contains a
-**1,634-line function** (`lower_call_method`). `LowerState`, the value threaded
-through all of it, has **30 fields**, eight of which are `string[]` sets
+The single largest file, `irlower.fern`, is **59,315 lines** and contains a
+**1,704-line function** (`lower_call_method`). `LowerState`, the value threaded
+through all of it, has **31 fields**, fourteen of which are `string[]` sets
 carrying ownership facts.
 
 None of this is because the author preferred it. Each row has a cause below.
@@ -144,7 +144,7 @@ functions). Nothing else. The consequences:
 with one-module-per-file and no package concept, a mutually-recursive compiler
 pass cannot be split at all. `lower_expr` ↔ `lower_stmt` ↔ `lower_call_method`
 ↔ `lower_stmt_var` are irreducibly mutually recursive, so they live in one
-56,702-line file, and the functions inside it grow to 1,634 lines because
+59,315-line file, and the functions inside it grow to 1,704 lines because
 splitting *them* out is the only decomposition the language permits and it
 does not reduce the file.
 
@@ -677,7 +677,7 @@ Ordered by (unblocking value) ÷ (cost), not by size.
    `docs/SELFHOST-SYMBOL-INTERNING.md` and route the 65 string-tag registries
    through it. The interning plan already exists and is unblocked.
 7. **Multi-file packages, or intra-package import cycles** (§2.3). The largest
-   language change here, and the only fix for a 56,702-line file and a 397-file
+   language change here, and the only fix for a 59,315-line file and a 397-file
    staging edit. Worth scoping even if it is not worth doing yet.
 8. **Surface the append cliff** (§4.5). A diagnostic mode reporting which
    `.append` / `.with` sites took the copying path, and a way to assert it in a

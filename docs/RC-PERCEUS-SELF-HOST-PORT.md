@@ -11092,3 +11092,108 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   — 4 programs x 3 legs; the three alias programs fail on the parent on x86-64
   and arm64, the fresh-value control passes either side, and the wasm leg passes
   either side as the parity gate it is. Refs #6880 #6875 #6567 #3495 #4451.
+
+
+
+- 2026-08-19: **the BARE-IDENT union payload — the array half, and why the string
+  half is not a typing problem.** The entry above refused `Some(xs)` because the
+  release has to be NAMED and the element site has no annotation to tell a
+  bare-ident array (flat dec) from a bare-ident string (which a flat dec would
+  misread as a pointer on the two-word-string backends). The slot carries what
+  the annotation did not: `is_arr_slot`.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `(i, Some(xs))`, `xs` read after | 40 \| 40 \| 24 | **0** | 0 |
+  | `(i, Some(xs))`, `xs` dead after | 40 \| 40 \| 24 | **0** | 0 |
+  | payload carried out of the arm | 72 (value) | 72 | 72 |
+
+  Freeing an aliased payload is balanced because the CONSTRUCTION alias-incs it,
+  so the element's dec spends the box's own reference and the local's own sweep
+  still finds a valid buffer. Both controls check that rather than assert it: one
+  reads `xs` after the tuple, the other reads a binding carried out of the arm
+  past every reclaim point, behind decoy allocations that would be handed the
+  block if the dec had really freed it.
+
+  A string ARRAY is `is_arr` too (`mark_arr` and `mark_strarr` are both set), so
+  it is refused explicitly: a flat dec would free the buffer and strand every
+  element box. `__fern_str_arr_free` is the release that walks them, and crediting
+  it here needs a reachable shape to test — `Option[string[]]` at a tuple element
+  is not IR-eligible, so there is none.
+
+  **The string half is a REACHED but INERT release**, and naming it is not what
+  is missing. Forcing the ident arm to return `__fern_str_free` unconditionally
+  leaves `(i, Some(sv))` at 32 on every backend, and the first reading of that
+  null was "the arm is never reached". The emitted code says otherwise: forcing
+  takes `__fern_str_free` in `churn` from 2 calls to 3. The arm runs, emits its
+  release, and the byte delta does not move — so the remaining 32 is not the
+  payload this arm would free.
+
+  A null result has now been misread three ways in this subsystem in one day —
+  wrong gate, edit did not apply, and here reached-but-inert. Counting the
+  emitted calls distinguishes them and a byte delta does not.
+
+  The ledger for that shape is the place to start: 2 `__fern_arr_box` against 2
+  `__fern_arr_dec` balances the tuple and union boxes, leaving 1
+  `__fern_str_concat` + 1 `__fern_i32_to_string` against 2 `__fern_str_free`.
+  The same string local with NO tuple is flat, so the tuple adds the 32; the
+  candidates are the copy `str_box` makes when a string is stored into the union
+  payload slot, and the producer temp. Nothing here over-releases — no probe has
+  returned 99.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_bare_ident_payload_reclaim_test.go` (4 cases x 3
+  backends; the two byte gates fail on the parent on all three legs, and the two
+  controls — the carried-out binding and the still-refused string payload — pass
+  either way). Refs #4353 #4451.
+- 2026-08-19: **the intermediate VIEW BOX at a slice receiver**, which closes
+  `base[4:base.len()].to_owned().len()` entirely — the receiver carve-out reading
+  the callee-side proof (#7167) gave the SOURCE its reclaim credit back and left
+  the box behind.
+
+  #7164 releases a fresh-or-receiver chain in receiver position under a runtime
+  pointer compare, but `sfrrecv_chain_root_slot` only walked an `ExprCall` link.
+  A bare `ExprSlice` was not a link it followed. It is the same character as an
+  `SFRRECV:` call — the box is a view over the source's bytes and never the
+  source's own box — so walking through it to the root, and admitting a slice
+  receiver at the release site, is the whole change.
+
+  | leg | before | after |
+  | --- | --- | --- |
+  | x86-64 | 9600 | **0** |
+  | arm64 | 9600 | **0** |
+  | wasm | 48000 | **0** |
+  | wasm, payload 4x wider | 230400 | **0** |
+
+  The wasm rows are the ones that matter: its residual SCALED with the payload
+  because a slice is a copy there and a zero-copy view on the asm-IR path
+  (#4294), so this recovers a whole copy per round rather than a 24-byte header.
+
+  The two guards have DIFFERENT standing at this arm, and both were measured
+  rather than argued:
+
+  | guard | standing at the SLICE arm | why |
+  | --- | --- | --- |
+  | recv_borrow | **witnessed**, exit 97 | a callee returning its receiver hands the view straight back |
+  | the pointer compare | **contract-only** | a slice box is never the source's box, so it cannot fire |
+
+  The compare stays because the `ExprCall` arm it shares does need it — #7164's
+  identity-path probe still exits 97 on a build without it — but recording that
+  it does no work at THIS arm is the point: the same two lines are load-bearing
+  at one caller and inert at the other.
+
+  This made the sibling entry's per-leg gate obsolete. That test split its
+  threshold across backends precisely because the residual differed by leg; with
+  every leg at 0 one tight gate serves all three and catches a regression of
+  either half, so the split and its substitution helper are deleted.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_str_slice_view_release_test.go` (6 cases x 3
+  backends; the two byte gates fail on the parent on all three legs).
+
+  Still open, and now the lead on this shape: a slice OF a slice. On wasm the
+  nested chain measures 60800 -> 48000 — the OUTER copy goes, the inner one
+  stays, because it is the operand of the second slice rather than a receiver at
+  a call, so no receiver-arm release reaches it. Both boxes go on the register
+  backends (9600 -> 0), which is why the nested case pins the VALUE rather than
+  the bytes. Refs #6544 #4451.

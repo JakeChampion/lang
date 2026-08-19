@@ -5,97 +5,96 @@
 > SH-057 miscompile has its own issue [#2850](https://github.com/JakeChampion/lang/issues/2850).
 > This doc stays the detailed reference (file:line, repro, fix sketch).
 
-Audit of the self-hosted Fern compiler under `examples/self_host/` (~62k lines of
-Fern across 47 files), compared where useful against the Go reference in
+Audit of the self-hosted Fern compiler under `examples/self_host/` (172,450 lines
+of Fern across 91 files), compared where useful against the Go reference in
 `internal/`. The goal is a worklist we can resolve **one item at a time**: every
 finding has a stable ID (`SH-NNN`), a severity, the affected `file:line`, and a
 concrete remediation. Check items off as they land.
 
 > Scope note: the self-host tree is a deliberately constrained bootstrap subset
-> (every file imports only siblings and `std/io`). That
-> constraint is real, but it does **not** explain most of the duplication below
-> — receiver methods, struct-update spread, and sibling imports are all already
-> used in this tree, so a shared sibling `util.fern` / `value.fern` /
-> `modload.fern` is fully within the subset. Items tagged _(needs generics)_ or
-> _(needs backend fix)_ are the genuinely blocked ones.
+> (every file imports only siblings and `std/io`). That constraint is real, but
+> it does **not** explain most of the duplication below — receiver methods,
+> struct-update spread, sibling imports, and generics (`astwalk.fern:19` takes
+> `[T]`) are all already used in this tree, so a shared sibling `util.fern` /
+> `modload.fern` is fully within the subset. A handful of modules
+> (`watbin`, `x86_native`, `arm64_native`, `elf`, `lexer`) import nothing **by
+> design**; their duplicate helpers are deliberate and are called out where they
+> appear.
 
 ---
 
 ## 1. Executive summary
 
 The implementation is **functionally impressive and broadly correct** — it has a
-full lexer, parser, monomorphiser, checker, tree-walker, bytecode VM, an SSA
-optimiser, four native/text backends, a WASM path, ELF/Mach-O writers, a WIT
-codec, and a literate engine, all with extensive in-file test coverage. The
-comments are unusually good and frequently record real bug history.
+full lexer, parser, monomorphiser, checker, tree-walker, an IR + SSA optimiser,
+native x86-64/arm64 and WASM backends, ELF/Mach-O writers, a WIT codec, and a
+literate engine, all with extensive in-file test coverage. The comments are
+unusually good and frequently record real bug history.
 
 The quality problems are almost entirely **structural / maintainability**, not
-correctness — with a small number of genuine latent bugs (§2). The three
-dominant themes:
+correctness — with a small number of genuine latent bugs (§2). The dominant
+themes:
 
-1. **Pervasive copy-paste of utility code** — 156 redundant function definitions
-   across 82 names; one 3-line helper (`i32_to_string`) exists in **9 files**,
-   a string-membership test in **6 copies under 4 names**. No shared util module
-   exists even though the stdlib already provides most of these.
-2. **A stringly-typed type system** carried as raw strings and re-parsed with
-   magic ASCII byte constants (`91`=`[`, `44`=`,`, `93`=`]`, `46`=`.`) in dozens
-   of places, spawning families of near-duplicate `type_from_name*` /
-   `ty_from_name` resolvers.
-3. **Giant parallel-maintained functions / files** — two ~4,000-line
-   `emit_runtime` twins, ~1,000-line `emit_method_call` and ~880-line
-   `try_emit_builtin` copies per backend, and no generic AST visitor so ~25–40
-   tree-walkers are hand-rewritten across the tree.
+1. **Giant functions.** `wasm_ir.fern:3189 emit_function_ir` is **1,257 lines**;
+   `ssa.fern:524 build_expr` is **790**; `asmcore.fern:2704 infer_expr_type` is
+   **497**; `parser.fern:6033 parse_type_name` is **341**. Every one of these has
+   grown since it was first recorded here.
+2. **Left-fold string accumulation.** `out = out + …` at **701 sites in
+   `wasm_ir.fern`** alone (plus 278 in `ssa_arm64`, 259 in `ssa_x86`), the
+   O(n²) shape whose cost the tree's own comments document.
+3. **Parallel-maintained twins and god-structs.** `asm_ir.fern` ↔
+   `asm_arm64_ir.fern` keep two `emit_runtime` surfaces whose `has_need` key
+   sets have **drifted apart by 7 keys**; `irlower.fern:409 LowerState` carries
+   **31 fields, 20 of them arrays**; `wasm_ir.fern:8027` takes 13 positional
+   params carrying 8 parallel arrays.
+4. **A stringly-typed type system** carried as raw strings and re-parsed with
+   magic ASCII byte constants (`91`=`[`, `44`=`,`, `93`=`]`, `46`=`.`). Largely
+   migrated onto `parse_type_ref` (SH-021); the endgame — the parser storing
+   `TypeRef` directly — is still open.
+
+Leaf-utility duplication, the headline of the original audit, is **mostly
+resolved**: see SH-020 for what is left and what is deliberately kept.
 
 ### Scorecard (subjective, per area)
 
 | Area | Files | Grade | One-line take |
 |---|---|---|---|
-| Machine-code encoders | `x86_encode`, `arm64_native` (pt.1), `elf` | **A** | Small, pinned-to-`llvm-mc`, single-responsibility. The model to emulate. |
-| Optimiser / IR | `ssa` | B− | Strong algorithms + comments; undermined by string-tagged IR and 2 giant fns. |
-| Literate / printer / disasm / constfold | — | B | Clean and tested; only duplication + one backend workaround. |
-| Frontend | `lexer`, `parser` | B− | Capable; no AST visitor, sentinel error nodes, types-as-strings. |
-| Checker / shared frontend | `checker`, `asmcore` | C+ | Real `Type`/`Diag` model, but 15 duplicated walkers, 6 scope ctors, 6 type resolvers. |
-| Tree-walker / VM | `interp`, `vm` | C+ | Ambitious + tested; control flow & errors smuggled through magic strings (§2). |
-| Text emitters | `asm`, `asm_arm64` | C | ~8k lines each; 4 large parallel-maintained surfaces beyond the documented one. |
-| WASM path | `wasm`, `watbin` | C | 40-field god-struct, 21-arg fn, O(n²) string build, silent wrong-byte fallthroughs. |
-| Driver / glue | `*_run`, `fern`, `bundle_*` | C− | 31 `main()`s; import-resolver triplicated verbatim; ~10 near-clone stdin shims. |
+| Machine-code encoders / containers | `x86_native` (pt.1), `arm64_native` (pt.1), `elf` | **A** | Small, pinned-to-`llvm-mc`, single-responsibility. The model to emulate. Import-free by design. |
+| Optimiser / SSA | `ssa` | B− | Strong algorithms + comments; undermined by an overloaded `imm` field and 2 giant fns. |
+| Literate / printer / constfold | `literate`, `printer`, `constfold` | B | Clean and tested; only duplication + hand-rolled option types. |
+| Frontend | `lexer`, `parser` | B− | Capable; no AST visitor in the rewrite passes, positionless `StmtUnknown`, types-as-strings. |
+| Checker / shared frontend | `checker`, `asmcore` | C+ | Real `Type`/`Diag` model, but 15 duplicated walkers and `build_func_scope` rebuilt 9× per function. |
+| Tree-walker | `interp` | C+ | Ambitious + tested; five parallel arrays as an environment, scoping by length-trim. |
+| IR lowering | `irlower` | C | 59k lines; a 31-field `LowerState` and a 1,704-line `lower_call_method`. |
+| Native IR emitters | `asm_ir`, `asm_arm64_ir` | C | Two `emit_runtime` surfaces hand-maintained in parallel, key sets already drifted. |
+| WASM path | `wasm_ir`, `watbin` | C | The 1,257-line `emit_function_ir`, 701 left-folds, 13-param unbundled entry point. |
+| Driver / glue | `*_run`, `fern` | C− | 56 `main()`s / 45 `*_run.fern`; import resolver duplicated and already drifted. |
 
 ---
 
 ## 2. Correctness bugs / latent hazards (do these first)
 
-These are not just smells — they can produce wrong output today.
+- [x] **SH-001 — the bytecode VM turned any user string starting with `"__"`
+  into a runtime error.** Closed by matching only the exact compiler sentinels;
+  the bytecode VM is no longer part of the tree.
 
-- [x] **SH-001 — VM converts any user string starting with `"__"` into an error.**
-  `vm.fern:1788` — `OpPushStr` sniffed the operand and, if it started with `"__"`,
-  pushed a `VErr` instead of a `VString`. Any legitimate literal like
-  `"__proto__"` / `"__init__"` became a runtime error. Severity **High**.
-  _Done (narrow fix):_ the `OpPushStr` handler now matches only the three exact
-  compiler sentinels (`__undef:`, `__assign-undef:`, `__exprunknown__`) instead of
-  the blanket `__` prefix, so ordinary user literals stay `VString`. The fuller
-  `OpError { msg }` opcode remains the ideal end state (see SH-040) but carries a
-  3-match-site blast radius (`disasm.fern` enumerates all 60 `Op` variants).
-
-- [x] **SH-002 — Control flow rides magic error strings.** _Done:_
-  `StepResult` grew a dedicated `sig: i32` channel (0 = none, 1 = stop —
-  a `return`'s value or a runtime error in `ret`, 2 = break, 3 =
-  continue) built via `step_none`/`step_stop`; every construction and
-  consumer (loop break/continue handling, `eval_block` short-circuit,
-  function-body enders, the top-stmts driver) keys off `sig`, and the
-  `VErr("__noreturn__"/"__break__"/"__continue__")` sentinels + their
-  `is_*` matchers are deleted — no Value can be mistaken for a control
-  signal, and a typo'd literal can no longer silently break control
-  flow. (The `vm.fern` `-1001`/`-1002` half of this entry is obsolete:
-  that VM was retired after the audit was written; the file no longer
-  exists.)
+- [x] **SH-002 — Control flow rides magic error strings.** _Done:_ `StepResult`
+  (`interp.fern:2596`) grew a dedicated `sig: i32` channel (0 = none, 1 = stop —
+  a `return`'s value or a runtime error in `ret`, 2 = break, 3 = continue) built
+  via `step_none`/`step_stop`; every construction and consumer (loop
+  break/continue handling, `eval_block` short-circuit, function-body enders, the
+  top-stmts driver) keys off `sig`, and the
+  `VErr("__noreturn__"/"__break__"/"__continue__")` sentinels + their `is_*`
+  matchers are deleted — no Value can be mistaken for a control signal, and a
+  typo'd literal can no longer silently break control flow.
 
 - [x] **SH-003 — `watbin` silently drops unknown instructions.** _Done:_ the
   opcode tables' `return 0` sentinel made an unhandled instruction fall
   through BOTH encoder paths (folded `enc_instr` and the flat token loop)
   and emit NOTHING — the module encoded with the operation missing, so it
   failed validation with a baffling type mismatch or ran with wrong values
-  (the `sat_trunc_opcode` comment records a real instance). Both
-  fallthroughs now `eprint` the op and `exit(1)` when a NAMED op reaches
+  (the `sat_trunc_opcode` comment at `watbin.fern:919` records a real instance).
+  Both fallthroughs now `eprint` the op and `exit(1)` when a NAMED op reaches
   them (empty/unnamed nodes keep the lenient skip). Verified benign-token
   clean across the wasm-binary, CLI (`-target wasm32-wasi -emit core-module`), leb128,
   ret-struct-field, streq-helper, and arm64-builds suites.
@@ -105,10 +104,10 @@ These are not just smells — they can produce wrong output today.
   kernel — the classic exact decimal-shift algorithm (digit buffer + movable
   point, grade-school ÷2/×2 to binary-normalize, bit extraction,
   round-to-nearest ties-to-even, with subnormal/±inf/±0 handling). It exists in
-  FOUR copies: `util.parse_f64_bits`, which the IR emitters and the
-  interpreter's literal reader import, and the three the assemblers keep
-  standalone (`watbin.parse_f64`, `x86_gas_parse_f64`, `arm64_parse_f64` — they
-  are deliberately import-free). The reference commentary lives in `util.fern`.
+  FOUR copies: `util.fern:382 parse_f64_bits`, which the IR emitters and the
+  interpreter's literal reader import, and the three the import-free assembler
+  modules keep standalone (`watbin.fern:458`, `x86_native.fern:2141`,
+  `arm64_native.fern:2917`). The reference commentary lives in `util.fern`.
   Pinned bit-exact against `strconv.ParseFloat` by
   `TestSelfHostParseF64{Watbin,X86Gas,Arm64}` and
   `TestSelfHostInterpFloatLiteralBits` on a shared corpus of the compiler's
@@ -116,66 +115,44 @@ These are not just smells — they can produce wrong output today.
   (`2.4703282292062327e-324` et al.), exact ULP ties written out in full, and
   17-digit round-trip spellings of seeded random doubles;
   `TestSelfHostParseF64MirrorsAgree` holds the four copies to identical code,
-  since three of them only run behind a Linux x86-64 toolchain. This closes the
-  in-process-vs-GNU-as float-bit parity gap (the `.Lfc_*` tables assembled ULPs
-  off in-process before) and, with #6824, the reader divergence between the
-  interpreter and the native oracle.
+  since three of them only run behind a Linux x86-64 toolchain.
 
-- [x] **SH-005 — `x86_gas` silently drops unsupported mnemonics.** _Done:_
-  `X86Asm` grew an `unknown: string[]` list; the three silent-skip sites in
-  `x86_gas_emit` (unknown single-operand mnemonic, the final two-operand
-  fallthrough, and `cmpb`'s non-`$imm` operand form) record instead of
-  dropping, and every ELF-writing driver (the capstone + x86_gas test
-  mains) fails on a non-empty list before writing the executable —
-  mirroring the arm64 path's `p.unknown` check in `fern.fern`. Pinned by
-  the x86_gas unit driver (unknown one-operand / two-operand / cmpb-form
-  each recorded; clean programs record nothing).
+- [x] **SH-005 — the GAS-text x86 front-end silently dropped unsupported
+  mnemonics.** _Done:_ `X86Asm` (`x86_native.fern:1397`) grew an
+  `unknown: string[]` list (`:1433`); the three silent-skip sites in
+  `x86_gas_emit` (`:2624`) record instead of dropping, and every ELF-writing
+  driver fails on a non-empty list before writing the executable — mirroring the
+  arm64 path's `p.unknown` check in `fern.fern`.
 
-- [x] **SH-006 — `arm64_gas_reg` defaults unknown registers to x0.** _Done:_
-  the decode is strict — x0..x30 / w0..w30, d0..s31, sp/lr/xzr/wzr, and
-  `-1` for anything else (including digit-suffix garbage like `x1a`,
-  previously 1 via the lenient atoi, and out-of-range `x31`/`x99`).
-  Because the encoders would fold `-1` into garbage bits, a `-1` alone is
-  not centrally catchable (`& 31` masks alias it to xzr/sp), so
-  `arm64_gas_program`'s line loop pre-scans every instruction's operands
-  for REGISTER-SHAPED tokens (x/w/d/s + digit lead, top-level or inside a
-  `[...]` memory operand) that fail the decode and records them on
-  `p.unknown` — the same gate that already refuses unknown mnemonics, so
-  the driver rejects the output before a corrupt encoding can run. Pinned
-  by the gas self-test (strict-decode units + program-level recording +
-  clean-program control); the whole-compiler arm64-builds suite proves no
-  benign token trips the shape heuristic.
+- [x] **SH-006 — `arm64_gas_reg` defaulted unknown registers to x0.** _Done:_
+  the decode (`arm64_native.fern:1630`) is strict — x0..x30 / w0..w30, d0..s31,
+  sp/lr/xzr/wzr, and `-1` for anything else (including digit-suffix garbage like
+  `x1a` and out-of-range `x31`/`x99`). Because the encoders would fold `-1` into
+  garbage bits, a `-1` alone is not centrally catchable (`& 31` masks it to
+  xzr/sp), so `arm64_gas_program` (`:3251`) pre-scans every instruction's
+  operands for REGISTER-SHAPED tokens that fail the decode and records them on
+  `p.unknown` — the same gate that already refuses unknown mnemonics.
 
-- [x] **SH-007 — `ssa_wasm` `index_of_str` returned 0 (not −1) on miss.** _Done:_
-  consolidated all three util-host copies (`ssa`, `ssa_wasm`, `wasm`) onto one
-  canonical `util.index_of_str` that returns −1 on miss, so a missing `funcaddr`
-  now emits table slot −1 (an out-of-bounds `call_indirect` that traps loudly)
-  instead of silently calling slot 0. (`watbin`'s copy stays local — it's a
-  deliberately self-contained module; it already returned −1.)
+- [x] **SH-007 — `index_of_str` returned 0 (not −1) on miss.** _Done:_ the SSA
+  and wasm hosts share one canonical `util.index_of_str` (`util.fern:330`)
+  returning −1, so a missing `funcaddr` emits table slot −1 (an out-of-bounds
+  `call_indirect` that traps loudly) instead of silently calling slot 0.
 
-- [x] **SH-008 — `wasm` `StrTable.offset_of` returns scratch base on miss.**
-  _Done:_ both the AST backend's `StrTable.offset_of` and the IR path's
-  `offset_of_value` (`wasm_ir.fern` — the same bug, independently) now
-  `eprint` the missing literal and `exit(1)` instead of silently
-  returning 24 (the iovec scratch base). A miss is a compiler bug (the
-  literal escaped the collection pre-pass), so it should halt the
-  compile, not point the emitted code at scratch memory. (The map-backed
-  table remains a possible perf follow-up; correctness no longer
-  depends on it.)
+- [x] **SH-008 — the wasm string table returned the scratch base on miss.**
+  _Done:_ `wasm_ir.fern:444 offset_of_value` now `eprint`s the missing literal
+  and `exit(1)` instead of returning 24 (the iovec scratch base). A miss is a
+  compiler bug (the literal escaped the collection pre-pass), so it halts the
+  compile rather than pointing emitted code at scratch memory.
 
-- [x] **SH-009 — Dead duplicate `movl` branch.** `x86_gas.fern:703-708` was
-  unreachable (the `movl` at `:667` returns first) and additionally used the
-  *wrong* register decoder (`x86_gas_reg`, 64-bit) feeding `x86_mov_r32_imm32`.
-  _Done:_ deleted; confirmed the live `x86_gas_movl` (`:128`) handles the `$imm`
-  form correctly via `x86_gas_reg32`. Severity **Med**.
+- [x] **SH-009 — Dead duplicate `movl` branch** in the GAS-text x86 front-end,
+  unreachable and additionally using the 64-bit register decoder to feed
+  `x86_mov_r32_imm32`. _Done:_ deleted; the live `x86_gas_movl`
+  (`x86_native.fern:1996`) handles the `$imm` form via `x86_gas_reg32`.
 
-- [x] **SH-010 — `digits_to_i32` had drifted across copies.** `interp`'s
-  `str_to_i32`, `constfold`'s and others were sign-naive while `vm`/`asmcore`
-  were sign-aware. _Done:_ consolidated onto one canonical **sign-aware**
-  `util.digits_to_i32` (sign-aware is a strict superset on digit-only input, so
-  every caller is safe and the latent negative-string bug is fixed). All 6 copies
-  (`asmcore` pub, `constfold`, `ssa`, `vm`, `wasm`, `interp`'s `str_to_i32`) plus
-  the `asm`/`asm_arm64` cross-module callers now use it.
+- [x] **SH-010 — `digits_to_i32` had drifted across copies** (sign-naive in some,
+  sign-aware in others). _Done:_ consolidated onto one canonical **sign-aware**
+  `util.digits_to_i32`; sign-aware is a strict superset on digit-only input, so
+  every caller is safe and the latent negative-string bug is fixed.
 
 ---
 
@@ -184,231 +161,204 @@ These are not just smells — they can produce wrong output today.
 These each touch many files; fixing the root removes dozens of individual
 findings. Ranked by leverage.
 
-### T1 — No shared utility module (→ 156 redundant defs)
-- [~] **SH-020 — Create `examples/self_host/util.fern`** (sibling, import-friendly)
-  and move the copy-pasted leaf helpers into it, then import everywhere.
-  _In progress (staged rollout):_ `util.fern` now exists (imports nothing but
-  siblings) and is seeded with the canonical `i32_to_string`;
-  all 9 `i32_to_string` copies are now retired (`disasm`, `vm`, `constfold`, `printer` (dead), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm`, `asmcore` — the last also dropped the `pub` cross-module copy used by `asm.fern`/`asm_arm64.fern`).
-  The `i32_to_string` strand is **done**. Remaining for SH-020: fold in the OTHER duplicated helpers and the
-  rest of the helpers below, one file per PR — each conversion must add
-  `util.fern` to every Go test that stages that module (no shared staging list;
-  `disasm` had a footprint of 1, most others are 4–8, `wasm`/`asmcore` are 58/74).
-  Prefer files NOT imported by `fern.fern` (e.g. `disasm`, `vm`) so the whole
-  affected suite is x86-runnable locally; the `fern.fern`-imported files
-  (`constfold`/`printer`/`ssa_*`/`wasm`/`asmcore`) drag in arm64/macOS-darwin
-  test suites whose staging edits can only be confirmed in CI.
-  Helpers still to fold in:
-  - `i32_to_string` — **9 copies**: `asmcore:35`, `constfold:49`, `disasm:36`,
-    `printer:29`, `ssa(int_str):3633`, `ssa_arm64:17`, `ssa_wasm:35`,
-    `ssa_x86:23`, `vm:358`, `wasm:2581`.
-  - `digits_to_i32` — **done** (SH-010): one sign-aware `util.digits_to_i32`; all
-    5 copies + `interp.str_to_i32` + the `asm`/`asm_arm64` cross-module callers converted.
-  - String membership — **done**: one `util.has_str` replaces the 6 copies /
-    4 names (`has_str`/`name_in`/`name_in_list`/`contains_name`) across `asmcore`,
-    `vm`, `checker`, `parser`, `fern`, and the two `*_load_run` drivers.
-  - `base_type_name`/`type_base`/`strip_generic_args` — **done**: one
-    `util.base_type_name` (asmcore pub + wasm + checker's two names; asm/asm_arm64
-    cross-module callers updated).
-  - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
-  - `index_of_str` — **done** (SH-007 fixed). `contains` (substring) — **done**
-    (`asmcore` pub + `disasm` + asm/asm_arm64 callers; `watbin`/`literate` keep
-    their own copies — deliberately self-contained modules). `index_of_byte`
-    `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
-    `join_path`, `module_name`, `resolve_path`, `dir_of`, `is_local`.
-  - Named ASCII constants (`DOT=46`, `LBRACKET=91`, `RBRACKET=93`, `COMMA=44`,
-    `ZERO=48`, `NINE=57`, `SLASH=47`, `DQUOTE=34`, `BACKSLASH=92`) to kill the
-    magic-number comparisons that recur in **every** file.
+### T1 — Shared utility module
+- [~] **SH-020 — `examples/self_host/util.fern`** exists, holds **31
+  definitions**, and is imported by **61 of the 91 modules**. The `i32_to_string`
+  strand is finished: one canonical copy at `util.fern:21`.
+  Current duplication census across the tree: **5,126 function definitions**
+  (4,863 free functions + 263 receiver methods); **89 names are defined in 2+
+  files**, giving **171 redundant copies**, of which **55 are `main`** — so
+  roughly **116 real redundant copies** remain.
+
+  **Most of that residue is not leaf-utility duplication and is not a dedupe
+  target.** It breaks down as:
+  - **Per-ISA `emit_*`** in `ssa_x86` / `ssa_arm64` / `ssa_wasm` (`emit_inst`,
+    `emit_term`, `emit_func`, `emit_program`, `emit_phi_moves`, `emit_binary`) —
+    same names, genuinely different code. See SH-025 for the part of this that
+    *is* liftable.
+  - **Per-driver `main`** — one per `*_run.fern`. See SH-056.
+  - **Import-free modules.** `watbin.fern`, `x86_native.fern`,
+    `arm64_native.fern`, and `elf.fern` are single self-contained modules by
+    design (each header says so), and `lexer.fern` likewise imports nothing.
+    Their duplicate helpers must stay.
+  - The **`parse_f64_bits` + `pf64_div2` / `pf64_mul2` / `pf64_sub` /
+    `pf64_all_zero` family** — 5 functions in 4 copies each (`util.fern:382`,
+    `watbin.fern:458`, `x86_native.fern:2141`, `arm64_native.fern:2917`) — is
+    hand-synced **on purpose** and pinned by `TestSelfHostParseF64MirrorsAgree`.
+    **Not a dedupe target.**
+
+  Genuinely liftable leftovers: `block_index` and `pred_slot` (4 copies each,
+  `ssa` + the three SSA backends — SH-025), `join_path` (`asm_load_run`, `fern`,
+  `mvs` — SH-055), `trim` (`fern_toml`, `literate`, `mvs`), `split_commas`
+  (`ferndoc`, `irlower`, `printer`).
+
+  **Naming hazard — a naive `util.`-qualification sweep binds the wrong
+  function.** `index_of_str` names **two different functions**: array index-of
+  (`util.fern:330`, `watbin.fern:330`, `(xs: string[], s: string)`) and
+  **substring** index-of (`fern_toml.fern:86`, `(s: string, sub: string)`).
+  Similarly `contains` is substring search (`util.fern:342`, `literate.fern:74`)
+  while array membership is the differently-named `contains_str`
+  (`ssa.fern:1773`). Check the parameter shape, not the name.
+
+  Still worth doing: named ASCII constants (`DOT=46`, `LBRACKET=91`,
+  `RBRACKET=93`, `COMMA=44`, `ZERO=48`, `NINE=57`, `SLASH=47`, `DQUOTE=34`,
+  `BACKSLASH=92`) to kill the magic-number comparisons that recur in every file.
+
   > Note: `core/int.int_to_string`, `parse_int_radix`, and the `std/i32` digit
   > predicates already exist in the stdlib. Prefer importing those if the
   > bootstrap subset can take them; otherwise mirror them once in `util.fern`.
 
 ### T2 — Stringly-typed type system
 - [~] **SH-021 — Carry a structured type AST from the parser** instead of flat
-  strings re-parsed downstream. Root cause of: `parser.fern:2812-2905` (type
-  re-decode by substring surgery, incl. the unsound "type names never contain
-  `__`" assumption at `:2851`), `asmcore:1273-1358` (`ty_from_name`/`split_tuple_ret`,
-  keyed on the exact 2-byte `", "` at `:1278`), `checker.fern`'s **6**
-  `type_from_name*` resolvers (`:684,1508,1524,1548,1615`) and `wasm.fern:1283`.
-  _Fix:_ a small `TypeRef { base, args[], array_depth }` produced once;
-  pattern-match instead of byte-scanning. Large but eliminates a whole class of
-  fragility findings.
-  _Foundation slice landed:_ `parser.fern` now defines
+  strings re-parsed downstream. Root cause of `asmcore.fern:2603 ty_from_name` /
+  `:2619 split_tuple_ret`, the checker's **5** `type_from_name*` resolvers
+  (`checker.fern:1878, 3162, 3218, 3276, 3587`), and the wasm/irlower type
+  decoders. _Fix:_ a small `TypeRef { base, args[], array_depth }` produced once;
+  pattern-match instead of byte-scanning.
+  _Foundation slice landed:_ `parser.fern` defines
   `TypeRef { base, args[], array_depth, is_tuple }` plus the canonical
-  `parse_type_ref` / `render_type_ref` pair (the single place the
-  `[]` / `(…)` / `Name[…]` / `", "` grammar is scanned), with a round-trip golden
-  (`typeref_run.fern` + `TestSelfHostTypeRef`: `render(parse s) == s` over the
-  full grammar corpus + structure spot-checks).
-  _Slice 2 landed:_ asmcore `ty_from_name` now decodes via
-  `ty_from_ref(parse_type_ref(name))` — a structured pattern-match — retiring its
-  hand-rolled byte scan (and the `generic_value_ty` / `generic_key_is_i32` helper
-  scans it drove). Byte-identical, locked by a 51-case golden
-  (`ty_from_ref_run.fern` + `TestSelfHostTyFromRef`, `ty_tag(ty_from_name s)` over
-  every decode branch) plus the bootstrap / per-module fixpoints.
-  _Slice 3 landed:_ asmcore `split_tuple_ret` / `tuple_ret_tag_at` now decode a
-  tuple spelling via `parse_type_ref` (element idx = `args[idx]`), retiring their
-  top-level-comma scans. Byte-identical, locked by `tuple_tags_run.fern` +
-  `TestSelfHostTupleTags` (a golden of both decoders over element / OK-type /
-  index / out-of-range / non-tuple / 3+-element paths) + the fixpoints.
-  _Slice 4 landed:_ the checker's richest resolver,
-  `type_from_name_with_structs_unions`, now decodes via `parse_type_ref` +
-  pattern-match (new `type_from_ref_su`), retiring its array-suffix / tuple /
-  `Map[` first-comma scans (and the now-dead `split_top_comma` / `split_top_commas`
-  / `trim_spaces` helpers). Byte-identical, locked by `type_resolve_run.fern` +
-  `TestSelfHostTypeResolve` (a golden — via a new `type_debug` renderer — over
-  scalar / struct / union / array / tuple / Map / generic / unknown branches,
-  reasons included) + the bootstrap.
-  _Slice 5 landed:_ the three simpler resolvers (`_with_structs` /
-  `_with_struct_names` / `_with_names_and_unions`) now peel their `Elem[]` array
-  suffix via `parse_type_ref`'s `array_depth`, retiring the magic-byte `[`(91)/
-  `]`(93) scan; byte-identical (before/after diff over a 30-entry × 3-resolver
-  corpus), locked by `type_resolve_simple_run.fern` + `TestSelfHostTypeResolveSimple`.
-  The scalar-only base `type_from_name` has no byte-scan, so it is left as-is.
-  _wasm extern-sum slice landed:_ the wasm backend's flat-sum extern checks
-  `extern_sum_param_supported` / `extern_sum_param_is_option` now decode
-  `Option[…]` / `Result[…, …]` via `parse_type_ref` instead of the magic-byte
-  `Option[` / `Result[` prefix + top-level-comma depth scan. Byte-identical
-  (pure boolean fns, so identical output ⇒ unchanged wasm codegen), verified
-  old-vs-new over a 25-input corpus and pinned by `wasm_extern_sum_run.fern` +
-  `TestSelfHostWasmExternSum`.
-  _wasm payload-extractor slice landed:_ `parse_option_payload` /
-  `parse_result_err_payload` now pull the Some/Ok payload `T` and the Err type `E`
-  out of an `Option[T]` / `Result[T, E]` via `parse_type_ref` (`base` / `args` /
-  `array_depth`) instead of the `Option[` / `Result[` prefix + top-level-comma
-  depth scan. Byte-identical on every valid input; the migration additionally
-  corrects the old scan's garbage-on-array edge case (`Option[i32][]` /
-  `Result[…][]` — an array value, for which the prefix + trailing-`]` test wrongly
-  fired — now correctly return "" via the `array_depth == 0` guard). The three x86
-  self-compile fixpoints confirm no such array type reaches these during
-  bootstrap, so the correction leaves the self-compile byte-identical. Pinned by
-  `wasm_option_payload_run.fern` + `TestSelfHostWasmOptionPayload`.
-  _irlower tuple-element slice landed:_ `tuple_type_elem_tag` (extract element `n`
-  of a `(t0, t1, …)` tuple spelling) now decodes via `parse_type_ref` (`is_tuple` /
-  `args` / `array_depth`) instead of its own depth-tracking top-level-comma scan;
-  byte-identical over a corpus exercising nested-generic / nested-tuple / array
-  elements (the inner commas the scan must not split on), single-element tuples,
-  out-of-range and negative indices, non-tuples, and a tuple-array `(a, b)[]`.
-  Pinned by `tuple_elem_tag_run.fern` + `TestSelfHostTupleElemTag`.
-  _checker generic-arity slice landed:_ `count_type_args` (top-level type-arg
-  count of a `Name[A, B, …]` annotation, feeding the E019 struct-arity check) now
-  decodes via `parse_type_ref` (`args` / `is_tuple` / `array_depth`) instead of a
-  first-`[` + trailing-`]` window with a depth-tracking top-level-comma count. On
-  every non-array annotation the count matches the former scan exactly (incl.
-  depth-correct nesting: `Pair[Map[a, b], c]` → 2); arrays/tuples resolve to -1
-  (not a generic head — the former scan returned a garbage count on a trailing
-  `[]`, but that value only ever fed E019 on a struct's OWN generic head, never an
-  array, so the arity diagnostics are unchanged, confirmed by the fixpoints).
-  Pinned by `count_type_args_run.fern` + `TestSelfHostCountTypeArgs`.
-  _wasm tuple-element slice landed:_ `nth_tuple_type_elem` (idx-th element of a
-  `(A, B, …)` tuple spelling, feeding the extern flat-tuple-param check + tuple
-  struct-element recovery) now decodes via `parse_type_ref` (`is_tuple` / `args` /
-  `array_depth`) instead of its own bracket/paren depth scan. On every non-array
-  spelling the element matches the former scan exactly (incl. nested generic /
-  tuple elements); a tuple-array `(i32, i32)[]` resolves to "" (array_depth > 0 is
-  a value of array type, not a tuple — the former scan keyed only off a leading
-  `(` and mis-read the trailing `[]`, wrongly reporting it as a flat extern tuple
-  param). This is a codegen path, so the three x86 fixpoints strictly gate the
-  correction. Pinned by `nth_tuple_elem_run.fern` + `TestSelfHostNthTupleElem`.
-  _flatten tuple-mangle slice landed:_ `rewrite_type_name`'s tuple branch (mangle
-  each element of a `(A, B, …)` cross-module type, preserving nesting) now decodes
-  the tuple via `parse_type_ref` (`is_tuple` / `args` / `array_depth`) instead of a
-  hand-rolled depth-tracking comma split + per-element space trim; each element is
-  rendered back to its canonical spelling and recursed through `rewrite_type_name`.
-  This is the mangle path — byte-identity-critical — so the three x86 fixpoints
-  (which self-compile real cross-module tuples like std/test's `(string,
-  TestRunner)`) strictly gate it. Covered by new tuple assertions in flatten.fern's
-  own `main()` self-test (own-decl + imported-qualified + nested-generic + nested-
-  tuple elements, and the tuple-array fallthrough) under `TestSelfHostFlattenX86_64`.
-  _Remaining:_ every genuine canonical-type-spelling comma-depth decoder in the
-  self-host compiler is now migrated onto `parse_type_ref` (asmcore, the checker's
-  resolvers + `count_type_args`, wasm's extern-sum / payload / tuple decoders,
-  irlower's `tuple_type_elem_tag`, flatten's tuple mangle). What's left is either
-  lower-value or delicate: the unambiguous `[]`-suffix element-strips (`ft[0:len-2]`
-  / `ty_spelling_is_array`; a trailing `[]` is a structurally unambiguous array
-  marker, so these carry no nested-comma mis-read risk and are not worth routing
-  through a heavier parse); the internal `,`-joined tag encodings (irlower's
-  `csv_nth` / `LowerState.tuple_elem_tag`, which decode a spaceless CSV of tags,
-  not a canonical type spelling); and the parser's `bind_unify` monomorphisation
-  unifier, whose final case matches a generic pattern against a `__`-mangled clone
-  name (not a type spelling `parse_type_ref` can decode), so it stays string-based.
-  The endgame remains having the parser store `TypeRef` directly so the string
-  becomes render output. Unblocks #4394 lever 1 (symbol interning ripples into this
-  type system).
+  `parse_type_ref` (`:7896`) / `render_type_ref` (`:7935`) pair — the single
+  place the `[]` / `(…)` / `Name[…]` / `", "` grammar is scanned — with a
+  round-trip golden (`typeref_run.fern` + `TestSelfHostTypeRef`).
+  _Slices landed since:_ asmcore's `ty_from_name` (via `ty_from_ref`) and
+  `split_tuple_ret` / `tuple_ret_tag_at`; the checker's
+  `type_from_name_with_structs_unions` (via `type_from_ref_su`) and the three
+  simpler resolvers' array-suffix peel; `count_type_args`; the wasm backend's
+  `extern_sum_param_supported` / `_is_option`, `parse_option_payload` /
+  `parse_result_err_payload`, and `nth_tuple_type_elem`; irlower's
+  `tuple_type_elem_tag`; flatten's `rewrite_type_name` tuple branch. Each is
+  byte-identical on valid input and pinned by its own golden driver
+  (`ty_from_ref_run`, `tuple_tags_run`, `type_resolve_run`,
+  `type_resolve_simple_run`, `count_type_args_run`, `wasm_extern_sum_run`,
+  `wasm_option_payload_run`, `nth_tuple_elem_run`, `tuple_elem_tag_run`) plus
+  the bootstrap / per-module fixpoints. Three of the migrations additionally
+  correct a garbage-on-array edge case the old prefix+trailing-`]` scans hit
+  (`Option[i32][]`, `Result[…][]`, `(i32, i32)[]`).
+  _Remaining:_ every genuine canonical-type-spelling comma-depth decoder is now
+  migrated. What is left is either lower-value or delicate: the unambiguous
+  `[]`-suffix element-strips (`ft[0:len-2]` / `ty_spelling_is_array`); the
+  internal `,`-joined tag encodings (irlower's `csv_nth` /
+  `LowerState.tuple_elem_tag`, which decode a spaceless CSV of tags, not a
+  canonical type spelling); and the parser's `bind_unify` monomorphisation
+  unifier, whose final case matches a generic pattern against a `__`-mangled
+  clone name, so it stays string-based. The endgame remains having the parser
+  store `TypeRef` directly so the string becomes render output. Unblocks #4394
+  lever 1.
 
-### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
+### T3 — No generic AST visitor / fold in the remaining passes
 - [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress:_
-  `astwalk.fern` now carries the walk itself once — `fold_expr_nodes` /
-  `fold_stmt_nodes`, generic in the accumulator and parameterised by a statement
-  visitor, an expression visitor and a descent predicate, with `fold_expr` /
-  `fold_stmt` and the pruned pair as wrappers (#6993). Every collector in the
-  module is a visitor over it: `collect_idents_expr`/`_stmt`,
+  `astwalk.fern` carries the walk itself once — `fold_expr_nodes` /
+  `fold_stmt_nodes`, generic in the accumulator (`astwalk.fern:19` takes `[T]`)
+  and parameterised by a statement visitor, an expression visitor and a descent
+  predicate, with `fold_expr` / `fold_stmt`, the pruned pair, and
+  `map_expr` / `map_stmt` / `map_stmts` as wrappers (#6993). Every collector in
+  the module is a visitor over it: `collect_idents_expr`/`_stmt`,
   `collect_bound_stmt`, `collect_calls_stmt`, `collect_qualrefs_expr`/`_stmt`.
-  `flatten`'s and `asmcore`'s private binder walks are deleted onto it too, and
-  the `a.target` divergence the appendix describes was resolved in astwalk's
-  favour (#2850 / SH-057) — `wasm.fern` itself no longer exists, so the
-  appendix's "wasm is deferred" is history. Every remaining analysis
-  re-enumerates all Expr/Stmt variants by hand: `parser.fern` ~10 walkers
-  (`expr_mentions:1574`, `mono_*`, `ms_*`, `rw_call_*`, …); `checker.fern` ~15
-  scope-threading passes (`ret_diags`, `lret_*`, `mx_*`, `slit_diags`,
-  `call_diags`, …) that also rebuild `build_func_scope` 8× per function
-  (`:4527-4660`); `wasm.fern` ~25 `collect_*`/`module_uses_*` (`:299-531`);
-  `asmcore` `collect_idents_*`; `ssa`/`ssa_wasm` re-open-code the 3-level
-  funcs→blocks→insts loop. _Fix:_ one traversal taking a per-node callback;
-  removes well over 1,000 lines and the "added a field, forgot a walker" hazard.
+  `flatten`'s and `asmcore`'s private binder walks are converted onto it —
+  **asmcore's `collect_idents_*` is gone**, leaving only the delegating comments
+  at `asmcore.fern:37,39` and the call at `:47`.
+  Still hand-enumerating every Expr/Stmt variant:
+  - **`wasm_ir.fern` — 28 `collect_*` / `module_uses_*` walkers.** The largest
+    remaining cluster and the place to go next.
+  - **`parser.fern` — 12** rewrite passes (`expr_mentions:4876`,
+    `mono_infer:8411`, `mono_expr:8586`, `mono_call_expected:8816`,
+    `mono_stmt:8850`, `mono_stmts:8911`, `ms_expr:9935`, `ms_stmt:10111`,
+    `ms_stmts:10180`, `ms_func:10197`, `rw_call_expr:12350`,
+    `rw_call_stmts:12405`).
+  - **`checker.fern` — 15** scope-threading passes (`ret_diags`, `lret_*`,
+    `mx_*`, `slit_diags`, `call_diags`, …).
+  - `ssa` / `ssa_wasm` re-open-code the 3-level funcs→blocks→insts loop.
+
+  _Fix:_ one traversal taking a per-node callback; removes well over 1,000 lines
+  and the "added a field, forgot a walker" hazard.
 
 ### T4 — Struct-copy boilerplate (use the spread the parser already supports)
 - [ ] **SH-023 — Replace full struct-literal rebuilds with `{ ...x, field: y }`.**
-  The 11-field `FuncDecl{…}` literal is spelled out in ~15 places in `parser.fern`
-  just to change one field (`:459,2318,2357,…`); the spread form is *already used*
-  at `parser.fern:4557,5088`. Same for `Module{…}` (~10×), the 5 `new_scope*`
-  ctors in `checker.fern:309-347`, and the `EmitState`/`Scope` updates. Apply the
-  spread consistently; removes the "added a field, forgot a copy site" bug class.
+  `FuncDecl` (`parser.fern:359`) now carries **20 fields**, and `parser.fern`
+  spells out **77 `FuncDecl {` literals** of which only **8** use the spread —
+  every other one restates all 20 fields to change one. `Module {` is worse:
+  **45 literals, 0 of them spread**. `checker.fern`'s scope constructors are down
+  to **2** (`new_scope:957`, `new_scope_full:967`), so that half is effectively
+  resolved. Apply the spread consistently across the `FuncDecl` / `Module`
+  rebuilds; removes the "added a field, forgot a copy site" bug class, which the
+  20-field `FuncDecl` makes near-certain.
 
 ### T5 — Backend duplication beyond what asmcore/CLAUDE.md claims
-- [ ] **SH-024 — Introduce an `Emitter` interface to dedupe `asm.fern` ↔
-  `asm_arm64.fern`.** The CLAUDE.md claim that "only `emit_*` instruction-selection
-  is parallel" is materially understated. Four large target-**independent**
-  surfaces are still hand-maintained twice: `emit_stmt` (`asm:3321` ≈
-  `asm_arm64:3069`), `emit_function` (`asm:3762` ≈ `asm_arm64:3450`),
-  `try_emit_builtin` (`asm:168`, 61 branches ≈ `asm_arm64:184`, 71 branches — the
-  10-branch gap is itself drift), and the two ~4,000-line `emit_runtime` twins
-  (`asm:3867` / `asm_arm64:3553`) gated on the **same 33 `has_need` keys**. _Fix:_
-  a thin target interface (`push`/`pop`/`load_local`/`branch_if_zero`/`call`/
-  `syscall`) driven from shared code; each backend implements only the leaves.
-- [ ] **SH-025 — Create `ssabackend.fern`** (the SSA analogue of `asmcore`). The 3
-  SSA backends share ~180–220 LOC of **byte-identical** helpers (`i32_to_string`,
-  `str_join_*`, `block_index`, `pred_slot` — all 3) plus the native-pair
-  const/label/reg helpers, and 3 hand-mirrored `emit_inst` dispatch ladders.
-  Align the gratuitously-divergent `emit_term` signatures (`ssa_x86:431` takes
-  `name`, `ssa_arm64:429` reads `f.name`) first, then lift a parameterised
+- [ ] **SH-024 — Introduce an `Emitter` interface to dedupe `asm_ir.fern` ↔
+  `asm_arm64_ir.fern`.** The two IR emitters keep three hand-maintained twin
+  surfaces:
+
+  | function | `asm_ir.fern` | `asm_arm64_ir.fern` |
+  |---|---|---|
+  | `emit_ir_runtime` | `:1031` | `:6323` |
+  | `emit_ir_runtime_fern_fn` | `:6370` | `:2138` |
+  | `emit_function_via_ir` | `:4303` | `:464` |
+
+  They are gated on `has_need` keys that have **already drifted**: 94 distinct
+  literal keys in `asm_ir.fern` (178 call sites) against 91 in
+  `asm_arm64_ir.fern` (131 call sites). Five keys exist only on x86 —
+  `alloc_u8`, `maps`, `strbuf`, `subprocess`, `tcp_pollable` — and two only on
+  arm64 — `arr_i32_min_max`, `float_transcendentals`. **The drift is itself the
+  finding**: the runtime surface is supposed to be target-independent, so a key
+  present on one backend and absent on the other is either a missing arm64
+  runtime or dead x86 code. _Fix:_ a thin target interface
+  (`push`/`pop`/`load_local`/`branch_if_zero`/`call`/`syscall`) driven from
+  shared code, with the need-key table as shared data; each backend implements
+  only the leaves.
+- [ ] **SH-025 — Create `ssabackend.fern`** (the SSA analogue of `asmcore`).
+  `block_index` and `pred_slot` are byte-identical across all four SSA modules
+  (`ssa`, `ssa_x86`, `ssa_arm64`, `ssa_wasm`), and the three backends
+  hand-mirror `emit_inst` / `emit_term` / `emit_func` / `emit_program` /
+  `emit_phi_moves` dispatch ladders. Align the gratuitously-divergent `emit_term`
+  signatures first — `ssa_x86:479` takes a `name` param, `ssa_arm64:453` reads
+  `f.name`, `ssa_wasm:233` takes neither — then lift a parameterised
   `emit_func`/`emit_program` driver.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
-- [ ] **SH-026 — Stop overloading value types for errors/signals.** Beyond SH-001/
-  SH-002: `VErr` is a catch-all sentinel (`"__noreceiver__"`, `"__noclosure__"`,
-  `"__uninit__"`, `"__pending__"`); compile errors ride `VString`
-  (`vm.fern:696,993,1080`); `lookup_*` return `name:""` to mean "not found"
-  (`checker.fern:3756` etc., forcing `.name.len()>0` checks everywhere); ~30
-  bespoke `*Result` structs each re-implement `(value, ok)` / `(node, next_pos)`.
-  _Fix:_ a kinded error type; `Option[T]`/`Result[T,E]` once generics land (T8);
-  meanwhile give `VErr` a `kind` field and namespace internal sentinels.
+- [ ] **SH-026 — Stop overloading value types for errors/signals.** Surviving
+  sentinels: `v_err("__noreceiver__")` (`interp.fern:1464`, `:2433`) with its
+  checker twin `t_unknown("__noreceiver__")` (`checker.fern:1972`), and
+  `v_err("__noclosure__")` (`interp.fern:1465`). `lookup_*` returns `name:""` to
+  mean "not found" (`checker.fern:1219 lookup_sig`, `:1508 lookup_struct`,
+  `:1630 lookup_method`, `:1731 lookup_union`), forcing `.name.len() > 0` checks
+  at every call site. **22 bespoke `*Result` structs** each re-implement
+  `(value, ok)` or `(node, next_pos)` — and two of them are both named
+  `CheckResult` in different modules. _Fix:_ a kinded error type;
+  `Option[T]`/`Result[T,E]` now that generics work (T8); meanwhile give the
+  sentinel-carrying values a `kind` field and namespace the internal sentinels.
 
 ### T7 — O(n²) string accumulation in emitters
 - [ ] **SH-027 — Use a `strbuf`/chunk-join accumulator in the string emitters.**
-  `out = out + line` left-folds: `wasm.fern:7180-7351`, `ssa_x86:581-718` &
-  `ssa_arm64:577-711` & `ssa_wasm:580-642` (each embeds its ~140-line runtime via
-  the very left-fold its own comments warn against), `asm_arm64.fern:8211`
-  (`darwinize`, self-admitted O(n²)), `wasm.fern` lambda-defs (`:3166`). _Fix:_
-  collect pieces in a `string[]` and `str_join_chunks` once; move inline runtime
-  asm into data constants (`runtime_x86(): string`).
+  `out = out + …` left-folds, by file:
 
-### T8 — Missing generics force hand-rolled options/containers
-- [ ] **SH-028 — _(needs generics)_** Hand-rolled `OptInt`/`OptBool`/`OptString`
-  (`constfold:84-115`), the ~30 `*Result` structs, the four `append_*` concat
-  helpers (`flatten:462-536`), and the placeholder `tag: i32` fields on ~25
-  nullary variants (`asmcore:721-759`, `checker:45`, `parser:137`, `vm`
-  opcodes). Track as blocked on parser generics + nullary struct variants; until
-  then centralise each family in one place rather than per-file.
+  | file | `out = out +` sites |
+  |---|---|
+  | `wasm_ir.fern` | **701** |
+  | `ssa_arm64.fern` | 278 |
+  | `ssa_x86.fern` | 259 |
+  | `ssa_wasm.fern` | 18 |
+  | `asm_ir.fern` | 2 |
+  | `asm_arm64_ir.fern` | 1 |
+
+  `wasm_ir.fern` is now by far the worst in the tree; the native IR emitters
+  have essentially finished migrating to `strbuf`, which is what the target
+  shape looks like. The SSA backends embed their ~140-line runtime via the very
+  left-fold their own comments warn against (`ssa_x86.fern:629 emit_program`
+  chunk-joins the function bodies but still folds the prologue). _Fix:_ collect
+  pieces in a `string[]` and `str_join_chunks` once, or route through the
+  global `strbuf` as `darwinize` now does; move inline runtime asm into data
+  constants (`runtime_x86(): string`).
+
+### T8 — Hand-rolled options/containers that generics would replace
+- [ ] **SH-028 — Replace the hand-rolled option/result families with generics.**
+  Generics work in this tree (`astwalk.fern:19` is `fold_expr[T]`), so this is no
+  longer blocked — it is unconverted code. Still present: `OptInt`
+  (`constfold.fern:93`), `OptBool` (`:121`), `OptString` (`:131`); the 22
+  `*Result` structs (SH-026); the four `append_*` concat helpers in
+  `flatten.fern` (`append_funcs:820`, `append_structs:825`, `append_aliases:830`,
+  `append_enum_decls:1088`), which one generic `append_all[T]` replaces; and the
+  placeholder `tag: i32` fields on the nullary variants. Convert family by
+  family, each with the test at the layer it touches.
 
 ---
 
@@ -418,96 +368,199 @@ Items not already folded into a theme above. (Med/Low findings live in the
 appendix §6.)
 
 ### Frontend
-- [x] **SH-040 — `parser.fern:1000-1070`** re-implemented struct-literal body
-  parsing that `parse_struct_lit_body` (`:621`) already provides. _Done:_ the
-  `parse_primary` bare-ident path now delegates to the shared helper (mirroring
-  the qualified `pkg.Type {…}` path at `:840` and the generic `Name[T] {…}` path
-  at `:750`), removing ~55 duplicated lines and the drift risk between the two
-  copies of the spread / field / trailing-comma loop.
-- [ ] **SH-041 — `parser.fern:1136-1169`** parse errors collapse into untyped
-  `ExprUnknown{kind:string}`/`StmtUnknown` with no position — accumulate real
-  diagnostics; at least carry source position.
-- [ ] **SH-042 — `parser.fern:2079-2243`** `parse_type_name` is a ~165-line giant
-  whose recovery exists "to avoid OOM spin" — split into `parse_type_atom` +
-  `parse_type_suffixes` and return structured types (feeds T2).
-- [x] **SH-043 — `lexer.fern:397-485`** the C-escape decoder (`\n\t\r\0\"\\\xNN`)
-  was copy-pasted between `scan_string` and `scan_fstring`. _Done:_ extracted
-  `apply_escape(l, esc) -> EscResult` (decoded fragment + `hexerr`/`unknown`
-  flags) so both scanners share one decode ladder while keeping their own
-  literal-kind error messages. The escape grammar now lives in one place (no
-  drift risk; a future `\u` escape is a one-site change).
+- [x] **SH-040 — `parse_primary` re-implemented struct-literal body parsing**
+  that `parse_struct_lit_body` already provides. _Done:_ the bare-ident path now
+  delegates to the shared helper (mirroring the qualified `pkg.Type {…}` and
+  generic `Name[T] {…}` paths), removing ~55 duplicated lines and the drift risk
+  between the two copies of the spread / field / trailing-comma loop.
+- [ ] **SH-041 — Parse errors still collapse into positionless sentinel nodes.**
+  Half fixed: `ExprUnknown` (`parser.fern:143`) carries `line`/`col`. But
+  **`StmtUnknown` (`parser.fern:293`) has no position at all** — it is still
+  `{ kind: string }` — and the position-carrying expression constructor is
+  barely used: **1 call site of `e_unknown_at` (`:2202`, defined `:628`) against
+  42 calls to the positionless `e_unknown` (`:627`)** and 25 calls to
+  `s_unknown` (`:1075`). _Fix:_ give `StmtUnknown` `line`/`col`, then convert the
+  `e_unknown` / `s_unknown` call sites to the positioned constructors and
+  accumulate real diagnostics.
+- [ ] **SH-042 — `parser.fern:6033-6373`** `parse_type_name` is a **341-line**
+  giant whose recovery exists "to avoid OOM spin". No `parse_type_atom` /
+  `parse_type_suffixes` split exists. Split it and return structured types
+  (feeds T2).
+- [x] **SH-043 — `lexer.fern`** the C-escape decoder (`\n\t\r\0\"\\\xNN`) was
+  copy-pasted between `scan_string` and `scan_fstring`. _Done:_ extracted
+  `apply_escape(l, esc) -> EscResult` (`lexer.fern:524`) so both scanners share
+  one decode ladder while keeping their own literal-kind error messages. A future
+  `\u` escape is a one-site change.
 
 ### Checker / asmcore
-- [ ] **SH-044 — `asmcore.fern:1374-1686`** `infer_expr_type` is a ~310-line monster
-  with hundreds of hardcoded builtin-name string compares — table-drive
-  `builtin_return_type(name,args)` + per-receiver method resolvers.
-- [ ] **SH-045 — `checker.fern:4527-4660`** `check_module` rebuilds `build_func_scope`
-  8× per function and runs the whole pass list twice (funcs + top_stmts) — build
-  the scope once; extract `run_body_passes(stmts, scope)`.
-- [~] **SH-046 — `checker.fern:454-486` + `:400-413`** builtin function/enum-variant
-  membership as giant hand-kept `||` chains in 3 places — single source-of-truth
-  table. _Partial:_ `is_builtin_variant` (`:400`) now derives from the single
-  variant→enum table in `mx_builtin_enum_of`, collapsing the duplicated 17-name
-  variant list. Still open: `is_builtin_function` (`:454`, the ~30-name builtin
-  list) and folding `is_reserved_enum_name`'s 4 enum names into the same table.
+- [ ] **SH-044 — `asmcore.fern:2704-3200`** `infer_expr_type` is a **497-line**
+  function with hundreds of hardcoded builtin-name string compares —
+  table-drive `builtin_return_type(name, args)` + per-receiver method resolvers.
+- [ ] **SH-045 — `checker.fern:11599-11932`** `check_module` is **334 lines** and
+  calls `build_func_scope` (defined `checker.fern:3717`) **12 times — 9 of them
+  inside the single per-function pass loop**, rebuilding the same scope for
+  `slice_escape_diags`, `must_consume_diags`, `lret_stmts`, `mx_stmts`,
+  `stmts_call_diags`, `stmts_assign_diags`, and `vref_stmts` in turn. The
+  `Scope` doc comment at `checker.fern:812` concedes it ("build_func_scope runs
+  nine times per function across the diagnostic passes") and mitigates only the
+  `SigTable` share. _Fix:_ build the scope once per function; extract
+  `run_body_passes(stmts, scope)`.
+- [x] **SH-046 — builtin function / enum-variant membership as hand-kept `||`
+  chains.** _Done:_ `is_builtin_variant` (`checker.fern:1048`) derives from the
+  single variant→enum table in `mx_builtin_enum_of`, and `is_builtin_function`
+  moved to `parser.fern:7430` as a one-liner over the single
+  `builtin_function_names()` table. Loose end: `is_reserved_enum_name`
+  (`checker.fern:1055`) is still a 4-name `||` chain
+  (`Option`/`Result`/`IoError`/`JsonValue`) that should read from the same table.
 
-### Interp / VM / SSA
-- [ ] **SH-047 — `interp.fern:125-176` & `vm.fern:1681-1990`** environment/stack are
-  immutable parallel arrays rebuilt per op (O(n²)); block scoping via length-trim
-  is off-by-one-fragile — extract scope-frame `Env`/`LocalsTable` + `stack_drop`/
-  `stack_take_top` helpers (used ~6× by hand today).
-- [x] **SH-048 — `interp.fern:237-680` / `vm.fern:660-998`** `eval_expr` (~440 lines)
-  & `compile_expr` (~340) — extract `eval_binary`/`eval_unary` (mirror the VM's
-  `apply_binary`) and `compile_args` (4 near-identical arg loops). _Done:_
-  `eval_binary` and now `eval_unary` extracted from interp's `eval_expr`; the
-  VM's six near-identical arg-emit loops folded into one `compile_args`.
-- [ ] **SH-049 — `ssa.fern:69` SInst/STerm are string-tagged flat records** with an
-  `imm` field overloaded as value / param-index / **width 32-64** / alloc-count /
-  call-return-kind (`:2983`) — make it a tagged union (checker-enforced exhaustive
-  `emit_inst`) with named `width`/`ret_kind` fields.
-- [ ] **SH-050 — `ssa.fern:428-1310`** `build_expr` (~730 lines) and
-  `regalloc_linear` (`:3244`, ~155 lines over ~10 parallel i32 arrays) — extract
-  per-builtin lowerings and interval-construction/liveness/scan helpers.
-- [ ] **SH-051 — `ssa.fern:1606`** `env_put` mutates in place and is correct only on
-  unaliased scratch (vs near-identical `env_set_at:1588`) — make the aliasing
-  contract type-level (`ScratchVec`) or rename `env_put_unsafe_owned`.
+### Interp / SSA
+- [ ] **SH-047 — `interp.fern:444`** `Env { names, values, funcs, aliases,
+  variants }` is **five parallel arrays** rebuilt per binding (O(n²)), and block
+  scoping is done by length-trim: four sites capture
+  `var base: i32 = env.names.len()` (`:2671`, `:2698`, `:2841`, `:2891`) and
+  hand back to `trim_env(e, base)` (`:2926`), which rebuilds the arrays element
+  by element. The invariant that outer-scope updates live below `base` is
+  off-by-one-fragile and enforced only by comment. _Fix:_ a scope-frame `Env`
+  with an explicit frame stack, so trimming is popping a frame rather than
+  recomputing a prefix.
+- [x] **SH-048 — `eval_expr` / `compile_expr` giants.** _Done:_ `eval_binary` and
+  `eval_unary` extracted from interp's `eval_expr`; the VM's six near-identical
+  arg-emit loops folded into one `compile_args` before that backend was retired.
+- [ ] **SH-049 — `ssa.fern:51 SInst` overloads its `imm` field.** The records are
+  **integer-tagged**, not string-tagged: `SInst { kind_tag: i32, result: i32,
+  args: i32[], imm: i32, str: string }` (`:51`) and
+  `STerm { kind_tag: i32, cond, target, t, f, value }` (`:54`). The live defect
+  is that **one `imm: i32` carries four unrelated meanings**, discriminated only
+  by `kind_tag`:
 
-### Text emitters / WASM
-- [ ] **SH-052 — `asm_arm64.fern:8207-8288`** `darwinize` is a line-oriented string
-  rewrite of emitted asm (peephole-on-text) — drive the dialect from the `darwin`
-  flag at emit time instead (it already does for syscalls).
-- [ ] **SH-053 — `wasm.fern:81-164`** `Ctx` is a ~40-parallel-array god-struct hand-
-  modelling a symbol table — replace with `Scope` keyed name→`VarInfo`.
-- [ ] **SH-054 — `wasm.fern:6038`** `emit_func` takes **21 positional params** (call
-  sites pass trailing `[],[],[],[]`) — bundle into `ModuleInfo`/capture structs.
+  | meaning | example sites |
+  |---|---|
+  | constant value | `ssa.fern:346` (`kind_tag: 1`), `:537` |
+  | param index | documented at `ssa.fern:47` |
+  | operand width, 32 or 64 | `ssa.fern:505` (`imm: 64`), `:572` (`imm: 32`) |
+  | allocation count | `ssa.fern:500` (`imm: 1`), `:565` (`imm: 2`) |
+
+  A `kind_tag`/`imm` mismatch is invisible to the checker and shows up as a
+  wrong-width load or a wrong-size allocation. _Fix:_ a tagged union with named
+  `width` / `ret_kind` / `count` fields and a checker-enforced exhaustive
+  `emit_inst`.
+  **Also stale:** the doc-comment block at `ssa.fern:41-50` still describes the
+  kinds as string-tagged (`"const_int"`, `"binary"`, …) and documents the `imm`
+  overload as if it were a feature. Rewrite it against the integer `kind_tag`
+  encoding in the same change.
+- [ ] **SH-050 — `ssa.fern:524-1313`** `build_expr` is **790 lines**, and
+  `regalloc_linear` (`ssa.fern:3286-3440`) is 155 lines threading **16 separate
+  `i32[]` locals** (`lo`, `hi`, `calls`, `def_pos`, `blk_ids`, `blk_starts`,
+  `reg_of`, `order`, `act_val`, `act_hi`, `act_reg`, `free`, `nv`, `nh`, `nr`,
+  `nf`) as ad-hoc parallel arrays. Extract per-builtin lowerings from
+  `build_expr`; give the allocator an `Interval` / `ActiveSet` struct so the
+  parallel arrays become fields.
+- [ ] **SH-051 — `ssa.fern:1768`** `env_put` mutates in place and is correct only
+  on unaliased scratch, versus the near-identical copying `env_set_at` (`:1750`)
+  — make the aliasing contract type-level (`ScratchVec`) or rename it
+  `env_put_unsafe_owned`.
+
+### Emitters / WASM
+- [ ] **SH-052 — `asm_arm64_ir.fern:6738-6859`** `darwinize` is a **122-line**
+  line-oriented post-hoc string rewrite of already-emitted asm (peephole-on-text)
+  — drive the dialect from the `darwin` flag at emit time instead (it already
+  does for syscalls). Its O(n²) sub-complaint is **fixed**: the function opens
+  with `strbuf_reset()` and returns `strbuf_take()`, and its header records why
+  (one ordinary fixture emits 118,035 lines / 2.7 MB, and the old `out = out +`
+  fold exhausted the arena on 61 of 339 arm64-darwin fixtures). What remains is
+  the rewrite-after-the-fact shape, plus the sticky `pend_sys` state machine it
+  needs to correlate a syscall-number line with the `svc` that consumes it — a
+  correlation the emitter has for free.
+- [ ] **SH-053 — `irlower.fern:409 LowerState` is a 31-field god-struct, 20 of
+  them arrays.** `ops`, `locals`, `loop_blk`, `closure_locals`,
+  `closure_opt_rets`, `structs`, `reclaimable_names`, `aliased_names`,
+  `borrowed_names`, `xblock_pending`, `try_cleanup`, `defer_slots`,
+  `grow_exempt`, `append_inplace`, `grow_sole`, `own_params`, `optret_pending`,
+  `moved_names`, `moved_elided`, `move_sites` — a dozen of which are `string[]`
+  sets hand-modelling ownership facts about named locals. `asmcore.fern:73-132
+  EmitState` is the same shape one size down (16 fields, 10 arrays).
+  _Fix:_ group the ownership sets behind a `LocalFacts` keyed by name (the
+  `locals: LocalInfo[]` array is already the right shape to hang them off), so
+  adding an ownership fact is one field on one struct rather than a new parallel
+  array threaded through every lowering function. (`wasm_ir.fern` declares zero
+  structs, so its state is instead spread across positional params — SH-054.)
+- [ ] **SH-054 — `wasm_ir.fern:8027`** `emit_ir_module_units_mode` takes **13
+  positional params carrying 8 parallel arrays** — `nss`, `unit_texts`,
+  `all_strs`, `str_counts`, `all_caggs`, `cagg_counts`, `all_fns`, `fn_counts` —
+  plus `mod`, `needs`, `fn_sigs`, `rc_bodies`, `mode`; the 12-param
+  `emit_ir_module_units` at `:8007` is its twin. The count-and-values pairs
+  (`all_strs`/`str_counts`, `all_caggs`/`cagg_counts`, `all_fns`/`fn_counts`) are
+  three hand-rolled ragged arrays. This is down from a 21-param predecessor, so
+  it is moving the right way; it is still unbundled. _Fix:_ a `ModuleUnits`
+  struct holding the per-unit slices, and fold the two entry points into one with
+  a defaulted `mode`.
 
 ### Drivers / glue
-- [ ] **SH-055 — Extract `modload.fern`.** The ~120-line import-resolution suite
+- [ ] **SH-055 — Extract `modload.fern`.** The ~90-line import-resolution suite
   (`last_slash`, `dir_of`, `module_name`, `is_local`, `join_path`, `should_load`,
-  `resolve_path`, `add_imports`, `contains_name`) is triplicated **verbatim** in
-  `asm_load_run.fern`, `asm_arm64_load_run.fern`, and `fern.fern:89-165` (the
-  arm64 copy's own header admits it's identical).
-- [ ] **SH-056 — Retire redundant `*_run.fern` shims.** There are **31 `main()`s**;
-  `fern.fern` is the intended unified driver yet ~10 single-mode stdin clones
-  (`wasm_run`, `asm_run`, `interp_run`, `checker_run`, `vm_run`,
-  …) remain — collapse to one-line wrappers over a shared `run_stdin(emit_fn)`,
-  keeping only those a Go test pins (document which).
+  `resolve_path`, `queue_imports`/`add_imports`) is duplicated between
+  `fern.fern:278-365` and `asm_load_run.fern:25-107`. **The two copies have
+  already drifted**, which is the whole reason to extract:
+  `fern.fern:323 should_load` takes a third `deps: string[]` param and gained a
+  manifest-dependency arm (`if (util.has_str(deps, module_name(import_path)))
+  { return true; }`) that `asm_load_run.fern:71` does not have; `fern.fern` also
+  carries an `ImportQueue { paths, dirs }` struct (`:344`) and a
+  `queue_imports` breadth-first worklist (`:349`) with no counterpart in the
+  other copy. So a manifest-dependency import resolves under `fern` and silently
+  does not under the asm loader.
+  _Note:_ `modloader.fern` (614 lines) is a different, newer loader and does
+  **not** subsume this suite — extracting still means a new shared module or
+  folding these callers onto `modloader`.
+- [ ] **SH-056 — Retire the redundant `*_run.fern` shims.** There are **56
+  `main()`s across 45 `*_run.fern` files**, and no shared `run_stdin` helper
+  exists. Two large groups are **keepers, not targets**:
+  - **Golden-test drivers pinned by a Go test** — `typeref_run`,
+    `ty_from_ref_run`, `tuple_tags_run`, `type_resolve_run`,
+    `type_resolve_simple_run`, `wasm_extern_sum_run`, `wasm_option_payload_run`,
+    `tuple_elem_tag_run`, `count_type_args_run`, `nth_tuple_elem_run`. Most of
+    the growth in this count is these; each one is the pinning half of an SH-021
+    slice. **Keep them.**
+  - **A `main()` inside a library module** — `parser.fern`, `checker.fern`,
+    `lexer.fern`, `printer.fern`, `interp.fern` (and `constfold`, `flatten`,
+    `literate`, `pipeline`) — is the tree's **in-file test idiom**, not a driver
+    shim. **Do not count these as redundant.**
+
+  What is actually collapsible is the single-mode stdin clone group (`wasm_run`,
+  `asm_run`, `interp_run`, `checker_run`, `ssa_run`, …), which `fern.fern`
+  already supersedes as the unified driver: give them one shared
+  `run_stdin(emit_fn)` and make each a one-line wrapper, keeping only those a Go
+  test pins.
+- [ ] **SH-058 — `wasm_ir.fern:3189-4445`** `emit_function_ir` is **1,257
+  lines** — the largest function named anywhere in this audit, bigger than
+  SH-044's and SH-050's giants combined. It takes 9 params (`ns`, `r`, `fd`,
+  `str_vals`, `cagg_vals`, `structs`, `fn_table`, `funcs`, `vsigs`), left-folds
+  its output into a single `out` string, and inlines the whole per-IR-op
+  instruction selection. _Fix:_ split the IR-op dispatch out as
+  `emit_ir_op(op, ctx) -> string` with the ambient params bundled into a context
+  struct (the wasm sibling of SH-053), and accumulate through chunks rather than
+  `out = out + …` (SH-027). Do this before SH-024/SH-025, not after — every
+  other wasm-path item is easier once this function is decomposed.
 
 ---
 
 ## 5. Suggested sequencing
 
-1. **Correctness first** — SH-001…SH-010 (small, isolated, some are real bugs).
-2. **T1 `util.fern`** (SH-020) — mechanical, removes the largest dup surface, low risk.
-3. **T4 spread / SH-023** and **SH-055/SH-056 glue** — mechanical, high line-count payoff.
-4. **T3 visitor** (SH-022) then the giant-function splits (SH-044/45/48/50) which it unlocks.
-5. **T2 structured types** (SH-021) — the big one; do after the visitor lands.
-6. **T5 backend interfaces** (SH-024/025) — largest effort, do last with CI as backstop.
-7. **T8 generics-blocked** items — revisit when the parser gains generics.
+1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
+2. **SH-058 then SH-054/SH-027** — the wasm path is the worst area by every
+   metric, and decomposing `emit_function_ir` unblocks the rest of it.
+3. **SH-045 and SH-023** — mechanical, high payoff, low risk.
+4. **T3 visitor** (SH-022, starting with `wasm_ir`'s 28 walkers) then the giant
+   function splits (SH-044/SH-050) it unlocks.
+5. **T2 structured types** (SH-021 endgame — parser stores `TypeRef`).
+6. **T5 backend interfaces** (SH-024/SH-025) — largest effort, do last with CI as
+   backstop. Resolve the 7-key `has_need` drift before lifting anything.
+7. **SH-028** — no longer blocked; schedule alongside SH-026.
 
 Keep the engineering bar from `CLAUDE.md`: every change re-runs the relevant
 suite (x86-64 + WASM locally; CI for arm64/qemu), and each fix ships with the
-test at the layer it touches.
+test at the layer it touches. `internal/e2eselfhost` is primary on self-host
+lowering changes; the fixpoint is self-referential and blind to a stable
+miscompile.
 
 ---
 
@@ -517,100 +570,64 @@ The complete Med/Low findings per file (with line citations) are recorded in the
 audit working notes. The high-severity and cross-cutting items are tracked above;
 pull the remaining Med/Low items into this section as they're scheduled, so this
 file stays the single worklist. Files audited in full: `lexer`, `parser`,
-`checker`, `asmcore`, `interp`, `vm`, `constfold`, `flatten`, `ssa`, `ssa_x86`,
-`ssa_arm64`, `ssa_wasm`, `asm`, `asm_arm64`, `x86_encode`, `arm64_native`,
-`wasm`, `watbin`, `elf`, `x86_gas`, `disasm`, `printer`, `literate`,
-`wit_decode`, `wit_compose`, plus the `*_run` / `pipeline` / `bundle_*` /
-`fern` driver group.
+`checker`, `asmcore`, `interp`, `constfold`, `flatten`, `ssa`, `ssa_x86`,
+`ssa_arm64`, `ssa_wasm`, `asm_ir`, `asm_arm64_ir`, `irlower`, `x86_native`,
+`arm64_native`, `wasm_ir`, `watbin`, `elf`, `printer`, `literate`, `wit_decode`,
+`wit_compose`, plus the `*_run` / `pipeline` / `fern` driver group.
 
 ---
 
 ## Appendix — SH-022 design proposal (generic AST traversal)
 
-_Investigated during the SH-020 work; this is the plan to implement, not yet done._
-
 ### The problem, concretely
-There is no shared AST traversal, so every pass hand-enumerates the Expr/Stmt
-variants. Current hand-written Expr-variant arm counts: **wasm 180, checker 89,
-asmcore 30, ssa 28** (plus the parser's own ~10 rewrite passes). Adding a field or
-variant to the AST means touching all of them; a missed arm is a silent bug.
+There is no shared AST traversal in the passes that have not been converted, so
+each hand-enumerates the Expr/Stmt variants: `wasm_ir` 28 collectors,
+`checker` 15 scope-threading passes, `parser` 12 rewrite passes. Adding a field
+or variant to the AST means touching all of them; a missed arm is a silent bug.
 
-### What actually converges (corrected after closer analysis)
-An earlier draft of this appendix claimed the walkers had "semantically diverged"
-and couldn't be merged. That was over-cautious — the real picture:
-
-- **`collect_idents_expr` converges across all four** (`asmcore`/`ssa`/`vm` are
-  byte-identical modulo whitespace; `wasm` matches too). The apparent difference —
-  `wasm` dedups into the accumulator (`if (!contains_str(acc, …))`) — is
-  **redundant**: every consumer (`lambda_captures` and the ssa/vm equivalents)
-  dedups *again* when building the capture list (`!has_str(caps, nm)`), so a `refs`
-  list with duplicates yields an identical capture set + first-seen order. wasm's
-  `_ => {}` wildcard over the literal leaves is equivalent to the others' explicit
-  no-op arms. So one **non-deduping** collector serves all four with zero behaviour
+### What converges
+- **`collect_idents_expr` converges everywhere.** The apparent difference — the
+  wasm collector dedups into the accumulator (`if (!contains_str(acc, …))`) — is
+  **redundant**: every consumer dedups *again* when building the capture list, so
+  a `refs` list with duplicates yields an identical capture set and first-seen
+  order. One non-deduping collector serves all callers with zero behaviour
   change.
-- **`collect_idents_stmt` converges across `asmcore`/`ssa`/`vm`** (identical, all 13
-  Stmt variants) but **wasm genuinely diverges**. The `StmtSwitch`/`StmtDefer`
-  difference I first cited turns out to be a no-op (`module_with_builtins` runs
-  `desugar_switches_module` + `lower_defers_module` before `wasm.emit_module`, so
-  those nodes never reach any collector). The **real** divergence: wasm's
-  `StmtAssign` arm collects the assign **target** name (`if (!contains_str(acc,
-  a.target)) acc.append(a.target)`), which astwalk/asmcore/ssa/vm do **not**. So for
-  a lambda that *writes* an outer var without reading it (`{ x = 5; }`), wasm
-  captures `x` and the others wouldn't. Converging wasm is therefore **not** a safe
-  no-op — wasm stays separate.
-
-  **Open question (worth its own investigation):** this discrepancy is either a
-  **latent capture bug in `asmcore`/`ssa`/`vm`** (they miss capturing a
-  write-only-assigned outer var) or **redundant work in `wasm`** (if such captures
-  aren't needed — e.g. captures are read-only). Resolve before any wasm merge.
+- **`collect_idents_stmt` does NOT fully converge.** The wasm collector's
+  `StmtAssign` arm collects the assign **target** name, which astwalk's does not.
+  For a lambda that *writes* an outer var without reading it (`{ x = 5; }`), wasm
+  captures `x` and the others do not. That divergence is the confirmed bug
+  SH-057 below, not a merge hazard to route around — the wasm behaviour is the
+  correct one.
 
 **Status:** `astwalk.fern` holds the canonical (non-deduping, full-coverage)
-`collect_idents_expr`/`_stmt`/`collect_bound_stmt`; **`asmcore`, `ssa`, and `vm` are
-all converted** (asmcore's bundle cascade + 73-list sweep done). The only remaining
-backend is **`wasm`**, whose *stmt* collector genuinely diverges (skips
-`StmtSwitch`/`StmtDefer`) — a deliberate bugfix-vs-regression call, not a sweep.
+`collect_idents_expr` (`:466`) / `collect_idents_stmt` (`:517`) /
+`collect_bound_stmt` (`:661`) / `collect_calls_stmt` (`:589`) /
+`collect_qualrefs_*` (`:715`, `:721`), plus the `map_expr` (`:304`) /
+`map_stmt` (`:379`) rebuilding pair. `asmcore`, `ssa`, and `flatten` are
+converted. `wasm_ir`'s 28 walkers are the remaining cluster.
 
 ### What the bootstrap language supports
-Closures/lambdas with captures lower on every backend (`OpMakeClosure` etc.), and
-function-typed parameters work — so a higher-order traversal taking a per-node
-callback is feasible. The functional/immutable style means a **fold**
-(`acc -> acc`) fits better than a mutating visitor.
+Generics are usable here: `astwalk.fern:19` is
+`pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T): T`.
+Closures/lambdas with captures lower on every backend and function-typed
+parameters work, so a higher-order traversal taking a per-node callback is
+feasible. The functional/immutable style means a **fold** (`acc -> acc`) fits
+better than a mutating visitor.
 
-### Proposed shape
-Add `astwalk.fern` (imports `parser` only) with two primitives:
-
-```
-// Post-order fold: visit every sub-expression, threading an accumulator.
-// `f` is called once per Expr node (leaves and composites) with the node
-// and the current acc; astwalk handles all the structural recursion.
-pub function fold_expr[A](e: parser.Expr, acc: A, f: fn(parser.Expr, A) -> A): A
-pub function fold_stmt[A](s: parser.Stmt, acc: A, f: ...): A   // recurses into exprs + nested stmts
-```
-
-If parser generics (`[A]`) aren't usable here yet (verify first — see SH-021/
-generics status), fall back to a monomorphic `string[]`-accumulator fold
-(`fold_expr_strs`) which already covers the biggest cluster (the `collect_*`
-ident/var-name walkers). The diverged dedup policy becomes the caller's `f`
-(append vs. append-if-absent), so wasm keeps its set semantics explicitly.
-
-### Staged rollout (one PR each, lowest-risk first)
-1. `astwalk.fern` + `fold_expr_strs` + convert the **collect-ident family** in
-   `ssa`/`vm` (identical copies; not in `///MODULE` bundles → low blast radius).
-   Leave `wasm`'s deduping version until step 3 so its policy change is isolated
-   and reviewable.
-2. Convert `asmcore`'s `collect_idents_*` — note `asmcore` is hand-bundled by the
-   asm-path self-hosting tests, so add `///MODULE astwalk` to those bundles
-   (same cascade handled for `util` in SH-020; **also check dynamic-marker
-   bundles** — `interp_driver`-style `"///MODULE " + name` — which the literal
-   sweeps miss).
-3. Convert `wasm`'s deduping collector, passing the append-if-absent `f`; pin the
-   set-semantics with a test so the behaviour is explicit, not incidental.
-4. Generalise the rewrite passes (constfold/flatten/monomorph) onto a
-   `map_expr`/`map_stmt` (rebuilding fold) — larger, do last.
+### Staged rollout for the remaining cluster (one PR each)
+1. Convert `wasm_ir`'s `collect_*` family onto `fold_expr` / `fold_stmt`, keeping
+   the deduping policy explicit in the caller's `f` and pinning the set
+   semantics with a test.
+2. Convert `wasm_ir`'s `module_uses_*` predicates — these are folds to `boolean`
+   and are the easiest half.
+3. Convert `checker`'s scope-threading passes onto `fold_stmt_nodes` (the
+   accumulator carries the `Scope`).
+4. Convert `parser`'s `mono_*` / `ms_*` / `rw_call_*` rewrite passes onto
+   `map_expr` / `map_stmt` — larger, do last.
 
 ### Risks / test strategy
-- Behaviour drift on the diverged collectors — mitigate by converting identical
-  copies first and isolating each policy change (step 3) with its own pinning test.
+- Behaviour drift on the diverged collectors — isolate each policy change with
+  its own pinning test.
 - Bundle cascades (incl. dynamic-marker bundles) — grep both `///MODULE astwalk`
   and `"///MODULE " +` builders.
 - Verify locally on x86 (cli/fixpoint/stage2/cross-validation) + wasm via
@@ -620,24 +637,19 @@ ident/var-name walkers). The diverged dedup policy becomes the caller's `f`
 
 ## SH-057 — self-host miscompiles a lambda that *writes* a captured outer var (confirmed bug)
 
-_Surfaced while resolving the SH-022 wasm-collector question; pre-existing (not
-caused by SH-022 — astwalk's collectors are byte-identical to the old copies)._
-
 **Repro:** `function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }`
 
 | engine | result | |
 |---|---|---|
 | Go reference (`fern -interp`) | **49** ✓ correct | `x` mutated to 42 → by-reference scalar capture; `7 + 42` |
 | self-host interp | **8** (bug) | captured **by value** → the write doesn't propagate → `7 + 1` |
-| self-host vm | **254**/VErr (bug) | write-only scalar never captured → `x = 42` → assign-to-undefined sentinel |
 
-**Root cause:** the free-variable collector's `collect_idents_stmt` `StmtAssign` arm
-(now in `astwalk.fern`, inherited identically from asmcore/ssa/vm) collects only
-`a.value`, **not** the assign target `a.target`. So a lambda that assigns to an
-outer var *without reading it* never lists that var as a free reference →
-`lambda_captures` doesn't capture it. `wasm`'s collector is the only one that
-collects `a.target`, so wasm is the lone correct backend here. (This is why SH-022
-left wasm un-converged.)
+**Root cause:** the free-variable collector's `collect_idents_stmt` `StmtAssign`
+arm (`astwalk.fern:517`) collects only `a.value`, **not** the assign target
+`a.target`. So a lambda that assigns to an outer var *without reading it* never
+lists that var as a free reference → `lambda_captures` doesn't capture it. The
+wasm collector is the only one that collects `a.target`, so the wasm path is the
+lone correct backend here.
 
 **Why CI misses it:** the cross-validation suite's closure cases capture vars they
 *read*; none assign a captured var write-only.
@@ -652,7 +664,7 @@ principled, deliberate split — not an undecided one:
   reference.
 - **Reference captures (`string`/array/struct) are read-only — E049.** Writing one
   back could close an RC reference cycle (Perceus), so it's a compile error. This is
-  why E049 (`checker.go:7067`, `checker.fern:4475`) is intentionally
+  why E049 (`checker.go:7067`, `checker.fern`) is intentionally
   *reference-typed only*.
 
 So **E049 must stay reference-only — do _not_ extend it to scalars** (that would
@@ -660,17 +672,15 @@ reject the intentionally-supported mutable-scalar-capture feature).
 
 **The actual bug:** the self-host doesn't implement mutable scalar captures
 correctly. The reference says the repro is 49 (and the counter is 2); the self-host
-gives interp **8** (captured by value → the write is lost) and vm **254** (the
-write-only scalar is never captured → assign-to-undefined). CLAUDE.md notes the
-self-host stores captures "by value" — so this is an unimplemented-semantics gap,
-not a missing checker rule.
+interp gives **8** — captured by value, so the write is lost. The self-host stores
+captures by value, so this is an unimplemented-semantics gap, not a missing checker
+rule.
 
 **Fix (deferred — substantial, multi-PR; scope before starting):** make self-host
 scalar captures by-reference/mutable to match the reference. That means: (1) the
 collector must capture write-assigned scalars (collect `a.target` in
 `astwalk.collect_idents_stmt`), and (2) the capture *codegen* must make scalar
-captures writable-and-shared rather than by-value snapshots — across interp's env,
-vm's `OpMakeClosure`/capture slots, and the asm/wasm closure boxes — with a
-cross-engine test that the repro → 49 and the counter → 2 on x86/arm64/wasm.
-`wasm`'s collector already collects `a.target`, so its capture analysis is ahead of
-the others here.
+captures writable-and-shared rather than by-value snapshots — across interp's env
+and the native/wasm closure boxes — with a cross-engine test that the repro → 49
+and the counter → 2 on x86/arm64/wasm. The wasm collector already collects
+`a.target`, so its capture analysis is ahead of the others here.

@@ -1564,11 +1564,11 @@ function arm64_str_split(s: string, sep: string): string[] {
 // arm64_gas_trim strips leading/trailing ASCII spaces and tabs.
 function arm64_gas_trim(s: string): string {
     var i: i32 = 0;
-    while (i < s.len() && (s[i] == 32 || s[i] == 9)) {
+    while (i < s.len() && (s[i] == b' ' || s[i] == b'\t')) {
         i = i + 1;
     }
     var j: i32 = s.len();
-    while (j > i && (s[j - 1] == 32 || s[j - 1] == 9)) {
+    while (j > i && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
         j = j - 1;
     }
     return s[i:j] + "";
@@ -1580,12 +1580,12 @@ function arm64_gas_atoi(tok: string): i32 {
     var s: string = tok;
     var neg: boolean = false;
     var i: i32 = 0;
-    if (s.len() > 0 && s[0] == 45) { // '-'
+    if (s.len() > 0 && s[0] == b'-') {
         neg = true;
         i = 1;
     }
     var v: i32 = 0;
-    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+    if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
         i = i + 2;
         while (i < s.len()) {
             var c: i32 = s[i] as i32;
@@ -1613,7 +1613,7 @@ function arm64_gas_atoi(tok: string): i32 {
 // optional '-'); the leading '#' is dropped.
 function arm64_gas_imm(tok: string): i32 {
     var s: string = arm64_gas_trim(tok);
-    if (s.len() > 0 && s[0] == 35) { // '#'
+    if (s.len() > 0 && s[0] == b'#') {
         s = s[1:s.len()] + "";
     }
     return arm64_gas_atoi(s);
@@ -1632,7 +1632,7 @@ function arm64_gas_reg(tok: string): i32 {
     if (s == "sp") { return 31; }
     if (s == "xzr" || s == "wzr") { return 31; }
     if (s == "lr") { return 30; }
-    if (s.len() >= 2 && (s[0] == 120 || s[0] == 119 || s[0] == 100 || s[0] == 115)) { // x/w/d/s
+    if (s.len() >= 2 && (s[0] == b'x' || s[0] == b'w' || s[0] == b'd' || s[0] == b's')) {
         var n: i32 = 0;
         var i: i32 = 1;
         while (i < s.len()) {
@@ -1642,7 +1642,7 @@ function arm64_gas_reg(tok: string): i32 {
             i = i + 1;
         }
         var lim: i32 = 30;
-        if (s[0] == 100 || s[0] == 115) { lim = 31; }   // d0..d31 / s0..s31
+        if (s[0] == b'd' || s[0] == b's') { lim = 31; }   // d0..d31 / s0..s31
         if (n > lim) { return 0 - 1; }
         return n;
     }
@@ -1662,22 +1662,22 @@ function arm64_gas_bad_reg_token(rest: string): string {
     var i: i32 = 0;
     while (i < ops.len()) {
         var t: string = ops[i];
-        if (t.len() > 0 && t[0] == 91) {           // '[' — memory operand
+        if (t.len() > 0 && t[0] == b'[') {           // memory operand
             var rb: i32 = arm64_str_indexof(t, "]");
             if (rb > 1) {
                 var inner: string[] = arm64_gas_operands(t[1:rb]);
                 var k: i32 = 0;
                 while (k < inner.len()) {
                     var it: string = arm64_gas_trim(inner[k]);
-                    if (it.len() >= 2 && (it[0] == 120 || it[0] == 119 || it[0] == 100 || it[0] == 115)
-                        && it[1] >= 48 && it[1] <= 57 && arm64_gas_reg(it) < 0) { return it; }
+                    if (it.len() >= 2 && (it[0] == b'x' || it[0] == b'w' || it[0] == b'd' || it[0] == b's')
+                        && it[1] >= b'0' && it[1] <= b'9' && arm64_gas_reg(it) < 0) { return it; }
                     k = k + 1;
                 }
             }
         } else {
             var tt: string = arm64_gas_trim(t);
-            if (tt.len() >= 2 && (tt[0] == 120 || tt[0] == 119 || tt[0] == 100 || tt[0] == 115)
-                && tt[1] >= 48 && tt[1] <= 57 && arm64_gas_reg(tt) < 0) { return tt; }
+            if (tt.len() >= 2 && (tt[0] == b'x' || tt[0] == b'w' || tt[0] == b'd' || tt[0] == b's')
+                && tt[1] >= b'0' && tt[1] <= b'9' && arm64_gas_reg(tt) < 0) { return tt; }
         }
         i = i + 1;
     }
@@ -1716,13 +1716,13 @@ function arm64_gas_is_cond(s: string): boolean {
 // arm64_gas_is_w reports whether a register token names a 32-bit w-register.
 function arm64_gas_is_w(tok: string): boolean {
     var s: string = arm64_gas_trim(tok);
-    return s.len() >= 1 && s[0] == 119; // 'w'
+    return s.len() >= 1 && s[0] == b'w';
 }
 
 // arm64_gas_is_d reports whether a register token names a 64-bit FP (d) register.
 function arm64_gas_is_d(tok: string): boolean {
     var s: string = arm64_gas_trim(tok);
-    return s.len() >= 1 && s[0] == 100; // 'd'
+    return s.len() >= 1 && s[0] == b'd';
 }
 
 // arm64_gas_is_s distinguishes a SINGLE-precision FP register from the
@@ -1732,7 +1732,7 @@ function arm64_gas_is_d(tok: string): boolean {
 // float-heavy fixture (#6044).
 function arm64_gas_is_s(tok: string): boolean {
     var t: string = arm64_gas_trim(tok);
-    return t.len() >= 1 && t[0] == 115; // 's'
+    return t.len() >= 1 && t[0] == b's';
 }
 
 // arm64_gas_vreg_arr decodes an ARRANGED vector operand (`v0.8b` / `v1.16b`)
@@ -1742,7 +1742,7 @@ function arm64_gas_is_s(tok: string): boolean {
 function arm64_gas_vreg_arr(tok: string): i32 {
     var s: string = arm64_gas_trim(tok);
     var dot: i32 = arm64_str_indexof(s, ".");
-    if (s.len() < 4 || s[0] != 118 || dot < 2) { return 0 - 1; }  // 'v'
+    if (s.len() < 4 || s[0] != b'v' || dot < 2) { return 0 - 1; }
     var n: i32 = 0;
     var i: i32 = 1;
     while (i < dot) {
@@ -1769,7 +1769,7 @@ function arm64_gas_vreg_arr_q(tok: string): boolean {
 // of an `addv` over a byte arrangement — to its number, or -1.
 function arm64_gas_breg(tok: string): i32 {
     var s: string = arm64_gas_trim(tok);
-    if (s.len() < 2 || s[0] != 98) { return 0 - 1; }  // 'b'
+    if (s.len() < 2 || s[0] != b'b') { return 0 - 1; }
     var n: i32 = 0;
     var i: i32 = 1;
     while (i < s.len()) {
@@ -1904,7 +1904,7 @@ function arm64_gas_movwide_out_of_range(mnem: string, rest: string): boolean {
     if (mnem != "mov" && mnem != "movz" && mnem != "movn") { return false; }
     var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() < 2) { return false; }
-    if (ops[1].len() == 0 || ops[1][0] != 35) { return false; }   // register form
+    if (ops[1].len() == 0 || ops[1][0] != b'#') { return false; }   // register form
     if (ops.len() > 2 && arm64_gas_lsl_amount(ops[2]) != 0) { return false; }  // explicit shift
     var v: i64 = arm64_gas_imm(ops[1]) as i64;
     if (v < 0) { v = (0 - v) - 1; }
@@ -2015,11 +2015,11 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, rest: string): boole
 // either GAS spelling: the dotted `b.lt` form or the no-dot `blt` alias.
 // arm64_gas_bcond_suffix returns the condition part of such a mnemonic.
 function arm64_gas_is_bcond(mnem: string): boolean {
-    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // 'b' '.'
-    return mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3]);
+    if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') { return true; }
+    return mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(mnem[1:3]);
 }
 function arm64_gas_bcond_suffix(mnem: string): str {
-    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) {
+    if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') {
         return mnem[2:mnem.len()];
     }
     return mnem[1:3];
@@ -2043,7 +2043,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     }
     if (mnem == "mov" || mnem == "movz") {
         var rd: i32 = arm64_gas_reg(ops[0]);
-        if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
+        if (ops[1].len() > 0 && ops[1][0] == b'#') {
             // The `lsl #N` operand is part of the VALUE, not decoration: movk
             // below already parsed it, this path passed 0, and
             // `movz x5, #0x400, lsl #16` therefore loaded 0x400 instead of
@@ -2109,7 +2109,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var is_sub: boolean = (mnem == "sub");
         var ad: i32 = arm64_gas_reg(ops[0]);
         var an: i32 = arm64_gas_reg(ops[1]);
-        if (ops[2].len() > 0 && ops[2][0] == 35) {
+        if (ops[2].len() > 0 && ops[2][0] == b'#') {
             if (is_sub) {
                 a = Arm64Asm { ...a, code: arm64_subimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
             } else {
@@ -2143,7 +2143,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     }
     if (mnem == "cmp") {
         var cn: i32 = arm64_gas_reg(ops[0]);
-        if (ops[1].len() > 0 && ops[1][0] == 35) {
+        if (ops[1].len() > 0 && ops[1][0] == b'#') {
             a = Arm64Asm { ...a, code: arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1]), arm64_gas_is_w(ops[0])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
@@ -2154,7 +2154,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var rt: i32 = arm64_gas_reg(ops[0]);
         // SIMD&FP `ldr/str Dt, [Xn{, #off}]` — d-register dest (the f64
         // constant-load path). Scalar [Xn] / [Xn, #off] only.
-        if (ops[0].len() > 0 && ops[0][0] == 100) { // 'd'
+        if (ops[0].len() > 0 && ops[0][0] == b'd') {
             // Post-index `ldr Dt, [Xn], #off` arrives as three operands, exactly
             // like the GP form below.
             if (ops.len() >= 3) {
@@ -2192,7 +2192,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var rb0: i32 = arm64_str_indexof(ops[1], "]");
         if (lb0 >= 0 && rb0 > lb0) {
             var mparts: string[] = arm64_gas_operands(ops[1][lb0 + 1:rb0]);
-            if (mparts.len() >= 2 && mparts[1].len() > 0 && (mparts[1][0] == 120 || mparts[1][0] == 119)) { // 'x'/'w'
+            if (mparts.len() >= 2 && mparts[1].len() > 0 && (mparts[1][0] == b'x' || mparts[1][0] == b'w')) {
                 var shifted: boolean = (mparts.len() >= 3 && arm64_str_indexof(mparts[2], "lsl") >= 0);
                 return Arm64Asm { ...a, code: arm64_ldr_str_reg(a.code, mnem == "ldr", rt, arm64_gas_reg(mparts[0]), arm64_gas_reg(mparts[1]), shifted) };
             }
@@ -2296,7 +2296,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "lsl") {
-        if (ops[2].len() > 0 && ops[2][0] == 35) { // '#' → immediate form
+        if (ops[2].len() > 0 && ops[2][0] == b'#') { // immediate form
             a = Arm64Asm { ...a, code: arm64_lsl_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
         } else { // register form → LSLV
             a = Arm64Asm { ...a, code: arm64_lslv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
@@ -2304,7 +2304,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "lsr") {
-        if (ops[2].len() > 0 && ops[2][0] == 35) { // '#' → immediate form
+        if (ops[2].len() > 0 && ops[2][0] == b'#') { // immediate form
             a = Arm64Asm { ...a, code: arm64_lsr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
         } else { // register form → LSRV
             a = Arm64Asm { ...a, code: arm64_lsrv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
@@ -2315,7 +2315,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         // Same immediate/register split as lsl and lsr above. The emitter only
         // produces the register (ASRV) form today, but the immediate one used to
         // fall through to it and encode a shift by xzr — i.e. by ZERO.
-        if (ops[2].len() > 0 && ops[2][0] == 35) { // '#' → immediate form (SBFM)
+        if (ops[2].len() > 0 && ops[2][0] == b'#') { // immediate form (SBFM)
             a = Arm64Asm { ...a, code: arm64_asr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_asrv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
@@ -2347,7 +2347,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "subs") {
-        if (ops[2].len() > 0 && ops[2][0] == 35) { // '#'
+        if (ops[2].len() > 0 && ops[2][0] == b'#') {
             a = Arm64Asm { ...a, code: arm64_subsimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_subsreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
@@ -2532,8 +2532,8 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "fcvt" || mnem == "fneg" || mnem == "fabs" || mnem == "fsqrt") { return true; }
     if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz" || mnem == "frintn") { return true; }
     if (arm64_funary_d_base(mnem) >= 0) { return true; }
-    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
-    if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
+    if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') { return true; } // b.<cond>
+    if (mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
     return false;
 }
 
@@ -2564,12 +2564,12 @@ function arm64_gas_atoi64(tok: string): i64 {
     var s: string = tok;
     var neg: boolean = false;
     var i: i32 = 0;
-    if (s.len() > 0 && s[0] == 45) { // '-'
+    if (s.len() > 0 && s[0] == b'-') {
         neg = true;
         i = 1;
     }
     var v: i64 = 0;
-    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+    if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
         i = i + 2;
         while (i < s.len()) {
             var c: i32 = s[i] as i32;
@@ -2619,7 +2619,7 @@ function arm64_gas_is_digits(s: string): boolean {
     }
     var i: i32 = 0;
     while (i < s.len()) {
-        if (s[i] < 48 || s[i] > 57) {
+        if (s[i] < b'0' || s[i] > b'9') {
             return false;
         }
         i = i + 1;
@@ -2763,7 +2763,7 @@ function arm64_gas_data_asciz(own p: Arm64GasProg, line: string): Arm64GasProg {
         return p;
     }
     var i: i32 = q1 + 1;
-    while (i < line.len() && line[i] != 34) { // until closing '"'
+    while (i < line.len() && line[i] != b'"') {
         var c: i32 = line[i] as i32;
         if (c == 92 && i + 1 < line.len()) { // '\'
             var e: i32 = line[i + 1] as i32;
@@ -2823,16 +2823,16 @@ function arm64_gas_data_ascii(own p: Arm64GasProg, line: string): Arm64GasProg {
     var closed: boolean = false;
     var k: i32 = q1 + 1;
     while (k < line.len()) {
-        if (line[k] == 92) { k = k + 2; }
+        if (line[k] == b'\\') { k = k + 2; }
         else {
-            if (line[k] == 34) { closed = true; }
+            if (line[k] == b'"') { closed = true; }
             k = k + 1;
             if (closed) { break; }
         }
     }
     if (!closed) { return Arm64GasProg { ...p, unknown: p.unknown.append("ascii:unterminated") }; }
     var i: i32 = q1 + 1;
-    while (i < line.len() && line[i] != 34) {
+    while (i < line.len() && line[i] != b'"') {
         var c: i32 = line[i] as i32;
         if (c == 92 && i + 1 < line.len()) {
             var e: i32 = line[i + 1] as i32;
@@ -2917,8 +2917,8 @@ function pf64_all_zero(b: i32[]): boolean {
 function parse_f64_bits(s: string): i64 {
     var i: i32 = 0;
     var neg: boolean = false;
-    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
-    else if (s.len() > 0 && s[0] == 43) { i = 1; }
+    if (s.len() > 0 && s[0] == b'-') { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == b'+') { i = 1; }
     var signbit: i64 = 0;
     if (neg) { var one: i64 = 1; signbit = one << 63; }
     // Collect significant digits and the decimal point position:
@@ -2931,7 +2931,7 @@ function parse_f64_bits(s: string): i64 {
     var dp: i32 = 0;
     var sticky: boolean = false;
     var started: boolean = false;
-    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+    while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
         var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
@@ -2941,9 +2941,9 @@ function parse_f64_bits(s: string): i64 {
         }
         i = i + 1;
     }
-    if (i < s.len() && s[i] == 46) {        // '.'
+    if (i < s.len() && s[i] == b'.') {
         i = i + 1;
-        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
             var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
@@ -2955,13 +2955,13 @@ function parse_f64_bits(s: string): i64 {
             i = i + 1;
         }
     }
-    if (i < s.len() && (s[i] == 101 || s[i] == 69)) {   // 'e' / 'E'
+    if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
         i = i + 1;
         var eneg: boolean = false;
-        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
-        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        if (i < s.len() && s[i] == b'-') { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == b'+') { i = i + 1; }
         var exp: i32 = 0;
-        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
             if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
             i = i + 1;
         }
@@ -3145,7 +3145,7 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
         var lci: i32 = 0;
         var lp: Arm64GasProg = p;
         while (lci < lrest.len()) {
-            if (lrest[lci] == 44) {   // ','
+            if (lrest[lci] == b',') {
                 lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
                 ltok = "";
             } else {
@@ -3302,7 +3302,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             }
         }
         // directives
-        if (line[0] == 46) { // '.'
+        if (line[0] == b'.') {
             if (line == ".ltorg") {
                 if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
                     p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };

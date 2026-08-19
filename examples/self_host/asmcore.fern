@@ -1718,7 +1718,7 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                     while (fi < s.funcs.len()) {
                         if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
                             var rt: string = s.funcs[fi].ret_type;
-                            if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
+                            if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == b']') {
                                 return ty_from_name(rt[7 : rt.len() - 1]);
                             }
                             if (rt.len() >= 8 && rt[0:7] == "Result[") {
@@ -1749,7 +1749,7 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                         while (fi < s.funcs.len()) {
                             if (s.funcs[fi].name == fa.field && ty_eq(ty_from_name(s.funcs[fi].receiver_type), rcv)) {
                                 var rt: string = s.funcs[fi].ret_type;
-                                if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
+                                if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == b']') {
                                     return ty_from_name(rt[7 : rt.len() - 1]);
                                 }
                                 if (rt.len() >= 8 && rt[0:7] == "Result[") {
@@ -1909,7 +1909,7 @@ pub function field_type_tag(field: string, s: EmitState): Ty {
 pub function struct_local_tag(type_name: string, s: EmitState): Ty {
     var bi: i32 = 0;
     while (bi < type_name.len()) {
-        if (type_name[bi] == 91) { return ty_from_name(type_name); }
+        if (type_name[bi] == b'[') { return ty_from_name(type_name); }
         bi = bi + 1;
     }
     var di: i32 = 0;
@@ -2503,7 +2503,7 @@ pub function generic_value_ty(name: string, start: i32): Ty {
     var inner: str = name[start : name.len() - 1];
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
-        if (inner[i] == 44 && inner[i + 1] == 32) {
+        if (inner[i] == b',' && inner[i + 1] == b' ') {
             return ty_from_name(inner[i + 2 : inner.len()]);
         }
         i = i + 1;
@@ -2516,7 +2516,7 @@ pub function generic_key_is_i32(name: string, start: i32): boolean {
     var inner: str = name[start : name.len() - 1];
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
-        if (inner[i] == 44 && inner[i + 1] == 32) {
+        if (inner[i] == b',' && inner[i + 1] == b' ') {
             return ty_is_i32(ty_from_name(inner[0 : i]));
         }
         i = i + 1;
@@ -3300,7 +3300,7 @@ pub function count_locals(body: parser.Stmt[]): i32 {
 pub function name_has_comma(name: string): boolean {
     var i: i32 = 0;
     while (i < name.len()) {
-        if (name[i] == 44) { return true; }
+        if (name[i] == b',') { return true; }
         i = i + 1;
     }
     return false;
@@ -3316,7 +3316,7 @@ pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
                 var cnt: i32 = 1;
                 var ci: i32 = 0;
                 while (ci < v.name.len()) {
-                    if (v.name[ci] == 44) { cnt = cnt + 1; }
+                    if (v.name[ci] == b',') { cnt = cnt + 1; }
                     ci = ci + 1;
                 }
                 return cnt;
@@ -4372,7 +4372,7 @@ function callgate_known_names(mod: parser.Module): string[] {
 function callgate_module_ns(name: string, names: string[], known: string[]): string {
     var i: i32 = 1;
     while (i + 1 < name.len()) {
-        if (name[i] == 95 && name[i + 1] == 95) {
+        if (name[i] == b'_' && name[i + 1] == b'_') {
             // `+ ""` materialises the slice as a string — a bare slice is the
             // `str` view type (the idiom astwalk's binder split uses).
             var ns: string = name[0:i] + "";

@@ -48,7 +48,7 @@ function base_name_of(path: string): string {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < path.len()) {
-        if (path[i] == 47) { start = i + 1; }   // '/'
+        if (path[i] == b'/') { start = i + 1; }
         i = i + 1;
     }
     return path[start:path.len()] + "";
@@ -184,7 +184,7 @@ function qual_type_parts(tn: string): (string, string) {
     var dot: i32 = 0 - 1;
     var i: i32 = 0;
     while (i < tn.len()) {
-        if (tn[i] == 46) { dot = i; i = tn.len(); }   // '.', first only
+        if (tn[i] == b'.') { dot = i; i = tn.len(); }   // first only
         i = i + 1;
     }
     if (dot < 0) { return ("", ""); }
@@ -193,7 +193,7 @@ function qual_type_parts(tn: string): (string, string) {
     var cut: i32 = rest.len();
     var j: i32 = 0;
     while (j < rest.len()) {
-        if (rest[j] == 91) { cut = j; j = rest.len(); }   // '['
+        if (rest[j] == b'[') { cut = j; j = rest.len(); }
         j = j + 1;
     }
     return (q, rest[0:cut] + "");

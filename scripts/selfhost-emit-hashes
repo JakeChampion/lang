@@ -3,7 +3,7 @@
 # selfhost-emit-hashes — byte-identity gate for pure refactors of the self-host
 # compiler.
 #
-# Emits every fixture in internal/e2e/testdata/cases through a self-host
+# Emits every fixture in conformance/cases through a self-host
 # compiler binary, on all three backends, and writes one sha256 per (fixture,
 # target). Run it before and after a refactor and diff the two files: if the
 # refactor was pure, they are identical.
@@ -56,7 +56,7 @@ trap 'rm -rf "$TMP"' EXIT
 : > "$OUT"
 
 for f in $(find "$CASES" -name '*.fern' | sort); do
-    for tgt in x86-64 arm64 wasm; do
+    for tgt in x86-64-linux arm64-linux wasm32-wasi; do
         o="$TMP/out"
         if "$BIN" -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
             printf '%s  %s  %s\n' "$(sha256sum < "$o" | cut -d' ' -f1)" "$tgt" "${f#"$CASES"/}" >> "$OUT"
@@ -67,6 +67,17 @@ for f in $(find "$CASES" -name '*.fern' | sort); do
     done
 done
 
-ok=$(grep -vc '^FAILED' "$OUT")
-bad=$(grep -c '^FAILED' "$OUT")
+ok=$(grep -vc '^FAILED' "$OUT" || true)
+bad=$(grep -c '^FAILED' "$OUT" || true)
 echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted, $bad refused)"
+
+# A run where NOTHING emitted is indistinguishable from a pure refactor: both
+# sides of the diff are all-FAILED, so the comparison reports PURE for any
+# change at all. That is how a wrong -target spelling made this gate vacuous
+# rather than red. Refuse to produce such a file.
+if [ "$ok" -eq 0 ]; then
+    echo "$0: every case refused — the gate would compare all-FAILED against" >&2
+    echo "  all-FAILED and call any refactor pure. Check that $BIN runs and" >&2
+    echo "  that the -target spellings above are ones it accepts." >&2
+    exit 1
+fi

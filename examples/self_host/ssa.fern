@@ -967,7 +967,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var ccn: string = "";
                     var cpi: i32 = 0;
                     while (cpi <= cap_csv.len()) {
-                        if (cpi == cap_csv.len() || cap_csv[cpi] == 44) {
+                        if (cpi == cap_csv.len() || cap_csv[cpi] == b',') {
                             if (ccn.len() > 0) { argvals = argvals.append(s.get_var(ccn)); }
                             ccn = "";
                         } else { ccn = ccn + cap_csv[cpi : cpi + 1]; }
@@ -1333,7 +1333,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                 while (dci <= v.name.len()) {
                     var d_end: boolean = dci == v.name.len();
                     var d_comma: boolean = false;
-                    if (!d_end) { if (v.name[dci] == 44) { d_comma = true; } }
+                    if (!d_end) { if (v.name[dci] == b',') { d_comma = true; } }
                     if (d_end || d_comma) {
                         s = s.kconst(didx);
                         var deidx: i32 = s.cur_id();
@@ -1364,7 +1364,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             match (v.init) {
                 parser.ExprLambda(lam) => {
                     var lidx: i32 = count_fn_markers(s.vt_types);
-                    var lname: string = s.name + "$lam$" + int_str(lidx);
+                    var lname: string = s.name + "$lam$" + util.i32_to_string(lidx);
                     var lcaps: string[] = lambda_free_caps(lam, s.var_names);
                     if (lcaps.len() == 0) { return s.set_var_type(v.name, "fn:" + lname); }
                     // Build the box: alloc(1+ncaps), slot 0 = fn addr, slots
@@ -1502,7 +1502,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                 var ot: i32 = opt_tag(pv.type_name);
                 var tag: i32 = ot;
                 if (ot < 0) { tag = find_struct_index(structs, pv.type_name); }
-                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: int_str(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
+                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: util.i32_to_string(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
                 var then_body: parser.Stmt[] = [];
                 if (pv.binding.len() > 0 && pv.binding != "_") {
                     var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0 };
@@ -1585,7 +1585,7 @@ function build_match(m: parser.StmtMatch, s: BState): BState {
 // (never pre-bound to a `parser.Expr` union local), matching
 // synth_match_chain.
 function build_for(fr: parser.StmtFor, s: BState): BState {
-    var uid: string = int_str(s.next_blk);
+    var uid: string = util.i32_to_string(s.next_blk);
     var arr_name: string = "$arr" + uid;
     var i_name: string = "$i" + uid;
 
@@ -2069,7 +2069,7 @@ function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
                 var nm: string = "";
                 var ci: i32 = 0;
                 while (ci <= v.name.len()) {
-                    if (ci == v.name.len() || v.name[ci] == 44) {
+                    if (ci == v.name.len() || v.name[ci] == b',') {
                         if (nm.len() > 0) { out = out.append(nm); }
                         nm = "";
                     } else { nm = nm + v.name[ci : ci + 1]; }
@@ -2138,7 +2138,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprLambda(lam) => {
-                            var nm: string = fn_sym(fd) + "$lam$" + int_str(cnt);
+                            var nm: string = fn_sym(fd) + "$lam$" + util.i32_to_string(cnt);
                             cnt = cnt + 1;
                             var caps: string[] = lambda_free_caps(lam, parent_locals_upto(fd, si));
                             var tp: string[] = [];
@@ -2181,7 +2181,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
-                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: int_str(cj + 1), line: 0, col: 0, ty: "" };
+                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: util.i32_to_string(cj + 1), line: 0, col: 0, ty: "" };
                                     ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false });
                                     cj = cj + 1;
                                 }
@@ -2244,7 +2244,7 @@ pub function is_ptr_type(tn: string): boolean {
     if (tn.len() == 0) { return false; }
     if (tn == "string") { return true; }   // strings are byte-array pointers
     if (tn == "fn") { return true; }        // function value — a code pointer
-    return tn[tn.len() - 1] == 93;          // ']' — array types
+    return tn[tn.len() - 1] == b']';          // array types
 }
 
 // is_struct_type reports whether `name` names a declared struct.
@@ -2706,14 +2706,14 @@ function is_commutative(op: string): boolean {
 // by id (already canonicalised through copy-propagation); commutative
 // binary operands are sorted so order doesn't matter.
 function cse_key(ins: SInst): string {
-    if (ins.kind_tag == 1) { return "ci|" + int_str(ins.imm); }
-    if (ins.kind_tag == 2) { return "cb|" + int_str(ins.imm); }
-    if (ins.kind_tag == 10) { return "u|" + ins.str + "|" + int_str(ins.args[0]); }
+    if (ins.kind_tag == 1) { return "ci|" + util.i32_to_string(ins.imm); }
+    if (ins.kind_tag == 2) { return "cb|" + util.i32_to_string(ins.imm); }
+    if (ins.kind_tag == 10) { return "u|" + ins.str + "|" + util.i32_to_string(ins.args[0]); }
     if (ins.kind_tag == 9) {  // binary
         var a: i32 = ins.args[0];
         var b: i32 = ins.args[1];
         if (is_commutative(ins.str) && b < a) { var tmp: i32 = a; a = b; b = tmp; }
-        return "b|" + ins.str + "|" + int_str(a) + "|" + int_str(b);
+        return "b|" + ins.str + "|" + util.i32_to_string(a) + "|" + util.i32_to_string(b);
     }
     return "";
 }
@@ -3681,45 +3681,33 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
 
 // ---- text printer (for golden tests / debugging) -----------------------
 
-function int_str(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    var x: i32 = n;
-    if (x < 0) { neg = true; x = 0 - x; }
-    var digits: string = "0123456789";
-    var s: string = "";
-    while (x > 0) { s = digits[x % 10 : x % 10 + 1] + s; x = x / 10; }
-    if (neg) { return "-" + s; }
-    return s;
-}
-
 pub function print_func(f: SFunc): string {
     var out: string = "func " + f.name + " {\n";
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
         var blk: SBlock = f.blocks[bi];
-        out = out + "  b" + int_str(blk.id) + ":\n";
+        out = out + "  b" + util.i32_to_string(blk.id) + ":\n";
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            out = out + "    v" + int_str(ins.result) + " = " + kind_name(ins.kind_tag);
+            out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag);
             if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6) {
-                out = out + " " + int_str(ins.imm);
+                out = out + " " + util.i32_to_string(ins.imm);
             }
             if (ins.kind_tag == 9 || ins.kind_tag == 10 || ins.kind_tag == 11) {
                 out = out + " " + ins.str;
             }
             var ai: i32 = 0;
             while (ai < ins.args.len()) {
-                out = out + " v" + int_str(ins.args[ai]);
+                out = out + " v" + util.i32_to_string(ins.args[ai]);
                 ai = ai + 1;
             }
             out = out + "\n";
             k = k + 1;
         }
-        if (blk.term.kind_tag == 1) { out = out + "    ret v" + int_str(blk.term.value) + "\n"; }
-        else if (blk.term.kind_tag == 2) { out = out + "    br b" + int_str(blk.term.target) + "\n"; }
-        else if (blk.term.kind_tag == 3) { out = out + "    brif v" + int_str(blk.term.cond) + " b" + int_str(blk.term.t) + " b" + int_str(blk.term.f) + "\n"; }
+        if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
+        else if (blk.term.kind_tag == 2) { out = out + "    br b" + util.i32_to_string(blk.term.target) + "\n"; }
+        else if (blk.term.kind_tag == 3) { out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n"; }
         bi = bi + 1;
     }
     return out + "}\n";
