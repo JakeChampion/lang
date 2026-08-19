@@ -13017,6 +13017,28 @@ function iter_range_args(iter: Expr): Expr[] {
     return [];
 }
 
+// dr_expr rewrites the range-fors living inside an EXPRESSION — in practice a
+// lambda body, which is a statement list no statement walk reaches. The generic
+// descent rides dl_expr_kids / dl_expr_with_kids so only the lambda case is
+// spelled out; those two report no children for a lambda precisely because a
+// lambda's children are statements, not expressions.
+function dr_expr(e: Expr): Expr {
+    match (e) {
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: desugar_ranges_block(lm.body) }; },
+        _ => { return dr_expr_kids(e); }
+    }
+    return e;
+}
+
+function dr_expr_kids(e: Expr): Expr {
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return e; }
+    var nk: Expr[] = [];
+    var i: i32 = 0;
+    while (i < kids.len()) { nk = nk.append(dr_expr(kids[i])); i = i + 1; }
+    return dl_expr_with_kids(e, nk);
+}
+
 pub function desugar_ranges_block(body: Stmt[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
@@ -13067,6 +13089,14 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
             if (r.len() == 1) { return [StmtDefer { action: r[0], on_error: d.on_error, line: d.line }]; }
             return [st];
         },
+        // The statement forms whose EXPRESSIONS can hold a lambda. Without these
+        // the `_` arm returned them untouched and a range-for in a lambda body
+        // survived as an undesugared `__range` call, which the interpreter has
+        // no function for (#7174).
+        StmtVar(v) => { return [StmtVar { ...v, init: dr_expr(v.init) }]; },
+        StmtReturn(r2) => { return [StmtReturn { ...r2, value: dr_expr(r2.value) }]; },
+        StmtExpr(x) => { return [StmtExpr { ...x, value: dr_expr(x.value) }]; },
+        StmtAssign(a) => { return [StmtAssign { ...a, value: dr_expr(a.value) }]; },
         _ => { return [st]; }
     }
     return [st];

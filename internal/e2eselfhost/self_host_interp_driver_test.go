@@ -91,6 +91,22 @@ var interpProgs = []struct {
 	{"range-break", "function main(): i32 { var s = 0; for i in 0..100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
 	{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
 	{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
+	// A range-for inside a LAMBDA body. desugar_ranges_one recursed through the
+	// statement forms and had no expression descent at all, so its `_` arm
+	// returned a `var` / `return` / call statement untouched and the lambda body
+	// hanging off it was never reached — the `__range` iter survived to the
+	// interpreter, which has no such function (#7174). Native answers 6 on all
+	// four shapes.
+	{"range-in-lambda", "function run(f: () => i32): i32 { return f(); }\n" +
+		"function main(): i32 { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }", 6},
+	{"range-in-lambda-var", "function main(): i32 { var f = function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }; return f(); }", 6},
+	{"range-in-lambda-nested", "function run(f: () => i32): i32 { return f(); }\n" +
+		"function main(): i32 { return run(function(): i32 { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }); }", 6},
+	// The lambda hangs off a match arm's statement, which the arm walk reaches
+	// but the expression descent has to finish.
+	{"range-in-lambda-match-arm", "enum E { A(i32) }\n" +
+		"function run(f: () => i32): i32 { return f(); }\n" +
+		"function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }, _ => { return 0; } } return 0; }", 6},
 	// Generic trait declaration header `trait Name[T]` with a default
 	// method (#4340): parse_trait_decl walked name -> `:` supertraits ->
 	// `{` and never consumed the `[T]` type-param list, so `[T] { … }`
