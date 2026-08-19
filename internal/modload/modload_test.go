@@ -1049,6 +1049,36 @@ function main(): i32 { return util.f(); }`,
 	}
 }
 
+// Every module's TypeRefs merge into one side table, and ast.Position
+// carries no filename — so the stamp is the only thing that tells two
+// modules' entries apart. Without it the LSP answers a type-annotation
+// query for one file out of another that happens to write a type name
+// at the same line and column.
+func TestLoadStampsTypeRefSourceModule(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern": `pub struct Point { x: i32 }
+pub function origin(): Point { return Point { x: 0 }; }`,
+		"main.fern": `import "./util";
+function main(): i32 { var p: util.Point = util.origin(); return p.x; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainAbs, _ := filepath.Abs(filepath.Join(dir, "main.fern"))
+	utilAbs, _ := filepath.Abs(filepath.Join(dir, "util.fern"))
+	got := map[string]string{}
+	for _, tr := range prog.TypeRefs {
+		got[tr.Name] = tr.SourceModule
+	}
+	if got["Point"] != utilAbs {
+		t.Errorf("util.fern's `Point` TypeRef stamped %q, want %q", got["Point"], utilAbs)
+	}
+	if got["util.Point"] != mainAbs {
+		t.Errorf("main.fern's `util.Point` TypeRef stamped %q, want %q", got["util.Point"], mainAbs)
+	}
+}
+
 // Transitive import closures: a module's closure includes
 // itself plus every module reachable by an import-chain. The
 // checker reads this to answer the "is the receiver's source

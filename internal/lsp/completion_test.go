@@ -9,7 +9,7 @@ import (
 func completionFor(src string, line, col int) *completionList {
 	s := NewServer()
 	s.updateDoc("file:///t", src)
-	return runCompletion(s.docs["file:///t"], Position{Line: line, Character: col})
+	return runCompletion(s.docs["file:///t"], "file:///t", Position{Line: line, Character: col})
 }
 
 // labelsContain reports whether the completion list includes an item

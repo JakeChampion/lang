@@ -41,6 +41,12 @@ type nameHit struct {
 // 1-based, matching lang's internal positions. Returns nil when no
 // recognised name covers the position.
 //
+// mod is the module path of the document the request named (see
+// requestModule): a workspace program merges every module into one
+// position space, so the file has to be part of the match or a
+// request for main.fern can be answered from a sibling module that
+// happens to carry a name at the same line and column.
+//
 // Recognised name-bearing nodes:
 //   - *ast.Ident          — variable / parameter / function reference
 //   - *ast.StructLit      — name is the struct's TypeName, starting at P
@@ -52,13 +58,16 @@ type nameHit struct {
 // last character (the common "click at end of word" placement editors
 // send) still hits. Identifiers in lang can't span newlines, so a
 // single-line range check is correct for all node kinds.
-func findNameAt(prog *ast.Program, line, col int) *nameHit {
+func findNameAt(prog *ast.Program, mod string, line, col int) *nameHit {
 	if prog == nil {
 		return nil
 	}
 	var best *nameHit
 	for _, fd := range prog.Funcs {
 		if fd == nil || fd.Body == nil {
+			continue
+		}
+		if !inModule(fd.SourceModule, mod) {
 			continue
 		}
 		ast.Walk(fd.Body, func(n ast.Node) bool {
@@ -144,6 +153,9 @@ func findNameAt(prog *ast.Program, line, col int) *nameHit {
 	// slots, not expressions.)
 	for i := range prog.TypeRefs {
 		tr := &prog.TypeRefs[i]
+		if !inModule(tr.SourceModule, mod) {
+			continue
+		}
 		if spans(tr.P, line, col, len(tr.Name)) {
 			best = &nameHit{
 				name:    tr.Name,

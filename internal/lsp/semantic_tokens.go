@@ -63,10 +63,11 @@ type rawToken struct {
 // highlighting. Conservative: only emits tokens we're confident
 // about (decls, name references, field accesses, type names),
 // leaving everything else for the editor's syntactic highlighter.
-func runSemanticTokens(state *docState) semanticTokensResponse {
+func runSemanticTokens(state *docState, uri string) semanticTokensResponse {
 	if state == nil || state.prog == nil {
 		return semanticTokensResponse{Data: []int{}}
 	}
+	mod := requestModule(uri)
 	var raw []rawToken
 	add := func(pos ast.Position, length, tt int) {
 		if length <= 0 || pos.Line <= 0 {
@@ -76,6 +77,9 @@ func runSemanticTokens(state *docState) semanticTokensResponse {
 	}
 	for _, fd := range state.prog.Funcs {
 		if fd == nil || fd.Body == nil {
+			continue
+		}
+		if !inModule(fd.SourceModule, mod) {
 			continue
 		}
 		if isInternalName(fd.Name) {
@@ -115,6 +119,9 @@ func runSemanticTokens(state *docState) semanticTokensResponse {
 	// (which our parser doesn't actually emit TypeRefs for, but
 	// it's safe).
 	for _, tr := range state.prog.TypeRefs {
+		if !inModule(tr.SourceModule, mod) {
+			continue
+		}
 		tt := stType
 		if state.info != nil {
 			if _, ok := state.info.Structs[tr.Name]; ok {

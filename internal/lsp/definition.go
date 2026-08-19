@@ -33,7 +33,7 @@ func runDefinition(state *docState, uri string, pos Position) *Location {
 		return nil
 	}
 	line, col := lspToInternalPos(pos)
-	hit := findNameAt(state.prog, line, col)
+	hit := findNameAt(state.prog, requestModule(uri), line, col)
 	if hit == nil {
 		return nil
 	}

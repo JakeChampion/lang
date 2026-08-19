@@ -54,7 +54,7 @@ func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 	// starts at 1-based col 31, so the TypeRef spans cols [31, 41)
 	// for the spelling "util.Point". Cursor at LSP (line 2, col 35)
 	// = 1-based (line 3, col 36) is on the `P` of `Point`.
-	hit := findNameAt(s.docs[mainURI].prog, 3, 36)
+	hit := findNameAt(s.docs[mainURI].prog, mainPath, 3, 36)
 	if hit == nil || hit.typeRef == nil {
 		t.Fatalf("expected a typeRef hit inside `util.Point`, got %+v", hit)
 	}
@@ -333,29 +333,50 @@ func TestWorkspace_ImportedSyntaxErrorDoesNotLandOnTheEntry(t *testing.T) {
 	}
 }
 
-// collidingVariantWorkspace builds a workspace whose modules `a` and
-// `b` each declare `Kind { Text }`. Neither imports the other, so
+// variantCollision is the workspace collidingVariantWorkspace builds:
+// modules `a` and `b` each declaring `Kind { Text }` and using the
+// bare variant at the SAME line and column of their own file, plus an
+// entry module importing both. Neither sibling imports the other, so
 // neither bare `Text` is ambiguous where it is written — but the
-// entry's program holds both enums at once, which is what the LSP
-// resolves names against. Returns the server, the entry URI, and the
-// (1-based) line/col of a.fern's `Text`.
-func collidingVariantWorkspace(t *testing.T) (*Server, string, int, int) {
+// entry's program holds both enums at once, and that single program is
+// what the LSP resolves positions against.
+type variantCollision struct {
+	// entry is the docState loaded from main.fern: it carries a, b
+	// and main in one program and one position space.
+	entry *docState
+	// mainURI / aURI / bURI name the three files a request can be
+	// made against.
+	mainURI, aURI, bURI string
+	// line / col is the 1-based position of `Text` — the same in
+	// a.fern and in b.fern.
+	line, col int
+	// typeLine / typeCol is the 1-based position of the `Kind`
+	// return-type annotation, likewise shared by both siblings.
+	typeLine, typeCol int
+}
+
+// pos converts the fixture's 1-based (line, col) to the 0-based LSP
+// Position a request carries.
+func at(line, col int) Position { return Position{Line: line - 1, Character: col - 1} }
+
+func collidingVariantWorkspace(t *testing.T) variantCollision {
 	t.Helper()
 	dir := t.TempDir()
+	// a and b are byte-identical apart from their function names,
+	// which are the same length — so every name in one sits at the
+	// exact position of a differently-meant name in the other.
 	aSrc := "pub enum Kind { Text }\n" +
 		"pub function ka(): Kind { return Text; }\n"
-	// b's use sits on its own line so the two bare `Text`s never
-	// share a source position — the hit under test has to be a's.
 	bSrc := "pub enum Kind { Text }\n" +
-		"pub function kb(): Kind {\n" +
-		"    return Text;\n" +
-		"}\n"
+		"pub function kb(): Kind { return Text; }\n"
 	mainSrc := "import \"./a\";\n" +
 		"import \"./b\";\n" +
 		"function main(): i32 { var x: a.Kind = a.ka(); var y: b.Kind = b.kb(); return 0; }\n"
-	writeFile(t, filepath.Join(dir, "a.fern"), aSrc)
-	writeFile(t, filepath.Join(dir, "b.fern"), bSrc)
+	aPath := filepath.Join(dir, "a.fern")
+	bPath := filepath.Join(dir, "b.fern")
 	mainPath := filepath.Join(dir, "main.fern")
+	writeFile(t, aPath, aSrc)
+	writeFile(t, bPath, bSrc)
 	writeFile(t, mainPath, mainSrc)
 
 	s := NewServer()
@@ -377,69 +398,167 @@ func collidingVariantWorkspace(t *testing.T) (*Server, string, int, int) {
 	if len(state.diags) != 0 {
 		t.Fatalf("fixture should type-check clean, got %+v", state.diags)
 	}
-	line := 2
-	col := strings.Index(strings.Split(aSrc, "\n")[1], "return Text") + len("return ") + 1
-	return s, mainURI, line, col
+	sibLine := strings.Split(aSrc, "\n")[1]
+	if sibLine != strings.Split(bSrc, "\n")[1] {
+		// The two lines differ only in the function name; if that
+		// stops holding, every position below is a different name
+		// in each file and the tests prove nothing.
+		if len(sibLine) != len(strings.Split(bSrc, "\n")[1]) {
+			t.Fatalf("a and b must line up column-for-column")
+		}
+	}
+	return variantCollision{
+		entry:    state,
+		mainURI:  mainURI,
+		aURI:     pathToURI(aPath),
+		bURI:     pathToURI(bPath),
+		line:     2,
+		col:      strings.Index(sibLine, "return Text") + len("return ") + 1,
+		typeLine: 2,
+		typeCol:  strings.Index(sibLine, "): Kind") + len("): ") + 1,
+	}
 }
 
 // A variant name declared by two mutually invisible modules must
-// resolve to the enum the checker stamped on the reference. The
-// symbol tables are Go maps, so a name-keyed sweep picks a different
-// enum from run to run — hence the repeats.
+// resolve to the enum the checker stamped on the reference — and to
+// the one in the file the request named, since both siblings carry a
+// `Text` at this position. The symbol tables are Go maps, so a
+// name-keyed sweep picks a different enum from run to run — hence the
+// repeats.
 func TestWorkspace_VariantHoverNamesTheStampedEnum(t *testing.T) {
-	s, mainURI, line, col := collidingVariantWorkspace(t)
-	state := s.docs[mainURI]
-	hit := findNameAt(state.prog, line, col)
-	if hit == nil || hit.ident == nil {
-		t.Fatalf("expected an Ident hit on a.fern's `Text`, got %+v", hit)
-	}
-	if hit.ident.EnumName != "a__Kind" {
-		t.Fatalf("checker stamped %q on a's `Text`, want a__Kind", hit.ident.EnumName)
-	}
-	for i := 0; i < 50; i++ {
-		got, ok := describeName(state.info, hit)
-		if !ok {
-			t.Fatalf("run %d: no description for a's `Text`", i)
+	w := collidingVariantWorkspace(t)
+	for _, tc := range []struct{ uri, enum string }{
+		{w.aURI, "a__Kind"},
+		{w.bURI, "b__Kind"},
+	} {
+		hit := findNameAt(w.entry.prog, requestModule(tc.uri), w.line, w.col)
+		if hit == nil || hit.ident == nil {
+			t.Fatalf("%s: expected an Ident hit on `Text`, got %+v", tc.uri, hit)
 		}
-		if !strings.Contains(got, "a__Kind") {
-			t.Fatalf("run %d: hover = %q, want a's enum", i, got)
+		if hit.ident.EnumName != tc.enum {
+			t.Fatalf("%s: hit stamped %q, want %s", tc.uri, hit.ident.EnumName, tc.enum)
 		}
-	}
-	if got := classifyIdent(state.info, hit.enclosing, hit.ident); got != stEnumMember {
-		t.Errorf("semantic token = %d, want stEnumMember (%d)", got, stEnumMember)
+		for i := 0; i < 50; i++ {
+			got, ok := describeName(w.entry.info, hit)
+			if !ok {
+				t.Fatalf("%s run %d: no description for `Text`", tc.uri, i)
+			}
+			if !strings.Contains(got, tc.enum) {
+				t.Fatalf("%s run %d: hover = %q, want %s", tc.uri, i, got, tc.enum)
+			}
+		}
+		if got := classifyIdent(w.entry.info, hit.enclosing, hit.ident); got != stEnumMember {
+			t.Errorf("%s: semantic token = %d, want stEnumMember (%d)", tc.uri, got, stEnumMember)
+		}
 	}
 }
 
 // Find-all-references on a variant must not sweep in the like-named
-// variant of an enum the referring module cannot see.
+// variant of an enum the referring module cannot see, and must start
+// from the file the request named.
 func TestWorkspace_VariantReferencesStayInTheirEnum(t *testing.T) {
-	s, mainURI, line, col := collidingVariantWorkspace(t)
-	state := s.docs[mainURI]
-	for i := 0; i < 50; i++ {
-		locs := runReferences(state, mainURI, Position{Line: line - 1, Character: col - 1})
-		if len(locs) != 2 {
-			t.Fatalf("run %d: %d references, want 2 (a's decl + a's use): %+v", i, len(locs), locs)
+	w := collidingVariantWorkspace(t)
+	for _, uri := range []string{w.aURI, w.bURI} {
+		want := "a.fern"
+		if uri == w.bURI {
+			want = "b.fern"
 		}
-		for _, l := range locs {
-			if !strings.HasSuffix(l.URI, "a.fern") {
-				t.Fatalf("run %d: reference in %s, want a.fern only", i, l.URI)
+		for i := 0; i < 50; i++ {
+			locs := runReferences(w.entry, uri, at(w.line, w.col))
+			if len(locs) != 2 {
+				t.Fatalf("%s run %d: %d references, want 2 (decl + use): %+v", want, i, len(locs), locs)
+			}
+			for _, l := range locs {
+				if !strings.HasSuffix(l.URI, want) {
+					t.Fatalf("%s run %d: reference in %s", want, i, l.URI)
+				}
 			}
 		}
 	}
 }
 
-// Go-to-definition on the same reference lands on a's declaration.
+// Go-to-definition on the same reference lands on the declaration in
+// the file the request named.
 func TestWorkspace_VariantDefinitionPicksTheStampedEnum(t *testing.T) {
-	s, mainURI, line, col := collidingVariantWorkspace(t)
-	state := s.docs[mainURI]
-	for i := 0; i < 50; i++ {
-		loc := runDefinition(state, mainURI, Position{Line: line - 1, Character: col - 1})
-		if loc == nil {
-			t.Fatalf("run %d: no definition for a's `Text`", i)
+	w := collidingVariantWorkspace(t)
+	for _, uri := range []string{w.aURI, w.bURI} {
+		want := "a.fern"
+		if uri == w.bURI {
+			want = "b.fern"
 		}
-		if !strings.HasSuffix(loc.URI, "a.fern") {
-			t.Fatalf("run %d: definition in %s, want a.fern", i, loc.URI)
+		for i := 0; i < 50; i++ {
+			loc := runDefinition(w.entry, uri, at(w.line, w.col))
+			if loc == nil {
+				t.Fatalf("%s run %d: no definition for `Text`", want, i)
+			}
+			if !strings.HasSuffix(loc.URI, want) {
+				t.Fatalf("%s run %d: definition in %s", want, i, loc.URI)
+			}
 		}
+	}
+}
+
+// A position is only meaningful paired with the file it was measured
+// in. The entry document's program merges every module into one
+// position space, so a request naming main.fern at a position main
+// does not fill must not be answered out of a sibling module that
+// does — here `import "./b";` is shorter than a.fern's `return Text;`
+// line, and hovering past its end used to report a variant of an enum
+// main.fern never mentions.
+func TestWorkspace_PositionSearchDoesNotCrossFiles(t *testing.T) {
+	w := collidingVariantWorkspace(t)
+
+	if hit := findNameAt(w.entry.prog, requestModule(w.mainURI), w.line, w.col); hit != nil {
+		t.Errorf("main.fern has no name at %d:%d, got %q from %+v", w.line, w.col, hit.name, hit.pos)
+	}
+	if hit := findNameAt(w.entry.prog, requestModule(w.mainURI), w.typeLine, w.typeCol); hit != nil {
+		t.Errorf("main.fern has no type at %d:%d, got %q", w.typeLine, w.typeCol, hit.name)
+	}
+	if h := runHover(w.entry, w.mainURI, at(w.line, w.col)); h != nil {
+		t.Errorf("hover on main.fern's import line = %q", h.Contents.Value)
+	}
+	if loc := runDefinition(w.entry, w.mainURI, at(w.line, w.col)); loc != nil {
+		t.Errorf("definition from main.fern's import line = %+v", loc)
+	}
+	if locs := runReferences(w.entry, w.mainURI, at(w.line, w.col)); len(locs) != 0 {
+		t.Errorf("references from main.fern's import line = %+v", locs)
+	}
+
+	// The siblings' `Kind` annotations share a position too; each
+	// file's request must find its own module's TypeRef.
+	for _, uri := range []string{w.aURI, w.bURI} {
+		hit := findNameAt(w.entry.prog, requestModule(uri), w.typeLine, w.typeCol)
+		if hit == nil || hit.typeRef == nil {
+			t.Fatalf("%s: expected a typeRef hit on `Kind`, got %+v", uri, hit)
+		}
+		if got := pathToURI(hit.typeRef.SourceModule); got != uri {
+			t.Errorf("typeRef at %d:%d came from %s, want %s", w.typeLine, w.typeCol, got, uri)
+		}
+	}
+
+	// Positive control: main.fern's own names still resolve.
+	if hit := findNameAt(w.entry.prog, requestModule(w.mainURI), 3, 31); hit == nil || hit.name != "a.Kind" {
+		t.Errorf("main.fern's own `a.Kind` annotation went missing, got %+v", hit)
+	}
+}
+
+// Semantic tokens are absolute (line, char) pairs the editor paints on
+// the document it asked about, so a sibling module's tokens landing in
+// the stream mis-colour whatever sits at those coordinates.
+func TestWorkspace_SemanticTokensCoverOnlyTheRequestedFile(t *testing.T) {
+	w := collidingVariantWorkspace(t)
+	// main.fern's only token-bearing line is its third; a and b
+	// carry names on lines 1-2 that would otherwise be emitted.
+	got := runSemanticTokens(w.entry, w.mainURI)
+	line := 0
+	for i := 0; i+4 < len(got.Data); i += 5 {
+		line += got.Data[i]
+		if line != 2 {
+			t.Fatalf("token on line %d, but main.fern only has names on line 2 (0-based): %v", line, got.Data)
+		}
+	}
+	if len(got.Data) == 0 {
+		t.Fatalf("main.fern's own names produced no tokens")
 	}
 }
 
