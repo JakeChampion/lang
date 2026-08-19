@@ -1460,6 +1460,14 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 			}
 			walkBlockStructLits(arm.Body, fn)
 		}
+	case *ast.Defer:
+		// Same shape as the FuncDecl arm below, and the second time this
+		// walk has been short by one: a `defer { … Box { v: 5 } … }` was
+		// never rewritten to its instantiation, so the re-check rejected
+		// the program as a compiler bug ("unknown struct type"). The two
+		// sibling statement walks, substituteStmt and walkStmt, both had
+		// this arm already.
+		walkExprStructLits(x.Expr, fn)
 	case *ast.FuncDecl:
 		// A nested named function's body holds struct literals like any
 		// other; without this a `Box { v: k }` inside one was never

@@ -689,6 +689,96 @@ function main(): i32 {
 	}
 }
 
+// The same class as TestMonomorphEntersNestedFunctionAndLambdaBodies, one
+// statement kind later: a `defer` action was reachable by none of the three
+// walks that had been taught about nested functions, and neither CloneStmt nor
+// CloneExpr deep-copied the node, so every instantiation of a generic shared
+// one action.
+//
+// It is worth pinning separately because the failure is a REFUSED COMPILE that
+// blames itself — the monomorpher's own re-check rejects the program it just
+// produced with "compiler bug" — so it reads as an internal error rather than
+// as a missing case:
+//
+//	monomorph: re-check failed (compiler bug): unknown struct type "Holder"
+//
+// Each row failed on the parent for a different reason:
+//
+//   - defer-struct-lit    walkStmtStructLits never rewrote `Holder { … }`
+//   - defer-in-generic    the same, with the type parameter still to substitute
+//   - defer-nested        the action is reached through an enclosing `if`
+//   - defer-two-insts     CloneExpr shared the action's *BlockExpr by pointer,
+//     so the second instantiation substituted into the first one's nodes
+//   - loop-two-insts      CloneStmt shared an *ast.Loop body the same way
+//
+// The no-defer twin of each shape already compiled, which is what isolates the
+// statement kind rather than the generic.
+func TestMonomorphEntersDeferAndLoopBodies(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"defer-struct-lit", `struct Holder[T] { v: T }
+function run(): i32 {
+  var r: i32 = 0;
+  defer { var h: Holder[i32] = Holder { v: 5 }; r = h.v; }
+  return 7;
+}
+function main(): i32 { return run(); }`},
+		{"defer-in-generic", `struct Box[T] { v: T }
+function outer[T](x: T): i32 {
+  var r: i32 = 0;
+  defer { var b: Box[T] = Box { v: x }; r = 1; }
+  return 7;
+}
+function main(): i32 { return outer(3); }`},
+		{"defer-nested", `struct Box[T] { v: T }
+function run(n: i32): i32 {
+  var r: i32 = 0;
+  if (n > 0) { defer { var h: Box[i32] = Box { v: 5 }; r = h.v; } }
+  return 7;
+}
+function main(): i32 { return run(1); }`},
+		{"defer-two-insts", `struct Box[T] { v: T }
+function outer[T](x: T): i32 {
+  var r: i32 = 0;
+  defer { var b: Box[T] = Box { v: x }; r = 1; }
+  return 7;
+}
+function main(): i32 {
+  var a: i32 = outer(3);
+  var b: i32 = outer("s");
+  return a + b - 7;
+}`},
+		{"loop-two-insts", `struct Box[T] { v: T }
+function outer[T](x: T): i32 {
+  var n: i32 = 0;
+  loop {
+    var b: Box[T] = Box { v: x };
+    n = n + 1;
+    if (n > 0) { break; }
+  }
+  return 7;
+}
+function main(): i32 {
+  var a: i32 = outer(3);
+  var b: i32 = outer("s");
+  return a + b - 7;
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}
+
 func TestMonomorphTupleArgProducesAssemblerSafeName(t *testing.T) {
 	src := `function id[T](x: T): T { return x; }
 function main(): i32 {

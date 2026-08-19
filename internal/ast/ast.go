@@ -729,6 +729,25 @@ func CloneStmt(s Stmt) Stmt {
 			c.Arms[i] = &ac
 		}
 		return &c
+	case *Defer:
+		// Same pointer-sharing hazard as *FuncDecl below, one statement
+		// kind later: a `defer` in a generic body was shared across every
+		// instantiation, so substituting types into the second wrote
+		// through the first and the re-check rejected its own output.
+		c := *x
+		c.Expr = CloneExpr(x.Expr)
+		return &c
+	case *Loop:
+		// Likewise. `loop` is the one repetition form that carries no
+		// condition, which is why it sits apart from *While / *For above
+		// and was missed with them.
+		c := *x
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
 	case *FuncDecl:
 		// A nested function declaration. Falling through to `return s`
 		// shared this node by pointer with the original — and with every
@@ -748,6 +767,61 @@ func CloneExpr(e Expr) Expr {
 		return nil
 	}
 	switch x := e.(type) {
+	case *UnitLit:
+		c := *x
+		return &c
+	case *CaptureRef:
+		c := *x
+		return &c
+	case *BlockExpr:
+		// The block a `defer { … }` action carries, and the tail-value
+		// block form. Falling through to `return e` shared its STATEMENTS
+		// with every clone, so a generic body cloned per instantiation had
+		// its second instantiation substitute types into the first one's
+		// nodes — the monomorpher then rejected its own output as a
+		// compiler bug (the #7042 shape, in the expression layer).
+		c := *x
+		c.Stmts = make([]Stmt, len(x.Stmts))
+		for i, st := range x.Stmts {
+			c.Stmts[i] = CloneStmt(st)
+		}
+		c.Tail = CloneExpr(x.Tail)
+		return &c
+	case *EnumLit:
+		c := *x
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = CloneExpr(a)
+		}
+		return &c
+	case *MapLit:
+		c := *x
+		c.Entries = make([]MapEntry, len(x.Entries))
+		for i, en := range x.Entries {
+			c.Entries[i] = MapEntry{Key: CloneExpr(en.Key), Value: CloneExpr(en.Value)}
+		}
+		return &c
+	case *FString:
+		c := *x
+		c.Parts = make([]FStringPart, len(x.Parts))
+		for i, pt := range x.Parts {
+			pc := pt
+			pc.Expr = CloneExpr(pt.Expr)
+			c.Parts[i] = pc
+		}
+		c.Desugared = CloneExpr(x.Desugared)
+		return &c
+	case *DowncastExpr:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *MakeClosure:
+		c := *x
+		c.Captures = make([]Expr, len(x.Captures))
+		for i, cp := range x.Captures {
+			c.Captures[i] = CloneExpr(cp)
+		}
+		return &c
 	case *Ident:
 		c := *x
 		return &c
