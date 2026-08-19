@@ -11304,3 +11304,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   backends; the byte gate fails on the parent on all three legs, and the three
   controls — the escape, the carried-out binding and the untouched array twin —
   pass either way). Refs #4353 #4451.
+- 2026-08-19: **#5674 — the "two inline aggregate literals in one `return`"
+  mislowering was a DOUBLE RELEASE, and #6127's move rule closed it.** The
+  wrapper `make_wrap_named_func` returns is built correctly even in an IR-built
+  generation: instrumenting both generations shows `hr.func.name` reading back as
+  `main$wrap0` immediately after `try_fn_field_value` appends it, not as the base
+  name the issue reported. What fails is later. By the time
+  `emit_module_ir_gated` walks the module, that array slot holds a byte-for-byte
+  copy of the ENCLOSING function's FuncDecl — name, param count, body length and
+  return type all equal `fd`'s, and renaming the enclosing function to `helper`
+  moves the corrupted value with it — so the box was freed and its block recycled
+  by the next FuncDecl allocation. `module_has_func` misses the wrapper and the
+  module falls back to the AST emitter, which is the #5649 symptom.
+
+  The over-release is `try_fn_field_value`'s own scope-exit sweep: it hands
+  `hr.func` to `__fern_arr_push` with no retain (`movq 8(%rax), %rax` straight
+  into the call) and then drops `hr` with
+  `__fn___struct_drop_irlower__HoistResult`, the deep field walk, ahead of the
+  box dec. That walk releases the FuncDecl box the array now holds. Diffing the
+  emitted `make_wrap_named_func` between the inline and the #5675 hoisted form
+  isolates what the workaround bought: one extra `rc_inc` on the FuncDecl box
+  with no matching dec — a deliberately leaked reference. `try_fn_field_value`
+  emits byte-identically either way, which is why hoisting EITHER aggregate
+  worked and hoisting a scalar field did not.
+
+  What closed it is `af47d5442` (#6127, PR #6408): the "NODEEP:" marker now fires
+  on a bare non-scalar field read in a MOVE position — a call argument or a
+  container element, which `funcs.append(hr.func)` is — so
+  `emit_struct_field_drops` withholds the deep drop. `HoistResult` still routes
+  field reclaim (`struct_has_reclaim_array_field` admits it for the direct
+  nested-struct field), so it is the marker and not the routing that keeps the
+  wrapper alive; a regression in that marker brings the corruption back, which is
+  what `TestSelfHostConstFuncGen2` now guards alone.
+
+  Measured on x86-64 against the `asm_load_run.fern` driver (NOT `fern.fern`),
+  512-function budget stripped where it still existed: at `209fe4110^` the two
+  generations emit 4 and 0 `.Lir` labels for the #5649 repro; at HEAD with the
+  hoist reverted both emit 4 and the emitted `try_fn_field_value` carries no
+  `__struct_drop_irlower__HoistResult` at all. The boundary was found by
+  bisecting on that emitted-drop metric rather than on the symptom, which costs
+  one stage-2 emit per step instead of a full two-generation build.
+  Refs #5674 #5649 #6127 #4451.
