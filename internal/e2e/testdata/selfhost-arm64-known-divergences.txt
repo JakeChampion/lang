@@ -108,21 +108,20 @@
 # identically on both register backends. docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
 
 # --- ACTIVE -----------------------------------------------------------------
-# The reclaim shapes below were fixed in `internal/ir` — the NATIVE compiler —
-# and the self-host compiler carries its own RC implementation, which has not
-# been ported. So each case measures `flat` under native and `grows` here, on
-# ALL THREE self-host targets identically: the gap is in the shared self-host
-# reclaim path, not in any one emitter.
+# EMPTY. The last row, `alloc_flat_method_identity_return`, went with the
+# guarded chain-receiver release (#6544); every AL-01 reclaim shape this leg
+# once listed now measures `flat` here, as it does under native.
 #
-# Shape only: every ANSWER matches native and only the allocation class
-# diverges, which is what these AL-01 cases exist to measure. A row that ever
-# carries a VALUE divergence as well has to say so — the answer being wrong is
-# a different order of bug from the memory being wrong.
+# Keep the section and the file. An empty allowlist is what makes the NEXT
+# divergence fail the leg, and a listed case that comes back matching native
+# fails it too, so an entry cannot outlive its bug.
 #
-# This is the RECLAIM half of goal 2 (docs/RC-PERCEUS-SELF-HOST-PORT.md §9),
-# the same category as `alloc_flat_map_get` before #6875 closed it, and it is
-# tracked as such. Each row goes when the corresponding rule is ported.
-#
-# Every row here must be a live divergence: a listed case that comes back
-# matching native FAILS this leg, so an entry cannot outlive its bug.
-alloc_flat_method_identity_return #6544 self-host prints "grows" where native prints "flat" on all three targets. Shape only — every answer matches (6150 / 12300 both sides). Re-measured 2026-08-19: 20 B/round on x86-64 and arm64, 29 on wasm, not the 117 this row claimed. Of the two halves it named, the ~95 — a fresh struct method result consumed by a field read, `b.relabel("fresh-tag-value").tag.len()` — is CLOSED, measuring -3 on its own. The other half is LIVE and is exactly what the row describes: the chain INTERMEDIATE view box, needing the outer callee proven both borrowing and never-a-view. Isolated: `base.tail(4).len()` is -1 (one link, SFRRECV reclaims the result), `base.tail(4).to_owned().len()` is 22 (two links — the `tail(4)` view box in the middle is what leaks), and the builtin `base.drop(2).len()` is -1, being a single link with no intermediate. RECLAIM half of goal 2, docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
+# A new row belongs here when a shape is fixed in `internal/ir` — the NATIVE
+# compiler — and the self-host compiler's own RC implementation has not caught
+# up: those measure `flat` under native and `grows` here, on all three
+# self-host targets identically, because the gap is in the shared self-host
+# reclaim path rather than in any one emitter. Shape only: every ANSWER must
+# still match native, and a row that carries a VALUE divergence as well has to
+# say so — the answer being wrong is a different order of bug from the memory
+# being wrong. That is the RECLAIM half of goal 2
+# (docs/RC-PERCEUS-SELF-HOST-PORT.md §9).

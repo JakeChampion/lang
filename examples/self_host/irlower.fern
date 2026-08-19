@@ -11717,13 +11717,38 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         // bare `return s` and a `return s[a:b]` view alike because both are
         // escapes for it. So the box is dead once the call returns, and the
         // argument machinery below drains it.
-        if (is_fresh_str_temp(fa.obj, s) && util.index_of_str(s.sigs.recv_borrow_fns, pty + "." + fa.field) >= 0) {
+        var recv_ok: boolean = util.index_of_str(s.sigs.recv_borrow_fns, pty + "." + fa.field) >= 0;
+        if (is_fresh_str_temp(fa.obj, s) && recv_ok) {
             var rvn: string = "$precv" + util.i32_to_string(pm.locals.len());
             pm = pm.add_local(rvn);
             var rvslot: i32 = pm.slot_of(rvn);
             pm = pm.emit(ir.op_store_local(rvslot));
             pm = pm.emit(ir.op_load_local(rvslot));
             pm_lat = pm_lat.append(rvslot);
+        }
+        // A FRESH-OR-RECEIVER chain in receiver position — `base.tail(4).to_owned()`,
+        // where every link returns a fresh box, its own receiver, or a view of one.
+        // is_fresh_str_temp refuses it and must: on the identity path the
+        // "intermediate" IS the root's box, and freeing it unconditionally is a
+        // double free. What settles it is the same runtime discriminator the
+        // `.len()` site uses — a fresh box is never the root's pointer — so release
+        // only when the two differ. The outer callee still has to be recv_borrow
+        // proven, which is what says the CALL did not carry the receiver into its
+        // own result.
+        var prroot: i32 = 0 - 1;
+        if (recv_ok && !is_fresh_str_temp(fa.obj, s)) {
+            match (fa.obj) {
+                parser.ExprCall(_) => { prroot = sfrrecv_chain_root_slot(fa.obj, s, 0); },
+                _ => {}
+            }
+        }
+        var prslot: i32 = 0 - 1;
+        if (prroot >= 0) {
+            var prn: string = "$prcv" + util.i32_to_string(pm.locals.len());
+            pm = pm.add_local(prn);
+            prslot = pm.slot_of(prn);
+            pm = pm.emit(ir.op_store_local(prslot));
+            pm = pm.emit(ir.op_load_local(prslot));
         }
         var pai: i32 = 0;
         while (pai < c.args.len()) {
@@ -11742,7 +11767,18 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             pai = pai + 1;
         }
         pm = pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
-        return free_stashed_str_args(pm, pm_lat);
+        pm = free_stashed_str_args(pm, pm_lat);
+        if (prslot >= 0) {
+            pm = pm.emit(ir.op_load_local(prslot));
+            pm = pm.emit(ir.op_load_local(prroot));
+            pm = pm.emit(ir.op_bin("ne", 0, false));
+            pm = pm.emit(ir.op_if(0));
+            pm = pm.emit(ir.op_load_local(prslot));
+            pm = pm.emit(ir.op_call_direct("__fern_str_view_free", 1));
+            pm = pm.emit(ir.op_drop());
+            pm = pm.emit(ir.op_end());
+        }
+        return pm;
     }
     return s.fail();
 }
