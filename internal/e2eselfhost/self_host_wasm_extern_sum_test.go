@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -32,18 +30,7 @@ func TestSelfHostWasmExternSum(t *testing.T) {
 		t.Skip("wasm_extern_sum_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{
-		"util.fern", "lexer.fern", "astwalk.fern", "ir.fern", "parser.fern",
-		"asmcore.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_extern_sum_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "wasm_extern_sum_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "wasm_extern_sum_run.fern", "wasm_extern_sum_run")
 
 	const want = "ok  Option[i32] sum=1 opt=1\n" +
