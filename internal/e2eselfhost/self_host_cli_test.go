@@ -656,120 +656,95 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("opt-folds-constants", func(t *testing.T) {
-		// -O constant-folds before codegen (constfold.fold_module), and the
-		// op-list fold in ir.fern reaches the same answer on EVERY build. So on
-		// a const-only arithmetic program the two agree byte for byte, and the
-		// assertion is that neither leaves runtime arithmetic behind — an
-		// equality that held because both failed to fold would still show the
-		// imul.
-		srcPath := filepath.Join(dir, "fold.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 2 * 3 + 1; }\n"), 0o644); err != nil {
-			t.Fatalf("write src: %v", err)
-		}
-		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
-		if code != 0 {
-			t.Fatalf("-O emit exited %d, want 0", code)
-		}
-		defAsm, _ := runDriver(t, "-no-ssa", srcPath)
-		if string(optAsm) != string(defAsm) {
-			t.Errorf("-O and the default build disagree on a wholly constant expression;\n"+
-				"one of the two folds is not reaching it:\n--- -O ---\n%s\n--- default ---\n%s", optAsm, defAsm)
-		}
-		for _, arith := range []string{"imulq", "addq %rcx, %rax"} {
-			if strings.Contains(string(defAsm), arith) {
-				t.Errorf("`2 * 3 + 1` still emits %q; constant folding is not applied:\n%s", arith, defAsm)
-			}
-		}
-		progBin := buildBin(t, gcc, dir, "fold", string(optAsm))
-		cmd := exec.Command(progBin)
-		_ = cmd.Run()
-		if c := cmd.ProcessState.ExitCode(); c != 7 {
-			t.Errorf("-O folded program exited %d, want 7", c)
-		}
-	})
-
-	t.Run("opt-folds-literal-concat", func(t *testing.T) {
-		// What -O still reaches that the op-list fold does not: a concat of two
-		// string literals becomes one literal, so no __fern_str_concat call and
-		// no allocation per evaluation. This is the half of #7111 the default
-		// build does not do yet — the assertion is on -O's output rather than on
-		// a diff against the default, so closing that gap does not fail it.
-		srcPath := filepath.Join(dir, "foldconcat.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var s: string = \"ab\" + \"cd\"; return s.len(); }\n"), 0o644); err != nil {
-			t.Fatalf("write src: %v", err)
-		}
-		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
-		if code != 0 {
-			t.Fatalf("-O emit exited %d, want 0", code)
-		}
-		if n := strings.Count(string(optAsm), "call __fn___fern_str_concat"); n != 0 {
-			t.Errorf("-O left %d __fern_str_concat call site(s) for a literal concat:\n%s", n, optAsm)
-		}
-		progBin := buildBin(t, gcc, dir, "foldconcat", string(optAsm))
-		cmd := exec.Command(progBin)
-		_ = cmd.Run()
-		if c := cmd.ProcessState.ExitCode(); c != 4 {
-			t.Errorf("-O folded concat program exited %d, want 4", c)
-		}
-	})
-
-	t.Run("opt-folds-guard-concat", func(t *testing.T) {
-		// A match arm's GUARD rides the ARM, not the statement's own
-		// expressions, so a rewrite that rebuilt arms field by field had to
-		// remember it — constfold's did not, and copied every guard through
-		// unfolded. Routing the pass through astwalk's map fold made the
-		// coverage complete by construction, and this is the shape that shows
-		// it: the literal concat in the guard is the one thing the op-list
-		// fold cannot reach, so before the change it survived to a runtime
-		// __fern_str_concat call.
-		srcPath := filepath.Join(dir, "foldguard.fern")
-		src := "enum E { A(string) }\n" +
-			"function main(): i32 {\n" +
-			"    var e: E = E.A(\"abcd\");\n" +
-			"    match (e) {\n" +
-			"        E.A(s) when s == (\"ab\" + \"cd\") => { return 7; },\n" +
-			"        _ => { return 9; },\n" +
-			"    }\n" +
-			"    return 0;\n" +
-			"}\n"
+	// Constant folding is NOT what `-O` selects, on either compiler. Native
+	// calls constfold.Fold unconditionally on all four of its compile paths and
+	// spends `-O` on eliding asserts; the self-host now matches. So every case
+	// below asserts the DEFAULT build folds, and that `-O` changes nothing —
+	// which is what fails if the pass is ever put back behind a flag.
+	foldCase := func(t *testing.T, name, src string, wantExit int, unwanted ...string) {
+		t.Helper()
+		srcPath := filepath.Join(dir, name+".fern")
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
+		defAsm, code := runDriver(t, "-no-ssa", srcPath)
+		if code != 0 {
+			t.Fatalf("default emit exited %d, want 0", code)
+		}
+		for _, u := range unwanted {
+			if n := strings.Count(string(defAsm), u); n != 0 {
+				t.Errorf("%s: the DEFAULT build left %d %q; constant folding is gated again:\n%s", name, n, u, defAsm)
+			}
+		}
 		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
-		if n := strings.Count(string(optAsm), "call __fn___fern_str_concat"); n != 0 {
-			t.Errorf("-O left %d __fern_str_concat call site(s) in a match-arm guard:\n%s", n, optAsm)
+		if string(optAsm) != string(defAsm) {
+			t.Errorf("%s: -O changed the emitted code; folding is meant to run on every build\n"+
+				"--- -O ---\n%s\n--- default ---\n%s", name, optAsm, defAsm)
 		}
-		progBin := buildBin(t, gcc, dir, "foldguard", string(optAsm))
+		progBin := buildBin(t, gcc, dir, name, string(defAsm))
 		cmd := exec.Command(progBin)
 		_ = cmd.Run()
-		if c := cmd.ProcessState.ExitCode(); c != 7 {
-			t.Errorf("-O folded-guard program exited %d, want 7", c)
+		if c := cmd.ProcessState.ExitCode(); c != wantExit {
+			t.Errorf("%s exited %d, want %d", name, c, wantExit)
 		}
+	}
+
+	// Arithmetic. The op-list fold in ir.fern reaches this one downstream too,
+	// so the `unwanted` mnemonics are what distinguishes "folded" from "both
+	// paths quietly failed to fold".
+	t.Run("fold-constants", func(t *testing.T) {
+		foldCase(t, "fold", "function main(): i32 { return 2 * 3 + 1; }\n", 7, "imulq", "addq %rcx, %rax")
 	})
 
-	t.Run("opt-folds-hex-constants", func(t *testing.T) {
-		// A hex operand in a folded binop must carry its value (#4341):
-		// as_int_lit used the decimal-only digits_to_i32, which stops at the
-		// `x` and reads every `0x` literal as 0, so `-O` folded `0x10 + 1`
-		// to 1 — a silent value corruption, not just a missed optimisation.
-		srcPath := filepath.Join(dir, "foldhex.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 0x10 + 1; }\n"), 0o644); err != nil {
-			t.Fatalf("write src: %v", err)
-		}
-		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
-		if code != 0 {
-			t.Fatalf("-O emit exited %d, want 0", code)
-		}
-		progBin := buildBin(t, gcc, dir, "foldhex", string(optAsm))
-		cmd := exec.Command(progBin)
-		_ = cmd.Run()
-		if c := cmd.ProcessState.ExitCode(); c != 17 {
-			t.Errorf("-O hex-folded program exited %d, want 17", c)
-		}
+	// A literal concat is the shape the op-list fold CANNOT reach — it has no
+	// string vocabulary — so this is the case that actually shows the AST fold
+	// running. It was the open half of #7111: before ungating, a default build
+	// emitted a runtime __fern_str_concat call where native emitted one literal.
+	t.Run("fold-literal-concat", func(t *testing.T) {
+		foldCase(t, "foldconcat",
+			"function main(): i32 { var s: string = \"ab\" + \"cd\"; return s.len(); }\n",
+			4, "call __fn___fern_str_concat")
+	})
+
+	// A match arm's GUARD rides the ARM, not the statement's own expressions,
+	// so a rewrite that rebuilt arms field by field had to remember it —
+	// constfold's did not, and copied every guard through unfolded until it was
+	// routed through astwalk's map fold.
+	t.Run("fold-guard-concat", func(t *testing.T) {
+		foldCase(t, "foldguard", "enum E { A(string) }\n"+
+			"function main(): i32 {\n"+
+			"    var e: E = E.A(\"abcd\");\n"+
+			"    match (e) {\n"+
+			"        E.A(s) when s == (\"ab\" + \"cd\") => { return 7; },\n"+
+			"        _ => { return 9; },\n"+
+			"    }\n"+
+			"    return 0;\n"+
+			"}\n", 7, "call __fn___fern_str_concat")
+	})
+
+	// i32::MIN. `0 - 2147483647 - 1` is how std/i32 spells it, because it is the
+	// only way to spell it — and folding it produced an ExprNumber whose TEXT
+	// carried the sign. irlower.literal_is_i64 classifies a literal by text
+	// LENGTH, so the 11-character "-2147483648" read as an i64 and the i32
+	// return path declined it: the whole module fell off the IR path. lit_i32
+	// now emits unary minus over the magnitude, the shape the parser produces.
+	//
+	// This failed under `-O` long before folding was ungated; nothing ran `-O`
+	// over a program reaching std/i32, so it sat unfound.
+	t.Run("fold-i32-min", func(t *testing.T) {
+		foldCase(t, "foldmin", "function f(): i32 { return 0 - 2147483647 - 1; }\n"+
+			"function main(): i32 { if (f() < 0 - 2147483647) { return 11; } return 1; }\n", 11)
+	})
+
+	// A hex operand in a folded binop must carry its value (#4341): as_int_lit
+	// used the decimal-only digits_to_i32, which stops at the `x` and read every
+	// `0x` literal as 0, folding `0x10 + 1` to 1 — a silent wrong answer rather
+	// than a missed optimisation.
+	t.Run("fold-hex-constants", func(t *testing.T) {
+		foldCase(t, "foldhex", "function main(): i32 { return 0x10 + 1; }\n", 17)
 	})
 
 	t.Run("check-ok", func(t *testing.T) {
