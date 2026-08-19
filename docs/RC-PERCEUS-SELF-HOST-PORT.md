@@ -9827,14 +9827,6 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
     80 B/round): its return type carries a type var, so there is no concrete
     element tuple for the walk. That is the call site's instantiation question
     (#6299), not something to approximate in the registry.
-  - **A NESTED rc-tuple is not reclaimed at all** — new here, and not a
-    consequence of either fix: `var t: ((i32, i32[]), i32) = ((k, [k, k+1]), k+1)`
-    churns at 120 \| 120 \| 72 B/round where the un-nested `(i32, i32[])` is flat,
-    reading only the outer scalar. Both the admission
-    (`tuple_lit_rc_reclaimable`, via `tuple_lit_has_array`) and the emission
-    (`emit_tuple_child_drops`' nested arm) claim to cover it, so the credit is
-    being refused somewhere between them and the cause wants locating before
-    anything is changed.
   - **Array- and struct-valued map columns** (80 B/round self-host): NATIVE
     leaks these too — and leaks plain `Map[i32, i32]` churn where the self-host
     is flat — so there is no parity target to port to. It wants a native
@@ -9926,3 +9918,50 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   guarding a hypothetical. A smaller witness is worth finding; until someone
   does, do not weaken this gate on the strength of a probe that runs clean.
   Refs #6544 #6522 #4451.
+
+- 2026-08-19: **the nested rc-tuple, and the #4353 re-measurement above named
+  the wrong dimension.** Among its deliberately-open items it recorded
+  `var t: ((i32, i32[]), i32) = ((k, [k, k+1]), k+1)` churning at
+  120 | 120 | 72 B/round "where the un-nested `(i32, i32[])` is flat", and asked for the cause to be located before anything was changed.
+  Located: **nesting has nothing to do with it.** The same nested tuple with a
+  bare ident in the outer scalar position — `((i, [i, i+1]), i)` — was already
+  flat, and the UN-nested `(i + 1, [i, i + 1])` leaks 80 | 80 | 48. What the two
+  leaking shapes share is a scalar arithmetic element.
+
+  `tuple_lit_rc_reclaimable` routed every `ExprBinary` and `ExprCall` element
+  through `tuple_str_elem_fresh` — the fresh-STRING producer test — and returned
+  false for the whole tuple when it came back false. `i + 1` is a numeric add, so
+  a tuple that merely counts lost its deep reclaim entirely: buffer, box, and any
+  string element beside them.
+
+  `emit_tuple_child_drops` was already right. Its `ExprBinary` / `ExprCall` arms
+  free only what `tuple_str_elem_fresh` proves fresh and emit nothing otherwise,
+  which is the same leak-safe skip the bare-ident arm has always taken. Only the
+  admission treated "I will not free this element" as "I cannot free this
+  tuple", so the fix is to drop two `return false`s rather than to add an
+  emitter case.
+
+  | shape | before (x86-64 \| arm64 \| wasm) | after |
+  |---|---|---|
+  | `((i, [i, i+1]), i + 1)` | 120 \| 120 \| 72 | **0** |
+  | `((i, [i, i+1]), i)` — ident in the same position | 0 | 0 |
+  | `(i + 1, [i, i + 1])` — not nested at all | 80 \| 80 \| 48 | **0** |
+  | `(i, [i, i + 1], i + 1)` | 88 \| 88 \| 56 | **0** |
+  | `(i + 1, "wide-" + s)` | 112 \| 112 \| 80 | **0** |
+
+  The last row is the part worth keeping: the refusal cost the OTHER elements
+  their release too. That tuple's string IS a provable fresh producer, admitted
+  and deep-freed on its own; the scalar sibling was all that held it back.
+  Native is flat on every row.
+
+  Still not freed, and deliberately: a call element, and a `+` the freshness test
+  cannot prove (`a + b` of two live string locals). Both are leaks rather than
+  faults — the position keeps no release, so an operand a live local still holds
+  is never touched — and both are pinned as refusal cases.
+
+  Regression test:
+  `internal/e2eselfhost/self_host_tuple_scalar_elem_reclaim_test.go` (5 cases x 3
+  backends; the 3 byte gates fail on the parent on all three legs, the 2 aliasing
+  controls pass either way). Gates: the whole `internal/e2eselfhost` package,
+  which is the targeted set for a change to what the compiler emits for its own
+  sources. Refs #4353 #4451.

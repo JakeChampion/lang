@@ -25033,9 +25033,10 @@ function tuple_strarr_elem_fresh(e: parser.Expr): boolean {
 // nowhere), so a DEEP loop-rebind reclaim — arr_dec / rc-aware str_free each
 // fresh element, then the box — is exactly balanced (#4357 tuple sibling of
 // the fresh-string struct reclaim). A bare array or string IDENT element
-// (`(i, xs)`) is EXCLUDED (it aliases a live local, so freeing it would
-// double-release) — that tuple stays on the SHALLOW scalar-tuple path
-// (leak-safe).
+// (`(i, xs)`) is not freed (it aliases a live local, so freeing it would
+// double-release) but does not disqualify the tuple; nor does any other element
+// emit_tuple_child_drops skips. A tuple with NO rc child to free stays on the
+// SHALLOW scalar-tuple path (leak-safe).
 function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
@@ -25054,15 +25055,13 @@ function tuple_lit_rc_reclaimable(e: parser.Expr, structs: parser.StructDecl[]):
                     parser.ExprString(_) => { any_arr = true; },
                     // A fresh-string producer element (`(i, "x" + s)`): the
                     // construction copy is likewise fresh and routed through
-                    // the rc-aware __fern_str_free.
-                    parser.ExprBinary(_) => {
-                        if (!tuple_str_elem_fresh(tl.elements[i])) { return false; }
-                        any_arr = true;
-                    },
-                    parser.ExprCall(_) => {
-                        if (!tuple_str_elem_fresh(tl.elements[i])) { return false; }
-                        any_arr = true;
-                    },
+                    // the rc-aware __fern_str_free. Any OTHER binary or call —
+                    // scalar arithmetic (`i + 1`), a comparison, a concat the
+                    // freshness test cannot prove — is SKIPPED like a bare
+                    // ident rather than refusing the whole tuple, which is what
+                    // emit_tuple_child_drops already does with it.
+                    parser.ExprBinary(_) => { if (tuple_str_elem_fresh(tl.elements[i])) { any_arr = true; } },
+                    parser.ExprCall(_) => { if (tuple_str_elem_fresh(tl.elements[i])) { any_arr = true; } },
                     parser.ExprArray(_) => { any_arr = true; },
                     // A fresh STRUCT-literal element with an rc-array field (`(i, P { xs: [..] })`,
                     // #4365): the struct box sole-owns its field buffers, so emit_tuple_child_drops
