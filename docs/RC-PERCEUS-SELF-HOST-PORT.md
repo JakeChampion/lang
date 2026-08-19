@@ -10786,3 +10786,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Still open on this family: the source-declared method twin
   (`base.to_owned().to_owned().len()` 46, `b.unrel()` 47) is the user-method call
   site and wants the `SFRFRESHNAME:` registry. Refs #6544 #4451.
+- 2026-08-19: **the fresh anonymous receiver at a SOURCE-DECLARED method, and the
+  chain of them.** The builtin twin lands in `lower_str_method`; this is the
+  primitive-method dispatch, which already stashed its ARGUMENTS through
+  `stash_fresh_str_arg` and never its receiver.
+
+  The warrant did not need inventing. `recv_borrow_fns_of` already computes the
+  callee-side proof — the plain `"<Type>.<method>"` key means `body_unsafe_for`
+  found no escape of the receiver — but it was gated to STRUCT receivers, because
+  the marker it feeds is the struct deep drop. A string receiver earns the same
+  key on `body_unsafe_for` alone: the two field-hazard predicates beside it are
+  about carrying a FIELD of the receiver out, and a string has none.
+
+  That gate turns out to refuse exactly the right three shapes, all witnessed:
+
+  | callee | admitted | exit under a compiler that skips the proof |
+  | --- | --- | --- |
+  | `return s + ""` | yes | ok |
+  | `return s` (identity) | no | **97** |
+  | `return s[2:s.len()]` (view) | no | **97** |
+  | receiver moved into a struct the callee returns a field of | no | **97** |
+
+  The VIEW row is worth noting against the two entries above: the same question
+  was CONTRACT-ONLY at the binding-credit and fresh-alloc-builtin sites — no probe
+  distinguished it — and here it has a witness, because `body_unsafe_for` is the
+  thing doing the refusing and the receiver really is freed. Three sites, three
+  different standings for what looks like one predicate; recording it rather than
+  letting "load-bearing" generalise.
+
+  The first case list assumed a CHAIN would follow for free and it did not:
+  `w(pre).copies().copies().len()` still leaked 272 B/round, because
+  `is_fresh_str_temp` did not recognise a source-declared method result as a fresh
+  temp — only builtins and fresh-ret free calls. Admitting the `SFRFRESHNAME:`
+  class (every return a freshly allocated box, so it cannot be handing the
+  receiver or a view back) closed it, and closed the rest of the family with it:
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `var u = w(pre).copies(); u.len()` | 46 | **-2** |
+  | `var u = w(pre).unrel(); u.len()` | 47 | **-1** |
+  | `w(pre).copies().copies().len()` | 272 | **flat** |
+  | `mkfresh(i).to_owned().to_owned().len()` | 143 | **-2** |
+  | `base.to_owned().to_owned().len()` | 46 | **-2** |
+  | `base[4:base.len()].to_owned().len()` | 119 | **70** |
+
+  The last row is what remains of the family and is now the lead. Refs #6544 #4451.

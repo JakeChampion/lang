@@ -5817,6 +5817,14 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
                 // releases a concat temp.
                 parser.ExprFieldAccess(mfa) => {
                     if (str_fresh_alloc_method(mfa.field) && expr_is_str(mfa.obj, s)) { return true; }
+                    // A SOURCE-DECLARED method whose every return is a freshly
+                    // allocated box ("SFRFRESHNAME:", the strict class the
+                    // binding credit reads). It cannot be handing its receiver
+                    // or a view of one back, so the result is a temp nobody else
+                    // names — which is the whole question here. Without it a
+                    // chain of such methods released only its ROOT receiver and
+                    // stranded every intermediate.
+                    if (util.index_of_str(s.sigs.str_fresh_ret_fns, "SFRFRESHNAME:" + mfa.field) >= 0) { return true; }
                 },
                 _ => {}
             }
@@ -11702,6 +11710,21 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         else { pm = lower_expr(fa.obj, s); }
         if (!pm.ok) { return pm; }
         var pm_lat: i32[] = [];
+        // A fresh anonymous RECEIVER at a SOURCE-DECLARED method, the twin of the
+        // builtin-method release. The warrant is the callee-side proof
+        // recv_borrow_fns_of already computes: the plain "<Type>.<method>" key
+        // says body_unsafe_for found no escape of the receiver, which refuses a
+        // bare `return s` and a `return s[a:b]` view alike because both are
+        // escapes for it. So the box is dead once the call returns, and the
+        // argument machinery below drains it.
+        if (is_fresh_str_temp(fa.obj, s) && util.index_of_str(s.sigs.recv_borrow_fns, pty + "." + fa.field) >= 0) {
+            var rvn: string = "$precv" + util.i32_to_string(pm.locals.len());
+            pm = pm.add_local(rvn);
+            var rvslot: i32 = pm.slot_of(rvn);
+            pm = pm.emit(ir.op_store_local(rvslot));
+            pm = pm.emit(ir.op_load_local(rvslot));
+            pm_lat = pm_lat.append(rvslot);
+        }
         var pai: i32 = 0;
         while (pai < c.args.len()) {
             // fn-value arg (const_func) before general lowering —
@@ -29460,6 +29483,21 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
         var fn: parser.FuncDecl = funcs[k];
         if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0) {
             var rty: string = util.base_type_name(fn.receiver_type);
+            // A STRING receiver earns the plain key on body_unsafe_for alone:
+            // the two field-hazard predicates below are about carrying a FIELD
+            // of the receiver out, and a string has none. What is left is the
+            // question that matters at a caller-side release — does the box
+            // escape — and body_unsafe_for already answers it, refusing a bare
+            // `return s` (an identity return) and `return s[a:b]` (a view of the
+            // receiver) alike, since both are escapes for it.
+            if (rty == "string") {
+                if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
+                    out = out.append("RECVRET:" + rty + "." + fn.name);
+                }
+                if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable)) {
+                    out = out.append(rty + "." + fn.name);
+                }
+            }
             if (decl_is_struct(structs, rty)) {
                 // "RECVRET:" is the widest and the only UNCONDITIONAL class: the
                 // body returns the bare receiver somewhere, so the result MAY be
