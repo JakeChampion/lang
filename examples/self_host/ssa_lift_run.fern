@@ -15,18 +15,7 @@ import "./ir";
 import "./ssa";
 import "./ssa_lift";
 import "./parser";
-
-function int_str(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    var x: i32 = n;
-    if (x < 0) { neg = true; x = 0 - x; }
-    var digits: string = "0123456789";
-    var s: string = "";
-    while (x > 0) { s = digits[x % 10 : x % 10 + 1] + s; x = x / 10; }
-    if (neg) { return "-" + s; }
-    return s;
-}
+import "./util";
 
 // count_kind counts SSA instructions of a given kind across all blocks.
 function count_kind(f: ssa.SFunc, kind_tag: i32): i32 {
@@ -54,10 +43,10 @@ function check_eval(label: string, nparams: i32, nslots: i32, ops: ir.Op[], args
     }
     var got: i32 = ssa.eval_func(lr.func, args);
     if (got == want) {
-        print("ok - " + label + " => " + int_str(got));
+        print("ok - " + label + " => " + util.i32_to_string(got));
         return 0;
     }
-    print("not ok - " + label + " => " + int_str(got) + " want " + int_str(want));
+    print("not ok - " + label + " => " + util.i32_to_string(got) + " want " + util.i32_to_string(want));
     return 1;
 }
 
@@ -103,7 +92,7 @@ function main(): i32 {
     if (ife_f.ok && count_kind(ife_f.func, 8) == 1) {
         print("ok - ifelse builds exactly one phi");
     } else {
-        print("not ok - ifelse phi count = " + int_str(count_kind(ife_f.func, 8)));
+        print("not ok - ifelse phi count = " + util.i32_to_string(count_kind(ife_f.func, 8)));
         fails = fails + 1;
     }
 
@@ -268,6 +257,6 @@ function main(): i32 {
     }
 
     if (fails == 0) { print("# all lift checks passed"); }
-    else { print("# " + int_str(fails) + " lift check(s) failed"); }
+    else { print("# " + util.i32_to_string(fails) + " lift check(s) failed"); }
     return fails;
 }
