@@ -174,7 +174,13 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // binds `sh` as TypeUnion("Shape") rather than the inferred
 // TypeStruct("Circle"). Interp / VM ignore it (annotations
 // are checker-only metadata).
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean }
+// fn_ret is the RETURN spelling of a fn-typed annotation (`var f: (i32) => i32`
+// -> "i32"). parse_type_name coarsens the annotation itself to the flat "fn"
+// tag, and StmtVar carries no signature sidecars, so without this the declared
+// return is simply lost — which is what leaves cap_param_for with nothing exact
+// to rebuild a fn-typed capture's signature from (#6256). "" on every other
+// binding.
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string }
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 pub struct StmtExpr { value: Expr, line: i32 }
 // StmtIf models `if (cond) { then... } else { else... }`. else_body
@@ -628,13 +634,13 @@ pub function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind, li
 pub function e_unknown_at(kind: string, line: i32, col: i32): Expr { return ExprUnknown { kind: kind, line: line, col: col }; }
 
 function s_var(name: string, type_name: string, init: Expr): Stmt {
-    return StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, is_str: false };
+    return StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, is_str: false, fn_ret: "" };
 }
 // s_var_at is s_var with an explicit source position (used at the parse
 // site so a `var` declaration's diagnostics — E003 / E013 / E020 — point
 // at the `var` keyword).
 function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i32): Stmt {
-    return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false };
+    return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false, fn_ret: "" };
 }
 
 // parse_destructure_names consumes `(a, b, …)` with the cursor ON the opening
@@ -5677,7 +5683,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         // builtin surface. The annotation outranks the inference.
         init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
         init_expr = stamp_value_block_ret(init_expr, type_name);
-        return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
+        return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str, fn_ret: v_fn_ret }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
@@ -8863,7 +8869,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: string)
             var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str }, renv: env.ebind(v.name, ty), rins2: iv.rins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }, renv: env.ebind(v.name, ty), rins2: iv.rins };
         },
         StmtReturn(r) => {
             // A `return mk()` binds a bounded-generic constructor's type params
@@ -9105,7 +9111,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }); },
             StmtReturn(r) => { out = out.append(StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
             StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -9185,7 +9191,7 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_str: v.is_str }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }); },
             StmtReturn(r) => { out = out.append(StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col }); },
             StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -10127,7 +10133,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: 
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
             var ninit: Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: false, fn_ret: v.fn_ret }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -11228,7 +11234,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                 }
             }
             if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, enums, structs, funcs); }
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, vty), rins2: cins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false, fn_ret: v.fn_ret }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         StmtReturn(r) => {
             var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -11859,7 +11865,7 @@ function dl_expand_loop_edges(stmts: Stmt[], actions: Stmt[], flags: i32[], star
             StmtVar(v) => {
                 var vve: DeferEdgeExpr = dl_edges_expr(v.init, actions, flags, start, armed, label, own_level);
                 armed = vve.armed;
-                out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, is_str: v.is_str });
+                out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret });
             },
             StmtExpr(x) => {
                 var xve: DeferEdgeExpr = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
@@ -12020,7 +12026,7 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
         },
         StmtVar(v) => {
             var ir: DeferExprAcc = dl_collect_expr(v.init, actions, flags);
-            var one: Stmt[] = [StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, is_str: v.is_str }];
+            var one: Stmt[] = [StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }];
             return DeferAcc { stmts: one, actions: ir.actions, flags: ir.flags };
         },
         StmtReturn(r) => {
@@ -12199,7 +12205,7 @@ function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[
             return out;
         },
         StmtVar(v) => {
-            var one: Stmt[] = [StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, is_str: v.is_str }];
+            var one: Stmt[] = [StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }];
             return one;
         },
         StmtExpr(x) => {
@@ -13246,7 +13252,7 @@ function rvf_expr(e: Expr, structs: StructDecl[]): Expr {
 
 function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
     match (st) {
-        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str }; },
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; },
         StmtReturn(r) => { return StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: rvf_expr(x.value, structs), line: x.line }; },
         StmtIf(f) => { return StmtIf { ...f, cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs) }; },
@@ -14327,7 +14333,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
 
 function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
     match (st) {
-        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col, is_str: v.is_str }; },
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; },
         StmtReturn(r) => { return StmtReturn { value: cf_rw_expr(r.value, f, target), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
@@ -14653,7 +14659,7 @@ function elb_mark_stmts(stmts: Stmt[], idx: string, arr: string): Stmt[] {
 }
 function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
     match (st) {
-        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str }; },
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; },
         StmtReturn(r) => { return StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
@@ -14876,7 +14882,7 @@ function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
                             if (cf_all_zero_arg_fn_elems(arr.elements, funcs) && cf_decl_count(out, v.name) == 1) {
                                 var asc: CFScan = cf_arr_scan_stmts(out, v.name);
                                 if (asc.vals == 0 && asc.calls >= 1) {
-                                    keep = StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col, is_str: v.is_str };
+                                    keep = StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
                                 }
                             }
                         },
@@ -15037,7 +15043,7 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
                 match (v.init) {
                     ExprIdent(rid) => {
                         if (fnv_is_struct_ret_zero_arg(funcs, structs, rid.name) && fnv_name_called_in_block(whole, v.name)) {
-                            return StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col, is_str: v.is_str };
+                            return StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
                         }
                     },
                     _ => {}
@@ -17118,7 +17124,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
     match (st) {
         StmtVar(v) => {
             var init: Expr = settle_to_name(settle_expr(v.init, names, types, funcs, structs), v.type_name);
-            return StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_str: v.is_str };
+            return StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
         },
         StmtReturn(r) => {
             return StmtReturn { value: settle_to_name(settle_expr(r.value, names, types, funcs, structs), ret_type), line: r.line, col: r.col };
@@ -17742,7 +17748,7 @@ function main(): i32 {
     var prog: Stmt[] = parse_program(toks);
     if (prog.len() != 3) { return 1; }
 
-    // Stmt 0: var x = 1 + 2 * 3   →   StmtVar { name: "x", init: ExprBinary "+" }
+    // Stmt 0: var x = 1 + 2 * 3   →   StmtVar { name: "x", init: ExprBinary "+", fn_ret: "" }
     match (prog[0]) {
         StmtVar(s0) => {
             if (s0.name != "x") { return 100; }
@@ -17768,7 +17774,7 @@ function main(): i32 {
         _ => { return 107; }
     }
 
-    // Stmt 1: var y = (1 + 2) * 3   →  StmtVar { name: "y", init: ExprBinary "*" }
+    // Stmt 1: var y = (1 + 2) * 3   →  StmtVar { name: "y", init: ExprBinary "*", fn_ret: "" }
     match (prog[1]) {
         StmtVar(s1) => {
             if (s1.name != "y") { return 200; }

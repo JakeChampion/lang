@@ -492,7 +492,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
                 type_name: rewrite_type_name(v.type_name, ctx),
                 init: rewrite_expr(v.init, ctx),
                 line: v.line, col: v.col, is_str: v.is_str
-            };
+           , fn_ret: v.fn_ret };
         },
         parser.StmtReturn(r) => {
             return parser.StmtReturn { value: rewrite_expr(r.value, ctx), line: r.line, col: r.col };
