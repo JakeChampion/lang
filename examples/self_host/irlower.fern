@@ -22349,18 +22349,40 @@ function str_borrowing_method(field: string): boolean {
         || field == "contains" || field == "index_of";
 }
 
+// str_method_recv_borrows extends str_borrowing_method's carve-out from the
+// fixed builtin set to any SOURCE-DECLARED method the callee-side proof already
+// clears, so `base[a:b].to_owned()` reads `base` instead of aliasing it.
+//
+// The proof is the plain recv_borrow key, which body_unsafe_for grants only when
+// nothing carries the receiver out — so `to_owned` (`return s + ""`) qualifies
+// and `trim` (`return s[low:high]`, a view of the receiver) does not. That is
+// the same warrant the receiver RELEASE sites use; here it decides whether the
+// SOURCE keeps its reclaim credit.
+//
+// The key can only be spelled `string.<method>`: this scan runs on bare AST with
+// no types, so a same-named method on another type answers to it. That is sound
+// only because admitting a receiver is what routes it to
+// expr_unsafe_for_view_pos, which DIFFERS from expr_unsafe_for on ExprSlice
+// alone and delegates straight to it for every other shape — so a non-slice
+// receiver reaches the same verdict either way, and a slice of a string is a
+// string. A type check here would be dead code, not a guard.
+function str_method_recv_borrows(field: string, recv_borrow: string[]): boolean {
+    if (recv_borrow.len() == 0) { return false; }
+    return util.index_of_str(recv_borrow, "string." + field) >= 0;
+}
+
 // binop_operand_unsafe_for is expr_unsafe_for at a string binary operator's
 // operand. A BARE IDENT there is a borrow, for the same reason the index base
 // and the method receiver already are: concat copies both operands' bytes into a
 // new box and the comparisons read them, so neither retains. Flagging it cost
 // every `return s + ""` its param's borrowability, so a caller could not release
 // the temp it had just passed in.
-function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): boolean {
+function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (e) {
         parser.ExprIdent(_) => { return false; },
-        _ => { return expr_unsafe_for_view_pos(e, name, borrowable); }
+        _ => { return expr_unsafe_for_view_pos(e, name, borrowable, recv_borrow); }
     }
-    return expr_unsafe_for_view_pos(e, name, borrowable);
+    return expr_unsafe_for_view_pos(e, name, borrowable, recv_borrow);
 }
 
 // expr_unsafe_for_view_pos is expr_unsafe_for at a position that only BORROWS a
@@ -22371,20 +22393,20 @@ function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: stri
 // slot_of can name — so the source is READ, not aliased out, and keeps its
 // reclaim credit. Counting it as an escape cost `base[a:b].len()` the whole
 // reclaim of `base`. The bounds are ordinary positions and scan unchanged.
-function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: string[]): boolean {
+function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (e) {
         parser.ExprSlice(sl) => {
             var src_unsafe: boolean = false;
             match (sl.array) {
                 parser.ExprIdent(_) => {},
-                _ => { src_unsafe = expr_unsafe_for_view_pos(sl.array, name, borrowable); }
+                _ => { src_unsafe = expr_unsafe_for_view_pos(sl.array, name, borrowable, recv_borrow); }
             }
-            return src_unsafe || expr_unsafe_for(sl.start, name, borrowable)
-                || expr_unsafe_for(sl.end, name, borrowable);
+            return src_unsafe || expr_unsafe_for(sl.start, name, borrowable, recv_borrow)
+                || expr_unsafe_for(sl.end, name, borrowable, recv_borrow);
         },
-        _ => { return expr_unsafe_for(e, name, borrowable); }
+        _ => { return expr_unsafe_for(e, name, borrowable, recv_borrow); }
     }
-    return expr_unsafe_for(e, name, borrowable);
+    return expr_unsafe_for(e, name, borrowable, recv_borrow);
 }
 
 // expr_unsafe_for reports whether `name` appears anywhere in `e` in a position
@@ -22400,7 +22422,7 @@ function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: stri
 // read-only callee cannot retain the arg, so passing it there is a BORROW. The
 // registry is "" for Level-1 borrowability computation itself (every call arg
 // escapes), avoiding circularity.
-function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): boolean {
+function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprNumber(_) => { return false; },
@@ -22412,23 +22434,23 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
             // lower_view_borrowed calls at each of them say. Every other op is
             // arithmetic on scalars, where a slice operand cannot arise.
             if (b.op == "+" || b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                return binop_operand_unsafe_for(b.left, name, borrowable)
-                    || binop_operand_unsafe_for(b.right, name, borrowable);
+                return binop_operand_unsafe_for(b.left, name, borrowable, recv_borrow)
+                    || binop_operand_unsafe_for(b.right, name, borrowable, recv_borrow);
             }
-            return expr_unsafe_for(b.left, name, borrowable) || expr_unsafe_for(b.right, name, borrowable);
+            return expr_unsafe_for(b.left, name, borrowable, recv_borrow) || expr_unsafe_for(b.right, name, borrowable, recv_borrow);
         },
-        parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name, borrowable); },
+        parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name, borrowable, recv_borrow); },
         parser.ExprIndex(ix) => {
             var base_unsafe: boolean = false;
             match (ix.array) {
                 parser.ExprIdent(_) => { base_unsafe = false; },   // name[i] / other[i]: base read is a borrow
-                _ => { base_unsafe = expr_unsafe_for_view_pos(ix.array, name, borrowable); }
+                _ => { base_unsafe = expr_unsafe_for_view_pos(ix.array, name, borrowable, recv_borrow); }
             }
-            return base_unsafe || expr_unsafe_for(ix.index, name, borrowable);
+            return base_unsafe || expr_unsafe_for(ix.index, name, borrowable, recv_borrow);
         },
         parser.ExprSlice(sl) => {
             // a slice creates a VIEW that aliases the source buffer → escapes.
-            return expr_unsafe_for(sl.array, name, borrowable) || expr_unsafe_for(sl.start, name, borrowable) || expr_unsafe_for(sl.end, name, borrowable);
+            return expr_unsafe_for(sl.array, name, borrowable, recv_borrow) || expr_unsafe_for(sl.start, name, borrowable, recv_borrow) || expr_unsafe_for(sl.end, name, borrowable, recv_borrow);
         },
         parser.ExprCall(c) => {
             var callee_unsafe: boolean = false;
@@ -22445,14 +22467,14 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
                         // cannot retain it borrows the source, exactly as the
                         // bare-ident receiver above does.
                         _ => {
-                            if (str_borrowing_method(fa.field)) { callee_unsafe = expr_unsafe_for_view_pos(fa.obj, name, borrowable); }
-                            else { callee_unsafe = expr_unsafe_for(fa.obj, name, borrowable); }
+                            if (str_borrowing_method(fa.field) || str_method_recv_borrows(fa.field, recv_borrow)) { callee_unsafe = expr_unsafe_for_view_pos(fa.obj, name, borrowable, recv_borrow); }
+                            else { callee_unsafe = expr_unsafe_for(fa.obj, name, borrowable, recv_borrow); }
                         }
                     }
                     // method args stay escapes: method-param borrowability isn't in
                     // the (free-function-keyed) registry (callee_name left "").
                 },
-                _ => { callee_unsafe = expr_unsafe_for(c.callee, name, borrowable); }
+                _ => { callee_unsafe = expr_unsafe_for(c.callee, name, borrowable, recv_borrow); }
             }
             if (callee_unsafe) { return true; }
             var ai: i32 = 0;
@@ -22470,8 +22492,8 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
                 // lowers through lower_view_borrowed, so a slice argument there
                 // borrows its source too.
                 if (callee_name == "len" && c.args.len() == 1) {
-                    if (expr_unsafe_for_view_pos(c.args[ai], name, borrowable)) { return true; }
-                } else if (!arg_is_borrow && expr_unsafe_for(c.args[ai], name, borrowable)) { return true; }
+                    if (expr_unsafe_for_view_pos(c.args[ai], name, borrowable, recv_borrow)) { return true; }
+                } else if (!arg_is_borrow && expr_unsafe_for(c.args[ai], name, borrowable, recv_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -22479,17 +22501,17 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(_) => { return false; },   // name.field: base read is a borrow
-                _ => { return expr_unsafe_for(fa.obj, name, borrowable); }
+                _ => { return expr_unsafe_for(fa.obj, name, borrowable, recv_borrow); }
             }
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_unsafe_for(a.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (expr_unsafe_for(a.elements[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (expr_unsafe_for(t.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (expr_unsafe_for(t.elements[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
@@ -22504,11 +22526,11 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
             if (sl.has_base) {
                 match (sl.base) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (expr_unsafe_for(sl.base, name, borrowable)) { return true; } }
+                    _ => { if (expr_unsafe_for(sl.base, name, borrowable, recv_borrow)) { return true; } }
                 }
             }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name, borrowable)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -22571,7 +22593,7 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
 // names the lambda captures — the env-build retain makes the capture a counted
 // reference the env sweep releases. Every other statement defers to the plain
 // walker (a lambda in any other position still escape-flags its captures).
-function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], clo_ok: string[]): boolean {
+function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], clo_ok: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         var skip: boolean = false;
@@ -22585,56 +22607,56 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
                 }
             },
             parser.StmtIf(iff) => {
-                if (!expr_unsafe_for(iff.cond, name, borrowable)
-                    && !body_unsafe_for_clo(iff.then_body, name, borrowable, clo_ok)
-                    && !body_unsafe_for_clo(iff.else_body, name, borrowable, clo_ok)) { skip = true; }
+                if (!expr_unsafe_for(iff.cond, name, borrowable, recv_borrow)
+                    && !body_unsafe_for_clo(iff.then_body, name, borrowable, clo_ok, recv_borrow)
+                    && !body_unsafe_for_clo(iff.else_body, name, borrowable, clo_ok, recv_borrow)) { skip = true; }
             },
             parser.StmtWhile(w) => {
-                if (!expr_unsafe_for(w.cond, name, borrowable)
-                    && !body_unsafe_for_clo(w.body, name, borrowable, clo_ok)) { skip = true; }
+                if (!expr_unsafe_for(w.cond, name, borrowable, recv_borrow)
+                    && !body_unsafe_for_clo(w.body, name, borrowable, clo_ok, recv_borrow)) { skip = true; }
             },
             _ => {}
         }
-        if (!skip && stmt_unsafe_for(stmts[i], name, borrowable)) { return true; }
+        if (!skip && stmt_unsafe_for(stmts[i], name, borrowable, recv_borrow)) { return true; }
         i = i + 1;
     }
     return false;
 }
 
-function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
-        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable); },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
-        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable); },
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
+        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable, recv_borrow); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable, recv_borrow); },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return body_unsafe_for(f.then_body, name, borrowable) || body_unsafe_for(f.else_body, name, borrowable);
+            if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_unsafe_for(f.then_body, name, borrowable, recv_borrow) || body_unsafe_for(f.else_body, name, borrowable, recv_borrow);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return body_unsafe_for(w.body, name, borrowable);
+            if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_unsafe_for(w.body, name, borrowable, recv_borrow);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for(fo.body, name, borrowable);
+            return body_unsafe_for(fo.body, name, borrowable, recv_borrow);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (body_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for(m.arms[ai].body, name, borrowable, recv_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -22663,30 +22685,30 @@ function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): b
 // that merely mentions the name stay escapes, and arm guards and arm bodies are
 // still walked in full — as is every other use of the name anywhere in the
 // function, so an alias, a return or a call argument still refuses the candidate.
-function body_unsafe_for_match_borrow(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+function body_unsafe_for_match_borrow(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_match_borrow(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_unsafe_for_match_borrow(stmts[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (st) {
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return body_unsafe_for_match_borrow(f.then_body, name, borrowable)
-                || body_unsafe_for_match_borrow(f.else_body, name, borrowable);
+            if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_unsafe_for_match_borrow(f.then_body, name, borrowable, recv_borrow)
+                || body_unsafe_for_match_borrow(f.else_body, name, borrowable, recv_borrow);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return body_unsafe_for_match_borrow(w.body, name, borrowable);
+            if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_unsafe_for_match_borrow(w.body, name, borrowable, recv_borrow);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for_match_borrow(fo.body, name, borrowable);
+            return body_unsafe_for_match_borrow(fo.body, name, borrowable, recv_borrow);
         },
         parser.StmtMatch(m) => {
             var scrut_borrow: boolean = false;
@@ -22694,16 +22716,16 @@ function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable:
                 parser.ExprIdent(sid) => { if (sid.name == name) { scrut_borrow = true; } },
                 _ => {}
             }
-            if (!scrut_borrow && expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (!scrut_borrow && expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (body_unsafe_for_match_borrow(m.arms[ai].body, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for_match_borrow(m.arms[ai].body, name, borrowable, recv_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        _ => { return stmt_unsafe_for(st, name, borrowable); }
+        _ => { return stmt_unsafe_for(st, name, borrowable, recv_borrow); }
     }
 }
 
@@ -22712,45 +22734,45 @@ function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable:
 // bare `return name` is SAFE (the builder param's final value is MOVED OUT to the
 // caller, not retained). Every other unsafe use — an alias `var c = name`, a
 // store into a container, a non-borrowable call arg, a slice — is still flagged.
-function body_unsafe_for_allow_ret(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+function body_unsafe_for_allow_ret(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_allow_ret(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_unsafe_for_allow_ret(stmts[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
         parser.StmtReturn(r) => {
             match (r.value) {
                 parser.ExprIdent(_) => { return false; },   // `return name`: move-out, safe
-                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+                _ => { return expr_unsafe_for(r.value, name, borrowable, recv_borrow); }
             }
         },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
-        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable, recv_borrow); },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return body_unsafe_for_allow_ret(f.then_body, name, borrowable) || body_unsafe_for_allow_ret(f.else_body, name, borrowable);
+            if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_unsafe_for_allow_ret(f.then_body, name, borrowable, recv_borrow) || body_unsafe_for_allow_ret(f.else_body, name, borrowable, recv_borrow);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return body_unsafe_for_allow_ret(w.body, name, borrowable);
+            if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_unsafe_for_allow_ret(w.body, name, borrowable, recv_borrow);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for_allow_ret(fo.body, name, borrowable);
+            return body_unsafe_for_allow_ret(fo.body, name, borrowable, recv_borrow);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (body_unsafe_for_allow_ret(m.arms[ai].body, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for_allow_ret(m.arms[ai].body, name, borrowable, recv_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -22774,7 +22796,7 @@ function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: st
 // `name` argument sits at a CONSUME-SAFE or BORROWABLE position of g, and no other
 // argument lets `name` escape. (Method calls are already safe via the receiver-
 // borrow rule, so only free-call rebinds need this.)
-function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string[], consume_safe: string[]): boolean {
+function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[], consume_safe: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var callee_name: string = "";
@@ -22794,7 +22816,7 @@ function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string
                     saw_name = true;
                     if (!(param_is_borrowable(consume_safe, callee_name, ai) || param_is_borrowable(borrowable, callee_name, ai))) { return false; }
                 } else {
-                    if (expr_unsafe_for(c.args[ai], name, borrowable)) { return false; }
+                    if (expr_unsafe_for(c.args[ai], name, borrowable, recv_borrow)) { return false; }
                 }
                 ai = ai + 1;
             }
@@ -22808,48 +22830,48 @@ function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string
 // body_consume_unsafe_for: body_unsafe_for_allow_ret PLUS the consume-rebind
 // relaxation — a `name = g(.., name, ..)` whose callee is consume-safe at name's
 // position(s) is NOT an escape.
-function body_consume_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], consume_safe: string[]): boolean {
+function body_consume_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], consume_safe: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_consume_unsafe_for(stmts[i], name, borrowable, consume_safe)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_consume_unsafe_for(stmts[i], name, borrowable, consume_safe, recv_borrow)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], consume_safe: string[]): boolean {
+function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[], consume_safe: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
         parser.StmtReturn(r) => {
             match (r.value) {
                 parser.ExprIdent(_) => { return false; },   // `return name`: move-out, safe
-                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+                _ => { return expr_unsafe_for(r.value, name, borrowable, recv_borrow); }
             }
         },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
         parser.StmtAssign(a) => {
-            if (a.target == name && is_consume_rebind_call(a.value, name, borrowable, consume_safe)) { return false; }
-            return expr_unsafe_for(a.value, name, borrowable);
+            if (a.target == name && is_consume_rebind_call(a.value, name, borrowable, consume_safe, recv_borrow)) { return false; }
+            return expr_unsafe_for(a.value, name, borrowable, recv_borrow);
         },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return body_consume_unsafe_for(f.then_body, name, borrowable, consume_safe) || body_consume_unsafe_for(f.else_body, name, borrowable, consume_safe);
+            if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_consume_unsafe_for(f.then_body, name, borrowable, consume_safe, recv_borrow) || body_consume_unsafe_for(f.else_body, name, borrowable, consume_safe, recv_borrow);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return body_consume_unsafe_for(w.body, name, borrowable, consume_safe);
+            if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+            return body_consume_unsafe_for(w.body, name, borrowable, consume_safe, recv_borrow);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_consume_unsafe_for(fo.body, name, borrowable, consume_safe);
+            return body_consume_unsafe_for(fo.body, name, borrowable, consume_safe, recv_borrow);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (body_consume_unsafe_for(m.arms[ai].body, name, borrowable, consume_safe)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, recv_borrow)) { return true; }
+                if (body_consume_unsafe_for(m.arms[ai].body, name, borrowable, consume_safe, recv_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -23182,8 +23204,8 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // An rc-payload Option/Result gets the match-scrutinee-is-a-borrow
                 // reading (#6127); every other candidate kind keeps the coarse walker,
                 // so this widens exactly one class at a time.
-                var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable);
-                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable); }
+                var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable, []);
+                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, []); }
                 if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
@@ -26099,7 +26121,7 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
                     || all_assigns_fresh_scalar_enum(stmts, v.name, structs);
                 if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0
-                        && !body_unsafe_for(stmts, v.name, borrowable)) {
+                        && !body_unsafe_for(stmts, v.name, borrowable, [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
@@ -26144,7 +26166,7 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
                         a = push_str_unique(a, v.name);
-                    } else if (match_idx < 0 && !body_unsafe_for(stmts, v.name, borrowable)) {
+                    } else if (match_idx < 0 && !body_unsafe_for(stmts, v.name, borrowable, [])) {
                         // NO consuming match in this block. Every gate above exists to
                         // prove the match neither retains the box nor hands out its
                         // payload; with no match there is nothing to prove but that
@@ -26935,10 +26957,10 @@ function str_accum_reassign_ok(e: parser.Expr, name: string, borrowable: string[
             // or another string — is consumed to build the fresh result, not
             // retained). Recurse so nested `a + name + b` is covered.
             if (b.op == "+") { return str_accum_reassign_ok(b.left, name, borrowable) && str_accum_reassign_ok(b.right, name, borrowable); }
-            return !expr_unsafe_for(e, name, borrowable);
+            return !expr_unsafe_for(e, name, borrowable, []);
         },
         parser.ExprIdent(_) => { return true; },   // a concat-operand ident is a borrow-read
-        _ => { return !expr_unsafe_for(e, name, borrowable); },
+        _ => { return !expr_unsafe_for(e, name, borrowable, []); },
     }
     return false;
 }
@@ -26956,7 +26978,7 @@ function str_accum_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: st
 }
 function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, []); },
         parser.StmtReturn(r) => {
             // A bare `return name` MOVES the final builder value out to the caller —
             // safe, and kept from the exit sweep by returned_moved_arr_slots (the
@@ -26964,10 +26986,10 @@ function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string
             // returned expression must not otherwise leak name.
             match (r.value) {
                 parser.ExprIdent(_) => { return false; },
-                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+                _ => { return expr_unsafe_for(r.value, name, borrowable, []); }
             }
         },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, []); },
         parser.StmtAssign(a) => {
             if (a.target == name) {
                 // A consume-rebind of the accumulator: safe iff the new value is a
@@ -26977,30 +26999,30 @@ function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string
                 if (str_local_binding_is_fresh(a.value) && str_accum_reassign_ok(a.value, name, borrowable)) { return false; }
                 return true;
             }
-            return expr_unsafe_for(a.value, name, borrowable);
+            return expr_unsafe_for(a.value, name, borrowable, []);
         },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
             return str_accum_unsafe_for(f.then_body, name, borrowable) || str_accum_unsafe_for(f.else_body, name, borrowable);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
             return str_accum_unsafe_for(w.body, name, borrowable);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
             return str_accum_unsafe_for(fo.body, name, borrowable);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, [])) { return true; }
                 if (str_accum_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
                 ai = ai + 1;
             }
@@ -28884,7 +28906,7 @@ function clo_rc_candidate_names(body: parser.Stmt[], borrowable: string[]): stri
         var nm: string = cands[i];
         if (nm.len() > 0
             && util.index_of_str(reassigned, nm) < 0
-            && !body_unsafe_for(body, nm, borrowable)) { out = out.append("OK:" + nm); }
+            && !body_unsafe_for(body, nm, borrowable, [])) { out = out.append("OK:" + nm); }
         i = i + 1;
     }
     return out;
@@ -29622,7 +29644,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                 if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
                     out = out.append("RECVRET:" + rty + "." + fn.name);
                 }
-                if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable)) {
+                if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
                     out = out.append(rty + "." + fn.name);
                 }
             }
@@ -29637,7 +29659,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                 }
                 if (!moves_fields_stmts(fn.body, fn.receiver_name, none)
                     && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
-                    if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable)) {
+                    if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
                         out = out.append(rty + "." + fn.name);
                     }
                     // Second tier: the ONLY escape is that bare `return self`.
@@ -29645,7 +29667,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                     // receiver holds the result, which is a call-site question —
                     // the key carries the callee half and recv_ident_methods_of
                     // decides the rest.
-                    else if (!body_unsafe_for_allow_ret(fn.body, fn.receiver_name, borrowable)) {
+                    else if (!body_unsafe_for_allow_ret(fn.body, fn.receiver_name, borrowable, [])) {
                         out = out.append("RECVIDENT:" + rty + "." + fn.name);
                     }
                 }
@@ -29953,7 +29975,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // recv_borrow_escapes_via_result. Without that gate `keep = b.me()`
         // left `keep` on b's own box and b's per-rebind reclaim freed it
         // underneath, which is an over-release rather than a leak.
-        if (!body_unsafe_for(body, fresh[i], borrowable) && !reassigned_from_alias(body, fresh[i])
+        if (!body_unsafe_for(body, fresh[i], borrowable, recv_borrow) && !reassigned_from_alias(body, fresh[i])
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fresh[i], structs), body, fresh[i], borrowable)
             && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fresh[i]), body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
         i = i + 1;
@@ -30034,7 +30056,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
     var ti: i32 = 0;
     while (ti < tups.len()) {
-        if (!body_unsafe_for(body, tups[ti], borrowable)) {
+        if (!body_unsafe_for(body, tups[ti], borrowable, recv_borrow)) {
             out = out.append("TUP:" + tups[ti]);
             // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
             // assignment builds a fresh tuple (#6127), which lets lower_stmt_assign
@@ -30066,7 +30088,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, []);
     var rti: i32 = 0;
     while (rti < rctups.len()) {
-        if (!body_unsafe_for(body, rctups[rti], borrowable)) {
+        if (!body_unsafe_for(body, rctups[rti], borrowable, recv_borrow)) {
             var rctty: string = rctuple_type_of_decl(body, rctups[rti]);
             if (rctty == "" || !rctuple_payload_escapes(body, rctups[rti], rctty, structs)) {
                 out = out.append("TUPRC:" + rctups[rti]);
@@ -30162,7 +30184,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var clo_ok: string[] = clo_rc_candidate_names(body, borrowable);
     var si: i32 = 0;
     while (si < strs.len()) {
-        if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for_clo(body, strs[si], borrowable, clo_ok)) {
+        if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for_clo(body, strs[si], borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + strs[si]);
         }
         si = si + 1;
@@ -30177,7 +30199,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (util.index_of_str(strs, lits[li2]) < 0
             && util.index_of_str(reassigned, lits[li2]) < 0
             && !litstr_tostring_recv_body(body, lits[li2])
-            && !body_unsafe_for_clo(body, lits[li2], borrowable, clo_ok)) {
+            && !body_unsafe_for_clo(body, lits[li2], borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + lits[li2]);
         }
         li2 = li2 + 1;
@@ -30192,7 +30214,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (ti2 < tss.len()) {
         if (util.index_of_str(strs, tss[ti2]) < 0
             && util.index_of_str(reassigned, tss[ti2]) < 0
-            && !body_unsafe_for_clo(body, tss[ti2], borrowable, clo_ok)) {
+            && !body_unsafe_for_clo(body, tss[ti2], borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + tss[ti2]);
         }
         ti2 = ti2 + 1;
@@ -30219,7 +30241,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var frets: string[] = collect_fresh_str_ret_call_names(body, str_fresh_ret, reassigned, []);
     var fri: i32 = 0;
     while (fri < frets.len()) {
-        if (!body_unsafe_for(body, frets[fri], borrowable)) { out = out.append("STR:" + frets[fri]); }
+        if (!body_unsafe_for(body, frets[fri], borrowable, recv_borrow)) { out = out.append("STR:" + frets[fri]); }
         fri = fri + 1;
     }
     // Owned-container READ destinations (#6491 pointer half): `var s: string =
@@ -30229,7 +30251,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, structs, []);
     var oci: i32 = 0;
     while (oci < ocrs.len()) {
-        if (!body_unsafe_for(body, ocrs[oci], borrowable)) { out = out.append("STR:" + ocrs[oci]); }
+        if (!body_unsafe_for(body, ocrs[oci], borrowable, recv_borrow)) { out = out.append("STR:" + ocrs[oci]); }
         oci = oci + 1;
     }
     // `?`-bound string payloads (#4355): `var s: string = mk(pre)?` where mk is
@@ -30241,7 +30263,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var tstrs: string[] = collect_try_str_binding_names(body, opt_fresh_ret, reassigned, []);
     var tsi: i32 = 0;
     while (tsi < tstrs.len()) {
-        if (!body_unsafe_for(body, tstrs[tsi], borrowable)) { out = out.append("STR:" + tstrs[tsi]); }
+        if (!body_unsafe_for(body, tstrs[tsi], borrowable, recv_borrow)) { out = out.append("STR:" + tstrs[tsi]); }
         tsi = tsi + 1;
     }
     // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
@@ -30274,7 +30296,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // exactly one live box. Any other rebind disqualifies as before.
         if (!map_nonself_reassigned(body, maps[mi])
             && util.index_of_str(aliased_m, maps[mi]) < 0
-            && !body_unsafe_for(body, maps[mi], borrowable)
+            && !body_unsafe_for(body, maps[mi], borrowable, recv_borrow)
             && !map_has_explicit_iter(body, maps[mi])
             // Identity-carrying method hole (insert/without return the
             // receiver's own box — see expr_map_identity_use): any such use
@@ -30356,7 +30378,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var oaas: string[] = collect_fresh_optaarr_names(body, []);
     var oai: i32 = 0;
     while (oai < oaas.len()) {
-        if (!body_unsafe_for(body, oaas[oai], borrowable)
+        if (!body_unsafe_for(body, oaas[oai], borrowable, recv_borrow)
             && util.index_of_str(reassigned, oaas[oai]) < 0
             && !arrarr_row_escapes(body, oaas[oai])
             && !optaarr_elem_payload_escapes(body, oaas[oai])) {
@@ -30459,7 +30481,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var ats: string[] = collect_fresh_arrtup_names(body, body, structs, fresh_ret, []);
     var ati: i32 = 0;
     while (ati < ats.len()) {
-        if (!body_unsafe_for(body, ats[ati], borrowable)
+        if (!body_unsafe_for(body, ats[ati], borrowable, recv_borrow)
             && util.index_of_str(reassigned, ats[ati]) < 0
             && !arrarr_row_escapes(body, ats[ati])
             && !arrtup_elem_payload_escapes(body, ats[ati], arrtup_elem_type_of_decl(body, structs, ats[ati]), structs)) {
@@ -30507,7 +30529,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var aeni: i32 = 0;
     while (aeni < aens.len()) {
         var aename: string = arrenum_entry_name(aens[aeni]);
-        if (aename.len() > 0 && !arrenum_escapes(body, aename) && !body_unsafe_for(body, aename, borrowable)) {
+        if (aename.len() > 0 && !arrenum_escapes(body, aename) && !body_unsafe_for(body, aename, borrowable, recv_borrow)) {
             out = out.append("ARRENUM:" + aens[aeni]);
         }
         aeni = aeni + 1;
@@ -30582,7 +30604,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var dname: str = dentry[0:dbar];
         if (dname.len() > 0
             && util.index_of_str(reassigned, dname) < 0
-            && !body_unsafe_for(body, dname, borrowable)) {
+            && !body_unsafe_for(body, dname, borrowable, recv_borrow)) {
             if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dname); }
             else { out = out.append("DYN:" + dentry); }
         }
@@ -30631,14 +30653,14 @@ function snapshot_param_names_of(fn: parser.FuncDecl, borrowable: string[], cons
     var out: string[] = [];
     var reassigned: string[] = body_assign_targets(fn.body);
     if (fn.receiver_name.len() > 0) {
-        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_consume_unsafe_for(fn.body, fn.receiver_name, borrowable, consume_safe)) {
+        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_consume_unsafe_for(fn.body, fn.receiver_name, borrowable, consume_safe, [])) {
             out = out.append(fn.receiver_name);
         }
     }
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var pn: string = fn.params[pi].name;
-        if (util.index_of_str(reassigned, pn) >= 0 && !body_consume_unsafe_for(fn.body, pn, borrowable, consume_safe)) {
+        if (util.index_of_str(reassigned, pn) >= 0 && !body_consume_unsafe_for(fn.body, pn, borrowable, consume_safe, [])) {
             out = out.append(pn);
         }
         pi = pi + 1;
@@ -30806,7 +30828,7 @@ function body_unsafe_for_allow_structret(stmts: parser.Stmt[], name: string, bor
 }
 function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowable: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, []); },
         parser.StmtReturn(r) => {
             match (r.value) {
                 parser.ExprStructLit(rlit) => {
@@ -30817,38 +30839,38 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
                             parser.ExprIdent(fid) => { bare = fid.name == name; },
                             _ => {}
                         }
-                        if (!bare && expr_unsafe_for(rlit.field_values[fi], name, borrowable)) { return true; }
+                        if (!bare && expr_unsafe_for(rlit.field_values[fi], name, borrowable, [])) { return true; }
                         fi = fi + 1;
                     }
                     return false;
                 },
-                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+                _ => { return expr_unsafe_for(r.value, name, borrowable, []); }
             }
         },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
-        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, []); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable, []); },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
             return body_unsafe_for_allow_structret(f.then_body, name, borrowable) || body_unsafe_for_allow_structret(f.else_body, name, borrowable);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
             return body_unsafe_for_allow_structret(w.body, name, borrowable);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
             return body_unsafe_for_allow_structret(fo.body, name, borrowable);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, [])) { return true; }
                 if (body_unsafe_for_allow_structret(m.arms[ai].body, name, borrowable)) { return true; }
                 ai = ai + 1;
             }
@@ -31202,7 +31224,7 @@ function body_returns_local_built_arr(stmts: parser.Stmt[]): boolean {
     while (i < names.len()) {
         if (!arr_local_init_is_frame_fresh(stmts, names[i], no_producers, stmts)) { return false; }
         if (arr_reassigned_other_than_selfappend(stmts, names[i])) { return false; }
-        if (body_unsafe_for_allow_ret(stmts, names[i], no_borrow)) { return false; }
+        if (body_unsafe_for_allow_ret(stmts, names[i], no_borrow, [])) { return false; }
         i = i + 1;
     }
     return true;
@@ -31665,7 +31687,7 @@ function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs:
                     && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
                     && struct_has_reclaim_array_field(structs, v.type_name)
-                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe)) {
+                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
@@ -32639,8 +32661,8 @@ function enum_stmt_binds_rc_payload(st: parser.Stmt, name: string, structs: pars
 // conservatively a retain (escape). A borrow-only binding (indexing, `.len()`,
 // arithmetic over reads) returns false and is admitted.
 function binding_escapes_arm(arm: parser.MatchArm, name: string, borrowable: string[]): boolean {
-    if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable)) { return true; }
-    return body_unsafe_for(arm.body, name, borrowable);
+    if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
+    return body_unsafe_for(arm.body, name, borrowable, []);
 }
 
 // match_moved_rc_payloads: the Koka consuming-match MOVED-payload set (#4400)
@@ -35225,37 +35247,37 @@ function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: st
                 if (structarr_self_append_elem(a.value, name, fresh_ret)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
-            return expr_unsafe_for(a.value, name, borrowable);
+            return expr_unsafe_for(a.value, name, borrowable, []);
         },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
             return structarr_unsafe_for(f.then_body, name, borrowable, fresh_ret) || structarr_unsafe_for(f.else_body, name, borrowable, fresh_ret);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
             return structarr_unsafe_for(w.body, name, borrowable, fresh_ret);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
             return structarr_unsafe_for(fo.body, name, borrowable, fresh_ret);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, [])) { return true; }
                 if (structarr_unsafe_for(m.arms[ai].body, name, borrowable, fresh_ret)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
         parser.StmtDefer(d) => { return stmt_structarr_unsafe_for(d.action, name, borrowable, fresh_ret); },
-        _ => { return stmt_unsafe_for(st, name, borrowable); }
+        _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
 }
@@ -35561,37 +35583,37 @@ function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: strin
                 if (arrarr_self_append_row(a.value, name, ofr) >= 0) { return false; }
                 return true;   // any other reassignment of the candidate
             }
-            return expr_unsafe_for(a.value, name, borrowable);
+            return expr_unsafe_for(a.value, name, borrowable, []);
         },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
             return arrarr_unsafe_for(f.then_body, name, borrowable, ofr) || arrarr_unsafe_for(f.else_body, name, borrowable, ofr);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
             return arrarr_unsafe_for(w.body, name, borrowable, ofr);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
             return arrarr_unsafe_for(fo.body, name, borrowable, ofr);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, [])) { return true; }
                 if (arrarr_unsafe_for(m.arms[ai].body, name, borrowable, ofr)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
         parser.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable, ofr); },
-        _ => { return stmt_unsafe_for(st, name, borrowable); }
+        _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
 }
@@ -35796,7 +35818,7 @@ function structarr_elem_escapes(stmts: parser.Stmt[], name: string, borrowable: 
                 }
                 // `for p in name`: the element box `p` is bound per iteration.
                 // Safe iff it does not escape the loop body (only borrow reads).
-                if (iterates_name && body_unsafe_for(fo.body, fo.var_name, borrowable)) { return true; }
+                if (iterates_name && body_unsafe_for(fo.body, fo.var_name, borrowable, [])) { return true; }
                 if (structarr_elem_escapes(fo.body, name, borrowable)) { return true; }
             },
             parser.StmtIf(f) => { if (structarr_elem_escapes(f.then_body, name, borrowable) || structarr_elem_escapes(f.else_body, name, borrowable)) { return true; } },
@@ -36679,7 +36701,7 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: str
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
-                    && !body_unsafe_for(stmts, v.name, [])) {
+                    && !body_unsafe_for(stmts, v.name, [], [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
@@ -36707,7 +36729,7 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: str
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
-                    && !body_unsafe_for(stmts, v.name, [])) {
+                    && !body_unsafe_for(stmts, v.name, [], [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
@@ -37768,37 +37790,37 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
                 if (arrstruct_self_append_elem(a.value, name, structs, msites)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
-            return expr_unsafe_for(a.value, name, borrowable);
+            return expr_unsafe_for(a.value, name, borrowable, []);
         },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
             return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
             return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
             return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, [])) { return true; }
                 if (arrstruct_unsafe_for(m.arms[ai].body, name, borrowable, structs, msites)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
         parser.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites); },
-        _ => { return stmt_unsafe_for(st, name, borrowable); }
+        _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
 }
@@ -44689,7 +44711,7 @@ function append_built_row_local_kind(fnbody: parser.Stmt[], name: string): i32 {
     if (init_kind < 0) { return -1; }
     var rebind_kind: i32 = row_local_rebind_kind(fnbody, name);
     if (rebind_kind < 0) { return -1; }
-    if (body_unsafe_for_allow_ret(fnbody, name, [])) { return -1; }
+    if (body_unsafe_for_allow_ret(fnbody, name, [], [])) { return -1; }
     if (rebind_kind < init_kind) { return rebind_kind; }
     return init_kind;
 }
@@ -49112,7 +49134,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             // release and a loop-local enum passed to a helper leaked unboundedly
             // (#6606) while the identical match written inline was flat.
             if (!param_consumed_in_body(funcs[k].body, pname, reasgn)
-                && !body_unsafe_for_match_borrow(funcs[k].body, pname, none)
+                && !body_unsafe_for_match_borrow(funcs[k].body, pname, none, [])
                 && !param_match_binding_escapes(funcs[k].body, pname)) { flags = flags + "1"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
@@ -49205,7 +49227,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     // keeps this pass monotone-decreasing: it only ever withholds a
                     // 1->0 flip, so the convergence test is unaffected.
                     if (!param_consumed_in_body(funcs[i].body, funcs[i].params[pj].name, ip_reasgn)
-                        && !body_unsafe_for_match_borrow(funcs[i].body, funcs[i].params[pj].name, reg)
+                        && !body_unsafe_for_match_borrow(funcs[i].body, funcs[i].params[pj].name, reg, [])
                         && !param_match_binding_escapes(funcs[i].body, funcs[i].params[pj].name)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
@@ -49279,7 +49301,7 @@ pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable:
                 var any: boolean = false;
                 var pj: i32 = 0;
                 while (pj < funcs[i].params.len()) {
-                    if (!body_consume_unsafe_for(funcs[i].body, funcs[i].params[pj].name, borrowable, reg)) { flags = flags + "1"; any = true; }
+                    if (!body_consume_unsafe_for(funcs[i].body, funcs[i].params[pj].name, borrowable, reg, [])) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }

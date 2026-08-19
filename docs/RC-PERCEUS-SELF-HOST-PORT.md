@@ -10985,3 +10985,65 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   backends; the five byte gates fail on the parent on all three legs, and the
   three controls — carried-out validity, a bare-ident payload, and an immortal
   `.rodata` literal that must not be freed — pass either way). Refs #4353 #4451.
+- 2026-08-19: **the escape scan's receiver carve-out now reads the callee-side
+  proof, not just the builtin list**, so a slice receiver at a SOURCE-DECLARED
+  method stops costing its source the whole reclaim credit.
+  `base[4:base.len()].to_owned().len()` measured 70 with each half — the slice
+  alone, the `to_owned` alone — already flat.
+
+  `expr_unsafe_for`'s ExprFieldAccess arm treats a non-ident receiver as a borrow
+  only when `str_borrowing_method` names the field, and that is a closed list of
+  BUILTINS. Every source-declared method fell through to the plain scan, where a
+  slice is an alias, so `base` escaped. `recv_borrow` already carries the
+  warrant: the plain `"<Type>.<method>"` key means `body_unsafe_for` found
+  nothing carrying the receiver out, which admits `to_owned` (`return s + ""`)
+  and refuses `trim` (`return s[low:high]`).
+
+  The registry is threaded through the scan family — 13 signatures, 169 call
+  sites — and is EMPTY inside `recv_borrow_fns_of` itself, the same Level-1
+  treatment `borrowable` already documents, so computing the proof cannot consult
+  it. `reclaimable_names_of` already took `recv_borrow` as a parameter, so the
+  one entry point that decides a string local's `STR:` credit needed no new
+  plumbing.
+
+  The proof is WITNESSED, and the shape that witnesses it is not the obvious
+  one. Every probe where the view and the source die together passes even under a
+  compiler that admits any method name, because the release lands after the last
+  read either way. What faults is the view RETURNED past its source's scope:
+
+  | probe | admit-anything build |
+  | --- | --- |
+  | `v = base[a:b].view2()`, both read below | ok |
+  | `return base[a:b].view2()`, read by the caller | **96** (freed and reused bytes) |
+
+  A first attempt at a TYPE CHECK here was deleted as dead code rather than kept
+  as a guard. The key can only be spelled `string.<method>` — the scan runs on
+  bare AST — so a same-named method on another type answers to it, and
+  restricting the receiver to an `ExprSlice` looked like the fix. It cannot
+  change any verdict: admitting a receiver only routes it to
+  `expr_unsafe_for_view_pos`, which differs from `expr_unsafe_for` on `ExprSlice`
+  alone and delegates straight to it otherwise, so a non-slice receiver reaches
+  the same answer either way. Removing the restriction measured identically on
+  every probe, including the struct-name-collision one built to break it.
+
+  | leg | before | after | what is left |
+  | --- | --- | --- | --- |
+  | x86-64 | 246400 | **9600** | the 24-byte view box, fixed size |
+  | arm64 | 246400 | **9600** | same |
+  | wasm | 464000 | **230400** | a payload-sized COPY |
+
+  (400 rounds, wide payload.) The wasm column is the finding worth carrying
+  forward: its residual SCALES with the payload where the register backends' does
+  not, because a slice is a zero-copy view on the asm-IR path (#4294) and a copy
+  on wasm. So the register legs keep a 25x separation and wasm only 2x, which is
+  why the regression test gates them at different numbers rather than picking one
+  loose threshold that would sit inside a 7% band on both.
+
+  Regression test: `internal/e2eselfhost/self_host_str_slice_recv_borrow_test.go`
+  (6 cases x 3 backends). The improvement case fails on the parent on all three
+  legs; the witness above is checked against a build that skips the proof.
+
+  Next on this shape: the intermediate view box itself. #7164 releases a
+  fresh-or-receiver CHAIN in receiver position under a pointer compare, but its
+  root walk only recognises an `ExprCall` receiver — a bare `ExprSlice` there is
+  not a chain link it follows. Refs #6544 #4451.
