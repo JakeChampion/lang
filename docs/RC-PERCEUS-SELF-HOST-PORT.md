@@ -10831,3 +10831,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | `base[4:base.len()].to_owned().len()` | 119 | **70** |
 
   The last row is what remains of the family and is now the lead. Refs #6544 #4451.
+- 2026-08-19: **a fresh-or-receiver CHAIN in receiver position, released under a
+  runtime pointer compare** — the live half of
+  `alloc_flat_method_identity_return`, and with it the last listed self-host
+  divergence on any leg. `base.tail(4).to_owned()` materialises a view box over
+  `base`'s bytes that nobody names, and the receiver release above could not take
+  it: `is_fresh_str_temp` refuses a chain, and must keep refusing, because `tail`
+  has an identity path (`if (n <= 0) { return s; }` ) on which the
+  "intermediate" IS the root's own box. Which path ran is a runtime fact, so no
+  static predicate settles it.
+
+  What settles it is the discriminator the `.len()` site already uses: a box the
+  chain freshly allocated is never the root's pointer. The release is emitted
+  under a compare against `sfrrecv_chain_root_slot`'s root, and the identity path
+  simply does not take it. The outer callee still has to be `recv_borrow` proven
+  — that is what says the CALL did not carry the receiver into its own result,
+  and it is why the `.ident()` shape is refused outright rather than guarded.
+
+  | shape | before | after |
+  | --- | --- | --- |
+  | `base.tail(4).to_owned().len()` | 22 | **-1** |
+  | `base.tail(4).unrel().len()` | 22 | **-1** |
+  | `base.tail(4).to_owned().to_owned().len()` | 21 | **-2** |
+  | `base.tail(4).tail(1).to_owned().len()` | 47 | **22** |
+  | `base.to_owned().len()` (control) | -1 | -1 |
+
+  The fourth row is a deliberate partial and not a miss: `tail` is not itself
+  `recv_borrow` proven — it returns `s` on one path and a view of `s` on another
+  — so at the INNER call nothing is released and only the outer view box goes.
+  Halving it is exactly what the proof licenses; the other half needs `tail`'s
+  own shape admitted, which is a different question from this one.
+
+  The pointer compare is WITNESSED: `base.tail(0).to_owned()` takes the identity
+  path, and a build with the compare removed frees what `base` still holds and
+  exits 97. Its neighbour is NOT a witness and the test says so: the
+  `n >= sLen` path returns a LITERAL `""` whose pointer also differs from the
+  root, so the compare admits it and the release does run on a static — safe, but
+  by a different guard, `__fern_str_view_free`'s view case skipping a box base
+  outside the arena. That case passes with the compare removed too.
+
+  `alloc_flat_method_identity_return` now prints `flat` on x86-64, arm64 and wasm
+  and is delisted from all three known-divergence files, which leaves **zero
+  listed divergences on every leg** (the remaining lines in those files are all
+  commentary). Delisting is part of this change rather than follow-up: the
+  fixture gate fails a listed fixture that starts PASSING, by design.
+
+  Regression test: `internal/e2eselfhost/self_host_str_chain_receiver_test.go`
+  (7 cases x 3 backends). Thresholds there are calibrated rather than inherited
+  — the leak is 24 B/round, so the 32768-over-400-rounds gate the sibling suites
+  use would not have caught it; measured 9600 -> 0 per flat case. Refs #6544 #4451.
