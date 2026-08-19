@@ -10495,6 +10495,11 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
+		// Record the resolution on the arm. Both facts are authoritative
+		// here — `ed` IS the scrutinee's enum — and every later stage used
+		// to recover them from the scrutinee's static type instead (#6964).
+		arm.EnumName = ed.Name
+		arm.VariantIndex = varIdx
 		if covered[arm.VariantName] {
 			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}
@@ -11245,6 +11250,11 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}
+		// Record the resolution on the arm. Both facts are authoritative
+		// here — `ed` IS the scrutinee's enum — and every later stage used
+		// to recover them from the scrutinee's static type instead (#6964).
+		arm.EnumName = ed.Name
+		arm.VariantIndex = varIdx
 		if covered[arm.VariantName] {
 			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}

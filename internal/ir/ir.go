@@ -5518,22 +5518,10 @@ func needsImplicitReturn(ops []Op) bool {
 // name the winner varies per process — DO NOT use this where a wrong
 // answer is possible. Match arms in particular are resolved against
 // the SCRUTINEE, not globally, so an arm name that is ambiguous across
-// the program is still legitimate; use scrutineeEnumName + lookupVariantOn
-// there.
+// the program is still legitimate; they read the checker's stamped
+// MatchArm.EnumName / VariantIndex instead of looking anything up.
 func (b *builder) lookupVariant(name string) (enumName string, varIdx int, payloadCount int, ok bool) {
 	return b.lookupVariantOn(name, "")
-}
-
-// scrutineeEnumName is the enum a match's scrutinee statically has, or ""
-// when it is not an enum type. Arms are resolved against it: a variant name
-// two enums share resolves to a different ordinal in each, and the arm means
-// the scrutinee's. "" preserves the global-scan behaviour for the shapes that
-// have no static enum type.
-func (b *builder) scrutineeEnumName(scrut ast.Expr) string {
-	if et, isEnum := b.exprStaticType(scrut).(ast.EnumType); isEnum {
-		return et.Name
-	}
-	return ""
 }
 
 // lookupVariantOn resolves a variant by name, optionally restricted
@@ -8175,13 +8163,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.brTo(matchEndD, false)
 				continue
 			}
-			// Resolve the variant index against the SCRUTINEE's enum: two
-			// enums may declare one variant name at different ordinals, and
-			// the arm means this scrutinee's.
-			_, varIdx, _, ok := b.lookupVariantOn(arm.VariantName, b.scrutineeEnumName(n.Tag))
-			if !ok {
-				return fmt.Errorf("ir: match arm references unknown variant %q", arm.VariantName)
+			// The checker resolved this arm against the SCRUTINEE's enum
+			// and stamped the answer — two enums may declare one variant
+			// name at different ordinals, and the arm means this
+			// scrutinee's. Reading the stamp is what keeps that one
+			// resolution authoritative instead of recovering it here from
+			// the scrutinee's static type (#6964).
+			if arm.EnumName == "" {
+				return fmt.Errorf("ir: match arm %q reached lowering unresolved", arm.VariantName)
 			}
+			varIdx := arm.VariantIndex
 			// Outer per-arm block: skip body when tag mismatch.
 			b.openBlock(BlockTypeVoid)
 			outerArmD := b.depth
@@ -8989,11 +8980,11 @@ func (b *builder) expr(e ast.Expr) error {
 				b.brTo(matchEndD, false)
 				continue
 			}
-			// Same scrutinee-relative resolution as the statement form.
-			_, varIdx, _, ok := b.lookupVariantOn(arm.VariantName, b.scrutineeEnumName(n.Tag))
-			if !ok {
-				return fmt.Errorf("ir: match-expression arm references unknown variant %q", arm.VariantName)
+			// Same stamped resolution as the statement form.
+			if arm.EnumName == "" {
+				return fmt.Errorf("ir: match-expression arm %q reached lowering unresolved", arm.VariantName)
 			}
+			varIdx := arm.VariantIndex
 			b.openBlock(BlockTypeVoid)
 			outerArmD := b.depth
 			b.openBlock(BlockTypeVoid)
