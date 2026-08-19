@@ -10055,3 +10055,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   not rooted at a bare-local method chain), and no conformance case covers the
   shape. That is a bigger and simpler target than the intermediate-link slice.
   Refs #6544 #4451.
+- 2026-08-19: isolating the `base[4:…].to_owned().len()` shape the previous entry
+  named turned up four more, all simpler and two of them bigger than the AL-01
+  row that led here. Each is one line in a loop over a fresh `base`, measured
+  with `__heap_bump_bytes` (x86-64 / arm64 / wasm):
+
+  | shape | B/round |
+  | --- | --- |
+  | `base.to_owned().len()` | **-1** |
+  | `base.to_upper().len()` | **43** / 43 / 37 |
+  | `base[4:base.len()].len()` | **47** / 47 / 71 |
+  | `base.to_owned().to_owned().len()` | **46** |
+  | `base[4:base.len()].to_owned().len()` | **119** |
+
+  The lead is the FIRST TWO ROWS. `to_owned` and `to_upper` are both builtin
+  copying methods in receiver position, one link from a bare string local,
+  consumed by `.len()` — and one is reclaimed while the other is not. Neither is
+  in the SFRRECV registry, which `str_fresh_ret_fns` fills only from
+  SOURCE-DECLARED receiver methods (`funcs[k].receiver_type`), so whatever
+  reclaims `to_owned` is a different mechanism and `to_upper` is falling between
+  them. That asymmetry is the cheapest thing to chase here and it is worth more
+  than the 22 the row tracks.
+
+  The third row is its own finding: a bare SLICE read, `base[4:base.len()].len()`,
+  strands its view box — no method chain involved at all, 47 B/round, more than
+  twice the whole `alloc_flat_method_identity_return` row. No conformance case
+  covers it. Refs #6544 #4451.
