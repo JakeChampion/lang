@@ -227,6 +227,56 @@ pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stm
     return acc;
 }
 
+// fold_stmt_own visits the expressions the statement ITSELF owns — a `var`'s
+// initialiser, an assignment's value, a `return` / expression statement's
+// value, an `if` / `while` condition, a `for`'s iterated expression, and a
+// `match`'s scrutinee and arm guards — and does NOT enter the statement lists
+// it encloses.
+//
+// fold_stmt is the whole-subtree walk; this is the one level a PER-STATEMENT
+// pass wants when its driver visits the child blocks itself. interp's cellify
+// pre-pass is the archetype: it runs once per statement of a block against that
+// block's reassignment set, and a nested block gets its own pass with its own
+// set — walking into one here would cell a loop-local `var` that has to stay
+// per-iteration.
+//
+// A `defer`'s action is a child statement, so it contributes nothing at this
+// level. Every variant is spelled out rather than wildcarded: a new statement
+// kind should fail to compile here, not silently own no expressions.
+pub function fold_stmt_own[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
+    return fold_stmt_own_pruned(st, acc, visit, descend_all);
+}
+
+// fold_stmt_own_pruned is fold_stmt_own with descent control, on the same terms
+// as fold_expr_pruned: `descend` decides whether a visited node's CHILDREN are
+// walked, which a consumer needs when one node's contribution already accounts
+// for its whole subtree.
+pub function fold_stmt_own_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+    match (st) {
+        parser.StmtVar(v) => { return fold_expr_pruned(v.init, acc, visit, descend); },
+        parser.StmtAssign(a) => { return fold_expr_pruned(a.value, acc, visit, descend); },
+        parser.StmtReturn(r) => { return fold_expr_pruned(r.value, acc, visit, descend); },
+        parser.StmtExpr(e) => { return fold_expr_pruned(e.value, acc, visit, descend); },
+        parser.StmtIf(i) => { return fold_expr_pruned(i.cond, acc, visit, descend); },
+        parser.StmtWhile(w) => { return fold_expr_pruned(w.cond, acc, visit, descend); },
+        parser.StmtFor(f) => { return fold_expr_pruned(f.iter, acc, visit, descend); },
+        parser.StmtMatch(m) => {
+            acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard) { acc = fold_expr_pruned(m.arms[ai].guard, acc, visit, descend); }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtDefer(_) => { return acc; },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
 // ident_of contributes one node's identifier READS. It is the whole of
 // collect_idents_expr that is not the walk.
 function ident_of(e: parser.Expr, acc: string[]): string[] {

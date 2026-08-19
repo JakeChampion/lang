@@ -20,6 +20,7 @@
 import "./lexer";
 import "./parser";
 import "./util";
+import "./astwalk";
 
 // =================== VALUES ====================
 
@@ -550,40 +551,6 @@ function lam_assign_targets(stmts: parser.Stmt[], acc: string[]): string[] {
     return acc;
 }
 
-// lam_targets_expr recurses an expression for nested lambda bodies.
-function lam_targets_expr(e: parser.Expr, acc: string[]): string[] {
-    match (e) {
-        parser.ExprLambda(lm) => { return lam_assign_targets(lm.body, acc); },
-        parser.ExprBinary(b) => { return lam_targets_expr(b.right, lam_targets_expr(b.left, acc)); },
-        parser.ExprUnary(u) => { return lam_targets_expr(u.operand, acc); },
-        parser.ExprIndex(ix) => { return lam_targets_expr(ix.index, lam_targets_expr(ix.array, acc)); },
-        parser.ExprSlice(sl) => { return lam_targets_expr(sl.end, lam_targets_expr(sl.start, lam_targets_expr(sl.array, acc))); },
-        parser.ExprFieldAccess(fa) => { return lam_targets_expr(fa.obj, acc); },
-        parser.ExprCall(c) => {
-            acc = lam_targets_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = lam_targets_expr(c.args[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { acc = lam_targets_expr(a.elements[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { acc = lam_targets_expr(t.elements[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { acc = lam_targets_expr(sl.field_values[i], acc); i = i + 1; }
-            return acc;
-        },
-        _ => { return acc; }
-    }
-    return acc;
-}
 
 // ---- the OUTER-write clause of a mutable scalar capture (#5394 / #6578) ----
 //
@@ -666,56 +633,15 @@ function ib_idents_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
     return a;
 }
 
-// lam_reads_expr / lam_read_names: the names some lambda in `st` mentions. Only
-// a LAMBDA body contributes, exactly as stmt_lambda_writes does — an ident in
-// the statement's own expression is an ordinary read in this scope.
-function lam_reads_expr(e: parser.Expr, acc: string[]): string[] {
-    match (e) {
-        parser.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
-        parser.ExprBinary(b) => { return lam_reads_expr(b.right, lam_reads_expr(b.left, acc)); },
-        parser.ExprUnary(u) => { return lam_reads_expr(u.operand, acc); },
-        parser.ExprIndex(ix) => { return lam_reads_expr(ix.index, lam_reads_expr(ix.array, acc)); },
-        parser.ExprSlice(sl) => { return lam_reads_expr(sl.end, lam_reads_expr(sl.start, lam_reads_expr(sl.array, acc))); },
-        parser.ExprFieldAccess(fa) => { return lam_reads_expr(fa.obj, acc); },
-        parser.ExprCall(c) => {
-            var a1: string[] = lam_reads_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) { a1 = lam_reads_expr(c.args[i], a1); i = i + 1; }
-            return a1;
-        },
-        parser.ExprArray(ar) => {
-            var a2: string[] = acc;
-            var j: i32 = 0;
-            while (j < ar.elements.len()) { a2 = lam_reads_expr(ar.elements[j], a2); j = j + 1; }
-            return a2;
-        },
-        parser.ExprTuple(t) => {
-            var a3: string[] = acc;
-            var k: i32 = 0;
-            while (k < t.elements.len()) { a3 = lam_reads_expr(t.elements[k], a3); k = k + 1; }
-            return a3;
-        },
-        parser.ExprStructLit(sl2) => {
-            var a4: string[] = acc;
-            if (sl2.has_base) { a4 = lam_reads_expr(sl2.base, a4); }
-            var m: i32 = 0;
-            while (m < sl2.field_values.len()) { a4 = lam_reads_expr(sl2.field_values[m], a4); m = m + 1; }
-            return a4;
-        },
-        _ => { return acc; }
-    }
-    return acc;
-}
+// lam_read_names: the names some lambda in `st` mentions. Only a LAMBDA body
+// contributes, exactly as stmt_lambda_writes does — an ident in the statement's
+// own expression is an ordinary read in this scope, not a capture.
+//
+// Same walk as stmt_lambda_writes, and for the same reason: see its comment for
+// why it is the statement's OWN expressions and why it stops at a lambda.
 function lam_read_names(st: parser.Stmt): string[] {
     var acc: string[] = [];
-    match (st) {
-        parser.StmtVar(v) => { return lam_reads_expr(v.init, acc); },
-        parser.StmtAssign(a) => { return lam_reads_expr(a.value, acc); },
-        parser.StmtReturn(r) => { return lam_reads_expr(r.value, acc); },
-        parser.StmtExpr(x) => { return lam_reads_expr(x.value, acc); },
-        _ => { return acc; }
-    }
-    return acc;
+    return astwalk.fold_stmt_own_pruned(st, acc, lam_read_of, not_lambda_expr);
 }
 
 // body_assign_names: every name this body reassigns, at any depth. A name NOT
@@ -739,10 +665,19 @@ function body_assign_names(stmts: parser.Stmt[], acc: string[]): string[] {
     return a;
 }
 
-// cellify_outer_writes applies the clause: a name a lambda in `st` reads AND
-// this body reassigns becomes a shared cell before the closure snapshots it.
-function cellify_outer_writes(env: Env, st: parser.Stmt, reassigned: string[]): Env {
-    if (reassigned.len() == 0) { return env; }
+// cellify_captures is the per-statement pre-pass every block driver runs before
+// evaluating a statement, and it applies both capture clauses:
+//
+//   WRITES — a name a lambda in `st` assigns becomes a cell unconditionally,
+//     or the closure writes a private copy (SH-057).
+//   READS — a name a lambda in `st` reads AND this body reassigns becomes a
+//     cell, or the closure freezes the pre-assignment value (#5394).
+//
+// Both must run BEFORE the statement evaluates, because that is when the
+// closure snapshots the env; celling afterwards hands it a slot nobody shares.
+function cellify_captures(env: Env, st: parser.Stmt, reassigned: string[]): Env {
+    var out: Env = cellify_env(env, stmt_lambda_writes(st));
+    if (reassigned.len() == 0) { return out; }
     var reads: string[] = lam_read_names(st);
     var hit: string[] = [];
     var i: i32 = 0;
@@ -750,24 +685,57 @@ function cellify_outer_writes(env: Env, st: parser.Stmt, reassigned: string[]): 
         if (util.index_of_str(reassigned, reads[i]) >= 0) { hit = hit.append(reads[i]); }
         i = i + 1;
     }
-    if (hit.len() == 0) { return env; }
-    return cellify_env(env, hit);
+    if (hit.len() == 0) { return out; }
+    return cellify_env(out, hit);
 }
 
 // stmt_lambda_writes lists the names some lambda in `st` assigns to.
+//
+// Every expression the statement OWNS is scanned, not the four shapes a
+// hand-written match happened to spell: a lambda in an `if` / `while`
+// condition, a `for`'s iterated expression or a `match` scrutinee or guard
+// captures the enclosing scope exactly as one in a `var` initialiser does, and
+// missing it left the written name uncelled — a write to a private copy. The
+// statement's own child BLOCKS are not entered, which is the point of
+// fold_stmt_own: each gets its own pass with its own reassignment set, and
+// walking in would cell a loop-local `var` that has to stay per-iteration.
+//
+// Only a lambda body contributes, so the walk stops at one: lam_assign_targets
+// already accounts for its whole body, and descending would re-scan it.
 function stmt_lambda_writes(st: parser.Stmt): string[] {
-    var one: parser.Stmt[] = [st];
     var acc: string[] = [];
-    // Only a lambda body contributes: walk the statement's EXPRESSIONS, never
-    // its own top-level assignments (those are ordinary writes in this scope).
-    match (st) {
-        parser.StmtVar(v) => { return lam_targets_expr(v.init, acc); },
-        parser.StmtAssign(a) => { return lam_targets_expr(a.value, acc); },
-        parser.StmtReturn(r) => { return lam_targets_expr(r.value, acc); },
-        parser.StmtExpr(x) => { return lam_targets_expr(x.value, acc); },
+    return astwalk.fold_stmt_own_pruned(st, acc, lam_target_of, not_lambda_expr);
+}
+
+// lam_targets_expr finds the nested lambdas in one expression and takes each
+// one's assignment targets. Stops AT a lambda: lam_target_of already accounts
+// for its whole body, so descending would re-scan it.
+function lam_targets_expr(e: parser.Expr, acc: string[]): string[] {
+    return astwalk.fold_expr_pruned(e, acc, lam_target_of, not_lambda_expr);
+}
+
+// lam_target_of / lam_read_of are one node's contribution to the two scans —
+// the whole of each that is not the walk.
+function lam_target_of(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprLambda(lm) => { return lam_assign_targets(lm.body, acc); },
         _ => { return acc; }
     }
     return acc;
+}
+function lam_read_of(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+function not_lambda_expr(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprLambda(_) => { return false; },
+        _ => { return true; }
+    }
+    return true;
 }
 
 // raw_slot reads a slot WITHOUT the lookup deref — cellify needs to see whether
@@ -2636,11 +2604,6 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
         // arm recurses on the lowered form.
         parser.StmtDefer(d) => { return eval_stmt(d.action, env); },
         parser.StmtVar(v) => {
-            // Mutable scalar captures (SH-057): if the initialiser contains a
-            // lambda that WRITES an enclosing local, rebind that local as a
-            // shared cell first, so the closure's env snapshot and this scope
-            // point at the same one. Read-only captures are untouched.
-            env = cellify_env(env, stmt_lambda_writes(st));
             var val: Value = eval_expr(v.init, env);
             // A runtime error in the initializer aborts the function rather
             // than being bound and silently swallowed (#4348 item 4). eval_expr
@@ -2790,8 +2753,6 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // env.update would only rebind this copy (SH-057).
             var tslot: i32 = env.raw_slot(a.target);
             if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) { return step_none(env); }
-            // A lambda in the RHS may itself write an enclosing local.
-            env = cellify_env(env, stmt_lambda_writes(st));
             return step_none(env.update(a.target, av));
         },
         parser.StmtMatch(m) => {
@@ -2987,7 +2948,7 @@ function eval_block(body: parser.Stmt[], env: Env): StepResult {
     var reassigned: string[] = body_assign_names(body, []);
     var i: i32 = 0;
     while (i < body.len()) {
-        cur = cellify_outer_writes(cur, body[i], reassigned);
+        cur = cellify_captures(cur, body[i], reassigned);
         var r: StepResult = eval_stmt(body[i], cur);
         cur = r.env;
         if (r.sig != 0) {
@@ -3006,7 +2967,7 @@ function eval_program(prog: parser.Stmt[]): Value {
     var preassigned: string[] = body_assign_names(prog, []);
     var i: i32 = 0;
     while (i < prog.len()) {
-        env = cellify_outer_writes(env, prog[i], preassigned);
+        env = cellify_captures(env, prog[i], preassigned);
         var r: StepResult = eval_stmt(prog[i], env);
         env = r.env;
         if (r.sig != 0) { return r.ret; }
@@ -3044,8 +3005,10 @@ pub function eval_module(raw_mod: parser.Module): Value {
         i = i + 1;
     }
     var env: Env = new_module_env(mod.funcs, all_aliases, all_variants);
+    var mreassigned: string[] = body_assign_names(mod.top_stmts, []);
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
+        env = cellify_captures(env, mod.top_stmts[j], mreassigned);
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
         env = r.env;
         if (r.sig != 0) { return r.ret; }

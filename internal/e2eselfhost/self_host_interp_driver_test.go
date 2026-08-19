@@ -338,6 +338,32 @@ var interpProgs = []struct {
 	{"sat-shl-mask", "function main(): i32 { return 42 <<| 32; }", 42},
 }
 
+// interpDriverFiles is the in-memory module set for interpDriverMod: its own
+// source plus the TRANSITIVE import closure of the three modules it imports.
+//
+// Derived rather than listed. The list used to be spelled out as
+// {util, lexer, parser, interp}, which went stale the moment `interp.fern`
+// gained an import — the compile then failed with a missing module rather than
+// anything about the change that caused it.
+func interpDriverFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := map[string]string{"main.fern": interpDriverMod}
+	for _, root := range []string{"lexer.fern", "parser.fern", "interp.fern"} {
+		for _, p := range selfHostImportClosure(t, "../../examples/self_host", root) {
+			base := filepath.Base(p)
+			if _, ok := files[base]; ok {
+				continue
+			}
+			src, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatalf("read %s: %v", p, err)
+			}
+			files[base] = string(src)
+		}
+	}
+	return files
+}
+
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
 // overhaul: the self-hosted compiler compiles the self-hosted
 // INTERPRETER (interp.fern, whose Value union has VInt/VString/VFloat
@@ -347,14 +373,7 @@ func TestSelfHostInterpDriverX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	// The interp "driver" is just a program importing ./lexer + ./parser +
 	// ./interp, compiled by the file-based asm driver (no bundle_run).
-	files := map[string]string{"main.fern": interpDriverMod}
-	for _, m := range []string{"util", "lexer", "parser", "interp"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
-		if err != nil {
-			t.Fatalf("read %s.fern: %v", m, err)
-		}
-		files[m+".fern"] = string(src)
-	}
+	files := interpDriverFiles(t)
 	interpAsm, progDir := compileFilesModload(t, runner, driverBin, files)
 	if len(interpAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the interp driver")
@@ -382,14 +401,7 @@ func TestSelfHostInterpDriverX86_64(t *testing.T) {
 func TestSelfHostInterpDriverArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
-	files := map[string]string{"main.fern": interpDriverMod}
-	for _, m := range []string{"util", "lexer", "parser", "interp"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
-		if err != nil {
-			t.Fatalf("read %s.fern: %v", m, err)
-		}
-		files[m+".fern"] = string(src)
-	}
+	files := interpDriverFiles(t)
 	interpAsm, progDir := compileFilesModload(t, x86runner, driverBin, files, "-target", "arm64-linux")
 	interpBin := buildBin(t, arm64gcc, progDir, "interp", interpAsm)
 
