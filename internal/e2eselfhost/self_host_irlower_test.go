@@ -241,39 +241,60 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 	// (operands pushed before the store), and `return` lowers its value then
 	// emits `return`.
 	t.Run("dump", func(t *testing.T) {
-		const src = "function main(): i32 { var x = 2 + 3; return x * 10; }"
-		// Integer literals lower to const_i32_text (source text spliced into the
-		// immediate), so hex literals and the full u32 range survive — see
-		// op_const_i32_text / the IR backends. Each i32 arithmetic op is followed
-		// by an int_cast (the signed sibling of u32_wrap — op_int_cast("i32"),
-		// the per-width wrap the register backends emit), so `mul` carries a
-		// trailing int_cast.
+		// `scale` and `main` are the same expression; only the multiplicand
+		// differs. A PARAMETER is opaque to the fold, so scale keeps the shape
+		// this golden is for; main's is wholly constant and folds to one op.
+		const src = "function scale(n: i32): i32 { var x = 2 + 3; return x * n; }\n" +
+			"function main(): i32 { var x = 2 + 3; return x * 10; }"
+
+		dump := func(t *testing.T, args ...string) (string, int) {
+			t.Helper()
+			cmd := exec.Command(bin, args...)
+			cmd.Stdin = strings.NewReader(src)
+			out, _ := cmd.Output()
+			return string(out), cmd.ProcessState.ExitCode()
+		}
+
+		// Each i32 arithmetic op is followed by an int_cast (the signed sibling
+		// of u32_wrap — op_int_cast("i32"), the per-width wrap the register
+		// backends emit), so `mul` carries a trailing int_cast.
 		//
-		// `2 + 3` is gone: ir.fold_const_binaries collapses the const/const/binary
-		// triple to a single const_i32 before the backends see it, so this golden
-		// doubles as the fold's pin. `x * 10` survives because `x` is a load, not
-		// a constant.
+		// `2 + 3` is gone, and so is ITS int_cast: ir.fold_const_binaries
+		// collapses the const/const/binary triple and then folds the constant
+		// through the width normalise, so this golden doubles as the fold's pin.
+		// `x * n` survives because `n` is a parameter.
 		// The `store_local 0 ; load_local 0` pair this golden used to carry is GONE
 		// (#6638): ir.fuse_tee collapses it to a `tee_local 0`, and then
 		// ir.propagate_copies drops that tee outright because nothing else touches
-		// slot 0 — the write is dead and the value rides the operand stack into the
-		// mul. So this pins both passes on the real lowering path alongside the
+		// the slot — the write is dead and the value rides the operand stack into
+		// the mul. So this pins both passes on the real lowering path alongside the
 		// fold's. A slot the RC sweeps read would keep its tee; an i32 is not swept.
-		const want = "const_i32 5\n" +
-			"int_cast\n" +
-			"const_i32_text 10\n" +
+		const wantScale = "const_i32 5\n" +
+			"load_local 0\n" +
 			"mul\n" +
 			"int_cast\n" +
 			"return\n"
-		cmd := exec.Command(bin, "-dump")
-		cmd.Stdin = strings.NewReader(src)
-		out, _ := cmd.Output()
-		if got := string(out); got != want {
-			t.Errorf("lowered op stream mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+		got, code := dump(t, "-dump-fn", "scale")
+		if got != wantScale {
+			t.Errorf("lowered op stream mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, wantScale)
 		}
-		// exit code is ops.len() in -dump mode.
-		if code := cmd.ProcessState.ExitCode(); code != 6 {
-			t.Errorf("dump op count = %d, want 6", code)
+		// exit code is ops.len() in the dump modes.
+		if code != 5 {
+			t.Errorf("dump-fn op count = %d, want 5", code)
+		}
+
+		// The same expression with a literal multiplicand collapses entirely —
+		// the fold reaches through BOTH width normalises, the add's and the
+		// mul's. Without that it stopped at `const_i32 5 ; int_cast ;
+		// const_i32_text 10 ; mul ; int_cast` and shipped a runtime imul.
+		const wantMain = "const_i32 50\n" +
+			"return\n"
+		got, code = dump(t, "-dump")
+		if got != wantMain {
+			t.Errorf("constant-only lowering mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, wantMain)
+		}
+		if code != 2 {
+			t.Errorf("dump op count = %d, want 2", code)
 		}
 	})
 }
