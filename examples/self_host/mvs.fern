@@ -158,9 +158,9 @@ pub function parse_index(src: string): Index {
         var line: string = trim(lines[ln]);
         ln = ln + 1;
         if (line.len() == 0) { continue; }
-        if (line[0] == 35) { continue; }         // '#'
-        if (line[0] == 91) {                     // '['
-            if (line[line.len() - 1] != 93) {    // ']'
+        if (line[0] == b'#') { continue; }
+        if (line[0] == b'[') {
+            if (line[line.len() - 1] != b']') {
                 return index_err(entries, "line " + util.i32_to_string(ln) + ": malformed section header " + quoted(line));
             }
             pkg = trim(line[1:line.len() - 1] + "");
@@ -202,7 +202,7 @@ struct SourceResult {
 
 function parse_source(val: string): SourceResult {
     var none: Source = Source { path: "", url: "", hash: "" };
-    if (val.len() < 2 || val[0] != 123 || val[val.len() - 1] != 125) {   // '{' '}'
+    if (val.len() < 2 || val[0] != b'{' || val[val.len() - 1] != b'}') {
         return SourceResult { src: none, err: "expected an inline table { path = … } or { url = …, hash = … }" };
     }
     var path: string = "";
@@ -558,8 +558,8 @@ pub function lock_text(sel: Sel[]): string {
 pub function trim(s: string): string {
     var a: i32 = 0;
     var b: i32 = s.len();
-    while (a < b && (s[a] == 32 || s[a] == 9 || s[a] == 13)) { a = a + 1; }
-    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9 || s[b - 1] == 13)) { b = b - 1; }
+    while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) { a = a + 1; }
+    while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) { b = b - 1; }
     return s[a:b] + "";
 }
 
@@ -596,25 +596,25 @@ pub function quoted(s: string): string {
 }
 
 function is_quoted(s: string): boolean {
-    if (s.len() < 2 || s[0] != 34 || s[s.len() - 1] != 34) { return false; }   // '"'
+    if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') { return false; }
     var inner: string = s[1:s.len() - 1] + "";
     var i: i32 = 0;
     while (i < inner.len()) {
-        if (inner[i] == 34 || inner[i] == 92) { return false; }   // '"' '\'
+        if (inner[i] == b'"' || inner[i] == b'\\') { return false; }
         i = i + 1;
     }
     return true;
 }
 
 function unquote_error(s: string): string {
-    if (s.len() < 2 || s[0] != 34 || s[s.len() - 1] != 34) {
+    if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
         return "expected a quoted string, got " + quoted(s);
     }
     return "escapes unsupported in " + quoted(s);
 }
 
 pub function is_abs(p: string): boolean {
-    return p.len() > 0 && p[0] == 47;   // '/'
+    return p.len() > 0 && p[0] == b'/';
 }
 
 // join_path joins `dir` and the relative `rel`, resolving `.` and `..` as

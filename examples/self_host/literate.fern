@@ -98,7 +98,7 @@ function trim(s: string): string {
 function leading_ws(s: string): string {
     var k: i32 = 0;
     var n: i32 = s.len();
-    while (k < n && (s[k] == 32 || s[k] == 9)) { k = k + 1; }
+    while (k < n && (s[k] == b' ' || s[k] == b'\t')) { k = k + 1; }
     return s[0:k] + "";
 }
 
@@ -111,7 +111,7 @@ function split_lines(src: string): string[] {
     var i: i32 = 0;
     var n: i32 = src.len();
     while (i < n) {
-        if (src[i] == 10) {
+        if (src[i] == b'\n') {
             lines = lines.append(src[start:i]);
             start = i + 1;
         }
@@ -157,7 +157,7 @@ function fence_lang(line: string): string {
     var info: string = trim(line[i:n]);
     var j: i32 = 0;
     var m: i32 = info.len();
-    while (j < m && info[j] != 32 && info[j] != 9) { j = j + 1; }
+    while (j < m && info[j] != b' ' && info[j] != b'\t') { j = j + 1; }
     return info[0:j] + "";
 }
 
@@ -177,9 +177,9 @@ function split_ws(s: string): string[] {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
-        while (i < n && (s[i] == 32 || s[i] == 9)) { i = i + 1; }
+        while (i < n && (s[i] == b' ' || s[i] == b'\t')) { i = i + 1; }
         var start: i32 = i;
-        while (i < n && s[i] != 32 && s[i] != 9) { i = i + 1; }
+        while (i < n && s[i] != b' ' && s[i] != b'\t') { i = i + 1; }
         if (i > start) { words = words.append(s[start:i]); }
     }
     return words;

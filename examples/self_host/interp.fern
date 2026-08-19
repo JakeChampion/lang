@@ -250,7 +250,7 @@ function vint_bits(v: Value): i32 {
 function is_destructure_name(name: string): boolean {
     var i: i32 = 0;
     while (i < name.len()) {
-        if (name[i] == 44) { return true; }
+        if (name[i] == b',') { return true; }
         i = i + 1;
     }
     return false;
@@ -260,7 +260,7 @@ function split_binding_names(csv: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= csv.len()) {
-        if (i == csv.len() || csv[i] == 44) {
+        if (i == csv.len() || csv[i] == b',') {
             out = out.append(csv[start : i]);
             start = i + 1;
         }
@@ -1355,8 +1355,8 @@ function eval_unary(op: string, ov: Value): Value {
 function eval_number_literal(is_float: boolean, t: string): Value {
     if (is_float) { return v_float(f64_from_bits(util.parse_f64_bits(t))); }
     var hs: i32 = 0;
-    if (t.len() > 0 && t[0] == 45) { hs = 1; }
-    var is_radix: boolean = t.len() > hs + 1 && t[hs] == 48 && (t[hs + 1] == 120 || t[hs + 1] == 88 || t[hs + 1] == 98 || t[hs + 1] == 66);
+    if (t.len() > 0 && t[0] == b'-') { hs = 1; }
+    var is_radix: boolean = t.len() > hs + 1 && t[hs] == b'0' && (t[hs + 1] == b'x' || t[hs + 1] == b'X' || t[hs + 1] == b'b' || t[hs + 1] == b'B');
     if (is_radix) { return v_int(util.lit_to_i32(t)); }
     return box_i64(util.digits_to_i64(t));
 }
@@ -1858,7 +1858,7 @@ function is_array_recv_type(t: string): boolean {
     if (t.len() != 3) { return false; }
     var c: i32 = t[0] as i32;
     if (c < 65 || c > 90) { return false; }
-    return t[1] == 91 && t[2] == 93;
+    return t[1] == b'[' && t[2] == b']';
 }
 
 // name_ends_with reports whether `nm` is `suffix` or ends with it, which is
@@ -1878,7 +1878,7 @@ function variant_simple_name(name: string): string {
     var last_dot: i32 = 0 - 1;
     var i: i32 = 0;
     while (i < name.len()) {
-        if (name[i] == 46) { last_dot = i; }
+        if (name[i] == b'.') { last_dot = i; }
         i = i + 1;
     }
     if (last_dot >= 0) { return name[last_dot + 1 : name.len()] + ""; }

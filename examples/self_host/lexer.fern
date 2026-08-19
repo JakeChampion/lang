@@ -224,7 +224,7 @@ function (l: Lex) advance_to(end: i32): Lex {
     var new_line: i32 = l.line;
     var new_col: i32 = l.col;
     while (i < end) {
-        if (l.src[i] == 10) {
+        if (l.src[i] == b'\n') {
             new_line = new_line + 1;
             new_col = 1;
         } else {
@@ -251,7 +251,7 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
             l = l.advance_to(we);
             continue;
         }
-        if (b == 47 && l.i + 1 < l.n && l.src[l.i + 1] == 47) {
+        if (b == 47 && l.i + 1 < l.n && l.src[l.i + 1] == b'/') {
             // `//` line comment — consume to newline (newline
             // itself is left for the next iteration's whitespace
             // path so line tracking stays simple).
@@ -259,7 +259,7 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
             var c_col: i32 = l.col;
             var body: i32 = l.i + 2;
             var ce: i32 = body;
-            while (ce < l.n && l.src[ce] != 10) {
+            while (ce < l.n && l.src[ce] != b'\n') {
                 ce = ce + 1;
             }
             if (keep) { acc = acc.append(comment_tok(c_line, c_col, l.src[body:ce])); }
@@ -413,7 +413,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     // float (fractional / exponent) upgrades. A bare `0x` with no
     // following hex digit is an error, not a silent `0` + `x` ident.
     if (l.peek_byte() == 48 && l.i + 1 < l.n
-        && (l.src[l.i + 1] == 120 || l.src[l.i + 1] == 88)) {   // 'x' / 'X'
+        && (l.src[l.i + 1] == b'x' || l.src[l.i + 1] == b'X')) {
         is_hex = true;
         l = l.advance_to(l.i + 2);   // '0' then 'x' / 'X'
         var hex_start: i32 = l.i;
@@ -435,7 +435,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     var is_float: boolean = false;
     // Fractional part: `.<digit>+`. Suppressed for hex and right
     // after a `.` (chained tuple index).
-    if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == 46 && is_digit((l.src[l.i + 1] as i32))) {
+    if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == b'.' && is_digit((l.src[l.i + 1] as i32))) {
         is_float = true;
         l = l.advance_to(l.i + 1);   // consume `.`
         var fe: i32 = l.i;
@@ -451,7 +451,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     if (!is_hex && !after_dot && !l.at_end()
         && (l.peek_byte() == 101 || l.peek_byte() == 69)) {   // 'e' / 'E'
         var j: i32 = l.i + 1;
-        if (j < l.n && (l.src[j] == 43 || l.src[j] == 45)) { j = j + 1; }   // '+' / '-'
+        if (j < l.n && (l.src[j] == b'+' || l.src[j] == b'-')) { j = j + 1; }
         if (j < l.n && is_digit((l.src[j] as i32))) {
             is_float = true;
             l = l.advance_to(l.i + 1);   // 'e' / 'E'
@@ -484,14 +484,14 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         if (!is_valid_numeric_suffix(suffix)) {
             return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
         }
-        if (is_float && suffix[0] != 102) {   // not 'f'
+        if (is_float && suffix[0] != b'f') {
             return NumResult { lex: l, tok: error_tok("integer suffix on float literal", start_line, start_col) };
         }
     }
     // `42f32` / `42f64` — integer text with float suffix promotes
     // the token to Float so a downstream parser routes via the
     // float-literal construction path.
-    if (!is_float && suffix.len() > 0 && suffix[0] == 102) {
+    if (!is_float && suffix.len() > 0 && suffix[0] == b'f') {
         is_float = true;
     }
     var tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
@@ -653,8 +653,8 @@ function quoted_escape(l: Lex, is_byte: boolean): EscVal {
 // unterminated one (`'ab`) so each error names its own problem.
 function closing_quote_ahead(l: Lex): boolean {
     var j: i32 = l.i;
-    while (j < l.n && l.src[j] != 10) {
-        if (l.src[j] == 39) { return true; }
+    while (j < l.n && l.src[j] != b'\n') {
+        if (l.src[j] == b'\'') { return true; }
         j = j + 1;
     }
     return false;
@@ -814,7 +814,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             continue;
         }
         if (c == 123) {   // {
-            if (l.i + 1 < l.n && l.src[l.i + 1] == 123) {   // {{ → literal {
+            if (l.i + 1 < l.n && l.src[l.i + 1] == b'{') {   // {{ → literal {
                 lit = lit + "{";
                 have_lit = true;
                 l = l.advance();
@@ -873,7 +873,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             continue;
         }
         if (c == 125) {   // }
-            if (l.i + 1 < l.n && l.src[l.i + 1] == 125) {   // }} → literal }
+            if (l.i + 1 < l.n && l.src[l.i + 1] == b'}') {   // }} → literal }
                 lit = lit + "}";
                 have_lit = true;
                 l = l.advance();
@@ -925,7 +925,7 @@ function tokenize_impl(src: string, keep: boolean): LexResult {
         // f-string `f"..."` — checked before the identifier path so
         // the leading `f` isn't scooped up as an ident. Mirrors the
         // Go lexer's first-branch f-string detection.
-        if (b == 102 && l.i + 1 < l.n && l.src[l.i + 1] == 34) {
+        if (b == 102 && l.i + 1 < l.n && l.src[l.i + 1] == b'"') {
             l = l.advance();   // consume `f`
             var rf = scan_fstring(l, start_line, start_col);
             l = rf.lex;
@@ -938,7 +938,7 @@ function tokenize_impl(src: string, keep: boolean): LexResult {
         // the same reason the f-string prefix is: `b` starts an
         // identifier, and no valid program has one immediately followed
         // by a `'`.
-        if (b == 98 && l.i + 1 < l.n && l.src[l.i + 1] == 39) {
+        if (b == 98 && l.i + 1 < l.n && l.src[l.i + 1] == b'\'') {
             var rb = scan_quoted(l, true, start_line, start_col);
             l = rb.lex;
             out = out.append(rb.tok);

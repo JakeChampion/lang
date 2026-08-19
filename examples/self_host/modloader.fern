@@ -32,7 +32,7 @@ pub function dirname(path: string): string {
     var cut: i32 = 0;
     var i: i32 = 0;
     while (i < path.len()) {
-        if (path[i] == 47) { cut = i + 1; }   // '/'
+        if (path[i] == b'/') { cut = i + 1; }
         i = i + 1;
     }
     return path[0:cut] + "";
@@ -44,20 +44,10 @@ pub function base_name(path: string): string {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < path.len()) {
-        if (path[i] == 47) { start = i + 1; }   // '/'
+        if (path[i] == b'/') { start = i + 1; }
         i = i + 1;
     }
     return path[start:path.len()] + "";
-}
-
-// contains reports membership of `name` in `xs`.
-function contains(xs: string[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
 }
 
 // rel_path strips a leading import-relative `./` so the path joins cleanly
@@ -77,7 +67,7 @@ function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): s
     while (i < mod.imports.len()) {
         var path: string = mod.imports[i].path;
         var name: string = base_name(path);
-        if (!contains(seen, name)) { out = out.append(path); }
+        if (!util.has_str(seen, name)) { out = out.append(path); }
         i = i + 1;
     }
     return out;
@@ -215,7 +205,7 @@ function parent_dir(dir: string): string {
     var end: i32 = dir.len() - 1;
     var i: i32 = end - 1;
     while (i >= 0) {
-        if (dir[i] == 47) { return dir[0:i + 1] + ""; }   // '/'
+        if (dir[i] == b'/') { return dir[0:i + 1] + ""; }
         i = i - 1;
     }
     return "";
@@ -375,7 +365,7 @@ pub function load_imports(dir: string, entry: parser.Module): flatten.LoadedModu
         var from: string = queue_dirs[qi];
         qi = qi + 1;
         var name: string = base_name(path);
-        if (contains(seen, name)) { continue; }
+        if (util.has_str(seen, name)) { continue; }
         seen = seen.append(name);
         var r: Resolved = resolve_module(from, path, name);
         if (r.ok) {

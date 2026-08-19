@@ -1872,10 +1872,10 @@ struct GasMem {
 function x86_gas_trim(s: string): string {
     var a: i32 = 0;
     var b: i32 = s.len();
-    while (a < b && (s[a] == 32 || s[a] == 9)) {
+    while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
         a = a + 1;
     }
-    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9)) {
+    while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
         b = b - 1;
     }
     return s[a:b] + "";
@@ -1884,7 +1884,7 @@ function x86_gas_trim(s: string): string {
 // x86_gas_reg maps a register token (`%rax` or `rax`) to its number, or -1.
 function x86_gas_reg(tok: string): i32 {
     var s: string = tok;
-    if (s.len() > 0 && s[0] == 37) { // '%'
+    if (s.len() > 0 && s[0] == b'%') {
         s = s[1:s.len()] + "";
     }
     if (s == "rax") { return 0; }
@@ -1931,7 +1931,7 @@ function x86_gas_reg(tok: string): i32 {
 // number, or -1. spl/bpl/sil/dil (4..7) and r8b..r15b (8..15) included.
 function x86_gas_reg8(tok: string): i32 {
     var s: string = tok;
-    if (s.len() > 0 && s[0] == 37) { // '%'
+    if (s.len() > 0 && s[0] == b'%') {
         s = s[1:s.len()] + "";
     }
     if (s == "al") { return 0; }
@@ -1969,7 +1969,7 @@ function x86_gas_st(tok: string): i32 {
 // number 0..15, or -1.
 function x86_gas_reg32(tok: string): i32 {
     var s: string = tok;
-    if (s.len() > 0 && s[0] == 37) { // '%'
+    if (s.len() > 0 && s[0] == b'%') {
         s = s[1:s.len()] + "";
     }
     if (s == "eax") { return 0; }
@@ -1994,7 +1994,7 @@ function x86_gas_reg32(tok: string): i32 {
 // x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
 // reg->mem (store), all 32-bit.
 function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
+    if (src.len() > 0 && src[0] == b'$') { // $imm -> reg or mem
         if (x86_str_contains(dst, "(")) { // `movl $imm, disp(%base)` (C7 /0 m32 id)
             var mi: GasMem = x86_gas_parse_mem(dst);
             if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
@@ -2035,7 +2035,7 @@ function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
 // x86_gas_alu32 dispatches addl/subl/andl/orl/xorl/cmpl: `$imm, %reg` uses
 // the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
 function x86_gas_alu32(own a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == 36) {
+    if (src.len() > 0 && src[0] == b'$') {
         a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src)) };
         return a;
     }
@@ -2052,13 +2052,13 @@ function x86_gas_is_xmm(tok: string): boolean {
 // or -1.
 function x86_gas_xmm(tok: string): i32 {
     var s: string = tok;
-    if (s.len() > 0 && s[0] == 37) { // '%'
+    if (s.len() > 0 && s[0] == b'%') {
         s = s[1:s.len()] + "";
     }
     if (s.len() < 4) {
         return 0 - 1;
     }
-    if (s[0] != 120 || s[1] != 109 || s[2] != 109) { // "xmm"
+    if (s[0] != b'x' || s[1] != b'm' || s[2] != b'm') {
         return 0 - 1;
     }
     var v: i32 = 0;
@@ -2141,8 +2141,8 @@ function pf64_all_zero(b: i32[]): boolean {
 function parse_f64_bits(s: string): i64 {
     var i: i32 = 0;
     var neg: boolean = false;
-    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
-    else if (s.len() > 0 && s[0] == 43) { i = 1; }
+    if (s.len() > 0 && s[0] == b'-') { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == b'+') { i = 1; }
     var signbit: i64 = 0;
     if (neg) { var one: i64 = 1; signbit = one << 63; }
     // Collect significant digits and the decimal point position:
@@ -2155,7 +2155,7 @@ function parse_f64_bits(s: string): i64 {
     var dp: i32 = 0;
     var sticky: boolean = false;
     var started: boolean = false;
-    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+    while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
         var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
@@ -2165,9 +2165,9 @@ function parse_f64_bits(s: string): i64 {
         }
         i = i + 1;
     }
-    if (i < s.len() && s[i] == 46) {        // '.'
+    if (i < s.len() && s[i] == b'.') {
         i = i + 1;
-        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
             var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
@@ -2179,13 +2179,13 @@ function parse_f64_bits(s: string): i64 {
             i = i + 1;
         }
     }
-    if (i < s.len() && (s[i] == 101 || s[i] == 69)) {   // 'e' / 'E'
+    if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
         i = i + 1;
         var eneg: boolean = false;
-        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
-        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        if (i < s.len() && s[i] == b'-') { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == b'+') { i = i + 1; }
         var exp: i32 = 0;
-        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
             if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
             i = i + 1;
         }
@@ -2316,12 +2316,12 @@ function x86_gas_ascii(buf: i32[], line: string): i32[] {
 // (immediate sigil) and a leading `-`.
 function x86_gas_atoi(tok: string): i32 {
     var s: string = tok;
-    if (s.len() > 0 && s[0] == 36) { // '$'
+    if (s.len() > 0 && s[0] == b'$') {
         s = s[1:s.len()] + "";
     }
     var neg: boolean = false;
     var i: i32 = 0;
-    if (s.len() > 0 && s[0] == 45) { // '-'
+    if (s.len() > 0 && s[0] == b'-') {
         neg = true;
         i = 1;
     }
@@ -2331,7 +2331,7 @@ function x86_gas_atoi(tok: string): i32 {
     // MAP_PRIVATE|MAP_ANONYMOUS flags asm.fern emits) parsed to 22, not 34, so
     // the heap mmap got bad flags (EBADF) and every alloc-using program's
     // runtime OOM-exited 137 (the capstone string / heap cases).
-    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+    if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
         i = i + 2;
         while (i < s.len()) {
             var c: i32 = s[i] as i32;
@@ -2362,17 +2362,17 @@ function x86_gas_atoi(tok: string): i32 {
 // wraps give the right bits for INT64_MIN.
 function x86_gas_atoi64(tok: string): i64 {
     var s: string = tok;
-    if (s.len() > 0 && s[0] == 36) { // '$'
+    if (s.len() > 0 && s[0] == b'$') {
         s = s[1:s.len()] + "";
     }
     var neg: boolean = false;
     var i: i32 = 0;
-    if (s.len() > 0 && s[0] == 45) { // '-'
+    if (s.len() > 0 && s[0] == b'-') {
         neg = true;
         i = 1;
     }
     var v: i64 = 0;
-    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+    if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
         i = i + 2;
         while (i < s.len()) {
             var c: i32 = s[i] as i32;
@@ -2446,7 +2446,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
         a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst)) };
         return a;
     }
-    if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
+    if (src.len() > 0 && src[0] == b'$') { // $imm -> reg or mem
         if (x86_str_contains(dst, "(")) { // $imm -> mem (e.g. `movq $1, 8(%rax)`)
             var mi: GasMem = x86_gas_parse_mem(dst);
             if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
@@ -2505,7 +2505,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
 // x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp):
 // `$imm, %reg`, a memory *source* `mem, %reg`, or `%reg, %reg`.
 function x86_gas_alu(own a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+    if (src.len() > 0 && src[0] == b'$') { // $imm -> reg
         a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
     }
@@ -2550,7 +2550,7 @@ function x86_gas_alu(own a: X86Asm, slash: i32, src: string, dst: string): X86As
 // x86_gas_logic dispatches andq/orq/xorq: `$imm, %reg` uses the group-1
 // imm32 form (slash 4/1/6), `%reg, %reg` the reg-reg opcode (0x21/09/31).
 function x86_gas_logic(own a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == 36) {
+    if (src.len() > 0 && src[0] == b'$') {
         a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
     }
@@ -2585,7 +2585,7 @@ function x86_gas_top_comma(s: string): i32 {
 // x86_gas_movb dispatches movb's three shapes: $imm->mem, reg8->mem (store),
 // mem->reg8 (load), in AT&T src, dst order.
 function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == 36) { // $imm -> mem
+    if (src.len() > 0 && src[0] == b'$') { // $imm -> mem
         var m: GasMem = x86_gas_parse_mem(dst);
         if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
         if (m.is_rip) { return x86_store_imm_rip_label(a, 198, 0, m.label, x86_gas_atoi(src), 1); }   // C6 /0
@@ -2656,7 +2656,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // A `*` operand means INDIRECT — through a register or stack slot — not
     // a branch to a label of that name.
     if (mnem == "call" || mnem == "jmp") {
-        if (rest.len() > 0 && rest[0] == 42) { // '*'
+        if (rest.len() > 0 && rest[0] == b'*') {
             var ind: string = x86_gas_trim(rest[1:rest.len()]);
             if (x86_str_contains(ind, "(")) {
                 var cm: GasMem = x86_gas_parse_mem(ind);
@@ -2691,7 +2691,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "jp") { return x86_jcc_label(a, x86_cc_p(), rest); }
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
-        if (rest.len() > 0 && rest[0] == 36) { // $imm
+        if (rest.len() > 0 && rest[0] == b'$') { // $imm
             a = X86Asm { ...a, code: x86_push_imm32(a.code, x86_gas_atoi(rest)) };
         } else {
             if (x86_str_contains(rest, "(")) {
@@ -2840,7 +2840,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
     if (mnem == "testq") {
-        if (src.len() > 0 && src[0] == 36) { // `testq $imm, %reg` — bit-mask test
+        if (src.len() > 0 && src[0] == b'$') { // `testq $imm, %reg` — bit-mask test
             a = X86Asm { ...a, code: x86_test_r64_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) };
             return a;
         }
@@ -2865,7 +2865,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
             a = X86Asm { ...a, code: x86_shift_r64_cl(a.code, sl, x86_gas_reg(dst)) };
             return a;
         }
-        if (src.len() > 0 && src[0] == 36) { // '$'
+        if (src.len() > 0 && src[0] == b'$') {
             a = X86Asm { ...a, code: x86_shift_r64_imm8(a.code, sl, x86_gas_reg(dst), x86_gas_atoi(src)) };
             return a;
         }
@@ -2961,7 +2961,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "cmpl") { return x86_gas_alu32(a, 7, 57, src, dst); }
     if (mnem == "shrl") { a = X86Asm { ...a, code: x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) }; return a; }
     if (mnem == "testb") {
-        if (src.len() > 0 && src[0] == 36) {
+        if (src.len() > 0 && src[0] == b'$') {
             a = X86Asm { ...a, code: x86_testb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
         } else {
             a = X86Asm { ...a, code: x86_testb_reg8_reg8(a.code, x86_gas_reg8(dst), x86_gas_reg8(src)) };
@@ -2972,7 +2972,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // writes both spellings (`cmovneq` at asm_ir.fern:5293), so strip a
     // trailing `q` before matching. Every operand here is 64-bit.
     var cmv: string = mnem;
-    if (cmv.len() > 5 && cmv[0:4] == "cmov" && cmv[cmv.len() - 1] == 113) { // 'q'
+    if (cmv.len() > 5 && cmv[0:4] == "cmov" && cmv[cmv.len() - 1] == b'q') {
         cmv = cmv[0:cmv.len() - 1] + "";
     }
     if (cmv == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
@@ -3006,7 +3006,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         return a;
     }
     if (mnem == "cmpb") {
-        if (src.len() > 0 && src[0] == 36) {
+        if (src.len() > 0 && src[0] == b'$') {
             a = X86Asm { ...a, code: x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
             return a;
         }
@@ -3094,7 +3094,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
             }
         }
         // directive: `.…`
-        if (line[0] == 46) { // '.'
+        if (line[0] == b'.') {
             if (x86_str_starts_with(line, ".section")) {
                 if (x86_str_contains(line, ".rodata")) {
                     section = 1;
@@ -3141,7 +3141,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
                 var ltok: string = "";
                 var lci: i32 = 0;
                 while (lci < lrest.len()) {
-                    if (lrest[lci] == 44) {   // ','
+                    if (lrest[lci] == b',') {
                         a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
                         ltok = "";
                     } else {

@@ -174,11 +174,11 @@ function t_char(): Type {
 // exceeds 0x10FFFF, so it is rejected without trusting the wrapped value.
 function lit_is_scalar_value(text: string): boolean {
   var off: i32 = 0;
-  if (text.len() > 0 && text[0] == 45) {
+  if (text.len() > 0 && text[0] == b'-') {
     off = 1;
   }
   var digits: i32 = text.len() - off;
-  var is_hex: boolean = digits > 1 && text[off] == 48 && (text[off + 1] == 120 || text[off + 1] == 88);
+  var is_hex: boolean = digits > 1 && text[off] == b'0' && (text[off + 1] == b'x' || text[off + 1] == b'X');
   if (is_hex) {
     if (digits - 2 > 6) {
       return false;
@@ -1010,7 +1010,7 @@ function (s: Scope) defines(name: string): boolean {
 function name_has_comma(name: string): boolean {
   var i: i32 = 0;
   while (i < name.len()) {
-    if (name[i] == 44) {
+    if (name[i] == b',') {
       return true;
     }
     i = i + 1;
@@ -1028,7 +1028,7 @@ function bind_names(s: Scope, name: string): Scope {
   var i: i32 = 0;
   var out: Scope = s;
   while (i <= name.len()) {
-    if (i == name.len() || name[i] == 44) {
+    if (i == name.len() || name[i] == b',') {
       if (i > start) {
         out = out.bind(name[start:i], t_unknown("binding"));
       }
@@ -1352,7 +1352,7 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
   // argument we look up an impl for — skip.
   var bi: i32 = 0;
   while (bi < cty.len()) {
-    if (cty[bi] == 91) {
+    if (cty[bi] == b'[') {
       return out;
     }
     bi = bi + 1;
@@ -1363,7 +1363,7 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
   var start: i32 = 0;
   var i: i32 = 0;
   while (i <= pbound.len()) {
-    if (i == pbound.len() || pbound[i] == 43) {
+    if (i == pbound.len() || pbound[i] == b'+') {
       if (i > start) {
         var tr: str = pbound[start:i];
         var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
@@ -3283,7 +3283,7 @@ pub function type_from_name_with_structs_unions(name: string, structs: StructSig
   if (name.len() >= 5 && name[0:4] == "dyn ") {
     var tail: str = name[4:name.len()];
     var depth: i32 = 0;
-    while (tail.len() >= 2 && tail[tail.len() - 2] == 91 && tail[tail.len() - 1] == 93) {
+    while (tail.len() >= 2 && tail[tail.len() - 2] == b'[' && tail[tail.len() - 1] == b']') {
       tail = tail[0:tail.len() - 2];
       depth = depth + 1;
     }
@@ -5797,7 +5797,7 @@ function struct_decl_col(structs: parser.StructDecl[], name: string): i32 {
 function dot_index(s: string): i32 {
   var i: i32 = 0;
   while (i < s.len()) {
-    if (s[i] == 46) {
+    if (s[i] == b'.') {
       return i;
     }
     i = i + 1;
@@ -6471,7 +6471,7 @@ function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
   var start: i32 = 0;
   var i: i32 = 0;
   while (i <= bound.len()) {
-    if (i == bound.len() || bound[i] == 43) {
+    if (i == bound.len() || bound[i] == b'+') {
       if (i > start) {
         var tr: str = bound[start:i];
         var h: AssocHit = trait_assoc_req(s, tr, field, 0);
@@ -8060,7 +8060,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
         var ncommas: i32 = 0;
         var ci: i32 = 0;
         while (ci < v.name.len()) {
-          if (v.name[ci] == 44) {
+          if (v.name[ci] == b',') {
             ncommas = ncommas + 1;
           }
           ci = ci + 1;
@@ -8395,8 +8395,8 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   }
   var bi: i32 = 0;
   while (bi < rt.len()) {
-    if (rt[bi] == 91) {
-      return true;  // '[' → generic/Map/array
+    if (rt[bi] == b'[') {
+      return true;  // generic/Map/array
     }
     bi = bi + 1;
   }
@@ -11177,7 +11177,7 @@ function e021_dyn_target(type_name: string): string {
     return "";
   }
   var t: str = type_name[4:type_name.len()];
-  while (t.len() >= 2 && t[t.len() - 2] == 91 && t[t.len() - 1] == 93) {
+  while (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
     t = t[0:t.len() - 2];
   }
   return t + "";
@@ -11232,8 +11232,8 @@ function e060_dyn_set_of(type_name: string): string {
     return "";
   }
   var t: str = type_name[4:type_name.len()];
-  if (t.len() >= 2 && t[t.len() - 2] == 91 && t[t.len() - 1] == 93) {
-    return "";  // "[]"
+  if (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
+    return "";
   }
   return t + "";
 }
@@ -11300,8 +11300,8 @@ function e060_collect_dyn_locals(stmts: parser.Stmt[], acc: string[]): string[] 
         while (k < a.len()) {
           var e: string = a[k];
           var bar: i32 = 0;
-          while (bar < e.len() && e[bar] != 124) {
-            bar = bar + 1;  // 124 = '|'
+          while (bar < e.len() && e[bar] != b'|') {
+            bar = bar + 1;
           }
           if (e[0:bar] == v.name) {
             a = a.with(k, v.name + "|");
@@ -11346,7 +11346,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
   while (i < dyns.len()) {
     var e: string = dyns[i];
     var bar: i32 = 0;
-    while (bar < e.len() && e[bar] != 124) {
+    while (bar < e.len() && e[bar] != b'|') {
       bar = bar + 1;
     }
     if (e[0:bar] == name) {

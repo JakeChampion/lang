@@ -279,7 +279,7 @@ function last_slash(p: string): i32 {
     var i: i32 = 0;
     var last: i32 = 0 - 1;
     while (i < p.len()) {
-        if (p[i] == 47) { last = i; }
+        if (p[i] == b'/') { last = i; }
         i = i + 1;
     }
     return last;
@@ -305,7 +305,7 @@ function module_name(import_path: string): string {
 // root, when one is configured).
 function is_local(import_path: string): boolean {
     if (import_path.len() == 0) { return false; }
-    return import_path[0] == 46;   // '.'
+    return import_path[0] == b'.';
 }
 
 // join_path builds `<dir>/<name>.fern` (or `<name>.fern` if dir empty).
@@ -366,7 +366,7 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
 // `fern -interp -` an unknown-flag error.
 function is_flag(a: string): boolean {
     if (a.len() < 2) { return false; }
-    return a[0] == 45;   // '-'
+    return a[0] == b'-';
 }
 
 function usage(): i32 {
@@ -700,7 +700,7 @@ function find_manifest_dir(dir: string): string {
 // source cannot be materialised — fetching is native-only — so an index
 // entry MVS actually selects by url is a diagnostic rather than a download.
 function run_resolve(start: string): i32 {
-    if (start.len() == 0 || start[0] != 47) {   // '/'
+    if (start.len() == 0 || start[0] != b'/') {
         eprint("resolve: pass an absolute path (this driver has no working-directory builtin)");
         return 2;
     }
@@ -907,7 +907,7 @@ function insert_dependency(src: string, line: string): string {
         i = i + 1;
     }
     var sep: string = "\n";
-    if (src.len() > 0 && src[src.len() - 1] == 10) { sep = ""; }
+    if (src.len() > 0 && src[src.len() - 1] == b'\n') { sep = ""; }
     return src + sep + "\n[dependencies]\n" + line + "\n";
 }
 
@@ -915,7 +915,7 @@ function insert_dependency(src: string, line: string): string {
 // digit — the manifest's own rule for a dependency key.
 function valid_dep_name(s: string): boolean {
     if (s.len() == 0) { return false; }
-    if (s[0] >= 48 && s[0] <= 57) { return false; }   // '0'..'9'
+    if (s[0] >= b'0' && s[0] <= b'9') { return false; }
     var i: i32 = 0;
     while (i < s.len()) {
         var c: i32 = s[i] as i32;
@@ -1200,7 +1200,7 @@ function copy_package(src: string, dst: string): string {
             var child: string = src + "/" + child_rel;
             if (is_dir(child)) {
                 if (name == "vendor") { continue; }
-                if (name.len() > 0 && name[0] == 46) { continue; }   // '.', and so `.` / `..`
+                if (name.len() > 0 && name[0] == b'.') { continue; }   // and so `.` / `..`
                 rels = rels.append(child_rel + "");
                 continue;
             }
@@ -1490,7 +1490,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
 // module whose final line has no newline is a diff against native's output
 // and an oddity in the file `-o` writes.
 function end_with_newline(code: string): string {
-    if (code.len() > 0 && code[code.len() - 1] == 10) { return code; }   // '\n'
+    if (code.len() > 0 && code[code.len() - 1] == b'\n') { return code; }
     return code + "\n";
 }
 
@@ -1622,7 +1622,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
             if (rel.len() > 0) { child_rel = rel + "/" + name; }
             var child: string = dir + "/" + child_rel;
             if (is_dir(child)) {
-                if (name.len() > 0 && name[0] == 46) { continue; }   // '.', and so `.` / `..`
+                if (name.len() > 0 && name[0] == b'.') { continue; }   // and so `.` / `..`
                 rels = rels.append(child_rel + "");
                 continue;
             }
@@ -1679,9 +1679,9 @@ function doc_module_path(ns: string, stem: string): string {
 // `-doc std/` names the same namespace as `-doc std`.
 function path_base(p: string): string {
     var end: i32 = p.len();
-    while (end > 0 && p[end - 1] == 47) { end = end - 1; }   // '/'
+    while (end > 0 && p[end - 1] == b'/') { end = end - 1; }
     var start: i32 = end;
-    while (start > 0 && p[start - 1] != 47) { start = start - 1; }
+    while (start > 0 && p[start - 1] != b'/') { start = start - 1; }
     return p[start:end] + "";
 }
 
@@ -1691,7 +1691,7 @@ function flatten_path(p: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < p.len()) {
-        if (p[i] == 47) { out = out + "_"; } else { out = out + p[i:i + 1]; }
+        if (p[i] == b'/') { out = out + "_"; } else { out = out + p[i:i + 1]; }
         i = i + 1;
     }
     return out;

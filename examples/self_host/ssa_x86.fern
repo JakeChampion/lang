@@ -20,23 +20,6 @@
 import "./ssa";
 import "./util";
 
-// str_join_range concatenates parts[lo..hi) by balanced divide-and-conquer.
-// A left fold (out = out + parts[i]) copies the whole accumulator on every
-// append → O(total²) when emitting a large program; this splits the range in
-// half and merges, so each of the log n levels copies O(total) → O(total·log n)
-// overall. (Array push is amortised O(1), but string concat is O(len), so the
-// emit hot path collects chunks in a string[] and joins once through here.)
-function str_join_range(parts: string[], lo: i32, hi: i32): string {
-    var n: i32 = hi - lo;
-    if (n <= 0) { return ""; }
-    if (n == 1) { return parts[lo]; }
-    var mid: i32 = lo + n / 2;
-    return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
-}
-function str_join_chunks(parts: string[]): string {
-    return str_join_range(parts, 0, parts.len());
-}
-
 // slot returns the AT&T memory operand for SSA value v's stack slot.
 function slot(v: i32): string {
     return "-" + util.i32_to_string(8 * (v + 1)) + "(%rbp)";
@@ -571,7 +554,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
         chunks = chunks.append(emit_term(f, f.name, reg_of, widths, isfloat, blk, ""));
         bi = bi + 1;
     }
-    return str_join_chunks(chunks);
+    return util.str_join_chunks(chunks);
 }
 
 // emit_program frames the whole module: a heap (a .bss arena + bump
@@ -632,7 +615,7 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
                     parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + util.i32_to_string(sv.len()) + "\n");
                     var ci: i32 = 0;
                     while (ci < sv.len()) { parts = parts.append("    .quad " + util.i32_to_string((sv[ci] as i32)) + "\n"); ci = ci + 1; }
-                    out = out + str_join_chunks(parts);
+                    out = out + util.str_join_chunks(parts);
                 }
                 k = k + 1;
             }
@@ -671,7 +654,7 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         chunks = chunks.append(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
-    out = out + str_join_chunks(chunks);
+    out = out + util.str_join_chunks(chunks);
     // __fern_ssa_print(%rdi = string handle): write each byte to stdout,
     // then a trailing newline — Fern's print / eprint append a '\n' (the
     // native backend, the interpreter, and the AST emitters all do).
