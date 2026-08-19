@@ -747,6 +747,121 @@ function main(): i32 {
 		foldCase(t, "foldhex", "function main(): i32 { return 0x10 + 1; }\n", 17)
 	})
 
+	// `-O` is the release build: it elides every assert() check and nothing
+	// else, which is the one thing native spends the flag on
+	// (constfold.ElideAsserts). assertCase pins both directions — the default
+	// build still checks, `-O` does not — because an elision that fired on
+	// every build would be a silent loss of every assert in the language.
+	assertCase := func(t *testing.T, name, src string, wantDefault, wantOpt int) {
+		t.Helper()
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		for _, leg := range []struct {
+			label    string
+			args     []string
+			wantExit int
+			wantMsg  int
+		}{
+			{"default", []string{"-no-ssa"}, wantDefault, 1},
+			{"-O", []string{"-no-ssa", "-O"}, wantOpt, 0},
+		} {
+			asm, code := runDriver(t, append(append([]string{}, leg.args...), srcPath)...)
+			if code != 0 {
+				t.Fatalf("%s: %s emit exited %d, want 0", name, leg.label, code)
+			}
+			// The desugar's message is the only trace an assert leaves in the
+			// emitted code, so its absence is what "elided" means.
+			if n := strings.Count(string(asm), "assertion failed"); (n > 0) != (leg.wantMsg > 0) {
+				t.Errorf("%s: %s build has %d \"assertion failed\" string(s), want %s:\n%s",
+					name, leg.label, n, map[bool]string{true: "at least one", false: "none"}[leg.wantMsg > 0], asm)
+			}
+			progBin := buildBin(t, gcc, dir, name+leg.label, string(asm))
+			cmd := exec.Command(progBin)
+			_ = cmd.Run()
+			if c := cmd.ProcessState.ExitCode(); c != leg.wantExit {
+				t.Errorf("%s: %s build exited %d, want %d", name, leg.label, c, leg.wantExit)
+			}
+		}
+	}
+
+	// A failing assert: exit 1 on a default build, gone under `-O` so the
+	// function reaches its return. Native answers 1 / 5 on the same program.
+	t.Run("opt-elides-assert", func(t *testing.T) {
+		assertCase(t, "elide", "function main(): i32 {\n"+
+			"    var n: i32 = 3;\n"+
+			"    assert(n > 100, \"boom\");\n"+
+			"    return 5;\n"+
+			"}\n", 1, 5)
+	})
+
+	// The shapes a top-level statement filter misses. Each nests an assert one
+	// level deeper than the last; `-O` has to reach all five, which is what
+	// routing the pass through astwalk's splicing fold buys — a lambda body
+	// and a match arm are not in the enclosing statement list at all.
+	t.Run("opt-elides-nested-asserts", func(t *testing.T) {
+		assertCase(t, "elidenest", "enum E { A(i32) }\n"+
+			"function run(f: () => i32): i32 { return f(); }\n"+
+			"function main(): i32 {\n"+
+			"    var n: i32 = 3;\n"+
+			"    if (n > 0) { assert(n > 100, \"nested-if\"); }\n"+
+			"    var g: i32 = 0;\n"+
+			"    while (g < 1) { assert(n > 100, \"while\"); g = g + 1; }\n"+
+			"    var r: i32 = run(function(): i32 { assert(n > 100, \"lambda\"); return 1; });\n"+
+			"    var e: E = E.A(1);\n"+
+			"    match (e) {\n"+
+			"        E.A(v) => { assert(v > 100, \"match-arm\"); },\n"+
+			"        _ => { return 90; }\n"+
+			"    }\n"+
+			"    var r2: i32 = run(function(): i32 {\n"+
+			"        return run(function(): i32 { assert(n > 100, \"nested-lambda\"); return 2; });\n"+
+			"    });\n"+
+			"    return r + r2 + 2;\n"+
+			"}\n", 1, 5)
+	})
+
+	// Through MONOMORPHISATION. The marker rides StmtIf.origin, and the passes
+	// between the parser and the elision rebuild statements field by field —
+	// a copy site that omits `origin` drops it silently and only for cloned
+	// generics, which is the same shape as the async-function case above.
+	// Both instantiations must lose their assert.
+	t.Run("opt-elides-assert-in-generic", func(t *testing.T) {
+		assertCase(t, "elidegen", "function check_it[T](v: T, n: i32): i32 {\n"+
+			"    assert(n > 100, \"generic\");\n"+
+			"    return 1;\n"+
+			"}\n"+
+			"function main(): i32 {\n"+
+			"    return check_it(7, 3) + check_it(\"s\", 3) + 3;\n"+
+			"}\n", 1, 5)
+	})
+
+	// Ordering: the elision runs AFTER the gates, so a release build rejects
+	// the same programs a default build does rather than deleting the offending
+	// code unexamined. `-O` must narrow the emitted program, never widen the
+	// set that compiles.
+	//
+	// The target-capability gate (E066) is the shape this can be pinned with.
+	// The checker's own diagnostics cannot: every code an ill-typed assert
+	// raises — E001, E004, E009, E043 — is on is_partial_checker_gap_code's
+	// measured list, so none of them gates a build here yet. See #7170.
+	t.Run("opt-elides-after-the-gates", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "capassert.fern")
+		src := "function main(): i32 {\n    assert(proc_fork() >= 0);\n    return 0;\n}\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		for _, leg := range [][]string{
+			{"-target", "wasm32-wasi", "-emit", "asm", srcPath},
+			{"-target", "wasm32-wasi", "-emit", "asm", "-O", srcPath},
+		} {
+			out, code := runDriver(t, leg...)
+			if code == 0 {
+				t.Errorf("%v: a capability-violating assert compiled; the elision is running before the gates:\n%s", leg, out)
+			}
+		}
+	})
+
 	t.Run("check-ok", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ok.fern")
 		if err := os.WriteFile(srcPath, []byte("function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }\n"), 0o644); err != nil {

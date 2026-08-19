@@ -554,6 +554,27 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		s.walkExpr(&x.Expr)
 	case *ast.FuncDecl:
 		s.walkBlock(x.Body)
+	// Same hole the expression switch below already had patched (#5477): a
+	// const referenced from one of these was never substituted and reached
+	// the checker as a bare Ident, so `parser.ORIGIN_ASSERT` inside a match
+	// arm was "E001: undefined identifier" for a const plainly in scope.
+	// MatchExpr is handled in walkExpr; the STATEMENT match was not.
+	case *ast.Match:
+		s.walkExpr(&x.Tag)
+		for _, arm := range x.Arms {
+			if arm.Literal != nil {
+				s.walkExpr(&arm.Literal)
+			}
+			if arm.RangeHi != nil {
+				s.walkExpr(&arm.RangeHi)
+			}
+			if arm.Guard != nil {
+				s.walkExpr(&arm.Guard)
+			}
+			s.walkBlock(arm.Body)
+		}
+	case *ast.Defer:
+		s.walkExpr(&x.Expr)
 	}
 }
 

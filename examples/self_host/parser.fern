@@ -720,6 +720,16 @@ function s_expr(value: Expr): Stmt { return StmtExpr { value: value, line: 0 }; 
 function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
     return s_if_chained(cond, then_body, else_body, false);
 }
+// s_if_origin is s_if plus the marker naming the source form the `if` was
+// desugared FROM, so a later pass can find it again. `assert` uses it: `-O`
+// drops the check, and a desugared assert is otherwise indistinguishable from
+// a hand-written `if`.
+function s_if_origin(cond: Expr, then_body: Stmt[], else_body: Stmt[], origin: string): Stmt {
+    return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0, else_chained: false, sugar: no_match_sugar(), origin: origin };
+}
+// ORIGIN_ASSERT marks the `if (!cond) { eprint(…); exit(1); }` an `assert`
+// desugars to. constfold.elide_asserts keys off it.
+pub const ORIGIN_ASSERT: string = "assert";
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
 pub function no_match_sugar(): MatchSugar {
@@ -5223,7 +5233,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             as_xargs = as_xargs.append(e_number("1", "", false));
             as_body = as_body.append(s_expr(e_call(e_ident("exit"), as_xargs)));
             var as_noelse: Stmt[] = [];
-            return (s_if(e_unary("!", as_cond), as_body, as_noelse), asp);
+            return (s_if_origin(e_unary("!", as_cond), as_body, as_noelse, ORIGIN_ASSERT), asp);
         }
     }
     // `todo;` / `todo("msg");` builtin — desugar to
