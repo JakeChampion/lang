@@ -523,7 +523,14 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
 ## 9. Implementation log
 
-(Updated as slices land.)
+**Closed to new entries as of 2026-08-20 — they now live one-per-file in
+[`rc-log/`](rc-log/).** The 291 entries below stay here; nothing was migrated,
+because moving them would be a 10,938-line diff that conflicts with every PR in
+flight, which is the problem being solved rather than a fix for it.
+
+The split is mechanical, not editorial: appending to one tail makes two
+concurrent goal-2 PRs conflict by construction, and a directory has no shared
+anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
 - 2026-06-07: design doc created; native + self-host fully mapped
   (this document).
