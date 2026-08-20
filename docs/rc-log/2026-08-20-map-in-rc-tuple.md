@@ -150,8 +150,16 @@ counter instead.
    clone at all here — it runs `__map_set_impl` in place and gets the same answer
    (verified: `var n = m; m = m.insert("k", 7); n.get_or("k", 0)` is 1 on interp,
    native and self-host alike), so native's copy-on-write is a RUNTIME rc check
-   where the self-host's is a whole-body syntactic scan. Fixing that is the
-   flow-sensitive `is_aliased_name` slice, and it subsumes this residue.
+   where the self-host's is a whole-body syntactic scan. Tracked as #7235.
+
+   Do NOT read that as "match native and the clone goes away": `__fern_map_new`
+   allocates the mapbox with `__fern_alloc`, not `__fern_arr_box` — 16 raw bytes
+   with NO rc header, which `__fern_map_free` returns to the freelist as such. A
+   mapbox carries no refcount, so `__fern_rc_is_unique` on one has nothing to
+   test and native's runtime guard is not available here. What is left is either
+   a flow-sensitive `is_aliased_name` (a wrong-answer risk, not a leak risk) or
+   giving the mapbox an rc header, which is a box-layout change across all five
+   emitters. #7235 has both.
 2. **The `(i32, Map[K, V])` tuple BOX earns no reclaim of its own** — neither
    "TUP:" (`tuple_type_is_all_scalar` says no) nor "TUPRC:" (no rc child). At
    most nestings something else frees it; in a `for` body nothing does, which is
