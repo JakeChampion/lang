@@ -60,6 +60,12 @@ pub struct LocalInfo {
     // release sites, which frees the box alone when the rc is the immortal view
     // sentinel and takes the ordinary path otherwise (wasm's trim copies).
     str_view_local: boolean,
+    // str_replace_src: for a slot bound from `<string>.replace(old, new)`, the
+    // RECEIVER's slot; -1 otherwise. replace has a genuine identity fast-path —
+    // with the needle absent it hands the receiver's own box back, measured at
+    // zero bytes allocated — so its result is releasable only behind a guard
+    // that the two are different pointers.
+    str_replace_src: i32,
     // struct_type: the slot's struct type name ("" = not a struct), so `p.x`
     // resolves x's field index in p's decl.
     struct_type: string,
@@ -186,7 +192,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_replace_src: 0 - 1, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -213,6 +219,9 @@ pub function li_set_strarr_builtin(li: LocalInfo, v: boolean): LocalInfo {
 }
 pub function li_set_str_view_local(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, str_view_local: v };
+}
+pub function li_set_str_replace_src(li: LocalInfo, v: i32): LocalInfo {
+    return LocalInfo { ...li, str_replace_src: v };
 }
 
 pub function li_set_is_bool(li: LocalInfo, v: boolean): LocalInfo {
@@ -1874,6 +1883,47 @@ pub function (s: LowerState) is_str_view_local_slot(i: i32): boolean {
     if (i < 0) { return false; }
     if (i >= s.locals.len()) { return false; }
     return s.locals[i].str_view_local;
+}
+
+pub function (s: LowerState) mark_str_replace_src(i: i32, v: i32): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_str_replace_src(s.locals[i], v)) };
+}
+
+pub function (s: LowerState) str_replace_src_slot(i: i32): i32 {
+    if (i < 0) { return 0 - 1; }
+    if (i >= s.locals.len()) { return 0 - 1; }
+    return s.locals[i].str_replace_src;
+}
+
+// replace_src_slot_of: the RECEIVER's slot for `<string ident>.replace(a, b)`,
+// or -1. Only a bare ident receiver qualifies — the guard has to compare the
+// result against something the frame still holds, and a temporary receiver has
+// no slot to compare with (and could not be the identity anyway, since nothing
+// else names it).
+function replace_src_slot_of(e: parser.Expr, s: LowerState): i32 {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return 0 - 1; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "replace") { return 0 - 1; }
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            if (!expr_is_str(fa.obj, s)) { return 0 - 1; }
+                            var si: i32 = s.slot_of(rid.name);
+                            if (si < 0) { return 0 - 1; }
+                            if (!s.is_str_slot(si)) { return 0 - 1; }
+                            return si;
+                        },
+                        _ => { return 0 - 1; }
+                    }
+                },
+                _ => { return 0 - 1; }
+            }
+        },
+        _ => {}
+    }
+    return 0 - 1;
 }
 
 // init_is_str_trim: `<string>.trim()`. trim is the one string builtin whose
@@ -17087,6 +17137,8 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // Same shape for the trim class: the receiver's type is known here, and the
     // flag is what makes the release site pick the view-aware free.
     if (vt.is_str) { sb = sb.mark_str_view_local(slot, init_is_str_trim(v.init, se)); }
+    // …and the replace receiver's slot, for the identity guard the release needs.
+    if (vt.is_str) { sb = sb.mark_str_replace_src(slot, replace_src_slot_of(v.init, se)); }
     sb = sb.mark_f64arr(slot, vt.is_f64arr);
     sb = sb.mark_bool(slot, vt.is_bool);
     sb = sb.mark_boolarr(slot, vt.is_boolarr);
@@ -24242,9 +24294,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var sj: i32 = st.n_params;
     while (sj < st.locals.len()) {
         if (!slot_list_has(keeps, sj) && slot_is_reclaimable_str(st, sj)) {
-            st = st.emit(ir.op_load_local(sj));
-            st = st.emit(ir.op_call_direct(str_free_helper(st, sj), 1));
-            st = st.emit(ir.op_drop());
+            st = emit_str_slot_release(st, sj);
         }
         sj = sj + 1;
     }
@@ -27676,6 +27726,62 @@ function trim_str_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
         _ => { return false; }
     }
     return false;
+}
+
+// replace_str_init: `init` is `<ident>.replace(old, new)` whose receiver is
+// declared `string`. Fourth consumer of the declared-name/type pair, for the same
+// reason as the other three.
+//
+// Unlike trim, the result here is NOT unconditionally a fresh box: with the
+// needle absent replace hands the receiver straight back, measured at zero bytes
+// allocated. The credit is therefore paired with the identity guard
+// emit_str_slot_release emits — the analysis says "this box MAY be ours", and the
+// guard settles it at run time, which is the only place the answer exists.
+function replace_str_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
+    match (init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "replace") { return false; }
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            var at: i32 = util.index_of_str(ns, rid.name);
+                            if (at < 0) { return false; }          // unknown type -> refuse
+                            if (at >= ts.len()) { return false; }
+                            return ts[at] == "string";
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_replace_local_names gathers every `var r: string = s.replace(a, b)`
+// binding, recursing through nested blocks like its siblings.
+function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (replace_str_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); } },
+            parser.StmtIf(f) => { a = collect_replace_local_names(f.then_body, ns, ts, a); a = collect_replace_local_names(f.else_body, ns, ts, a); },
+            parser.StmtWhile(w) => { a = collect_replace_local_names(w.body, ns, ts, a); },
+            parser.StmtFor(fo) => { a = collect_replace_local_names(fo.body, ns, ts, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_replace_local_names(m.arms[mi].body, ns, ts, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // collect_trim_local_names gathers every `var t: string = s.trim()` binding,
@@ -31399,6 +31505,19 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + tms[tmi]);
         }
         tmi = tmi + 1;
+    }
+    // `<string>.replace(old, new)` locals — same gates, released behind the
+    // identity guard (the slot's str_replace_src is what carries the receiver to
+    // compare against).
+    var rps: string[] = collect_replace_local_names(body, tsn, tst, []);
+    var rpi: i32 = 0;
+    while (rpi < rps.len()) {
+        if (util.index_of_str(strs, rps[rpi]) < 0
+            && util.index_of_str(reassigned, rps[rpi]) < 0
+            && !body_unsafe_for_clo(body, rps[rpi], borrowable, clo_ok, recv_borrow)) {
+            out = out.append("STR:" + rps[rpi]);
+        }
+        rpi = rpi + 1;
     }
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
@@ -36098,6 +36217,34 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
 // alone when the rc is the immortal view sentinel and takes __fern_str_free's
 // path otherwise, which is what wasm needs (its trim copies, so the result is an
 // ordinary owned block).
+// emit_str_slot_release emits the release for a reclaimable string slot: the
+// plain call, or — for a `replace` result — the same call under a guard that the
+// box is not the receiver's own. replace's identity fast-path returns the
+// receiver when the needle is absent (measured: zero bytes allocated), so an
+// unguarded free would release a box the receiver still owns. The guard is the
+// `old != new` cow test emit_str_reclaim_store already uses, pointed at the
+// recorded source slot instead.
+//
+// Comparing against a slot the sweep may have freed already is safe: the guard
+// only compares the pointers, never dereferences, and either order gives the
+// right answer — identical means skip, different means this box is ours.
+function emit_str_slot_release(s: LowerState, i: i32): LowerState {
+    var src: i32 = s.str_replace_src_slot(i);
+    if (src < 0) {
+        var d: LowerState = s.emit(ir.op_load_local(i));
+        d = d.emit(ir.op_call_direct(str_free_helper(d, i), 1));
+        return d.emit(ir.op_drop());
+    }
+    var g: LowerState = s.emit(ir.op_load_local(i));
+    g = g.emit(ir.op_load_local(src));
+    g = g.emit(ir.op_bin("ne", 0, false));
+    g = g.emit(ir.op_if(0));
+    g = g.emit(ir.op_load_local(i));
+    g = g.emit(ir.op_call_direct(str_free_helper(g, i), 1));
+    g = g.emit(ir.op_drop());
+    return g.emit(ir.op_end());
+}
+
 function str_free_helper(s: LowerState, i: i32): string {
     if (s.is_str_view_local_slot(i)) { return "__fern_str_view_free"; }
     return "__fern_str_free";
@@ -44418,7 +44565,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_replace_src: 0 - 1, struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the
