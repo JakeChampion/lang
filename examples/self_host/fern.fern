@@ -547,11 +547,11 @@ function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
         i = i + 1;
     }
 
-    write("functions scanned: " + checker.itoa_nn(allfuncs.len()) + "\n");
-    write("build_func failures: " + checker.itoa_nn(fails.len()) + "\n");
+    write("functions scanned: " + util.i32_to_string(allfuncs.len()) + "\n");
+    write("build_func failures: " + util.i32_to_string(fails.len()) + "\n");
     var fi: i32 = 0;
     while (fi < fails.len()) { write("  FAIL " + fails[fi] + "\n"); fi = fi + 1; }
-    write("unknown callees: " + checker.itoa_nn(unknown.len()) + "\n");
+    write("unknown callees: " + util.i32_to_string(unknown.len()) + "\n");
     var ui: i32 = 0;
     while (ui < unknown.len()) { write("  UNKNOWN " + unknown[ui] + "\n"); ui = ui + 1; }
     if (fails.len() == 0 && unknown.len() == 0) { write("RESULT: full per-function SSA coverage (0 failures, 0 unknown callees)\n"); }
@@ -628,7 +628,7 @@ function capability_violations(merged: parser.Module, target: string): boolean {
         // names the function and module instead. Native's renderer makes the
         // same split.
         if (v.fn_module.len() == 0 && v.line > 0) {
-            eprint(checker.itoa_nn(v.line) + ":" + checker.itoa_nn(v.col) + ": " + msg + "\n");
+            eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
         } else {
             eprint(msg + "\n");
         }
@@ -1333,7 +1333,7 @@ function bundle_visibility_diags(b: Bundle): boolean {
     var vi: i32 = 0;
     while (vi < vis_diags.len()) {
         var vd: util.Diag = vis_diags[vi];
-        eprint(checker.itoa_nn(vd.line) + ":" + checker.itoa_nn(vd.col) + ": " + vd.message + "\n");
+        eprint(util.i32_to_string(vd.line) + ":" + util.i32_to_string(vd.col) + ": " + vd.message + "\n");
         vi = vi + 1;
     }
     return vis_diags.len() > 0;
@@ -1359,7 +1359,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
         var tag: string = "";
         if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
         if (d.line > 0) {
-            eprint(checker.itoa_nn(d.line) + ":" + checker.itoa_nn(d.col) + ": " + tag + d.message + "\n");
+            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + tag + d.message + "\n");
         } else {
             eprint(tag + d.message + "\n");
         }
@@ -1390,7 +1390,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
         while (hi < hints.len()) {
             var h: util.Diag = hints[hi];
             if (h.line > 0) {
-                eprint(checker.itoa_nn(h.line) + ":" + checker.itoa_nn(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
+                eprint(util.i32_to_string(h.line) + ":" + util.i32_to_string(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
             } else {
                 eprint("error[" + h.code + "]: " + h.message + "\n");
             }
@@ -1444,7 +1444,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
         match (literate.tangle_chunk(src, chunk)) {
             literate.TangleOk(o) => { return tangle_emit(end_with_newline(o.code), out_path); },
             literate.TangleErr(e) => {
-                eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
+                eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
                 return 1;
             },
         }
@@ -1470,7 +1470,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
                 return tangle_emit(out, "");
             },
             literate.FileTangleErr(e) => {
-                eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
+                eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
                 return 1;
             },
         }
@@ -1478,7 +1478,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
     match (literate.tangle(src)) {
         literate.TangleOk(o) => { return tangle_emit(end_with_newline(o.code), out_path); },
         literate.TangleErr(e) => {
-            eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
+            eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
             return 1;
         },
     }
@@ -2219,7 +2219,7 @@ function run(): i32 {
         while (ii < gated.len()) {
             var idg: util.Diag = gated[ii];
             if (idg.line > 0) {
-                eprint(checker.itoa_nn(idg.line) + ":" + checker.itoa_nn(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
+                eprint(util.i32_to_string(idg.line) + ":" + util.i32_to_string(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
             } else {
                 eprint("error[" + idg.code + "]: " + idg.message + "\n");
             }
