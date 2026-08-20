@@ -64,6 +64,21 @@ and the CLI probe that found it took seconds.
 comment says an omission links a module against an undefined `__fern_x` under
 `-per-module`, caught by the per-module link test rather than silently.
 
+**And the IR verifier keeps its own inventory.** `irverifyprovided.fern`
+deliberately does not read `asm_ir.is_fern_helper` — a verifier that gets its
+answer from the compiler agrees with the compiler by construction — so a helper
+the emitter gains and the inventory does not becomes an unresolved callee:
+`calls __fern_str_arr_view_free, which the program does not declare and no
+backend provides`, on every conformance fixture that reclaims a builtin
+`string[]`. That is the pass working as designed, and it is the failure the
+audit test's own comment predicts for this direction.
+
+So a new runtime helper is FIVE registrations, and the checklist is already
+written down in `self_host_i32_predicates_ir_test.go`: `is_fern_helper`, a need
+mapping **per backend**, the `emit_ir_runtime` gate, the `emit_runtime_globls`
+export, and the verifier inventory. Four of the five fail loudly; the per-backend
+half of the need mapping is the one that looks fine on the backend you tested.
+
 ## What is witnessed, and what is not
 
 Witnessed at fault level, from the predecessor and still holding here (now with
