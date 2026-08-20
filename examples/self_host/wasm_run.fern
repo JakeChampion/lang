@@ -15,6 +15,7 @@ import "./lexer";
 import "./parser";
 import "./asmcore";
 import "./wasm_ir";
+import "./util";
 
 function main(): i32 {
     // `-decide`: print the ROUTING verdict ("ir" / "ast") instead of emitting.
@@ -42,21 +43,21 @@ function main(): i32 {
     // wasm emitter and miscompile where the Go compiler rejects with E004.
     // Checked on a default-filled COPY so omitted defaulted args don't read
     // as mismatches; the emit input stays untouched.
-    var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
     // Bare-map_new chain gate (native E038/E003 parity) — same
     // reject-don't-miscompile rationale as the arity gate.
-    arity_errs = arity_errs + asmcore.check_map_new_chain(mod);
+    arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
     // Undefined-callee gate (native E001, #5644): a callee naming nothing
     // otherwise reaches the emitter's generic call path, which emits a call
     // against a symbol nothing defines — an opaque load-time `unknown func`
     // instead of a diagnostic pointing at the source.
-    arity_errs = arity_errs + asmcore.check_undefined_calls(mod);
+    arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
     // Nameless-declaration gate: the permissive parser leaves an empty name
     // where a keyword was used (`function use()`), and nothing downstream
     // notices — see asmcore.check_decl_names for what that cost.
-    arity_errs = arity_errs + asmcore.check_decl_names(mod);
+    arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
     if (arity_errs.len() > 0) {
-        eprint(arity_errs);
+        eprint(util.format_diags(arity_errs));
         return 1;
     }
     // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,

@@ -6586,17 +6586,17 @@ pub function script_normalized(mod: parser.Module): parser.Module {
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
 pub function emit_module_or_error(mod: parser.Module): string {
-    var parse_errs: string = asmcore.parse_unknown_errors_module(mod);
+    var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
     if (parse_errs.len() > 0) {
-        eprint(parse_errs);
+        eprint(util.format_diags(parse_errs));
         exit(1);
         return "";
     }
     var chk: asmcore.EmitState = asmcore.new_state();
     chk = asmcore.EmitState { ...chk, struct_decls: mod.structs, funcs: mod.funcs };
-    var check_errs: string = asmcore.check_module(mod, chk);
+    var check_errs: util.Diag[] = asmcore.check_module(mod, chk);
     if (check_errs.len() > 0) {
-        eprint(check_errs);
+        eprint(util.format_diags(check_errs));
         exit(1);
         return "";
     }
