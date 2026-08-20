@@ -5680,35 +5680,36 @@ function label_in_scope(labels: string[], name: string): boolean {
 // it IS inside a loop, since an out-of-loop break is already E011 (the Go
 // checker reports E058 in the `else` branch after the E011 check, so the
 // two never both fire on one statement).
-// scoped_bodies collects the statement lists one statement's expressions hold,
-// splitting them by whether they are a SCOPE. An ordinary lambda is one: a
-// label does not cross a function boundary and `break` inside it is E011. A
-// value block is not — it is an if-/match-expression desugar that irlower
-// inlines, so `t = t + { if (c) { break; } i }` breaks the enclosing loop and
-// must keep both its labels and its in-loop state.
+// loop_diags_in_exprs runs loop_diags over the statement lists one statement's
+// expressions hold, each with the scope it deserves. An ordinary lambda is a
+// scope: a label does not cross a function boundary and a `break` inside one is
+// E011, so it recurses with in_loop = false and no labels. A value block is not
+// — it is an if-/match-expression desugar that irlower inlines, so
+// `t = t + { if (c) { break; } i }` breaks the enclosing loop and inherits both.
 //
-// The pruned fold does the splitting: `descend` stops at both node kinds, so a
-// value block's callee lambda is never also seen as a bare lambda, and a nested
-// lambda is reached later when its own enclosing body is walked.
-struct ScopedBodies { fresh: parser.Stmt[][], inherited: parser.Stmt[][] }
-
-function scoped_bodies(st: parser.Stmt): ScopedBodies {
-  var acc: ScopedBodies = ScopedBodies { fresh: [], inherited: [] };
-  return astwalk.fold_stmt_pruned(st, acc, split_scope, not_a_scope_root);
-}
-
-function split_scope(e: parser.Expr, acc: ScopedBodies): ScopedBodies {
-  match (e) {
-    parser.ExprCall(c) => {
-      if (parser.is_value_block(c)) {
-        return ScopedBodies { ...acc, inherited: acc.inherited.append(parser.vb_body(c)) };
-      }
-      return acc;
-    },
-    parser.ExprLambda(lm) => { return ScopedBodies { ...acc, fresh: acc.fresh.append(lm.body) }; },
-    _ => { return acc; }
-  }
-  return acc;
+// `not_a_scope_root` stops the fold at both node kinds, so a value block's
+// callee is never also seen as a bare lambda, and a nested lambda is reached
+// when its own enclosing body is walked rather than here.
+//
+// The accumulator is Diag[] rather than a list of bodies: a `parser.Stmt[][]`
+// does not lower in the self-host — `append` on an array-of-arrays of a union
+// resolves to `i32.append` and the module falls off the IR path.
+function loop_diags_in_exprs(st: parser.Stmt, in_loop: boolean, labels: string[]): Diag[] {
+  var acc: Diag[] = [];
+  return astwalk.fold_stmt_pruned(st, acc, function (e: parser.Expr, a: Diag[]): Diag[] {
+    match (e) {
+      parser.ExprCall(c) => {
+        if (parser.is_value_block(c)) { return append_diags(a, loop_diags(parser.vb_body(c), in_loop, labels)); }
+        return a;
+      },
+      parser.ExprLambda(lm) => {
+        var nolabels: string[] = [];
+        return append_diags(a, loop_diags(lm.body, false, nolabels));
+      },
+      _ => { return a; }
+    }
+    return a;
+  }, not_a_scope_root);
 }
 
 function not_a_scope_root(e: parser.Expr): boolean {
@@ -5774,18 +5775,7 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): D
       // illegal break was accepted (#7199) — the same lambda blindness as the
       // label RESOLVER had, one layer up.
       _ => {
-        var sb: ScopedBodies = scoped_bodies(stmts[i]);
-        var fi: i32 = 0;
-        while (fi < sb.fresh.len()) {
-          var nolabels: string[] = [];
-          out = append_diags(out, loop_diags(sb.fresh[fi], false, nolabels));
-          fi = fi + 1;
-        }
-        var ii: i32 = 0;
-        while (ii < sb.inherited.len()) {
-          out = append_diags(out, loop_diags(sb.inherited[ii], in_loop, labels));
-          ii = ii + 1;
-        }
+        out = append_diags(out, loop_diags_in_exprs(stmts[i], in_loop, labels));
       }
     }
     i = i + 1;
