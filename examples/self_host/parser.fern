@@ -1128,30 +1128,66 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             return StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
+            return StmtWhile { cond: rl_expr(w.cond), body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
+            return StmtFor { var_name: fr.var_name, iter: rl_expr(fr.iter), body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
         },
         StmtIf(f) => {
-            return StmtIf { ...f, cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
+            return StmtIf { ...f, cond: rl_expr(f.cond), then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
         },
         StmtMatch(m) => {
             var arms2: MatchArm[] = [];
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var a: MatchArm = m.arms[ai];
-                arms2 = arms2.append(MatchArm { ...a, body: resolve_labels_block(a.body, labels) });
+                var ag: Expr = a.guard;
+                if (a.has_guard) { ag = rl_expr(a.guard); }
+                arms2 = arms2.append(MatchArm { ...a, body: resolve_labels_block(a.body, labels), guard: ag });
                 ai = ai + 1;
             }
-            return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms2 };
+            return StmtMatch { ...m, scrutinee: rl_expr(m.scrutinee), arms: arms2 };
         },
         StmtDefer(dd) => {
             return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error, line: dd.line };
         },
+        // The statement forms whose EXPRESSIONS can hold a lambda. Without these
+        // the `_` arm returned them untouched, so a labeled loop inside a lambda
+        // body was never resolved and its `break`/`continue` degraded to tag 0 —
+        // the innermost loop. `break outer` silently broke the wrong loop, and
+        // `continue outer` re-entered the inner loop forever (#7199).
+        StmtVar(v) => { return StmtVar { ...v, init: rl_expr(v.init) }; },
+        StmtReturn(r) => { return StmtReturn { ...r, value: rl_expr(r.value) }; },
+        StmtExpr(x) => { return StmtExpr { ...x, value: rl_expr(x.value) }; },
+        StmtAssign(a) => { return StmtAssign { ...a, value: rl_expr(a.value) }; },
         _ => { return st; }
     }
     return st;
+}
+
+// rl_expr resolves the labels of any loop living inside an EXPRESSION — that
+// is, in a lambda body. The lambda gets a FRESH scope rather than the enclosing
+// one: a label does not cross a function boundary, and native rejects
+// `break outer` from inside a lambda with "E011: break outside of a loop", so
+// leaking the enclosing labels in would resolve a break the language forbids.
+function rl_expr(e: Expr): Expr {
+    match (e) {
+        ExprLambda(lm) => {
+            var fresh: string[] = [];
+            return ExprLambda { ...lm, body: resolve_labels_block(lm.body, fresh) };
+        },
+        _ => { return rl_expr_kids(e); }
+    }
+    return e;
+}
+
+function rl_expr_kids(e: Expr): Expr {
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return e; }
+    var nk: Expr[] = [];
+    var i: i32 = 0;
+    while (i < kids.len()) { nk = nk.append(rl_expr(kids[i])); i = i + 1; }
+    return dl_expr_with_kids(e, nk);
 }
 
 function resolve_labels_block(stmts: Stmt[], labels: string[]): Stmt[] {

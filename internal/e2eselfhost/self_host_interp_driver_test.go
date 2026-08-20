@@ -102,6 +102,45 @@ var interpProgs = []struct {
 	{"range-in-lambda-var", "function main(): i32 { var f = function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }; return f(); }", 6},
 	{"range-in-lambda-nested", "function run(f: () => i32): i32 { return f(); }\n" +
 		"function main(): i32 { return run(function(): i32 { return run(function(): i32 { var s = 0; for i in 0..4 { s = s + i; } return s; }); }); }", 6},
+	// A LABELED break/continue inside a lambda. resolve_labels_stmt had no
+	// expression recursion at all, so a labeled loop in a lambda body never had
+	// its tag resolved and the jump degraded to tag 0 — the innermost loop.
+	// `break outer` silently broke the wrong loop; `continue outer` re-entered
+	// the inner `while (true)` forever, hanging the COMPILED binary (#7199).
+	{"labeled-break-in-lambda", "function main(): i32 {\n" +
+		"    var f: () => i32 = function (): i32 {\n" +
+		"        var n: i32 = 0;\n" +
+		"        outer: while (n < 100) {\n" +
+		"            inner: while (true) { n = n + 1; break outer; }\n" +
+		"            n = n + 100;\n" +
+		"        }\n" +
+		"        return n;\n" +
+		"    };\n" +
+		"    return f() + 41; }", 42},
+	{"labeled-continue-in-lambda", "function main(): i32 {\n" +
+		"    var f: () => i32 = function (): i32 {\n" +
+		"        var n: i32 = 0;\n" +
+		"        outer: while (n < 3) {\n" +
+		"            n = n + 1;\n" +
+		"            inner: while (true) { continue outer; }\n" +
+		"        }\n" +
+		"        return n;\n" +
+		"    };\n" +
+		"    return f() + 39; }", 42},
+	// The label belongs to the lambda's OWN scope, so an identically named loop
+	// outside it must not be what the break resolves against.
+	{"labeled-break-shadowed-in-lambda", "function main(): i32 {\n" +
+		"    var acc: i32 = 0;\n" +
+		"    outer: while (acc < 1) {\n" +
+		"        acc = acc + 1;\n" +
+		"        var f: () => i32 = function (): i32 {\n" +
+		"            var n: i32 = 0;\n" +
+		"            outer: while (n < 100) { n = n + 1; break outer; }\n" +
+		"            return n;\n" +
+		"        };\n" +
+		"        acc = acc + f();\n" +
+		"    }\n" +
+		"    return acc + 40; }", 42},
 	// `defer` inside a LAMBDA. lower_defers found its actions through
 	// dl_expr_kids, whose `_` arm reports no children for an ExprLambda —
 	// structurally, because a lambda's children are statements, not expressions.
