@@ -632,13 +632,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 160) {  // return
             s = s.write("    ldr x0, [sp], #16\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
         } else if (o.kind_tag == 154) {  // if
-            var elseidx: i32 = irlower.find_matching_else(r.ops, i + 1);
+            var elseidx: i32 = ir.find_matching_else(r.ops, i + 1);
             var tgt: string = "";
             if (elseidx >= 0) { tgt = lp + util.i32_to_string(elseidx); }
-            else { tgt = lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)); }
+            else { tgt = lp + util.i32_to_string(ir.find_matching_end(r.ops, i + 1)); }
             s = s.write("    ldr x0, [sp], #16\n    cbz x0, " + tgt + "\n");
         } else if (o.kind_tag == 155) {  // else
-            s = s.write("    b " + lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)) + "\n");
+            s = s.write("    b " + lp + util.i32_to_string(ir.find_matching_end(r.ops, i + 1)) + "\n");
             s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else if (o.kind_tag == 152) {  // block
             // forward scope: exit label defined at the matching `end`.

@@ -3836,14 +3836,14 @@ function ir_f2u_sat(width: i32, lb: string): string {
 // grow-and-overwrite string[] scope arrays mis-ran under the self-hosted
 // compiler).
 pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
-    var op: i32 = irlower.enclosing_opener(ops, i, d);
+    var op: i32 = ir.enclosing_opener(ops, i, d);
     // No enclosing opener at depth `d` (an unbalanced op stream): resolve to the
     // function-boundary label rather than indexing ops[-1] (an OOB read whose
     // garbage `kind` would fabricate a bogus, possibly-dangling target). The
     // boundary label is defined at the epilogue (see emit_function_via_ir).
     if (op < 0) { return lp + util.i32_to_string(ops.len()); }
     if (ops[op].kind_tag == 153) { return lp + util.i32_to_string(op); }  // loop
-    return lp + util.i32_to_string(irlower.find_matching_end(ops, op + 1));
+    return lp + util.i32_to_string(ir.find_matching_end(ops, op + 1));
 }
 
 // emit_str_op emits one string operand-stack op (the bodies factored out of
@@ -4515,14 +4515,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rax\n    leave\n    ret\n");
         } else if (o.kind_tag == 154) {  // if
             // jump to the matching else (if any) or end when the cond is false.
-            var elseidx: i32 = irlower.find_matching_else(r.ops, i + 1);
+            var elseidx: i32 = ir.find_matching_else(r.ops, i + 1);
             var tgt: string = "";
             if (elseidx >= 0) { tgt = lp + util.i32_to_string(elseidx); }
-            else { tgt = lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)); }
+            else { tgt = lp + util.i32_to_string(ir.find_matching_end(r.ops, i + 1)); }
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + tgt + "\n");
         } else if (o.kind_tag == 155) {  // else
             // end of the then-arm jumps past the else; land the false path here.
-            s = s.write("    jmp " + lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)) + "\n");
+            s = s.write("    jmp " + lp + util.i32_to_string(ir.find_matching_end(r.ops, i + 1)) + "\n");
             s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else if (o.kind_tag == 152) {  // block
             // forward scope: its exit label is defined at the matching `end`.
