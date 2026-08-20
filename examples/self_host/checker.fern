@@ -1694,11 +1694,6 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     if (!rt_match && parser.parse_type_ref(s.methods[i].receiver_type).base == recv_type) {
       rt_match = true;
     }
-    // `bool` and `boolean` are interchangeable in source —
-    // accept either spelling at the call site.
-    if (!rt_match && recv_type == "bool" && s.methods[i].receiver_type == "boolean") {
-      rt_match = true;
-    }
     // Union-receiver methods: a method declared on a union
     // (e.g. `function (sh: Shape) area()`) matches when the
     // receiver is one of the union's variant structs.
@@ -1732,9 +1727,6 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
       return true;
     }
     if (parser.parse_type_ref(s.methods[i].receiver_type).base == recv_type) {
-      return true;
-    }
-    if (recv_type == "bool" && s.methods[i].receiver_type == "boolean") {
       return true;
     }
     if (is_variant_of(recv_type, s.methods[i].receiver_type, s.unions)) {
@@ -1919,7 +1911,7 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
 // Every type-name resolver below maps i32 / i64 / u32 / u64 to a width-tagged
 // TypeI32 (see the struct comment). Before this, the wider widths resolved to
 // t_unknown, so a receiver method on one (`function (x: i64) …`) tripped the
-// E021 "method receiver references unknown struct" gate, and a call site
+// E021 receiver-type gate, and a call site
 // couldn't recover the width to dispatch.
 function type_from_name(name: string): Type {
   if (name == "i32") {
@@ -2092,7 +2084,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
             recv_type_name = int_label(it);
           },
           TypeBool(_) => {
-            recv_type_name = "bool";
+            recv_type_name = "boolean";
           },
           TypeFloat(_) => {
             recv_type_name = "f64";
@@ -3165,7 +3157,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
 // collect_struct_sigs builds the struct-decl table from the
 // module's StructDecls. Field types are resolved via the same
 // type_from_name path used for function params — bare strings
-// like "i32" / "bool" / "string", plus references to other
+// like "i32" / "boolean" / "string", plus references to other
 // declared structs.
 function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]): StructSig[] {
   var out: StructSig[] = [];
@@ -3835,7 +3827,7 @@ function type_label(t: Type): string {
       return int_label(it);
     },
     TypeBool(_) => {
-      return "bool";
+      return "boolean";
     },
     TypeString(_) => {
       return "string";
@@ -3872,22 +3864,6 @@ function type_label(t: Type): string {
     }
   }
   return "unknown";
-}
-
-// e042_ret_label renders a known-primitive declared return type with the
-// native checker's ast spelling: bool prints "boolean" there (TS-heritage
-// keyword), everything else matches type_label. Callers guard with
-// is_primitive_type, so no other variant reaches the fallthrough.
-function e042_ret_label(t: Type): string {
-  match (t) {
-    TypeBool(_) => {
-      return "boolean";
-    },
-    _ => {
-      return type_label(t);
-    }
-  }
-  return type_label(t);
 }
 
 // keep_code filters a diagnostic list to one code.
@@ -7205,9 +7181,9 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
           match (trt) {
             TypeUnion(tu) => {
               if (tu.name == "Option" && is_primitive_type(s.ret_type)) {
-                out = out.append(dg_at("E042", "`?` on Option requires the surrounding function to return Option[_], got " + e042_ret_label(s.ret_type), u.line, u.col));
+                out = out.append(dg_at("E042", "`?` on Option requires the surrounding function to return Option[_], got " + type_label(s.ret_type), u.line, u.col));
               } else if (tu.name == "Result" && is_primitive_type(s.ret_type)) {
-                out = out.append(dg_at("E042", "`?` on Result requires the surrounding function to return Result[_, E], got " + e042_ret_label(s.ret_type), u.line, u.col));
+                out = out.append(dg_at("E042", "`?` on Result requires the surrounding function to return Result[_, E], got " + type_label(s.ret_type), u.line, u.col));
               }
             },
             _ => {}
@@ -8374,7 +8350,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
     return true;
   }
   var bi: i32 = 0;
@@ -8571,7 +8547,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     // union (or a primitive / generic / dyn receiver), reported at the
     // method declaration.
     if (f2.receiver_name.len() > 0 && !receiver_type_ok(f2.receiver_type, mod)) {
-      out = out.append(dg_at("E021", "method receiver references unknown struct \"" + util.base_type_name(f2.receiver_type) + "\"", f2.line, f2.col));
+      out = out.append(dg_at("E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got " + util.base_type_name(f2.receiver_type), f2.line, f2.col));
     }
     di = di + 1;
   }
@@ -9331,7 +9307,7 @@ function e049_is_ref(tn: string): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "bool" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
+  if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize" || tn == "boolean" || tn == "f64" || tn == "f32" || tn == "char") {
     return false;
   }
   return true;

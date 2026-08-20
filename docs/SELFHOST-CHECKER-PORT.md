@@ -671,7 +671,8 @@ same code(s) the Go checker does — restricted to
   struct / enum / union alias is fine; a generic / `Map` / array (`X[…]`)
   or `dyn Trait` receiver is skipped conservatively; anything else is
   E021 at the method declaration. `function (r: Nope) m()` →
-  `1:1: error[E021]: method receiver references unknown struct "Nope"`,
+  `1:1: error[E021]: method receiver type must be a struct, enum, array,
+  slice, or built-in type, got Nope`,
   matching Go; struct and builtin (`i32`) receivers stay clean. Zero
   false positives across all fifteen modules (every bundle method's
   receiver is a declared struct). Checker-only (fixpoint-safe). Gated by

@@ -6,10 +6,10 @@ import (
 )
 
 // Wide-int receiver methods through the self-hosted compiler. Before this,
-// the self-host checker only recognised i32 / bool / string / f64 as
+// the self-host checker only recognised i32 / boolean / string / f64 as
 // primitive receiver types: a method declared on i64 / u32 / u64 tripped
-// E021 ("method receiver references unknown struct"), and once that gate
-// was relaxed, dispatch still missed because every integer collapsed to the
+// the E021 receiver-type gate, and once that gate was relaxed, dispatch
+// still missed because every integer collapsed to the
 // "i32" type-name so the call site couldn't recover the width to match the
 // method's declared receiver. The checker now carries integer width +
 // signedness on its TypeI32 (staying width-LENIENT for assignability but
