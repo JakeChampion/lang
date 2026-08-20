@@ -47,6 +47,13 @@ pub struct LocalInfo {
     // is_strarr: a string[] — the element-typing overlay on is_arr, which still
     // drives the array's RC. Makes arr[i] type as a string.
     is_strarr: boolean,
+    // strarr_builtin: this string[] slot was bound from a BUILTIN string
+    // producer (`s.split(sep)` / `s.lines()`), whose elements the runtime
+    // creates and stores nowhere else. Set at the binding site, the only place
+    // that knows the receiver is a string — the reclaim collector sees names,
+    // not types, and a user method named `split` on another type would
+    // otherwise answer for this one.
+    strarr_builtin: boolean,
     // struct_type: the slot's struct type name ("" = not a struct), so `p.x`
     // resolves x's field index in p's decl.
     struct_type: string,
@@ -173,7 +180,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -194,6 +201,9 @@ pub function li_set_is_str(li: LocalInfo, v: boolean): LocalInfo {
 
 pub function li_set_is_strarr(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, is_strarr: v };
+}
+pub function li_set_strarr_builtin(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, strarr_builtin: v };
 }
 
 pub function li_set_is_bool(li: LocalInfo, v: boolean): LocalInfo {
@@ -1838,6 +1848,41 @@ pub function (s: LowerState) cell_elem_of_slot(i: i32): string {
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_is_strarr(s.locals[i], v)) };
+}
+
+pub function (s: LowerState) mark_strarr_builtin(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_strarr_builtin(s.locals[i], v)) };
+}
+
+pub function (s: LowerState) is_strarr_builtin_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    return s.locals[i].strarr_builtin;
+}
+
+// init_is_builtin_strarr_producer: `<string>.split(sep)` / `<string>.lines()`,
+// the two builtin methods that build a string[] the runtime fills itself. On the
+// IR path a string receiver routes these to lower_str_method's ops — the stdlib's
+// own `(s: string) split` declaration is shadowed, which the emitted call
+// (__fn___fern_str_split) confirms — so the elements are made by the runtime and
+// stored into that array and nowhere else.
+//
+// `chars` is deliberately absent: it yields i32[], with no string elements to
+// reclaim.
+function init_is_builtin_strarr_producer(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(bc) => {
+            match (bc.callee) {
+                parser.ExprFieldAccess(bfa) => {
+                    if (bfa.field != "split" && bfa.field != "lines") { return false; }
+                    return expr_is_str(bfa.obj, s);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => {}
+    }
+    return false;
 }
 
 pub function (s: LowerState) is_bool_slot(i: i32): boolean {
@@ -16984,6 +17029,9 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // behaviour-identical.
     if (vt.is_str) { sb = sb.mark_str_own(slot, str_binding_ownership(v.init, se)); }
     sb = sb.mark_strarr(slot, vt.is_strarr);
+    // The type gate the reclaim collector cannot make: confirm here, where the
+    // receiver's type is known, that a `SARRB:` candidate really is the builtin.
+    if (vt.is_strarr) { sb = sb.mark_strarr_builtin(slot, init_is_builtin_strarr_producer(v.init, se)); }
     sb = sb.mark_f64arr(slot, vt.is_f64arr);
     sb = sb.mark_bool(slot, vt.is_bool);
     sb = sb.mark_boolarr(slot, vt.is_boolarr);
@@ -29316,6 +29364,57 @@ function boxarr_lit_all_elems_fresh(e: parser.Expr, structs: parser.StructDecl[]
 // Purely syntactic, like collect_fresh_string_names — the TYPE gate is the slot's
 // is_strarr at the reclaim site (slot_is_reclaimable_strarr), so an i32[] literal
 // collected here is never element-walked.
+// collect_builtin_strarr_names gathers `var xs = <recv>.split(sep) / .lines()`
+// bindings — CANDIDATES only. It matches the method NAME, which is all a
+// name-level pass can do; the binding site confirms the receiver is a string
+// before the credit means anything (is_strarr_builtin_slot). Both are required
+// at the reclaim gate, so a user method named `split` on another type never
+// reaches it.
+//
+// Separate from collect_fresh_strarr_names because the element contract differs:
+// there the elements are values the FUNCTION produced and the collector checks
+// each one; here they are produced by the runtime helper, which stores them
+// nowhere else.
+function collect_builtin_strarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_builtin_strarr_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_builtin_strarr_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprFieldAccess(fa) => {
+                            if (fa.field == "split" || fa.field == "lines") { return push_str_unique(acc, v.name); }
+                        },
+                        _ => {}
+                    }
+                    return acc;
+                },
+                _ => { return acc; }
+            }
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_builtin_strarr_names(iff.then_body, acc);
+            return collect_builtin_strarr_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_builtin_strarr_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_builtin_strarr_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_builtin_strarr_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_builtin_strarr_in_stmt(d.action, acc); },
+        _ => {}
+    }
+    return acc;
+}
+
 function collect_fresh_strarr_names(stmts: parser.Stmt[], body: parser.Stmt[], fresh_ret: string[], str_fresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -31103,6 +31202,16 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (sri < sarrs.len()) {
         if (!strarr_unsafe_for(body, sarrs[sri], borrowable, str_fresh_ret)) { out = out.append("SARR:" + sarrs[sri]); }
         sri = sri + 1;
+    }
+    // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
+    // own prefix so the binding-site type confirmation is required alongside.
+    // Same strarr_unsafe_for gate: it is the non-escape half of the proof, and
+    // it is name-level, so it applies here unchanged.
+    var bsarrs: string[] = collect_builtin_strarr_names(body, []);
+    var bri: i32 = 0;
+    while (bri < bsarrs.len()) {
+        if (!strarr_unsafe_for(body, bsarrs[bri], borrowable, str_fresh_ret)) { out = out.append("SARRB:" + bsarrs[bri]); }
+        bri = bri + 1;
     }
     // Fresh arr-of-arr locals (#4355 slice 9): `var g = [[..], [..]]` where
     // every element is an ARRAY LITERAL of scalar literals / fresh strings —
@@ -39679,7 +39788,12 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
-    return reclaim_has(s.reclaimable_names, "SARR:", reclaim_slot_name(s, i));
+    if (reclaim_has(s.reclaimable_names, "SARR:", reclaim_slot_name(s, i))) { return true; }
+    // The builtin-producer class needs BOTH halves: the "SARRB:" credit carries
+    // the non-escape proof, the slot flag carries the type confirmation the
+    // name-level collector could not make.
+    return s.locals[i].strarr_builtin
+        && reclaim_has(s.reclaimable_names, "SARRB:", reclaim_slot_name(s, i));
 }
 
 // dyn_reclaim_concrete_of (#4351): the payload tag registered for dyn local
@@ -43947,7 +44061,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the
