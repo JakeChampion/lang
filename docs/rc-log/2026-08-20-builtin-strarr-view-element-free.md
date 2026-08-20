@@ -95,10 +95,25 @@ all three backends and both compilers:
 - **Mixed array** — `parts.with(1, w("…"))` replaces one view with a fresh
   string, so the walk meets both kinds and has to reclaim each exactly once.
 
-## Next lead
+## Next lead: the wasm residue is not in the reclaim
 
-wasm still strands 67200 on the 18-part split (168 bytes/round). It is not the
-element boxes — those are gone there, which is what the predecessor bought — and
-`lines` (one element) sits at 9600 on all three backends, so whatever remains
-scales with something other than element count. Unmeasured; that is the next
-thing to pull on in this shape.
+wasm still strands 67200 on the 18-part split. Measured against part count, same
+harness, 400 rounds, bytes per round:
+
+| parts | 1 | 2 | 4 | 9 | 18 |
+| --- | --- | --- | --- | --- | --- |
+| wasm | 24 | 8 | 8 | 88 | 168 |
+| x86-64 / arm64 | 0 | 0 | 0 | 0 | 0 |
+
+Flat and near-zero to 4 parts, then stepping up — the shape of DISCARDED GROWTH
+BUFFERS, not of a per-element or per-array constant. And the reclaim is not the
+suspect: a plain `SARR:` array literal of three fresh strings measures 0 on wasm,
+so `$__fern_arr_dec_ptr` frees both the elements and the buffer there. What is
+left is most likely inside the wasm `split` helper itself — a result array built
+by appending orphans each buffer it outgrows, and nothing at the call site can
+reclaim those.
+
+If that is right it is a helper bug rather than a Perceus one, it belongs to
+`lines` and every other appending helper equally, and it does not exist on the
+register backends. Confirm by counting allocations inside the helper before
+touching anything.
