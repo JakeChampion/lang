@@ -10456,8 +10456,43 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     if (mtype != "") {
         var mkk2: i32 = map_key_kind_of(mtype);
         var meqfn: string = map_key_eqfn(mtype);
+        // #7001: a COMPOSITE (struct / enum) key is kind 2, dispatched by its
+        // derived hash/eq. map_key_kind_of only separates `Map[i32,` from
+        // everything else, so it answers 0 — STRING — for one, and a
+        // `Map { … }` literal built itself string-keyed: __fern_str_eq then read
+        // each key box as a string, taking its first field as a length, and keys
+        // differing only past that field collapsed. meqfn was already right here;
+        // only the kind was wrong.
+        // The KEY EXPRESSION overrides a scalar/string key tag. `map_new` and
+        // `map_new_i32` are the only two constructor spellings, so a COMPOSITE
+        // (struct / enum) key has none and a `Map { … }` literal's desugared
+        // chain bases itself on `map_new` — the STRING one — which is what the
+        // tag is recovered from here. A struct / enum literal names its own
+        // type, so it answers what the constructor cannot. Read from the
+        // expression rather than a stamped type tag because only the CLI runs
+        // checker.annotate_module; the asm / wasm drivers do not, and a fix that
+        // needed the tag would leave them miscompiling (#7001).
+        if (meqfn == "" && (fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
+            var kexp: string = expr_struct_type(c.args[0], s);
+            // A payload-free enum variant is a bare ident that names no local,
+            // so expr_struct_type cannot type it; its enum is its declaration's
+            // owner.
+            if (kexp == "") {
+                match (c.args[0]) {
+                    parser.ExprIdent(kid) => {
+                        if (s.slot_of(kid.name) < 0) { kexp = variant_enum_owner(s.structs, kid.name); }
+                    },
+                    _ => {}
+                }
+            }
+            if (kexp != "") {
+                mtype = map_with_key(mtype, kexp);
+                meqfn = map_key_eqfn(mtype);
+            }
+        }
+        if (meqfn != "") { mkk2 = 2; }
         if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
-            var mset: LowerState = lower_expr(fa.obj, s);
+            var mset: LowerState = lower_expr_map_base(fa.obj, mtype, s);
             if (!mset.ok) { return mset; }
             mset = lower_expr(c.args[0], mset);
             if (!mset.ok) { return mset; }
@@ -52852,6 +52887,53 @@ pub function map_value_of(typestr: string): string {
 
 // map_key_of returns the key type K of a "Map[K, V]" type string, or ""
 // if not parseable — the K-side counterpart of map_value_of.
+// map_with_key respells a "Map[K, V]" tag with a different key type.
+function map_with_key(mtype: string, k: string): string {
+    var v: string = map_value_of(mtype);
+    if (v == "") { return mtype; }
+    return "Map[" + k + ", " + v + "]";
+}
+
+// lower_map_base_kind2 reports whether `e` is a bare `map_new[_i32](n)` — the
+// base a `Map { … }` literal's chain is desugared onto.
+function expr_is_map_new_base(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                _ => { return false; }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// lower_expr_map_base lowers a map-insert RECEIVER. It is ordinary lower_expr
+// except for the chain base of a composite-keyed `Map { … }` literal: `map_new`
+// / `map_new_i32` are the only two constructor spellings, so a struct / enum key
+// has none and the desugar falls back to `map_new` — the STRING one. The generic
+// constructor arm reads the kind off that callee NAME, so the box was built
+// string-keyed and no per-insert eq could rescue it, the box carrying its own
+// kind. Here the DECLARED `Map[K, V]` is in hand, which is the same authority
+// the annotated `var m: Map[K, V] = map_new(n)` binding already uses to build a
+// kind-2 box. #7001.
+function lower_expr_map_base(e: parser.Expr, mtype: string, s: LowerState): LowerState {
+    var k: string = map_key_eqfn(mtype);
+    if (k == "" || !expr_is_map_new_base(e)) { return lower_expr(e, s); }
+    match (e) {
+        parser.ExprCall(c) => {
+            var b: LowerState = lower_expr(c.args[0], s);
+            if (!b.ok) { return b; }
+            var kt: string = map_key_of(mtype);
+            return b.emit(ir.op_map_new(2, kt + ".hash|" + kt + ".eq"));
+        },
+        _ => {}
+    }
+    return lower_expr(e, s);
+}
+
 pub function map_key_of(typestr: string): string {
     if (typestr.len() < 5 || typestr[0:4] != "Map[") { return ""; }
     var inner: str = typestr[4 : typestr.len() - 1];   // K, V
