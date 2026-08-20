@@ -15075,8 +15075,70 @@ function cf_arr_scan_stmts(stmts: Stmt[], f: string): CFScan {
     return acc;
 }
 
+// cf_inline_descend runs cf_inline_fn_body over the statement lists NESTED
+// inside `st` — an if/while/for's body, a match arm, a defer's action, and a
+// lambda body reached through an expression.
+//
+// Without it the whole analysis was flat: a `var fns = [mk, mk2]` one `if` deep
+// got no `fn[]` annotation, so the array lowering const-CALLED each element and
+// `fns[0]()` called an integer as a code pointer — SIGSEGV from a program native
+// compiles to 42 (#7199). The same shape at top level was always fine, which is
+// what made the blindness invisible.
+//
+// Each nested list is its own scope here. That is not a simplification: the
+// scans require a use IN the list they are given (`calls >= 1`), so a binding
+// whose uses live in a deeper block simply is not rewritten — the conservative
+// direction, and the same answer the flat walk already gave.
+function cf_inline_descend(st: Stmt, funcs: FuncDecl[]): Stmt {
+    match (st) {
+        StmtIf(f) => {
+            return StmtIf { ...f, cond: cf_inline_expr(f.cond, funcs), then_body: cf_inline_fn_body(f.then_body, funcs), else_body: cf_inline_fn_body(f.else_body, funcs) };
+        },
+        StmtWhile(w) => {
+            return StmtWhile { cond: cf_inline_expr(w.cond, funcs), body: cf_inline_fn_body(w.body, funcs), label: w.label, line: w.line, is_loop: w.is_loop };
+        },
+        StmtFor(fr) => {
+            return StmtFor { var_name: fr.var_name, iter: cf_inline_expr(fr.iter, funcs), body: cf_inline_fn_body(fr.body, funcs), label: fr.label, line: fr.line };
+        },
+        StmtMatch(m) => {
+            var marms: MatchArm[] = [];
+            var mi: i32 = 0;
+            while (mi < m.arms.len()) {
+                marms = marms.append(MatchArm { ...m.arms[mi], body: cf_inline_fn_body(m.arms[mi].body, funcs) });
+                mi = mi + 1;
+            }
+            return StmtMatch { ...m, scrutinee: cf_inline_expr(m.scrutinee, funcs), arms: marms };
+        },
+        StmtDefer(d) => { return StmtDefer { action: cf_inline_descend(d.action, funcs), on_error: d.on_error, line: d.line }; },
+        StmtVar(v) => { return StmtVar { ...v, init: cf_inline_expr(v.init, funcs) }; },
+        StmtReturn(r) => { return StmtReturn { ...r, value: cf_inline_expr(r.value, funcs) }; },
+        StmtExpr(x) => { return StmtExpr { ...x, value: cf_inline_expr(x.value, funcs) }; },
+        StmtAssign(a) => { return StmtAssign { ...a, value: cf_inline_expr(a.value, funcs) }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+// cf_inline_expr reaches a LAMBDA body, the one statement list that hangs off an
+// expression rather than a statement.
+function cf_inline_expr(e: Expr, funcs: FuncDecl[]): Expr {
+    match (e) {
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: cf_inline_fn_body(lm.body, funcs) }; },
+        _ => {}
+    }
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return e; }
+    var nk: Expr[] = [];
+    var ki: i32 = 0;
+    while (ki < kids.len()) { nk = nk.append(cf_inline_expr(kids[ki], funcs)); ki = ki + 1; }
+    return dl_expr_with_kids(e, nk);
+}
+
 function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
-    var out: Stmt[] = body;
+    var pre: Stmt[] = [];
+    var pi2: i32 = 0;
+    while (pi2 < body.len()) { pre = pre.append(cf_inline_descend(body[pi2], funcs)); pi2 = pi2 + 1; }
+    var out: Stmt[] = pre;
     var i: i32 = 0;
     while (i < out.len()) {
         var handled: boolean = false;
@@ -17346,7 +17408,26 @@ function settle_expr(e: Expr, names: string[], types: string[], funcs: FuncDecl[
             return ExprFieldAccess { obj: settle_expr(fa.obj, names, types, funcs, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
         ExprLambda(lm) => {
-            return ExprLambda { ...lm, body: settle_block(lm.body, lm.ret_type, [], [], funcs, structs) };
+            // The lambda's OWN params seed the scope, exactly as a FuncDecl's do
+            // in settle_module. Passing empty lists left them unknown, so a
+            // literal assigned to an `f64` param settled as an integer and the
+            // compiled binary read the raw i32 bit pattern as a denormal — 0
+            // where native gives 3, silently (#7199). An annotated local in the
+            // same lambda was always correct, which is what pinned the gap to
+            // the dropped params rather than to the descent.
+            //
+            // The ENCLOSING scope is deliberately not inherited: a lambda body
+            // refers to captures by name, and settling one against the outer
+            // declaration would type it by a binding the lambda does not own.
+            var lnames: string[] = [];
+            var ltypes: string[] = [];
+            var lpi: i32 = 0;
+            while (lpi < lm.params.len()) {
+                lnames = lnames.append(lm.params[lpi].name);
+                ltypes = ltypes.append(lm.params[lpi].type_name);
+                lpi = lpi + 1;
+            }
+            return ExprLambda { ...lm, body: settle_block(lm.body, lm.ret_type, lnames, ltypes, funcs, structs) };
         },
         _ => { return e; }
     }
