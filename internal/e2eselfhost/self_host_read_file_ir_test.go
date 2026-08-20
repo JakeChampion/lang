@@ -13,7 +13,7 @@ import (
 
 // localLabelRe matches a self-host control-flow label — the x86-64 `.Lir_*`
 // emitter (asm_ir.fern) and the arm64 `.Lira_*` emitter (asm_arm64_ir.fern).
-var localLabelRe = regexp.MustCompile(`\.Lira?_[A-Za-z0-9_.]+`)
+var localLabelRe = regexp.MustCompile(`\.Lira?_[A-Za-z0-9_.$]+`)
 
 // assertNoDanglingLocalLabels fails if the emitted asm references a `.Lir_*` /
 // `.Lira_*` control-flow label it never defines — the exact dangling-label link
@@ -22,6 +22,19 @@ var localLabelRe = regexp.MustCompile(`\.Lira?_[A-Za-z0-9_.]+`)
 // definition is a line `<label>:`; every other occurrence is a reference.
 func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 	t.Helper()
+	if dangling := danglingLocalLabels(asm); len(dangling) > 0 {
+		t.Fatalf("%s: dangling local label(s) referenced but never defined: %v", ctx, dangling)
+	}
+}
+
+// danglingLocalLabels returns the `.Lir_*` / `.Lira?_*` labels `asm` references
+// without defining, sorted.
+//
+// The character class has to admit `$`: a capturing lambda is hoisted to
+// `<fn>$cloN` (irlower.fern:54733) and its labels carry that name. Excluding it
+// truncated every REFERENCE at the `$` while each DEFINITION was recorded whole,
+// so a closure label reported as dangling from an assembly that links.
+func danglingLocalLabels(asm []byte) []string {
 	defined := map[string]bool{}
 	referenced := map[string]bool{}
 	for _, line := range strings.Split(string(asm), "\n") {
@@ -40,10 +53,8 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 			dangling = append(dangling, r)
 		}
 	}
-	if len(dangling) > 0 {
-		sort.Strings(dangling)
-		t.Fatalf("%s: dangling local label(s) referenced but never defined: %v", ctx, dangling)
-	}
+	sort.Strings(dangling)
+	return dangling
 }
 
 // readFileIRCases exercise the `read_file(path)` builtin through the IR path on
