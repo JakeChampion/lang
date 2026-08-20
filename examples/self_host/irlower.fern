@@ -3217,6 +3217,29 @@ pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string, funcs: parser.Fun
     return true;
 }
 
+// display_arg wraps a `print` / `write` / `eprint` argument in `.to_string()`
+// when it is a STRUCT value — the lowering half of native's Display spine
+// (#2696), whose checker rewrites the same three builtins' sole argument.
+//
+// The test is "positively a struct", NOT "not provably a string". expr_is_str
+// is a conservative prover: it says false for a string it cannot trace, such as
+// a `m.get_or(k, d)` result or a call through a closure. Rewriting on its
+// negative answer wrapped those in `.to_string()`, which has an i32 fallback,
+// so the string's POINTER was formatted as a decimal — `write(g())` printed
+// "40" for "hi". A struct type recovered by expr_struct_type is the positive
+// signal, and every other shape lowers exactly as it did before.
+function display_arg(e: parser.Expr, line: i32, col: i32, s: LowerState): parser.Expr {
+    if (expr_struct_type(e, s).len() == 0) { return e; }
+    return parser.ExprCall {
+        callee: parser.ExprFieldAccess { obj: e, field: "to_string", line: line, col: col, ty: "" },
+        args: [],
+        line: line,
+        col: col,
+        type_argc: 0,
+        ty: "string"
+    };
+}
+
 // method_decl_index returns the index of the method named `name` on receiver
 // base type `bn`, or -1.
 function method_decl_index(funcs: parser.FuncDecl[], bn: string, name: string): i32 {
@@ -9578,15 +9601,23 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // Built-in `write(s)` / `print(s)` — write a string's bytes to
     // stdout. `print` appends a newline (Fern's print == println):
     // it desugars to `print_str(s + "\n")` via the existing str_concat
-    // op, so a single print_str op + helper serves both. The arg is a
-    // string (the checker guarantees it for these builtins).
-    if ((cid.name == "write" || cid.name == "print_str") && c.args.len() == 1) {
-        var wss: LowerState = lower_expr(c.args[0], s);
+    // op, so a single print_str op + helper serves both.
+    //
+    // `write` and `print` take any Display type and stringify through
+    // display_arg; `print_str` is the internal string-only spelling and
+    // takes its argument as it stands.
+    if (cid.name == "print_str" && c.args.len() == 1) {
+        var pss: LowerState = lower_expr(c.args[0], s);
+        if (!pss.ok) { return pss; }
+        return pss.emit(ir.op_print_str());
+    }
+    if (cid.name == "write" && c.args.len() == 1) {
+        var wss: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
         if (!wss.ok) { return wss; }
         return wss.emit(ir.op_print_str());
     }
     if (cid.name == "print" && c.args.len() == 1) {
-        var prs: LowerState = lower_expr(c.args[0], s);
+        var prs: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
         if (!prs.ok) { return prs; }
         prs = prs.emit(ir.op_const_str("\n"));
         prs = prs.emit(ir.op_str_concat());
@@ -9801,7 +9832,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // no newline). `eprint_int(n)` is its int companion: i32_to_string
     // then eprint_str (no third helper). Both lower to op_eprint_str.
     if (cid.name == "eprint" && c.args.len() == 1) {
-        var eps: LowerState = lower_expr(c.args[0], s);
+        var eps: LowerState = lower_expr(display_arg(c.args[0], c.line, c.col, s), s);
         if (!eps.ok) { return eps; }
         return eps.emit(ir.op_eprint_str());
     }

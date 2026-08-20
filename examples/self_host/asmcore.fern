@@ -2667,6 +2667,9 @@ pub function ty_friendly(t: Ty): string {
         TyArrayU64(_) => { return "u64[]"; },
         TyArrayI64(_) => { return "i64[]"; },
         TyArrayString(_) => { return "string[]"; },
+        // ty_tag spells the boolean type "bool" as its internal tag. That is not
+        // a type name anyone can write, so a message carrying it names nothing.
+        TyBool(_) => { return "boolean"; },
         _ => { return ty_tag(t); }
     }
     return ty_tag(t);
@@ -3872,25 +3875,33 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
     return errs;
 }
 
+// has_to_string reports whether receiver-type name `rt` has a `to_string`
+// method declared in this unit. Used by the Display gate below; a bare
+// declaration is enough, because irlower dispatches the call by that name.
+function has_to_string(rt: string, st: EmitState): boolean {
+    if (rt.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < st.funcs.len()) {
+        if (st.funcs[i].name == "to_string" && st.funcs[i].receiver_type.len() > 0
+                && util.base_type_name(st.funcs[i].receiver_type) == rt) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // display_arg_errs gates the single argument of `print` / `write` /
 // `eprint` on its type — the self-host half of native's "Display spine"
 // (#2696, the `case "print", "write", "eprint"` block in
 // internal/checker/checker.go).
 //
-// Native passes a `string` straight through, REWRITES any other `Display`
-// type to `arg.to_string()`, and raises E038 for the rest. The self-hosted
-// backends implement none of that: they hand the argument to the
-// string-only runtime helper, which reads it as a `(ptr, len)` box. So a
-// `u8[]` printed nothing at all, and a struct carrying a `to_string`
-// printed its own raw bytes with the length read out of a field — both
-// silent wrong answers on programs the compiler accepted (#5742).
-//
-// Anything that is not already a string is rejected here rather than
-// miscompiled. That is deliberately stricter than native for a `Display`
-// type, whose auto-stringify the self-host does not implement yet: a loud
-// error naming the fix beats emitting a struct's raw memory. Every
-// `print` / `write` / `eprint` in examples/self_host passes a string, so
-// the bootstrap is unaffected.
+// The three builtins accept any `T: Display`, not just `string`: a string
+// passes through, anything else is stringified through the type's
+// `to_string` (irlower's display_arg does the rewrite), and only a type
+// with no `to_string` at all is an error. Without the gate the raw value
+// reaches the string-only runtime helper, which reads it as a `(ptr, len)`
+// box — a `u8[]` printed nothing and a struct printed its own raw bytes
+// with the length read out of a field, both silent wrong answers on
+// programs the compiler accepted (#5742).
 //
 // A type the partial `Ty` union cannot model comes back unknown; those
 // are skipped rather than mis-flagged, the same discipline the E038 /
@@ -3904,11 +3915,30 @@ function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): util.Di
                             && c.args.len() == 1) {
                         var at: Ty = infer_expr_type(c.args[0], st);
                         if (ty_is_unknown(at) || ty_is_string(at)) { return []; }
+                        var an: string = ty_friendly(at);
+                        // Accept only what irlower's display_arg will actually
+                        // rewrite: a NAMED STRUCT carrying a `to_string`. This gate
+                        // has to stay the narrower of the two — rejecting is loud,
+                        // whereas accepting something the lowering then leaves alone
+                        // hands the raw value to the string-only helper, which is
+                        // the #5742 silent wrong answer.
+                        if (ty_struct_name(at).len() > 0 && has_to_string(an, st)) { return []; }
+                        if (has_to_string(an, st) && is_prim_recv_name(an, st)) {
+                            // A PRIMITIVE receiver's `.to_string()` resolves to the
+                            // built-in formatter in irlower, never to a declared
+                            // method, so rewriting here would print the builtin's
+                            // answer instead of the one the reader wrote. Refuse
+                            // loudly rather than stringify the wrong way.
+                            return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
+                                + id.name + ": " + an + " has a `to_string(): string`, but the"
+                                + " self-hosted compiler dispatches `.to_string()` on a primitive to its"
+                                + " built-in formatter, so that method would not be called", line: id.line, col: id.col }];
+                        }
                         return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
-                            + id.name + ": " + ty_friendly(at)
-                            + " is not a string — add an explicit .to_string()"
-                            + " (the self-hosted compiler does not apply the"
-                            + " Display auto-stringify that native does)", line: id.line, col: id.col }];
+                            + id.name + ": " + util.demangle(an)
+                            + " does not implement `Display` (no `to_string(): string` in scope)"
+                            + " — give " + util.demangle(an) + " a `to_string(): string` method, or "
+                            + util.derive_hint(an, "cmp.Display", "cmp.Display"), line: id.line, col: id.col }];
                     }
                     return [];
                 },

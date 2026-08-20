@@ -29,10 +29,16 @@ import (
 // the direction docs/NATIVE-CONVERGENCE.md calls out as the dangerous one: a
 // self-host checker LESS strict than native lets bad programs through.
 //
-// The gate rejects any argument that is not already a string. For a Display
-// type that is deliberately stricter than native, which auto-stringifies it —
-// the self-host does not implement that rewrite, and a diagnostic naming the
-// fix beats emitting a struct's raw bytes.
+// The self-host now implements the Display rewrite too: an argument that is
+// not already a string is lowered as `arg.to_string()` (irlower's display_arg),
+// and the gate rejects only a type with no `to_string(): string` at all. So the
+// struct case above compiles and prints `HELLO`, as it does under native.
+//
+// One shape stays refused where native accepts it: a PRIMITIVE receiver
+// carrying its own `to_string`. The self-host resolves `.to_string()` on a
+// primitive to its built-in formatter rather than the declared method, so
+// rewriting would print the builtin's answer instead of the reader's — a
+// silent wrong answer in place of a loud one. The diagnostic says so.
 //
 // The accept cases are the real risk: they pin that the gate never rejects a
 // valid program, and that an accepted one still runs and prints.
@@ -85,15 +91,14 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 			"function main(): i32 {\n    var n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
 			[]string{"E038", "i32"},
 		},
-		// The worse half: native COMPILES this and prints the to_string()
-		// result. The self-host printed the struct's raw bytes instead, with
-		// the byte count coming from `a`. The diagnostic names the type.
+		// A primitive receiver that declares its own to_string. Native calls
+		// the method; the self-host would call the builtin formatter, so it
+		// refuses rather than print a different answer than the one written.
 		{
-			"write-struct-with-to-string",
-			"struct Q { a: i32, b: i32 }\n" +
-				"function (q: Q) to_string(): string { return \"HELLO\"; }\n" +
-				"function main(): i32 {\n    var q: Q = Q { a: 7, b: 9 };\n    write(q);\n    return 0;\n}\n",
-			[]string{"E038", "Q"},
+			"print-i32-with-shadowing-to-string",
+			"function (n: i32) to_string(): string { return \"SHADOW\"; }\n" +
+				"function main(): i32 {\n    print(5);\n    return 0;\n}\n",
+			[]string{"E038", "built-in formatter"},
 		},
 		// Nested in a branch: bare expression statements were hitting
 		// check_stmt's `_ =>` catch-all and never being visited, so the walk
@@ -137,6 +142,8 @@ function main(): i32 {
     write(s + "-cat");
     write(label());
     write(q.to_string());
+    write(q);
+    eprint(q);
     print("done");
     return 0;
 }
@@ -157,7 +164,7 @@ function main(): i32 {
 		if exit != 0 {
 			t.Errorf("program exited %d, want 0 (stdout %q)", exit, out)
 		}
-		if want := "litlocloc-catlabQ!done\n"; out != want {
+		if want := "litlocloc-catlabQ!Q!done\n"; out != want {
 			t.Errorf("stdout = %q, want %q", out, want)
 		}
 	})
