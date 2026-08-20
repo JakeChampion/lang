@@ -844,6 +844,12 @@ function wasm_helper_symbol(name: string): string {
     if (name == "__fern_map_free_vs") { return "$__fern_map_release"; }
     if (name == "__fern_map_free_ks") { return "$__fern_map_release"; }
     if (name == "__fern_map_free_kvs") { return "$__fern_map_release"; }
+    // #4353 item 3: the box-VALUE-column variants are likewise register-only.
+    // On wasm the value column is rc-managed per insert instead — op_map_set's
+    // `vis` retains a pointer value and `vconsume` takes a fresh one — so
+    // $__fern_map_release already releases it, and the credit is a no-op here.
+    if (name == "__fern_map_free_va") { return "$__fern_map_release"; }
+    if (name == "__fern_map_free_ksva") { return "$__fern_map_release"; }
     if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
     // i32.to_string()'s decimal helper — i32_to_string_helper emits it as
     // $__fern_i32_to_str (param i32 -> i32 box), gated on @uses_i32_to_string.

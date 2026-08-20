@@ -1562,6 +1562,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // gating: an unrelated binary must not carry the strarrarr body's
             // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
             if (o.str == "__fern_arrarr_free") { s = s.need("arrarr_free"); }
+            // The box-VALUE-column map frees (#4353 item 3) free that column
+            // through __fern_arrarr_free, so they pull in its body as well as
+            // their own.
+            if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
+                s = s.need("arrarr_free"); s = s.need("map_free_va");
+            }
             if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
             if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
             // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
@@ -4162,122 +4168,26 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // freelist (class 2). Called ONLY on compile-time-proven fresh, non-escaping,
     // non-iterated map locals (irlower slot_is_reclaimable_map). Null / low-addr
     // guarded (a null slot / the precise-drop + exit-sweep double-call are safe
-    // no-ops). String keys/values leak one level (a sound documented gap).
+    // no-ops). In THIS variant both columns are shallow, so boxes they hold leak
+    // one level (sound; a credited column takes a deep variant below instead).
     // Stack-arg ABI (box at [sp]); x19 holds the box across the nested arr_dec
     // calls (callee-saved; __fern_arr_dec uses no bl so x30 survives too, but
     // both are saved for safety). x9 scratch.
-    s = s.write("__fn___fern_map_free:\n");
-    s = s.write("    ldr x0, [sp]\n");                  // box
-    s = s.write("    cbz x0, .Lmapfree_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Lmapfree_ret\n");             // low-addr guard
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
-    s = s.write("    mov x19, x0\n");                   // box
-    s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
-    s = s.write("    str x0, [sp, #-16]!\n");           // push stack arg (16-aligned)
-    s = s.write("    bl __fn___fern_arr_dec\n");
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_arr_dec\n");
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
-    s = s.write("    str x10, [x19]\n");                // *box = old head
-    s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
-    s = s.write("    mov x0, x19\n");                   // return box (caller drops)
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write(".Lmapfree_ret:\n");
-    s = s.write("    ret\n");
-    // __fern_map_free_vs(box) — #4353 string-VALUE-column deep-release, the
-    // arm64 sibling of the x86-64 body. Identical to __fern_map_free but frees
-    // the VALUES buffer (box[8]) via __fn___fern_str_arr_free (rc==1-gated
-    // per-element string free, then the buffer) so each fresh string value box
-    // is reclaimed; keys (box[0]) keep the shallow arr_dec (their string boxes
-    // leak one level). Called ONLY on irlower-proven Map[K, string] locals
-    // whose every value is fresh (MAPVS credit) — the map is the sole rc=1
-    // owner of each value. x19 holds the box across the two calls.
-    s = s.write("__fn___fern_map_free_vs:\n");
-    s = s.write("    ldr x0, [sp]\n");                  // box
-    s = s.write("    cbz x0, .Lmapfvs_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Lmapfvs_ret\n");             // low-addr guard
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
-    s = s.write("    mov x19, x0\n");                   // box
-    s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
-    s = s.write("    str x0, [sp, #-16]!\n");           // push stack arg (16-aligned)
-    s = s.write("    bl __fn___fern_arr_dec\n");        // keys: shallow (elements leak)
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_str_arr_free\n");   // vals: DEEP string-element free
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
-    s = s.write("    str x10, [x19]\n");                // *box = old head
-    s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
-    s = s.write("    mov x0, x19\n");                   // return box (caller drops)
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write(".Lmapfvs_ret:\n");
-    s = s.write("    ret\n");
-    // __fern_map_free_ks(box) — #4353 string-KEY-column deep-release (arm64).
-    // Keys buffer (box[0]) via __fn___fern_str_arr_free; vals (box[8]) shallow.
-    s = s.write("__fn___fern_map_free_ks:\n");
-    s = s.write("    ldr x0, [sp]\n");
-    s = s.write("    cbz x0, .Lmapfks_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Lmapfks_ret\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_str_arr_free\n");   // keys: DEEP
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_arr_dec\n");        // vals: shallow
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, #16]\n");
-    s = s.write("    str x10, [x19]\n");
-    s = s.write("    str x19, [x3, #16]\n");
-    s = s.write("    mov x0, x19\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write(".Lmapfks_ret:\n");
-    s = s.write("    ret\n");
-    // __fern_map_free_kvs(box) — #4353 both-columns deep-release (arm64). Both
-    // keys (box[0]) and vals (box[8]) buffers via __fn___fern_str_arr_free.
-    s = s.write("__fn___fern_map_free_kvs:\n");
-    s = s.write("    ldr x0, [sp]\n");
-    s = s.write("    cbz x0, .Lmapfkvs_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Lmapfkvs_ret\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_str_arr_free\n");   // keys: DEEP
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_str_arr_free\n");   // vals: DEEP
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x10, [x3, #16]\n");
-    s = s.write("    str x10, [x19]\n");
-    s = s.write("    str x19, [x3, #16]\n");
-    s = s.write("    mov x0, x19\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write(".Lmapfkvs_ret:\n");
-    s = s.write("    ret\n");
+    s = emit_arm64_map_free_variant(s, "",     "arr_dec",      "arr_dec",      "mapfree");
+    // The deep-release variants (#4353), the arm64 siblings of the x86-64 family:
+    // a credited fresh-string column is freed per element via __fern_str_arr_free,
+    // a credited fresh one-dec-BOX column (scalar-element array / all-scalar
+    // struct) via __fern_arrarr_free. Emitted only on irlower-proven columns
+    // (MAPVS: / MAPKS: / MAPVA:), where the map is the sole rc=1 owner of every
+    // element.
+    s = emit_arm64_map_free_variant(s, "_vs",   "arr_dec",      "str_arr_free", "mapfvs");
+    s = emit_arm64_map_free_variant(s, "_ks",   "str_arr_free", "arr_dec",      "mapfks");
+    s = emit_arm64_map_free_variant(s, "_kvs",  "str_arr_free", "str_arr_free", "mapfkvs");
+    // Need-gated: these name __fn___fern_arrarr_free, whose own body is need-gated.
+    if (s.has_need("map_free_va")) {
+    s = emit_arm64_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
+    s = emit_arm64_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
+    }
     s = s.write("__fn___fern_drop_arr_ptr:\n");
     s = s.write("    ret\n");
 
@@ -4287,6 +4197,42 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 // emit_rt_fs emits the filesystem and environment surface: the chunked reader,
 // read/write_file, open_fd, envp / env, temp_dir, stat, read_dir, and the
 // remove_file / remove_dir_all walkers.
+// emit_arm64_map_free_variant is the arm64 sibling of asm_ir's
+// emit_ir_map_free_variant: `__fern_map_free<suffix>(box)` frees the KEYS buffer
+// (box[0]) via __fn___fern_<kfree>, the VALUES buffer (box[8]) via
+// __fn___fern_<vfree>, then returns the raw 16-byte box to the size-classed
+// freelist (class 2). The six members differ only in those two symbols; `lbl` is
+// the local-label stem keeping their guard jumps distinct. Stack-arg ABI (box at
+// [sp]); x19 holds the box across both column calls, x9 is scratch.
+function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
+    s = s.write("__fn___fern_map_free" + suffix + ":\n");
+    s = s.write("    ldr x0, [sp]\n");                  // box
+    s = s.write("    cbz x0, .L" + lbl + "_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .L" + lbl + "_ret\n");         // low-addr guard
+    s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
+    s = s.write("    mov x19, x0\n");                   // box
+    s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
+    s = s.write("    str x0, [sp, #-16]!\n");           // push stack arg (16-aligned)
+    s = s.write("    bl __fn___fern_" + kfree + "\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_" + vfree + "\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
+    s = s.write("    str x10, [x19]\n");                // *box = old head
+    s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
+    s = s.write("    mov x0, x19\n");                   // return box (caller drops)
+    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write(".L" + lbl + "_ret:\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // The target key the migrated Fern helpers below are built for — same
     // derivation as emit_rt_clock_and_print's ctgt.

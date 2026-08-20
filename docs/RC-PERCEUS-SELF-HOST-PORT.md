@@ -11671,3 +11671,54 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `!is_array_type_name` guards from being a blanket refusal. Every want
   adjudicated against native; the churn row was written 0 and is 12, and 0 would
   have read as a pass. Refs #4451.
+
+### 2026-08-20 — #4353 item 3: the map VALUE column learns the box kinds, and the read learns to retain
+
+The column deep-release only ever knew the STRING kind. `MAPVS:` / `MAPKS:` gate
+on `map_decl_type(...) == "string"`, so a `Map[K, i32[]]` or `Map[K, Q]` kept the
+shallow buffer-only free and every element box leaked — 86 B/round and 94 B/round
+respectively on x86-64, 55 / 63 on wasm, against a native oracle flat on all four
+shapes (native's own Map leak was a different bug, fixed in #7143; the earlier
+"nothing to port here" reading of item 3 was an artefact of it).
+
+The credit is now `MAPVA:`, and its gate is deliberately narrower than "the
+column holds pointers": it admits only a value type **one `__fern_arr_dec`
+releases completely** — a scalar-element array, or a struct whose every field is
+a scalar. A `string[]` / `Q[]` column, or a struct with an rc field, needs a
+per-element-kind walk the map free does not have, so it keeps today's sound
+shallow free. What the credit claims, it reclaims in full; there is no
+half-freed column.
+
+**wasm was a second, independent cause.** `insert_value_is_ptr` — the fallback
+that exists precisely because the FIRST insert of a `Map { … }` chain sees the
+bare `map_new` receiver and its i32 default value type — covered string, struct
+and `string[]` but not a scalar-element array, so `op_map_set` emitted `vis=0`
+and `$__fern_map_release` never released that column at all. And `vconsume` was
+`is_fresh_str_temp`, string-only, so a fresh box value was RETAINED with nothing
+to balance the retain. Both were needed: fixing `vconsume` alone closed the
+struct column and left the array column untouched.
+
+**The register half exposed a pre-existing use-after-free**, which is the part
+worth remembering. `var v: i32[] = m.get_or(k, d)` binds the column's RAW
+pointer — the register map read hands back an uncounted alias — into a slot the
+exit dec-sweep releases unconditionally. The sweep therefore freed the map's live
+value, and a read after the alias died returned another local's contents:
+self-host x86-64 and arm64 disagreed with both the interpreter and native on a
+plain read-then-recycle program. Adding the column free turned that silent early
+free into a reported rc underflow, which is how it surfaced. The fix is the
+read-side twin of #6880's insert-side `vretain`: an array-valued map read sets
+`alias_inc` on the binding. Note the asymmetry that hid this for so long —
+strings are credit-gated (an uncredited string local is never swept), arrays are
+counted per slot, so only the array column could dangle.
+
+Erasure: the six `__fern_map_free*` members were six longhand near-copies per
+register backend differing only in their two column-free symbols. They are one
+parameterised emitter each now (`emit_ir_map_free_variant`,
+`emit_arm64_map_free_variant`), which is what made adding `_va` / `_ksva` two
+lines instead of a hundred.
+
+Regression test: `internal/e2eselfhost/self_host_map_box_column_reclaim_ir_test.go`
+(5 cases x 3 backends). Three discriminate — the two flatness cases and
+`read-then-recycle` — and fail on the parent on every leg; the two controls
+(`read-back-no-over-release`, which is what caught the missing retain, and the
+uncredited `string[]` column) pass either way. Refs #4353, #6880, #7143.
