@@ -3244,3 +3244,85 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227;
 }
+
+// --- Structured-scope navigation over an op stream ---
+//
+// br / br_if name a scope by DEPTH, so resolving one means walking the op
+// stream to find the scope it means. Both native backends and the IR
+// interpreter need that walk, and it reads nothing but ops and kind tags —
+// so it belongs with the op model rather than with lowering.
+
+// is_opener reports whether an op kind opens a structured scope (if / block
+// / loop) — used for the nesting counts below.
+function is_opener(k: string): boolean {
+    return k == "if" || k == "block" || k == "loop";
+}
+
+// find_matching_end returns the index of the `end` closing the structured
+// scope whose body begins at `start` (one past the opener), honouring
+// nesting across if / block / loop.
+pub function find_matching_end(ops: Op[], start: i32): i32 {
+    var depth: i32 = 0;
+    var i: i32 = start;
+    while (i < ops.len()) {
+        var k: string = kind_name(ops[i].kind_tag);
+        if (is_opener(k)) { depth = depth + 1; }
+        else if (k == "end") {
+            if (depth == 0) { return i; }
+            depth = depth - 1;
+        }
+        i = i + 1;
+    }
+    return ops.len();
+}
+
+// find_matching_else returns the index of the `else` for the if whose body
+// begins at `start`, or -1 if that if has no else (its scope closes at end).
+pub function find_matching_else(ops: Op[], start: i32): i32 {
+    var depth: i32 = 0;
+    var i: i32 = start;
+    while (i < ops.len()) {
+        var k: string = kind_name(ops[i].kind_tag);
+        if (is_opener(k)) { depth = depth + 1; }
+        else if (k == "end") {
+            if (depth == 0) { return 0 - 1; }
+            depth = depth - 1;
+        }
+        else if (k == "else") {
+            if (depth == 0) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// enclosing_opener returns the index of the d-th enclosing structured opener
+// from `pc` (d=0 is the innermost), scanning backward and skipping
+// already-closed inner scopes. The target of a `br d` / `br_if d`.
+pub function enclosing_opener(ops: Op[], pc: i32, d: i32): i32 {
+    var need: i32 = d;
+    var skip: i32 = 0;
+    var i: i32 = pc - 1;
+    while (i >= 0) {
+        var k: string = kind_name(ops[i].kind_tag);
+        if (k == "end") { skip = skip + 1; }
+        else if (is_opener(k)) {
+            if (skip > 0) { skip = skip - 1; }
+            else {
+                if (need == 0) { return i; }
+                need = need - 1;
+            }
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// do_branch resolves a `br d` from `pc`: branching to a loop re-enters its
+// header (re-evaluating the condition); branching to a block/if jumps past
+// its matching end (forward exit).
+pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
+    var op: i32 = enclosing_opener(ops, pc, d);
+    if (ops[op].kind_tag == 153) { return op + 1; }  // loop
+    return find_matching_end(ops, op + 1) + 1;
+}
