@@ -12554,7 +12554,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						fa.Field, pt.Name, pt.Name)
 					return nil
 				}
-				wantParams := tm.Params[1:] // drop `self`
+				// An ASSOCIATED function has no self receiver (`trait Num {
+				// function zero(): Self; }`), so it is reached as `T.zero()`
+				// — the branch above — and never through a value. Say so
+				// rather than slicing off a `self` that is not there: that
+				// panicked on the no-argument form and swallowed the first
+				// real argument on any other.
+				if tm.Assoc {
+					c.errfCode(n.P, "E021",
+						"%q is an associated function of trait %s, not a method; call it as %s.%s(...)",
+						fa.Field, boundTrait, pt.Name, fa.Field)
+					return nil
+				}
+				// !Assoc means the parser saw a leading `self` param
+				// (assoc := len(params) == 0 || params[0].Name != "self"),
+				// so dropping it here is safe.
+				wantParams := tm.Params[1:]
 				if len(n.Args) != len(wantParams) {
 					c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
 					return ast.SubstSelf(tm.Result, tt)

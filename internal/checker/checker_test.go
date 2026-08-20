@@ -5244,6 +5244,81 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 	}
 }
 
+// TestBoundedParamAssocFnCallNoPanic guards the sibling of
+// TestDynMethodCallNoSelfParamNoPanic: calling a trait ASSOCIATED function
+// (one with no `self` receiver) through a VALUE whose type is a bounded type
+// parameter. checkExpr sliced the resolved signature's Params[1:] "to drop
+// self", which panicked with `slice bounds out of range [1:0]` on the no-arg
+// form and reported a nonsense arity ("expects 0 argument(s), got 1") on any
+// other. The no-self form is not exotic — std/num's `Num { function zero():
+// Self; }` and std/convert's `From { function from(v: T): Self; }` are both
+// associated functions.
+func TestBoundedParamAssocFnCallNoPanic(t *testing.T) {
+	for _, tc := range []struct {
+		name, src, want string
+	}{
+		{
+			// The shape that panicked: zero-parameter associated function.
+			name: "no-arg",
+			src: `trait Show { function show(): i32; }
+struct P { v: i32 }
+impl Show for P { function show(): i32 { return 5; } }
+function pick[T: Show](a: T): i32 { return a.show(); }
+function main(): i32 { return pick(P { v: 42 }); }`,
+			want: "associated function",
+		},
+		{
+			// With a parameter the old code did not crash, it mis-reported:
+			// Params[1:] ate the real argument and blamed the caller.
+			name: "with-arg",
+			src: `trait Show { function show(x: i32): i32; }
+struct P { v: i32 }
+impl Show for P { function show(x: i32): i32 { return x + 1; } }
+function pick[T: Show](a: T): i32 { return a.show(1); }
+function main(): i32 { return pick(P { v: 41 }); }`,
+			want: "associated function",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, tc.src)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("want an error mentioning %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestBoundedParamTraitCallsStillCheck pins the two forms that must keep
+// working, so the associated-function rejection above cannot be widened into
+// them: an ordinary trait METHOD reached through a value, and an associated
+// function reached the way it is meant to be, through the type parameter.
+func TestBoundedParamTraitCallsStillCheck(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{
+			name: "method-on-value",
+			src: `trait Show { function show(self: Self): i32; }
+struct P { v: i32 }
+impl Show for P { function show(self: Self): i32 { return self.v; } }
+function pick[T: Show](a: T): i32 { return a.show(); }
+function main(): i32 { return pick(P { v: 42 }); }`,
+		},
+		{
+			name: "assoc-fn-on-type-param",
+			src: `trait Zero { function zero(): Self; }
+struct P { v: i32 }
+impl Zero for P { function zero(): Self { return P { v: 7 }; } }
+function mk[T: Zero](): i32 { var z: T = T.zero(); return 1; }
+function main(): i32 { return 42; }`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkSource(t, tc.src); err != nil {
+				t.Errorf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
 // TestDynMethodCallNoSelfParamNoPanic guards against a checker crash on a
 // `dyn Trait` method call where the trait method signature has no leading
 // `self` param. checkDynMethodCall unconditionally sliced `tm.Params[1:]` to
