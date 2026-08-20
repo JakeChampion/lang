@@ -27538,6 +27538,68 @@ function tostr_scalar_init(init: parser.Expr, ns: string[], ts: string[]): boole
     return false;
 }
 
+// join_strarr_init: `init` is `<ident>.join(<sep>)` whose receiver is a local
+// declared `string[]`. The receiver-type test is what makes the credit safe, and
+// it cannot live in str_local_binding_is_fresh for the same reason the
+// `.to_string()` one cannot: that function is state-free and purely syntactic, so
+// a bare `field == "join"` arm there also admits a user-declared
+// `(h: Holder) join(sep)` whose result ALIASES a field the receiver still owns —
+// measured as a live-box free (exit 97 on x86-64, a trap on wasm), which is why
+// the shape is pinned by a test rather than only described here.
+//
+// __fern_arr_str_join on a real string[] cannot alias: the register body is Fern
+// source built as `var r = ""` then concat, and wasm's copies bytes into a fresh
+// box.
+function join_strarr_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
+    match (init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "join") { return false; }
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            var at: i32 = util.index_of_str(ns, rid.name);
+                            if (at < 0) { return false; }          // unknown type -> refuse
+                            if (at >= ts.len()) { return false; }
+                            return ts[at] == "string[]";
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_join_strarr_names gathers every `var s: string = xs.join(sep)` binding,
+// recursing through nested blocks like its siblings. An UNANNOTATED receiver is
+// simply absent from ns/ts and so refused — the same conservative limit the
+// `.to_string()` collector accepts, and the reason a `string[]` PARAM receiver is
+// not credited (params carry no `var` declaration in the body).
+function collect_join_strarr_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (join_strarr_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); } },
+            parser.StmtIf(f) => { a = collect_join_strarr_names(f.then_body, ns, ts, a); a = collect_join_strarr_names(f.else_body, ns, ts, a); },
+            parser.StmtWhile(w) => { a = collect_join_strarr_names(w.body, ns, ts, a); },
+            parser.StmtFor(fo) => { a = collect_join_strarr_names(fo.body, ns, ts, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_join_strarr_names(m.arms[mi].body, ns, ts, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_tostr_scalar_names gathers every `var s: string = <scalar>.to_string()`
 // binding, recursing through nested blocks like its siblings.
 function collect_tostr_scalar_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
@@ -31184,6 +31246,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + tss[ti2]);
         }
         ti2 = ti2 + 1;
+    }
+    // `xs.join(sep)` string locals — same gates again, and the receiver-type test
+    // lives here for the same reason the `.to_string()` one does (join_strarr_init).
+    var jss: string[] = collect_join_strarr_names(body, tsn, tst, []);
+    var ji: i32 = 0;
+    while (ji < jss.len()) {
+        if (util.index_of_str(strs, jss[ji]) < 0
+            && util.index_of_str(reassigned, jss[ji]) < 0
+            && !body_unsafe_for_clo(body, jss[ji], borrowable, clo_ok, recv_borrow)) {
+            out = out.append("STR:" + jss[ji]);
+        }
+        ji = ji + 1;
     }
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
