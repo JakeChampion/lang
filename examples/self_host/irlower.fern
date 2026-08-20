@@ -3157,6 +3157,16 @@ pub function is_map_type_name(t: string): boolean {
     return t.len() >= 5 && t[0:4] == "Map[";
 }
 
+// map_elem_of_array_type: the `Map[K, V]` element of a `Map[K, V][]` spelling,
+// or "" for anything else — including a bare `Map[K, V]`, which is not an array
+// and so has no element.
+pub function map_elem_of_array_type(t: string): string {
+    if (!is_array_type_name(t)) { return ""; }
+    var el: str = t[0 : t.len() - 2];
+    if (is_map_type_name(el) && !is_array_type_name(el)) { return el + ""; }
+    return "";
+}
+
 // is_scalar_arr_field_access reports whether `e` reads a scalar-array struct
 // field (`v.items` where items: i32[]). Such an array lives inside the struct
 // (which leaks), so binding/returning/assigning it would create an alias the
@@ -10312,7 +10322,12 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 var moty: string = expr_struct_type(mrfa.obj, s);
                 if (moty != "") {
                     var mft: string = decl_field_type(s.structs, moty, mrfa.field);
-                    if (is_map_type_name(mft)) { mtype = mft; }
+                    // is_map_type_name is a bare `Map[` prefix test, so a
+                    // `Map[K, V][]` FIELD passes it — and typing that array as a
+                    // map sends `r.rows.len()` to op_map_len over array memory.
+                    // Same trap as the ident arms (slot_map_type); the element
+                    // read is the ExprIndex arm's job, not this one.
+                    if (is_map_type_name(mft) && !is_array_type_name(mft)) { mtype = mft; }
                 }
             } else {
                 // A map TUPLE element receiver (`t.0.get_or(k, d)`):
@@ -10321,7 +10336,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 // reads the element (tuple_get pushes the map ptr),
                 // same as a struct field. #3317.
                 var mtt: string = expr_tuple_elem_tag(mrfa.obj, util.digits_to_i32(mrfa.field), s);
-                if (is_map_type_name(mtt)) { mtype = mtt; }
+                if (is_map_type_name(mtt) && !is_array_type_name(mtt)) { mtype = mtt; }
             }
         },
         // A map ARRAY element receiver (`ms[i].get_or(k, d)`): the
@@ -10333,6 +10348,21 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 parser.ExprIdent(maid) => {
                     var maslot: i32 = s.slot_of(maid.name);
                     if (maslot >= 0 && s.is_arr_slot(maslot) && is_map_type_name(s.map_type_of(maslot))) { mtype = s.map_type_of(maslot); }
+                },
+                // The same element read off a TUPLE element (`t.0[i].get(k)`)
+                // or a STRUCT FIELD (`r.rows[i].get(k)`). Neither has a slot to
+                // carry the element map type, but both spell their own type as
+                // `Map[K, V][]`, so the element type is that with the array
+                // suffix dropped.
+                parser.ExprFieldAccess(mafa) => {
+                    var mabase: string = "";
+                    if (util.is_all_digits(mafa.field)) {
+                        mabase = expr_tuple_elem_tag(mafa.obj, util.digits_to_i32(mafa.field), s);
+                    } else {
+                        var maoty: string = expr_struct_type(mafa.obj, s);
+                        if (maoty != "") { mabase = decl_field_type(s.structs, maoty, mafa.field); }
+                    }
+                    mtype = map_elem_of_array_type(mabase);
                 },
                 _ => {}
             }
@@ -20166,6 +20196,15 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // miscompile (`p.1` printed fine, but its length came out wrong).
     var elem_tup: string = s.arrarr_elem_of_slot(aslot);
     if (elem_tup.len() >= 2 && elem_tup[0:1] == "(") { ff = ff.mark_tuple_elems(xslot, tuple_elem_tags(elem_tup)); }
+    // `for m in <Map[K, V][]>`: each element is a map, so carry the element
+    // Map[K, V] on the loop var (mark_map_type) or a map op in the body has no
+    // receiver type and mis-dispatches as `i32.<op>`. It reads the array slot's
+    // map column directly — the raw map_type_of, not slot_map_type: that column
+    // holds the ELEMENT type for a map-array slot, which is exactly what an
+    // element binding wants, and is where the direct-index `ms[i].get(k)` reads
+    // it too. The tuple case above needs its own mark for the same reason.
+    var elem_map: string = s.map_type_of(aslot);
+    if (is_map_type_name(elem_map)) { ff = ff.mark_map_type(xslot, elem_map); }
     ff = ff.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
     ff = ff.emit(ir.op_loop(0));                // depth 0 = continue/header
     // advance: idx = idx + 1 at the top, so a `continue` (br-to-header)
@@ -42769,7 +42808,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // FIRST and exclude it from r_is_enum, then map-track the receiver slot
         // (mapty) below so `m.values()` / `m.get(k)` / `m.iter()` dispatch as map
         // ops (a Map receiver marked as an enum would mis-dispatch them).
-        var r_is_map: boolean = is_map_type_name(fn.receiver_type);
+        var r_is_map: boolean = is_map_type_name(fn.receiver_type) && !is_array_type_name(fn.receiver_type);
         var r_is_enum: boolean = !r_is_map && is_enum_like_name(rbase, structs);
         // An Option[T] / Result[T, E] receiver (`function (o: Option[i32])
         // unwrap_or(...)`) binds slot 0 as a leak-only opt box carrying the full
@@ -42892,7 +42931,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // A Map[K,V] param records the slot's map type so `m.get_or(...)` / etc.
         // on the parameter dispatch as map ops (the local-var annotation path
         // already does this; params lacked it). #map-param.
-        if (is_map_type_name(ptn)) { mapty = mapty.append(ptn); } else { mapty = mapty.append(""); }
+        // A map-ARRAY param records its ELEMENT type, the same column convention
+        // map-array LOCALS use, so `ms[i].get(k)` reads a real Map[K, V] rather
+        // than the array spelling it happened to accept.
+        if (is_map_type_name(ptn) && !is_array_type_name(ptn)) { mapty = mapty.append(ptn); }
+        else if (map_elem_of_array_type(ptn) != "") { mapty = mapty.append(map_elem_of_array_type(ptn)); }
+        else { mapty = mapty.append(""); }
         cellty = cellty.append(cell_elem_of_type_name(ptn));
         // On wasm a bare-typevar (erased-generic) param of a PASS-THROUGH fn
         // (bare-typevar RETURN, e.g. `id[T](x:T):T` / `fst[A,B](a:A,b:B):A`) is
@@ -47396,7 +47440,10 @@ pub function map_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (is_map_type_name(funcs[k].ret_type)) {
+        // `Map[K, V][]` prefix-matches is_map_type_name but returns an ARRAY, and
+        // a caller that took this registration typed the un-bound `mk().len()`
+        // receiver as a map — op_map_len over array memory.
+        if (is_map_type_name(funcs[k].ret_type) && !is_array_type_name(funcs[k].ret_type)) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key + "|" + funcs[k].ret_type);

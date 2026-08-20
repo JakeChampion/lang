@@ -11598,3 +11598,69 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   signal — and the two controls (the element read, and a plain map local whose
   ops must all still dispatch) pass either way. Every want adjudicated against
   native; the churn row was guessed 30 and is 10. Refs #4451.
+
+- 2026-08-20: **the map ELEMENT of a `Map[K, V][]` now reaches every receiver
+  position, and the array itself reaches none.** The other half of the entry
+  above: that one stopped a map-ARRAY being typed as one map; this one gets the
+  element type to the places that legitimately want it.
+
+  | shape | native | before | after |
+  |---|---|---|---|
+  | `for x in ms { x.get_or(..) }` | 16 | bail | **16** |
+  | `t.0[0].get_or(..)` (tuple element base) | 10 | bail | **10** |
+  | `r.rows[0].get_or(..) + r.rows.len()` (struct field) | 8 | bail | **8** |
+  | `r.rows.len()` alone | 3 | **segfault** | **3** |
+  | `ms[0].get_or(..)` | 7 | 7 | 7 |
+  | `ms.len()` | 1 | 1 | 1 |
+
+  Three separate omissions, one theme:
+
+  - The foreach binds its element directly and carried struct / opt / tuple /
+    arrarr element kinds but never a map, so a map op on the loop var had no
+    receiver type. The tuple case's own comment already says why an element
+    binding needs its own mark even though the direct-index form reads the same
+    column.
+  - The map-op dispatch's `ExprIndex` arm understood only an IDENT base, so a
+    tuple element or struct field holding the array fell through. Both spell
+    their type as `Map[K, V][]`, so `map_elem_of_array_type` drops the suffix.
+  - Widening that arm then exposed the prefix-test trap from the entry above on
+    two MORE readers: the struct-field and tuple-element arms test with
+    `is_map_type_name`, a bare `Map[` match, so a `Map[K, V][]` field passed and
+    `r.rows.len()` lowered to `op_map_len` over array memory. That segfault was
+    already reachable on its own — `maparr-struct-field-len-only` dies on the
+    parent — and the earlier bail on the element read merely hid it in the
+    combined shape. Both arms now require a non-array spelling, matching what
+    `slot_map_type` does for idents.
+
+  So the same one-line trap sat in four readers; the entry above fixed two of
+  them and this fixes the other two. The prefix test is the hazard: anything
+  asking "is this a map" with `is_map_type_name` alone accepts an array of maps.
+
+  **Having tripped over it twice, the remaining 41 uses were audited rather than
+  waited on, and that found a fifth — another segfault.** `map_ret_fns_of`
+  registers every function whose `ret_type` prefix-matches, so one returning
+  `Map[K, V][]` was recorded as map-returning and an UN-BOUND `mk().len()`
+  receiver typed as a map (native 2, self-host died). Binding the call to a
+  local first was already safe — the local's slot is array-marked and
+  `slot_map_type` declines it — which is why only the direct-call form broke.
+  Registration is the right place: the function's own doc says it records
+  "each function returning a Map", and an array of maps is not one.
+
+  Two more sites were consistent-but-fragile and are now guarded with it:
+  a map-ARRAY PARAM recorded the full `Map[K, V][]` spelling in the map column
+  where every other map-array site records the ELEMENT type (it worked, but by
+  accident — `map_key_kind_of` happened to survive the array suffix), and a
+  receiver typed `Map[K, V][]` would have been map-tracked. Both are pinned by
+  positive cases now.
+
+  The audit's other 30-odd uses are safe: either paired with `is_arr_slot`
+  already, or in leaksafe/reuse predicates where an array of maps is a legitimate
+  member of the accepted set.
+
+  Regression test: `internal/e2eselfhost/self_host_maparr_elem_test.go`
+  (12 cases x 3 backends). On the parent four bail and one segfaults; the two
+  controls — a genuine Map struct FIELD and a genuine Map TUPLE ELEMENT, whose
+  ops must all still dispatch — pass either way, which is what keeps the two new
+  `!is_array_type_name` guards from being a blanket refusal. Every want
+  adjudicated against native; the churn row was written 0 and is 12, and 0 would
+  have read as a pass. Refs #4451.
