@@ -5680,6 +5680,23 @@ function label_in_scope(labels: string[], name: string): boolean {
 // it IS inside a loop, since an out-of-loop break is already E011 (the Go
 // checker reports E058 in the `else` branch after the E011 check, so the
 // two never both fire on one statement).
+// lambdas_in_stmt collects the lambdas one statement's expressions hold, using
+// astwalk's collecting fold rather than another hand-rolled walk. Only the
+// lambdas THIS statement holds directly are wanted — a lambda nested inside
+// another is reached when that one's body is itself walked.
+function lambdas_in_stmt(st: parser.Stmt): parser.Expr[] {
+  var acc: parser.Expr[] = [];
+  return astwalk.fold_stmt(st, acc, collect_lambda);
+}
+
+function collect_lambda(e: parser.Expr, acc: parser.Expr[]): parser.Expr[] {
+  match (e) {
+    parser.ExprLambda(_) => { return acc.append(e); },
+    _ => { return acc; }
+  }
+  return acc;
+}
+
 function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): Diag[] {
   var out: Diag[] = [];
   var i: i32 = 0;
@@ -5728,7 +5745,27 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): D
         var one: parser.Stmt[] = [d.action];
         out = append_diags(out, loop_diags(one, in_loop, labels));
       },
-      _ => {}
+      // A lambda body is NOT inside the enclosing loop: a label does not cross
+      // a function boundary, and native rejects `break outer` from inside one
+      // with E011. Without this descent the body was never visited, so the
+      // illegal break was accepted (#7199) — the same lambda blindness as the
+      // label RESOLVER had, one layer up.
+      _ => {
+        var lams: parser.Expr[] = lambdas_in_stmt(stmts[i]);
+        var li: i32 = 0;
+        while (li < lams.len()) {
+          match (lams[li]) {
+            parser.ExprLambda(lm) => {
+              var nolabels: string[] = [];
+              var sub: Diag[] = loop_diags(lm.body, false, nolabels);
+              var si: i32 = 0;
+              while (si < sub.len()) { out = out.append(sub[si]); si = si + 1; }
+            },
+            _ => {}
+          }
+          li = li + 1;
+        }
+      }
     }
     i = i + 1;
   }
