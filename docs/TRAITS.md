@@ -107,9 +107,13 @@ impl Eq for Point {
 }
 ```
 
-- A **trait** is a named set of method *signatures*. Each signature's
-  first parameter must be `self: Self`. `Self` is a contextual type that
-  stands for the implementing type.
+- A **trait** is a named set of *signatures*. A **method**'s first
+  parameter is `self: Self`; `Self` is a contextual type that stands for
+  the implementing type. A signature with no leading `self` is an
+  **associated function** (`ast.TraitMethod.Assoc`) — `std/num`'s
+  `Num { function zero(): Self; }` and `std/convert`'s
+  `From { function from(v: T): Self; }` are both this form. It is called
+  as `T.zero()`, never on a value: `x.zero()` is E021.
 - An **impl** provides bodies for exactly the trait's methods, with `Self`
   bound to the `for` type. Every *abstract* method must be present;
   signatures must match (modulo `Self` → `Type`); no extra methods are
