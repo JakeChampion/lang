@@ -71,10 +71,12 @@ pub struct ExprArray { elements: Expr[], elem_ty: string }
 // b: T): U { body }` — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
 // just builds the AST node.
-// origin records the source form a lambda the PARSER synthesised stands in for,
-// so `-fmt` reprints that form rather than the lambda: "block" for a
-// value-position `{ … }` block expression, which parse_primary desugars to a
-// 0-arg IIFE. "" for a lambda the programmer wrote. Read by the printer only.
+// origin records the source form a lambda the PARSER synthesised stands in for.
+// "" means the programmer wrote the lambda; the ORIGIN_* value-block constants
+// name which desugar produced it. Two readers: `-fmt` reprints ORIGIN_BLOCK as
+// `{ … }` rather than as a lambda, and is_value_block asks whether this lambda
+// is a desugar at all — a hand-written IIFE parses to the identical shape, and
+// only the marker separates them (#7192).
 // line / col locate a lambda the SOURCE wrote, for a diagnostic against one of
 // its annotations. Zero on a lambda the parser synthesised — the value-block
 // and match-/if-expression IIFEs — which is what keeps a reporter off their
@@ -736,6 +738,31 @@ function s_if_origin(cond: Expr, then_body: Stmt[], else_body: Stmt[], origin: s
 // ORIGIN_ASSERT marks the `if (!cond) { eprint(…); exit(1); }` an `assert`
 // desugars to. constfold.elide_asserts keys off it.
 pub const ORIGIN_ASSERT: string = "assert";
+
+// The value-block origins. Each names the source form whose desugar produced a
+// zero-arg call of a zero-param lambda — the shape irlower INLINES rather than
+// calls. is_value_block tests membership of this set, because a hand-written
+// IIFE has the identical shape and must NOT be inlined: it is a call with a
+// scope of its own, so a `defer` inside it runs when IT returns (#7192).
+// ORIGIN_BLOCK doubles as the printer's flag for reprinting `{ … }`.
+pub const ORIGIN_BLOCK: string = "block";
+pub const ORIGIN_MATCH_EXPR: string = "match_expr";
+pub const ORIGIN_IF_EXPR: string = "if_expr";
+pub const ORIGIN_ARR_COMP: string = "arr_comp";
+pub const ORIGIN_MAP_COMP: string = "map_comp";
+
+// ORIGIN_IIFE_SCOPED marks a hand-written IIFE whose body the defer lowering
+// scoped as its own — i.e. one that actually contains a defer. It is NOT a
+// value-block origin: irlower must CALL it, because inlining would splice the
+// defer machinery into the enclosing function and hoist the cleanup with it.
+//
+// A defer-free IIFE is deliberately left unmarked and keeps being inlined.
+// Inlining and calling differ only where the scope boundary is observable, and
+// `defer` / `errdefer` is the only construct that observes it — a `return`
+// inside one is already lowered as the block's value, not a function return. So
+// the narrow marker fixes #7192 without moving any program that worked before.
+pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
+
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
 pub function no_match_sugar(): MatchSugar {
@@ -946,7 +973,7 @@ function maybe_desugar_array_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: "", line: 0, col: 0 };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0 };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -1013,7 +1040,7 @@ function maybe_desugar_map_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: "", line: 0, col: 0 };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0 };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -2378,7 +2405,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 // the IIFE lambda always returns.
                 else if (mc.needs_default_return) { mlam_body = mlam_body.append(s_return(zero_expr_for(mc.rt))); }
                 var mno_args: Expr[] = [];
-                var miife: Expr = e_call(e_lambda(mno_params, mc.rt, mlam_body), mno_args);
+                var miife: Expr = e_call(e_lambda_origin(mno_params, mc.rt, mlam_body, ORIGIN_MATCH_EXPR), mno_args);
                 return parse_postfix(mc.par, miife);
             }
             if (x.name == "if") {
@@ -2389,7 +2416,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 var no_params: ParamDecl[] = [];
                 var lam_body: Stmt[] = [ic.stmt];
                 var no_args: Expr[] = [];
-                var iife: Expr = e_call(e_lambda(no_params, ic.rt, lam_body), no_args);
+                var iife: Expr = e_call(e_lambda_origin(no_params, ic.rt, lam_body, ORIGIN_IF_EXPR), no_args);
                 return parse_postfix(ic.par, iife);
             }
             // A TYPE keyword used as a MODULE name: `string.repeat_char(…)`
@@ -2545,7 +2572,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 var (bb_body, bb_rt, bb_p) = parse_branch_body(p);
                 var bx_params: ParamDecl[] = [];
                 var bx_args: Expr[] = [];
-                var iife: Expr = e_call(e_lambda_origin(bx_params, bb_rt, bb_body, "block"), bx_args);
+                var iife: Expr = e_call(e_lambda_origin(bx_params, bb_rt, bb_body, ORIGIN_BLOCK), bx_args);
                 return parse_postfix(bb_p, iife);
             }
             if (x.text == "-" || x.text == "!") {
@@ -11609,9 +11636,24 @@ struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 pub function is_value_block(c: ExprCall): boolean {
     if (c.args.len() != 0) { return false; }
     match (c.callee) {
-        ExprLambda(l) => { return l.params.len() == 0; },
+        ExprLambda(l) => {
+            if (l.params.len() != 0) { return false; }
+            return is_value_block_origin(l.origin);
+        },
         _ => { return false; }
     }
+    return false;
+}
+
+// is_value_block_origin reports whether `origin` names one of the desugars that
+// produce an inlined value block. Every pass that rebuilds an ExprLambda does so
+// by spread, so the marker survives to the consumers that need it.
+pub function is_value_block_origin(origin: string): boolean {
+    if (origin == ORIGIN_BLOCK) { return true; }
+    if (origin == ORIGIN_MATCH_EXPR) { return true; }
+    if (origin == ORIGIN_IF_EXPR) { return true; }
+    if (origin == ORIGIN_ARR_COMP) { return true; }
+    if (origin == ORIGIN_MAP_COMP) { return true; }
     return false;
 }
 
@@ -12828,11 +12870,40 @@ function dl_ll_expr(e: Expr): Expr {
         ExprLambda(lm) => { return ExprLambda { ...lm, body: lower_defers_body(lm.body) }; },
         ExprCall(c) => {
             if (is_value_block(c)) { return dl_vb_rebuild(c, dl_lower_lambda_bodies(vb_body(c))); }
+            // A hand-written IIFE carrying a defer becomes its own scope, and is
+            // stamped so irlower calls it instead of inlining it (#7192). The
+            // ExprLambda arm below does the scoping either way; the stamp is
+            // what tells the two apart afterwards.
+            if (dl_is_source_iife(c)) {
+                match (c.callee) {
+                    ExprLambda(lm) => {
+                        if (dl_stmts_have_defer(lm.body)) {
+                            var scoped: Expr = ExprLambda { ...lm, origin: ORIGIN_IIFE_SCOPED, body: lower_defers_body(lm.body) };
+                            return ExprCall { ...c, callee: scoped };
+                        }
+                    },
+                    _ => {}
+                }
+            }
             return dl_ll_expr_kids(e);
         },
         _ => { return dl_ll_expr_kids(e); }
     }
     return e;
+}
+
+// dl_is_source_iife reports a zero-arg call of a zero-param lambda the
+// programmer wrote — the shape a value block shares, minus the marker.
+function dl_is_source_iife(c: ExprCall): boolean {
+    if (c.args.len() != 0) { return false; }
+    match (c.callee) {
+        ExprLambda(lm) => {
+            if (lm.params.len() != 0) { return false; }
+            return !is_value_block_origin(lm.origin);
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // vb_body is the statement list of a value block's callee lambda.

@@ -748,7 +748,10 @@ function call_bail_tag(c: parser.ExprCall): string {
         parser.ExprFieldAccess(fa) => { return "call `." + fa.field + "`"; },
         parser.ExprLambda(lam) => {
             if (lam.params.len() == 0 && c.args.len() == 0) {
-                return "immediately-invoked value block (an if-/match-expression or comprehension desugar)";
+                if (lam.origin != parser.ORIGIN_IIFE_SCOPED) {
+                    return "immediately-invoked value block (an if-/match-expression or comprehension desugar)";
+                }
+                return "immediately-invoked lambda written in the source, carrying a defer";
             }
             return "call of an inline lambda";
         },
@@ -8370,7 +8373,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                         // if (t > 4i64) { t * 3i64 } else { 7i64 } }` answered wrongly
                         // above 2^31 on x86-64 and emitted wasm the validator rejects
                         // ("expected i32, found i64").
-                        if (lam.params.len() == 0) {
+                        if (lam.params.len() == 0 && lam.origin != parser.ORIGIN_IIFE_SCOPED) {
                             return lower_iife(c, lam, s, true);
                         }
                     },
@@ -13631,7 +13634,16 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // that stores each branch's result into a temp (#2938). Bails to
                 // AST for anything other than the i32 if-expression shape.
                 parser.ExprLambda(lam) => {
-                    return lower_iife(c, lam, s, false);
+                    // Only a MARKED value block is inlined. A hand-written IIFE
+                    // has the same shape but is a call with a scope of its own,
+                    // so lift_iife_lambdas rewrote it to a call of a lifted
+                    // function before this ran; reaching here with an unmarked
+                    // one means that rewrite declined, and inlining it would
+                    // hoist its defers to the enclosing function (#7192).
+                    if (lam.origin != parser.ORIGIN_IIFE_SCOPED) {
+                        return lower_iife(c, lam, s, false);
+                    }
+                    return s.fail();
                 },
                 // `mk()(args)` — the callee is itself a CALL returning a plain
                 // function value (a bare fn pointer; e.g. mk returns a no-capture
@@ -58361,7 +58373,13 @@ function is_wide_cap_type(t: string): boolean {
 function is_iife_callee(c: parser.ExprCall): boolean {
     if (c.args.len() != 0) { return false; }
     match (c.callee) {
-        parser.ExprLambda(lm) => { return lm.params.len() == 0; },
+        parser.ExprLambda(lm) => {
+            if (lm.params.len() != 0) { return false; }
+            // A defer-carrying IIFE is CALLED, not inlined, so its captures do
+            // need boxing and it is not exempt. Every other zero-param
+            // immediate call still inlines, so the exemption stands (#7192).
+            return lm.origin != parser.ORIGIN_IIFE_SCOPED;
+        },
         _ => { return false; }
     }
 }
@@ -58996,6 +59014,152 @@ function box_nested_lambdas(e: parser.Expr, acc: parser.ExprLambda[]): parser.Ex
     return out;
 }
 
+// name_source_iifes gives a hand-written IIFE a name, so the ordinary
+// bound-lambda lift handles it.
+//
+// `(function(){ B })()` is exactly `var $iife$N = function(){ B }; $iife$N()`,
+// and try_lift_binding already lifts a bound lambda that is only called. So
+// rather than teach the lift walk a second shape — it only ever looks at a
+// StmtVar initialiser — this normalises the shape it does not know into the one
+// it does.
+//
+// Only the BINDING is hoisted; the call stays where it was. Constructing a
+// lambda literal has no side effects, so evaluation order is unchanged.
+//
+// A MARKED value block is left alone: irlower inlines those, and its defers
+// belong to the enclosing function (parser.is_value_block_origin). This pass
+// exists for the unmarked one, whose defers belong to itself (#7192).
+//
+// Scope: an IIFE that is the whole of a `var` initialiser, a `return` value, an
+// assignment value, or an expression statement, at any statement nesting depth.
+// One nested inside a larger expression is left for the bail to name — the
+// counter cannot be threaded through astwalk.map_expr's stateless callback, and
+// a partial rewrite there would be worse than a diagnostic.
+struct IifeNamed { stmts: parser.Stmt[], k: i32 }
+
+function iife_is_source_written(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                parser.ExprLambda(lm) => {
+                    if (lm.params.len() != 0) { return false; }
+                    return lm.origin == parser.ORIGIN_IIFE_SCOPED;
+                },
+                _ => { return false; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function iife_lambda_of(e: parser.Expr): parser.Expr {
+    match (e) {
+        parser.ExprCall(c) => { return c.callee; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+function iife_name(fdname: string, k: i32): string {
+    return "$iife$" + fdname + "$" + util.i32_to_string(k);
+}
+
+// iife_call_to replaces the IIFE's lambda callee with a reference to the name
+// the hoisted binding introduced, keeping the call itself in place.
+function iife_call_to(c: parser.ExprCall, nm: string): parser.Expr {
+    return parser.ExprCall { ...c, callee: parser.ExprIdent { name: nm, line: c.line, col: c.col } };
+}
+
+// iife_bind is the hoisted `var <nm> = <lambda>;`. Untyped: the checker infers
+// the lambda's own type, exactly as it does for a written `var f = () => …`.
+function iife_bind(nm: string, lam: parser.Expr, line: i32, col: i32): parser.Stmt {
+    return parser.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_str: false, fn_ret: "" };
+}
+
+function name_source_iifes_stmts(stmts: parser.Stmt[], fdname: string, k0: i32): IifeNamed {
+    var out: parser.Stmt[] = [];
+    var k: i32 = k0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => {
+                if (iife_is_source_written(v.init)) {
+                    var nm: string = iife_name(fdname, k);
+                    k = k + 1;
+                    out = out.append(iife_bind(nm, iife_lambda_of(v.init), v.line, v.col));
+                    match (v.init) {
+                        parser.ExprCall(c) => { st = parser.StmtVar { ...v, init: iife_call_to(c, nm) }; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtReturn(r) => {
+                if (iife_is_source_written(r.value)) {
+                    var nmr: string = iife_name(fdname, k);
+                    k = k + 1;
+                    out = out.append(iife_bind(nmr, iife_lambda_of(r.value), r.line, r.col));
+                    match (r.value) {
+                        parser.ExprCall(c2) => { st = parser.StmtReturn { ...r, value: iife_call_to(c2, nmr) }; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtAssign(a) => {
+                if (iife_is_source_written(a.value)) {
+                    var nma: string = iife_name(fdname, k);
+                    k = k + 1;
+                    out = out.append(iife_bind(nma, iife_lambda_of(a.value), a.line, a.col));
+                    match (a.value) {
+                        parser.ExprCall(c3) => { st = parser.StmtAssign { ...a, value: iife_call_to(c3, nma) }; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtExpr(x) => {
+                if (iife_is_source_written(x.value)) {
+                    var nmx: string = iife_name(fdname, k);
+                    k = k + 1;
+                    out = out.append(iife_bind(nmx, iife_lambda_of(x.value), x.line, 0));
+                    match (x.value) {
+                        parser.ExprCall(c4) => { st = parser.StmtExpr { ...x, value: iife_call_to(c4, nmx) }; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtWhile(w) => {
+                var rw: IifeNamed = name_source_iifes_stmts(w.body, fdname, k);
+                k = rw.k;
+                st = parser.StmtWhile { ...w, body: rw.stmts };
+            },
+            parser.StmtFor(f) => {
+                var rf: IifeNamed = name_source_iifes_stmts(f.body, fdname, k);
+                k = rf.k;
+                st = parser.StmtFor { ...f, body: rf.stmts };
+            },
+            parser.StmtIf(ifs) => {
+                var rt: IifeNamed = name_source_iifes_stmts(ifs.then_body, fdname, k);
+                var re: IifeNamed = name_source_iifes_stmts(ifs.else_body, fdname, rt.k);
+                k = re.k;
+                st = parser.StmtIf { ...ifs, then_body: rt.stmts, else_body: re.stmts };
+            },
+            _ => {}
+        }
+        out = out.append(st);
+        i = i + 1;
+    }
+    return IifeNamed { stmts: out, k: k };
+}
+
+function name_source_iifes(fd: parser.FuncDecl): parser.FuncDecl {
+    var r: IifeNamed = name_source_iifes_stmts(fd.body, fd.name, 0);
+    if (r.k == 0) { return fd; }
+    return parser.FuncDecl { ...fd, body: r.stmts };
+}
+
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
 // lambda was lifted (keeping lambda-free modules byte-identical), else a module
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
@@ -59132,6 +59296,10 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // statements the lifts below can reach (#nested-capture). Inline, not
         // hoist — control flow + captures stay in scope.
         fd = unwrap_sole_iife_return(fd);
+        // 0-pre. Name a hand-written IIFE so the bound-lambda lift below sees a
+        // shape it knows. Must run BEFORE the lifts, and after the beta-reduce
+        // above so a genuine block-body arrow lambda is already gone (#7192).
+        fd = name_source_iifes(fd);
         // 0-pre. Snapshot 8-byte scalar captures (i64 / u64 / f64) into 1-element
         // cells so they fit the env box's 32-bit slot (#6046). Must run BEFORE
         // the lifts so they see the `i64[]` cell — pointer-shaped, which
