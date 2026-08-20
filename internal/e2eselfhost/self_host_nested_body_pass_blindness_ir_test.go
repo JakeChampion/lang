@@ -26,11 +26,14 @@ import (
 //     probe proves nothing.
 //
 //  2. settle_block — descended into a lambda but passed empty name/type lists,
-//     so the lambda's own params were not in scope for literal settling. A
-//     literal assigned to an `f64` param settled as an integer and the compiled
-//     binary read the raw i32 bit pattern as a denormal: 0 where native gives 3,
-//     silently. An annotated local in the same lambda was always correct, which
-//     is what pins the gap to the dropped param scope rather than the descent.
+//     so neither the lambda's own params nor the enclosing locals it captures
+//     were in scope for literal settling. A literal assigned to an `f64` param
+//     settled as an integer and the compiled binary read the raw i32 bit
+//     pattern as a denormal: 0 where native gives 3, silently. A method call
+//     resolves only from the receiver's ANNOTATION, so for a CAPTURED receiver
+//     that annotation lives in the enclosing scope and its arguments went
+//     unsettled too. An annotated local in the same lambda was always correct,
+//     which is what pins the gap to the dropped scope rather than the descent.
 //
 // The third defect in #7199 (resolve_labels_block) landed earlier; its case is
 // kept here as a regression guard because a `continue outer` degrading to the
@@ -116,6 +119,61 @@ function main(): i32 {
         return 90;
     };
     return f();
+}
+`},
+	// settle: a method call on a CAPTURED annotated local. The receiver type
+	// comes from `acc`'s annotation in the ENCLOSING scope, so dropping that
+	// scope leaves Acc.bump unresolved and its `2` unsettled in an f64 param.
+	{"lambda-captured-receiver", `struct Acc { v: f64 }
+
+function (a: Acc) bump(d: f64): f64 { return a.v + d; }
+
+function main(): i32 {
+    var acc: Acc = Acc { v: 1.0 };
+    var f: () => f64 = function (): f64 { return acc.bump(2); };
+    var r: f64 = f();
+    if (r > 2.5 && r < 3.5) { return 0; }
+    return 90;
+}
+`},
+	// The same capture two lambdas deep: the inner body only has a scope to
+	// inherit if the outer one was given one.
+	{"lambda-captured-receiver-nested", `struct Acc { v: f64 }
+
+function (a: Acc) bump(d: f64): f64 { return a.v + d; }
+
+function main(): i32 {
+    var acc: Acc = Acc { v: 1.0 };
+    var f: () => f64 = function (): f64 {
+        var g: () => f64 = function (): f64 { return acc.bump(2); };
+        return g();
+    };
+    var r: f64 = f();
+    if (r > 2.5 && r < 3.5) { return 0; }
+    return 90;
+}
+`},
+	// Shadowing: the param is appended after the inherited locals and
+	// settle_local_type scans from the end, so `acc.bump(2)` inside the lambda
+	// must settle against Ctr.bump's i32 param, not the captured Acc.bump's
+	// f64 one. Inheriting the enclosing scope must not outrank a param.
+	{"lambda-param-shadows-capture", `struct Acc { v: f64 }
+
+function (a: Acc) bump(d: f64): f64 { return a.v + d; }
+
+struct Ctr { n: i32 }
+
+function (c: Ctr) bump(d: i32): i32 { return c.n + d; }
+
+function run(f: (Ctr) => i32): i32 { return f(Ctr { n: 40 }); }
+
+function main(): i32 {
+    var acc: Acc = Acc { v: 1.0 };
+    var r: i32 = run(function (acc: Ctr): i32 { return acc.bump(2); });
+    if (r != 42) { return 90; }
+    var q: f64 = acc.bump(1);
+    if (q > 1.5 && q < 2.5) { return 0; }
+    return 91;
 }
 `},
 	// resolve_labels regression guard: `break outer` must leave the OUTER loop.
