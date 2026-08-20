@@ -31,9 +31,15 @@ import (
 // The fix shape is struct spread — `FuncDecl { ...fn, body: … }` cannot drop the
 // next field either, which is the property worth keeping. A rebuild that
 // legitimately has no type params (a monomorphised clone) spells
-// `type_params: notp` next to `bound_traits: []`, where the pairing is visible
-// and deliberate; those are not flagged, because they do not carry a declaration
-// forward.
+// `type_params: notp` next to `bound_traits: notp`, where the pairing is
+// visible and deliberate; that is fine, and so is carrying both.
+//
+// The pairing breaks in TWO directions, and the second one is not the mirror of
+// the first in the source text, so it needs its own check: `clone_bg` cleared
+// `type_params` for a monomorphised clone while keeping the generic's
+// `bound_traits`, leaving bounds indexed against parameters that no longer
+// exist. A test that only looks at literals carrying `type_params` forward is
+// blind to it by construction.
 //
 // KNOWN BLIND SPOT: matching on the literal only, this misses a rebuild that
 // launders `type_params` through a local first. `finalize_impl_method` does
@@ -49,6 +55,15 @@ var selfHostSources = []string{
 // carrying an EXISTING declaration's type parameters forward. A fresh list
 // (`type_params: notp`) does not match.
 var carriesTypeParams = regexp.MustCompile(`type_params:\s*\w+\.type_params`)
+
+// clearsTypeParams matches a rebuild that writes a FRESH type-param list —
+// `type_params: notp`, the monomorphised-clone shape — rather than carrying one
+// forward. `[]` counts too; `<ident>.type_params` does not.
+var clearsTypeParams = regexp.MustCompile(`type_params:\s*(\[\]|\w+)(?:,|\s|$)`)
+
+// carriesBoundTraits matches `bound_traits: <ident>.bound_traits`, a bound list
+// taken off an existing declaration.
+var carriesBoundTraits = regexp.MustCompile(`bound_traits:\s*\w+\.bound_traits`)
 
 // funcDeclOpen matches the opening of a `FuncDecl { … }` literal, qualified or
 // not. The match index is where the literal starts, so braces earlier on the
@@ -77,6 +92,19 @@ func TestFuncDeclRebuildsKeepBoundTraits(t *testing.T) {
 				continue
 			}
 			lit, end := funcDeclLiteral(lines, i, loc[0])
+			// The INVERSE desync: a rebuild that writes a fresh type-param list
+			// but keeps the source's bounds. `clone_bg` did this — a
+			// monomorphised clone has no type params, so the generic's bounds
+			// are indexed against parameters that no longer exist. The check
+			// above cannot see it: it only looks at literals that CARRY
+			// type_params forward.
+			if clearsTypeParams.MatchString(lit) && carriesBoundTraits.MatchString(lit) {
+				t.Errorf("%s:%d-%d: this FuncDecl rebuild writes a fresh `type_params` but keeps "+
+					"`bound_traits` from the source declaration, so the bounds are indexed against "+
+					"type parameters the rebuild does not have.\n"+
+					"Clear both — they are parallel arrays.\n%s",
+					path, i+1, end+1, lit)
+			}
 			if !carriesTypeParams.MatchString(lit) {
 				continue
 			}

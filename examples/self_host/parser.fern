@@ -9281,18 +9281,22 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
         nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
         i = i + 1;
     }
+    // The clone is an INSTANTIATION: every `T` has been replaced by the
+    // concrete type, so it has no type params — and bound_traits, which runs
+    // parallel to them, goes too. Keeping the generic's bounds here left the
+    // clone declaring bounds indexed against parameters it no longer has.
     var notp: string[] = [];
     return FuncDecl {
+        ...fd,
         name: fd.name + "__" + sanitize_key(key),
         receiver_name: "",
         receiver_type: "",
         type_params: notp,
+        bound_traits: notp,
         params: nparams,
         ret_type: subst_ty(fd.ret_type, tparams, cts),
-        body: subst_stmts(fd.body, tparams, cts), line: fd.line, col: fd.col,
-        import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
-        is_pub: fd.is_pub
-   , is_const: fd.is_const };
+        body: subst_stmts(fd.body, tparams, cts)
+    };
 }
 
 // ---- generic array-method monomorphisation (slice 1) ----------------
