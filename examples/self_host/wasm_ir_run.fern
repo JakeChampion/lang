@@ -44,26 +44,29 @@ function run(): i32 {
     // must reject before either the IR or the AST-fallback emit runs, not
     // miscompile. Checked on a default-filled COPY (the emit input is
     // untouched; both emit paths fill defaults themselves).
-    var arity_errs: string = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+    var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
     // Bare-map_new chain gate (native E038/E003 parity) — same
     // reject-don't-miscompile rationale as the arity gate.
-    arity_errs = arity_errs + asmcore.check_map_new_chain(mod);
+    arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
     // Undefined-callee gate (native E001, #5644): a callee naming nothing
     // otherwise reaches the emitter's generic call path, which emits a call
     // against a symbol nothing defines — an opaque load-time `unknown func`
     // instead of a diagnostic pointing at the source.
-    arity_errs = arity_errs + asmcore.check_undefined_calls(mod);
+    arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
     // Nameless-declaration gate: the permissive parser leaves an empty name
     // where a keyword was used (`function use()`), and nothing downstream
     // notices — see asmcore.check_decl_names for what that cost.
-    arity_errs = arity_errs + asmcore.check_decl_names(mod);
+    arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
     // Unclassifiable `fn[]` struct field (#5787 / #3457): a field whose
     // construction proves neither fn-pointers nor closures has no safe dispatch
     // — either default crashes — and used to bail to the AST emitter, which
     // miscompiles it into a runtime SIGSEGV with no diagnostic. Report it.
-    arity_errs = arity_errs + irlower.check_fn_array_fields(mod);
-    if (arity_errs.len() > 0) {
-        eprint(arity_errs);
+    // check_fn_array_fields is uncoded — it refuses a shape rather than naming a
+    // diagnostic in the E/P registry — so it renders alongside rather than through
+    // format_diags.
+    var fnfld_errs: string = irlower.check_fn_array_fields(mod);
+    if (arity_errs.len() > 0 || fnfld_errs.len() > 0) {
+        eprint(util.format_diags(arity_errs) + fnfld_errs);
         return 1;
     }
     // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,

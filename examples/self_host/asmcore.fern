@@ -3683,7 +3683,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
 }
 
-pub struct CheckCtx { st: EmitState, errs: string }
+pub struct CheckCtx { st: EmitState, diags: util.Diag[] }
 
 pub function is_wrapper(tag: Ty): boolean {
     return is_option(tag) || is_result(tag);
@@ -3709,16 +3709,16 @@ pub function assignable(want: Ty, got: Ty): boolean {
     return true;
 }
 
-function parse_unknown_error(where: string, kind: string): string {
+function parse_unknown_error(where: string, kind: string): util.Diag {
     // An out-of-range float literal is P002, the numeric-literal code native's
     // parser reports for it, not the generic parser-side-unknown P001 (#6842).
     if (util.is_f64_range_kind(kind)) {
-        return "error[P002]: " + where + ": " + util.f64_range_message(kind) + "\n";
+        return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: 0, col: 0 };
     }
-    return "error[P001]: " + where + ": parser-side unknown: " + kind + "\n";
+    return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: 0, col: 0 };
 }
 
-function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: string): string {
+function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.Diag[]): util.Diag[] {
     match (e) {
         parser.ExprIdent(_) => { return errs; },
         parser.ExprNumber(_) => { return errs; },
@@ -3798,12 +3798,12 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: string
             }
             return errs;
         },
-        parser.ExprUnknown(u) => { return errs + parse_unknown_error(where, u.kind); }
+        parser.ExprUnknown(u) => { return errs.append(parse_unknown_error(where, u.kind)); }
     }
     return errs;
 }
 
-function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: string): string {
+function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: util.Diag[]): util.Diag[] {
     match (st) {
         parser.StmtVar(v) => { return collect_expr_unknown_errors(v.init, where, errs); },
         parser.StmtReturn(r) => {
@@ -3870,21 +3870,20 @@ function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: strin
         },
         parser.StmtBreak(_) => { return errs; },
         parser.StmtContinue(_) => { return errs; },
-        parser.StmtUnknown(u) => { return errs + parse_unknown_error(where, "stmt: " + u.kind); },
+        parser.StmtUnknown(u) => { return errs.append(parse_unknown_error(where, "stmt: " + u.kind)); },
         parser.StmtDefer(d) => { return collect_stmt_unknown_errors(d.action, where, errs); }
     }
     return errs;
 }
 
-pub function parse_unknown_errors_module(mod: parser.Module): string {
-    var errs: string = "";
+pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
+    var errs: util.Diag[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var where: string = "in fn '" + mod.funcs[fi].name + "'";
         if (mod.funcs[fi].name.len() == 0) {
-            errs = errs + "error[P001]: at "
-                + util.i32_to_string(mod.funcs[fi].line) + ":" + util.i32_to_string(mod.funcs[fi].col)
-                + ": malformed function declaration\n";
+            errs = errs.append(util.Diag { code: "P001", message: "malformed function declaration",
+                line: mod.funcs[fi].line, col: mod.funcs[fi].col });
             where = "in malformed function declaration";
         }
         var bi: i32 = 0;
@@ -3925,7 +3924,7 @@ pub function parse_unknown_errors_module(mod: parser.Module): string {
 // A type the partial `Ty` union cannot model comes back unknown; those
 // are skipped rather than mis-flagged, the same discipline the E038 /
 // E003 argument passes already use.
-function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): string {
+function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): util.Diag[] {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -3933,36 +3932,36 @@ function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): string 
                     if ((id.name == "print" || id.name == "write" || id.name == "eprint")
                             && c.args.len() == 1) {
                         var at: Ty = infer_expr_type(c.args[0], st);
-                        if (ty_is_unknown(at) || ty_is_string(at)) { return ""; }
-                        return "error[E038]: in fn '" + fname + "': argument 1 to "
+                        if (ty_is_unknown(at) || ty_is_string(at)) { return []; }
+                        return [util.Diag { code: "E038", message: "in fn '" + fname + "': argument 1 to "
                             + id.name + ": " + ty_friendly(at)
                             + " is not a string — add an explicit .to_string()"
                             + " (the self-hosted compiler does not apply the"
-                            + " Display auto-stringify that native does)\n";
+                            + " Display auto-stringify that native does)", line: id.line, col: id.col }];
                     }
-                    return "";
+                    return [];
                 },
-                _ => { return ""; }
+                _ => { return []; }
             }
         },
-        _ => { return ""; }
+        _ => { return []; }
     }
-    return "";
+    return [];
 }
 
 pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     match (st) {
         parser.StmtExpr(ex) => {
-            return CheckCtx { st: ctx.st, errs: ctx.errs + display_arg_errs(ex.value, fname, ctx.st) };
+            return CheckCtx { st: ctx.st, diags: util.append_diags(ctx.diags, display_arg_errs(ex.value, fname, ctx.st)) };
         },
         parser.StmtReturn(r) => {
             var got: Ty = infer_expr_type(r.value, ctx.st);
             if (!assignable(want, got)) {
                 return CheckCtx {
                     st: ctx.st,
-                    errs: ctx.errs + "error[E002]: in fn '" + fname
+                    diags: ctx.diags.append(util.Diag { code: "E002", message: "in fn '" + fname
                         + "': returns " + ty_friendly(want)
-                        + " but expression has type " + ty_friendly(got) + "\n"
+                        + " but expression has type " + ty_friendly(got), line: r.line, col: r.col })
                 };
             }
             return ctx;
@@ -3975,7 +3974,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             // unknown so the pre-codegen gate doesn't false-positive on
             // desugared bodies (#4327).
             if (v.name.len() >= 2 && v.name[0:2] == "__") {
-                return CheckCtx { st: ctx.st.bind_local_typed(v.name, ty_unknown()), errs: ctx.errs };
+                return CheckCtx { st: ctx.st.bind_local_typed(v.name, ty_unknown()), diags: ctx.diags };
             }
             var got: Ty = infer_expr_type(v.init, ctx.st);
             var bind_ty: Ty = got;
@@ -3992,14 +3991,14 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
                 if (!assignable(declared, got)) {
                     ctx = CheckCtx {
                         st: ctx.st,
-                        errs: ctx.errs + "error[E003]: in fn '" + fname
+                        diags: ctx.diags.append(util.Diag { code: "E003", message: "in fn '" + fname
                             + "': variable '" + v.name + "' declared "
                             + ty_friendly(declared) + " but initializer has type "
-                            + ty_friendly(got) + "\n"
+                            + ty_friendly(got), line: v.line, col: v.col })
                     };
                 }
             }
-            return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), errs: ctx.errs };
+            return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), diags: ctx.diags };
         },
         parser.StmtAssign(a) => {
             var got: Ty = infer_expr_type(a.value, ctx.st);
@@ -4010,10 +4009,10 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
                 // this guard used to say E004).
                 return CheckCtx {
                     st: ctx.st,
-                    errs: ctx.errs + "error[E003]: in fn '" + fname
+                    diags: ctx.diags.append(util.Diag { code: "E003", message: "in fn '" + fname
                         + "': assignment to '" + a.target + "' of type "
                         + ty_friendly(tt) + " from expression of type "
-                        + ty_friendly(got) + "\n"
+                        + ty_friendly(got), line: a.line, col: a.col })
                 };
             }
             return ctx;
@@ -4033,7 +4032,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             if (ty_is_array_u64(it)) { elem = ty_u64(); }
             if (ty_is_array_i64(it)) { elem = ty_i64(); }
             if (ty_is_array_string(it)) { elem = ty_string(); }
-            ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), errs: ctx.errs };
+            ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), diags: ctx.diags };
             return check_stmts(fo.body, want, fname, ctx);
         },
         parser.StmtMatch(m) => {
@@ -4047,7 +4046,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
                             actx = CheckCtx {
                                 st: ctx.st.bind_local_typed(pv.binding,
                                     match_payload_type(m.scrutinee, ctx.st)),
-                                errs: ctx.errs
+                                diags: ctx.diags
                             };
                         }
                     },
@@ -4055,7 +4054,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
                 }
                 actx = check_stmts(m.arms[ai].body, want, fname, actx);
                 // Keep accumulated errors; drop arm-local bindings.
-                ctx = CheckCtx { st: ctx.st, errs: actx.errs };
+                ctx = CheckCtx { st: ctx.st, diags: actx.diags };
                 ai = ai + 1;
             }
             return ctx;
@@ -4074,7 +4073,7 @@ pub function check_stmts(stmts: parser.Stmt[], want: Ty, fname: string, ctx: Che
     return ctx;
 }
 
-pub function check_func(fd: parser.FuncDecl, s: EmitState): string {
+pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
     var want: Ty = ty_from_name(fd.ret_type);
     var s2: EmitState = s.reset_locals();
     if (fd.receiver_type.len() > 0) {
@@ -4085,29 +4084,29 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): string {
         s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
         pi = pi + 1;
     }
-    var ctx: CheckCtx = CheckCtx { st: s2, errs: "" };
+    var ctx: CheckCtx = CheckCtx { st: s2, diags: [] };
     ctx = check_stmts(fd.body, want, fd.name, ctx);
-    return ctx.errs;
+    return ctx.diags;
 }
 
-pub function check_module(mod: parser.Module, s: EmitState): string {
-    var errs: string = parse_unknown_errors_module(mod);
+pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
+    var errs: util.Diag[] = parse_unknown_errors_module(mod);
     if (errs.len() > 0) { return errs; }
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        errs = errs + check_func(mod.funcs[fi], s);
+        errs = util.append_diags(errs, check_func(mod.funcs[fi], s));
         fi = fi + 1;
     }
     // Bare-map_new chain gate (native E038/E003 parity): without it the
     // emitters MISCOMPILE the chain instead of rejecting (see
     // check_map_new_chain).
-    errs = errs + check_map_new_chain(mod);
+    errs = util.append_diags(errs, check_map_new_chain(mod));
     // Undefined-callee gate (native E001 parity): without it emit_call's
     // generic fall-through emits `call __fn_<name>` against a symbol that
     // does not exist and the compiler exits 0, turning a source-level typo
     // (or a skipped import) into a bare linker error (#5644). Runs on BOTH
     // codegen routes — emit_module gates the IR path with this same check.
-    errs = errs + check_undefined_calls(mod);
+    errs = util.append_diags(errs, check_undefined_calls(mod));
     return errs;
 }
 
@@ -4153,8 +4152,8 @@ function map_chain_root_ctor(e: parser.Expr): string {
         _ => { return ""; }
     }
 }
-function map_chain_check_expr(e: parser.Expr, fname: string, errs: string): string {
-    var out: string = errs;
+function map_chain_check_expr(e: parser.Expr, fname: string, errs: util.Diag[]): util.Diag[] {
+    var out: util.Diag[] = errs;
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -4170,11 +4169,11 @@ function map_chain_check_expr(e: parser.Expr, fname: string, errs: string): stri
                                 _ => {}
                             }
                             if (mism) {
-                                out = out + "error[E038]: in fn '" + fname
+                                out = out.append(util.Diag { code: "E038", message: "in fn '" + fname
                                     + "': '" + fa.field + "' key does not match the key kind of the"
                                     + " unannotated " + mroot + "() chain it is called on — the"
                                     + " ctor's key/value types are not inferable through a method"
-                                    + " chain; bind it first (var m: Map[K, V] = " + mroot + "(n))\n";
+                                    + " chain; bind it first (var m: Map[K, V] = " + mroot + "(n))", line: 0, col: 0 });
                             }
                         }
                     }
@@ -4210,8 +4209,8 @@ function map_chain_check_expr(e: parser.Expr, fname: string, errs: string): stri
         _ => { return out; }
     }
 }
-function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: string): string {
-    var out: string = errs;
+function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: util.Diag[]): util.Diag[] {
+    var out: util.Diag[] = errs;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -4248,8 +4247,8 @@ function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: string
     }
     return out;
 }
-pub function check_map_new_chain(mod: parser.Module): string {
-    var errs: string = "";
+pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
+    var errs: util.Diag[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         errs = map_chain_check_stmts(mod.funcs[fi].body, mod.funcs[fi].name, errs);
@@ -4387,21 +4386,20 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
     return false;
 }
 
-function callgate_undefined_error(g: CallGate, where: string, name: string, line: i32, col: i32): string {
-    var out: string = "error[E001]: " + where + " at " + util.i32_to_string(line) + ":"
-        + util.i32_to_string(col) + ": call to undefined function '" + name + "'";
+function callgate_undefined_error(g: CallGate, where: string, name: string, line: i32, col: i32): util.Diag {
+    var out: string = where + ": call to undefined function '" + name + "'";
     var ns: string = callgate_module_ns(name, g.names, g.known);
     if (ns.len() > 0) {
         out = out + " — no module '" + ns + "' was loaded (an import that resolves to no"
             + " file is skipped, so every call into it dangles)";
     }
-    return out + "\n";
+    return util.Diag { code: "E001", message: out, line: line, col: col };
 }
 
 // callgate_expr walks one expression, appending a diagnostic line for each
 // direct call the live rules reject. `bound` is the enclosing function's
 // shadow set.
-function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string[], errs: string): string {
+function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -4413,15 +4411,15 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
                             if (g.names[ti] == id.name) {
                                 found = true;
                                 if (g.check_arity && c.args.len() != g.argc[ti]) {
-                                    errs = errs + "error[E004]: function '" + id.name
+                                    errs = errs.append(util.Diag { code: "E004", message: "function '" + id.name
                                         + "' expects " + util.i32_to_string(g.argc[ti])
-                                        + " argument(s), got " + util.i32_to_string(c.args.len()) + "\n";
+                                        + " argument(s), got " + util.i32_to_string(c.args.len()), line: id.line, col: id.col });
                                 }
                                 ti = g.names.len();
                             } else { ti = ti + 1; }
                         }
                         if (g.check_undef && !found && !callgate_known_callee(id.name, g.known)) {
-                            errs = errs + callgate_undefined_error(g, where, id.name, id.line, id.col);
+                            errs = errs.append(callgate_undefined_error(g, where, id.name, id.line, id.col));
                         }
                     }
                 },
@@ -4502,7 +4500,7 @@ function callgate_known_callee(name: string, known: string[]): boolean {
     return callgate_name_in(known, name);
 }
 
-function callgate_stmts(stmts: parser.Stmt[], g: CallGate, where: string, bound: string[], errs: string): string {
+function callgate_stmts(stmts: parser.Stmt[], g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -4564,8 +4562,8 @@ function callgate_free_argc(mod: parser.Module): i32[] {
 
 // callgate_run walks every function body (and, for the undefined rule, the
 // top-level statements) under `g`.
-function callgate_run(mod: parser.Module, g: CallGate): string {
-    var errs: string = "";
+function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
+    var errs: util.Diag[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[fi];
@@ -4587,7 +4585,7 @@ function callgate_run(mod: parser.Module, g: CallGate): string {
     return errs;
 }
 
-pub function check_call_arity(mod: parser.Module): string {
+pub function check_call_arity(mod: parser.Module): util.Diag[] {
     return callgate_run(mod, CallGate {
         names: callgate_free_names(mod), argc: callgate_free_argc(mod), known: [],
         check_arity: true, check_undef: false
@@ -4617,27 +4615,29 @@ pub function check_call_arity(mod: parser.Module): string {
 // A gate rather than a parser error because the parser has nowhere to put one;
 // this is the same shape as check_call_arity / check_undefined_calls, and it
 // runs in the same place.
-pub function check_decl_names(mod: parser.Module): string {
-    var errs: string = "";
+pub function check_decl_names(mod: parser.Module): util.Diag[] {
+    var errs: util.Diag[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name.len() == 0) {
-            errs = errs + "error[P001]: line " + util.i32_to_string(mod.funcs[i].line)
-                + ": function declaration has no name (a keyword such as `use` / `type` / `match` cannot be used as one)\n";
+            errs = errs.append(util.Diag { code: "P001",
+                message: "function declaration has no name (a keyword such as `use` / `type` / `match` cannot be used as one)",
+                line: mod.funcs[i].line, col: 0 });
         }
         i = i + 1;
     }
     var si: i32 = 0;
     while (si < mod.structs.len()) {
         if (mod.structs[si].name.len() == 0) {
-            errs = errs + "error[P001]: struct declaration has no name (a keyword cannot be used as one)\n";
+            errs = errs.append(util.Diag { code: "P001", message: "struct declaration has no name (a keyword cannot be used as one)",
+                line: mod.structs[si].line, col: mod.structs[si].col });
         }
         si = si + 1;
     }
     return errs;
 }
 
-pub function check_undefined_calls(mod: parser.Module): string {
+pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
     // argc is filled even though the arity rule is off: the walk reads
     // `g.argc[ti]` under an `&&` with check_arity, and a parallel table is
     // cheaper than depending on short-circuit evaluation to keep an empty

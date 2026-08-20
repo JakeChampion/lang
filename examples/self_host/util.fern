@@ -732,3 +732,14 @@ pub function format_diags(diags: Diag[]): string {
   }
   return out;
 }
+
+// append_diags concatenates two diagnostic lists.
+// append_diags concatenates two diagnostic lists.
+pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
+  var i: i32 = 0;
+  while (i < b.len()) {
+    a = a.append(b[i]);
+    i = i + 1;
+  }
+  return a;
+}
