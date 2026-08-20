@@ -148,7 +148,7 @@ function print_block_expr(c: parser.ExprCall, parent_prec: i32): string {
     if (c.args.len() != 0) { return ""; }
     match (c.callee) {
         parser.ExprLambda(lm) => {
-            if (lm.origin != "block" || lm.body.len() == 0) { return ""; }
+            if (lm.origin != parser.ORIGIN_BLOCK || lm.body.len() == 0) { return ""; }
             var last: parser.Stmt = lm.body[lm.body.len() - 1];
             var tail: string = print_return_only([last]);
             if (tail.len() == 0) { return ""; }
