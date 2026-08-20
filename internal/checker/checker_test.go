@@ -5244,6 +5244,39 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 	}
 }
 
+// TestDynAssocFnOwnArgIsNotAnOwnReceiver pins that an `own` on a trait
+// ASSOCIATED function's first ARGUMENT is not mistaken for an `own` receiver.
+// methodConsumesReceiver / dynMethodConsumes answered "does this call consume
+// the receiver?" with Params[0].Own, which for an associated function reads a
+// real argument's flag — so a second call on the same `own` dyn value was
+// rejected as a use-after-move that never happened.
+func TestDynAssocFnOwnArgIsNotAnOwnReceiver(t *testing.T) {
+	// The associated function's `own` is on `b`, not on a receiver, so `m`
+	// survives the first call and the second is legal.
+	ok := `struct Box { v: i32 }
+trait Mk { function make(own b: Box): i32; }
+struct P { v: i32 }
+impl Mk for P { function make(own b: Box): i32 { return b.v; } }
+function twice(own m: dyn Mk, b1: Box, b2: Box): i32 { return m.make(b1) + m.make(b2); }
+function main(): i32 { return 0; }`
+	if err := checkSource(t, ok); err != nil {
+		t.Errorf("own dyn receiver + assoc fn with an own argument: want no error, got %v", err)
+	}
+
+	// Control: a genuine `own self` method IS consuming, so using the
+	// receiver twice must still be E050. This is what stops the fix above
+	// from being "never report a consumed dyn receiver".
+	consuming := `trait Mk { function take(own self: Self): i32; }
+struct P { v: i32 }
+impl Mk for P { function take(own self: Self): i32 { return 1; } }
+function twice(own m: dyn Mk): i32 { return m.take() + m.take(); }
+function main(): i32 { return 0; }`
+	err := checkSource(t, consuming)
+	if err == nil || !strings.Contains(err.Error(), "after it was consumed") {
+		t.Errorf("own self method used twice: want the E050 use-after-move, got %v", err)
+	}
+}
+
 // TestBoundedParamAssocFnCallNoPanic guards the sibling of
 // TestDynMethodCallNoSelfParamNoPanic: calling a trait ASSOCIATED function
 // (one with no `self` receiver) through a VALUE whose type is a bounded type

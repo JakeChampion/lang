@@ -8929,7 +8929,7 @@ func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
 			}
 			for i := range td.Methods {
 				if td.Methods[i].Name == m.Field {
-					return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+					return traitSelfIsOwn(td.Methods[i])
 				}
 			}
 		}
@@ -8961,10 +8961,20 @@ func (c *checker) dynMethodConsumes(trait, field string) bool {
 	}
 	for i := range td.Methods {
 		if td.Methods[i].Name == field {
-			return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+			return traitSelfIsOwn(td.Methods[i])
 		}
 	}
 	return false
+}
+
+// traitSelfIsOwn reports whether trait signature `m` takes its RECEIVER by
+// `own`. An associated function has no receiver, so its first parameter is a
+// real argument: reading Params[0].Own there answered a different question and
+// made `own b: Box` on `trait Mk { function make(own b: Box): i32; }` look like
+// a consuming receiver, so a second call on the same `own` dyn value was
+// rejected as E050 use-after-move.
+func traitSelfIsOwn(m ast.TraitMethod) bool {
+	return !m.Assoc && len(m.Params) > 0 && m.Params[0].Own
 }
 
 // checkOwnedParams is the affine use-after-move analysis for `own` (owned /
