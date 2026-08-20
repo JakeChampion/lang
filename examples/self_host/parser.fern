@@ -9938,7 +9938,15 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
         var base: str = ty[0 : lb];
         var inner: str = ty[lb + 1 : ty.len() - 1];
         var parts: string[] = split_top_commas(inner);
-        if (gstruct_index(gstructs, base) >= 0) {
+        // Register the instantiation only when the annotation supplies exactly
+        // as many arguments as the struct declares. A mismatch falls through to
+        // the pass-through branch below, leaving the spelling un-mangled for the
+        // checker to report (E019) — mirrors native's
+        // `len(sl.TypeArgs) != len(gen.TypeParams)` gate in internal/monomorph.
+        // Without it the short key reaches subst_ty, whose `cts[k]` indexes past
+        // the supplied arguments and aborts the compiler.
+        var gsi: i32 = gstruct_index(gstructs, base);
+        if (gsi >= 0 && parts.len() == gstructs[gsi].type_params.len()) {
             var cur: Insts = ins;
             var key: string = "";
             var j: i32 = 0;
@@ -10580,6 +10588,13 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[], funcs:
     if (ty[ty.len() - 1 : ty.len()] != "]") { return ""; }
     if (ty[0 : lb] != base) { return ""; }
     var parts: string[] = split_top_commas(ty[lb + 1 : ty.len() - 1]);
+    // The clone loop zips this key against the enum's DECLARED type parameters,
+    // so a spelling that supplies a different number of arguments would index
+    // past the key's pieces and abort. Refusing here leaves the annotation
+    // un-mangled for the checker to report — the enum half of native's
+    // `len(args) != len(gen.TypeParams)` gate in internal/monomorph.
+    var gei: i32 = genum_index(enums, base);
+    if (gei >= 0 && parts.len() != enums[gei].type_params.len()) { return ""; }
     if (parts.len() == 1) {
         return ge_targ_mangle(parts[0], enums, funcs);
     }
