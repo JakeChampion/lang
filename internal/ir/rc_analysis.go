@@ -1070,6 +1070,49 @@ func (b *builder) computeConsumedParams() map[string]bool {
 // mutate-in-place fast path. For now, the rc just goes
 // briefly to zero on the returned ptr, harmless under the
 // no-free regime.
+// countedBindingAlias reports whether `target = e` emits a transfer inc, making
+// `target` an owner rather than an inheritor of `e`'s borrow taint.
+//
+// It holds when `e` is a BINDING — a match / if-let / let-else / for-in name,
+// which is neither a declared local nor a parameter. Such a name is
+// borrow-tainted at its own site (it aliases an enum payload with no projection
+// dup), but `keep = g` is not that alias: needsRcIncOnAlias fires on the
+// assignment, so `keep` takes a reference of its own and reclaims through
+// __fern_arr_dec — whose is_unique gate can never free out from under the
+// binding.
+//
+// The two cancellations that would remove that inc cannot reach here, which is
+// what makes the untaint sound rather than optimistic: a move site needs an
+// owned rc LOCAL source (computeMovedLocals' isOwnedRcLocal), and so does a
+// borrowed-alias site. A binding is neither, so the inc the Assign lowering
+// emits is unconditional. That matters because moveSites is not populated yet
+// when this analysis runs — it is built from computeFreeEligible's result.
+//
+// The countedness is read off the TARGET's declared type, not the binding's. A
+// binding has no resolvable type this early — needsRcIncOnAlias answers false
+// for one here and true at the lowering site, which is the trap this predicate
+// exists to avoid — while the checker guarantees the two types match, and
+// isOwnedRcLocal tests exactly the type set needsRcIncOnAlias does.
+//
+// Parameters are deliberately excluded: `var L = <param>` has its own, narrower
+// untaint (countedSeed, gated on L being reassigned and uniquely named) with a
+// separate history (#6403, #4174), and widening it is not this rule's business.
+//
+// Without this, a match arm handing its binding to an outer local left that
+// local borrow-tainted, so its overwrite-dec fell back to the flat
+// __fern_rc_dec that decrements without reclaiming — one leaked buffer per
+// assignment (#7163).
+func (b *builder) countedBindingAlias(target string, e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if b.isOwnedRcLocal(id.Name) || b.paramNamed(id.Name) != nil {
+		return false
+	}
+	return b.isOwnedRcLocal(target)
+}
+
 // computeFreeEligible runs the borrow-aware free analysis: it
 // returns the set of array-typed locals that are OWNED — every value
 // ever written to them is freshly owned (an array literal, or a call
@@ -1117,6 +1160,10 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// *ast.Assign later overwrites. countedSeed below combines them.
 	seedParamInit := map[string]ast.Expr{}
 	reassignedIdent := map[string]bool{}
+	// countedAssign[rhs] marks an `L = <binding>` whose lowering emits the
+	// transfer inc, so L owns a reference of its own and does not inherit the
+	// binding's borrow taint. Populated in the *ast.Assign case below.
+	countedAssign := map[ast.Expr]bool{}
 	markBindings := func(names []string) {
 		for _, n := range names {
 			tainted[n] = true
@@ -1208,6 +1255,9 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
 				reassignedIdent[id.Name] = true
+				if b.countedBindingAlias(id.Name, s.Value) {
+					countedAssign[s.Value] = true
+				}
 			} else {
 				// Storing into an existing capture cell (`cap = v`)
 				// retains the value without an inc, so the source
@@ -1459,7 +1509,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		changed := false
 		for name, rhss := range assigns {
 			for _, rhs := range rhss {
-				if !tainted[name] && !countedSeed[rhs] && b.rhsTainted(rhs, tainted) {
+				if !tainted[name] && !countedSeed[rhs] && !countedAssign[rhs] && b.rhsTainted(rhs, tainted) {
 					tainted[name] = true
 					changed = true
 				}
