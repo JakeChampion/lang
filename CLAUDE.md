@@ -162,7 +162,8 @@ then force-with-lease push.
    the self-host matches native's memory management. **Reuse is substantially
    complete**; the RECLAIM side is where the work remains. Current state, the
    live leak list, and the traps this area sets:
-   `docs/RC-PERCEUS-SELF-HOST-PORT.md` (§9, latest entry) and
+   `docs/rc-log/` (newest file) — its §9 predecessor in
+   `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before 2026-08-20 — and
    `docs/SELFHOST-PERCEUS-REUSE.md`.
 
 When a PR merges with no more specific instruction, the default next task is the

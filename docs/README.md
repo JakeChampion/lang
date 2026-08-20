@@ -109,7 +109,8 @@ so explicitly.
 | Doc | Status | What it is |
 | --- | --- | --- |
 | `RC-PERCEUS-PLAN.md` | [record] | The native Perceus implementation — goal 2's reference target; implemented. |
-| `RC-PERCEUS-SELF-HOST-PORT.md` | [tracker] | **The active goal-2 tracker.** Port of native Perceus to the self-host, slice by slice. |
+| `RC-PERCEUS-SELF-HOST-PORT.md` | [tracker] | **The active goal-2 tracker.** Port of native Perceus to the self-host, slice by slice. Its §9 log is closed; new entries land in `rc-log/`. |
+| `rc-log/` | [record] | The goal-2 implementation log, one file per landed change. Continues §9 of the tracker above. |
 | `RC-PERCEUS-SELF-HOST-IR-REBUILD.md` | [tracker] | Design + rollout for the IR-path RC rebuild. |
 | `RC-PERCEUS-SELF-HOST-IR.md` | [record] | Early feasibility note — superseded by the REBUILD/PORT trackers. |
 | `RC-PERCEUS-PHASE-1E-PLAN.md` | [plan] | Phase-1e free-flip slices (draft executing). |
