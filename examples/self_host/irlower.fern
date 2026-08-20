@@ -6062,6 +6062,9 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
                 match (c.callee) {
                     parser.ExprFieldAccess(fa) => {
                         if (fa.field == "to_string" && tostring_recv_is_scalar(fa.obj, s)) { return true; }
+                        // …and on a receiver that is itself a fresh anonymous temp:
+                        // the identity result is that temp, which nothing else names.
+                        if (fa.field == "to_string" && is_fresh_str_temp(fa.obj, s)) { return true; }
                     },
                     _ => {}
                 }
@@ -27966,7 +27969,8 @@ function collect_str_fresh_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0
                     && (is_fresh_ret_binding(v.init, "", str_fresh_ret)
-                        || str_method_ret_is_fresh(v.init, str_fresh_ret))) {
+                        || str_method_ret_is_fresh(v.init, str_fresh_ret)
+                        || tostring_on_fresh_ret(v.init, str_fresh_ret))) {
                     a = push_str_unique(a, v.name);
                 }
             },
@@ -32994,6 +32998,37 @@ function str_method_ret_is_fresh(e: parser.Expr, fresh_ret: string[]): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => { return util.index_of_str(fresh_ret, "SFRFRESHNAME:" + fa.field) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// tostring_on_fresh_ret: `<fresh-string-producing call>.to_string()`.
+//
+// `.to_string()` on a STRING receiver is the receiver-identity fast-path, which
+// is why str_local_binding_is_fresh excludes it: the result is the receiver, so
+// freeing it would release a box the source still owns. That reasoning holds for
+// a NAMED receiver and inverts for an anonymous one — when the receiver is a call
+// the whole-program proof says returns a fresh sole-owned box, the identity
+// result IS that box, this frame is the only thing holding it, and NOT freeing it
+// is the leak.
+//
+// This is the shape `f"{f(x)}"` desugars to. parser.fern turns every interpolant
+// into `(<expr>).to_string()`, so an interpolated call stranded its box while the
+// same call written as an explicit concat operand did not.
+function tostring_on_fresh_ret(e: parser.Expr, fresh_ret: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "to_string") { return false; }
+                    return is_fresh_ret_binding(fa.obj, "", fresh_ret)
+                        || str_method_ret_is_fresh(fa.obj, fresh_ret);
+                },
                 _ => { return false; }
             }
         },
