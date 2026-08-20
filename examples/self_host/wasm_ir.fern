@@ -3491,9 +3491,9 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 93) {  // arr_push_owned
             // The sole-owner self-append (irlower's !aliased `a = a.append(v)`):
             // reclaims the old buffer on a grow-realloc via $__fern_arr_push_owned
-            // (wasm.fern's arr_push_owned_helper — wraps $__fern_arr_push + frees
-            // the dead old box through $__fern_arr_dec). Sound: the emit site
-            // proved the slot unaliased.
+            // (arr_push_owned_helper — wraps $__fern_arr_push + frees the dead old
+            // box through $__fern_arr_dec). Sound: the emit site proved the slot
+            // unaliased.
             out = out + "    call $__fern_arr_push_owned\n";
         } else if (o.kind_tag == 94) {  // arr_push_i64
             // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
@@ -5594,9 +5594,11 @@ pub function str_reverse_helper(): string {
 // str_lines_helper emits the IR-path $__fern_str_lines(s) — split s on '\n' then
 // drop a trailing empty segment when s is empty or ends with '\n' (so "a\nb\n"
 // is 2 lines). Builds a "\n" delim block, calls $__fern_str_split, then
-// decrements the result array's len by the trim flag. Depends on
-// $__fern_str_split (so the IR runtime also emits str_split_helper + substr_helper
-// when lines is used) + $__fern_str_box. wasm AST has no lines, so IR-only. Gated
+// decrements the result array's len by the trim flag, releasing the delimiter
+// and the trimmed-off element on the way out — both are this frame's alone, and
+// the trimmed one sits past the new len where no element walk can reach it.
+// Depends on $__fern_str_split (so the IR runtime also emits str_split_helper +
+// substr_helper when lines is used) + $__fern_str_box + $__fern_arr_dec. wasm AST has no lines, so IR-only. Gated
 // on module_uses_str_lines.
 pub function str_lines_helper(): string {
     var o: string = "";
@@ -5610,6 +5612,15 @@ pub function str_lines_helper(): string {
     o = o + "    (i32.store (local.get $delim) (i32.const 1))\n";
     o = o + "    (i32.store8 (i32.add (local.get $delim) (i32.const 4)) (i32.const 10))\n";
     o = o + "    (local.set $arr (call $__fern_str_split (local.get $s) (local.get $delim)))\n";
+    // The delimiter block is this frame's alone — split reads it and keeps
+    // nothing. A wasm heap string is one inline rc-headered block, so
+    // $__fern_arr_dec IS the string free.
+    o = o + "    (drop (call $__fern_arr_dec (local.get $delim)))\n";
+    // The trailing empty segment is dropped by DECREMENTING len, which puts it
+    // past the end where no element walk will ever reach it — so release it
+    // here or it leaks for the life of the process.
+    o = o + "    (if (local.get $trim) (then\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (i32.sub (i32.load (local.get $arr)) (i32.const 1)) (i32.const 4))))))))\n";
     o = o + "    (i32.store (local.get $arr) (i32.sub (i32.load (local.get $arr)) (local.get $trim)))\n";
     o = o + "    (local.get $arr))\n";
     return o;
@@ -5791,21 +5802,29 @@ pub function arr_push_helper(): string {
 }
 // str_split_helper emits the IR-path string→string[] runtime: a private
 // $__fern_arr_push (via arr_push_helper) plus $__fern_str_split, which builds
-// the result array with that push and slices each segment via $__fern_substr
-// (the IR runtime emits substr_helper alongside this). It is SELF-CONTAINED so
-// callers need only gate on str_split; a program that ALSO uses `.append` must
-// therefore emit the standalone arr_push_helper only when str_split is absent
-// (otherwise $__fern_arr_push would be defined twice). Depends only on
-// $__fern_str_box / $__fern_arr_box from the heap runtime (module_allocates).
-// The split body is transcribed verbatim from the strcat_helpers bundle's
-// $__fern_str_split.
+// the result array by appending and slices each segment via $__fern_substr (the
+// IR runtime emits substr_helper alongside this). It defines $__fern_arr_push
+// itself, so a program that ALSO uses `.append` must emit the standalone
+// arr_push_helper only when str_split is absent (otherwise the function is
+// defined twice). Depends on $__fern_str_box / $__fern_arr_box from the heap
+// runtime (module_allocates) and on $__fern_arr_push_owned, which the runtime
+// emitter pulls in for str_split / str_lines.
+//
+// The appends go through the OWNED wrapper because the intermediate buffers are
+// the helper's own: every growth step reallocates, and nothing outside this
+// function can ever reach — or release — the buffer it left behind.
 pub function str_split_helper(): string {
     var o: string = arr_push_helper();
     o = o + "  (func $__fern_str_split (param $s i32) (param $sep i32) (result i32)\n";
     o = o + "    (local $sl i32) (local $sepl i32) (local $i i32) (local $start i32) (local $arr i32) (local $piece i32) (local $j i32) (local $match i32)\n";
     o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
     o = o + "    (local.set $sepl (i32.load (local.get $sep)))\n";
-    o = o + "    (local.set $arr (call $__fern_alloc (i32.const 8)))\n";
+    // rc-HEADERED, not a bare $__fern_alloc: $__fern_arr_push reads the rc word
+    // at [a-8] to decide in-place vs copy, and $__fern_arr_push_owned reads it
+    // again to decide whether the superseded buffer is safe to free. An
+    // unheadered block answers both with garbage — the push then copies on every
+    // call and the owned free never fires.
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
     o = o + "    (i32.store (local.get $arr) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (i32.const 0))\n";
     // Empty separator char-splits, matching std/string's `split` and the
@@ -5815,7 +5834,7 @@ pub function str_split_helper(): string {
     o = o + "      (block $d0 (loop $c0\n";
     o = o + "        (br_if $d0 (i32.ge_s (local.get $i) (local.get $sl)))\n";
     o = o + "        (local.set $piece (call $__fern_substr (local.get $s) (local.get $i) (i32.add (local.get $i) (i32.const 1))))\n";
-    o = o + "        (local.set $arr (call $__fern_arr_push (local.get $arr) (local.get $piece)))\n";
+    o = o + "        (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
     o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "        (br $c0)))\n";
     o = o + "      (return (local.get $arr))))\n";
@@ -5832,13 +5851,13 @@ pub function str_split_helper(): string {
     o = o + "        (br $cm)))\n";
     o = o + "      (if (local.get $match) (then\n";
     o = o + "        (local.set $piece (call $__fern_substr (local.get $s) (local.get $start) (local.get $i)))\n";
-    o = o + "        (local.set $arr (call $__fern_arr_push (local.get $arr) (local.get $piece)))\n";
+    o = o + "        (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
     o = o + "        (local.set $i (i32.add (local.get $i) (local.get $sepl)))\n";
     o = o + "        (local.set $start (local.get $i)))\n";
     o = o + "      (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.set $piece (call $__fern_substr (local.get $s) (local.get $start) (local.get $sl)))\n";
-    o = o + "    (local.set $arr (call $__fern_arr_push (local.get $arr) (local.get $piece)))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
     o = o + "    (local.get $arr))\n";
     return o;
 }
@@ -7702,6 +7721,8 @@ pub function str_to_i32_helper(): string {
 // site proved the slot unaliased (no surviving reference to the superseded buffer).
 // wasm analog of asm_ir's __fern_arr_push_owned. Depends on $__fern_arr_push +
 // $__fern_arr_dec, both co-present whenever arr_push_owned is (module_allocates).
+// $__fern_str_split appends through this too, so the runtime emitter also pulls
+// it in for str_split / str_lines.
 pub function arr_push_owned_helper(heap_base: i32): string {
     var hb: string = util.i32_to_string(heap_base);
     var o: string = "";
@@ -8357,7 +8378,10 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     var needs_arr_push: boolean = need(needs, "arr_push") || need(needs, "arr_push_owned") || need(needs, "read_dir") || need(needs, "remove_dir_all");
     var split_emits_push: boolean = need(needs, "str_split") || need(needs, "@uses_str_lines");
     if (needs_arr_push && !split_emits_push) { out = out + arr_push_helper(); }
-    if (need(needs, "arr_push_owned")) { out = out + arr_push_owned_helper(heap_base_for_strs(sv, cv)); }
+    // $__fern_str_split appends through $__fern_arr_push_owned so its own
+    // intermediate buffers are reclaimed, so a split/lines module needs the
+    // wrapper even with no self-reassign append of its own.
+    if (need(needs, "arr_push_owned") || split_emits_push) { out = out + arr_push_owned_helper(heap_base_for_strs(sv, cv)); }
     if (need(needs, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
     if (need(needs, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
     if (need(needs, "@uses_maps")) { out = out + map_helpers(); }
