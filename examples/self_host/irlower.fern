@@ -5971,6 +5971,9 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
                 // releases a concat temp.
                 parser.ExprFieldAccess(mfa) => {
                     if (str_fresh_alloc_method(mfa.field) && expr_is_str(mfa.obj, s)) { return true; }
+                    // `xs.join(sep)` as a concat operand — same always-fresh
+                    // accumulator, on an ARRAY receiver rather than a string one.
+                    if (mfa.field == "join" && c.args.len() == 1 && expr_is_strarr(mfa.obj, s)) { return true; }
                     // A SOURCE-DECLARED method whose every return is a freshly
                     // allocated box ("SFRFRESHNAME:", the strict class the
                     // binding credit reads). It cannot be handing its receiver
@@ -29594,6 +29597,19 @@ function strarr_elem_read(e: parser.Expr, name: string): boolean {
 // tightened: a method receiver `name.m()` is only `.len()`-safe (`.append` is
 // sanctioned only as the `name = name.append(e)` rebind, handled at the
 // StmtAssign arm; `.with()` / slices alias the buffer AND its elements).
+// strarr_borrowing_method: a string[] builtin that only READS its receiver — it
+// keeps no reference to the array or to any element, so calling it on a
+// reclaimable local is not an escape. `len` reads the length word; `join`
+// (__fern_arr_str_join) walks the elements building a fresh accumulator with
+// `+`, storing nothing. The array-method sibling of str_borrowing_method.
+//
+// Everything else stays an escape by default, which is the right way round: a
+// method that returns an element, a slice, or the array itself hands out a
+// lasting alias, and the reclaim would free it out from under the caller.
+function strarr_borrowing_method(field: string): boolean {
+    return field == "len" || field == "join";
+}
+
 function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
@@ -29644,7 +29660,7 @@ function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]):
                     } else {
                         match (fa.obj) {
                             parser.ExprIdent(rid) => {
-                                if (rid.name == name && fa.field != "len") { return true; }
+                                if (rid.name == name && !strarr_borrowing_method(fa.field)) { return true; }
                             },
                             _ => { if (strarr_expr_unsafe(fa.obj, name, borrowable)) { return true; } }
                         }
