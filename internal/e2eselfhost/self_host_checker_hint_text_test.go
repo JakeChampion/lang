@@ -181,9 +181,13 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 // hintTextDivergences records the rows where the two checkers are meant to
 // say different things, keyed `<case>/<code>`. Not every difference is
 // drift, and forcing these into lockstep would be the #6990 bug all over
-// again: the self-host checker accepts only i32/string map keys (#7001),
-// so printing native's "add `@derive(cmp.Eq, cmp.Hash)`" there would name
-// a fix that checker itself still refuses.
+// again: a hint must not name a fix the checker printing it still refuses.
+//
+// E045's two rows used to be the example — the self-host accepted only
+// i32/string map keys, so repeating native's derive advice would have been
+// exactly that bug. #7001 taught it the derived-key rule, the texts converged,
+// and this table pruned them, which is the mechanism working rather than an
+// exception to it.
 //
 // The table is exact in BOTH directions. A listed row that converges fails
 // too, because the reason it was listed has gone away and nobody would
@@ -193,8 +197,6 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 // told, and leaving it as a test SKIP would hide it. Listing it makes the
 // self-host port's remaining hint gaps enumerable from one place.
 var hintTextDivergences = map[string]string{
-	"E045 float map key/E045":  "self-host E045 accepts only i32/string keys (#7001), so it must not repeat native's derive advice",
-	"E045 struct map key/E045": "self-host E045 accepts only i32/string keys (#7001), so it must not repeat native's derive advice",
 	"E038 print needs Display/E038": "the self-host checker has no Display check on `print` yet, so it reports nothing here " +
 		"— its E038 sites are call-shape errors",
 }
