@@ -690,9 +690,6 @@ pub function op_str_reverse(): Op { return op0("str_reverse"); }
 // (non-overlapping) occurrence of `old` in `haystack` replaced by `new`. An
 // empty `old`, or no match, returns `haystack` unchanged. Leak-only.
 pub function op_str_replace(): Op { return op0("str_replace"); }
-// `str_chars` pops [s] → a fresh string[] whose i-th element is the 1-char
-// string s[i:i+1]. Result is is_arr + is_strarr (like str_split). Leak-only.
-pub function op_str_chars(): Op { return op0("str_chars"); }
 // `str_lines` pops [s] → a fresh string[] of s split on newline, with a
 // trailing empty segment dropped when s is empty or ends with a newline (so
 // "a\nb\n" is 2 lines, not 3 — matching Rust/Python). is_arr + is_strarr.
@@ -1515,7 +1512,6 @@ function kind_id_2(name: string): i32 {
     if (name == "str_trim") { return 109; }
     if (name == "str_reverse") { return 110; }
     if (name == "str_replace") { return 111; }
-    if (name == "str_chars") { return 112; }
     if (name == "str_lines") { return 113; }
     if (name == "str_starts_with") { return 114; }
     if (name == "str_ends_with") { return 115; }
@@ -1795,7 +1791,6 @@ function kind_name_2(id: i32): string {
     if (id == 109) { return "str_trim"; }
     if (id == 110) { return "str_reverse"; }
     if (id == 111) { return "str_replace"; }
-    if (id == 112) { return "str_chars"; }
     if (id == 113) { return "str_lines"; }
     if (id == 114) { return "str_starts_with"; }
     if (id == 115) { return "str_ends_with"; }
@@ -2000,7 +1995,7 @@ function pops1_mem(t: i32): boolean {
         || t == 90 || t == 91 || t == 214                                // arr_len, arr_rc, arr_reverse
         || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
         || t == 106 || t == 107 || t == 109 || t == 110                  // str_to_upper/lower, str_trim, str_reverse
-        || t == 112 || t == 113                                          // str_chars, str_lines
+        || t == 113                                                      // str_lines
         || t == 118                                                      // strbuf_append
         || t == 120 || t == 122 || t == 123                              // opt_make, opt_tag, opt_payload
         || t == 124                                                      // map_new (pops the size hint)

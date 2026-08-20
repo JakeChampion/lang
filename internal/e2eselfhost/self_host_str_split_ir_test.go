@@ -63,9 +63,6 @@ var strSplitIRCases = []struct {
 	{"free-repeat", `function main(): i32 { return str_repeat("ab", 3).len(); }`},
 	{"free-replace", `function main(): i32 { return str_replace("a-b", "-", "_").len(); }`},
 	{"free-contains", `function main(): i32 { if (str_contains("abc", "b")) { return 1; } return 0; }`},
-	// String chars (op_str_chars) -- likewise IR-eligible.
-	{"chars", `function main(): i32 { return "abc".chars().len(); }`},
-	{"chars-forin", `function main(): i32 { var n = 0; for c in "hi".chars() { n = n + 1; } return n; }`},
 	// String lines (op_str_lines) -- likewise IR-eligible.
 	{"lines", `function main(): i32 { return "a\nb\nc".lines().len(); }`},
 	{"lines-forin", `function main(): i32 { var n = 0; for ln in "x\ny".lines() { n = n + 1; } return n; }`},

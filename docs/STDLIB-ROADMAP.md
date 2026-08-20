@@ -496,9 +496,11 @@ think they're free additions to make.
   i64::MIN (no i128 to widen into); u32 / u64 have no abs
   (always non-negative).
 - **String byte-level helpers**: `s.at(i)` (bounds-checked
-  Option), `s.chars()` (i32[] of byte values), `s.reverse_bytes()`
-  (ASCII-only reverse; multibyte UTF-8 will scramble). The
-  name `reverse_bytes` carries the warning.
+  Option), `s.reverse_bytes()` (ASCII-only reverse; multibyte
+  UTF-8 will scramble). The name `reverse_bytes` carries the
+  warning. (`s.chars()` was here as an `i32[]` of byte values
+  until #7231 made it the codepoint layer — `char[]`, matching
+  Rust; the byte layer is `bytes()` / `to_array()`.)
 - **Byte classifiers**: `(b).is_ascii_punct()` (Python's string.
   punctuation set), `(b).hex_digit()` (numeric → single-byte
   string).
@@ -762,7 +764,7 @@ think they're free additions to make.
   preserved.
 - **`(n: i32).is_palindrome()`**: decimal-palindrome check.
 - **`(s: string).to_array()`**: string[] of single-byte
-  strings — companion to `chars()` with string semantics.
+  strings — the string-element sibling of `bytes()`.
 - **`s.remove_all(needle)`**: sugar for `replace(needle, "")`.
 - **`s.before(sep)` / `s.after(sep)`**: substring around the
   FIRST `sep`. before returns s on no-match; after returns

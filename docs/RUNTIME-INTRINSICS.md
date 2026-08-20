@@ -4,8 +4,9 @@ This is the **implementation design** for the primitive floor sketched in
 `RUNTIME-IN-FERN.md` (§"The hard part: circularity and the primitive floor").
 The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 `str_to_i32`, `str_cmp`, the `str_search` predicates, `str_eq`,
-`arr_str_index_of`, `arr_str_join`, `str_trim`, `str_lines`, `str_bytes`,
-`str_chars` — are now Fern runtime functions.
+`arr_str_index_of`, `arr_str_join`, `str_trim`, `str_lines`, `str_bytes`
+— are now Fern runtime functions. (`str_chars` was one of them until #7231
+retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.)
 
 > **Status update (2026-07): the intrinsics below shipped and the Tier-2
 > migration is complete.** `chr`, `str_concat`, `i32_to_string`,
@@ -331,7 +332,7 @@ address-taking intrinsic in `asmcore.fern`.
 checker accepts — without the helper ever naming the box layout. Array
 construction reuses the existing `__fern_arr_box` (already a callable runtime
 symbol) wrapped the same way, or stays on the `.append()` path that `str_bytes`
-/ `str_chars` already use.
+/ `str_lines` already use.
 
 ## Worked example — `chr`
 

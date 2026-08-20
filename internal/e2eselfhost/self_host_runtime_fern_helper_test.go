@@ -139,14 +139,6 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_bytes:", ".Lbytes_loop"},
 		},
 		{
-			// str_chars (s.chars()) — a Fern helper that appends each 1-char slice
-			// (arr_push). The old hand-asm (__fern_str_chars: / .Lchars_loop) gone.
-			"str_chars",
-			`function main(): i32 { return "abc".chars().len(); }`,
-			"__fn___fern_str_chars",
-			[]string{"\n__fern_str_chars:", ".Lchars_loop"},
-		},
-		{
 			// chr — first Tier-2 helper via the raw-memory intrinsics (#2649).
 			// The old register-ABI hand-asm (a bare __fern_chr: label) is gone;
 			// only the Fern-compiled __fn___fern_chr remains.

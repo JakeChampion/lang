@@ -56,7 +56,7 @@ below proposes changing it.
 | `.reverse_bytes()` | bytes — honestly named, produces invalid UTF-8 on multibyte input |
 | `.bytes()` | copies into a `u8[]` (a `[u8]` *view* is listed as deferred in `LANGUAGE-DIRECTION.md`) |
 | Validity | Never checked. `string_from_bytes` accepts anything |
-| `std/utf8` | decode/encode, `codepoints() → i32[]`, `char_at`, `is_valid_utf8`, `substring → str` |
+| `std/utf8` | decode/encode, `codepoints() → char[]`, `char_at`, `is_valid_utf8`, `substring → str` |
 | `std/unicode` | simple (1:1) case mapping + `is_letter`/`is_digit`/… over code points |
 | Normalization | none |
 | Segmentation (UAX #29) | none |
@@ -466,7 +466,8 @@ types.
 - `std/utf8`'s `codepoints() → i32[]` becomes `char[]`;
   `unicode.to_upper_char(cp: i32)` becomes `char.to_upper()` — **both
   LANDED**. `string_from_codepoint(s)` followed, since the round trip
-  `string_from_codepoints(s.codepoints())` demands it.
+  `string_from_codepoints(s.chars())` demands it. `std/string`'s method
+  form is spelled `chars()` (#7231), not `codepoints()`.
 - Deletes: the `(b: i32) to_upper/is_alpha/is_digit` byte methods move
   to `u8` as `to_ascii_upper` / `is_ascii_alpha` / `is_ascii_digit`.
 

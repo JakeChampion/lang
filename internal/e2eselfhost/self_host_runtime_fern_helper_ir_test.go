@@ -84,14 +84,6 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			[]string{"\n__fern_str_bytes:", ".Lir_bytes_loop"},
 		},
 		{
-			// str_chars — migrated on the IR path too. The old hand-written IR body
-			// (__fern_str_chars: / .Lir_chars_loop) must be gone.
-			"str_chars",
-			`function main(): i32 { return "abc".chars().len(); }`,
-			"__fn___fern_str_chars",
-			[]string{"\n__fern_str_chars:", ".Lir_chars_loop"},
-		},
-		{
 			// chr — first Tier-2 helper via the raw-memory intrinsics (#2649). The IR
 			// symbol __fn___fern_chr is unchanged, but the old hand-written stack-arg
 			// body loaded its arg with `movq 8(%rsp), %rdi`; the Fern-compiled body

@@ -130,8 +130,8 @@ pub function utf8_encode(ch: char): string {
 // `codepoints(s)` — decode the whole string to its sequence of
 // codepoints. LOSSY: each malformed / truncated byte contributes one
 // U+FFFD and the scan resumes one byte later, so the result is always
-// well-formed (and non-empty for a non-empty input). Byte-for-byte the
-// codepoint sibling of `string.chars()`.
+// well-formed (and non-empty for a non-empty input). The free-function
+// form of `string.chars()`.
 pub function codepoints(s: string): char[] {
     var out: char[] = [];
     var n: i32 = s.len();

@@ -2439,29 +2439,10 @@ pub function (s: string) at(i: i32): Option[i32] {
     return Some((s[i] as i32));
 }
 
-// `s.chars()` — byte array of the string's contents as
-// i32 values (one per byte). Byte-level, not codepoint —
-// multibyte UTF-8 sequences come out as separate i32s in
-// order. Convenience over s.bytes() (which returns u8[])
-// when callers want to do i32 arithmetic / comparisons on
-// each byte without manually widening. The bytes() function
-// stays as the canonical way to get a u8[] slice; chars() is
-// the i32 sibling.
-pub function (s: string) chars(): i32[] {
-    var n: i32 = s.len();
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append((s[i] as i32));
-        i = i + 1;
-    }
-    return out;
-}
-
 // `s.to_array()` — string[] one element per byte (each a
-// single-byte string). Companion to chars() but with
-// string elements; useful when later operations need
-// string semantics rather than raw byte values.
+// single-byte string). The string-element sibling of
+// bytes(); useful when later operations need string
+// semantics rather than raw byte values.
 pub function (s: string) to_array(): string[] {
     var n: i32 = s.len();
     var out: string[] = [];
@@ -2475,14 +2456,14 @@ pub function (s: string) to_array(): string[] {
 
 // --- UTF-8 codepoint layer -------------------------------------------------
 //
-// Strings are byte-indexed; `chars()` above yields raw bytes, so anything
-// non-ASCII is fragile. These decode/encode the UTF-8 content as Unicode
-// scalar values (codepoints, as i32), the eager-array form the roadmap
-// asks for (#4416 ROADMAP #6). Ill-formed input never throws: a malformed
-// lead, a truncated or bad continuation, an overlong encoding, a UTF-16
+// Strings are byte-indexed; `bytes()` and `to_array()` above work at that
+// level, so anything non-ASCII is fragile through them. These decode/encode
+// the UTF-8 content as Unicode scalar values (`char`), the eager-array form
+// the roadmap asks for (#4416 ROADMAP #6). Ill-formed input never throws: a
+// malformed lead, a truncated or bad continuation, an overlong encoding, a UTF-16
 // surrogate (U+D800..U+DFFF), or a value past U+10FFFF each decodes to one
 // U+FFFD (`�`, the Unicode replacement character) and the scan resumes —
-// the WHATWG-style substitution policy, so `codepoints()` is total.
+// the WHATWG-style substitution policy, so `chars()` is total.
 
 // `__utf8_is_cont(b)` — is byte `b` a UTF-8 continuation byte (0x80..0xBF)?
 function __utf8_is_cont(b: i32): boolean { return b >= 128 && b < 192; }
@@ -2492,7 +2473,7 @@ function __utf8_is_cont(b: i32): boolean { return b >= 128 && b < 192; }
 // lead; otherwise the 2/3/4 the lead's continuation structure spells (even
 // when the value is overlong / a surrogate / out of range — those still
 // consume the whole sequence, they just decode to U+FFFD). Sharing this
-// with both decoders keeps `codepoint_count()` == `codepoints().len()`.
+// with both decoders keeps `codepoint_count()` == `chars().len()`.
 function __utf8_step(s: string, i: i32, n: i32): i32 {
     var b0: i32 = s[i] as i32;
     if (b0 < 192) { return 1; }   // ASCII (< 128) or stray continuation
@@ -2536,12 +2517,12 @@ function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
     return cp4;
 }
 
-// `s.codepoints()` — decode the UTF-8 content to Unicode scalar values,
-// one `char` per codepoint (ill-formed bytes → U+FFFD; see the layer
-// note). The codepoint counterpart of `chars()` (which is per-byte), and
-// the distinction is now in the TYPE rather than only the name: `chars()`
-// yields per-byte strings, `codepoints()` yields `char` (#5629).
-pub function (s: string) codepoints(): char[] {
+// `s.chars()` — decode the UTF-8 content to Unicode scalar values, one
+// `char` per codepoint (ill-formed bytes → U+FFFD; see the layer note).
+// This is the codepoint layer, matching what `chars` means in Rust, Swift
+// and Go's `[]rune`: iterating it never splits a multibyte sequence. For
+// the byte layer reach for `bytes()` (u8) or `to_array()` (1-byte strings).
+pub function (s: string) chars(): char[] {
     var n: i32 = s.len();
     var out: char[] = [];
     var i: i32 = 0;
@@ -2554,7 +2535,7 @@ pub function (s: string) codepoints(): char[] {
 }
 
 // `s.codepoint_count()` — number of Unicode codepoints in the UTF-8
-// content, without materialising the array. Equal to `codepoints().len()`
+// content, without materialising the array. Equal to `chars().len()`
 // (both advance by `__utf8_step`), including the one-U+FFFD-per-ill-formed
 // -unit accounting. This is the "length in characters" a byte `len()`
 // can't give for non-ASCII text.
@@ -2612,7 +2593,7 @@ function __utf8_put(buf_in: u8[], pos: i32, c: i32): u8[] {
 
 // `string_from_codepoint(cp)` — the single-codepoint UTF-8 string for
 // scalar `cp` (out-of-range / surrogate → U+FFFD). The inverse of indexing
-// `codepoints()`; the way to build non-ASCII text from a numeric scalar.
+// `chars()`; the way to build non-ASCII text from a numeric scalar.
 pub function string_from_codepoint(ch: char): string {
     var c: i32 = __utf8_sanitise(ch as i32);
     var buf: u8[] = __alloc_u8(__utf8_encoded_len(c));
@@ -2621,8 +2602,8 @@ pub function string_from_codepoint(ch: char): string {
 }
 
 // `string_from_codepoints(cps)` — UTF-8 string for a codepoint array (each
-// sanitised as in `string_from_codepoint`). Round-trips with `codepoints()`
-// for well-formed input: `string_from_codepoints(s.codepoints())` re-encodes
+// sanitised as in `string_from_codepoint`). Round-trips with `chars()`
+// for well-formed input: `string_from_codepoints(s.chars())` re-encodes
 // `s` (ill-formed runs collapse to U+FFFD). Two-pass exact-size buffer, no
 // O(n²) concatenation.
 pub function string_from_codepoints(cps: char[]): string {

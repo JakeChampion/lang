@@ -347,12 +347,6 @@ pub function ir_helper_symbol(name: string): string {
 // str_replace need. The op_str_replace handler now calls the stack-arg
 // __fn___fern_str_replace symbol.
 
-// __fern_str_chars was hand-written here through #2649; it is now a Fern runtime
-// function (asmcore.rt_src_str_chars) lowered through the IR pipeline via
-// emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it appends each
-// 1-char slice s[i:i+1] (arr_push). Heap + arr_push dependent; gated on the
-// str_chars need.
-
 // __fern_str_lines was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_lines) lowered through the IR pipeline via
 // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block. Heap +
@@ -4013,7 +4007,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // like the heap helpers above.
         "__fn___fern_arr_reverse", "__fn___fern_arr_concat", "__fn___fern_arr_slice",
         "__fn___fern_str_concat", "__fn___fern_str_eq",
-        "__fn___fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
+        "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
         "__fn___fern_str_replace", "__fn___fern_str_reverse", "__fn___fern_str_trim",
         "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
@@ -4267,14 +4261,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
         s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_replace\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.mark_str_replace(); return s;
-    }
-    if (o.kind_tag == 112) {  // str_chars
-        // operand stack [s box]; __fern_str_chars is a Fern runtime function now
-        // (#2649): the box on the stack IS param[0] (at +16 after the call), so call
-        // directly, pop the arg, push the result string[]. mark_str_chars pulls in
-        // arr_push + heap.
-        s = s.write("    call __fn___fern_str_chars\n    addq $8, %rsp\n    pushq %rax\n");
-        s = s.mark_str_chars(); return s;
     }
     if (o.kind_tag == 113) {  // str_lines
         // operand stack [s box]; __fern_str_lines is a Fern runtime function now
@@ -6587,7 +6573,7 @@ pub function all_runtime_need_roots(): string[] {
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         "print_int", "proc_exec", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
-        "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
+        "read_int", "sleep_ms", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
         "optarrarr_free", "str_arr_view_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf",
@@ -7331,14 +7317,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("str_split")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), all_structs, s);
-    }
-    // String chars — now a Fern runtime function (#2649), lowered through the IR
-    // pipeline: appends each 1-char slice s[i:i+1] (arr_push, present via its own
-    // need-gated block + the heap runtime above). .text since the heap runtime
-    // left us in .bss.
-    if (s.has_need("str_chars")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_chars(), all_structs, s);
     }
     // String lines — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: splits on '\n' (str_split) + drops the trailing empty via an array

@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostStrSliceRcBoxIRX86_64 pins the #2649 follow-up that closes the LAST
 // header-less string producer on the asm IR path: the str_slice op (`s[a:b]`, and
-// everything built on it — `.trim()`, `.chars()`, `.split()`). It used to allocate a
+// everything built on it — `.trim()`, `.split()`). It used to allocate a
 // raw 16-byte view box {data@0, len@8} with NO rc word, so box-8 was the previous
 // heap block — incing such a box (e.g. a struct string-field alias-inc) clobbered the
 // adjacent block. It now allocates a 24-byte box [rc=-1@base, data@base+8, len@base+16]

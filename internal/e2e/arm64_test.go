@@ -8101,6 +8101,8 @@ function main(): i32 {
 // Third stdlib bundle: i64 / u32 / u64 scalar reductions
 // (abs only on i64; min/max/clamp on all three), plus three
 // string helpers (at / chars / reverse_bytes). 13 new methods.
+// chars() is the codepoint layer (#7231), so the multibyte case is
+// what separates it from the byte-level bytes().
 func TestArm64StdlibBundle3(t *testing.T) {
 	src := `
 import "std/i64";
@@ -8132,11 +8134,16 @@ function main(): i32 {
     match ("hello".at(0 - 1)) { Some(_) => { return 16; }, None => { } }
     match ("".at(0)) { Some(_) => { return 17; }, None => { } }
 
-    // String chars — i32[] one element per byte.
-    var cs: i32[] = "abc".chars();
+    // String chars — char[] one element per CODEPOINT, so a multibyte
+    // sequence stays one element (the byte layer is bytes() / to_array()).
+    var cs: char[] = "abc".chars();
     if (cs.len() != 3) { return 18; }
-    if (cs[0] != 97 || cs[1] != 98 || cs[2] != 99) { return 19; }
+    if (cs[0] != (97 as char) || cs[1] != (98 as char) || cs[2] != (99 as char)) { return 19; }
     if (("".chars()).len() != 0) { return 20; }
+    var mixed: char[] = "aé😀".chars();
+    if (mixed.len() != 3) { return 24; }
+    if ((mixed[1] as i32) != 233 || (mixed[2] as i32) != 128512) { return 25; }
+    if ("aé😀".bytes().len() != 7) { return 26; }
 
     // String reverse_bytes — ASCII only.
     if ("hello".reverse_bytes() != "olleh") { return 21; }

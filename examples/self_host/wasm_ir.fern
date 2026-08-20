@@ -314,7 +314,6 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_map_w64(cache)) { out = out.append("@uses_map_w64"); }
     if (module_uses_random(cache)) { out = out.append("@uses_random"); }
     if (module_uses_str_case(cache)) { out = out.append("@uses_str_case"); }
-    if (module_uses_str_chars(cache)) { out = out.append("@uses_str_chars"); }
     if (module_uses_str_cmp(cache)) { out = out.append("@uses_str_cmp"); }
     if (module_uses_str_lines(cache)) { out = out.append("@uses_str_lines"); }
     if (module_uses_str_predicate(cache)) { out = out.append("@uses_str_predicate"); }
@@ -1285,12 +1284,6 @@ pub function module_uses_str_reverse(cache: irlower.LowerResult[]): boolean {
 // so wasm.str_replace_helper is emitted for the IR path. (IR-only, like trim.)
 pub function module_uses_str_replace(cache: irlower.LowerResult[]): boolean {
     return module_emits_op_cached(cache, "str_replace");
-}
-
-// module_uses_str_chars reports whether any function emits the str_chars op, so
-// wasm.str_chars_helper is emitted for the IR path. (IR-only, like trim.)
-pub function module_uses_str_chars(cache: irlower.LowerResult[]): boolean {
-    return module_emits_op_cached(cache, "str_chars");
 }
 
 // module_uses_str_lines reports whether any function emits the str_lines op, so
@@ -3796,9 +3789,6 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 111) {  // str_replace
             // stack: h, old, new -> $__fern_str_replace(...) -> fresh block.
             out = out + "    call $__fern_str_replace\n";
-        } else if (o.kind_tag == 112) {  // str_chars
-            // stack: s -> $__fern_str_chars(s) -> fresh string[] of 1-char blocks.
-            out = out + "    call $__fern_str_chars\n";
         } else if (o.kind_tag == 113) {  // str_lines
             // stack: s -> $__fern_str_lines(s) -> fresh string[] (split \n, trimmed).
             out = out + "    call $__fern_str_lines\n";
@@ -5622,33 +5612,6 @@ pub function str_lines_helper(): string {
     o = o + "    (if (local.get $trim) (then\n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (i32.sub (i32.load (local.get $arr)) (i32.const 1)) (i32.const 4))))))))\n";
     o = o + "    (i32.store (local.get $arr) (i32.sub (i32.load (local.get $arr)) (local.get $trim)))\n";
-    o = o + "    (local.get $arr))\n";
-    return o;
-}
-// str_chars_helper emits the IR-path $__fern_str_chars(s) — a fresh string[]
-// whose i-th element is a 1-char string block s[i:i+1]. wasm strings are inline
-// blocks, so each char is COPIED into a fresh $__fern_str_box (the register
-// backends' __fern_str_chars makes zero-copy views). The result array uses the
-// standard [len@0][cap@4][elems@8] layout (via $__fern_arr_box), matching
-// str_split's result. wasm's AST path has no chars, so this is IR-only. Gated on
-// module_uses_str_chars.
-pub function str_chars_helper(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_str_chars (param $s i32) (result i32)\n";
-    o = o + "    (local $l i32) (local $arr i32) (local $i i32) (local $box i32)\n";
-    o = o + "    (local.set $l (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $l) (i32.const 4))))\n";
-    o = o + "    (i32.store (local.get $arr) (local.get $l))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $l))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $l)))\n";
-    o = o + "      (local.set $box (call $__fern_str_box (i32.const 5)))\n";
-    o = o + "      (i32.store (local.get $box) (i32.const 1))\n";
-    o = o + "      (i32.store8 (i32.add (local.get $box) (i32.const 4)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $box))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
     o = o + "    (local.get $arr))\n";
     return o;
 }
@@ -8354,8 +8317,6 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     if (need(needs, "@uses_str_reverse")) { out = out + str_reverse_helper(); }
     // String replace — self-contained, emitted only when used (IR-only on wasm).
     if (need(needs, "@uses_str_replace")) { out = out + str_replace_helper(); }
-    // String chars — self-contained, emitted only when used (IR-only on wasm).
-    if (need(needs, "@uses_str_chars")) { out = out + str_chars_helper(); }
     // String lines — split on \n + trailing-empty trim (IR-only on wasm).
     if (need(needs, "@uses_str_lines")) { out = out + str_lines_helper(); }
     if (need(needs, "@uses_arr_slice")) { out = out + arr_slice_helper(); }

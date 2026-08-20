@@ -29,11 +29,17 @@ var stdlibModloadIRCases = []struct {
 	{"sort-i32-desc", "import \"core/cmp\";\nfunction main(): i32 { var a: i32[] = [3, 1, 4, 1, 5]; var s = cmp.sort_desc(a); return s[0] + s[4]; }\n"},
 	{"sort-u32-asc", "import \"core/cmp\";\nfunction main(): i32 { var a: u32[] = [9 as u32, 2 as u32, 7 as u32]; var s = cmp.sort(a); return s[0] as i32; }\n"},
 	// UTF-8 codepoint layer (#4416): decode a 2-byte é to its scalar U+00E9=233.
-	{"utf8-decode", "import \"std/string\";\nfunction main(): i32 { return \"é\".codepoints()[0] as i32; }\n"},
+	{"utf8-decode", "import \"std/string\";\nfunction main(): i32 { return \"é\".chars()[0] as i32; }\n"},
+	// chars() counts CODEPOINTS, not bytes (#7231): "aé😀" is 3 chars over 7 bytes.
+	// The self-host used to answer .chars() from a builtin returning string[], so
+	// this is the fixture that pins it to std/string's decoder.
+	{"utf8-chars-len", "import \"std/string\";\nfunction main(): i32 { return \"aé😀\".chars().len() * 10 + \"aé😀\".len(); }\n"},
+	// The astral scalar survives intact rather than splitting into 4 byte elements.
+	{"utf8-chars-astral", "import \"std/string\";\nfunction main(): i32 { return (\"aé😀\".chars()[2] as i32) % 1000; }\n"},
 	// codepoint_count over a mixed-width string (a=1, €=3 bytes) is 2, not the byte len 4.
 	{"utf8-count", "import \"std/string\";\nfunction main(): i32 { return \"a€\".codepoint_count() * 10 + \"a€\".len(); }\n"},
-	// Encode U+20AC (€) back to its 3 UTF-8 bytes; round-trip through codepoints().
-	{"utf8-encode", "import \"std/string\";\nfunction main(): i32 { return string.string_from_codepoint(8364 as char).len() * 10 + (string.string_from_codepoint(8364 as char).codepoints()[0] as i32) % 100; }\n"},
+	// Encode U+20AC (€) back to its 3 UTF-8 bytes; round-trip through chars().
+	{"utf8-encode", "import \"std/string\";\nfunction main(): i32 { return string.string_from_codepoint(8364 as char).len() * 10 + (string.string_from_codepoint(8364 as char).chars()[0] as i32) % 100; }\n"},
 }
 
 // TestSelfHostStdlibModloadIRX86_64 compiles each multi-module program through the
