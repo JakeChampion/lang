@@ -51,7 +51,7 @@ function verify_provided_module(merged: parser.Module): i32 {
     // names it. `@import` externs are ordinary FuncDecls, so the host-supplied
     // half needs no separate arm.
     var ix: irverify.NameIndex = irlower.fn_sig_index(vmod.funcs);
-    var fns: irlower.LoweredFn[] = irlower.lower_module(vmod.funcs, vmod.structs);
+    var fns: ir.LoweredFn[] = irlower.lower_module(vmod.funcs, vmod.structs);
     var probs: irverify.Problem[] = [];
     var calls: i32 = 0;
     var checked: i32 = 0;

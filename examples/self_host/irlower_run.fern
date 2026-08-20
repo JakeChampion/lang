@@ -36,6 +36,7 @@ import "std/io";
 import "./lexer";
 import "./parser";
 import "./ir";
+import "./irexec";
 import "./irlower";
 import "./irverify";
 import "./irverifystack";
@@ -46,7 +47,7 @@ import "./util";
 // successfully lowered function and returns the problems, so the driver can
 // be pointed at real modules — which is where a structural bug would
 // actually be, and the only way to know the pass does not fire on valid IR.
-function verify_all(funcs: parser.FuncDecl[], fns: irlower.LoweredFn[]): irverify.Problem[] {
+function verify_all(funcs: parser.FuncDecl[], fns: ir.LoweredFn[]): irverify.Problem[] {
     // The index the BACKENDS build, from the same declarations, so the corpus
     // sweep gates the derivation the compile-path gate actually consults —
     // including its receiver-counting rule, which an off-by-one would turn
@@ -74,7 +75,7 @@ struct StackSweep { problems: irverify.Problem[], cov: irverifystack.Coverage }
 // successfully lowered function. A function the pass cannot model contributes
 // a skip reason rather than a problem, so a widening op vocabulary shows up as
 // a coverage drop instead of a false failure.
-function verify_stack_all(fns: irlower.LoweredFn[]): StackSweep {
+function verify_stack_all(fns: ir.LoweredFn[]): StackSweep {
     var out: irverify.Problem[] = [];
     var cov: irverifystack.Coverage = irverifystack.coverage_new();
     var i: i32 = 0;
@@ -101,7 +102,7 @@ struct FipSweep { problems: irverify.Problem[], census: string }
 // verify_fip_all runs the allocation-budget verifier (#6639 slice 3) over every
 // successfully lowered function, pairing each with its declared claim.
 // `funcs` is the same list, in the same order, that `fns` was lowered from.
-function verify_fip_all(funcs: parser.FuncDecl[], fns: irlower.LoweredFn[]): FipSweep {
+function verify_fip_all(funcs: parser.FuncDecl[], fns: ir.LoweredFn[]): FipSweep {
     var out: irverify.Problem[] = [];
     var census: string = "";
     var i: i32 = 0;
@@ -212,7 +213,7 @@ function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i3
 // `bail` is the honest denominator: a function outside the lowered subset
 // contributes no ops, so a census over a module that mostly bailed is a census
 // over almost nothing.
-function clo_census(fns: irlower.LoweredFn[]): string {
+function clo_census(fns: ir.LoweredFn[]): string {
     var k_load: i32 = ir.kind_id("load_local");
     var k_store: i32 = ir.kind_id("store_local");
     var k_tee: i32 = ir.kind_id("tee_local");
@@ -374,7 +375,7 @@ function main(): i32 {
         return 0;
     }
 
-    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+    var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
 
     // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
     // kinds and declared return type — the facts LowerState knows and the op
@@ -385,7 +386,7 @@ function main(): i32 {
         var sl: string = "";
         var si: i32 = 0;
         while (si < fns.len()) {
-            var f: irlower.LoweredFn = fns[si];
+            var f: ir.LoweredFn = fns[si];
             if (f.ok) {
                 sl = sl + f.name + " ret=" + f.ret_type
                     + " params=" + util.i32_to_string(f.n_params)
@@ -410,7 +411,7 @@ function main(): i32 {
         // the corpus — a property of this driver's shortcut, not of the IR any
         // backend is handed.
         var vfilled: parser.Module = parser.fill_default_args_module(mod);
-        var vfns: irlower.LoweredFn[] = irlower.lower_module(vfilled.funcs, mod.structs);
+        var vfns: ir.LoweredFn[] = irlower.lower_module(vfilled.funcs, mod.structs);
         var probs: irverify.Problem[] = verify_all(vfilled.funcs, vfns);
         if (probs.len() == 0) {
             write("irverify: clean\n");
@@ -426,7 +427,7 @@ function main(): i32 {
         // production backends reach the IR through lift_lambdas, which runs
         // fill_default_args_module first, so a defaulted call arrives with its
         // arguments already pushed.
-        var sfns: irlower.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
+        var sfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
         var sw: StackSweep = verify_stack_all(sfns);
         if (sw.problems.len() == 0) {
             write("irverifystack: clean (" + irverifystack.coverage_str(sw.cov) + ")\n");
@@ -443,7 +444,7 @@ function main(): i32 {
         // production backends reach the IR through lift_lambdas, which runs
         // fill_default_args_module first.
         var ffilled: parser.Module = parser.fill_default_args_module(mod);
-        var ffns: irlower.LoweredFn[] = irlower.lower_module(ffilled.funcs, mod.structs);
+        var ffns: ir.LoweredFn[] = irlower.lower_module(ffilled.funcs, mod.structs);
         var fw: FipSweep = verify_fip_all(ffilled.funcs, ffns);
         write(fw.census);
         if (fw.problems.len() == 0) {
@@ -457,9 +458,9 @@ function main(): i32 {
 
     var wanted: string = "main";
     if (want_dump) { wanted = dump_fn; }
-    var mi: i32 = irlower.find_fn(fns, wanted);
+    var mi: i32 = irexec.find_fn(fns, wanted);
     if (mi < 0) { return 201; }
-    var mainfn: irlower.LoweredFn = fns[mi];
+    var mainfn: ir.LoweredFn = fns[mi];
     if (!mainfn.ok) { return 200; }
 
     if (want_dump) {
@@ -473,5 +474,5 @@ function main(): i32 {
         print(out);
         return mainfn.ops.len();
     }
-    return irlower.eval_program(fns);
+    return irexec.eval_program(fns);
 }

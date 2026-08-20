@@ -1,0 +1,788 @@
+// examples/self_host/irexec.fern — the IR interpreter.
+//
+// Executes a lowered op stream directly, so lowering is checkable end-to-end
+// without going through a backend: irlower_run compares what this yields
+// against what the program means. It is a validation oracle, not part of the
+// compile path — nothing in irlower.fern calls it, and the real backends walk
+// the same ops with interned shape pointers instead.
+//
+// Only irlower_run.fern imports it, so a driver that just compiles never
+// carries the interpreter.
+
+import "./ir";
+import "./util";
+
+// find_fn returns the index of `name` in fns, or -1.
+pub function find_fn(fns: ir.LoweredFn[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (fns[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// eval_call evaluates a call to `name` with `args` (recursion-safe via
+// eval_ops' fns parameter). A missing / unlowered callee yields 0.
+// EvalOut threads the round-trip evaluator's SHARED heap through the call
+// chain: eval_ops / eval_call take the incoming heap + freelist head and return
+// the call's value alongside the (possibly grown) heap + freelist. A single
+// heap shared across every call frame lets a box (array / struct / tuple /
+// Option) RETURNED from a callee survive into its caller — the per-call-heap
+// model used to leave such a pointer dangling and crash. Operand stack + locals
+// stay per-frame (each eval_ops has its own); only the heap is global.
+// `bailed` marks a result that did NOT run to completion: the program called a
+// function the IR path can't lower (find_fn miss / ir.LoweredFn.ok false — the
+// real compiler AST-falls-back for it) or hit an op this evaluator doesn't
+// model. It propagates up the call chain so the round-trip harness reports the
+// sentinel 198 instead of a silent wrong answer (a not-found callee used to
+// yield 0, which could spuriously match an expected value).
+struct EvalOut { value: i32, heap: i32[], freehead: i32, bailed: boolean }
+
+pub function eval_call(fns: ir.LoweredFn[], name: string, args: i32[], heap: i32[], freehead: i32): EvalOut {
+    var idx: i32 = find_fn(fns, name);
+    if (idx < 0) { return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true }; }
+    var fn: ir.LoweredFn = fns[idx];
+    if (!fn.ok) { return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true }; }
+    return eval_ops(fn.ops, fn.n_locals, args, fns, heap, freehead);
+}
+
+// eval_program runs `main` (with no args) on a fresh shared heap. Word 0 (byte
+// address 0) is reserved as the RC over-release counter, so the first
+// allocation starts at byte address 4 — no real box uses 0.
+pub function eval_program(fns: ir.LoweredFn[]): i32 {
+    var noargs: i32[] = [];
+    var heap0: i32[] = [];
+    heap0 = heap0.append(0);
+    var out: EvalOut = eval_call(eval_expand_const_structs(fns), "main", noargs, heap0, 0);
+    return out.value;
+}
+
+// eval_expand_const_structs rewrites every const_struct op (#6149) back into
+// the push-then-build sequence it replaced: one const_i32_text per field word,
+// then struct_make. The round-trip evaluator models a 4-byte box with no rc
+// word, so there is no sentinel for a shared constant to hide behind — and it
+// needs none, because expanding is EXACTLY what the lowering emitted before the
+// constant recognition existed. One rewrite here beats a fourth copy of the
+// alloc-and-fill arm, and it cannot drift from struct_make's semantics because
+// it IS struct_make.
+function eval_expand_const_structs(fns: ir.LoweredFn[]): ir.LoweredFn[] {
+    var out: ir.LoweredFn[] = [];
+    var fi: i32 = 0;
+    while (fi < fns.len()) {
+        var f: ir.LoweredFn = fns[fi];
+        var ops: ir.Op[] = [];
+        var oi: i32 = 0;
+        while (oi < f.ops.len()) {
+            var o: ir.Op = f.ops[oi];
+            if (o.kind_tag == 218) {
+                var words: string[] = ir.const_struct_values(o.str);
+                var wi: i32 = 0;
+                while (wi < words.len()) { ops = ops.append(ir.op_const_i32_text(words[wi])); wi = wi + 1; }
+                // The compile-time evaluator reads no field widths, so this
+                // expansion needs no decl (and has no decl table in scope).
+                ops = ops.append(ir.op_struct_make(ir.const_struct_type(o.str), words.len(), 0 - 1));
+            } else {
+                ops = ops.append(o);
+            }
+            oi = oi + 1;
+        }
+        out = out.append(ir.LoweredFn { ...f, ops: ops });
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// ---- stack-machine interpreter ----------------------------------------
+//
+// eval_ops runs the lowered op stream on an operand stack + a locals frame,
+// returning the value carried by the first `return`. `args` seed the param
+// slots. This validates lowering without a backend (the ssa.fern pattern).
+
+// shape_id interns a struct / enum-variant name to a deterministic non-zero
+// i32 — the round-trip evaluator's slot-0 box identity that `variant_is`
+// compares (struct_make writes it, variant_is reads + tests it). A polynomial
+// rolling hash over the name's bytes; distinct short names don't collide in
+// practice. This is the validation harness only — the real backends use
+// interned shape pointers (x86/arm64) / type ids (wasm) for the same slot.
+function shape_id(name: string): i32 {
+    var h: i32 = 7;
+    var i: i32 = 0;
+    while (i < name.len()) {
+        h = h * 31 + (name[i] as i32);
+        i = i + 1;
+    }
+    if (h < 0) { h = 0 - h; }
+    if (h == 0) { h = 1; }
+    return h;
+}
+
+// is_bin_kind reports whether an op kind is one of the i32 binary ops
+// bin_apply evaluates (pop r, pop l, push apply). It gates eval_ops' default
+// arm so a genuinely-unmodelled op (i64 / f64 / string / map) bails cleanly
+// instead of being mis-popped as a binary op (which underflowed -> SIGABRT).
+// is_bin_kind / bin_apply take an integer op-kind tag (ir.kind_id ids) rather
+// than the string kind, so eval_ops dispatches on o.kind_tag with no
+// __fern_str_eq. The ids are the arithmetic/compare block of the registry
+// (add=21 .. ge_s=40); see ir.fern's kind_id.
+function is_bin_kind(tag: i32): boolean {
+    return tag == 21 || tag == 22 || tag == 23 || tag == 24  // add, sub, mul, div_s
+        || tag == 26 || tag == 28 || tag == 29 || tag == 30  // rem_s, and, or, xor
+        || tag == 31 || tag == 32 || tag == 35 || tag == 36  // shl, shr_s, eq, ne
+        || tag == 37 || tag == 38 || tag == 39 || tag == 40;  // lt_s, le_s, gt_s, ge_s
+}
+
+function bin_apply(tag: i32, l: i32, r: i32): i32 {
+    if (tag == 21) { return l + r; }  // add
+    if (tag == 22) { return l - r; }  // sub
+    if (tag == 23) { return l * r; }  // mul
+    if (tag == 24) { return l / r; }  // div_s
+    if (tag == 26) { return l - (l / r) * r; }  // rem_s
+    if (tag == 28) { return l & r; }  // and
+    if (tag == 29) { return l | r; }  // or
+    if (tag == 30) { return l ^ r; }  // xor
+    if (tag == 31) { return l << r; }  // shl
+    if (tag == 32) { return l >> r; }  // shr_s
+    if (tag == 35) { if (l == r) { return 1; } return 0; }  // eq
+    if (tag == 36) { if (l != r) { return 1; } return 0; }  // ne
+    if (tag == 37) { if (l < r) { return 1; } return 0; }  // lt_s
+    if (tag == 38) { if (l <= r) { return 1; } return 0; }  // le_s
+    if (tag == 39) { if (l > r) { return 1; } return 0; }  // gt_s
+    if (tag == 40) { if (l >= r) { return 1; } return 0; }  // ge_s
+    return 0;
+}
+
+// is_reclaim_helper reports whether a call_direct callee is a Perceus reclaim
+// runtime helper that this i32 round-trip evaluator models as VALUE-PRESERVING
+// identity on its primary box arg (the value is already computed before the
+// drop, and the evaluator does not model the heap free). These are backend
+// runtime functions, NOT user functions in `fns`, so without this they would
+// miss find_fn / eval_call and bail (sentinel 198). Covers the per-type
+// __struct_drop_<T> (box -> box) and __field_reclaim_<T> (new, old, snap -> new)
+// helpers plus the shared __fern_snapshot_dec / __fern_arr_dec / __fern_drop_arr_ptr.
+// Each returns its arg0 (the deepest of its args on the operand stack). The real
+// reclaim semantics are exercised by the differential / memory-churn suites.
+function is_reclaim_helper(name: string): boolean {
+    if (name.len() >= 14 && name[0:14] == "__struct_drop_") { return true; }
+    if (name.len() >= 16 && name[0:16] == "__field_reclaim_") { return true; }
+    return name == "__fern_snapshot_dec" || name == "__fern_arr_dec" || name == "__fern_drop_arr_ptr"
+        || name == "__fern_str_arr_free";
+}
+
+pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredFn[], heap_in: i32[], freehead_in: i32): EvalOut {
+    var nloc: i32 = n_locals;
+    if (nloc < 1) { nloc = 1; }
+    // The self-host source is fully immutable: build the frames by growing
+    // append-arrays to size, then write with `arr = arr.with(i, v)` (reads
+    // by subscript are fine; only assignment needs .with).
+    var locals: i32[] = [];
+    var li: i32 = 0;
+    while (li < nloc) { locals = locals.append(0); li = li + 1; }
+    var ai: i32 = 0;
+    while (ai < args.len()) { locals = locals.with(ai, args[ai]); ai = ai + 1; }
+
+    var stack: i32[] = [];
+    var si: i32 = 0;
+    while (si < 256) { stack = stack.append(0); si = si + 1; }
+    var sp: i32 = 0;
+
+    // The word-addressed heap (byte address `a` -> word index a/4) is SHARED
+    // across the whole program: it arrives via heap_in (eval_program seeds it
+    // with the reserved word 0 = RC over-release counter) and is returned in
+    // the EvalOut so a box this call allocates — and returns — survives into
+    // its caller. Copied into locals so the op loop can grow it with .with /
+    // .append. The freelist head likewise threads in + out (0 = null; a free
+    // node stores [next@+0, size@+4] in its own first two words).
+    var heap: i32[] = heap_in;
+    var freehead: i32 = freehead_in;
+
+    var pc: i32 = 0;
+    while (pc < ops.len()) {
+        var o: ir.Op = ops[pc];
+        if (o.kind_tag == 1) { stack = stack.with(sp, o.i32_imm); sp = sp + 1; pc = pc + 1; }  // const_i32
+        else if (o.kind_tag == 2) { stack = stack.with(sp, util.lit_to_i32(o.str)); sp = sp + 1; pc = pc + 1; }  // const_i32_text
+        else if (o.kind_tag == 18) { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; pc = pc + 1; }  // load_local
+        else if (o.kind_tag == 19) { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); pc = pc + 1; }  // store_local
+        // tee_local: store WITHOUT popping — the fused `store_local X ; load_local X`
+        // (#6638). The evaluator is a consumer of the op stream like any backend,
+        // so it has to learn the op the optimiser now produces.
+        else if (o.kind_tag == 20) { locals = locals.with(o.i32_imm, stack[sp - 1]); pc = pc + 1; }  // tee_local
+        else if (o.kind_tag == 34) { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); pc = pc + 1; }  // not
+        else if (o.kind_tag == 160) { sp = sp - 1; return EvalOut { value: stack[sp], heap: heap, freehead: freehead, bailed: false }; }  // return
+        else if (o.kind_tag == 154) {  // if
+            // pop cond: nonzero -> fall into then; zero -> jump to the else
+            // body (if any) or past the matching end.
+            sp = sp - 1;
+            var c: i32 = stack[sp];
+            if (c != 0) { pc = pc + 1; }
+            else {
+                var el: i32 = ir.find_matching_else(ops, pc + 1);
+                if (el >= 0) { pc = el + 1; } else { pc = ir.find_matching_end(ops, pc + 1); }
+            }
+        }
+        else if (o.kind_tag == 155) {  // else
+            // reached only after executing a then-branch -> skip to end.
+            pc = ir.find_matching_end(ops, pc + 1);
+        }
+        else if (o.kind_tag == 156) { pc = pc + 1; }  // end
+        else if (o.kind_tag == 159) { sp = sp - 1; pc = pc + 1; }  // drop
+        else if (o.kind_tag == 152) { pc = pc + 1; }  // block
+        else if (o.kind_tag == 153) { pc = pc + 1; }  // loop
+        else if (o.kind_tag == 157) { pc = ir.do_branch(ops, pc, o.i32_imm); }  // br
+        else if (o.kind_tag == 158) {  // brif
+            sp = sp - 1;
+            var bc: i32 = stack[sp];
+            if (bc != 0) { pc = ir.do_branch(ops, pc, o.i32_imm); } else { pc = pc + 1; }
+        }
+        else if (o.kind_tag == 76) {  // alloc
+            // pop size (bytes); reuse an exact-size freed block if one exists,
+            // else bump-allocate (growing the heap).
+            sp = sp - 1;
+            var size: i32 = stack[sp];
+            var reuse: i32 = 0;
+            var cur: i32 = freehead;
+            var prev: i32 = 0;
+            while (cur != 0) {
+                if (heap[cur / 4 + 1] == size) {
+                    var nxt: i32 = heap[cur / 4];
+                    if (prev == 0) { freehead = nxt; } else { heap = heap.with(prev / 4, nxt); }
+                    reuse = cur;
+                    cur = 0;
+                } else {
+                    prev = cur;
+                    cur = heap[cur / 4];
+                }
+            }
+            var ptr: i32 = 0;
+            if (reuse != 0) {
+                ptr = reuse;
+            } else {
+                ptr = heap.len() * 4;
+                var nw: i32 = size / 4;
+                var q: i32 = 0;
+                while (q < nw) { heap = heap.append(0); q = q + 1; }
+            }
+            stack = stack.with(sp, ptr);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 68) {  // store
+            // pop val (top), pop addr; heap[addr/4] = val.
+            sp = sp - 1;
+            var sval: i32 = stack[sp];
+            sp = sp - 1;
+            var saddr: i32 = stack[sp];
+            heap = heap.with(saddr / 4, sval);
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 67) {  // load
+            sp = sp - 1;
+            var laddr: i32 = stack[sp];
+            stack = stack.with(sp, heap[laddr / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 87) {  // arr_make
+            // High-level array make: pop n element values (top = element n-1),
+            // allocate the [rc, len, e0..] block (this interpreter's 4-byte
+            // model — rc at base-4, len at base, element i at base+4+i*4),
+            // init rc=1 + len, fill elements, push the base. The alloc mirrors
+            // the `alloc` op: reuse an exact-size freed block or bump-grow.
+            var an: i32 = o.i32_imm;
+            var asize: i32 = (an + 2) * 4;
+            var areuse: i32 = 0;
+            var acur: i32 = freehead;
+            var aprev: i32 = 0;
+            while (acur != 0) {
+                if (heap[acur / 4 + 1] == asize) {
+                    var anxt: i32 = heap[acur / 4];
+                    if (aprev == 0) { freehead = anxt; } else { heap = heap.with(aprev / 4, anxt); }
+                    areuse = acur;
+                    acur = 0;
+                } else {
+                    aprev = acur;
+                    acur = heap[acur / 4];
+                }
+            }
+            var araw: i32 = 0;
+            if (areuse != 0) {
+                araw = areuse;
+            } else {
+                araw = heap.len() * 4;
+                var anw: i32 = asize / 4;
+                var aq: i32 = 0;
+                while (aq < anw) { heap = heap.append(0); aq = aq + 1; }
+            }
+            var abase: i32 = araw + 4;
+            heap = heap.with((abase - 4) / 4, 1);       // rc = 1
+            heap = heap.with(abase / 4, an);            // len = n
+            var ae: i32 = an - 1;
+            while (ae >= 0) {
+                sp = sp - 1;
+                heap = heap.with((abase + 4 + ae * 4) / 4, stack[sp]);
+                ae = ae - 1;
+            }
+            stack = stack.with(sp, abase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 88) {  // arr_get
+            // pop idx (top), base; push element at base+4+idx*4.
+            sp = sp - 1;
+            var gidx: i32 = stack[sp];
+            sp = sp - 1;
+            var gbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[(gbase + 4 + gidx * 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 89) {  // arr_set
+            // pop val (top), idx, base; store val at base+4+idx*4.
+            sp = sp - 1;
+            var stval: i32 = stack[sp];
+            sp = sp - 1;
+            var stidx: i32 = stack[sp];
+            sp = sp - 1;
+            var stbase: i32 = stack[sp];
+            heap = heap.with((stbase + 4 + stidx * 4) / 4, stval);
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 90) {  // arr_len
+            // pop base; push len header at base.
+            sp = sp - 1;
+            var lbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[lbase / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 91) {  // arr_rc
+            // pop base; push rc header at base-4.
+            sp = sp - 1;
+            var rbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[(rbase - 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 138) {  // struct_make
+            // High-level struct / enum-variant box: allocate
+            // [rc, shape, f0, f1, …] (this interpreter's 4-byte model — rc at
+            // base-4, the slot-0 shape/type id at base, field i at base+4+i*4),
+            // pop `i32_imm` field values (field 0 deepest, the order the
+            // lowering pushes them) and fill them, then push the base. The
+            // shape id is the interned struct/variant name (`o.str`), so
+            // variant_is can test the discriminant (an enum variant box is a
+            // struct_make whose name is the variant and whose payload is field
+            // 0 — see op_struct_make / op_variant_is). Mirrors arr_make's alloc
+            // (reuse an exact-size freed block or bump-grow). Scalar
+            // (i32/boolean) fields only, leak-only (no RC/drop on structs yet),
+            // so the box is never freed — exit-code-equivalent to every
+            // backend. A 0-field box is a bare enum variant (`E.A`).
+            var snf: i32 = o.i32_imm;
+            var ssize: i32 = (snf + 2) * 4;
+            var sreuse: i32 = 0;
+            var scur: i32 = freehead;
+            var sprev: i32 = 0;
+            while (scur != 0) {
+                if (heap[scur / 4 + 1] == ssize) {
+                    var snxt: i32 = heap[scur / 4];
+                    if (sprev == 0) { freehead = snxt; } else { heap = heap.with(sprev / 4, snxt); }
+                    sreuse = scur;
+                    scur = 0;
+                } else {
+                    sprev = scur;
+                    scur = heap[scur / 4];
+                }
+            }
+            var sraw: i32 = 0;
+            if (sreuse != 0) {
+                sraw = sreuse;
+            } else {
+                sraw = heap.len() * 4;
+                var snw: i32 = ssize / 4;
+                var sq: i32 = 0;
+                while (sq < snw) { heap = heap.append(0); sq = sq + 1; }
+            }
+            var sbase: i32 = sraw + 4;
+            heap = heap.with((sbase - 4) / 4, 1);             // rc = 1
+            heap = heap.with(sbase / 4, shape_id(o.str));     // slot-0 shape/type id
+            var sfi: i32 = snf - 1;
+            while (sfi >= 0) {
+                sp = sp - 1;
+                heap = heap.with((sbase + 4 + sfi * 4) / 4, stack[sp]);
+                sfi = sfi - 1;
+            }
+            stack = stack.with(sp, sbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 198) {  // struct_copy
+            // pop src box; allocate a fresh [rc, shape, f0..f(nf-1)] box (bump-grow,
+            // rc=1) and copy the shape slot + all nf field slots word-for-word from
+            // src, then push the new base. Shallow: field pointers are shared, exactly
+            // like the inline base-copy path (struct_get per field) this replaces.
+            sp = sp - 1;
+            var scpsrc: i32 = stack[sp];
+            var scpnf: i32 = o.i32_imm;
+            var scpraw: i32 = heap.len() * 4;
+            var scpnw: i32 = scpnf + 2;
+            var scpq: i32 = 0;
+            while (scpq < scpnw) { heap = heap.append(0); scpq = scpq + 1; }
+            var scpbase: i32 = scpraw + 4;
+            heap = heap.with((scpbase - 4) / 4, 1);                    // rc = 1
+            heap = heap.with(scpbase / 4, heap[scpsrc / 4]);           // shape/type id
+            var scpi: i32 = 0;
+            while (scpi < scpnf) {
+                heap = heap.with((scpbase + 4 + scpi * 4) / 4, heap[(scpsrc + 4 + scpi * 4) / 4]);
+                scpi = scpi + 1;
+            }
+            stack = stack.with(sp, scpbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 139) {  // struct_get
+            // pop base; push field `i32_imm` at base+4+i*4 (slot 0 is the shape).
+            sp = sp - 1;
+            var sgbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[(sgbase + 4 + o.i32_imm * 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 140) {  // struct_set
+            // pop val (top), box; store val into field `i32_imm` at base+4+i*4.
+            sp = sp - 1;
+            var ssval: i32 = stack[sp];
+            sp = sp - 1;
+            var ssbase: i32 = stack[sp];
+            heap = heap.with((ssbase + 4 + o.i32_imm * 4) / 4, ssval);
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 145) {  // variant_is
+            // pop an enum-variant box; push 1 if its slot-0 shape id equals the
+            // named variant's interned id, else 0 — the `match` discriminant test.
+            sp = sp - 1;
+            var vbase: i32 = stack[sp];
+            var vmatch: i32 = 0;
+            if (heap[vbase / 4] == shape_id(o.str)) { vmatch = 1; }
+            stack = stack.with(sp, vmatch);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 142) {  // tuple_make
+            // High-level tuple box: allocate [rc, e0, e1, …] (rc at base-4,
+            // element i at base+i*4 — a tuple has NO shape/type-id slot, unlike a
+            // struct; `.0` / `.1` are resolved at the access site), pop `i32_imm`
+            // element values (element 0 deepest, the order the lowering pushes
+            // them) and fill them, then push the base. Mirrors arr_make's alloc.
+            // Scalar (i32/boolean) elements only, leak-only — exit-code-
+            // equivalent to every backend. (`tuple_make_k` shares this
+            // kind; the 8-byte i64/f64 element form isn't modelled here, like the
+            // rest of this i32-only evaluator.)
+            var tn: i32 = o.i32_imm;
+            var tsize: i32 = (tn + 1) * 4;
+            var treuse: i32 = 0;
+            var tcur: i32 = freehead;
+            var tprev: i32 = 0;
+            while (tcur != 0) {
+                if (heap[tcur / 4 + 1] == tsize) {
+                    var tnxt: i32 = heap[tcur / 4];
+                    if (tprev == 0) { freehead = tnxt; } else { heap = heap.with(tprev / 4, tnxt); }
+                    treuse = tcur;
+                    tcur = 0;
+                } else {
+                    tprev = tcur;
+                    tcur = heap[tcur / 4];
+                }
+            }
+            var traw: i32 = 0;
+            if (treuse != 0) {
+                traw = treuse;
+            } else {
+                traw = heap.len() * 4;
+                var tnw: i32 = tsize / 4;
+                var tq: i32 = 0;
+                while (tq < tnw) { heap = heap.append(0); tq = tq + 1; }
+            }
+            var tbase: i32 = traw + 4;
+            heap = heap.with((tbase - 4) / 4, 1);       // rc = 1
+            var tei: i32 = tn - 1;
+            while (tei >= 0) {
+                sp = sp - 1;
+                heap = heap.with((tbase + tei * 4) / 4, stack[sp]);
+                tei = tei - 1;
+            }
+            stack = stack.with(sp, tbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 143) {  // tuple_get
+            // pop base; push element `i32_imm` at base+i*4 (no shape slot).
+            sp = sp - 1;
+            var tgbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[tgbase / 4 + o.i32_imm]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 120) {  // opt_make
+            // Built-in Option / Result box [rc, tag, payload] (rc at base-4, tag
+            // at base, payload at base+4 — the backends' [tag@0, payload@next]
+            // shape with this interpreter's rc header). `i32_imm` is the tag (0 =
+            // Some/Ok, 1 = Err); the payload is popped off the operand stack. Used
+            // for `Some(x)` and the built-in Option `match` (opt_tag / opt_payload).
+            sp = sp - 1;
+            var opval: i32 = stack[sp];
+            var oraw: i32 = heap.len() * 4;
+            heap = heap.append(0);                 // rc
+            heap = heap.append(0);                 // tag
+            heap = heap.append(0);                 // payload
+            var obase: i32 = oraw + 4;
+            heap = heap.with((obase - 4) / 4, 1);  // rc = 1
+            heap = heap.with(obase / 4, o.i32_imm); // tag
+            heap = heap.with(obase / 4 + 1, opval); // payload
+            stack = stack.with(sp, obase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 121) {  // opt_none
+            // Payloadless None box: tag 1, payload 0. Pops nothing.
+            var nraw: i32 = heap.len() * 4;
+            heap = heap.append(0);                 // rc
+            heap = heap.append(0);                 // tag
+            heap = heap.append(0);                 // payload
+            var nbase: i32 = nraw + 4;
+            heap = heap.with((nbase - 4) / 4, 1);  // rc = 1
+            heap = heap.with(nbase / 4, 1);        // tag = 1 (None)
+            heap = heap.with(nbase / 4 + 1, 0);    // payload = 0
+            stack = stack.with(sp, nbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 122) {  // opt_tag
+            // pop box; push the tag at base (slot 0).
+            sp = sp - 1;
+            var otbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[otbase / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 123) {  // opt_payload
+            // pop box; push the payload at base+4 (slot 1).
+            sp = sp - 1;
+            var opbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[opbase / 4 + 1]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && (o.str == "__fern_rc_inc" || o.str == "__fern_arr_share_inc")) {  // call_direct
+            // RC retain: inc the refcount header at base-4, return base.
+            sp = sp - 1;
+            var ib: i32 = stack[sp];
+            var ridx: i32 = (ib - 4) / 4;
+            heap = heap.with(ridx, heap[ridx] + 1);
+            stack = stack.with(sp, ib);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && (o.str == "__fern_rc_dec" || o.str == "__fern_arr_share_dec")) {  // call_direct
+            // RC release: dec the header at base-4 (no free). A dec of a value
+            // already at/below 0 is an over-release -> bump the counter at
+            // word 0. A null / sub-heap pointer is skipped (defensive).
+            sp = sp - 1;
+            var db: i32 = stack[sp];
+            if (db >= 8) {
+                var dridx: i32 = (db - 4) / 4;
+                if (heap[dridx] <= 0) {
+                    heap = heap.with(0, heap[0] + 1);
+                } else {
+                    var newrc: i32 = heap[dridx] - 1;
+                    heap = heap.with(dridx, newrc);
+                    if (newrc == 0) {
+                        // free: push the raw block (db-4) onto the freelist;
+                        // size = (len+2)*4 from the length header at [base].
+                        var rawblk: i32 = db - 4;
+                        var size2: i32 = (heap[db / 4] + 2) * 4;
+                        heap = heap.with(rawblk / 4, freehead);
+                        heap = heap.with(rawblk / 4 + 1, size2);
+                        freehead = rawblk;
+                    }
+                }
+            }
+            stack = stack.with(sp, db);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_rc_underflow_get") {  // call_direct
+            stack = stack.with(sp, heap[0]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_rc_is_unique") {  // call_direct
+            // Sole-ownership probe (#4350): 1 iff a live box with rc == 1 (rc at
+            // base-4 in this interpreter's 4-byte model). Null / sub-heap: 0.
+            sp = sp - 1;
+            var qb: i32 = stack[sp];
+            var qr: i32 = 0;
+            if (qb >= 8) {
+                if (heap[(qb - 4) / 4] == 1) { qr = 1; }
+            }
+            stack = stack.with(sp, qr);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_alloc_reuse") {  // call_direct
+            // FBIP reuse-degrade (#4350): pops [token, slots] (slots = total
+            // payload words: struct nf+1 incl. the shape word, tuple arity). A
+            // non-null token is handed straight back (same-shape reuse — the
+            // class always fits); a null token allocates the same [rc, slots…]
+            // block struct_make / tuple_make do (rc=1; any shape word left for
+            // the caller's raw copy).
+            sp = sp - 1;
+            var arnf: i32 = stack[sp];
+            sp = sp - 1;
+            var artok: i32 = stack[sp];
+            var arbase: i32 = artok;
+            if (artok == 0) {
+                var arsize: i32 = (arnf + 1) * 4;
+                var arreuse: i32 = 0;
+                var arcur: i32 = freehead;
+                var arprev: i32 = 0;
+                while (arcur != 0) {
+                    if (heap[arcur / 4 + 1] == arsize) {
+                        var arnxt: i32 = heap[arcur / 4];
+                        if (arprev == 0) { freehead = arnxt; } else { heap = heap.with(arprev / 4, arnxt); }
+                        arreuse = arcur;
+                        arcur = 0;
+                    } else {
+                        arprev = arcur;
+                        arcur = heap[arcur / 4];
+                    }
+                }
+                var arraw: i32 = 0;
+                if (arreuse != 0) {
+                    arraw = arreuse;
+                } else {
+                    arraw = heap.len() * 4;
+                    var arnw: i32 = arsize / 4;
+                    var arq: i32 = 0;
+                    while (arq < arnw) { heap = heap.append(0); arq = arq + 1; }
+                }
+                arbase = arraw + 4;
+                heap = heap.with((arbase - 4) / 4, 1);
+            }
+            stack = stack.with(sp, arbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 85) {  // raw_load_ptr: pops [ptr, off] -> word at ptr+off*4
+            sp = sp - 1;
+            var rlo: i32 = stack[sp];
+            sp = sp - 1;
+            var rlp: i32 = stack[sp];
+            stack = stack.with(sp, heap[(rlp + rlo * 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 84) {  // raw_store_ptr: pops [ptr, off, v] -> v; word store
+            sp = sp - 1;
+            var rsv: i32 = stack[sp];
+            sp = sp - 1;
+            var rso: i32 = stack[sp];
+            sp = sp - 1;
+            var rsp2: i32 = stack[sp];
+            heap = heap.with((rsp2 + rso * 4) / 4, rsv);
+            stack = stack.with(sp, rsv);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 80) {  // heap_bump_bytes
+            // Bytes bump-allocated = heap words * 4 minus the reserved word 0.
+            // Freelist reuse does not bump, so this measures peak growth.
+            stack = stack.with(sp, heap.len() * 4 - 4);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 8) {  // int_wrap
+            // Every slot here is already i32, so narrowing an i64 is the
+            // identity. Modelled because it is what an i64-valued builtin's
+            // result passes through to reach an i32 return; the widening
+            // sibling (int_extend) has no such caller and stays unmodelled.
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && is_reclaim_helper(o.str)) {  // call_direct
+            // A Perceus reclaim helper (see is_reclaim_helper): value-preserving
+            // identity on arg0 (the box / `new`). Pop its argc args and leave that
+            // primary arg as the result — the evaluator doesn't model the heap free
+            // (the value was read before the drop). Without this the call would miss
+            // find_fn and bail (198) the moment a struct becomes reclaimable.
+            var rargc: i32 = o.i32_imm;
+            var keepv: i32 = stack[sp - rargc];   // arg0 = deepest of the argc args
+            sp = sp - rargc;
+            stack = stack.with(sp, keepv);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149) {  // call_direct
+            // pop argc args (arg0..arg n-1, n-1 on top) preserving order, call
+            // the named function, push the result.
+            var argc: i32 = o.i32_imm;
+            var callargs: i32[] = [];
+            var z: i32 = 0;
+            while (z < argc) { callargs = callargs.append(0); z = z + 1; }
+            var kk: i32 = argc - 1;
+            while (kk >= 0) { sp = sp - 1; callargs = callargs.with(kk, stack[sp]); kk = kk - 1; }
+            // Thread the shared heap + freelist through the nested call so any
+            // box the callee allocates (and may return) persists on return. If
+            // the callee bailed (unlowered in the IR path — the real compiler
+            // AST-falls-back), propagate the bail rather than pushing its
+            // sentinel as a real value.
+            var co: EvalOut = eval_call(fns, o.str, callargs, heap, freehead);
+            if (co.bailed) { return co; }
+            heap = co.heap;
+            freehead = co.freehead;
+            stack = stack.with(sp, co.value);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 9) {  // int_cast
+            // Narrow the top of stack to the target int width
+            // (rides `o.str`), mirroring ir.op_int_cast and the register backends'
+            // `as_<ty>`. The lowering emits this after every i32 arithmetic op
+            // (add/sub/mul/shl — the signed sibling of u32_wrap) and for `as`
+            // casts, so the i32 evaluator must apply the same per-width wrap or
+            // every arithmetic program bails. i32 / u32 are identity in this
+            // 32-bit-word model; only the sub-word width (u8) changes the value.
+            var cv: i32 = stack[sp - 1];
+            var cty: string = o.str;
+            if (cty == "u8") { cv = cv & 255; }
+            stack = stack.with(sp - 1, cv);
+            pc = pc + 1;
+        }
+        else if (is_bin_kind(o.kind_tag)) {
+            // a binary op: pop r, pop l, push apply
+            sp = sp - 1;
+            var r: i32 = stack[sp];
+            sp = sp - 1;
+            var l: i32 = stack[sp];
+            stack = stack.with(sp, bin_apply(o.kind_tag, l, r));
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else {
+            // An op this i32-only evaluator doesn't model (i64 / f64 / string /
+            // map ops). Bail cleanly with the sentinel 198 instead of mis-popping
+            // the stack as a binary op — that underflowed to stack[-1] and
+            // SIGABRT'd (134), which reads like a real crash in CI. These ops are
+            // covered by the differential x86 / wasm IR suites; the round-trip
+            // evaluator stays integer-only by design. (Distinct from 200 =
+            // lowering bailed, 201 = no `main`.)
+            return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true };
+        }
+    }
+    // fell off the end with no return — yield top-of-stack if present, else 0
+    if (sp > 0) { return EvalOut { value: stack[sp - 1], heap: heap, freehead: freehead, bailed: false }; }
+    return EvalOut { value: 0, heap: heap, freehead: freehead, bailed: false };
+}
+
+function bool_not(x: i32): i32 {
+    if (x == 0) { return 1; }
+    return 0;
+}

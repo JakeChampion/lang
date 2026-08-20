@@ -3326,3 +3326,36 @@ pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
     if (ops[op].kind_tag == 153) { return op + 1; }  // loop
     return find_matching_end(ops, op + 1) + 1;
 }
+
+// LoweredFn is one function's lowered form, tagged with its name + arity so
+// the interpreter and the backend can resolve direct calls.
+//
+// The slot lists and `ret_type` are what a pass ANALYSING the ops needs and
+// the emit path does not: the backends reach the same facts through
+// LowerState, which does not survive lowering, and the op stream says
+// `load_local 1` rather than what slot 1 holds.
+//
+// Counting operands does NOT need them, contrary to what landing them
+// assumed: native's verifyStack is type-directed because a string is one
+// operand slot there on the register backends and two on wasm32, and the
+// self-host has no such split — wasm_ir.fern carries a string as a single
+// block pointer, so every value is one slot on every target and
+// irverifystack.fern reads none of these lists (#6639 slice 2). What does
+// need them is any pass asking what a value IS: the fip / fbip
+// allocation-budget check (slice 3), and the wasm signature emit, which
+// already reads i64_slots / f64_slots to type its params and locals.
+pub struct LoweredFn {
+    name: string,
+    ok: boolean,
+    ops: Op[],
+    n_locals: i32,
+    n_params: i32,
+    arr_slots: i32[],
+    i64_slots: i32[],
+    f64_slots: i32[],
+    str_slots: i32[],
+    // ret_type is the DECLARED return type, verbatim from the FuncDecl
+    // ("i32", "string", "" for void) — the type the ops must leave on the
+    // stack at the end of the function.
+    ret_type: string,
+}
