@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// --- A nested Option/Result local with a SCALAR inner payload (#7218) --------
+// --- A nested Option/Result local is never reclaimed (#7218) ----------------
 //
 // One level of Option is fully reclaimed; nesting one inside another dropped the
 // reclaim entirely — frees=0, not merely incomplete:
@@ -25,10 +25,14 @@ import (
 // `match (inner)` read as an ESCAPE, then `blockable` excluded it from the only
 // pass that sees a loop-body local.
 //
-// The inner box holds a by-value scalar and NOTHING else, so one __fern_rc_dec
-// releases it whole — which is already what opt_payload_freefn answers for the
-// type. That is what makes this admission-only; an rc inner payload needs a
-// two-level drop and is deliberately still refused (see the hazard table).
+// A SCALAR inner box holds a by-value scalar and NOTHING else, so one
+// __fern_rc_dec releases it whole — which is already what opt_payload_freefn
+// answers for the type, making that half admission-only. An RC inner owns a
+// payload of its own and takes emit_nested_opt_payload_drop instead: spill the
+// inner box, free ITS payload, free the inner box, then the outer. Both halves
+// are here; what separates them is the extra proof the rc one carries, that the
+// NESTED match's own binding does not escape either (a pointer can outlive its
+// arm where a scalar copy cannot).
 
 func nestedOptChurn(prelude, body string, rounds int) string {
 	return fmt.Sprintf(`%sfunction churn(n: i32): i32 {
@@ -90,6 +94,59 @@ var nestedOptFlatCases = []struct {
 		want100: 9,
 		want200: 18,
 	},
+	{
+		// The rc-inner half: THREE allocations a round — the array buffer, the
+		// inner box, the outer box — and the two-level drop must free all three.
+		// allocs == frees is what says it did.
+		name: "rc_inner_array_literal",
+		body: `        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+        match (o) {
+            Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len() + v[0]) % 91; }, None => { acc = (acc + 1) % 91; } } },
+            None => { acc = (acc + 2) % 91; }
+        }`,
+		want100: 54,
+		want200: 7,
+	},
+	{
+		// The same with the buffer coming from a LIVE LOCAL. Construction
+		// rc_inc's an array slot, so the buffer is at rc 2 and the drop's dec is
+		// the second — the interlock, not a double free. The underflow term in
+		// the exit code is what proves that rather than the byte count.
+		name: "rc_inner_array_ident",
+		body: `        var xs: i32[] = [i, i + 1];
+        var o: Option[Option[i32[]]] = Some(Some(xs));
+        match (o) {
+            Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
+            None => { acc = (acc + 2) % 91; }
+        }`,
+		want100: 18,
+		want200: 36,
+	},
+	{
+		// A string inner, released by the rc-aware __fern_str_free (immortal
+		// skips, shared decs, unique frees) rather than the array dec — on asm a
+		// string box's data buffer is separate and its block class differs.
+		name: "rc_inner_string",
+		body: `        var o: Option[Option[string]] = Some(Some("ab"));
+        match (o) {
+            Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
+            None => { acc = (acc + 2) % 91; }
+        }`,
+		want100: 18,
+		want200: 36,
+	},
+	{
+		// A string[] inner: __fern_str_arr_free walks the elements, where the
+		// flat dec would strand every element box.
+		name: "rc_inner_string_array",
+		body: `        var o: Option[Option[string[]]] = Some(Some(["a", "b"]));
+        match (o) {
+            Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
+            None => { acc = (acc + 2) % 91; }
+        }`,
+		want100: 18,
+		want200: 36,
+	},
 }
 
 // nestedOptHazardCases are the shapes that must keep leaking. Each asserts the
@@ -138,26 +195,47 @@ var nestedOptHazardCases = []struct {
 		want: 62,
 	},
 	{
-		// An rc INNER payload: the inner box owns an array buffer, so a shallow
-		// dec of it would strand the buffer. Still refused — leaking, which is
-		// what an unproven payload is owed. Pinned so that widening to a
-		// two-level drop has to come with a deliberate change here.
-		name: "rc_inner_array_refused",
-		src: nestedOptChurn("", `        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+		// THE rc-inner trap. The NESTED match's binding is carried out of its
+		// arm — a pointer, which a scalar inner's copy could never be — so the
+		// two-level drop would free a buffer `held` still names.
+		// nested_opt_payload_arm_escapes is what sees this; the outer arm looks
+		// clean to every other gate.
+		name: "inner_payload_escapes",
+		src: nestedOptChurn("", `        var held: i32[] = [];
+        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
         match (o) {
-            Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
+            Some(inner) => { match (inner) { Some(v) => { held = v; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
-        }`, 200),
+        }
+        acc = (acc + held.len()) % 91;`, 200),
 		want: 36,
 	},
 	{
-		// The string-payload sibling of the row above.
-		name: "rc_inner_string_refused",
-		src: nestedOptChurn("", `        var o: Option[Option[string]] = Some(Some("ab"));
-        match (o) {
-            Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
-            None => { acc = (acc + 2) % 91; }
-        }`, 200),
+		// A `None` INNER under an rc-inner annotation. The two-level drop reads
+		// offset 8 of the inner box unconditionally, and a None box never stored
+		// one — opt_arg_is_some_ctor is what keeps this out.
+		name: "inner_none_under_rc_type",
+		src: nestedOptChurn("", `        var o: Option[Option[i32[]]] = Some(None);
+        match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
+		want: 18,
+	},
+	{
+		// THREE levels. nested_opt_inner_freefn names a release for an array /
+		// string / string[] inner and nothing else, so an Option inner refuses
+		// rather than recursing — the walk is two levels deep by construction.
+		name: "triple_nested",
+		src: nestedOptChurn("", `        var o: Option[Option[Option[i32]]] = Some(Some(Some(i)));
+        match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
+		want: 18,
+	},
+	{
+		// The INNER BOX itself extracted to an outer local, so the outer arm's
+		// binding escapes under the scrutinee-borrow reading too.
+		name: "inner_box_extracted",
+		src: nestedOptChurn("", `        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+        var keep: Option[i32[]] = None;
+        match (o) { Some(inner) => { keep = inner; }, None => { acc = (acc + 2) % 91; } }
+        match (keep) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 3) % 91; } }`, 200),
 		want: 36,
 	},
 }
