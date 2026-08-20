@@ -1772,7 +1772,15 @@ function parse_map_lit(p: Par): (Expr, Par) {
             p = mve_p;
             mlk = mlk.append(mke_expr);
             mlv = mlv.append(mve_expr);
-            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            if (p.peek_punct() == ",") {
+                p = p.advance();
+                // A TRAILING comma closes the literal — `Map { 1: 2, }`. Without
+                // this the loop went back to parse_expr on the `}` and reported
+                // P001, while native, the interpreter, and this parser's own
+                // array and struct literals all accept one.
+                if (p.peek_punct() == "}") { break; }
+                continue;
+            }
             break;
         }
     }
