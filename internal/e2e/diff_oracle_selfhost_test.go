@@ -63,11 +63,11 @@ import (
 //
 // Set below the measured runnable fraction with room for the natural
 // drift a generator change causes, and well above "the leg has hollowed
-// out". Measured 2026-08-19 over seeds 0..511: 509 compile and run, 3
-// bail, 0 seeds skip on the interpreter side — a 0.99 ratio. Sharding is
+// out". Measured 2026-08-20 over seeds 0..511: 511 compile and run, 1
+// bails, 0 seeds skip on the interpreter side — a 1.00 ratio. Sharding is
 // what sets the headroom rather than the whole-corpus figure: CI splits
-// this leg two ways, so a shard that drew every one of today's 3 bails
-// runs 253 of 256, and the floor has to sit under that.
+// this leg two ways, so a shard that drew today's single bail runs 255 of
+// 256, and the floor has to sit under that.
 const selfHostDiffMinRunRatio = 0.85
 
 // selfHostDiffKnownFile lists the seeds whose self-host result is KNOWN

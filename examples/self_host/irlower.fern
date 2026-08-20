@@ -55706,6 +55706,29 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
 
+// passthrough_array_arg returns the index of the erased-generic argument a
+// passthrough call forwards when that argument is an ARRAY literal, or -1. The
+// call yields exactly that literal, so an arm spelled `id([…])` carries the same
+// elements an arm spelled `[…]` does.
+function passthrough_array_arg(c: parser.ExprCall, mfuncs: MFuncs): i32 {
+    match (c.callee) {
+        parser.ExprIdent(cid) => {
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)) {
+                    match (c.args[i]) {
+                        parser.ExprArray(_) => { return i; },
+                        _ => {}
+                    }
+                }
+                i = i + 1;
+            }
+        },
+        _ => {}
+    }
+    return 0 - 1;
+}
+
 // arr_elem_forces_box reports whether an array element makes the whole literal an
 // env-box array: a capturing lambda, or a generic-passthrough call carrying a fn
 // value (the lift boxes that argument unconditionally, so the call yields a box).
@@ -56211,7 +56234,20 @@ function expr_is_closure_array(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_closurearr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    if (s.is_closurearr_ret_fn(cid.name)) { return true; }
+                    // A generic passthrough hands its erased-generic argument
+                    // straight back, so `id([<closure>, …])` yields the array it
+                    // was given. Without this the arm reads as a plain fn-pointer
+                    // array and the binding bare-dispatches a box.
+                    var pi: i32 = 0;
+                    while (pi < c.args.len()) {
+                        if (util.index_of_str(s.sigs.closure_fns, "PASSTHRU:" + cid.name + ":" + util.i32_to_string(pi)) >= 0
+                                && expr_is_closure_array(c.args[pi], s)) { return true; }
+                        pi = pi + 1;
+                    }
+                    return false;
+                },
                 parser.ExprLambda(_) => { return c.args.len() == 0 && iife_callee_closurearr_arms(c.callee, s); },
                 _ => { return false; }
             }
@@ -56377,8 +56413,15 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
 // arrays holds a capturing lambda. It is the gate on rewriting the arms into
 // uniform env boxes: below the "every arm" half the binding would carry two
 // dispatch ABIs, and without the "some capture" half there is nothing to fix.
+//
+// Both halves read captures against iife_scope_fd, so a name the IIFE ITSELF
+// binds — a match arm's payload — counts. Against the enclosing function alone
+// an arm lambda reading `Ok(a) => [(x) => x + a]` looks capture-free, the gate
+// answers 0, and the lambda stays raw for a `<fd>$clo` nobody built. The
+// non-array twin (box_iife_arm_values) and iife_arm_lambda_captures already
+// widen this way; the array path did not.
 function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
-    var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0, mfuncs);
+    var seen: i32 = iife_arm_arrays_capturing(stmts, iife_scope_fd(fd, stmts), 0, mfuncs);
     return seen > 0;
 }
 
@@ -56407,8 +56450,25 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                         match (rc.callee) {
                             parser.ExprLambda(ril) => {
                                 if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
-                                n = iife_arm_arrays_capturing(ril.body, fd, n, mfuncs);
+                                n = iife_arm_arrays_capturing(ril.body, iife_scope_fd(fd, ril.body), n, mfuncs);
                                 if (n < 0) { return 0 - 1; }
+                            },
+                            // `id([<lambda>, …])` — a generic passthrough hands the
+                            // array straight back, so the arm yields the literal one
+                            // level in and its elements count like any other arm's.
+                            parser.ExprIdent(rcid) => {
+                                var pa: i32 = passthrough_array_arg(rc, mfuncs);
+                                if (pa < 0) { return 0 - 1; }
+                                match (rc.args[pa]) {
+                                    parser.ExprArray(parr) => {
+                                        var pe: i32 = 0;
+                                        while (pe < parr.elements.len()) {
+                                            if (arr_elem_forces_box(parr.elements[pe], fd, mfuncs)) { n = n + 1; }
+                                            pe = pe + 1;
+                                        }
+                                    },
+                                    _ => { return 0 - 1; }
+                                }
                             },
                             _ => { return 0 - 1; }
                         }
@@ -56469,10 +56529,38 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                         match (rc.callee) {
                             parser.ExprLambda(ril) => {
                                 if (rc.args.len() == 0 && ril.params.len() == 0) {
-                                    var nb: InlineCloStmts = box_iife_arm_array_elems(ril.body, fd, fs, ct, gfns, structs, mfuncs);
+                                    var nb: InlineCloStmts = box_iife_arm_array_elems(ril.body, iife_scope_fd(fd, ril.body), fs, ct, gfns, structs, mfuncs);
                                     fs = nb.funcs; ct = nb.counter;
                                     var nlam: parser.Expr = parser.ExprLambda { ...ril, body: nb.stmts };
                                     nv = parser.ExprCall { callee: nlam, args: rc.args, line: rc.line, col: rc.col, type_argc: rc.type_argc, ty: rc.ty };
+                                }
+                            },
+                            // The array a passthrough forwards: box its elements
+                            // where they sit, so the call still hands back the same
+                            // literal and the arms stay uniform.
+                            parser.ExprIdent(_) => {
+                                var pai: i32 = passthrough_array_arg(rc, mfuncs);
+                                if (pai >= 0) {
+                                    match (rc.args[pai]) {
+                                        parser.ExprArray(parr2) => {
+                                            var pnel: parser.Expr[] = [];
+                                            var pj: i32 = 0;
+                                            while (pj < parr2.elements.len()) {
+                                                var per: InlineCloRes = try_fn_field_value(parr2.elements[pj], fd, fs, ct, gfns, mfuncs, structs);
+                                                fs = per.funcs; ct = per.counter; pnel = pnel.append(per.expr);
+                                                pj = pj + 1;
+                                            }
+                                            var pnargs: parser.Expr[] = [];
+                                            var pk: i32 = 0;
+                                            while (pk < rc.args.len()) {
+                                                if (pk == pai) { pnargs = pnargs.append(parser.ExprArray { ...parr2, elements: pnel }); }
+                                                else { pnargs = pnargs.append(rc.args[pk]); }
+                                                pk = pk + 1;
+                                            }
+                                            nv = parser.ExprCall { callee: rc.callee, args: pnargs, line: rc.line, col: rc.col, type_argc: rc.type_argc, ty: rc.ty };
+                                        },
+                                        _ => {}
+                                    }
                                 }
                             },
                             _ => {}
@@ -56705,7 +56793,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // Anything else is left to bail exactly as before.
                     if (call.args.len() == 0 && ielam.params.len() == 0
                         && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd, mfuncs)) {
-                        var ibr: InlineCloStmts = box_iife_arm_array_elems(ielam.body, fd, fs, ct, gfns, structs, mfuncs);
+                        var ibr: InlineCloStmts = box_iife_arm_array_elems(ielam.body, iife_scope_fd(fd, ielam.body), fs, ct, gfns, structs, mfuncs);
                         if (ibr.counter > ct) {
                             fs = ibr.funcs; ct = ibr.counter;
                             ncallee = parser.ExprLambda { ...ielam, body: ibr.stmts };
