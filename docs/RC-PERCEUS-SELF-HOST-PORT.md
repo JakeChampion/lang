@@ -11460,3 +11460,93 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   Gate: all three `TestFernFixturesSelfHost` legs green with the corrected
   compiler (877 s, 420/420/410, zero skips). Refs #6544 #7178 #4451.
+
+- 2026-08-20: **`match` on an Option/Result with a MAP payload did not lower.**
+
+  Not a leak — a coverage gap. The self-host refused the whole function:
+
+  ```
+  var o: Option[Map[string, i32]] = Some(m);
+  match (o) { Some(v) => { r = v.get_or("k", 0); }, None => {} }
+
+  FERN_STRICT_IR: churn (did not lower: `match`)
+  ```
+
+  Native compiled and ran the same program, so this was a plain bug in the
+  sense goal 1 leaves: there is no AST fallback for a construct to land in.
+
+  Narrowed by varying one dimension at a time: it bailed with the payload bound
+  and used AND with it bound and unused (`hb` is true for any named binding);
+  `Option[i32[]]` lowered; an `Option[Map]` that was never matched lowered; a Map
+  passed to a function lowered. So the built-in-variant payload gate in
+  `lower_stmt_match` was the only thing refusing — it enumerates every accepted
+  `ptag` shape and Map was absent.
+
+  An ASYMMETRY, not a missing capability: the user-enum variant arm in the same
+  function already binds a Map payload via `mark_map_type`
+  (`JObject(Map[string, JsonValue])`). A Map box is a heap pointer at offset 8,
+  exactly like the struct / tuple / array payloads that arm reads through
+  `op_opt_payload`. Four things checked before writing it, all in the source:
+  `is_enum_like_name` is false for any name containing `[` (so no ordering
+  hazard against the struct/enum branch); `tuple_elem_tags` requires a leading
+  `(` (so the tuple branch cannot claim it); `opt_payload_type` counts depth over
+  both `[]` and `()` (so `Result[Map[K, V], E]` splits at the right comma and one
+  predicate covers both arms); and `mark_map_type` sets no `is_arr`, so the
+  BORROWED payload stays out of the exit dec-sweep without needing the array
+  branches' `mark_borrowed_arr` opt-out (#6049).
+
+  **The array-of-maps case turned the fix into a segfault, and that is the
+  second half of this entry.** `Map[K, V][]` prefix-matches `is_map_type_name`,
+  so the new predicate is guarded with `!is_array_type_name`. That guard was not
+  enough, because the gate never saw the array spelling: for
+  `var o: Option[Map[string, i32][]] = Some(ms)` the recorded slot type was
+  `Option[Map[string, i32]]`. The annotation parses correctly — an INFERENCE
+  overrode it. A map-array slot records the ELEMENT map type in the map column
+  (so `ms[i].get(k)` resolves), so `elem_type_tag(ms)` answers the bare
+  `Map[K, V]`, `some_opt_type` builds `Option[Map[K, V]]` from it, and the
+  `opt_ty == ""` guard means that inference wins over `v.type_name`. Admitting
+  the payload then bound an array box as a map: `v.len()` compiled to a map
+  length over array memory and **segfaulted**, where native answers 4 and the
+  pre-change compiler gave an honest bail.
+
+  Fixed in `some_opt_type`, which already declines twice for this same class —
+  a Result payload and a nested Some — each time so "the binding's annotation
+  (the authoritative full type) wins". The defect was that it ASSERTED a payload
+  type it could not determine; it now also declines when the payload is an array
+  the tag spelled as a single MAP. The annotation then wins, the gate sees
+  `Map[K, V][]`, and the case refuses as it always did.
+
+  The decline is keyed on the MAP spelling, not on "an array the tag did not
+  spell as one" — the broader wording was written first and regressed nine
+  `optarrarr` cases across four suites. A scalar array deliberately keeps the
+  bare `"i32"` tag (elem_type_tag's typed-array arm says so), so `Option[i32[][]]`
+  depends on the very shape the broad predicate rejected. The lie is specific to
+  the map column holding an ELEMENT type, and the predicate now says only that.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `match` on `Option[Map[K, V]]` | did not lower | **10** | 10 |
+  | payload bound but unused | did not lower | **10** | 10 |
+  | `Result[Map[K, V], string]`, Ok arm | did not lower | **6** | 6 |
+  | `Result[i32, Map[K, V]]`, Err arm | did not lower | **8** | 8 |
+  | `Option[Map[K, V[]]]` (map of arrays) | did not lower | **20** | 20 |
+  | `Option[Map[K, V][]]` (array of maps) | did not lower | did not lower | 4 |
+
+  The last row stays refused: an array-of-maps payload needs a map ELEMENT kind
+  on the array side, which is machinery the array branches do not have. It was
+  unsupported before this change and is untouched by it.
+
+  Left standing, and worth its own diff: `expr_map_type_tag`'s ident arm reads
+  the map column without checking `is_arr_slot`, so an array-of-maps IDENT types
+  as a single `Map[K, V]` everywhere, not just here. Fixing it there is the
+  deeper cause, but it feeds 11 consumers that all expect a bare `Map[K, V]`
+  (`map_value_of` would read a `Map[K, V][]` tag as a map), so it is a wider
+  change than this slice and does not block it — `some_opt_type` is where the
+  false claim was made.
+
+  Regression test: `internal/e2eselfhost/self_host_map_payload_match_test.go`
+  (6 cases x 3 backends). It asserts on WHETHER EACH CASE LOWERED, not only on
+  the exit code: the bug was a refusal to lower, so a regression would otherwise
+  reappear as a test that never runs its program. The refusal case additionally
+  asserts the refusal REASON, which is what caught the segfault — the miscompile
+  lowered cleanly, so nothing else separated the two outcomes. Refs #4451.

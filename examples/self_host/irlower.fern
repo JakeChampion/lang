@@ -2256,6 +2256,19 @@ pub function some_opt_type(e: parser.Expr, s: LowerState): string {
                         var pt: string = elem_type_tag(c.args[0], s);
                         if (pt == "fn") { return ""; }
                         if (pt.len() >= 7 && pt[0:7] == "Result[") { return ""; }
+                        // An ARRAY payload tagged as a single MAP (`Some(ms)`
+                        // where ms: Map[K, V][]): a map-array slot records the
+                        // ELEMENT map type in the map column so `ms[i].get(k)`
+                        // resolves, so elem_type_tag answers the bare `Map[K, V]`
+                        // for the array itself. Recording that claims the payload
+                        // IS one map, and the claim beats the binding's own
+                        // annotation, so `match` binds an array box as a map.
+                        // Decline for the same reason as the two cases above.
+                        //
+                        // Only the map spelling: a scalar array deliberately keeps
+                        // the bare "i32" tag (elem_type_tag's typed-array arm), and
+                        // Option[i32[][]] depends on it.
+                        if (is_map_type_name(pt) && !is_array_type_name(pt) && expr_is_arr_src(c.args[0], s)) { return ""; }
                         return "Option[" + pt + "]";
                     }
                     return "";
@@ -20473,7 +20486,14 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // offset 8 to read, so it is accepted here and bound
                         // below without a payload load.
                         var ptag_is_void: boolean = ptag == "void";
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void) { return s.fail(); }
+                        // A MAP payload (`Some(m)` / `Ok(m)` / `Err(m)` where the
+                        // payload is a Map[K, V]): a heap box pointer at offset 8,
+                        // read via op_opt_payload like the struct / tuple / array
+                        // payloads. is_map_type_name is a bare `Map[` prefix test,
+                        // so it also matches `Map[K, V][]` — the array branch owns
+                        // that spelling.
+                        var ptag_is_map: boolean = is_map_type_name(ptag) && !is_array_type_name(ptag);
+                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
                     }
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -20567,6 +20587,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // type so `e.method()` at the call site is recognised as
                         // a dyn receiver and routes through op_dyn_dispatch.
                         else if (ptag.len() > 4 && ptag[0:4] == "dyn ") { ms = ms.mark_struct_type(pbslot, ptag); }
+                        // A MAP payload: carry the full Map[K, V] so `v.get(k)` /
+                        // `v.len()` / `v.iter()` dispatch as map ops (v.get recovers
+                        // Option[V] from map_type_of). BORROWED from the
+                        // Option/Result box like the struct payload above, and
+                        // mark_map_type sets no is_arr, so it stays out of the exit
+                        // dec-sweep without needing the array branches' opt-out.
+                        else if (is_map_type_name(ptag) && !is_array_type_name(ptag)) { ms = ms.mark_map_type(pbslot, ptag); }
                         // The array-payload branches above call the binding
                         // BORROWED and "leak-only", but is_arr alone put it in the
                         // exit dec-sweep, which released the Option/Result box's
