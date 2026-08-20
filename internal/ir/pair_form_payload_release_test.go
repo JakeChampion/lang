@@ -39,6 +39,74 @@ func releasesAfterMatch(fn *ir.Func, helper string) bool {
 	return false
 }
 
+// releasesBoundPayload reports whether fn releases the slot holding the arm's
+// BINDING, which is the arm dropping a payload that escaped it.
+//
+// "Any release anywhere" is too coarse to express that. When the binding
+// escapes into a local, that local becomes an owner and reclaims its OWN prior
+// value at the overwrite — a release with nothing to do with the binding, in a
+// function that contains no arm release at all. Telling them apart needs the
+// operand, and both shapes carry it in the op immediately around the call:
+//
+//	local.load <binding>; rc.inc                    the escaping assignment's inc
+//	local.load <slot>; const.i32 <stride>; call     a release of <slot>
+//
+// The binding is the slot alias-inc'd as a SOURCE — the assignment incs what it
+// reads, and decs what it overwrites, so the two slots are never the same one.
+// A release of an inc'd-as-source slot is therefore the arm dropping the
+// binding; a release of any other slot is a destination reclaiming itself.
+func releasesBoundPayload(fn *ir.Func, helper string) bool {
+	bindings := map[int32]bool{}
+	for i, op := range fn.Ops {
+		if op.Kind == ir.OpRcInc && i > 0 && fn.Ops[i-1].Kind == ir.OpLoadLocal {
+			bindings[fn.Ops[i-1].I32] = true
+		}
+	}
+	for i, op := range fn.Ops {
+		if op.Kind != ir.OpCallDirect || op.Str != helper {
+			continue
+		}
+		if i < 2 || fn.Ops[i-2].Kind != ir.OpLoadLocal {
+			// Shape not recognised — report rather than pass silently.
+			return true
+		}
+		if bindings[fn.Ops[i-2].I32] {
+			return true
+		}
+	}
+	return false
+}
+
+// releasesBoundPayload is a hand-written op-stream matcher, so its own
+// discrimination is pinned here rather than assumed: a sharpened predicate that
+// answered "no" to everything would make every escape test above vacuous.
+func TestReleasesBoundPayloadDiscriminates(t *testing.T) {
+	// `local.load 6; rc.inc` marks slot 6 as the binding.
+	bind := []ir.Op{
+		{Kind: ir.OpLoadLocal, I32: 6},
+		{Kind: ir.OpRcInc, Str: "__fern_rc_inc"},
+	}
+	rel := func(slot int32) []ir.Op {
+		return []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: slot},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		}
+	}
+	armReleases := &ir.Func{Ops: append(append([]ir.Op{}, bind...), rel(6)...)}
+	if !releasesBoundPayload(armReleases, "__fern_arr_dec") {
+		t.Error("a release of the bound slot must be reported — the escape tests rest on this")
+	}
+	destReleases := &ir.Func{Ops: append(append([]ir.Op{}, bind...), rel(0)...)}
+	if releasesBoundPayload(destReleases, "__fern_arr_dec") {
+		t.Error("a release of the DESTINATION slot is that local reclaiming its own prior value, not an arm release")
+	}
+	unknownShape := &ir.Func{Ops: []ir.Op{{Kind: ir.OpCallDirect, Str: "__fern_arr_dec", I32: 2}}}
+	if !releasesBoundPayload(unknownShape, "__fern_arr_dec") {
+		t.Error("an unrecognised release shape must be reported, not passed silently")
+	}
+}
+
 // The load-bearing case: the binding is only ever read through (`a[0]`), so
 // the payload cannot outlive the arm and the arm releases it.
 func TestPairFormPayloadReleasedWhenConfined(t *testing.T) {
@@ -74,7 +142,7 @@ function main(): i32 {
 	if !ip.PairForm["mk"] {
 		t.Fatal("mk is not pair-form; this test no longer covers the pair-form path")
 	}
-	if releasesAfterMatch(funcByName(ip, "main"), "__fern_arr_dec") {
+	if releasesBoundPayload(funcByName(ip, "main"), "__fern_arr_dec") {
 		t.Error("main: `kept = a` lets the payload outlive the arm, but the arm releases it anyway — a use-after-free")
 	}
 }
