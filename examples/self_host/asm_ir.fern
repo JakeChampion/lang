@@ -355,9 +355,8 @@ pub function ir_helper_symbol(name: string): string {
 
 // __fern_str_lines was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_lines) lowered through the IR pipeline via
-// emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it splits on
-// '\n' (str_split) and drops the trailing empty entry with an array slice
-// (arr_slice). Heap + str_split + arr_slice dependent; gated on the str_lines need.
+// emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block. Heap +
+// arr_push dependent; gated on the str_lines need.
 
 // __fern_random_i32 is a Fern runtime function (#2649): asmcore.rt_src_random_i32,
 // emitted via emit_ir_runtime_fern_fn and gated on the random_i32 need. It stays
@@ -4281,7 +4280,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [s box]; __fern_str_lines is a Fern runtime function now
         // (#2649): the s box already on the stack IS param[0] (at +16 after the
         // call), so call directly, pop the arg, push the result string[].
-        // mark_str_lines pulls in its str_split + arr_slice + heap deps.
+        // mark_str_lines pulls in its arr_push + heap deps.
         s = s.write("    call __fn___fern_str_lines\n    addq $8, %rsp\n    pushq %rax\n");
         s = s.mark_str_lines(); return s;
     }
