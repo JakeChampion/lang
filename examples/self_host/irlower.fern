@@ -55754,26 +55754,78 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
 }
 
 // passthrough_array_arg returns the index of the erased-generic argument a
-// passthrough call forwards when that argument is an ARRAY literal, or -1. The
-// call yields exactly that literal, so an arm spelled `id([…])` carries the same
-// elements an arm spelled `[…]` does.
+// passthrough call forwards when that argument leads to an ARRAY literal, or
+// -1. The call yields exactly that literal, so an arm spelled `id([…])` carries
+// the same elements an arm spelled `[…]` does.
+//
+// A forwarded argument may be a passthrough itself — `id(pick(c, […], […]))`,
+// which fernsmith does not happen to emit but ordinary source does — so the
+// walk follows the chain rather than demanding the literal one level in.
+// passthrough_array_literal resolves the far end for the callers that need the
+// elements themselves.
 function passthrough_array_arg(c: parser.ExprCall, mfuncs: MFuncs): i32 {
     match (c.callee) {
         parser.ExprIdent(cid) => {
             var i: i32 = 0;
             while (i < c.args.len()) {
-                if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)) {
-                    match (c.args[i]) {
-                        parser.ExprArray(_) => { return i; },
-                        _ => {}
-                    }
-                }
+                if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
+                        && passthrough_leads_to_array(c.args[i], mfuncs)) { return i; }
                 i = i + 1;
             }
         },
         _ => {}
     }
     return 0 - 1;
+}
+
+// passthrough_leads_to_array reports whether `e` is an array literal, or a chain
+// of passthrough calls ending in one.
+function passthrough_leads_to_array(e: parser.Expr, mfuncs: MFuncs): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprCall(c) => { return passthrough_array_arg(c, mfuncs) >= 0; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// passthrough_array_literal returns the array literal at the far end of such a
+// chain as a one-element list, or an empty one when there is none — the shape a
+// caller can `match` without a second walk.
+function passthrough_array_literal(e: parser.Expr, mfuncs: MFuncs): parser.Expr[] {
+    match (e) {
+        parser.ExprArray(_) => { return [e]; },
+        parser.ExprCall(c) => {
+            var i: i32 = passthrough_array_arg(c, mfuncs);
+            if (i < 0) { return []; }
+            return passthrough_array_literal(c.args[i], mfuncs);
+        },
+        _ => { return []; }
+    }
+    return [];
+}
+
+// passthrough_rebuilt_with replaces the array literal at the far end of the
+// chain with `repl`, keeping every call in between — so boxing the elements
+// leaves `id(pick(c, [box…], […]))` shaped exactly as it was found.
+function passthrough_rebuilt_with(e: parser.Expr, repl: parser.Expr, mfuncs: MFuncs): parser.Expr {
+    match (e) {
+        parser.ExprArray(_) => { return repl; },
+        parser.ExprCall(c) => {
+            var i: i32 = passthrough_array_arg(c, mfuncs);
+            if (i < 0) { return e; }
+            var na: parser.Expr[] = [];
+            var k: i32 = 0;
+            while (k < c.args.len()) {
+                if (k == i) { na = na.append(passthrough_rebuilt_with(c.args[k], repl, mfuncs)); }
+                else { na = na.append(c.args[k]); }
+                k = k + 1;
+            }
+            return parser.ExprCall { callee: c.callee, args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+        },
+        _ => { return e; }
+    }
+    return e;
 }
 
 // arr_elem_forces_box reports whether an array element makes the whole literal an
@@ -56504,9 +56556,9 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                             // array straight back, so the arm yields the literal one
                             // level in and its elements count like any other arm's.
                             parser.ExprIdent(rcid) => {
-                                var pa: i32 = passthrough_array_arg(rc, mfuncs);
-                                if (pa < 0) { return 0 - 1; }
-                                match (rc.args[pa]) {
+                                var pl: parser.Expr[] = passthrough_array_literal(r.value, mfuncs);
+                                if (pl.len() == 0) { return 0 - 1; }
+                                match (pl[0]) {
                                     parser.ExprArray(parr) => {
                                         var pe: i32 = 0;
                                         while (pe < parr.elements.len()) {
@@ -56586,9 +56638,9 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                             // where they sit, so the call still hands back the same
                             // literal and the arms stay uniform.
                             parser.ExprIdent(_) => {
-                                var pai: i32 = passthrough_array_arg(rc, mfuncs);
-                                if (pai >= 0) {
-                                    match (rc.args[pai]) {
+                                var pl2: parser.Expr[] = passthrough_array_literal(r.value, mfuncs);
+                                if (pl2.len() > 0) {
+                                    match (pl2[0]) {
                                         parser.ExprArray(parr2) => {
                                             var pnel: parser.Expr[] = [];
                                             var pj: i32 = 0;
@@ -56597,14 +56649,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                                                 fs = per.funcs; ct = per.counter; pnel = pnel.append(per.expr);
                                                 pj = pj + 1;
                                             }
-                                            var pnargs: parser.Expr[] = [];
-                                            var pk: i32 = 0;
-                                            while (pk < rc.args.len()) {
-                                                if (pk == pai) { pnargs = pnargs.append(parser.ExprArray { ...parr2, elements: pnel }); }
-                                                else { pnargs = pnargs.append(rc.args[pk]); }
-                                                pk = pk + 1;
-                                            }
-                                            nv = parser.ExprCall { callee: rc.callee, args: pnargs, line: rc.line, col: rc.col, type_argc: rc.type_argc, ty: rc.ty };
+                                            nv = passthrough_rebuilt_with(r.value, parser.ExprArray { ...parr2, elements: pnel }, mfuncs);
                                         },
                                         _ => {}
                                     }
