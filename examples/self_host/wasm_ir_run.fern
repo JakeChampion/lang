@@ -104,7 +104,7 @@ function run(): i32 {
     // through a bare-typevar param (each targets a concrete clone), so
     // `module_erased_wide` clears and the module lowers on the wasm IR path
     // instead of being refused. Non-generic modules no-op (nothing bounded).
-    var mmod: parser.Module = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm))))));
+    var mmod: parser.Module = parser.inline_callonly_fn_values(parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm)))))));
     // `mono_ok` is the erased-wide-container rescue: only consulted when the raw
     // verdicts both say defer, so every program that already lowered keeps its
     // exact IR/AST verdict (and byte-identical output). Judging the SAME
