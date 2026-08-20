@@ -6,7 +6,7 @@
 // refresh after a Go toolchain upgrade.
 //
 // What std/string's plain-named case methods delegate to, and the
-// complement to its byte-wise to_ascii_* twins. Two families:
+// complement to its byte-wise to_ascii_* twins. Four families:
 //   - Case mapping: to_upper / to_lower / to_upper_char / to_lower_char
 //     / swap_case / capitalize / title_case / eq_ignore_case — over
 //     every code point (Latin, Greek, Cyrillic, Armenian, fullwidth, …),
@@ -14,6 +14,12 @@
 //     for which mappings are full and which are simple.
 //   - Character classes: is_letter / is_digit / is_alnum / is_whitespace
 //     / is_upper / is_lower over a code point, via range binary search.
+//   - Normalization: nfc / nfd / is_nfc / is_nfd / eq_canonical, so
+//     canonically-equivalent text compares equal. NFKC/NFKD are out of
+//     scope by decision — a second full table for a lossy transform.
+//   - Segmentation (UAX #29): graphemes / grapheme_count /
+//     reverse_graphemes for what a reader calls a character, and
+//     word_segments / words / word_count for word boundaries.
 //
 // Scope + caveats:
 //   - String-level to_upper / to_lower do FULL mapping: a code point may
@@ -180,6 +186,15 @@ function _gcb_ranges(): string {
 // 78 entries, 624 bytes (8 chars per entry).
 function _extpict_ranges(): string {
     return "002Y002Y002_002_020m020m02190219024R024R024j024j026D026I026Y026Z02<J02<K02<X02<X02>802>802??02??02?Y02?d02?i02?k02C202C202FZ02F[02Fg02Fg02G002G002Gl02Go02H002H502H702HB02HD02J502J@02L502L802LB02LD02LD02LF02LF02LM02LM02LQ02LQ02LX02LX02Ld02Le02M402M402M702M702M<02M<02M>02M>02MC02ME02MG02MG02MS02MW02NE02NG02NQ02NQ02Na02Na02Np02Np02Te02Tf02]502]702]K02]L02^@02^@02^E02^E030a030a030n030n03:G03:G03:I03:I0O000O3p0O4=0O4?0O4`0O4`0O5]0O5b0O5o0O5p0O6>0O6>0O6A0O6J0O6^0O7U0O810O8?0O8J0O8J0O8`0O8`0O8c0O8k0O8m0O8p0O990O?k0O@00ODn0OE60OI?0OJ00OKp0OMe0OMp0OOE0OOp0OP<0OP?0OQ80OQ?0OQJ0OQO0OR80OR?0OR_0OSp0OT<0OTk0OTm0OU50OU70O[p0Oa00Opn";
+}
+
+// Word_Break (UAX #29, UCD 16.0.0 (uniseg)): lo | hi | class. Class Other (0)
+// is the default and is NOT stored, on the same reasoning as the
+// grapheme table above. Class IDs are fixed by cmd/unicodegen and
+// are part of this table's format.
+// 1085 entries, 13020 bytes (12 chars per entry).
+function _wb_ranges(): string {
+    return "000:000:0002000;000<0003000=000=0001000P000P000B000R000R000<000W000W000;000]000]000?000_000_000=000a000j000@000k000k000>000l000l000?0011001J000:001O001O000A001Q001k000:002500250003002Z002Z000:002^002^0007002f002f000:002h002h000>002k002k000:0030003F000:003H003g000:003i00;G000:00;N00;p000:00<000=`000400=a00=e000:00=g00=h000:00=k00=n000:00=o00=o000?00=p00=p000:00>600>6000:00>700>7000>00>800>:000:00><00><000:00>>00>Q000:00>S00?f000:00?h00B1000:00B300B9000400B:00D`000:00Db00EF000:00EI00EL000:00EN00EN000:00EO00EO000>00EP00F8000:00F900F9000?00F:00F:000:00FA00Fn000400Fp00Fp000400G100G2000400G400G5000400G700G7000400G@00GZ000900G`00Gc000900Gd00Gd000:00Ge00Ge000>00H000H5000@00H<00H=000?00H@00HJ000400HL00HL000700HP00I:000:00I;00IO000400IP00IY000@00I[00I[000@00I]00I]000?00I_00I`000:00Ia00Ia000400Ib00KC000:00KE00KE000:00KF00KL000400KM00KM000@00KO00KT000400KU00KV000:00KW00KX000400KZ00K^000400K_00K`000:00Ka00Kj000@00Kk00Km000:00Kp00Kp000:00L?00L@000:00LA00LA000400LB00L`000:00La00M:000400M=00NU000:00NV00Na000400Nb00Nb000:00O000O9000@00O:00OZ000:00O[00Od000400Oe00Of000:00Oi00Oi000?00Ok00Ok000:00On00On000400P000PE000:00PF00PI000400PJ00PJ000:00PK00PS000400PT00PT000:00PU00PW000400PX00PX000:00PY00P^000400Q000QH000:00QI00QK000400QP00QZ000:00Qa00R7000:00R900R>000:00R@00RA000@00RG00RO000400RP00S9000:00S:00SQ000400SR00SR000@00SS00T3000400T400Tj000:00Tk00Tm000400Tn00Tn000:00To00U?000400U@00U@000:00UA00UG000400UH00UQ000:00UR00US000400UV00U`000@00Ub00V0000:00V100V3000400V500V<000:00V?00V@000:00VC00VX000:00VZ00Va000:00Vc00Vc000:00Vg00Vj000:00Vm00Vm000400Vn00Vn000:00Vo00W4000400W700W8000400W;00W=000400W>00W>000:00WG00WG000400WL00WM000:00WO00WQ000:00WR00WS000400WV00W`000@00Wa00Wb000:00Wm00Wm000:00Wo00Wo000400X100X3000400X500X:000:00X?00X@000:00XC00XX000:00XZ00Xa000:00Xc00Xd000:00Xf00Xg000:00Xi00Xj000:00Xm00Xm000400Xo00Y2000400Y700Y8000400Y;00Y=000400YA00YA000400YI00YL000:00YN00YN000:00YV00Y`000@00Ya00Yb000400Yc00Ye000:00Yf00Yf000400Z100Z3000400Z500Z=000:00Z?00ZA000:00ZC00ZX000:00ZZ00Za000:00Zc00Zd000:00Zf00Zj000:00Zm00Zm000400Zn00Zn000:00Zo00[5000400[700[9000400[;00[=000400[@00[@000:00[P00[Q000:00[R00[S000400[V00[`000@00[j00[j000:00[k00[p000400]100]3000400]500]<000:00]?00]@000:00]C00]X000:00]Z00]a000:00]c00]d000:00]f00]j000:00]m00]m000400]n00]n000:00]o00^4000400^700^8000400^;00^=000400^E00^G000400^L00^M000:00^O00^Q000:00^R00^S000400^V00^`000@00^b00^b000:00_200_2000400_300_3000:00_500_:000:00_>00_@000:00_B00_E000:00_I00_J000:00_L00_L000:00_N00_O000:00_S00_T000:00_X00_Z000:00__00_j000:00_o00`2000400`600`8000400`:00`=000400`@00`@000:00`G00`G000400`V00``000@00a000a4000400a500a<000:00a>00a@000:00aB00aX000:00aZ00aj000:00am00am000400an00an000:00ao00b4000400b600b8000400b:00b=000400bE00bF000400bH00bJ000:00bM00bM000:00bP00bQ000:00bR00bS000400bV00b`000@00c000c0000:00c100c3000400c500c<000:00c>00c@000:00cB00cX000:00cZ00cd000:00cf00cj000:00cm00cm000400cn00cn000:00co00d4000400d600d8000400d:00d=000400dE00dF000400dM00dN000:00dP00dQ000:00dR00dS000400dV00d`000@00db00dc000:00dd00dd000400e000e3000400e400e<000:00e>00e@000:00eB00ek000:00el00em000400en00en000:00eo00f4000400f600f8000400f:00f=000400f>00f>000:00fD00fF000:00fG00fG000400fO00fQ000:00fR00fS000400fV00f`000@00fk00fp000:00g100g3000400g500gF000:00gJ00gb000:00gd00gl000:00gn00gn000:00h000h6000:00h:00h:000400h?00hD000400hF00hF000400hH00hO000400hV00h`000@00hc00hd000400ib00ib000400ie00ik000400j700j>000400j@00jI000@00kb00kb000400ke00km000400l800l>000400l@00lI000@00m000m0000:00mH00mI000400mP00mY000@00mf00mf000400mh00mh000400mj00mj000400mo00mp000400n000n7000:00n900n]000:00nb00o4000400o600o7000400o800o<000:00o=00oG000400oI00om000400p600p60004010[010o000401100119000@011F011I0004011N011P0004011R011T0004011W011^0004011b011e00040122012=0004012?012?0004012@012I000@012J012M0004012P0135000:01370137000:013=013=000:013@013k000:013m0198000:019:019=000:019@019F000:019H019H000:019J019M000:019P01:8000:01::01:=000:01:@01:a000:01:c01:f000:01:i01:o000:01;001;0000:01;201;5000:01;801;F000:01;H01<@000:01<B01<E000:01<H01=J000:01=M01=O000401>001>?000:01>P01?f000:01?i01?n000:01@101I]000:01I`01Ip000:01J001J0000B01J101JJ000:01JP01KZ000:01K_01Ki000:01L001LA000:01LB01LE000401LO01Lb000:01Lc01Le000401M001MA000:01MB01MC000401MP01M]000:01M_01Ma000:01Mc01Md000401Ne01OC000401OM01OM000401OP01OY000@01P;01P=000401P>01P>000701P?01P?000401P@01PI000@01PP01Qi000:01R001R4000:01R501R6000401R701RX000:01RY01RY000401RZ01RZ000:01Ra01Sf000:01T001TN000:01TP01T[000401Ta01Tl000401U601U?000@01W@01WJ000@01X001XF000:01XG01XK000401YE01YN000401YP01Ym000401Yp01Yp000401Z001Z9000@01Z@01ZI000@01Za01[>000401]001]4000401]501]d000:01]e01^4000401^501^<000:01^@01^I000@01^[01^d000401_001_2000401_301_P000:01_Q01_^000401__01_`000:01_a01_j000@01_k01`U000:01`V01`d000401a001aS000:01aT01ah000401b001b9000@01b=01b?000:01b@01bI000@01bJ01bn000:01c001c:000:01c@01ck000:01cn01cp000:01d@01dB000401dD01dX000401dY01d]000:01d^01d^000401d_01dd000:01de01de000401df01dg000:01dh01dj000401dk01dk000:01e001gp000:01h001hp000401i001mE000:01mH01mM000:01mP01n5000:01n801n=000:01n@01nG000:01nI01nI000:01nK01nK000:01nM01nM000:01nO01nn000:01o001oe000:01og01om000:01oo01oo000:01p201p4000:01p601p<000:01p@01pC000:01pF01pK000:01pP01p]000:01pc01pe000:01pg01pm000:02000206000B0208020:000B020<020<0004020=020=0005020>020?0007020H020I000=020T020T000=020W020W000>020X020Y0003020Z020_0007020`020`000A020p0210000A02140214000?021D021D000A021O021O000B021P021T0007021V021`0007021b021b000:021p021p000:022@022L000:023@023a000402420242000:02470247000:024:024C000:024E024E000:024I024M000:024T024T000:024V024V000:024X024X000:024Z024^000:024`024j000:024m024p000:02550259000:025>025>000:025P0268000:02Bg02CY000:02a002dT000:02d[02d_000:02d`02db000402dc02dd000:02e002eU000:02eW02eW000:02e^02e^000:02ea02fW000:02f`02f`000:02fp02fp000402g002gF000:02gP02gV000:02gX02g_000:02ga02gg000:02gi02go000:02h002h6000:02h802h>000:02h@02hF000:02hH02hN000:02hP02hp000402i`02i`000:03000300000B03050305000:030Z030`0004030b030f0008030l030m000:032I032J0004032K032L0008032P033k0008033m033p00080345034`000:034b036>000:036P036p000:037a037p000803;@03;o000803<003=G00080:000:B<000:0:C@0:Cn000:0:D00:H<000:0:H@0:HO000:0:HP0:HY000@0:HZ0:H[000:0:I00:I_000:0:I`0:Ic00040:Ie0:In00040:Ip0:JM000:0:JN0:JO00040:JP0:K`000:0:Ka0:Kb00040:L80:O=000:0:O@0:OA000:0:OC0:OC000:0:OE0:OL000:0:Oc0:P1000:0:P20:P200040:P30:P5000:0:P60:P600040:P70:P:000:0:P;0:P;00040:P<0:PR000:0:PS0:PW00040:P]0:P]00040:Q00:Qd000:0:R00:R100040:R20:Rd000:0:Re0:S500040:S@0:SI000@0:SP0:Sb00040:Sc0:Sh000:0:Sl0:Sl000:0:Sn0:So000:0:Sp0:Sp00040:T00:T9000@0:T:0:TU000:0:TV0:T^00040:Ta0:U6000:0:U70:UC00040:UP0:Um000:0:V00:V300040:V40:Vc000:0:Vd0:W000040:W?0:W?000:0:W@0:WI000@0:WU0:WU00040:Wa0:Wj000@0:X00:XX000:0:XY0:Xg00040:Y00:Y2000:0:Y30:Y300040:Y40:Y;000:0:Y<0:Y=00040:Y@0:YI000@0:Yl0:Yn00040:Za0:Za00040:Zc0:Ze00040:Zh0:Zi00040:Zo0:Zp00040:[10:[100040:[P0:[Z000:0:[[0:[`00040:[c0:[e000:0:[f0:[g00040:]10:]6000:0:]90:]>000:0:]A0:]F000:0:]P0:]V000:0:]X0:]_000:0:]a0:^Y000:0:^a0:`R000:0:`S0:`Z00040:`]0:`^00040:`a0:`j000@0:a00=NS000:0=Na0=O6000:0=O;0=Ol000:0?]00?]6000:0?]C0?]G000:0?]M0?]M00090?]N0?]N00040?]O0?]X00090?]Z0?]g00090?]i0?]m00090?]o0?]o00090?^00?^100090?^30?^400090?^60?^?00090?^@0?_b000:0?`C0?en000:0?f@0?g?000:0?gB0?h7000:0?ha0?hl000:0?i00?i?00040?iC0?iC000>0?iP0?i`00040?id0?ie000A0?j=0?j?000A0?j@0?j@000?0?jB0?jB000=0?jD0?jD000?0?jE0?jE000>0?ja0?je000:0?jg0?lm000:0?lp0?lp00070?m70?m7000=0?m<0?m<000?0?m>0?m>000=0?m@0?mI000@0?mJ0?mJ000>0?mK0?mK000?0?mQ0?mk000:0?mp0?mp000A0?n10?nJ000:0?nV0?oM00080?oN0?oO00040?oP0?oo000:0?p20?p7000:0?p:0?p?000:0?pB0?pG000:0?pJ0?pL000:0?pj0?pl00070@000@0;000:0@0=0@0V000:0@0X0@0k000:0@0m0@0n000:0@0p0@1=000:0@1@0@1M000:0@200@3k000:0@500@5e000:0@7n0@7n00040@:00@:L000:0@:P0@;@000:0@;P0@;P00040@<00@<O000:0@<^0@=:000:0@=@0@=f000:0@=g0@=k00040@>00@>M000:0@>P0@?3000:0@?80@??000:0@?A0@?E000:0@@00@BM000:0@BP0@BY000@0@Ba0@CC000:0@CH0@Cl000:0@D00@DW000:0@Da0@ES000:0@Ea0@Ek000:0@Em0@F:000:0@F<0@FB000:0@FD0@FE000:0@FG0@FQ000:0@FS0@Fb000:0@Fd0@Fj000:0@Fl0@Fm000:0@G00@Gd000:0@H00@Lg000:0@M00@ME000:0@MP0@MW000:0@N00@N5000:0@N70@Na000:0@Nc0@Nk000:0@P00@P5000:0@P80@P8000:0@P:0@Pf000:0@Ph0@Pi000:0@Pm0@Pm000:0@Pp0@QE000:0@QP0@Qg000:0@R00@RN000:0@SP0@Sc000:0@Se0@Sf000:0@T00@TE000:0@TP0@Tj000:0@V00@Vh000:0@Vo0@Vp000:0@X00@X0000:0@X10@X300040@X50@X600040@X<0@X?00040@X@0@XC000:0@XE0@XG000:0@XI0@Xf000:0@Xi0@Xk00040@Xp0@Xp00040@YP0@Ym000:0@Z00@ZL000:0@[00@[7000:0@[90@[T000:0@[U0@[V00040@]00@]f000:0@^00@^E000:0@^P0@^c000:0@_00@_A000:0@a00@b8000:0@c00@cc000:0@d00@dc000:0@e00@eS000:0@eT0@eW00040@ea0@ej000@0@f00@f9000@0@f:0@fU000:0@fY0@f^00040@f`0@g5000:0@k00@kY000:0@k[0@k]00040@ka0@kb000:0@l20@l4000:0@lm0@lp00040@m00@mL000:0@mW0@mW000:0@ma0@n5000:0@n60@n@00040@na0@o1000:0@o20@o500040@oa0@p4000:0@pP0@pg000:0A000A0200040A030A0h000:0A0i0A1600040A1V0A1`000@0A1a0A1a00040A1b0A1c000:0A1d0A1e00040A1f0A1f000:0A1p0A2200040A230A2`000:0A2a0A2k00040A2n0A2n000@0A320A3200040A3=0A3=000@0A3@0A3X000:0A3a0A3j000@0A400A4200040A430A4V000:0A4W0A4e00040A4g0A4p000@0A540A54000:0A550A5600040A570A57000:0A5@0A5c000:0A5d0A5d00040A5g0A5g000:0A600A6200040A630A6c000:0A6d0A7000040A710A74000:0A790A7<00040A7>0A7?00040A7@0A7I000@0A7J0A7J000:0A7L0A7L000:0A800A8A000:0A8C0A8[000:0A8]0A8h00040A8o0A8o00040A8p0A90000:0A910A9100040A:00A:6000:0A:80A:8000:0A::0A:=000:0A:?0A:M000:0A:O0A:X000:0A:a0A;N000:0A;O0A;Z00040A;a0A;j000@0A<00A<300040A<50A<<000:0A<?0A<@000:0A<C0A<X000:0A<Z0A<a000:0A<c0A<d000:0A<f0A<j000:0A<l0A<m00040A<n0A<n000:0A<o0A=400040A=70A=800040A=;0A==00040A=@0A=@000:0A=G0A=G00040A=M0A=Q000:0A=R0A=S00040A=V0A=]00040A=a0A=e00040A>00A>9000:0A>;0A>;000:0A>>0A>>000:0A>@0A>f000:0A>h0A>h000:0A>i0A?000040A?20A?200040A?50A?500040A?70A?:00040A?<0A?@00040A?A0A?A000:0A?B0A?B00040A?C0A?C000:0A?Q0A?R00040A@00A@e000:0A@f0AA600040AA70AA:000:0AA@0AAI000@0AAN0AAN00040AAO0AAQ000:0AB00AB`000:0ABa0AC300040AC40AC5000:0AC70AC7000:0AC@0ACI000@0AF00AF_000:0AF`0AFf00040AFi0AG000040AGH0AGK000:0AGL0AGM00040AH00AH`000:0AHa0AI000040AI40AI4000:0AI@0AII000@0AJ00AJZ000:0AJ[0AJh00040AJi0AJi000:0AK00AK9000@0AK@0AKS000@0ALM0AL[00040ALa0ALj000@0AP00AP[000:0AP]0APk00040ARP0ASO000:0ASP0ASY000@0ASp0AT6000:0AT90AT9000:0AT<0ATC000:0ATE0ATF000:0ATH0AT`000:0ATa0ATf00040ATh0ATi00040ATl0ATo00040ATp0ATp000:0AU00AU000040AU10AU1000:0AU20AU300040AU@0AUI000@0AVP0AVW000:0AVZ0AW@000:0AWA0AWG00040AWJ0AWP00040AWQ0AWQ000:0AWS0AWS000:0AWT0AWT00040AX00AX0000:0AX10AX:00040AX;0AXc000:0AXd0AXj00040AXk0AXk000:0AXl0AXo00040AY70AY700040AY@0AY@000:0AYA0AYK00040AYL0AZ9000:0AZ:0AZI00040AZM0AZM000:0AZa0A[i000:0A`00A`P000:0A`a0A`j000@0Aa00Aa8000:0Aa:0Aa_000:0Aa`0Aag00040Aai0Aap00040Ab00Ab0000:0Ab@0AbI000@0Abc0Ac?000:0AcB0AcW00040AcY0Acg00040Ae00Ae6000:0Ae80Ae9000:0Ae;0Aea000:0Aeb0Aeg00040Aek0Aek00040Aem0Aen00040Aep0Af500040Af60Af6000:0Af70Af700040Af@0AfI000@0AfP0AfU000:0AfW0AfX000:0AfZ0Ag9000:0Ag:0Ag>00040Ag@0AgA00040AgC0AgG00040AgH0AgH000:0AgP0AgY000@0AlP0Alc000:0Ald0Alg00040Am00Am100040Am20Am2000:0Am30Am300040Am40Am@000:0AmB0Amd000:0Ame0Amk00040Amo0An200040An@0AnI000@0AnJ0AnJ00040Aoa0Aoa000:0B000B>I000:0B@00BA_000:0BB00BE3000:0Bo@0Bpa000:0C000C@`000:0C@a0C@p00070CA00CA000040CA10CA6000:0CA70CAE00040CAP0D?k000:0D@00DI6000:0F400F4M000:0F4N0F4`00040F4a0F4j000@0FP00FXi000:0FY00FYN000:0FYP0FYY000@0FYa0FZo000:0F[00F[9000@0F[@0F[^000:0F[a0F[e00040F]00F]`000:0F]a0F]g00040F^00F^3000:0F^@0F^I000@0F^S0F^h000:0F^n0F_?000:0Ff00Ff]000:0Ffa0Ffj000@0Fj00Fjp000:0Fm00Fn:000:0Fn?0Fn?00040Fn@0Fn@000:0FnA0Fo700040Fo?0FoB00040FoC0FoO000:0FpP0FpQ000:0FpS0FpS000:0FpT0FpT00040Fpa0Fpb00040Jpa0Jpd00080Jpf0Jpl00080Jpn0Jpo00080K000K0000080K4P0K4R00080K5E0K5E00080K5T0K5W00080Ka00KbZ000:0Kba0Kbm000:0Kc00Kc8000:0Kc@0KcI000:0KcM0KcN00040KcP0KcS00070Lda0Ldj000@0Lm00Lm^00040Lma0Ln600040M5U0M5Y00040M5^0M5c00040M5d0M5k00070M5l0M6200040M650M6;00040M6Z0M6^00040M920M9400040M@00MAD000:0MAF0MBL000:0MBN0MBO000:0MBR0MBR000:0MBU0MBV000:0MBY0MB]000:0MB_0MBj000:0MBl0MBl000:0MBn0MC3000:0MC50MD5000:0MD70MD:000:0MD=0MDD000:0MDF0MDL000:0MDN0MDj000:0MDl0MDo000:0ME00ME4000:0ME60ME6000:0ME:0ME@000:0MEB0MJU000:0MJX0MK0000:0MK20MKJ000:0MKL0MKk000:0MKm0MLD000:0MLF0MLe000:0MLg0MM>000:0MM@0MM_000:0MMa0MN8000:0MN:0MNX000:0MNZ0MO2000:0MO40MO;000:0MO>0MOp000@0MX00MXg00040MXl0MY]00040MYf0MYf00040MZ40MZ400040MZK0MZO00040MZQ0MZ`00040Mm00MmN000:0MmU0MmZ000:0N000N0600040N080N0H00040N0K0N0Q00040N0S0N0T00040N0V0N0Z00040N0a0N1^000:0N2?0N2?00040N400N4]000:0N4a0N4g00040N4h0N4n000:0N500N59000@0N5>0N5>000:0N:@0N:^000:0N:_0N:_00040N;00N;[000:0N;]0N;`00040N;a0N;j000@0NC@0NC[000:0NC]0NC`00040NCa0NCj000@0NG@0NG^000:0NG_0NG`00040NGa0NGa000:0NGb0NGk000@0NOP0NOV000:0NOX0NO[000:0NO^0NO_000:0NOa0NOo000:0NP00NS4000:0NS@0NSF00040NT00NU3000:0NU40NU:00040NU;0NU;000:0NU@0NUI000@0Ni00Ni3000:0Ni50NiO000:0NiQ0NiR000:0NiT0NiT000:0NiW0NiW000:0NiY0Nic000:0Nie0Nih000:0Nij0Nij000:0Nil0Nil000:0Nj20Nj2000:0Nj70Nj7000:0Nj90Nj9000:0Nj;0Nj;000:0Nj=0Nj?000:0NjA0NjB000:0NjD0NjD000:0NjG0NjG000:0NjI0NjI000:0NjK0NjK000:0NjM0NjM000:0NjO0NjO000:0NjQ0NjR000:0NjT0NjT000:0NjW0NjZ000:0Nj]0Njc000:0Nje0Njh000:0Njj0Njm000:0Njo0Njo000:0Nk00Nk9000:0Nk;0NkK000:0NkQ0NkS000:0NkU0NkY000:0Nk[0Nkl000:0O4a0O59000:0O5@0O5Y000:0O5a0O69000:0O7V0O7p00060O?l0O?p00040O`a0O`j000@3P013P0100073P0P3P1p00043P403P7`0004";
 }
 
 // _dig decodes one table character to its 6-bit value. The alphabet
@@ -1145,4 +1160,265 @@ pub function reverse_graphemes(s: string): string {
         i = i - 1;
     }
     return out;
+}
+
+// _wb_of — Word_Break class of `cp`, 0 (Other) when the table omits it.
+function _wb_of(cp: char): i32 {
+    var t: string = _wb_ranges();
+    var n: i32 = cp as i32;
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 12 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 12;
+        if (n < _fld(t, base)) { hi = mid - 1; }
+        else if (n > _fld(t, base + 4)) { lo = mid + 1; }
+        else { return _fld(t, base + 8); }
+    }
+    return 0;
+}
+
+// _wb_ignorable — Extend / Format / ZWJ. Rule WB4 folds these into
+// whatever precedes them, so every rule numbered after it looks
+// straight past them in both directions.
+function _wb_ignorable(cls: i32): boolean {
+    return cls == 4 || cls == 5 || cls == 7;
+}
+
+// _wb_needs_next — whether deciding a break before a code point of this
+// class can require looking at the one AFTER it (WB6, WB7b, WB12).
+// Only the mid-word punctuation classes do, which is what keeps the
+// scan linear: the lookahead is never taken on letters or digits.
+function _wb_needs_next(cls: i32): boolean {
+    return cls == 11 || cls == 12 || cls == 13 || cls == 14 || cls == 15;
+}
+
+// _wb_next — class of the first non-ignorable code point at or after
+// byte offset `i`, or -1 at end of input.
+function _wb_next(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    var j: i32 = i;
+    while (j < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, j)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[j]) as char; w = 1; }
+        }
+        var cls: i32 = _wb_of(cp);
+        if (!_wb_ignorable(cls)) { return cls; }
+        j = j + w;
+    }
+    return 0 - 1;
+}
+
+// _wb_break decides whether a word boundary falls before the current
+// code point, following the UAX #29 rules in their numbered order. As
+// with the grapheme rules the order is load-bearing: WB3 has to beat
+// WB3a, and WB999 only speaks once every joining rule has declined.
+//
+// The two histories are deliberately separate. `raw_prev` is the code
+// point physically before this one and is what rules WB3..WB3d see;
+// `prev` / `prev2` skip the WB4-ignorable classes and are what every
+// later rule sees. Collapsing them would break `a<ZWJ>b`, where WB3c
+// needs the ZWJ but WB5 needs the `a`.
+//
+//   prev2 / prev  classes of the two preceding non-ignorable points
+//   raw_prev      class of the immediately preceding point
+//   cur           class of the point a break is being decided before
+//   next          class of the next non-ignorable point, -1 at end
+//   ri            how many Regional_Indicators run up to prev
+//   cur_pict      is cur itself Extended_Pictographic
+function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri: i32, cur_pict: boolean): boolean {
+    // WB3: CR x LF -- a Windows line ending is one unit, as in GB3.
+    if (raw_prev == 1 && cur == 2) { return false; }
+    // WB3a / WB3b: a line break never joins anything either way.
+    if (raw_prev == 3 || raw_prev == 1 || raw_prev == 2) { return true; }
+    if (cur == 3 || cur == 1 || cur == 2) { return true; }
+    // WB3c: ZWJ x ExtPict, so an emoji ZWJ sequence stays one word.
+    if (raw_prev == 5 && cur_pict) { return false; }
+    // WB3d: a run of spaces is ONE segment rather than one per space.
+    if (raw_prev == 18 && cur == 18) { return false; }
+    // WB4: X (Extend | Format | ZWJ)* -> X. Never break before one.
+    if (_wb_ignorable(cur)) { return false; }
+
+    // AHLetter = ALetter | Hebrew_Letter, the two that behave alike
+    // everywhere except WB7a/b/c.
+    var ah_prev: boolean = prev == 10 || prev == 9;
+    var ah_prev2: boolean = prev2 == 10 || prev2 == 9;
+    var ah_cur: boolean = cur == 10 || cur == 9;
+    var ah_next: boolean = next == 10 || next == 9;
+    // MidNumLetQ = MidNumLet | Single_Quote.
+    var mid_letter_q: boolean = cur == 14 || cur == 13 || cur == 11;
+    var prev_mid_letter_q: boolean = prev == 14 || prev == 13 || prev == 11;
+    var mid_num_q: boolean = cur == 15 || cur == 13 || cur == 11;
+    var prev_mid_num_q: boolean = prev == 15 || prev == 13 || prev == 11;
+
+    // WB5: letters run together.
+    if (ah_prev && ah_cur) { return false; }
+    // WB6 / WB7: one mid-word punctuation mark joins BOTH sides, but
+    // only when a letter follows it -- which is what keeps the full
+    // stop in "can't stop." attached on the left and loose on the
+    // right. This is the pair of rules the lookahead exists for.
+    if (ah_prev && mid_letter_q && ah_next) { return false; }
+    if (ah_prev2 && prev_mid_letter_q && ah_cur) { return false; }
+    // WB7a / WB7b / WB7c: the Hebrew geresh and gershayim.
+    if (prev == 9 && cur == 11) { return false; }
+    if (prev == 9 && cur == 12 && next == 9) { return false; }
+    if (prev2 == 9 && prev == 12 && cur == 9) { return false; }
+    // WB8 / WB9 / WB10: digits run together and bind to letters, so
+    // "3rd" and "x2" are each one word.
+    if (prev == 16 && cur == 16) { return false; }
+    if (ah_prev && cur == 16) { return false; }
+    if (prev == 16 && ah_cur) { return false; }
+    // WB11 / WB12: the same join for numeric punctuation, so "3.14"
+    // and "1,000" survive whole.
+    if (prev2 == 16 && prev_mid_num_q && cur == 16) { return false; }
+    if (prev == 16 && mid_num_q && next == 16) { return false; }
+    // WB13: Katakana runs together -- Japanese has no spaces, and this
+    // is as far as UAX #29 goes without a dictionary.
+    if (prev == 8 && cur == 8) { return false; }
+    // WB13a / WB13b: ExtendNumLet (underscore and friends) glues
+    // word-like things on either side, so `snake_case` is one word.
+    if ((ah_prev || prev == 16 || prev == 8 || prev == 17) && cur == 17) { return false; }
+    if (prev == 17 && (ah_cur || cur == 16 || cur == 8)) { return false; }
+    // WB15 / WB16: regional indicators pair up, as in GB12/GB13.
+    if (prev == 6 && cur == 6 && ri % 2 == 1) { return false; }
+    // WB999: anything else breaks.
+    return true;
+}
+
+// _wb_is_word reports whether the segment `s[a:b]` is word-LIKE: it
+// holds at least one letter or digit. This is what separates `words`
+// from `word_segments` -- spaces, punctuation runs and line breaks are
+// segments of the text but are not words of it.
+function _wb_is_word(s: string, a: i32, b: i32): boolean {
+    var i: i32 = a;
+    while (i < b) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var n: i32 = cp as i32;
+        if (_is_letter_cp(n) || _is_digit_cp(n)) { return true; }
+        i = i + w;
+    }
+    return false;
+}
+
+// `word_segments(s)` — split at every UAX #29 word boundary, losslessly:
+// the pieces concatenate back to `s`, so the spaces and the punctuation
+// come back as segments of their own. This is the one to reach for when
+// the gaps matter — re-joining after a transform, or highlighting.
+//
+// Elements are `str` VIEWS into s, as with `graphemes`, so the split
+// copies no text.
+//
+// What the segmentation is and is not: it is the language-independent
+// default from UAX #29, which is right for Latin, Greek, Cyrillic,
+// Hebrew, Arabic and the rest of the space-separated world, and it
+// keeps `can't`, `3.14`, `snake_case` and emoji ZWJ sequences whole.
+// It is NOT a substitute for a dictionary in Thai, Lao, Khmer or
+// Japanese: those scripts do not mark word boundaries with spaces, and
+// UAX #29 says so itself. Han and Hiragana therefore segment per code
+// point, and Katakana runs stay together (WB13).
+pub function word_segments(s: string): str[] {
+    var out: str[] = [];
+    var n: i32 = s.len();
+    if (n == 0) { return out; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var prev2: i32 = 0 - 1;
+    var prev: i32 = 0 - 1;
+    var raw_prev: i32 = 0 - 1;
+    var ri: i32 = 0;
+    while (i < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var cls: i32 = _wb_of(cp);
+        if (i > 0) {
+            var nxt: i32 = 0 - 1;
+            if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
+            if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
+                out = out.append(s[start : i]);
+                start = i;
+            }
+        }
+        raw_prev = cls;
+        if (!_wb_ignorable(cls)) {
+            prev2 = prev;
+            prev = cls;
+            if (cls == 6) { ri = ri + 1; } else { ri = 0; }
+        }
+        i = i + w;
+    }
+    return out.append(s[start : n]);
+}
+
+// `words(s)` — the word-like segments only: what a reader would count
+// as words, with the whitespace and punctuation runs dropped. Built on
+// `word_segments`, so the same caveats about Thai and Japanese apply.
+//
+// Note this is NOT `s.split(" ")` with extra steps: it keeps `can't`
+// and `3.14` whole, splits `hello,world` without a space to help it,
+// and works on text with no ASCII spaces in it at all.
+pub function words(s: string): str[] {
+    var segs: str[] = word_segments(s);
+    var out: str[] = [];
+    var i: i32 = 0;
+    var off: i32 = 0;
+    while (i < segs.len()) {
+        var w: i32 = segs[i].len();
+        if (_wb_is_word(s, off, off + w)) { out = out.append(segs[i]); }
+        off = off + w;
+        i = i + 1;
+    }
+    return out;
+}
+
+// `word_count(s)` — how many words, without building the array of them.
+// A separate scan for the same reason `grapheme_count` is one: counting
+// should not allocate.
+pub function word_count(s: string): i32 {
+    var n: i32 = s.len();
+    if (n == 0) { return 0; }
+    var count: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var prev2: i32 = 0 - 1;
+    var prev: i32 = 0 - 1;
+    var raw_prev: i32 = 0 - 1;
+    var ri: i32 = 0;
+    while (i < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var cls: i32 = _wb_of(cp);
+        if (i > 0) {
+            var nxt: i32 = 0 - 1;
+            if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
+            if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
+                if (_wb_is_word(s, start, i)) { count = count + 1; }
+                start = i;
+            }
+        }
+        raw_prev = cls;
+        if (!_wb_ignorable(cls)) {
+            prev2 = prev;
+            prev = cls;
+            if (cls == 6) { ri = ri + 1; } else { ri = 0; }
+        }
+        i = i + w;
+    }
+    if (_wb_is_word(s, start, n)) { count = count + 1; }
+    return count;
 }

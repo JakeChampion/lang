@@ -1274,6 +1274,158 @@ func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
 	}
 }
 
+// wbdata.txt holds the UAX #29 word-segmentation source data, for the
+// same reason gcbdata.txt holds the grapheme data: Word_Break is
+// exposed by neither Go's unicode package nor CPython's unicodedata.
+// gen_wbdata.py regenerates it from `uniseg`, a regeneration-time
+// dependency only. Extended_Pictographic, which rule WB3c needs, is
+// read from gcbdata.txt rather than duplicated here.
+//
+//go:embed wbdata.txt
+var wbData string
+
+// Word_Break class IDs. As with the grapheme classes, the generated
+// Fern hard-codes these numbers, so they are part of the table format.
+// Other is 0 because it is what the lookup returns for the code points
+// the table omits.
+const (
+	wbOther = iota
+	wbCR
+	wbLF
+	wbNewline
+	wbExtend
+	wbZWJ
+	wbRegionalIndicator
+	wbFormat
+	wbKatakana
+	wbHebrewLetter
+	wbALetter
+	wbSingleQuote
+	wbDoubleQuote
+	wbMidNumLet
+	wbMidLetter
+	wbMidNum
+	wbNumeric
+	wbExtendNumLet
+	wbWSegSpace
+	wbClassCount
+)
+
+var wbNames = map[string]int{
+	"CR": wbCR, "LF": wbLF, "NEWLINE": wbNewline,
+	"EXTEND": wbExtend, "ZWJ": wbZWJ,
+	"REGIONAL_INDICATOR": wbRegionalIndicator, "FORMAT": wbFormat,
+	"KATAKANA": wbKatakana, "HEBREW_LETTER": wbHebrewLetter,
+	"ALETTER": wbALetter, "SINGLE_QUOTE": wbSingleQuote,
+	"DOUBLE_QUOTE": wbDoubleQuote, "MIDNUMLET": wbMidNumLet,
+	"MIDLETTER": wbMidLetter, "MIDNUM": wbMidNum,
+	"NUMERIC": wbNumeric, "EXTENDNUMLET": wbExtendNumLet,
+	"WSEGSPACE": wbWSegSpace,
+}
+
+const wbChars = 3 * fieldChars
+
+type wbRun struct {
+	lo, hi rune
+	class  int
+}
+
+// parseWBData reads the embedded word-segmentation data. Malformed
+// input panics, on the same reasoning as parseGCBData.
+func parseWBData() (wbs []wbRun, version string) {
+	for _, line := range strings.Split(wbData, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			if i := strings.Index(line, "# UCD "); i == 0 {
+				version = strings.TrimSpace(strings.TrimPrefix(line, "# UCD "))
+			}
+			continue
+		}
+		f := strings.Split(line, ";")
+		if f[0] != "W" {
+			panic("unicodegen: unknown wbdata record: " + line)
+		}
+		if len(f) != 4 {
+			panic("unicodegen: malformed WB line: " + line)
+		}
+		class, ok := wbNames[f[3]]
+		if !ok {
+			panic("unicodegen: unknown Word_Break class: " + f[3])
+		}
+		wbs = append(wbs, wbRun{lo: rune(mustHex(f[1])), hi: rune(mustHex(f[2])), class: class})
+	}
+	sort.Slice(wbs, func(i, j int) bool { return wbs[i].lo < wbs[j].lo })
+	return wbs, version
+}
+
+func encodeWB(rs []wbRun) string {
+	var b strings.Builder
+	for _, r := range rs {
+		encField(&b, int(r.lo))
+		encField(&b, int(r.hi))
+		encField(&b, r.class)
+	}
+	return b.String()
+}
+
+// decodeWB mirrors the generated _wb_of.
+func decodeWB(t string, cp int) int {
+	lo, hi := 0, len(t)/wbChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * wbChars
+		switch {
+		case cp < decField(t, base):
+			hi = mid - 1
+		case cp > decField(t, base+fieldChars):
+			lo = mid + 1
+		default:
+			return decField(t, base+2*fieldChars)
+		}
+	}
+	return wbOther
+}
+
+// verifyWB round-trips the emitted table and checks the structural
+// invariants the binary search depends on.
+func verifyWB(wbTable string, wbs []wbRun) {
+	for i, r := range wbs {
+		if r.lo > r.hi {
+			panic(fmt.Sprintf("unicodegen: WB range U+%04X..U+%04X inverted", r.lo, r.hi))
+		}
+		if i > 0 && wbs[i-1].hi >= r.lo {
+			panic(fmt.Sprintf("unicodegen: WB ranges overlap at U+%04X", r.lo))
+		}
+		if r.class <= wbOther || r.class >= wbClassCount {
+			panic(fmt.Sprintf("unicodegen: WB class %d out of range at U+%04X", r.class, r.lo))
+		}
+		for _, cp := range []rune{r.lo, r.hi} {
+			if got := decodeWB(wbTable, int(cp)); got != r.class {
+				panic(fmt.Sprintf("unicodegen: wb(U+%04X) = %d, want %d", cp, got, r.class))
+			}
+		}
+	}
+	// Spot-check the anchors the state machine keys on; a renumbering of
+	// the class IDs would sail past the round-trip above but not this.
+	for _, tc := range []struct {
+		cp    rune
+		class int
+	}{
+		{0x000D, wbCR}, {0x000A, wbLF}, {0x000B, wbNewline},
+		{0x0300, wbExtend}, {0x200D, wbZWJ}, {0x1F1E6, wbRegionalIndicator},
+		{0x00AD, wbFormat}, {0x30A1, wbKatakana}, {0x05D0, wbHebrewLetter},
+		{'a', wbALetter}, {'\'', wbSingleQuote}, {'"', wbDoubleQuote},
+		{'.', wbMidNumLet}, {':', wbMidLetter}, {',', wbMidNum},
+		{'0', wbNumeric}, {'_', wbExtendNumLet}, {' ', wbWSegSpace},
+	} {
+		if got := decodeWB(wbTable, int(tc.cp)); got != tc.class {
+			panic(fmt.Sprintf("unicodegen: wb(U+%04X) = %d, want %d", tc.cp, got, tc.class))
+		}
+	}
+}
+
 // genStats is what main reports after a run; the tests ignore it.
 type genStats struct{ runs, tableBytes int }
 
@@ -1324,6 +1476,11 @@ func generate() (string, genStats) {
 	verifyGCB(gcbTable, extT, gcbs, extPict)
 	stats.tableBytes += len(gcbTable) + len(extT)
 
+	wbs, wbVersion := parseWBData()
+	wbTable := encodeWB(wbs)
+	verifyWB(wbTable, wbs)
+	stats.tableBytes += len(wbTable)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, `// std/unicode — Unicode case mapping + character classes.
 //
@@ -1333,7 +1490,7 @@ func generate() (string, genStats) {
 // refresh after a Go toolchain upgrade.
 //
 // What std/string's plain-named case methods delegate to, and the
-// complement to its byte-wise to_ascii_* twins. Two families:
+// complement to its byte-wise to_ascii_* twins. Four families:
 //   - Case mapping: to_upper / to_lower / to_upper_char / to_lower_char
 //     / swap_case / capitalize / title_case / eq_ignore_case — over
 //     every code point (Latin, Greek, Cyrillic, Armenian, fullwidth, …),
@@ -1341,6 +1498,12 @@ func generate() (string, genStats) {
 //     for which mappings are full and which are simple.
 //   - Character classes: is_letter / is_digit / is_alnum / is_whitespace
 //     / is_upper / is_lower over a code point, via range binary search.
+//   - Normalization: nfc / nfd / is_nfc / is_nfd / eq_canonical, so
+//     canonically-equivalent text compares equal. NFKC/NFKD are out of
+//     scope by decision — a second full table for a lossy transform.
+//   - Segmentation (UAX #29): graphemes / grapheme_count /
+//     reverse_graphemes for what a reader calls a character, and
+//     word_segments / words / word_count for word boundaries.
 //
 // Scope + caveats:
 //   - String-level to_upper / to_lower do FULL mapping: a code point may
@@ -1424,6 +1587,13 @@ import "std/utf8" as utf8;
 			"// ZWJ-sequence rule (GB11) -- it is a separate property from the\n"+
 			"// break classes above, so a code point can be both.",
 		extT, len(extPict), rangeChars)
+
+	emitTable(&b, "_wb_ranges",
+		fmt.Sprintf("Word_Break (UAX #29, UCD %s): lo | hi | class. Class Other (0)\n"+
+			"// is the default and is NOT stored, on the same reasoning as the\n"+
+			"// grapheme table above. Class IDs are fixed by cmd/unicodegen and\n"+
+			"// are part of this table's format.", wbVersion),
+		wbTable, len(wbs), wbChars)
 
 	b.WriteString(`// _dig decodes one table character to its 6-bit value. The alphabet
 // skips ` + "`\\`" + ` (92), so the two spans are 48..91 and 93..112.
@@ -2407,6 +2577,267 @@ pub function reverse_graphemes(s: string): string {
         i = i - 1;
     }
     return out;
+}
+
+// _wb_of — Word_Break class of ` + "`" + `cp` + "`" + `, 0 (Other) when the table omits it.
+function _wb_of(cp: char): i32 {
+    var t: string = _wb_ranges();
+    var n: i32 = cp as i32;
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 12 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 12;
+        if (n < _fld(t, base)) { hi = mid - 1; }
+        else if (n > _fld(t, base + 4)) { lo = mid + 1; }
+        else { return _fld(t, base + 8); }
+    }
+    return 0;
+}
+
+// _wb_ignorable — Extend / Format / ZWJ. Rule WB4 folds these into
+// whatever precedes them, so every rule numbered after it looks
+// straight past them in both directions.
+function _wb_ignorable(cls: i32): boolean {
+    return cls == 4 || cls == 5 || cls == 7;
+}
+
+// _wb_needs_next — whether deciding a break before a code point of this
+// class can require looking at the one AFTER it (WB6, WB7b, WB12).
+// Only the mid-word punctuation classes do, which is what keeps the
+// scan linear: the lookahead is never taken on letters or digits.
+function _wb_needs_next(cls: i32): boolean {
+    return cls == 11 || cls == 12 || cls == 13 || cls == 14 || cls == 15;
+}
+
+// _wb_next — class of the first non-ignorable code point at or after
+// byte offset ` + "`" + `i` + "`" + `, or -1 at end of input.
+function _wb_next(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    var j: i32 = i;
+    while (j < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, j)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[j]) as char; w = 1; }
+        }
+        var cls: i32 = _wb_of(cp);
+        if (!_wb_ignorable(cls)) { return cls; }
+        j = j + w;
+    }
+    return 0 - 1;
+}
+
+// _wb_break decides whether a word boundary falls before the current
+// code point, following the UAX #29 rules in their numbered order. As
+// with the grapheme rules the order is load-bearing: WB3 has to beat
+// WB3a, and WB999 only speaks once every joining rule has declined.
+//
+// The two histories are deliberately separate. ` + "`" + `raw_prev` + "`" + ` is the code
+// point physically before this one and is what rules WB3..WB3d see;
+// ` + "`" + `prev` + "`" + ` / ` + "`" + `prev2` + "`" + ` skip the WB4-ignorable classes and are what every
+// later rule sees. Collapsing them would break ` + "`" + `a<ZWJ>b` + "`" + `, where WB3c
+// needs the ZWJ but WB5 needs the ` + "`" + `a` + "`" + `.
+//
+//   prev2 / prev  classes of the two preceding non-ignorable points
+//   raw_prev      class of the immediately preceding point
+//   cur           class of the point a break is being decided before
+//   next          class of the next non-ignorable point, -1 at end
+//   ri            how many Regional_Indicators run up to prev
+//   cur_pict      is cur itself Extended_Pictographic
+function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri: i32, cur_pict: boolean): boolean {
+    // WB3: CR x LF -- a Windows line ending is one unit, as in GB3.
+    if (raw_prev == 1 && cur == 2) { return false; }
+    // WB3a / WB3b: a line break never joins anything either way.
+    if (raw_prev == 3 || raw_prev == 1 || raw_prev == 2) { return true; }
+    if (cur == 3 || cur == 1 || cur == 2) { return true; }
+    // WB3c: ZWJ x ExtPict, so an emoji ZWJ sequence stays one word.
+    if (raw_prev == 5 && cur_pict) { return false; }
+    // WB3d: a run of spaces is ONE segment rather than one per space.
+    if (raw_prev == 18 && cur == 18) { return false; }
+    // WB4: X (Extend | Format | ZWJ)* -> X. Never break before one.
+    if (_wb_ignorable(cur)) { return false; }
+
+    // AHLetter = ALetter | Hebrew_Letter, the two that behave alike
+    // everywhere except WB7a/b/c.
+    var ah_prev: boolean = prev == 10 || prev == 9;
+    var ah_prev2: boolean = prev2 == 10 || prev2 == 9;
+    var ah_cur: boolean = cur == 10 || cur == 9;
+    var ah_next: boolean = next == 10 || next == 9;
+    // MidNumLetQ = MidNumLet | Single_Quote.
+    var mid_letter_q: boolean = cur == 14 || cur == 13 || cur == 11;
+    var prev_mid_letter_q: boolean = prev == 14 || prev == 13 || prev == 11;
+    var mid_num_q: boolean = cur == 15 || cur == 13 || cur == 11;
+    var prev_mid_num_q: boolean = prev == 15 || prev == 13 || prev == 11;
+
+    // WB5: letters run together.
+    if (ah_prev && ah_cur) { return false; }
+    // WB6 / WB7: one mid-word punctuation mark joins BOTH sides, but
+    // only when a letter follows it -- which is what keeps the full
+    // stop in "can't stop." attached on the left and loose on the
+    // right. This is the pair of rules the lookahead exists for.
+    if (ah_prev && mid_letter_q && ah_next) { return false; }
+    if (ah_prev2 && prev_mid_letter_q && ah_cur) { return false; }
+    // WB7a / WB7b / WB7c: the Hebrew geresh and gershayim.
+    if (prev == 9 && cur == 11) { return false; }
+    if (prev == 9 && cur == 12 && next == 9) { return false; }
+    if (prev2 == 9 && prev == 12 && cur == 9) { return false; }
+    // WB8 / WB9 / WB10: digits run together and bind to letters, so
+    // "3rd" and "x2" are each one word.
+    if (prev == 16 && cur == 16) { return false; }
+    if (ah_prev && cur == 16) { return false; }
+    if (prev == 16 && ah_cur) { return false; }
+    // WB11 / WB12: the same join for numeric punctuation, so "3.14"
+    // and "1,000" survive whole.
+    if (prev2 == 16 && prev_mid_num_q && cur == 16) { return false; }
+    if (prev == 16 && mid_num_q && next == 16) { return false; }
+    // WB13: Katakana runs together -- Japanese has no spaces, and this
+    // is as far as UAX #29 goes without a dictionary.
+    if (prev == 8 && cur == 8) { return false; }
+    // WB13a / WB13b: ExtendNumLet (underscore and friends) glues
+    // word-like things on either side, so ` + "`" + `snake_case` + "`" + ` is one word.
+    if ((ah_prev || prev == 16 || prev == 8 || prev == 17) && cur == 17) { return false; }
+    if (prev == 17 && (ah_cur || cur == 16 || cur == 8)) { return false; }
+    // WB15 / WB16: regional indicators pair up, as in GB12/GB13.
+    if (prev == 6 && cur == 6 && ri % 2 == 1) { return false; }
+    // WB999: anything else breaks.
+    return true;
+}
+
+// _wb_is_word reports whether the segment ` + "`" + `s[a:b]` + "`" + ` is word-LIKE: it
+// holds at least one letter or digit. This is what separates ` + "`" + `words` + "`" + `
+// from ` + "`" + `word_segments` + "`" + ` -- spaces, punctuation runs and line breaks are
+// segments of the text but are not words of it.
+function _wb_is_word(s: string, a: i32, b: i32): boolean {
+    var i: i32 = a;
+    while (i < b) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var n: i32 = cp as i32;
+        if (_is_letter_cp(n) || _is_digit_cp(n)) { return true; }
+        i = i + w;
+    }
+    return false;
+}
+
+// ` + "`" + `word_segments(s)` + "`" + ` — split at every UAX #29 word boundary, losslessly:
+// the pieces concatenate back to ` + "`" + `s` + "`" + `, so the spaces and the punctuation
+// come back as segments of their own. This is the one to reach for when
+// the gaps matter — re-joining after a transform, or highlighting.
+//
+// Elements are ` + "`" + `str` + "`" + ` VIEWS into s, as with ` + "`" + `graphemes` + "`" + `, so the split
+// copies no text.
+//
+// What the segmentation is and is not: it is the language-independent
+// default from UAX #29, which is right for Latin, Greek, Cyrillic,
+// Hebrew, Arabic and the rest of the space-separated world, and it
+// keeps ` + "`" + `can't` + "`" + `, ` + "`" + `3.14` + "`" + `, ` + "`" + `snake_case` + "`" + ` and emoji ZWJ sequences whole.
+// It is NOT a substitute for a dictionary in Thai, Lao, Khmer or
+// Japanese: those scripts do not mark word boundaries with spaces, and
+// UAX #29 says so itself. Han and Hiragana therefore segment per code
+// point, and Katakana runs stay together (WB13).
+pub function word_segments(s: string): str[] {
+    var out: str[] = [];
+    var n: i32 = s.len();
+    if (n == 0) { return out; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var prev2: i32 = 0 - 1;
+    var prev: i32 = 0 - 1;
+    var raw_prev: i32 = 0 - 1;
+    var ri: i32 = 0;
+    while (i < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var cls: i32 = _wb_of(cp);
+        if (i > 0) {
+            var nxt: i32 = 0 - 1;
+            if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
+            if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
+                out = out.append(s[start : i]);
+                start = i;
+            }
+        }
+        raw_prev = cls;
+        if (!_wb_ignorable(cls)) {
+            prev2 = prev;
+            prev = cls;
+            if (cls == 6) { ri = ri + 1; } else { ri = 0; }
+        }
+        i = i + w;
+    }
+    return out.append(s[start : n]);
+}
+
+// ` + "`" + `words(s)` + "`" + ` — the word-like segments only: what a reader would count
+// as words, with the whitespace and punctuation runs dropped. Built on
+// ` + "`" + `word_segments` + "`" + `, so the same caveats about Thai and Japanese apply.
+//
+// Note this is NOT ` + "`" + `s.split(" ")` + "`" + ` with extra steps: it keeps ` + "`" + `can't` + "`" + `
+// and ` + "`" + `3.14` + "`" + ` whole, splits ` + "`" + `hello,world` + "`" + ` without a space to help it,
+// and works on text with no ASCII spaces in it at all.
+pub function words(s: string): str[] {
+    var segs: str[] = word_segments(s);
+    var out: str[] = [];
+    var i: i32 = 0;
+    var off: i32 = 0;
+    while (i < segs.len()) {
+        var w: i32 = segs[i].len();
+        if (_wb_is_word(s, off, off + w)) { out = out.append(segs[i]); }
+        off = off + w;
+        i = i + 1;
+    }
+    return out;
+}
+
+// ` + "`" + `word_count(s)` + "`" + ` — how many words, without building the array of them.
+// A separate scan for the same reason ` + "`" + `grapheme_count` + "`" + ` is one: counting
+// should not allocate.
+pub function word_count(s: string): i32 {
+    var n: i32 = s.len();
+    if (n == 0) { return 0; }
+    var count: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var prev2: i32 = 0 - 1;
+    var prev: i32 = 0 - 1;
+    var raw_prev: i32 = 0 - 1;
+    var ri: i32 = 0;
+    while (i < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var cls: i32 = _wb_of(cp);
+        if (i > 0) {
+            var nxt: i32 = 0 - 1;
+            if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
+            if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
+                if (_wb_is_word(s, start, i)) { count = count + 1; }
+                start = i;
+            }
+        }
+        raw_prev = cls;
+        if (!_wb_ignorable(cls)) {
+            prev2 = prev;
+            prev = cls;
+            if (cls == 6) { ri = ri + 1; } else { ri = 0; }
+        }
+        i = i + w;
+    }
+    if (_wb_is_word(s, start, n)) { count = count + 1; }
+    return count;
 }
 `))
 

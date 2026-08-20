@@ -296,7 +296,7 @@ fix can be a call rather than a language-wide equality change.
 | Go | not in std — `x/text` |
 | Zig | not in std at all |
 | Roc | deliberately moved *out* of builtins |
-| **Fern** | absent |
+| **Fern** | `std/unicode` — grapheme **and** word, opt-in and DCE'd |
 
 **Not converged**, and the split tracks binary-size sensitivity almost
 perfectly: languages with a runtime/platform already loaded (Swift, JS,
@@ -582,6 +582,12 @@ binaries and has a binary-size epic. Shipped as:
 - `unicode.graphemes(s)` / `unicode.grapheme_count(s)` — opt-in, tables
   DCE'd unless called. `grapheme_count` is a separate scan rather than
   `graphemes(s).len()`, so counting does not allocate the array.
+- `unicode.word_segments(s)` / `unicode.words(s)` /
+  `unicode.word_count(s)` — the standard's other boundary, landed with
+  #5552. Same opt-in shape: `word_segments` is the lossless split
+  (the pieces concatenate back to the input), `words` keeps only the
+  segments holding a letter or digit, and `word_count` is a separate
+  non-allocating scan.
 - `reverse_bytes` keeps its name (it is already the honest one);
   `unicode.reverse_graphemes(s)` is the correct-by-default sibling.
 - Roc's advice is carried as *documentation* in the `graphemes` doc
@@ -900,12 +906,14 @@ Tracked as epic #5626; issue numbers below.
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
-| 7 | **D6** (#5633) — grapheme segmentation — **DONE** | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). |
+| 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
 | 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the
-ASCII contract) is already done (#5620).
+ASCII contract) is already done (#5620). Its one deliverable that no
+slice covered — UAX #29 **word** boundaries, which D6 scoped to
+grapheme clusters — landed against #5552 directly.
 
 ---
 
