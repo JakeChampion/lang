@@ -18,9 +18,9 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-19 over seeds 0..511 (the leg's default corpus): 509 agree,
-# 0 diverge, 3 compile gaps — all of them the `<fn>$clo not defined` class
-# (#6256), so every other category in the census below is empty.
+# Measured 2026-08-20 over seeds 0..511 (the leg's default corpus): 511 agree,
+# 0 diverge, 1 compile gap — the `<fn>$clo not defined` class (#6256), so every
+# other category in the census below is empty.
 #
 # This is the only place the figure is derived. Quote it from here and re-sweep
 # before you do: a count carried into an issue body or a doc is stale within
@@ -33,7 +33,7 @@
 # That caution cuts both ways, and every run since has gone the other way: 204
 # agree / 308 gaps, then 263 / 249 (#6237 + #6246), 291 / 221 (#6261), 311 / 201
 # (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151, 504 / 8, 507 / 5,
-# 508 / 4, 509 / 3.
+# 508 / 4, 509 / 3, 511 / 1.
 # One bail can cost far more than the seed that exposes it — an if-expression
 # whose branches are 64-bit took the whole MODULE off the IR path, and fernsmith
 # emits if-expressions everywhere, so a single missing branch in one classifier
@@ -58,11 +58,21 @@
 # The class is NOT one mechanism, which is the standing lesson here: grouping by
 # message is what made the first reduction fix the wrong thing. #6256's sweep
 # separated the survivors by instrumenting `lower_expr`'s `ExprLambda` arm. The
-# fn-valued-capture row (s0356, s0172) left with #6861; three remain:
+# fn-valued-capture row (s0356, s0172) left with #6861; one remains:
 #
-#   2  the array gate failed by a passthrough arm, not a nested
-#      IIFE — same gate as the closed s0017, different failure    (s0042, s0211)
 #   1  nested IIFEs in non-array fn-value position                (s0199)
+#
+# The array-gate pair left together, and neither was the passthrough ARM the
+# census guessed at. s0211 was a capture-SCOPE miss: a value-position if/match
+# binds names of its own — a match arm's payload — and the array gate read
+# captures against the enclosing function alone, so `Ok(a) => [(x) => x + a]`
+# looked capture-free, the gate answered 0 and the arm lambda stayed raw. The
+# non-array twin and iife_arm_lambda_captures already scope through
+# iife_scope_fd. s0042 was an arm spelled `id([…])`: a passthrough hands the
+# literal straight back, but the gate demanded a literal and abandoned the whole
+# rewrite. Destination first there as always — expr_is_closure_array sees
+# through the same passthrough now, so the binding reads as a closure array
+# instead of bare-dispatching a box.
 #
 # s0215 left when the passthrough rule reached both sides: the boxing pass now
 # descends a passthrough nested in another, and the closure-ARRAY registry

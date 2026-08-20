@@ -74,6 +74,26 @@ function main(): i32 { var fs: ((i32) => i32)[] = gen(false, 5i32); return (fs[0
 function gen(p0: i32): i32 { var v0: (i32) => i32 = pick(true, ((a: i32) => 45i32), ((b: i32) => 46i32)); var v1: ((i32) => i32)[] = [(if (false) { v0 } else { pick(false, v0, ((x: i32) => (x + p0))) })]; return v1[0i32](1i32); }
 function main(): i32 { return gen(3i32) & 63i32; }`}, // 4
 
+	// The ARRAY path's capture scope. A value-position if/match parses as an
+	// IIFE, and its arms can bind names of their own — a match arm's payload.
+	// The non-array twin already reads captures against `iife_scope_fd` so those
+	// count, and so does `iife_arm_lambda_captures`; the array gate did not, so
+	// `Ok(a) => [(x) => x + a]` looked capture-free, the gate answered 0, and the
+	// arm lambda stayed raw for a `<fd>$clo` nobody built. Reduced from fernsmith
+	// seed 211, where the payload-capturing arm sits beside a nested if/match.
+	{"arm_array_payload_capture_scope", `function mk(r: Result[i32, i32]): ((i32) => i32)[] { return (match (r) { Ok(a) => [((x: i32) => (x + a))], Err(b) => (match (r) { Ok(c) => [((y: i32) => y)], Err(d) => [((z: i32) => (z + d))] }) }); }
+function main(): i32 { var fs: ((i32) => i32)[] = mk(Err(4i32)); return fs[0i32](3i32) & 63i32; }`}, // 7
+	// An arm spelled `id([…])` rather than `[…]`. A generic passthrough hands the
+	// array literal straight back, so the arm carries the same elements — but the
+	// gate demanded a literal and abandoned the whole rewrite, leaving a sibling
+	// arm's capturing lambda raw. The destination moved first here too:
+	// `expr_is_closure_array` now sees through the same passthrough, so the
+	// binding reads as a closure array rather than bare-dispatching a box.
+	// Reduced from fernsmith seed 42.
+	{"arm_array_passthrough_forwards_literal", `enum Status { Active, Inactive, Pending }
+function id[T](x: T): T { return x; }
+function main(): i32 { var v1: Status = Pending; var v3: ((i32) => i32)[] = (match (v1) { Active => [((a: i32) => (match (v1) { Active => a, Inactive => a, Pending => 673i32 }))], Inactive => [((b: i32) => b)], Pending => id([((c: i32) => 126i32)]) }); return v3[0i32](3i32) & 63i32; }`}, // 62
+
 	// The control: one passthrough deep, built and consumed in the same
 	// function, which both sides already agreed on.
 	{"array_elem_single_passthrough_control", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
