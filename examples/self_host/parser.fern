@@ -11646,11 +11646,12 @@ function dl_vb_rebuild(c: ExprCall, body: Stmt[]): Expr {
     return e_unknown("value block");
 }
 
-// dl_expr_kids / dl_expr_with_kids are the generic expression traversal the
-// three defer walks share: kids in EVALUATION order, and a rebuild from a
-// same-length, same-order replacement list. An ExprLambda has no kids — its body
-// is statements, and it is a defer-scope boundary — so a lambda callee is
-// visited only through the value-block check above.
+// dl_expr_kids / dl_expr_with_kids are the generic expression traversal every
+// rewriting walk in this file shares, through map_expr_kids below: kids in
+// EVALUATION order, and a rebuild from a same-length, same-order replacement
+// list. An ExprLambda has no kids — its body is statements, and it is a scope
+// boundary for the walks that care — so a walk reaches a lambda body only by
+// matching ExprLambda itself.
 function dl_expr_kids(e: Expr): Expr[] {
     match (e) {
         ExprBinary(b) => { return [b.left, b.right]; },
@@ -11854,6 +11855,18 @@ function dl_expr_with_kids(e: Expr, kids: Expr[]): Expr {
         _ => { return e; }
     }
     return e;
+}
+
+// map_expr_kids rebuilds `e` with `f` applied to each direct sub-expression,
+// leaving a leaf (and an ExprLambda, which has none) untouched. Every walk that
+// wants "recurse into the kids and rebuild" goes through here.
+function map_expr_kids(e: Expr, f: (Expr) => Expr): Expr {
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return e; }
+    var nk: Expr[] = [];
+    var i: i32 = 0;
+    while (i < kids.len()) { nk = nk.append(f(kids[i])); i = i + 1; }
+    return dl_expr_with_kids(e, nk);
 }
 
 // dl_while / dl_for rebuild a loop around a rewritten body, keeping the
@@ -17408,19 +17421,16 @@ function settle_expr(e: Expr, names: string[], types: string[], funcs: FuncDecl[
             return ExprFieldAccess { obj: settle_expr(fa.obj, names, types, funcs, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
         ExprLambda(lm) => {
-            // The lambda's OWN params seed the scope, exactly as a FuncDecl's do
-            // in settle_module. Passing empty lists left them unknown, so a
-            // literal assigned to an `f64` param settled as an integer and the
-            // compiled binary read the raw i32 bit pattern as a denormal — 0
-            // where native gives 3, silently (#7199). An annotated local in the
-            // same lambda was always correct, which is what pinned the gap to
-            // the dropped params rather than to the descent.
-            //
-            // The ENCLOSING scope is deliberately not inherited: a lambda body
-            // refers to captures by name, and settling one against the outer
-            // declaration would type it by a binding the lambda does not own.
-            var lnames: string[] = [];
-            var ltypes: string[] = [];
+            // The body sees the enclosing annotated locals plus the lambda's
+            // own params — the scope check_expr and annotate_expr build for a
+            // lambda body (checker.fern:7484, :13025). A lambda captures the
+            // enclosing binding lexically, so a captured local's annotation is
+            // the one that names its type; dropping it leaves a method call on
+            // a captured receiver unresolved and its arguments unsettled.
+            // Params are appended last, and settle_local_type scans from the
+            // end, so a param shadows an enclosing local of the same name.
+            var lnames: string[] = names;
+            var ltypes: string[] = types;
             var lpi: i32 = 0;
             while (lpi < lm.params.len()) {
                 lnames = lnames.append(lm.params[lpi].name);
