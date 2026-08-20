@@ -96,19 +96,19 @@ Three pre-existing self-host divergences surfaced while building the witnesses.
 All three reproduce identically on main and on the fix; none is caused or
 worsened here.
 
-1. **A method returning a struct's `string[]` field over-releases.**
+1. **A method returning a struct's `string[]` field over-releases** (#7232).
    `function (h: Holder) get(): string[] { return h.xs; }`, bound to a local in
    the caller and called twice, ticks the underflow counter on the second call.
    Self-host x86-64 and wasm; the native compiler is clean. No observable
    corruption over 200 rounds with churn, so the unbalanced dec is landing on a
    box whose rc floor is guarded — detected, not yet located.
-2. **A split result escaping its frame dangles on the register backends.**
+2. **A split result escaping its frame dangles on the register backends** (#7230).
    `function parts_of(pre: string): string[] { var base = w(pre); return
    base.split("-"); }` — the elements are views over `base`, which the frame
    frees on the way out. Native reads back correctly; self-host x86-64 reads
    corrupted element data. This one is a WRONG ANSWER, not a leak, and it is the
    same view-lifetime question the register half above has to answer.
-3. **`.chars()` yields string elements on the self-host path.** `"abcdefgh"
+3. **`.chars()` yields string elements on the self-host path** (#7231). `"abcdefgh"
    .chars()` prints `97, 98` under the native compiler and `a, b` under the
    self-host one, despite the declaration being `i32[]`. Read as raw `i32` it
    prints heap addresses, and one probe segfaulted.
