@@ -27471,6 +27471,24 @@ function tostr_scalar_type_name(t: string): boolean {
 // The names and the types are collected by two INDEPENDENT walks in the same order,
 // which is what keeps the two lists index-aligned: each visits the same StmtVar nodes
 // in the same sequence and appends exactly when the binding carries an annotation.
+// param_decl_names / param_decl_types extend the declared-name / declared-type
+// pair with the function's PARAMETERS. A parameter is a declaration like any
+// other — it just does not appear as a `var` in the body — and without it the
+// receiver-type tests that read this pair (join_strarr_init, tostr_scalar_init)
+// refuse every `function f(xs: string[]) { var s = xs.join(sep); }`.
+function param_decl_names(params: parser.ParamDecl[], ns: string[]): string[] {
+    var out_n: string[] = ns;
+    var i: i32 = 0;
+    while (i < params.len()) { out_n = out_n.append(params[i].name); i = i + 1; }
+    return out_n;
+}
+function param_decl_types(params: parser.ParamDecl[], ts: string[]): string[] {
+    var out_t: string[] = ts;
+    var i: i32 = 0;
+    while (i < params.len()) { out_t = out_t.append(params[i].type_name); i = i + 1; }
+    return out_t;
+}
+
 function tostr_decl_names(stmts: parser.Stmt[], ns: string[]): string[] {
     var out_n: string[] = ns;
     var i: i32 = 0;
@@ -30959,7 +30977,7 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: string[], params: parser.ParamDecl[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -31235,8 +31253,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // `<scalar>.to_string()` string locals (#6599) — same gates as the producers
     // above. See the collect_tostr_scalar_names block for why the receiver-type test
     // cannot live in str_local_binding_is_fresh.
-    var tsn: string[] = tostr_decl_names(body, []);
-    var tst: string[] = tostr_decl_vals(body, []);
+    // Body declarations FIRST, parameters after: the lookups take the first
+    // match, so a local shadowing a parameter still answers with its own type.
+    var tsn: string[] = param_decl_names(params, tostr_decl_names(body, []));
+    var tst: string[] = param_decl_types(params, tostr_decl_vals(body, []));
     var tss: string[] = collect_tostr_scalar_names(body, tsn, tst, []);
     var ti2: i32 = 0;
     while (ti2 < tss.len()) {
@@ -44177,7 +44197,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // now dump-only. The append-built ARRSTRUCT credit consults it to decide
     // whether a BOUND element may be admitted: a moved local hands its single
     // reference to the buffer, so the buffer's deep walk is the one release.
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
