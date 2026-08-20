@@ -5680,21 +5680,44 @@ function label_in_scope(labels: string[], name: string): boolean {
 // it IS inside a loop, since an out-of-loop break is already E011 (the Go
 // checker reports E058 in the `else` branch after the E011 check, so the
 // two never both fire on one statement).
-// lambdas_in_stmt collects the lambdas one statement's expressions hold, using
-// astwalk's collecting fold rather than another hand-rolled walk. Only the
-// lambdas THIS statement holds directly are wanted — a lambda nested inside
-// another is reached when that one's body is itself walked.
-function lambdas_in_stmt(st: parser.Stmt): parser.Expr[] {
-  var acc: parser.Expr[] = [];
-  return astwalk.fold_stmt(st, acc, collect_lambda);
+// scoped_bodies collects the statement lists one statement's expressions hold,
+// splitting them by whether they are a SCOPE. An ordinary lambda is one: a
+// label does not cross a function boundary and `break` inside it is E011. A
+// value block is not — it is an if-/match-expression desugar that irlower
+// inlines, so `t = t + { if (c) { break; } i }` breaks the enclosing loop and
+// must keep both its labels and its in-loop state.
+//
+// The pruned fold does the splitting: `descend` stops at both node kinds, so a
+// value block's callee lambda is never also seen as a bare lambda, and a nested
+// lambda is reached later when its own enclosing body is walked.
+struct ScopedBodies { fresh: parser.Stmt[][], inherited: parser.Stmt[][] }
+
+function scoped_bodies(st: parser.Stmt): ScopedBodies {
+  var acc: ScopedBodies = ScopedBodies { fresh: [], inherited: [] };
+  return astwalk.fold_stmt_pruned(st, acc, split_scope, not_a_scope_root);
 }
 
-function collect_lambda(e: parser.Expr, acc: parser.Expr[]): parser.Expr[] {
+function split_scope(e: parser.Expr, acc: ScopedBodies): ScopedBodies {
   match (e) {
-    parser.ExprLambda(_) => { return acc.append(e); },
+    parser.ExprCall(c) => {
+      if (parser.is_value_block(c)) {
+        return ScopedBodies { ...acc, inherited: acc.inherited.append(parser.vb_body(c)) };
+      }
+      return acc;
+    },
+    parser.ExprLambda(lm) => { return ScopedBodies { ...acc, fresh: acc.fresh.append(lm.body) }; },
     _ => { return acc; }
   }
   return acc;
+}
+
+function not_a_scope_root(e: parser.Expr): boolean {
+  match (e) {
+    parser.ExprLambda(_) => { return false; },
+    parser.ExprCall(c) => { return !parser.is_value_block(c); },
+    _ => { return true; }
+  }
+  return true;
 }
 
 function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): Diag[] {
@@ -5751,19 +5774,17 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): D
       // illegal break was accepted (#7199) — the same lambda blindness as the
       // label RESOLVER had, one layer up.
       _ => {
-        var lams: parser.Expr[] = lambdas_in_stmt(stmts[i]);
-        var li: i32 = 0;
-        while (li < lams.len()) {
-          match (lams[li]) {
-            parser.ExprLambda(lm) => {
-              var nolabels: string[] = [];
-              var sub: Diag[] = loop_diags(lm.body, false, nolabels);
-              var si: i32 = 0;
-              while (si < sub.len()) { out = out.append(sub[si]); si = si + 1; }
-            },
-            _ => {}
-          }
-          li = li + 1;
+        var sb: ScopedBodies = scoped_bodies(stmts[i]);
+        var fi: i32 = 0;
+        while (fi < sb.fresh.len()) {
+          var nolabels: string[] = [];
+          out = append_diags(out, loop_diags(sb.fresh[fi], false, nolabels));
+          fi = fi + 1;
+        }
+        var ii: i32 = 0;
+        while (ii < sb.inherited.len()) {
+          out = append_diags(out, loop_diags(sb.inherited[ii], in_loop, labels));
+          ii = ii + 1;
         }
       }
     }
