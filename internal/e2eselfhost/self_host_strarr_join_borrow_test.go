@@ -44,11 +44,11 @@ import (
 // on x86-64, a trap on wasm) and is pinned by the last case below.
 //
 // The credit therefore rides `join_strarr_init`, which reads the receiver's
-// DECLARED type out of the body the way the `.to_string()` collector already
-// does. Its limit is the same one: an unannotated receiver, or a `string[]`
-// PARAM, carries no `var` declaration to read, so it is refused. A param
-// receiver still leaks the result (131200 on x86-64), which is the next thing to
-// pull on in this shape.
+// DECLARED type the way the `.to_string()` collector already does. Both read the
+// same name/type pair, which is harvested from the body's annotated `var`s AND
+// from the function's parameters — a parameter is a declaration too, it just
+// never appears as a `var`. An UNANNOTATED local receiver has nothing to read
+// and is still refused, which is the remaining limit and a sound one.
 //
 // The receiver half needed no such gate: the escape analysis runs over a slot
 // already known to be `string[]`, and a user method cannot be called on one.
@@ -135,10 +135,9 @@ function round(pre: string): i32 {
     return ys.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 2) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
-	// A `string[]` PARAM receiver: refused for want of a declaration to read the
-	// type from, so the result still leaks — sound, and here so the limit is a
-	// recorded fact rather than an assumption. Correctness only; no ceiling,
-	// which would otherwise pin the leak as a floor.
+	// A `string[]` PARAM receiver, which the harvesters see now that they are
+	// seeded with the function's ParamDecl[]. Correctness only — the heap side of
+	// this shape is `strarr-join-param-receiver` below.
 	{"strarr-join-param-receiver-live", strArrJoinPrelude + `function joined(xs: string[]): i32 {
     var s: string = xs.join("|");
     return s.len() % 251;
@@ -156,6 +155,46 @@ function main(): i32 {
     var i: i32 = 0;
     var want: i32 = round(xs);
     while (i < 2000) { if (round(xs) != want) { return 97; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`},
+	// The heap side of the param receiver: 131200 on x86-64 and 128000 on wasm
+	// before the harvesters could see parameters. Self-contained rather than
+	// generated, because the array has to live in the CALLER for only the result
+	// to be in play.
+	{"strarr-join-param-receiver", strArrJoinPrelude + `function joined(xs: string[]): i32 {
+    var s: string = xs.join("|");
+    return s.len() % 251;
+}
+function churn(xs: string[], n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + joined(xs)) % 251; i = i + 1; } return acc; }
+function main(): i32 {
+    var xs: string[] = [w("e0"), w("e1"), w("e2")];
+    var a: i32 = churn(xs, 400);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var b: i32 = churn(xs, 400);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (a != b) { return 97; }
+    if (b2 - b1 >= 4096) { return 98; }
+    return 0;
+}`},
+	// PARAM negative: seeding the harvesters with parameters must not widen the
+	// credit past the type test. A struct param whose user `join` returns an ALIAS
+	// is refused for the same reason the local-receiver case below is.
+	{"strarr-join-param-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }
+function (h: Holder) join(sep: string): string { return h.name; }
+function joined(h: Holder): i32 { var s: string = h.join("|"); return s.len() % 251; }
+function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); return a.len() + b.len(); }
+function main(): i32 {
+    var keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
+    var i: i32 = 0;
+    while (i < 2000) {
+        if (joined(keep) < 0) { return 96; }
+        if (churn("QQQQQQQQ") < 0) { return 95; }
+        if (!keep.name.starts_with("aaaa-")) { return 97; }
+        if (!keep.tag.starts_with("bbbb-")) { return 97; }
+        i = i + 1;
+    }
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`},

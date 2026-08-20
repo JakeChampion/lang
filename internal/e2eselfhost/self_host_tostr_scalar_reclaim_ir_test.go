@@ -58,6 +58,47 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+	// A scalar PARAM receiver. The receiver-type test reads declared types, and a
+	// parameter is a declaration that never appears as a `var` in the body — so
+	// until the harvesters were seeded with the function's ParamDecl[] this shape
+	// was refused and leaked (12800 over 400 rounds on x86-64, 9600 on wasm).
+	{"tostr-scalar-param-receiver", `function fmt(n: i32): i32 {
+    var s: string = n.to_string();
+    return s.len();
+}
+function churn(k: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < k) { acc = (acc + fmt(1234567 + i)) % 251; i = i + 1; } return acc; }
+function main(): i32 {
+    var a: i32 = churn(400);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var b: i32 = churn(400);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (a != b) { return 97; }
+    if (b2 - b1 >= 2048) { return 98; }
+    return 0;
+}`, 0},
+	// PARAM negative: seeding the harvesters with parameters must not widen the
+	// credit past the type test. A struct param whose user `to_string` returns an
+	// ALIAS of a field the receiver still owns is refused for the same reason the
+	// local-receiver case above is — the declared type is not a scalar.
+	{"tostr-param-user-method-uncredited", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+struct Holder { name: string, tag: string }
+function (h: Holder) to_string(): string { return h.tag; }
+function shown(h: Holder): i32 { var s: string = h.to_string(); return s.len() % 251; }
+function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); return a.len() + b.len(); }
+function main(): i32 {
+    var keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
+    var i: i32 = 0;
+    while (i < 2000) {
+        if (shown(keep) < 0) { return 96; }
+        if (churn("QQQQQQQQ") < 0) { return 95; }
+        if (!keep.name.starts_with("aaaa-")) { return 97; }
+        if (!keep.tag.starts_with("bbbb-")) { return 97; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 	// CONTROL: the free-function spelling was already credited and must stay bounded,
 	// so a regression here means the shared gates moved rather than this class.
 	{"tostr-freefn-control", `function main(): i32 {
