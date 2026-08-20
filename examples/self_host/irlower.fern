@@ -25415,6 +25415,292 @@ function aliased_array_names_of(body: parser.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
+// --- map locals borrowed by a tuple element (#7212) --------------------------
+//
+// `var t: (i32, Map[K, V]) = (i, m)` mentions `m` at a container-element
+// position, so both map-reclaim gates refuse it: alias_idents_in_value credits
+// the alias and expr_unsafe_for calls the element an escape. Nothing on the
+// TUPLE side takes over — tuple construction emits no rc_inc for a map slot, and
+// emit_tuple_child_drops / emit_tuple_type_child_drops both skip a bare-ident
+// element (the latter can never even see one: tuple_arg_payload_fresh refuses a
+// Map-typed position outright). So the map box ends up with no owner at all and
+// leaks every round, where native is flat.
+//
+// Exactly ONE release is owed, and the local is the one that owes it: with no
+// retain at construction the tuple holds a BARE pointer, so `m` and `t.1` are one
+// box at rc 1. Freeing from both sides would double-release, which is why the
+// element side stays untouched here.
+//
+// The relaxation is sound only while the tuple cannot be read after the map's
+// sweep point. Scope exit is after every read of a local tuple, so the "MAP:"
+// exit set may take it; the PRECISE drop fires at the map's last TOP-LEVEL use —
+// which is the tuple binding itself — so that gate keeps refusing.
+
+// tuple_bare_elem_sole_use: `init` is a tuple literal in which `name` appears
+// ONLY as a direct bare-ident element. A tuple mentioning the name anywhere else
+// answers false, so the borrow reading below cannot hide a second, genuinely
+// escaping use. The sibling of tuple_union_payload_sole_use, one position out.
+function tuple_bare_elem_sole_use(init: parser.Expr, name: string): boolean {
+    match (init) {
+        parser.ExprTuple(tl) => {
+            var found: boolean = false;
+            var k: i32 = 0;
+            while (k < tl.elements.len()) {
+                var bare: boolean = false;
+                match (tl.elements[k]) {
+                    parser.ExprIdent(id) => { bare = id.name == name; },
+                    _ => {}
+                }
+                if (bare) { found = true; }
+                else if (expr_mentions_name(tl.elements[k], name)) { return false; }
+                k = k + 1;
+            }
+            return found;
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// tuple_elem_host_names collects the LOCAL names bound by
+// `var t = ( …, name, … )` — the tuples that hold `name` at a bare-ident element
+// and mention it nowhere else. An ASSIGNMENT `t = (…, name, …)` is deliberately
+// not collected: its target may be declared in an enclosing scope and so outlive
+// the map's sweep, which is the one ordering the relaxation cannot survive.
+function tuple_elem_host_names(stmts: parser.Stmt[], name: string, acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (tuple_bare_elem_sole_use(v.init, name)) { a = push_str_unique(a, v.name); } },
+            parser.StmtIf(f) => {
+                a = tuple_elem_host_names(f.then_body, name, a);
+                a = tuple_elem_host_names(f.else_body, name, a);
+            },
+            parser.StmtWhile(w) => { a = tuple_elem_host_names(w.body, name, a); },
+            parser.StmtFor(fo) => { a = tuple_elem_host_names(fo.body, name, a); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = tuple_elem_host_names(m.arms[k].body, name, a); k = k + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// used_only_as_tuple_elem answers BOTH reclaim gates at once: every ALIASING and
+// every ESCAPING use of `name` in `stmts` is a bare-ident element of a tuple
+// bound to one of `hosts`. One walker rather than two because the two questions
+// share a skip rule — a host's init mentions `name` only at that element, so
+// dropping the whole statement from either scan loses nothing else.
+//
+// The nested arms mirror stmt_unsafe_for's, and each recurses before it skips:
+// the sub-scan covers exactly the positions alias_names_in_stmt would have
+// looked at, and the condition / iterator / scrutinee / guard positions it does
+// not cover are checked here.
+function used_only_as_tuple_elem(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], hosts: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var skip: boolean = false;
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (util.index_of_str(hosts, v.name) >= 0 && tuple_bare_elem_sole_use(v.init, name)) { skip = true; }
+            },
+            parser.StmtIf(f) => {
+                if (!expr_unsafe_for(f.cond, name, borrowable, recv_borrow)
+                    && used_only_as_tuple_elem(f.then_body, name, borrowable, recv_borrow, hosts)
+                    && used_only_as_tuple_elem(f.else_body, name, borrowable, recv_borrow, hosts)) { skip = true; }
+            },
+            parser.StmtWhile(w) => {
+                if (!expr_unsafe_for(w.cond, name, borrowable, recv_borrow)
+                    && used_only_as_tuple_elem(w.body, name, borrowable, recv_borrow, hosts)) { skip = true; }
+            },
+            parser.StmtFor(fo) => {
+                var iter_unsafe: boolean = true;
+                match (fo.iter) {
+                    parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                    _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
+                }
+                if (!iter_unsafe && used_only_as_tuple_elem(fo.body, name, borrowable, recv_borrow, hosts)) { skip = true; }
+            },
+            parser.StmtMatch(m) => {
+                var mok: boolean = !expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow);
+                var k: i32 = 0;
+                while (mok && k < m.arms.len()) {
+                    if (m.arms[k].has_guard && expr_unsafe_for(m.arms[k].guard, name, borrowable, recv_borrow)) { mok = false; }
+                    else if (!used_only_as_tuple_elem(m.arms[k].body, name, borrowable, recv_borrow, hosts)) { mok = false; }
+                    k = k + 1;
+                }
+                if (mok) { skip = true; }
+            },
+            _ => {}
+        }
+        if (!skip) {
+            if (stmt_unsafe_for(stmts[i], name, borrowable, recv_borrow)) { return false; }
+            var none: string[] = [];
+            if (util.index_of_str(alias_names_in_stmt(stmts[i], none), name) >= 0) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// map_recv_borrows names the map methods that hand back neither the receiver's
+// box nor a view of it. A WHITELIST because the complement is the dangerous
+// half — `set`/`insert`, `delete`/`without` and `clear`/`cleared` all return the
+// receiver's own mapbox and `iter` holds a raw pointer into it — so a map method
+// added later refuses until it is classified here, which leaks rather than
+// over-releases.
+function map_recv_borrows(field: string): boolean {
+    return field == "len" || field == "has" || field == "get" || field == "get_or"
+        || field == "keys" || field == "values";
+}
+
+// tuple_pos_read reports whether `e` is exactly `host.<idx>` — the positional
+// read of one tuple element, and nothing wrapping it.
+function tuple_pos_read(e: parser.Expr, host: string, idx: i32): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            if (!util.is_all_digits(fa.field)) { return false; }
+            if (util.digits_to_i32(fa.field) != idx) { return false; }
+            match (fa.obj) {
+                parser.ExprIdent(id) => { return id.name == host; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// tuple_pos_esc_expr reports whether `e` reads `host.<idx>` anywhere except as
+// the RECEIVER of a borrowing map method. A bare read binds the mapbox to a
+// second name that the local's sweep would then free underneath — a
+// use-after-free, which is what `return t.1` and `var keep = t.1;` both are.
+//
+// A LAMBDA needs no arm: any lambda mentioning `host` is already an escape by
+// expr_unsafe_for's own lambda arm, so the caller's host gate has refused before
+// this walk runs. Hand-written rather than folded over astwalk because a
+// capturing lambda in argument position lowers to a `$clo` the per-unit link
+// cannot resolve (#7215) — and because the sibling escape walks either side of
+// this one are shaped the same way.
+function tuple_pos_esc_expr(e: parser.Expr, host: string, idx: i32): boolean {
+    if (tuple_pos_read(e, host, idx)) { return true; }
+    match (e) {
+        parser.ExprFieldAccess(fa) => { return tuple_pos_esc_expr(fa.obj, host, idx); },
+        parser.ExprCall(c) => {
+            var callee_esc: boolean = true;
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (map_recv_borrows(cfa.field) && tuple_pos_read(cfa.obj, host, idx)) { callee_esc = false; }
+                    else { callee_esc = tuple_pos_esc_expr(c.callee, host, idx); }
+                },
+                _ => { callee_esc = tuple_pos_esc_expr(c.callee, host, idx); }
+            }
+            if (callee_esc) { return true; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { if (tuple_pos_esc_expr(c.args[ai], host, idx)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return tuple_pos_esc_expr(b.left, host, idx) || tuple_pos_esc_expr(b.right, host, idx); },
+        parser.ExprUnary(u) => { return tuple_pos_esc_expr(u.operand, host, idx); },
+        parser.ExprIndex(ix) => { return tuple_pos_esc_expr(ix.array, host, idx) || tuple_pos_esc_expr(ix.index, host, idx); },
+        parser.ExprSlice(sl) => {
+            return tuple_pos_esc_expr(sl.array, host, idx) || tuple_pos_esc_expr(sl.start, host, idx)
+                || tuple_pos_esc_expr(sl.end, host, idx);
+        },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { if (tuple_pos_esc_expr(ar.elements[i], host, idx)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(tl) => {
+            var i: i32 = 0;
+            while (i < tl.elements.len()) { if (tuple_pos_esc_expr(tl.elements[i], host, idx)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && tuple_pos_esc_expr(sl.base, host, idx)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (tuple_pos_esc_expr(sl.field_values[i], host, idx)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function tuple_pos_esc_stmt(st: parser.Stmt, host: string, idx: i32): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return tuple_pos_esc_expr(v.init, host, idx); },
+        parser.StmtAssign(a) => { return tuple_pos_esc_expr(a.value, host, idx); },
+        parser.StmtReturn(r) => { return tuple_pos_esc_expr(r.value, host, idx); },
+        parser.StmtExpr(e) => { return tuple_pos_esc_expr(e.value, host, idx); },
+        parser.StmtDefer(d) => { return tuple_pos_esc_stmt(d.action, host, idx); },
+        parser.StmtIf(f) => {
+            return tuple_pos_esc_expr(f.cond, host, idx)
+                || tuple_pos_esc_stmts(f.then_body, host, idx) || tuple_pos_esc_stmts(f.else_body, host, idx);
+        },
+        parser.StmtWhile(w) => { return tuple_pos_esc_expr(w.cond, host, idx) || tuple_pos_esc_stmts(w.body, host, idx); },
+        parser.StmtFor(fo) => { return tuple_pos_esc_expr(fo.iter, host, idx) || tuple_pos_esc_stmts(fo.body, host, idx); },
+        parser.StmtMatch(m) => {
+            if (tuple_pos_esc_expr(m.scrutinee, host, idx)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && tuple_pos_esc_expr(m.arms[ai].guard, host, idx)) { return true; }
+                if (tuple_pos_esc_stmts(m.arms[ai].body, host, idx)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function tuple_pos_esc_stmts(stmts: parser.Stmt[], host: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (tuple_pos_esc_stmt(stmts[i], host, idx)) { return true; } i = i + 1; }
+    return false;
+}
+
+// map_tuple_elem_borrow_only is the gate override itself: `name` is aliased and
+// escape-flagged ONLY by tuple-element positions, and every tuple holding one is
+// a local that neither escapes, nor is rebound, nor lets a map element back OUT
+// — so the tuple box dies inside the frame with the map, and no second name
+// reaches either.
+//
+// The host's declared TUPLE TYPE is required, and every NON-SCALAR position of
+// it is checked, not just the one this call is about. Keying on
+// is_map_type_name instead would miss a map reached through a type parameter or
+// an alias, where the tag is not spelled `Map[`; a scalar position carries no
+// pointer to extract, so excluding those is the whole relaxation needed to keep
+// `t.0` readable.
+function map_tuple_elem_borrow_only(body: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], reassigned: string[]): boolean {
+    var hosts: string[] = tuple_elem_host_names(body, name, []);
+    if (hosts.len() == 0) { return false; }
+    var h: i32 = 0;
+    while (h < hosts.len()) {
+        if (util.index_of_str(reassigned, hosts[h]) >= 0) { return false; }
+        if (body_unsafe_for(body, hosts[h], borrowable, recv_borrow)) { return false; }
+        var htype: string = rctuple_type_of_decl(body, hosts[h]);
+        if (htype == "") { return false; }
+        var k: i32 = 0;
+        while (k < 64) {
+            var tag: string = tuple_type_elem_tag(htype, k);
+            if (tag == "") { k = 64; }
+            else {
+                if (!is_scalar_type_name(tag) && tuple_pos_esc_stmts(body, hosts[h], k)) { return false; }
+                k = k + 1;
+            }
+        }
+        h = h + 1;
+    }
+    return used_only_as_tuple_elem(body, name, borrowable, recv_borrow, hosts);
+}
+
 // borrowed_rebind_closure credits the `var X = Y` bare-ident rebinds whose X
 // still shares a buffer someone else reaches. Run to a fixpoint so a chain
 // `var b = a; var c = b;` reaches c.
@@ -30674,14 +30960,24 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var aliased_m: string[] = aliased_array_names_of(body);
     var mi: i32 = 0;
     while (mi < maps.len()) {
+        // The two POSITIONAL gates, and their one override: a map whose only
+        // alias and only escape is a bare-ident element of a local, non-escaping
+        // tuple keeps the credit (#7212). The tuple holds an uncounted pointer
+        // nothing on that side ever releases, so the local still owes the one
+        // release, and scope exit is past every read of a local tuple. Asked
+        // only when the plain reading has already refused — it walks the body
+        // again, and the maps it can rescue are the minority that reach it.
+        var pos_ok: boolean = util.index_of_str(aliased_m, maps[mi]) < 0
+            && !body_unsafe_for(body, maps[mi], borrowable, recv_borrow);
+        if (!pos_ok) { pos_ok = map_tuple_elem_borrow_only(body, maps[mi], borrowable, recv_borrow, reassigned); }
         // The reassigned gate admits the sanctioned COW self-reassign
         // (`m = m.insert(k, v)` — map_nonself_reassigned / #4357): insert at
         // rc==1 mutates in place and returns the SAME box, so the slot's
         // value is unchanged and the exit / precise reclaim still frees
         // exactly one live box. Any other rebind disqualifies as before.
+        // The iteration and identity holes below are NOT overridden.
         if (!map_nonself_reassigned(body, maps[mi])
-            && util.index_of_str(aliased_m, maps[mi]) < 0
-            && !body_unsafe_for(body, maps[mi], borrowable, recv_borrow)
+            && pos_ok
             && !map_has_explicit_iter(body, maps[mi])
             // Identity-carrying method hole (insert/without return the
             // receiver's own box — see expr_map_identity_use): any such use
