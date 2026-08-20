@@ -2201,7 +2201,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         VInt(_) => { recv_type = "i32"; },
         VInt64(iv64) => { recv_type = "i64"; if (iv64.unsigned) { recv_type = "u64"; } },
         VUint(_) => { recv_type = "u32"; },
-        VBool(_) => { recv_type = "bool"; },
+        VBool(_) => { recv_type = "boolean"; },
         VFloat(_) => { recv_type = "f64"; },
         VFloat32(_) => { recv_type = "f32"; },
         VArr(_) => { recv_type = "Array"; },
@@ -2211,11 +2211,6 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     while (i < funcs.len()) {
         var fd: parser.FuncDecl = funcs[i];
         var rt_match: boolean = fd.receiver_type == recv_type;
-        // `bool` and `boolean` are interchangeable receiver
-        // type-names — the lexer's keyword set accepts both.
-        if (!rt_match && recv_type == "bool" && fd.receiver_type == "boolean") {
-            rt_match = true;
-        }
         // Union-receiver methods: a method declared on a union
         // (`function (sh: Shape) area()`) matches when recv's
         // struct type_name is in the union's variant list.

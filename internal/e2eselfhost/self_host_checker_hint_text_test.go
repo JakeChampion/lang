@@ -198,6 +198,24 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		code:     "E064",
 		spelling: "did you mean `string`?",
 	},
+	{
+		// The type NAME a message renders is advice to write as much as a
+		// hint is: the self-host used to print its internal "bool" tag here,
+		// naming a type the reader cannot spell. e042_ret_label patched
+		// exactly one of the two E042 sites; this is the other one (#7251).
+		name: "E042 non-Option operand names boolean",
+		src: `function f(): i32 { var b: boolean = true; var c = b?; return 0; }
+function main(): i32 { return 0; }`,
+		code:     "E042",
+		spelling: "got boolean",
+	},
+	{
+		name: "E021 receiver type not a valid receiver",
+		src: `function (x: bool) foo(): i32 { return 0; }
+function main(): i32 { return 0; }`,
+		code:     "E021",
+		spelling: "must be a struct, enum, array, slice, or built-in type",
+	},
 }
 
 // hintTextDivergences records the rows where the two checkers are meant to
