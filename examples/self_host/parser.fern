@@ -9819,12 +9819,8 @@ pub function monomorphize_module(mod: Module): Module {
             var cenv: MEnv = env_from_params(cl.params);
             var crb: RStmts = mono_stmts(cl.body, cenv, fns, ins, cl.ret_type);
             ins = crb.rins3;
-            rewritten = rewritten.append(FuncDecl {
-                name: cl.name, receiver_name: "", receiver_type: "",
-                type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts, line: cl.line, col: cl.col,
-                import_iface: cl.import_iface, import_wit: cl.import_wit, type_param_count: cl.type_param_count, bound_traits: [], fip: cl.fip, fbip: cl.fbip, fip_allowance: cl.fip_allowance, ret_str: cl.ret_str, async: cl.async,
-                is_pub: cl.is_pub
-           , is_const: cl.is_const });
+            // The receiver is cleared: a lifted closure is a free function.
+            rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
         }
         wi = wi + 1;
     }
@@ -10274,12 +10270,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts):
     var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur, rt.ty);
     cur = br.rins3;
     return FRes {
-        ffn: FuncDecl {
-            name: fn.name, receiver_name: fn.receiver_name, receiver_type: rcv.ty,
-            type_params: fn.type_params, params: nparams, ret_type: rt.ty, body: br.rstmts, line: fn.line, col: fn.col,
-            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, fbip: fn.fbip, fip_allowance: fn.fip_allowance, ret_str: fn.ret_str, async: fn.async,
-            is_pub: fn.is_pub
-       , is_const: fn.is_const },
+        ffn: FuncDecl { ...fn, receiver_type: rcv.ty, params: nparams, ret_type: rt.ty, body: br.rstmts },
         fins: cur
     };
 }
@@ -10426,12 +10417,7 @@ pub function monomorphize_structs(mod: Module): Module {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
                     var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, sfns, ins, clm.ret_type);
                     ins = br2.rins3;
-                    nfuncs = nfuncs.append(FuncDecl {
-                        name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
-                        type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col,
-                        import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count, bound_traits: [], fip: clm.fip, fbip: clm.fbip, fip_allowance: clm.fip_allowance, ret_str: clm.ret_str, async: clm.async,
-                        is_pub: clm.is_pub
-                   , is_const: clm.is_const });
+                    nfuncs = nfuncs.append(FuncDecl { ...clm, body: br2.rstmts });
                 }
                 mi = mi + 1;
             }
@@ -11418,13 +11404,9 @@ pub function monomorphize_enums(mod: Module): Module {
             ins = me_collect_anno(fn.params[pj].type_name, mod.enums, mod.funcs, ins);
             pj = pj + 1;
         }
-        nfuncs = nfuncs.append(FuncDecl {
-            name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
-            type_params: fn.type_params, params: me_rewrite_params(fn.params, mod.enums, mod.funcs),
-            ret_type: me_rewrite_ty(fn.ret_type, mod.enums, mod.funcs), body: rb.rstmts, line: fn.line, col: fn.col,
-            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, fbip: fn.fbip, fip_allowance: fn.fip_allowance, ret_str: fn.ret_str, async: fn.async,
-            is_pub: fn.is_pub
-       , is_const: fn.is_const });
+        nfuncs = nfuncs.append(FuncDecl { ...fn,
+            params: me_rewrite_params(fn.params, mod.enums, mod.funcs),
+            ret_type: me_rewrite_ty(fn.ret_type, mod.enums, mod.funcs), body: rb.rstmts });
         fi = fi + 1;
     }
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
@@ -12710,13 +12692,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
         // Rewrite this body's calls to any lambda-lifted function so the
         // captures are passed at the (now top-level) call sites.
         var fn_body: Stmt[] = hl_apply_lifts(r_stmts, r_lifts);
-        funcs = funcs.append(FuncDecl {
-            name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
-            type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: fn_body,
-            line: fn.line, col: fn.col, import_iface: fn.import_iface, import_wit: fn.import_wit,
-            type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, fbip: fn.fbip, fip_allowance: fn.fip_allowance, ret_str: fn.ret_str, async: fn.async,
-            is_pub: fn.is_pub
-       , is_const: fn.is_const });
+        funcs = funcs.append(FuncDecl { ...fn, body: fn_body });
         i = i + 1;
     }
     var tencl: string[] = hl_collect_var_names(mod.top_stmts);
