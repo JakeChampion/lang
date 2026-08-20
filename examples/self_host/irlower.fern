@@ -27810,15 +27810,15 @@ function str_call_ret_is_fresh_reg(e: parser.Expr, reg: string[]): boolean {
 // than a handover. A parameter never qualifies: it has no declaration here.
 function str_local_is_fresh_ret(stmts: parser.Stmt[], name: string, reg: string[], params: parser.ParamDecl[]): boolean {
     if (name.len() == 0) { return false; }
-    if (!strloc_declared_fresh(stmts, name, reg, params)) { return false; }
-    return !strloc_escapes(stmts, name, reg, params);
+    if (!strloc_declared_fresh(stmts, name, reg, stmts, params)) { return false; }
+    return !strloc_escapes(stmts, name, reg, stmts, params);
 }
 
-function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[], params: parser.ParamDecl[]): boolean {
+function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (v.name == name) { return str_return_is_fresh_reg(v.init, reg, params); } },
+            parser.StmtVar(v) => { if (v.name == name) { return str_return_is_fresh_reg(v.init, reg, body, params); } },
             _ => {}
         }
         i = i + 1;
@@ -27828,7 +27828,7 @@ function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[]
 
 // strloc_escapes: `name` appears somewhere other than its own declaration, an
 // assignment TO it whose value is fresh, and a bare `return name`.
-function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], params: parser.ParamDecl[]): boolean {
+function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -27840,7 +27840,7 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], param
                 // the base name here too — any of those touching `name` is an
                 // escape, and only the plain self-assign is credited.
                 if (a.target == name) {
-                    if (!str_return_is_fresh_reg(a.value, reg, params)) { return true; }
+                    if (!str_return_is_fresh_reg(a.value, reg, body, params)) { return true; }
                 } else if (expr_mentions_name(a.value, name)) { return true; }
             },
             parser.StmtReturn(r) => {
@@ -27851,22 +27851,22 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], param
             parser.StmtExpr(e) => { if (expr_mentions_name(e.value, name)) { return true; } },
             parser.StmtIf(f) => {
                 if (expr_mentions_name(f.cond, name)) { return true; }
-                if (strloc_escapes(f.then_body, name, reg, params) || strloc_escapes(f.else_body, name, reg, params)) { return true; }
+                if (strloc_escapes(f.then_body, name, reg, body, params) || strloc_escapes(f.else_body, name, reg, body, params)) { return true; }
             },
             parser.StmtWhile(w) => {
                 if (expr_mentions_name(w.cond, name)) { return true; }
-                if (strloc_escapes(w.body, name, reg, params)) { return true; }
+                if (strloc_escapes(w.body, name, reg, body, params)) { return true; }
             },
             parser.StmtFor(fo) => {
                 if (expr_mentions_name(fo.iter, name)) { return true; }
-                if (strloc_escapes(fo.body, name, reg, params)) { return true; }
+                if (strloc_escapes(fo.body, name, reg, body, params)) { return true; }
             },
             parser.StmtMatch(m) => {
                 if (expr_mentions_name(m.scrutinee, name)) { return true; }
                 var a2: i32 = 0;
                 while (a2 < m.arms.len()) {
                     if (m.arms[a2].has_guard && expr_mentions_name(m.arms[a2].guard, name)) { return true; }
-                    if (strloc_escapes(m.arms[a2].body, name, reg, params)) { return true; }
+                    if (strloc_escapes(m.arms[a2].body, name, reg, body, params)) { return true; }
                     a2 = a2 + 1;
                 }
             },
@@ -27885,7 +27885,7 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], param
 // live field, which is the same reason tostring_recv_is_scalar gates on it.
 // A receiver that is not one of the callee's params answers false: its type is
 // not in the signature, and an unregistered function merely leaks.
-function tostring_recv_is_scalar_param(e: parser.Expr, params: parser.ParamDecl[]): boolean {
+function tostring_recv_is_scalar_param(e: parser.Expr, body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     match (e) {
         parser.ExprNumber(_) => { return true; },
         parser.ExprIdent(id) => {
@@ -27894,15 +27894,110 @@ function tostring_recv_is_scalar_param(e: parser.Expr, params: parser.ParamDecl[
                 if (params[i].name == id.name) { return is_scalar_type_name(params[i].type_name); }
                 i = i + 1;
             }
-            return false;
+            // Not a param: a callee LOCAL declared `var v: <scalar> = …` proves
+            // the same thing the param's annotation does. Without this a helper
+            // that computes before formatting — `var v: i32 = n * 2; return
+            // v.to_string();` — never entered the registry, where the
+            // param-receiver spelling of the same helper did, and every caller's
+            // binding leaked its result at frees=0.
+            return decl_scalar_local(body, id.name);
         },
         _ => {}
     }
     return false;
 }
 
+// decl_scalar_local: `name` is declared in `body` and EVERY declaration of it
+// annotates a flat scalar type. Every one, because a nested block may shadow the
+// name with a pointer-shaped local, and this scan has no scopes; requiring all of
+// them keeps a shadow from licensing the outer name. An un-annotated `var`
+// answers false — the type is what carries the proof here, and refusing costs a
+// leak where guessing would cost an over-release.
+function decl_scalar_local(stmts: parser.Stmt[], name: string): boolean {
+    var found: boolean = false;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (!is_scalar_type_name(v.type_name)) { return false; }
+                    found = true;
+                }
+            },
+            parser.StmtIf(f) => {
+                if (decl_scalar_local_bad(f.then_body, name) || decl_scalar_local_bad(f.else_body, name)) { return false; }
+                if (decl_scalar_local(f.then_body, name) || decl_scalar_local(f.else_body, name)) { found = true; }
+            },
+            parser.StmtWhile(w) => {
+                if (decl_scalar_local_bad(w.body, name)) { return false; }
+                if (decl_scalar_local(w.body, name)) { found = true; }
+            },
+            parser.StmtFor(fo) => {
+                // A `for NAME in …` binder is not a `var` and carries no
+                // annotation, so it cannot be proved scalar here.
+                if (fo.var_name == name) { return false; }
+                if (decl_scalar_local_bad(fo.body, name)) { return false; }
+                if (decl_scalar_local(fo.body, name)) { found = true; }
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (match_arm_binds_name(m.arms[k], name)) { return false; }
+                    if (decl_scalar_local_bad(m.arms[k].body, name)) { return false; }
+                    if (decl_scalar_local(m.arms[k].body, name)) { found = true; }
+                    k = k + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+// decl_scalar_local_bad: `name` is declared somewhere in `stmts` with a
+// NON-scalar annotation. The refusing half of the pair — decl_scalar_local
+// answers "every declaration is scalar", which needs both a witness and the
+// absence of a counter-example, and the two recursions cannot be folded into one
+// boolean without losing which of the two it is reporting.
+function decl_scalar_local_bad(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name && !is_scalar_type_name(v.type_name)) { return true; } },
+            parser.StmtIf(f) => { if (decl_scalar_local_bad(f.then_body, name) || decl_scalar_local_bad(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (decl_scalar_local_bad(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => {
+                if (fo.var_name == name) { return true; }
+                if (decl_scalar_local_bad(fo.body, name)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (match_arm_binds_name(m.arms[k], name)) { return true; }
+                    if (decl_scalar_local_bad(m.arms[k].body, name)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// match_arm_binds_name: the arm's pattern binds `name`. Such a binding has no
+// annotation to read, so it can never be proved scalar and must refuse.
+function match_arm_binds_name(arm: parser.MatchArm, name: string): boolean {
+    match (arm.pattern) {
+        parser.PatVariant(pv) => { return pv.binding == name; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function str_return_is_fresh_reg_in(e: parser.Expr, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
-    if (str_return_is_fresh_reg(e, reg, params)) { return true; }
+    if (str_return_is_fresh_reg(e, reg, body, params)) { return true; }
     match (e) {
         parser.ExprIdent(id) => { return str_local_is_fresh_ret(body, id.name, reg, params); },
         _ => {}
@@ -27910,8 +28005,8 @@ function str_return_is_fresh_reg_in(e: parser.Expr, reg: string[], body: parser.
     return false;
 }
 
-function str_return_is_fresh_reg(e: parser.Expr, reg: string[], params: parser.ParamDecl[]): boolean {
-    if (str_return_is_fresh(e, params)) { return true; }
+function str_return_is_fresh_reg(e: parser.Expr, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
+    if (str_return_is_fresh(e, body, params)) { return true; }
     return str_call_ret_is_fresh_reg(e, reg);
 }
 
@@ -27962,7 +28057,7 @@ function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string
     return false;
 }
 
-function str_return_is_fresh(e: parser.Expr, params: parser.ParamDecl[]): boolean {
+function str_return_is_fresh(e: parser.Expr, body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
         // `n.to_string()` on a provably SCALAR receiver is the builtin
@@ -27975,7 +28070,7 @@ function str_return_is_fresh(e: parser.Expr, params: parser.ParamDecl[]): boolea
             if (c.args.len() == 0) {
                 match (c.callee) {
                     parser.ExprFieldAccess(fa) => {
-                        if (fa.field == "to_string" && tostring_recv_is_scalar_param(fa.obj, params)) { return true; }
+                        if (fa.field == "to_string" && tostring_recv_is_scalar_param(fa.obj, body, params)) { return true; }
                     },
                     _ => {}
                 }
