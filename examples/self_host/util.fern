@@ -734,7 +734,6 @@ pub function format_diags(diags: Diag[]): string {
 }
 
 // append_diags concatenates two diagnostic lists.
-// append_diags concatenates two diagnostic lists.
 pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
   var i: i32 = 0;
   while (i < b.len()) {
@@ -742,4 +741,52 @@ pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
     i = i + 1;
   }
   return a;
+}
+
+// dunder_at returns the index of the module-mangling `__` in name, or -1.
+// Index 0 never counts: a leading `__` marks a compiler-internal name, not
+// a module prefix.
+pub function dunder_at(name: string): i32 {
+  var i: i32 = 1;
+  while (i + 1 < name.len()) {
+    if (name[i:i + 2] == "__") { return i; }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// demangle turns a module-mangled name back into the `mod.Name` the reader
+// wrote. `mod__Name` is not a spelling anyone can type, so a hint carrying
+// one names a fix that does not compile.
+pub function demangle(name: string): string {
+  var cut: i32 = dunder_at(name);
+  if (cut < 0) { return name; }
+  return name[0:cut] + "." + name[cut + 2:name.len()];
+}
+
+// derive_hint renders the "add `@derive(…)` (or `impl … for T`)" clause
+// the derive hints share. `derive` is the attribute spelling and `trait`
+// the trait for the impl form, "" to offer the derive alone.
+//
+// A type from ANOTHER module takes neither route where the reader is
+// standing: `@derive` annotates the declaration, and an impl of a foreign
+// trait for a foreign type is an orphan impl. So the hint names the
+// declaring module instead of two spellings that both fail. Kept in
+// lockstep with the native checker's deriveHint, which the message-text
+// differential compares against.
+pub function derive_hint(tn: string, derive: string, trait_name: string): string {
+  var cut: i32 = dunder_at(tn);
+  var routes: string = "`@derive(" + derive + ")`";
+  if (cut < 0) {
+    if (trait_name.len() > 0) {
+      routes = routes + " (or `impl " + trait_name + " for " + tn + "`)";
+    }
+    return "add " + routes + ", which requires `import \"core/cmp\";`";
+  }
+  var orphan: string = "";
+  if (trait_name.len() > 0) {
+    routes = routes + " (or `impl " + trait_name + " for " + tn[cut + 2:tn.len()] + "`)";
+    orphan = " (an impl written here instead would be an orphan impl)";
+  }
+  return "add " + routes + " in module `" + tn[0:cut] + "`, which declares it and needs `import \"core/cmp\";` there" + orphan;
 }
