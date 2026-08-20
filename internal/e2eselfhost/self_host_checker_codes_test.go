@@ -1458,6 +1458,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"tuple-union-elem", "enum E { A, B }\nfunction f(): (E, i32) { return (A, 1); }\nfunction main(): i32 { return 0; }\n"},
 		{"tuple-param", "function f(p: (i32, string)): i32 { return p.0; }\nfunction main(): i32 { return f((1, \"a\")); }\n"},
 		{"tuple-struct-elem", "struct P { x: i32 }\nfunction f(): (P, i32) { return (P { x: 1 }, 2); }\nfunction main(): i32 { return 0; }\n"},
+		// Composite MAP KEYS (#7001). A struct or enum key deriving Eq + Hash is
+		// accepted by the Go checker; the self-host rejected every non-i32,
+		// non-string key outright, so these rows were `[E045]` vs `[]`. The
+		// underived pair is the other half of the rule — both must still be
+		// rejected, so the relaxation cannot become a blanket accept.
+		{"map-lit-derived-struct-key", "import \"core/cmp\";\nimport \"core/map\";\n@derive(cmp.Eq, cmp.Hash)\nstruct K { a: i32, b: string }\nfunction main(): i32 { var m: Map[K, i32] = Map { K { a: 1, b: \"x\" }: 10 }; return m.get_or(K { a: 1, b: \"x\" }, 0); }\n"},
+		{"map-lit-derived-enum-key", "import \"core/cmp\";\nimport \"core/map\";\n@derive(cmp.Eq, cmp.Hash)\nenum T { Red, Green }\nfunction main(): i32 { var m: Map[T, i32] = Map { Red: 1, Green: 2 }; return m.get_or(Green, 0); }\n"},
+		{"map-lit-underived-struct-key", "import \"core/map\";\nstruct B { a: i32 }\nfunction main(): i32 { var m: Map[B, i32] = Map { B { a: 1 }: 10 }; return m.len(); }\n"},
+		{"map-lit-underived-enum-key", "import \"core/map\";\nenum U { X, Y }\nfunction main(): i32 { var m: Map[U, i32] = Map { X: 1 }; return m.len(); }\n"},
 		{"tuple-reassign", "function main(): i32 { var t: (i32, string) = (1, \"a\"); t = (2, \"b\"); return t.0; }\n"},
 		// Generic tuple container (the std/array `zip` shape).
 		{"tuple-generic-array", "function zip(a: i32[], b: string[]): (i32, string)[] { var out: (i32, string)[] = []; return out; }\nfunction main(): i32 { return 0; }\n"},

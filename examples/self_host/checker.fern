@@ -785,7 +785,10 @@ pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_par
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
 // index i holds (field_names[i], field_types[i]).
-pub struct StructSig { name: string, field_names: string[], field_types: Type[], type_params: string[], field_type_names: string[], variant_field_names: string[] }
+// `derives` carries the declaration's `@derive(...)` list so a conformance
+// question can be answered from the Scope — the map-key Eq/Hash check needs it,
+// and a derive does not synthesise an entry in the impl table.
+pub struct StructSig { name: string, field_names: string[], field_types: Type[], type_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string }
 
 // MethodSig: nominal handle for a declared receiver method
 // `function (recv: RecvType) name(p1, p2): RT`. The receiver
@@ -1334,6 +1337,49 @@ function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_
   return false;
 }
 
+// map_key_conforms names whether `tyname` implements trait `tr` for map-key
+// purposes: an explicit `impl tr for tyname`, or a `@derive(cmp.tr)` on the
+// declaration — for an enum, on any variant, which carries the owner's derives.
+// Both sources, because a derive does not synthesise an impl-table entry.
+function map_key_conforms(s: Scope, tyname: string, tr: string): boolean {
+  if (e021_scope_has_impl(s.impls, tr, tyname)) { return true; }
+  var i: i32 = 0;
+  while (i < s.structs.len()) {
+    if (s.structs[i].name == tyname || s.structs[i].enum_owner == tyname) {
+      var di: i32 = 0;
+      while (di < s.structs[i].derives.len()) {
+        if (parser.derive_simple_name(s.structs[i].derives[di]) == tr) { return true; }
+        di = di + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// map_key_type_error returns the E045 message describing why `kt` cannot be a
+// map key, or "" if it is usable. Usable keys are integers, strings, and
+// struct / enum types deriving both Eq and Hash — the same set native accepts
+// (#2671), which is what closes the accepts/rejects divergence in #7001. The
+// old wording ("use i32 or string") described a checker that rejected every
+// composite key; the lowering builds a kind-2 map from the key's derived
+// hash/eq now, so the restriction it named is gone.
+function map_key_type_error(s: Scope, kt: Type): string {
+  if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string())) { return ""; }
+  var kn: string = "";
+  var kw: string = "";
+  match (kt) {
+    TypeStruct(st) => { kn = st.name; kw = "a struct"; },
+    TypeUnion(u) => { if (u.name != "Option" && u.name != "Result") { kn = u.name; kw = "an enum"; } },
+    _ => {}
+  }
+  if (kn != "") {
+    if (map_key_conforms(s, kn, "Eq") && map_key_conforms(s, kn, "Hash")) { return ""; }
+    return "map key type " + type_label(kt) + " is not supported — " + kw + " used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
+  }
+  return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
+}
+
 // e021_bound_call_diag emits E021 for a generic-bound conformance failure
 // at a call site (#4842): parameter `x: T` with `T: Tr` (pbound is the
 // `+`-joined bound list) whose call-site argument has concrete type `at`
@@ -1518,7 +1564,7 @@ function (s: Scope) lookup_struct(name: string): StructSig {
   var empty_t: Type[] = [];
   var empty_tp: string[] = [];
   var empty_ftn: string[] = [];
-  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n };
+  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "" };
 }
 
 // field_index returns the index of `name` in a struct sig's field list,
@@ -3154,7 +3200,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       ftnames = ftnames.append(sd.fields[j].type_name);
       j = j + 1;
     }
-    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names });
+    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner });
     k = k + 1;
   }
   return out;
@@ -5447,7 +5493,7 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
   var nonet: Type[] = [];
   var none_tp: string[] = [];
   var none_ftn: string[] = [];
-  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none };
+  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "" };
 }
 
 // slit_diags recurses through an expression and emits E005 for every
@@ -6668,8 +6714,9 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
           // Go checker, which checks `MapLit.Entries[0].Key`.
           if (mfa.field == "insert" && mlit_is_base(mfa.obj) && c.args.len() >= 1) {
             var kt: Type = check_expr(c.args[0], s);
-            if (!is_unknown(kt) && !is_integer(kt) && !type_eq(kt, t_string())) {
-              out = out.append(dg_at("E045", "map key type " + type_label(kt) + " is not yet supported (use i32 or string)", expr_line(c.args[0]), expr_col(c.args[0])));
+            var kmsg: string = map_key_type_error(s, kt);
+            if (kmsg != "") {
+              out = out.append(dg_at("E045", kmsg, expr_line(c.args[0]), expr_col(c.args[0])));
             }
           }
         },
