@@ -1128,13 +1128,13 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             return StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: rl_expr(w.cond), body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
+            return StmtWhile { cond: rl_expr(w.cond, labels), body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: rl_expr(fr.iter), body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
+            return StmtFor { var_name: fr.var_name, iter: rl_expr(fr.iter, labels), body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
         },
         StmtIf(f) => {
-            return StmtIf { ...f, cond: rl_expr(f.cond), then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
+            return StmtIf { ...f, cond: rl_expr(f.cond, labels), then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
         },
         StmtMatch(m) => {
             var arms2: MatchArm[] = [];
@@ -1142,11 +1142,11 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             while (ai < m.arms.len()) {
                 var a: MatchArm = m.arms[ai];
                 var ag: Expr = a.guard;
-                if (a.has_guard) { ag = rl_expr(a.guard); }
+                if (a.has_guard) { ag = rl_expr(a.guard, labels); }
                 arms2 = arms2.append(MatchArm { ...a, body: resolve_labels_block(a.body, labels), guard: ag });
                 ai = ai + 1;
             }
-            return StmtMatch { ...m, scrutinee: rl_expr(m.scrutinee), arms: arms2 };
+            return StmtMatch { ...m, scrutinee: rl_expr(m.scrutinee, labels), arms: arms2 };
         },
         StmtDefer(dd) => {
             return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error, line: dd.line };
@@ -1156,37 +1156,46 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
         // body was never resolved and its `break`/`continue` degraded to tag 0 —
         // the innermost loop. `break outer` silently broke the wrong loop, and
         // `continue outer` re-entered the inner loop forever (#7199).
-        StmtVar(v) => { return StmtVar { ...v, init: rl_expr(v.init) }; },
-        StmtReturn(r) => { return StmtReturn { ...r, value: rl_expr(r.value) }; },
-        StmtExpr(x) => { return StmtExpr { ...x, value: rl_expr(x.value) }; },
-        StmtAssign(a) => { return StmtAssign { ...a, value: rl_expr(a.value) }; },
+        StmtVar(v) => { return StmtVar { ...v, init: rl_expr(v.init, labels) }; },
+        StmtReturn(r) => { return StmtReturn { ...r, value: rl_expr(r.value, labels) }; },
+        StmtExpr(x) => { return StmtExpr { ...x, value: rl_expr(x.value, labels) }; },
+        StmtAssign(a) => { return StmtAssign { ...a, value: rl_expr(a.value, labels) }; },
         _ => { return st; }
     }
     return st;
 }
 
-// rl_expr resolves the labels of any loop living inside an EXPRESSION — that
-// is, in a lambda body. The lambda gets a FRESH scope rather than the enclosing
-// one: a label does not cross a function boundary, and native rejects
-// `break outer` from inside a lambda with "E011: break outside of a loop", so
-// leaking the enclosing labels in would resolve a break the language forbids.
-function rl_expr(e: Expr): Expr {
+// rl_expr resolves the labels of any loop living inside an EXPRESSION — in
+// practice a lambda body, which is a statement list no statement walk reaches.
+//
+// A LAMBDA gets a FRESH scope: a label does not cross a function boundary, and
+// native rejects `break outer` from inside one with "E011: break outside of a
+// loop", so leaking the enclosing labels in would resolve a jump the language
+// forbids. A VALUE BLOCK is the opposite — it matches the same shape (a
+// zero-arg call of a zero-param lambda) but is an if-/match-expression or
+// comprehension desugar that irlower INLINES, so `t = t + { if (c) { break; } i }`
+// breaks the enclosing loop and must keep seeing its labels.
+function rl_expr(e: Expr, labels: string[]): Expr {
     match (e) {
         ExprLambda(lm) => {
             var fresh: string[] = [];
             return ExprLambda { ...lm, body: resolve_labels_block(lm.body, fresh) };
         },
-        _ => { return rl_expr_kids(e); }
+        ExprCall(c) => {
+            if (is_value_block(c)) { return dl_vb_rebuild(c, resolve_labels_block(vb_body(c), labels)); }
+            return rl_expr_kids(e, labels);
+        },
+        _ => { return rl_expr_kids(e, labels); }
     }
     return e;
 }
 
-function rl_expr_kids(e: Expr): Expr {
+function rl_expr_kids(e: Expr, labels: string[]): Expr {
     var kids: Expr[] = dl_expr_kids(e);
     if (kids.len() == 0) { return e; }
     var nk: Expr[] = [];
     var i: i32 = 0;
-    while (i < kids.len()) { nk = nk.append(rl_expr(kids[i])); i = i + 1; }
+    while (i < kids.len()) { nk = nk.append(rl_expr(kids[i], labels)); i = i + 1; }
     return dl_expr_with_kids(e, nk);
 }
 
@@ -11594,7 +11603,7 @@ function dl_itoa(n: i32): string {
 
 struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 
-// dl_is_value_block reports whether `e` is a value-position `{ … }` block.
+// is_value_block reports whether `e` is a value-position `{ … }` block.
 // parse_primary builds one as an immediately-invoked zero-parameter lambda (the
 // general value-block form and the if- / match-expression desugars), and irlower
 // INLINES its statements into the enclosing function — so a `defer` inside one
@@ -11603,7 +11612,12 @@ struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 // enclosing loop body if there is one and to the function otherwise (#6852).
 // Every other lambda is a boundary here: it owns its own defer scope and is
 // lowered after lambda lifting.
-function dl_is_value_block(c: ExprCall): boolean {
+// is_value_block reports the shape the parser emits desugaring an
+// if-/match-expression or a comprehension: a zero-arg call of a zero-param
+// lambda, which irlower INLINES rather than calling. Three passes and the
+// checker need to tell one from an ordinary lambda — an ordinary lambda is a
+// scope boundary, a value block is not — so the test lives in one place.
+pub function is_value_block(c: ExprCall): boolean {
     if (c.args.len() != 0) { return false; }
     match (c.callee) {
         ExprLambda(l) => { return l.params.len() == 0; },
@@ -11774,7 +11788,7 @@ function dl_exprs_have_defer(es: Expr[]): boolean {
 function dl_expr_has_defer(e: Expr): boolean {
     match (e) {
         ExprCall(c) => {
-            if (dl_is_value_block(c)) {
+            if (is_value_block(c)) {
                 match (c.callee) {
                     ExprLambda(l) => { return dl_stmts_have_defer(l.body); },
                     _ => {}
@@ -11913,7 +11927,7 @@ struct DeferEdgeExpr { expr: Expr, armed: i32 }
 function dl_edges_expr(e: Expr, actions: Stmt[], flags: i32[], start: i32, armed0: i32, label: string, own_level: boolean): DeferEdgeExpr {
     match (e) {
         ExprCall(c) => {
-            if (dl_is_value_block(c)) {
+            if (is_value_block(c)) {
                 match (c.callee) {
                     ExprLambda(l) => {
                         var vb: DeferEdges = dl_expand_loop_edges(l.body, actions, flags, start, armed0, label, own_level);
@@ -12081,7 +12095,7 @@ struct DeferExprAcc { expr: Expr, actions: Stmt[], flags: i32[] }
 function dl_collect_expr(e: Expr, actions: Stmt[], flags: i32[]): DeferExprAcc {
     match (e) {
         ExprCall(c) => {
-            if (dl_is_value_block(c)) {
+            if (is_value_block(c)) {
                 match (c.callee) {
                     ExprLambda(l) => {
                         var vb: DeferAcc = dl_collect_stmts(l.body, actions, flags);
@@ -12258,7 +12272,7 @@ function dl_expand_returns_vb(body: Stmt[], cleanup_all: Stmt[], cleanup_err: St
 function dl_return_expr(e: Expr, cleanup_all: Stmt[], cleanup_err: Stmt[]): Expr {
     match (e) {
         ExprCall(c) => {
-            if (dl_is_value_block(c)) {
+            if (is_value_block(c)) {
                 match (c.callee) {
                     ExprLambda(l) => { return dl_vb_rebuild(c, dl_expand_returns_vb(l.body, cleanup_all, cleanup_err)); },
                     _ => {}
@@ -12817,7 +12831,7 @@ function dl_ll_expr(e: Expr): Expr {
     match (e) {
         ExprLambda(lm) => { return ExprLambda { ...lm, body: lower_defers_body(lm.body) }; },
         ExprCall(c) => {
-            if (dl_is_value_block(c)) { return dl_vb_rebuild(c, dl_lower_lambda_bodies(dl_vb_body(c))); }
+            if (is_value_block(c)) { return dl_vb_rebuild(c, dl_lower_lambda_bodies(vb_body(c))); }
             return dl_ll_expr_kids(e);
         },
         _ => { return dl_ll_expr_kids(e); }
@@ -12825,8 +12839,8 @@ function dl_ll_expr(e: Expr): Expr {
     return e;
 }
 
-// dl_vb_body is the statement list of a value block's callee lambda.
-function dl_vb_body(c: ExprCall): Stmt[] {
+// vb_body is the statement list of a value block's callee lambda.
+pub function vb_body(c: ExprCall): Stmt[] {
     match (c.callee) {
         ExprLambda(l) => { return l.body; },
         _ => { var none: Stmt[] = []; return none; }
