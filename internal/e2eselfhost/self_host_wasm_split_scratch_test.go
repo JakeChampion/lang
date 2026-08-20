@@ -33,7 +33,7 @@ import (
 //	18-part split                   67200 -> 0                       0
 //	40-part split                  124800 -> 0                       0
 //	char split (101 chars)         233600 -> 0                       0
-//	lines, 4 lines + trailing \n    16000 -> 0                    9600
+//	lines, 4 lines + trailing \n    16000 -> 0              9600 -> 0
 //	lines, no trailing \n            9600 -> 0                       0
 //
 // The fix is to make the helper own what it allocates: an rc-headered initial
@@ -42,13 +42,14 @@ import (
 // element. Nothing at the call site could have done any of this — the buffers
 // are private to the helper and unreachable from the IR.
 //
-// The register column is untouched by the change and is here to keep it that
-// way. Its one non-zero, `lines` with a trailing newline, is a PRE-EXISTING
-// residue with a different cause: the register `__fern_str_lines` is Fern source
-// (`asmcore.rt_src_str_lines`) that trims with `parts[0:keep]`, and the element
-// the slice drops is not reclaimed. Same family, different mechanism, tracked
-// separately — its ceiling below is deliberately slack so fixing it does not
-// have to argue with a gate.
+// The register column had one non-zero of its own, `lines` with a trailing
+// newline, and it is fixed here too — same symptom, different mechanism. The
+// register `__fern_str_lines` is Fern source (`asmcore.rt_src_str_lines`) that
+// used to split on '\n' and then trim with `parts[0:keep]`; the element the slice
+// dropped was never reclaimed, and could not be, since the slice shares element
+// pointers with `parts`. It now scans for the newlines itself and appends exactly
+// the lines wanted, so there is no dropped element to begin with. The other
+// register cells were already 0 and are here to keep them that way.
 
 const wasmSplitScratchPrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
@@ -85,12 +86,13 @@ var wasmSplitScratchHeapCases = []struct {
 	// The empty-separator branch has its own push site.
 	{"wasm-split-scratch-char-split", `    var parts: string[] = base.split("");
     return parts.len() % 251;`, 4096, 4096},
-	// Trailing newline: exercises the delimiter release AND the trimmed element.
-	// The register ceiling is slack for the pre-existing rt_src_str_lines
-	// residue described in the header — do not tighten it here.
+	// Trailing newline. On wasm this exercises the delimiter release AND the
+	// trimmed element; on the register backends it is the gate on
+	// rt_src_str_lines producing exactly the lines wanted rather than trimming
+	// a split result and stranding the element it dropped.
 	{"wasm-lines-scratch-trailing-newline", `    var doc: string = base + "\n" + base + "\n" + base + "\n";
     var ls: string[] = doc.lines();
-    return ls.len();`, 16000, 4096},
+    return ls.len();`, 4096, 4096},
 	// No trailing newline: nothing is trimmed, so this isolates the delimiter.
 	{"wasm-lines-scratch-no-trailing-newline", `    var doc: string = base + "\n" + base;
     var ls: string[] = doc.lines();

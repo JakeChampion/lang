@@ -1325,13 +1325,11 @@ pub function (s: EmitState) mark_str_chars(): EmitState {
     return s.need("heap").need("arr_push").need("arr_push_owned").need("str_chars");
 }
 
-// str_lines's helper calls str_split (split on '\n') and arr_slice (drop the
-// trailing empty entry), marked as transitive deps directly — same shape as
+// str_lines's helper builds its string[] with .append() → arr_push /
+// arr_push_owned, marked as transitive deps directly — same shape as
 // mark_arr_str_join. runtime_need_deps declares the same edges for close_needs.
 pub function (s: EmitState) mark_str_lines(): EmitState {
-    // str_split (a Fern helper) builds its string[] with .append() → arr_push /
-    // arr_push_owned, so mark those transitive deps here too.
-    return s.need("heap").need("str_split").need("arr_push").need("arr_push_owned").need("arr_slice").need("str_lines");
+    return s.need("heap").need("arr_push").need("arr_push_owned").need("str_lines");
 }
 
 // str_bytes's helper builds the result array with `.append()`, which the
@@ -1666,16 +1664,15 @@ pub function rt_src_str_bytes(): string {
     return "function __fern_str_bytes(s: string): i32[] { var n: i32 = s.len(); var r: i32[] = []; var i: i32 = 0; while (i < n) { r = r.append(s[i]); i = i + 1; } return r; }";
 }
 
-// rt_src_str_lines backs `s.lines()` (#2649). It splits s on '\n' via str_split,
-// then drops the single trailing empty entry that a trailing newline (or an empty
-// input) produces — so "a\nb\nc\n".lines() is 3 lines, not 4, matching the interp
-// and Rust/Python. Composite / Tier-1: calls str_split (existing) and an array
-// slice parts[0:keep] (→ __fern_arr_slice, existing) — no new primitive. The
-// no-trim case returns `parts` directly to avoid a redundant full-array copy.
-// (The hand-asm it replaces trimmed by decrementing the result array's length
-// word in place; Fern can't mutate that word, so it slices instead — same lines.)
+// rt_src_str_lines backs `s.lines()` (#2649).
+// A trailing newline (or an empty input) yields no final entry — so
+// "a\nb\nc\n".lines() is 3 lines, not 4, matching the interp and Rust/Python.
+// It scans for itself rather than trimming a split result: producing exactly the
+// lines wanted means there is never a dropped element to reclaim, and no element
+// of `out` is ever shared with a discarded array. Same arr_push / arr_push_owned
+// dependency as __fern_str_split, whose loop this mirrors.
 pub function rt_src_str_lines(): string {
-    return "function __fern_str_lines(s: string): string[] { var parts: string[] = s.split(\"\\n\"); var n: i32 = parts.len(); var sl: i32 = s.len(); var keep: i32 = n; if (n > 0) { if (sl == 0) { keep = n - 1; } else { if (s[sl - 1] == 10) { keep = n - 1; } } } if (keep == n) { return parts; } return parts[0:keep]; }";
+    return "function __fern_str_lines(s: string): string[] { var out: string[] = []; var sl: i32 = s.len(); var start: i32 = 0; var i: i32 = 0; while (i < sl) { if (s[i] == 10) { out = out.append(s[start:i]); start = i + 1; } i = i + 1; } if (start < sl) { out = out.append(s[start:sl]); } return out; }";
 }
 
 pub function rt_src_str_trim(): string {
@@ -3458,9 +3455,9 @@ pub function runtime_need_deps(name: string): string[] {
         return d4;
     }
     if (name == "str_lines") {
-        // __fern_str_lines splits on '\n' (__fern_str_split) and drops the
-        // trailing empty entry via an array slice (__fern_arr_slice).
-        var d5: string[] = ["heap", "str_split", "arr_slice"];
+        // __fern_str_lines scans for '\n' itself and appends each line —
+        // same arr_push / arr_push_owned pairing as __fern_str_split.
+        var d5: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d5;
     }
     if (name == "str_bytes") {
@@ -3477,8 +3474,7 @@ pub function runtime_need_deps(name: string): string[] {
     }
     if (name == "str_split") {
         // __fern_str_split builds the result string[] by appending each s[start:i]
-        // slice — same arr_push / arr_push_owned pairing as str_chars. (str_lines
-        // pulls str_split, so close_needs reaches these transitively.)
+        // slice — same arr_push / arr_push_owned pairing as str_chars.
         var d8: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d8;
     }

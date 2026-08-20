@@ -362,8 +362,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 113) {  // str_lines
         // operand stack [s box]; __fern_str_lines is a Fern runtime function now
         // (#2649): asm_arm64.emit_runtime emits the shared body gated on the
-        // str_lines need (it splits + array-slices; mark_str_lines pulls in
-        // str_split + arr_slice + heap). The s box on the stack IS param[0] (at
+        // str_lines need (mark_str_lines pulls in arr_push + heap). The s box
+        // on the stack IS param[0] (at
         // [x29,#16]); call, pop arg, push result.
         s = s.mark_str_lines();
         s = s.write("    bl __fn___fern_str_lines\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n"); return s;
@@ -5654,9 +5654,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("str_trim")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), s.struct_decls, s);
     }
-    // __fern_str_lines — Fern runtime function (#2649), Tier-1: splits on '\n'
-    // (str_split) and drops the trailing empty entry via an array slice
-    // (arr_slice). Shared by arm64 AST + IR. Deps pre-marked by mark_str_lines.
+    // __fern_str_lines — Fern runtime function (#2649), Tier-1. Shared by
+    // arm64 AST + IR. Deps pre-marked by mark_str_lines.
     if (s.has_need("str_lines")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), s.struct_decls, s);
     }
@@ -5888,9 +5887,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // runtime_need_deps.
     // __fern_str_lines is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_lines, emitted (need-gated) in the migrated-helpers
-    // section below. The single shared body serves both arm64 AST + IR. It splits
-    // on '\n' (str_split) and drops the trailing empty via an array slice
-    // (arr_slice) — its deps are declared by mark_str_lines / runtime_need_deps.
+    // section below. The single shared body serves both arm64 AST + IR; its deps
+    // are declared by mark_str_lines / runtime_need_deps.
     // __fern_arr_i32_product / _sum are now Fern runtime functions (#2649),
     // compiled through emit_function (see asmcore.rt_src_arr_i32_*). They link
     // as __fn___fern_arr_i32_product / __fn___fern_arr_i32_sum and are called
