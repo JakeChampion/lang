@@ -11550,3 +11550,51 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reappear as a test that never runs its program. The refusal case additionally
   asserts the refusal REASON, which is what caught the segfault — the miscompile
   lowered cleanly, so nothing else separated the two outcomes. Refs #4451.
+
+- 2026-08-20: **a `Map[K, V][]` IDENT typed as a single map, so `ms.len()`
+  segfaulted.** The follow-up #7194 deliberately deferred, and a miscompile
+  rather than a bail.
+
+  ```
+  var ms: Map[string, i32][] = [m];
+  return ms.len();          // native 1, self-host SEGFAULT
+  ```
+
+  A map-array slot records its ELEMENT map type in the same column a plain map
+  local uses, so that `ms[i].get(k)` resolves K/V. Two readers took that column
+  for the NAME without asking whether the slot is an array, so `ms` typed as one
+  `Map[K, V]` and `.len()` lowered to `op_map_len` over array memory. Nothing
+  refused; the program just died.
+
+  Isolated by varying only the receiver form:
+
+  | probe | native | before | after |
+  |---|---|---|---|
+  | `ms.len()` | 1 | **segfault** | **1** |
+  | `ms.len() + ms[0].get_or("k", 0)` | 8 | **segfault** | **8** |
+  | `ms[0].get_or("k", 0)` | 7 | 7 | 7 |
+  | `for x in ms { x.get_or(…) }` | 16 | bail | bail |
+  | map-array tuple element / struct field | 10 / 8 | bail | bail |
+
+  The element read was already correct: the `ExprIndex` arm of the map-op
+  dispatch pairs `map_type_of` with an explicit `is_arr_slot` check. Only the
+  IDENT arms lacked it — `expr_map_type_tag`'s (whose own doc says it returns ""
+  when `e` is not a map, which an array of maps is not) and the map-op
+  dispatch's, and it was the second that produced the segfault. The first edit
+  landed only in `expr_map_type_tag` and moved nothing, which is the usual
+  reminder that a null result means the gate was wrong as often as the reasoning.
+
+  Both now go through one guarded reader, `LowerState.slot_map_type(name)`,
+  which answers "" for an array slot — rather than two copies of the same guard
+  that could drift. The array-ELEMENT readers keep pairing `map_type_of` with
+  `is_arr_slot` and are untouched.
+
+  The remaining bails are unchanged and honest: `for x in ms`, and a map-array
+  in a tuple element or struct field, all need a map ELEMENT kind the array side
+  does not carry. That is the next slice in this area, not this one.
+
+  Regression test: `internal/e2eselfhost/self_host_maparr_ident_test.go`
+  (5 cases x 3 backends). Three fail on the parent — as exit `-1`, death by
+  signal — and the two controls (the element read, and a plain map local whose
+  ops must all still dispatch) pass either way. Every want adjudicated against
+  native; the churn row was guessed 30 and is 10. Refs #4451.

@@ -2490,6 +2490,22 @@ pub function (s: LowerState) map_type_of(i: i32): string {
     return s.locals[i].map_type;
 }
 
+// slot_map_type: the `Map[K, V]` a NAME denotes, or "" when it denotes no map.
+//
+// An ARRAY of maps records its ELEMENT map type in the same column, so that
+// `ms[i].get(k)` can resolve K/V — which means map_type_of answers a Map tag
+// for `ms` itself, and reading it unguarded types the ARRAY as one map. That
+// mis-dispatched `ms.len()` to op_map_len over array memory (a segfault, not a
+// bail). Every reader that asks "is this name a map" wants this, not the raw
+// column; the array-ELEMENT readers pair map_type_of with is_arr_slot instead.
+pub function (s: LowerState) slot_map_type(name: string): string {
+    var sl: i32 = s.slot_of(name);
+    if (sl < 0 || s.is_arr_slot(sl)) { return ""; }
+    var t: string = s.map_type_of(sl);
+    if (is_map_type_name(t)) { return t; }
+    return "";
+}
+
 // expr_map_kind reports a map EXPRESSION's key kind — 1 for i32 keys, 0 for
 // string keys, -1 if `e` is not a map. Unlike map_type_of (which only types a
 // map LOCAL slot), this recognises the chained map-construction expressions a
@@ -2546,8 +2562,8 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
     // A map-typed local already carries its full tag — reuse it directly.
     match (e) {
         parser.ExprIdent(mid) => {
-            var lt: string = s.map_type_of(s.slot_of(mid.name));
-            if (is_map_type_name(lt)) { return lt; }
+            var lt: string = s.slot_map_type(mid.name);
+            if (lt != "") { return lt; }
         },
         // A Map-typed struct FIELD (`r.caps` where `caps: Map[K, V]`) or tuple
         // element: recover the declared Map[K, V], so a map op on it
@@ -10285,7 +10301,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     match (fa.obj) {
         parser.ExprIdent(mrid) => {
             mrslot = s.slot_of(mrid.name);
-            if (mrslot >= 0 && is_map_type_name(s.map_type_of(mrslot))) { mtype = s.map_type_of(mrslot); }
+            mtype = s.slot_map_type(mrid.name);
         },
         // A Map-typed struct FIELD receiver (`c.m.get_or(k, d)`):
         // resolve the map type from the field's declaration so the
