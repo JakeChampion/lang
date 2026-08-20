@@ -1191,12 +1191,7 @@ function rl_expr(e: Expr, labels: string[]): Expr {
 }
 
 function rl_expr_kids(e: Expr, labels: string[]): Expr {
-    var kids: Expr[] = dl_expr_kids(e);
-    if (kids.len() == 0) { return e; }
-    var nk: Expr[] = [];
-    var i: i32 = 0;
-    while (i < kids.len()) { nk = nk.append(rl_expr(kids[i], labels)); i = i + 1; }
-    return dl_expr_with_kids(e, nk);
+    return map_expr_kids(e, function (k: Expr): Expr { return rl_expr(k, labels); });
 }
 
 function resolve_labels_block(stmts: Stmt[], labels: string[]): Stmt[] {
@@ -12871,12 +12866,7 @@ pub function vb_body(c: ExprCall): Stmt[] {
 }
 
 function dl_ll_expr_kids(e: Expr): Expr {
-    var kids: Expr[] = dl_expr_kids(e);
-    if (kids.len() == 0) { return e; }
-    var nk: Expr[] = [];
-    var i: i32 = 0;
-    while (i < kids.len()) { nk = nk.append(dl_ll_expr(kids[i])); i = i + 1; }
-    return dl_expr_with_kids(e, nk);
+    return map_expr_kids(e, dl_ll_expr);
 }
 
 pub function lower_defers_module(mod: Module): Module {
@@ -13253,12 +13243,7 @@ function dr_expr(e: Expr): Expr {
 }
 
 function dr_expr_kids(e: Expr): Expr {
-    var kids: Expr[] = dl_expr_kids(e);
-    if (kids.len() == 0) { return e; }
-    var nk: Expr[] = [];
-    var i: i32 = 0;
-    while (i < kids.len()) { nk = nk.append(dr_expr(kids[i])); i = i + 1; }
-    return dl_expr_with_kids(e, nk);
+    return map_expr_kids(e, dr_expr);
 }
 
 pub function desugar_ranges_block(body: Stmt[]): Stmt[] {
@@ -15139,12 +15124,7 @@ function cf_inline_expr(e: Expr, funcs: FuncDecl[]): Expr {
         ExprLambda(lm) => { return ExprLambda { ...lm, body: cf_inline_fn_body(lm.body, funcs) }; },
         _ => {}
     }
-    var kids: Expr[] = dl_expr_kids(e);
-    if (kids.len() == 0) { return e; }
-    var nk: Expr[] = [];
-    var ki: i32 = 0;
-    while (ki < kids.len()) { nk = nk.append(cf_inline_expr(kids[ki], funcs)); ki = ki + 1; }
-    return dl_expr_with_kids(e, nk);
+    return map_expr_kids(e, function (k: Expr): Expr { return cf_inline_expr(k, funcs); });
 }
 
 function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
