@@ -5907,7 +5907,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): util.Diag[] {
   if (nargs >= 0) {
     var tpc: i32 = struct_type_param_count(structs, util.base_type_name(t));
     if (tpc >= 0 && nargs != tpc) {
-      out = out.append(dg_at("E019", "struct " + util.base_type_name(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied", struct_decl_line(structs, util.base_type_name(t)), struct_decl_col(structs, util.base_type_name(t))));
+      out = out.append(dg_at("E019", "struct " + util.base_type_name(t) + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, util.base_type_name(t)), struct_decl_col(structs, util.base_type_name(t))));
     }
   }
   return out;
@@ -5993,7 +5993,7 @@ function record_pattern_diags(pv: parser.PatVariant, structs: StructSig[], line:
       listed = listed + decl[d];
       d = d + 1;
     }
-    out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + itoa_nn(decl.len()) + " field(s) (" + listed + ")", line, col));
+    out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + ")", line, col));
   }
   return out;
 }
@@ -6083,7 +6083,7 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[], unions: UnionSi
                       nb = nb + 1;
                     }
                     if (nb != pc) {
-                      out = out.append(dg_at("E015", "variant " + pv.type_name + " has " + itoa_nn(pc) + " payload(s), got " + itoa_nn(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
+                      out = out.append(dg_at("E015", "variant " + pv.type_name + " has " + util.i32_to_string(pc) + " payload(s), got " + util.i32_to_string(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
                     }
                   }
                 }
@@ -6210,24 +6210,6 @@ function dupvar_diags(stmts: parser.Stmt[]): util.Diag[] {
     i = i + 1;
   }
   return out;
-}
-
-// itoa_nn renders a non-negative i32 as decimal (checker.fern has no
-// int→string, and diagnostic messages aren't part of the differential
-// gate, but a faithful count reads better).
-pub function itoa_nn(n: i32): string {
-  if (n == 0) {
-    return "0";
-  }
-  var digits: string = "0123456789";
-  var s: string = "";
-  var v: i32 = n;
-  while (v > 0) {
-    var d: i32 = v % 10;
-    s = digits[d:d + 1] + s;
-    v = v / 10;
-  }
-  return s;
 }
 
 // call_diags recurses through an expression (scope-threaded) emitting the
@@ -6426,14 +6408,14 @@ function variant_ctor_diags(vname: string, c: parser.ExprCall, s: Scope): util.D
     return out;
   }
   if (c.args.len() != want) {
-    out = out.append(dg_at("E036", "variant " + vname + " expects " + itoa_nn(want) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+    out = out.append(dg_at("E036", "variant " + vname + " expects " + util.i32_to_string(want) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
   }
   var i: i32 = 0;
   while (i < c.args.len() && i < want) {
     var at: Type = check_expr(c.args[i], s);
     var pt: Type = variant_payload_type_at(s, vname, i);
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !type_assignable(at, pt, s.unions)) {
-      out = out.append(dg_at("E036", "variant " + vname + " payload " + itoa_nn(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
+      out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
   }
@@ -6824,11 +6806,11 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
             // relies on inference, and type args on a non-generic
             // function are ignored (matching the Go checker).
             if (sig.name.len() > 0 && sig.type_param_count > 0 && c.type_argc > 0 && c.type_argc != sig.type_param_count) {
-              out = out.append(dg_at("E040", id.name + " expects " + itoa_nn(sig.type_param_count) + " type argument(s), got " + itoa_nn(c.type_argc), c.line, c.col));
+              out = out.append(dg_at("E040", id.name + " expects " + util.i32_to_string(sig.type_param_count) + " type argument(s), got " + util.i32_to_string(c.type_argc), c.line, c.col));
             }
             if (sig.name.len() > 0) {
               if (c.args.len() != sig.param_types.len()) {
-                out = out.append(dg_at("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()), c.line, c.col));
+                out = out.append(dg_at("E004", "function expects " + util.i32_to_string(sig.param_types.len()) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
               } else {
                 // E038: per-argument type mismatch (only when
                 // the arity matches, so indices line up).
@@ -6850,7 +6832,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
                   // it, so skip rather than mis-flag E038. (An
                   // unknown ARG is already skipped above.)
                   if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !type_assignable(at, sig.param_types[ai], s.unions)) {
-                    out = out.append(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
+                    out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                   }
                   // E034: a composite-array literal argument's
                   // elements checked against the parameter's
@@ -6955,7 +6937,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
               if (msig.name.len() > 0) {
                 if (c.args.len() != msig.param_types.len()) {
-                  out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+                  out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(msig.param_types.len()) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
                 } else {
                   // E038: per-argument type mismatch on a
                   // user-defined method. Now that
@@ -6971,7 +6953,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
                     // Skip an opaque generic param type (see
                     // the free-function E038 note above).
                     if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
-                      out = out.append(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+                      out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                     }
                     // E034: composite-array method argument
                     // elements vs the parameter element type.
@@ -7418,7 +7400,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
           if (idx < 0) {
             out = out.append(dg_at("E046", "tuple field access requires a numeric index, got \"" + fa.field + "\"", fa.line, fa.col));
           } else if (idx >= tt.elements.len()) {
-            out = out.append(dg_at("E046", "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range", fa.line, fa.col));
+            out = out.append(dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + util.i32_to_string(idx) + " is out of range", fa.line, fa.col));
           }
         },
         _ => {
@@ -8163,7 +8145,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
           match (dit) {
             TypeTuple(dtt) => {
               if (dtt.elements.len() != nnames) {
-                out = out.append(dg_at("E024", "tuple has " + itoa_nn(dtt.elements.len()) + " elements, but " + itoa_nn(nnames) + " names given", v.line, v.col));
+                out = out.append(dg_at("E024", "tuple has " + util.i32_to_string(dtt.elements.len()) + " elements, but " + util.i32_to_string(nnames) + " names given", v.line, v.col));
               }
             },
             TypeUnknown(_) => {},
@@ -9063,7 +9045,7 @@ function ru_borrow(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     parser.ExprIdent(id) => {
       var d: util.Diag[] = [];
       if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
-        d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+        d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
       }
       return OwnWalk { moved: moved, diags: d };
     },
@@ -9083,7 +9065,7 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var m: MovedEntry[] = moved;
       if (ow_is_owned(ctx, id.name)) {
         if (ow_moved_has(moved, id.name)) {
-          d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+          d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
         } else {
           m = ow_moved_add(moved, id.name, id.line);
         }
