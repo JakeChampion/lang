@@ -351,14 +351,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_replace\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n"); return s;
     }
-    if (o.kind_tag == 112) {  // str_chars
-        // operand stack [s box]; __fern_str_chars is a Fern runtime function now
-        // (#2649): asm_arm64.emit_runtime emits the shared body gated on str_chars
-        // (it appends each 1-char slice; mark_str_chars pulls in arr_push + heap).
-        // The box on the stack IS param[0] (at [x29,#16]); call, pop arg, push result.
-        s = s.mark_str_chars();
-        s = s.write("    bl __fn___fern_str_chars\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n"); return s;
-    }
     if (o.kind_tag == 113) {  // str_lines
         // operand stack [s box]; __fern_str_lines is a Fern runtime function now
         // (#2649): asm_arm64.emit_runtime emits the shared body gated on the
@@ -5664,11 +5656,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("str_bytes")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s.struct_decls, s);
     }
-    // __fern_str_chars — Fern runtime function (#2649), Tier-1: builds the string[]
-    // by appending each 1-char slice s[i:i+1] (arr_push). Shared by arm64 AST + IR.
-    if (s.has_need("str_chars")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_chars(), s.struct_decls, s);
-    }
     // __fern_str_reverse — Fern runtime function (#2649) via the raw-memory
     // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
     if (s.has_need("str_reverse")) {
@@ -5880,11 +5867,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
             s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork(tgt), s.struct_decls, s);
         }
     }
-    // __fern_str_chars is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_str_chars, emitted (need-gated) in the migrated-helpers
-    // section below. The single shared body serves both arm64 AST + IR. It appends
-    // each 1-char slice s[i:i+1] (arr_push) — deps declared by mark_str_chars /
-    // runtime_need_deps.
     // __fern_str_lines is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_lines, emitted (need-gated) in the migrated-helpers
     // section below. The single shared body serves both arm64 AST + IR; its deps

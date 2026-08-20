@@ -108,7 +108,9 @@ worsened here.
    frees on the way out. Native reads back correctly; self-host x86-64 reads
    corrupted element data. This one is a WRONG ANSWER, not a leak, and it is the
    same view-lifetime question the register half above has to answer.
-3. **`.chars()` yields string elements on the self-host path** (#7231). `"abcdefgh"
-   .chars()` prints `97, 98` under the native compiler and `a, b` under the
-   self-host one, despite the declaration being `i32[]`. Read as raw `i32` it
-   prints heap addresses, and one probe segfaulted.
+3. ~~**`.chars()` yields string elements on the self-host path** (#7231).~~
+   FIXED. The self-host was answering `.chars()` from an invented `str_chars`
+   builtin that returned a `string[]` of 1-byte slices; native has no such
+   builtin. The op and its four backend bodies are deleted, and `chars()` is
+   now the codepoint layer on both compilers (`char[]`, Rust-shaped) with the
+   byte layer left to `bytes()` / `to_array()`.

@@ -1316,15 +1316,6 @@ pub function (s: EmitState) mark_arr_i32_product(): EmitState {
     return s.need("arr_i32_product");
 }
 
-// str_chars's helper builds the result array with `.append()`, which the
-// ownership analysis lowers to the reclaim-on-grow __fern_arr_push_owned (`r` is
-// a sole-owner local being reassigned) rather than plain __fern_arr_push, so both
-// symbols must be present. Marked directly here; runtime_need_deps declares the
-// same edges for close_needs (arr_push_owned → arr_push).
-pub function (s: EmitState) mark_str_chars(): EmitState {
-    return s.need("heap").need("arr_push").need("arr_push_owned").need("str_chars");
-}
-
 // str_lines's helper builds its string[] with .append() → arr_push /
 // arr_push_owned, marked as transitive deps directly — same shape as
 // mark_arr_str_join. runtime_need_deps declares the same edges for close_needs.
@@ -1343,7 +1334,7 @@ pub function (s: EmitState) mark_str_bytes(): EmitState {
 
 // str_split's Fern helper builds the result string[] with .append()
 // (__fern_arr_push_owned for the sole-owner local, __fern_arr_push otherwise) —
-// same pairing as str_chars. Marked directly here; runtime_need_deps declares the
+// same pairing as str_lines. Marked directly here; runtime_need_deps declares the
 // same edges for close_needs.
 pub function (s: EmitState) mark_str_split(): EmitState {
     return s.need("heap").need("arr_push").need("arr_push_owned").need("str_split");
@@ -1625,21 +1616,10 @@ pub function rt_src_arr_i32_max(): string {
 // `go` flag + nested if/else instead of `&&`/`||` to stay in the proven subset.
 // Empty / all-whitespace input → start==end → a zero-length slice, matching the
 // hand-asm it replaces.
-// rt_src_str_chars backs `s.chars()` (#2649). Returns a string[] of 1-byte
-// strings — each a zero-copy slice s[i:i+1] (the str_slice op yields a fresh
-// 16-byte box reusing s's data at offset i with length 1, no per-char byte copy).
-// Composite / Tier-1: appends each 1-char slice (.append() → __fern_arr_push); the
-// only allocations are the slice boxes + the growing array, no new primitive. The
-// hand-asm pre-sized the array via __fern_arr_box; the append-loop grows it — same
-// string[] result.
-pub function rt_src_str_chars(): string {
-    return "function __fern_str_chars(s: string): string[] { var n: i32 = s.len(); var r: string[] = []; var i: i32 = 0; while (i < n) { r = r.append(s[i:i + 1]); i = i + 1; } return r; }";
-}
-
 // rt_src_str_split backs `str_split(s, sep)` / `s.split(sep)` (#2649) — a string[]
 // of the substrings between each non-overlapping occurrence of `sep`. Composite /
 // Tier-1: scans for `sep` (inline byte-compare, like str_replace) and appends each
-// segment slice s[start:i] (.append() → __fern_arr_push, like str_chars) — no new
+// segment slice s[start:i] (.append() → __fern_arr_push, like str_lines) — no new
 // primitive. Semantics match the interp: trailing "a,b," → ["a","b",""], leading
 // ",a" → ["","a"], no-match → [s], "" → [""], multi-char sep.
 //
@@ -3113,7 +3093,6 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // String methods that mirror existing builtins.
                     if (ty_is_string(rt)) {
                         if (fa.field == "split") { return ty_array_string(); }
-                        if (fa.field == "chars") { return ty_array_string(); }
                         if (fa.field == "lines") { return ty_array_string(); }
                         if (fa.field == "bytes") { return ty_array_i32(); }
                         if (fa.field == "as_bytes") { return ty_array_i32(); }
@@ -3466,15 +3445,9 @@ pub function runtime_need_deps(name: string): string[] {
         var d6: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d6;
     }
-    if (name == "str_chars") {
-        // __fern_str_chars appends each 1-char slice with .append() — same arr_push /
-        // arr_push_owned pairing as str_bytes.
-        var d7: string[] = ["heap", "arr_push", "arr_push_owned"];
-        return d7;
-    }
     if (name == "str_split") {
         // __fern_str_split builds the result string[] by appending each s[start:i]
-        // slice — same arr_push / arr_push_owned pairing as str_chars.
+        // slice — same arr_push / arr_push_owned pairing as str_bytes.
         var d8: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d8;
     }

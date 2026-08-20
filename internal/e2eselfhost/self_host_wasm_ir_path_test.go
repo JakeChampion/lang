@@ -1042,13 +1042,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"replace-byte", `function main(): i32 { var r = "hello".replace("l", "L"); return r[2]; }`, 76},
 		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`, 3},
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
-		// String chars (op_str_chars) -> string[] of 1-char blocks. wasm AST has no
-		// chars, so IR-only (dedicated str_chars_helper, copying).
-		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`, 5},
-		{"chars-elem-len", `function main(): i32 { return "abc".chars()[1].len(); }`, 1},
-		{"chars-elem-byte", `function main(): i32 { return "abc".chars()[1][0]; }`, 98},
-		{"chars-empty", `function main(): i32 { return "".chars().len() + 4; }`, 4},
-		{"chars-forin", `function main(): i32 { var n = 0; for c in "hello".chars() { n = n + c.len(); } return n; }`, 5},
 		// String lines (op_str_lines) -> string[]. wasm AST has no lines, so IR-only.
 		{"lines-3", `function main(): i32 { return "a\nb\nc".lines().len(); }`, 3},
 		{"lines-trailing-nl", `function main(): i32 { return "a\nb\nc\n".lines().len(); }`, 3},

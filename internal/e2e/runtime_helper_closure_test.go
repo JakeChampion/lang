@@ -45,7 +45,7 @@ var allRuntimeNeedRoots = []string{
 	"arr_str_index_of", "arr_str_join", "chr", "eprint", "heap", "i32_pow",
 	"i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
 	"print_int", "putchar", "random_bytes", "random_i32", "read_file",
-	"read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
+	"read_int", "sleep_ms", "str_bytes", "str_case", "str_cmp",
 	"str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
 	"str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
 	"str_split", "str_to_i32", "str_trim", "strbuf",

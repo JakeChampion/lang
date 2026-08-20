@@ -1347,30 +1347,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
-			"str-chars-len",
-			"function main(): i32 { var s = \"hello\"; var cs = s.chars(); return cs.len(); }",
-			5,
-			"",
-		},
-		{
-			"str-chars-content",
-			"function main(): i32 { var s = \"abc\"; var cs = s.chars(); for c in cs { write(c); write(\"|\"); } return 0; }",
-			0,
-			"a|b|c|",
-		},
-		{
-			"str-chars-empty",
-			"function main(): i32 { var s = \"\"; var cs = s.chars(); return cs.len(); }",
-			0,
-			"",
-		},
-		{
-			"str-chars-index",
-			"function main(): i32 { var s = \"xyz\"; var cs = s.chars(); write(cs[1]); return 0; }",
-			0,
-			"y",
-		},
-		{
 			"arr-i32-product",
 			"function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }",
 			30,

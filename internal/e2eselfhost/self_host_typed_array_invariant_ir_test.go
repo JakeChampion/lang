@@ -28,7 +28,7 @@ import (
 // fails here rather than years later.
 //
 // Half the fixtures are self-host dialect with no interpreter oracle
-// (`str_split` is E001 natively; `.bytes()` / `.chars()` / `.lines()` need
+// (`str_split` is E001 natively; `.bytes()` / `.lines()` need
 // `std/string` imported), so their exit codes are stated and were verified
 // against the emitted wasm. The three that ARE native-valid carry the same value
 // on both, which is what makes the stated ones credible.
@@ -69,7 +69,6 @@ func TestSelfHostTypedArrayInvariantIR(t *testing.T) {
 
 		// The string methods that yield arrays.
 		{"bytes-for", `function main(): i32 { var b = "abc".bytes(); var n = 0; for c in b { n = n + 1; } return n; }`, 3, nil},
-		{"chars-for", `function main(): i32 { var c = "abcd".chars(); var n = 0; for x in c { n = n + 1; } return n; }`, 4, nil},
 		{"lines-for", "function main(): i32 { var l = \"a\\nb\\nc\".lines(); var n = 0; for x in l { n = n + 1; } return n; }", 3, nil},
 
 		// The WIDE element kinds, whose flags are the other two predicates.

@@ -1867,8 +1867,8 @@ pub function (s: LowerState) is_strarr_builtin_slot(i: i32): boolean {
 // (__fn___fern_str_split) confirms — so the elements are made by the runtime and
 // stored into that array and nowhere else.
 //
-// `chars` is deliberately absent: it yields i32[], with no string elements to
-// reclaim.
+// `chars` is deliberately absent: it is not a builtin — it resolves to
+// std/string's codepoint decoder, which returns char[].
 function init_is_builtin_strarr_producer(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprCall(bc) => {
@@ -5106,7 +5106,6 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                         return expr_is_strarr(cfa.obj, s);
                     }
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
-                    if (cfa.field == "chars" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "lines" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `m.keys()` on a string-keyed map / `m.values()` on a
                     // string-valued map yields a string[].
@@ -5340,9 +5339,6 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                         return expr_is_str(cfa.obj, s);
                     }
                     if (cfa.field == "split" && c.args.len() == 1) {
-                        return expr_is_str(cfa.obj, s);
-                    }
-                    if (cfa.field == "chars" && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
                     if (cfa.field == "lines" && c.args.len() == 0) {
@@ -5996,7 +5992,7 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
 // the predicates (scalar results, no box at all) and is about what a method does
 // to its RECEIVER; this is about what it returns. `trim` returns a view and
 // `replace` returns the receiver unchanged when the needle is absent, so neither
-// belongs here — and `chars` / `lines` / `split` return arrays, not strings.
+// belongs here — and `lines` / `split` return arrays, not strings.
 function str_fresh_alloc_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower"
         || field == "reverse" || field == "repeat";
@@ -8553,7 +8549,7 @@ pub function str_free_call_field(name: string): string {
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim"
         || field == "reverse" || field == "repeat" || field == "replace"
-        || field == "chars" || field == "lines"
+        || field == "lines"
         || field == "split"
         || field == "starts_with" || field == "ends_with" || field == "index_of"
         || field == "contains";
@@ -8562,7 +8558,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // str_method_argc gives the argument count of a string builtin method: the case
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
-    if (field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim" || field == "reverse" || field == "chars" || field == "lines") { return 0; }
+    if (field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim" || field == "reverse" || field == "lines") { return 0; }
     if (field == "replace") { return 2; }
     return 1;
 }
@@ -8585,9 +8581,9 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     // str_borrowing_method is the warrant: those methods read the receiver's
     // bytes or allocate a new buffer and hand neither the receiver's box nor a
     // view of it back. `trim` and `replace` are outside it because both can
-    // return the receiver, and `chars` / `lines` / `split` were never in it
-    // because their results carry views into the receiver's bytes — all four
-    // still lower here, and all four keep the leak rather than risk the alias.
+    // return the receiver, and `lines` / `split` were never in it
+    // because their results carry views into the receiver's bytes — all three
+    // still lower here, and all three keep the leak rather than risk the alias.
     var rslots: i32[] = [];
     // A SLICE receiver is a box nobody names either — `base[a:b].starts_with(..)`
     // materialises one and the op is done with it once it returns.
@@ -8595,7 +8591,7 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     // the question it answers), but str_borrowing_method is the warrant that
     // matters here: every method in that set reads the receiver's bytes and hands
     // back a scalar or a freshly allocated string, never the receiver or a view of
-    // it. `trim` / `replace` / `chars` / `lines` / `split` are outside it precisely
+    // it. `trim` / `replace` / `lines` / `split` are outside it precisely
     // because they can alias, and they keep the leak.
     var rview: boolean = false;
     var rtake: boolean = false;
@@ -8620,7 +8616,6 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     if (field == "to_ascii_lower") { return free_stashed_recv(p.emit(ir.op_str_to_lower()), rslots, rview); }
     if (field == "trim") { return p.emit(ir.op_str_trim()); }
     if (field == "reverse") { return free_stashed_recv(p.emit(ir.op_str_reverse()), rslots, rview); }
-    if (field == "chars") { return p.emit(ir.op_str_chars()); }
     if (field == "lines") { return p.emit(ir.op_str_lines()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
@@ -18576,7 +18571,6 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 parser.ExprFieldAccess(cfa) => {
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                     else if (cfa.field == "split" && cc.args.len() == 1 && expr_is_str(cfa.obj, se)) { is_arr = true; }
-                    else if (cfa.field == "chars" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                     else if (cfa.field == "lines" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                     // `var a = obj.m()` where obj is a struct and method `m`
                     // returns an array (e.g. a struct-array `P[]`) — a MOVE,

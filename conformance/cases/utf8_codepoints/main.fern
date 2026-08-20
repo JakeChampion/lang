@@ -1,31 +1,31 @@
-// std/string UTF-8 codepoint layer (#4416 ROADMAP #6): codepoints() /
+// std/string UTF-8 codepoint layer (#4416 ROADMAP #6): chars() /
 // codepoint_count() decode UTF-8 to Unicode scalar values; string_from_codepoint
 // / string_from_codepoints re-encode. Ill-formed input substitutes U+FFFD.
 // Exercised on every backend (interp oracle + x86-64 / arm64 / wasm) — the
 // decode/encode is pure byte + i32 arithmetic over the raw-memory intrinsics,
-// so it must agree everywhere. codepoints() yields `char` (#5629), so the
+// so it must agree everywhere. chars() yields `char` (#5629), so the
 // decoded values are compared through `as i32`.
 import "std/string";
 
 function main(): i32 {
     // ASCII decodes 1:1 with the byte view.
-    var a: char[] = "abc".codepoints();
+    var a: char[] = "abc".chars();
     if (a.len() != 3 || (a[0] as i32) != 97 || (a[1] as i32) != 98 || (a[2] as i32) != 99) { print("ascii FAILED"); return 1; }
     if ("abc".codepoint_count() != 3) { print("ascii count FAILED"); return 1; }
 
     // 2-byte é (U+00E9), 3-byte € (U+20AC), 4-byte 😀 (U+1F600).
-    var e: char[] = "é".codepoints();
+    var e: char[] = "é".chars();
     if (e.len() != 1 || (e[0] as i32) != 233) { print("2-byte FAILED"); return 1; }
-    var eu: char[] = "€".codepoints();
+    var eu: char[] = "€".chars();
     if (eu.len() != 1 || (eu[0] as i32) != 8364) { print("3-byte FAILED"); return 1; }
-    var g: char[] = "😀".codepoints();
+    var g: char[] = "😀".chars();
     if (g.len() != 1 || (g[0] as i32) != 128512) { print("4-byte FAILED"); return 1; }
 
     // Mixed: byte len 10, codepoint count 5, decoded values in order.
     var mix: string = "a€b😀c";
     if (mix.len() != 10) { print("mixed bytelen FAILED"); return 1; }
     if (mix.codepoint_count() != 5) { print("mixed count FAILED"); return 1; }
-    var mc: char[] = mix.codepoints();
+    var mc: char[] = mix.chars();
     if (mc.len() != 5 || (mc[0] as i32) != 97 || (mc[1] as i32) != 8364 || (mc[2] as i32) != 98 || (mc[3] as i32) != 128512 || (mc[4] as i32) != 99) {
         print("mixed decode FAILED"); return 1;
     }
@@ -33,17 +33,17 @@ function main(): i32 {
     // Encode: single scalar and array; round-trip the mixed string.
     if (string.string_from_codepoint(128512 as char) != "😀") { print("encode one FAILED"); return 1; }
     if (string.string_from_codepoints([104 as char, 233 as char, 108 as char, 108 as char, 111 as char]) != "héllo") { print("encode arr FAILED"); return 1; }
-    if (string.string_from_codepoints(mix.codepoints()) != mix) { print("roundtrip FAILED"); return 1; }
+    if (string.string_from_codepoints(mix.chars()) != mix) { print("roundtrip FAILED"); return 1; }
 
-    // count == codepoints().len() on non-trivial input (the shared __utf8_step).
-    if (mix.codepoint_count() != mix.codepoints().len()) { print("count/len mismatch FAILED"); return 1; }
+    // count == chars().len() on non-trivial input (the shared __utf8_step).
+    if (mix.codepoint_count() != mix.chars().len()) { print("count/len mismatch FAILED"); return 1; }
 
     // Ill-formed bytes substitute exactly one U+FFFD and resume.
-    var bad: char[] = string_from_bytes_unchecked([255 as u8, 66 as u8]).codepoints();   // invalid lead, then 'B'
+    var bad: char[] = string_from_bytes_unchecked([255 as u8, 66 as u8]).chars();   // invalid lead, then 'B'
     if (bad.len() != 2 || (bad[0] as i32) != 65533 || (bad[1] as i32) != 66) { print("bad-lead FAILED"); return 1; }
-    var trunc: char[] = string_from_bytes_unchecked([226 as u8]).codepoints();           // truncated 3-byte lead
+    var trunc: char[] = string_from_bytes_unchecked([226 as u8]).chars();           // truncated 3-byte lead
     if (trunc.len() != 1 || (trunc[0] as i32) != 65533) { print("truncated FAILED"); return 1; }
-    var stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).codepoints(); // 'A', stray cont, 'B'
+    var stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).chars(); // 'A', stray cont, 'B'
     if (stray.len() != 3 || (stray[0] as i32) != 65 || (stray[1] as i32) != 65533 || (stray[2] as i32) != 66) { print("stray-cont FAILED"); return 1; }
 
     // Surrogates and out-of-range sanitise to U+FFFD on encode. The bad
@@ -56,7 +56,7 @@ function main(): i32 {
     if (string.string_from_codepoint(oor as char) != string.string_from_codepoint(65533 as char)) { print("oor FAILED"); return 1; }
 
     // Empty string: no codepoints.
-    if ("".codepoints().len() != 0 || "".codepoint_count() != 0) { print("empty FAILED"); return 1; }
+    if ("".chars().len() != 0 || "".codepoint_count() != 0) { print("empty FAILED"); return 1; }
 
     print("OK");
     return 0;
