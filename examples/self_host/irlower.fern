@@ -6580,8 +6580,13 @@ function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerStat
 function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerState {
     var lf: boolean = is_fresh_str_temp(b.left, s);
     var rf: boolean = is_fresh_str_temp(b.right, s);
-    var sl: LowerState = lower_view_borrowed(b.left, s);
+    var lst: ArgStash = lower_view_borrowed_parked(b.left, s);
+    var sl: LowerState = lst.state;
     if (!sl.ok) { return sl; }
+    // A slice operand parks instead of taking the lf path: is_fresh_str_temp
+    // refuses a slice (it aliases its source), so the two are exclusive and
+    // nothing is released twice.
+    var lv: i32 = lst.slot;
     var lt: i32 = 0 - 1;
     if (lf) {
         var lname: string = "$cclt" + util.i32_to_string(sl.locals.len());
@@ -6590,8 +6595,10 @@ function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerStat
         sl = sl.emit(ir.op_store_local(lt));
         sl = sl.emit(ir.op_load_local(lt));
     }
-    var sr: LowerState = lower_view_borrowed(b.right, sl);
+    var rst: ArgStash = lower_view_borrowed_parked(b.right, sl);
+    var sr: LowerState = rst.state;
     if (!sr.ok) { return sr; }
+    var rv: i32 = rst.slot;
     var rt: i32 = 0 - 1;
     if (rf) {
         var rname: string = "$ccrt" + util.i32_to_string(sr.locals.len());
@@ -6601,7 +6608,7 @@ function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerStat
         sr = sr.emit(ir.op_load_local(rt));
     }
     sr = sr.emit(ir.op_str_concat());
-    if (!lf && !rf) { return sr; }
+    if (!lf && !rf && lv < 0 && rv < 0) { return sr; }
     var resname: string = "$ccres" + util.i32_to_string(sr.locals.len());
     sr = sr.add_local(resname);
     var res: i32 = sr.slot_of(resname);
@@ -6616,6 +6623,10 @@ function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerStat
         sr = sr.emit(ir.op_call_direct("__fern_str_free", 1));
         sr = sr.emit(ir.op_drop());
     }
+    var ccv: i32[] = [];
+    if (lv >= 0) { ccv = ccv.append(lv); }
+    if (rv >= 0) { ccv = ccv.append(rv); }
+    sr = free_parked_views(sr, ccv);
     return sr.emit(ir.op_load_local(res));
 }
 
@@ -9896,9 +9907,10 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // map_new / Some / Ok), so this never shadows a user function.
     if (cid.name == "len" && c.args.len() == 1) {
         var lstr: boolean = expr_is_str(c.args[0], s);
-        var ls: LowerState = lower_view_borrowed(c.args[0], s);
+        var lvst: ArgStash = lower_view_borrowed_parked(c.args[0], s);
+        var ls: LowerState = lvst.state;
         if (!ls.ok) { return ls; }
-        if (lstr) { return ls.emit(ir.op_str_len()); }
+        if (lstr) { return free_parked_view_after(ls.emit(ir.op_str_len()), lvst.slot); }
         return ls.emit(ir.op_arr_len());
     }
     // String builtin free calls — `str_split(s, sep)` and the
@@ -11186,9 +11198,10 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 return fr.emit(ir.op_load_local(nslot));
             }
         }
-        var sl: LowerState = lower_view_borrowed(fa.obj, s);
+        var lnst: ArgStash = lower_view_borrowed_parked(fa.obj, s);
+        var sl: LowerState = lnst.state;
         if (!sl.ok) { return sl; }
-        if (str_recv) { return sl.emit(ir.op_str_len()); }
+        if (str_recv) { return free_parked_view_after(sl.emit(ir.op_str_len()), lnst.slot); }
         // A FRESH-ARRAY-returning call receiver (`mk(i).len()`,
         // mk in the strict-fresh "ARR:" registry — every return
         // a direct scalar-element array literal): the returned
@@ -12928,21 +12941,29 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // moved; the temp's own scope-exit / accumulator reclaim handles it).
                 if (b.op == "+") { return emit_str_concat_reclaim(b, s); }
                 if (b.op == "==" || b.op == "!=") {
-                    var sl: LowerState = lower_view_borrowed(b.left, s);
+                    var eqL: ArgStash = lower_view_borrowed_parked(b.left, s);
+                    var sl: LowerState = eqL.state;
                     if (!sl.ok) { return sl; }
-                    var sr: LowerState = lower_view_borrowed(b.right, sl);
+                    var eqR: ArgStash = lower_view_borrowed_parked(b.right, sl);
+                    var sr: LowerState = eqR.state;
                     if (!sr.ok) { return sr; }
                     var se: LowerState = sr.emit(ir.op_str_eq());
+                    se = free_parked_view_after(se, eqL.slot);
+                    se = free_parked_view_after(se, eqR.slot);
                     if (b.op == "!=") { return se.emit(ir.op_bin("not", 0, false)); }
                     return se;
                 }
                 if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                    var cl: LowerState = lower_view_borrowed(b.left, s);
+                    var cmpL: ArgStash = lower_view_borrowed_parked(b.left, s);
+                    var cl: LowerState = cmpL.state;
                     if (!cl.ok) { return cl; }
-                    var cr: LowerState = lower_view_borrowed(b.right, cl);
+                    var cmpR: ArgStash = lower_view_borrowed_parked(b.right, cl);
+                    var cr: LowerState = cmpR.state;
                     if (!cr.ok) { return cr; }
                     // str_cmp(a,b) <rel> 0
                     var cc: LowerState = cr.emit(ir.op_str_cmp());
+                    cc = free_parked_view_after(cc, cmpL.slot);
+                    cc = free_parked_view_after(cc, cmpR.slot);
                     cc = cc.emit(ir.op_const_i32(0));
                     return cc.emit(ir.op_bin(map_binop(b.op), 0, false));
                 }
@@ -13372,7 +13393,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     if (ixown != "") { ixdeep = true; }
                 }
             }
-            var sidx: LowerState = lower_view_borrowed(ix.array, s);
+            var ixvst: ArgStash = lower_view_borrowed_parked(ix.array, s);
+            var sidx: LowerState = ixvst.state;
             if (!sidx.ok) { return sidx; }
             var ixslot: i32 = 0 - 1;
             if (ixown != "") {
@@ -13384,7 +13406,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             }
             sidx = lower_expr(ix.index, sidx);
             if (!sidx.ok) { return sidx; }
-            if (expr_is_str(ix.array, s)) { return sidx.emit(ir.op_str_index()); }
+            if (expr_is_str(ix.array, s)) { return free_parked_view_after(sidx.emit(ir.op_str_index()), ixvst.slot); }
             if (ixslot >= 0) {
                 var ixw: i32 = 32;
                 if (ixtag == "f64") { ixw = 64; }
@@ -13437,13 +13459,14 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // A slice OF a slice borrows its source: the outer box's data
             // pointer aims into the ORIGINAL buffer, never into the inner box,
             // so the inner one is dead the moment this op has read it.
-            var ssl: LowerState = lower_view_borrowed(slc.array, s);
+            var slvst: ArgStash = lower_view_borrowed_parked(slc.array, s);
+            var ssl: LowerState = slvst.state;
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.start, ssl);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.end, ssl);
             if (!ssl.ok) { return ssl; }
-            if (slc_is_str) { return ssl.emit(ir.op_str_slice()); }
+            if (slc_is_str) { return free_parked_view_after(ssl.emit(ir.op_str_slice()), slvst.slot); }
             return ssl.emit(ir.op_arr_slice(slc_w));
         },
         parser.ExprCall(c) => {
@@ -16849,6 +16872,66 @@ function view_frame_temp_ok(e: parser.Expr, s: LowerState): boolean {
 function lower_view_borrowed(e: parser.Expr, s: LowerState): LowerState {
     if (view_frame_temp_ok(e, s)) { return lower_str_slice_frame(e, s); }
     return lower_expr(e, s);
+}
+
+// lower_view_borrowed_parked is lower_view_borrowed plus the WASM half of the
+// same idea, and the two are alternatives rather than additions: a borrow-
+// position slice temp has to stop costing anything, and the backends get there
+// differently.
+//
+// On the register backends view_frame_temp_ok routes the slice to
+// lower_str_slice_frame, whose 24-byte box lives in three reserved frame slots
+// and never reaches the heap — nothing to release, which is why that predicate
+// bails on wasm rather than pretending otherwise. wasm has no such storage
+// (op_str_slice_frame's own note: it "ignores it, its str_slice copies into a
+// fresh inline block"), so the copy is a real heap block and every borrow
+// position stranded one: 48000 B over 400 rounds, payload-sized, at each of the
+// six positions measured.
+//
+// So park it and let the caller drain after the consuming op, the same park/
+// drain pair stash_fresh_str_arg uses. The warrant is the one lower_view_borrowed
+// already asserts in its name — the value is borrowed for the duration of ONE
+// EXPRESSION — which is exactly the proof the frame form relies on to reuse its
+// slots. A slot of `0 - 1` means nothing was parked, so a caller can drain
+// unconditionally.
+function lower_view_borrowed_parked(e: parser.Expr, s: LowerState): ArgStash {
+    var p: LowerState = lower_view_borrowed(e, s);
+    if (!p.ok || !s.for_wasm()) { return ArgStash { state: p, slot: 0 - 1 }; }
+    var is_str_slice: boolean = false;
+    match (e) {
+        parser.ExprSlice(vsl) => { is_str_slice = expr_is_str(vsl.array, s); },
+        _ => {}
+    }
+    if (!is_str_slice) { return ArgStash { state: p, slot: 0 - 1 }; }
+    var vn: string = "$vwb" + util.i32_to_string(p.locals.len());
+    p = p.add_local(vn);
+    var vslot: i32 = p.slot_of(vn);
+    p = p.emit(ir.op_store_local(vslot));
+    p = p.emit(ir.op_load_local(vslot));
+    return ArgStash { state: p, slot: vslot };
+}
+
+// free_parked_views drains what lower_view_borrowed_parked parked. Slots are
+// released through __fern_str_view_free, which on wasm is the rc dec that frees
+// the copy and on the register backends skips a box outside the arena — so a
+// caller that parks nothing, or runs on a backend that parked nothing, emits
+// nothing.
+function free_parked_views(s: LowerState, slots: i32[]): LowerState {
+    if (slots.len() == 0) { return s; }
+    return free_stashed_recv(s, slots, true);
+}
+
+// free_parked_view_after drains one parked view AFTER the op that consumed it,
+// which is where every single-operand borrow position wants it. The three
+// emitted ops are stack-neutral — load pushes the box, the call replaces it,
+// drop removes the result — so whatever the consuming op left on top stays on
+// top. A slot of `0 - 1` emits nothing, which is the register backends and every
+// non-slice operand.
+function free_parked_view_after(s: LowerState, slot: i32): LowerState {
+    if (slot < 0) { return s; }
+    var one: i32[] = [];
+    one = one.append(slot);
+    return free_stashed_recv(s, one, true);
 }
 
 // view_frame_slot_name is the name the reserved box slots carry. No source
