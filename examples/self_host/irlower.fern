@@ -23518,7 +23518,8 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 if (!is_lit && !is_opt) {
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
-                        if (!body_has_top_level_match(body, v.name) && !opt_body_binding_escapes(body, v.name, rcc.variant)) {
+                        if (!body_has_top_level_match(body, v.name)
+                                && !opt_body_binding_escapes(body, v.name, rcc.variant, type_is_scalar_union(rcc.ptype))) {
                             is_rcopt = true;
                             rcopt_pfree = opt_payload_freefn(rcc.ptype);
                             rcopt_sty = opt_payload_deep_sty(rcc.ptype, structs);
@@ -32671,6 +32672,22 @@ function type_is_scalar_option(tn: string): boolean {
     return is_scalar_type_name(tn[7 : tn.len() - 1]);
 }
 
+// type_is_scalar_union widens that to any tagged union whose payload is a
+// by-value scalar in EVERY arm: `Option[<scalar>]`, or `Result[<scalar>,
+// <scalar>]`. Such a box owns no pointer at all, so ONE __fern_rc_dec is its
+// complete release whichever variant it happens to hold — which is what lets a
+// nested one ride the plain payload dec.
+//
+// Result needs BOTH arms proved. The drop runs after the match and does not read
+// the tag, so an Err arm carrying a pointer would be stranded by the very same
+// dec that fully releases a scalar one.
+function type_is_scalar_union(tn: string): boolean {
+    if (type_is_scalar_option(tn)) { return true; }
+    if (tn.len() < 10 || tn[0:7] != "Result[") { return false; }
+    return is_scalar_type_name(opt_payload_type(tn, "Ok"))
+        && is_scalar_type_name(opt_payload_type(tn, "Err"));
+}
+
 // fresh_scalar_option_init reports whether `v` binds a FRESH scalar Option OR
 // Result local — `var o = None`, `var o = Some(p)`, `var r = Ok(p)`, or
 // `var r = Err(p)` whose constructed-variant payload is provably scalar (the
@@ -33435,6 +33452,23 @@ function binding_escapes_arm(arm: parser.MatchArm, name: string, borrowable: str
     return body_unsafe_for(arm.body, name, borrowable, []);
 }
 
+// binding_escapes_arm_scrut is binding_escapes_arm with the MATCH-SCRUTINEE
+// reading #6127 gave the option LOCAL, applied to the arm BINDING instead: a
+// nested `match (binding)` consumes it by reading its tag and payload and
+// retains nothing, so it is a borrow. Any other mention of the binding still
+// escapes, because body_unsafe_for_match_borrow relaxes that one position and
+// nothing else.
+//
+// Only the nested-OPTION payload asks for it, and only there is it sound: the
+// inner box's own payload is scalar, so the nested match's own binding is a
+// COPY that cannot outlive the arm either. An rc inner payload would need its
+// own proof and does not get this reading.
+function binding_escapes_arm_scrut(arm: parser.MatchArm, name: string): boolean {
+    var none: string[] = [];
+    if (arm.has_guard && expr_unsafe_for(arm.guard, name, none, [])) { return true; }
+    return body_unsafe_for_match_borrow(arm.body, name, none, []);
+}
+
 // match_moved_rc_payloads: the Koka consuming-match MOVED-payload set (#4400)
 // for the consuming rc-payload enum match `st`: every "<Variant>#<field k>"
 // whose rc-droppable payload field is BOUND (non-`_`) by an arm to a name that
@@ -34086,6 +34120,28 @@ struct OptRcCand { variant: string, ptype: string }
 // An un-annotated Ok/Err isn't native-valid (Result's other param stays free), so
 // only annotated Results fire; None / a non-fresh / a non-leak-safe payload aren't
 // admitted.
+// opt_arg_is_direct_ctor reports whether `e` CONSTRUCTS a built-in tagged union
+// here — a bare or qualified `Some(x)` / `Ok(x)` / `Err(x)` / `None` — rather
+// than merely having that type. Construction is what makes the box fresh and
+// sole-owned; a bare ident of the same type aliases a local whose own reclaim
+// would free it a second time.
+function opt_arg_is_direct_ctor(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "Some" || id.name == "Ok" || id.name == "Err"; },
+                parser.ExprFieldAccess(fa) => { return fa.field == "Some" || fa.field == "Ok" || fa.field == "Err"; },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(id) => { return id.name == "None"; },
+        parser.ExprFieldAccess(fa) => { return fa.field == "None"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]): OptRcCand {
     var kind: string = "";
     var arg0: parser.Expr = v.init;
@@ -34109,6 +34165,21 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
     // Annotated array payload.
     var pt: string = opt_payload_type(v.type_name, kind);
     if (is_leaksafe_array_field(pt)) { return OptRcCand { variant: kind, ptype: pt }; }
+    // Annotated NESTED UNION payload whose own payload is SCALAR in every arm
+    // (#7218) — a
+    // `var o: Option[Option[i32]] = Some(Some(i))` / `Some(None)` /
+    // `Some(Ok(i))` of `Option[Result[i32, i32]]`. The box at
+    // offset 8 is another rc-headered box holding a by-value scalar and nothing
+    // else, so one __fern_rc_dec releases it whole with no inner walk, exactly
+    // as is_leaksafe_array_field buys for a flat buffer — and exactly what
+    // opt_payload_freefn already answers for this ptype.
+    //
+    // Admitted only for a DIRECT inner construction: `Some(inner)` off a live
+    // local aliases a box that local's own scalar-Option reclaim already frees,
+    // and this drop would be the second.
+    if (type_is_scalar_union(pt) && opt_arg_is_direct_ctor(arg0)) {
+        return OptRcCand { variant: kind, ptype: pt };
+    }
     // Annotated STRING payload (#4355) — admitted only when FRESH: a literal
     // (const_str allocs a fresh box per construction; its .rodata data is
     // heap-guard-skipped by __fern_str_free) or a fresh producer (concat / named
@@ -34211,7 +34282,7 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
 // NOTHING — `"Ok"` never matches a `Some(s)` arm — while reading as if it ran.
 // Checking every arm instead over-refuses: a scalar `Err(e)` binding used in
 // arithmetic is not a payload this drop can release.
-function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
+function opt_arm_binding_escapes(st: parser.Stmt, variant: string, scrut_borrow: boolean): boolean {
     var none: string[] = [];
     match (st) {
         parser.StmtMatch(m) => {
@@ -34230,7 +34301,9 @@ function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
                         var is_target: boolean = vname == variant;
                         if (variant == "Ok|Some") { is_target = vname == "Ok" || vname == "Some"; }
                         if (is_target && pv.binding != "" && pv.binding != "_") {
-                            if (binding_escapes_arm(arm, pv.binding, none)) { return true; }
+                            if (scrut_borrow) {
+                                if (binding_escapes_arm_scrut(arm, pv.binding)) { return true; }
+                            } else if (binding_escapes_arm(arm, pv.binding, none)) { return true; }
                         }
                     },
                     _ => {}
@@ -34250,36 +34323,36 @@ function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
 // than at function top level — opt_arm_binding_escapes only inspects one match, so
 // this lifts it over the whole body. A true result rejects the precise-drop
 // candidate (its payload could be aliased past the box free).
-function opt_body_binding_escapes(stmts: parser.Stmt[], name: string, variant: string): boolean {
+function opt_body_binding_escapes(stmts: parser.Stmt[], name: string, variant: string, scrut_borrow: boolean): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (opt_stmt_binding_escapes(stmts[i], name, variant)) { return true; }
+        if (opt_stmt_binding_escapes(stmts[i], name, variant, scrut_borrow)) { return true; }
         i = i + 1;
     }
     return false;
 }
-function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string): boolean {
+function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string, scrut_borrow: boolean): boolean {
     match (st) {
         parser.StmtMatch(m) => {
             match (m.scrutinee) {
                 parser.ExprIdent(id) => {
-                    if (id.name == name && opt_arm_binding_escapes(st, variant)) { return true; }
+                    if (id.name == name && opt_arm_binding_escapes(st, variant, scrut_borrow)) { return true; }
                 },
                 _ => {}
             }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (opt_body_binding_escapes(m.arms[ai].body, name, variant)) { return true; }
+                if (opt_body_binding_escapes(m.arms[ai].body, name, variant, scrut_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
         parser.StmtIf(iff) => {
-            return opt_body_binding_escapes(iff.then_body, name, variant)
-                || opt_body_binding_escapes(iff.else_body, name, variant);
+            return opt_body_binding_escapes(iff.then_body, name, variant, scrut_borrow)
+                || opt_body_binding_escapes(iff.else_body, name, variant, scrut_borrow);
         },
-        parser.StmtWhile(w) => { return opt_body_binding_escapes(w.body, name, variant); },
-        parser.StmtFor(f) => { return opt_body_binding_escapes(f.body, name, variant); },
+        parser.StmtWhile(w) => { return opt_body_binding_escapes(w.body, name, variant, scrut_borrow); },
+        parser.StmtFor(f) => { return opt_body_binding_escapes(f.body, name, variant, scrut_borrow); },
         _ => { return false; }
     }
 }
@@ -34985,7 +35058,11 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                         var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
-                        var binds_esc: boolean = opt_arm_binding_escapes(msv[0], cand.variant);
+                        // A nested-OPTION payload reads its arm's `match (binding)`
+                        // as a BORROW (binding_escapes_arm_scrut); every other
+                        // payload kind keeps the coarse walker, so this widens
+                        // exactly one class.
+                        var binds_esc: boolean = opt_arm_binding_escapes(msv[0], cand.variant, type_is_scalar_union(cand.ptype));
                         if (!arms_use && dead_after && !escapes && !binds_esc) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
@@ -35006,7 +35083,14 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             // block pass would emit a shallow dec and strand the field
                             // buffers, which is the #5453 regression this gate was added
                             // for.
-                            blockable = blockable.append(cand.ptype == "string" || cand.ptype == "string[]" || is_leaksafe_array_field(cand.ptype) || dsty.len() > 0);
+                            // A nested-OPTION payload is blockable for the same
+                            // reason a leak-safe array is: the inner box holds a
+                            // by-value scalar and nothing else, so one
+                            // __fern_rc_dec is its COMPLETE drop and no
+                            // surrounding machinery is starved by the slot zero.
+                            blockable = blockable.append(cand.ptype == "string" || cand.ptype == "string[]"
+                                || is_leaksafe_array_field(cand.ptype) || type_is_scalar_union(cand.ptype)
+                                || dsty.len() > 0);
                             tagged = tagged.append(call_pt != "");
                             // #6360: the Err arm's string may be released too, but
                             // only for a call-bound candidate whose producer is
@@ -35522,7 +35606,7 @@ function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boole
                     },
                     _ => {}
                 }
-                if (is_elem && opt_arm_binding_escapes(stmts[i], "Some")) { return true; }
+                if (is_elem && opt_arm_binding_escapes(stmts[i], "Some", false)) { return true; }
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
                     if (optaarr_elem_payload_escapes(m.arms[ai].body, name)) { return true; }
