@@ -5769,10 +5769,15 @@ pub function count_type_args(t: string): i32 {
 
 // struct_type_param_count returns how many type parameters the struct
 // `name` declares, or -1 if there's no such struct.
+//
+// The parser desugars every enum variant into a StructDecl pushed to the same
+// table (`enum_owner` names the enum). A variant is not a type head — Go answers
+// E064 for `Yes[i32]`, never E019 — so variants are skipped here, and a variant
+// sharing a builtin's name (`enum Stage { Map(..) }`) leaves `Map[K, V]` alone.
 function struct_type_param_count(structs: parser.StructDecl[], name: string): i32 {
   var i: i32 = 0;
   while (i < structs.len()) {
-    if (structs[i].name == name) {
+    if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return structs[i].type_params.len();
     }
     i = i + 1;
@@ -5782,11 +5787,12 @@ function struct_type_param_count(structs: parser.StructDecl[], name: string): i3
 
 // struct_decl_line / struct_decl_col return the declaration position of a
 // named struct (0 when absent). E019 is reported at the struct's
-// definition (Go's `sd.P`), not the use site.
+// definition (Go's `sd.P`), not the use site. Variants are skipped for the
+// same reason as in struct_type_param_count.
 function struct_decl_line(structs: parser.StructDecl[], name: string): i32 {
   var i: i32 = 0;
   while (i < structs.len()) {
-    if (structs[i].name == name) {
+    if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return structs[i].line;
     }
     i = i + 1;
@@ -5797,7 +5803,7 @@ function struct_decl_line(structs: parser.StructDecl[], name: string): i32 {
 function struct_decl_col(structs: parser.StructDecl[], name: string): i32 {
   var i: i32 = 0;
   while (i < structs.len()) {
-    if (structs[i].name == name) {
+    if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return structs[i].col;
     }
     i = i + 1;
