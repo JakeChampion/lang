@@ -58471,7 +58471,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
     var boxed: string[] = acc.names;
     var btypes: string[] = acc.types;
     if (boxed.len() == 0) { return fd; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed, btypes), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+    return parser.FuncDecl { ...fd, body: box_rewrite_stmts(fd.body, boxed, btypes) };
 }
 
 // BoxScan: box_scan_stmts' paired accumulator — boxed capture NAMES and the
@@ -58813,7 +58813,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // round); a body with no such closure is returned unchanged (fixpoint-safe).
         var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, mf);
         if (ic.funcs.len() > 0) {
-            fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+            fd = parser.FuncDecl { ...fd, body: ic.stmts };
             var ici: i32 = 0;
             while (ici < ic.funcs.len()) { acc = LiftAcc { funcs: acc.funcs.append(ic.funcs[ici]), counter: acc.counter + 1 }; ici = ici + 1; }
         }
@@ -58837,7 +58837,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         var r: LiftStmts = lift_stmts(cbody, acc, gfns);
         acc = r.acc;
         var nb: parser.Stmt[] = r.stmts;
-        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        newfuncs = newfuncs.append(parser.FuncDecl { ...fd, body: nb });
         // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
         // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
         // to a make_closure box); only the hoisted target is appended here.
