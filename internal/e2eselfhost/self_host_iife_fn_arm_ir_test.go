@@ -162,6 +162,34 @@ var iifeFnArmCases = []struct {
 	// bailed the module. A passthrough hands its argument straight back, so a
 	// lambda there is an arm lambda. Reduced from fernsmith seed 393.
 	{"arm-passthrough-holds-lambda", "function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 40i32); var n: i32 = 2i32; var t: boolean = false; var xs: ((i32) => i32)[] = [(if (t) { v0 } else { pick(t, v0, ((x: i32) => (x + n))) })]; return xs[0i32](3i32) & 63i32; }", 5},
+
+	// EVERY arm of the capturing IIFE is itself a value-position if/match, so
+	// the lambda that needs hoisting sits one level in. Both of the hoist's
+	// gates read only what an arm RETURNS, and a nested if/match returns a
+	// CALL — so an outer IIFE with no directly-lambda arm declined the hoist
+	// and the lambda inside reached lower_expr bare, asking for a `<fd>$clo`
+	// nothing built. They now descend through a nested IIFE, as the arm-array
+	// gate already did.
+	//
+	// The nesting is the whole trigger, not the IIFE count: giving the outer
+	// level a single directly-lambda arm makes the identical program compile,
+	// which is why nested-match-expr-fn-arm above passes without this. Reduced
+	// from fernsmith seed 199.
+	{"nested-iife-arms-capturing", "function main(): i32 { var n: i32 = 5i32; var f: (i32) => i32 = (if (true) { (if (false) { ((a: i32) => 20i32) } else { ((b: i32) => (b + n)) }) } else { (if (true) { ((c: i32) => 40i32) } else { ((d: i32) => 3i32) }) }); return f(2i32) & 63i32; }", 7},
+	{"nested-iife-arms-else-branch-taken", "function main(): i32 { var n: i32 = 5i32; var c: boolean = false; var f: (i32) => i32 = (if (c) { (if (false) { ((a: i32) => 20i32) } else { ((b: i32) => (b + n)) }) } else { (if (true) { ((cc: i32) => (n * 4i32)) } else { ((d: i32) => 3i32) }) }); return f(2i32) & 63i32; }", 20},
+	{"nested-matchexpr-iife-arms-capturing", "enum S { A, B } function main(): i32 { var n: i32 = 9i32; var e: S = S.A; var f: (i32) => i32 = (match (e) { A => (match (e) { A => ((x: i32) => (x * n)), B => ((y: i32) => y) }), B => (match (e) { A => ((z: i32) => 1i32), B => ((w: i32) => 2i32) }) }); return f(3i32) & 63i32; }", 27},
+	{"nested-iife-arms-three-deep", "function main(): i32 { var n: i32 = 6i32; var f: (i32) => i32 = (if (true) { (if (true) { (if (false) { ((a: i32) => 20i32) } else { ((b: i32) => (b + n)) }) } else { (if (true) { ((c: i32) => 1i32) } else { ((d: i32) => 2i32) }) }) } else { (if (true) { ((e: i32) => 3i32) } else { ((g: i32) => 4i32) }) }); return f(1i32) & 63i32; }", 7},
+	// Through a factory: the hoisted `<fd>$iifeN` has to register as
+	// closure-returning or the caller bare-dispatches the box it hands back.
+	{"nested-iife-arms-bound-then-returned", "function gen(n: i32, c: boolean): (i32) => i32 { var w: (i32) => i32 = (if (c) { (if (false) { ((a: i32) => 20i32) } else { ((b: i32) => (b + n)) }) } else { (if (true) { ((cc: i32) => n) } else { ((d: i32) => 3i32) }) }); return w; } function main(): i32 { var f: (i32) => i32 = gen(5i32, true); return f(2i32) & 63i32; }", 7},
+	// One nested arm holds an already-boxed closure local beside the lambda:
+	// the lambda is still the binding constraint, so the outer IIFE hoists.
+	{"nested-iife-arms-mixed-closure-local", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 41i32); var n: i32 = 5i32; var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (false) { v0 } else { ((b: i32) => (b + n)) }) } else { (if (c) { v0 } else { v0 }) }); return f(2i32) & 63i32; }", 7},
+	// The controls for the two representations the descent must leave alone:
+	// nested arms that are all already-boxed closure locals stay on #6323's
+	// clo_init marking, and nested bare fn-name arms stay plain fn pointers.
+	{"nested-iife-closure-local-arms-unchanged", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 41i32); var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (c) { v0 } else { v0 }) } else { (if (c) { v0 } else { v0 }) }); return f(3i32) & 63i32; }", 41},
+	{"nested-iife-bare-fnname-arms-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (c) { inc } else { dbl }) } else { (if (c) { dbl } else { inc }) }); return f(40i32) & 63i32; }", 41},
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms

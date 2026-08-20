@@ -55644,6 +55644,10 @@ function iife_arms_have_lambda(stmts: parser.Stmt[], mfuncs: MFuncs): boolean {
 // (`pick(c, v0, <lambda>)`). Nothing has boxed such a lambda, and the expression
 // walk stops at the IIFE that holds it, so only the hoist puts it where the
 // ordinary passes can reach it.
+//
+// An arm that is ITSELF a value-position if/match holds its lambdas one level
+// in, and the walk stops at that nested IIFE for the same reason it stops at the
+// outer one, so the question recurses through it.
 function passthrough_arg_has_lambda(e: parser.Expr, mfuncs: MFuncs): boolean {
     match (e) {
         parser.ExprLambda(_) => { return true; },
@@ -55656,6 +55660,9 @@ function passthrough_arg_has_lambda(e: parser.Expr, mfuncs: MFuncs): boolean {
                                 && passthrough_arg_has_lambda(c.args[i], mfuncs)) { return true; }
                         i = i + 1;
                     }
+                },
+                parser.ExprLambda(il) => {
+                    if (c.args.len() == 0 && il.params.len() == 0) { return iife_arms_have_lambda(il.body, mfuncs); }
                 },
                 _ => {}
             }
@@ -55678,6 +55685,17 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
                 // fn?", so the declared type answers it.
                 match (r.value) {
                     parser.ExprIdent(aid) => { if (cap_type(aid.name, fd, structs, mfuncs) == "fn") { return true; } },
+                    // A nested value-position if/match arm yields whatever its own
+                    // arms yield, so the question descends into it.
+                    parser.ExprCall(rc) => {
+                        match (rc.callee) {
+                            parser.ExprLambda(ril) => {
+                                if (rc.args.len() == 0 && ril.params.len() == 0
+                                        && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs)) { return true; }
+                            },
+                            _ => {}
+                        }
+                    },
                     _ => {}
                 }
             },
