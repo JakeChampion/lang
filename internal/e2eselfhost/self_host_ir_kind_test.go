@@ -29,7 +29,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "ir_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ir_kind_run.fern", "ir_kind_run")
 
-	// Golden report — locks kind_count, the full-table bijection (all 197 ids
+	// Golden report — locks kind_count, the full-table bijection (all 196 ids
 	// round-trip), the extension-tag sweep (the 34 registered ids beyond
 	// kind_count(), struct_copy=198 … create_dir_all=231 — #5452's skew
 	// left them unrendered by kind_name), the KIND_INVALID sentinels, a few stable ids,
@@ -39,8 +39,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// added: both count entries in ir_kind_run.fern's sweep lists, and the
 	// point of the golden is that adding a kind_id without registering it in
 	// BOTH shows up here rather than as an "invalid" name at some call site.
-	const want = "kind_count=197\n" +
-		"bijection_ok=197\n" +
+	const want = "kind_count=196\n" +
+		"bijection_ok=196\n" +
 		"bijection_failures=0\n" +
 		"ext_ok=34\n" +
 		"ext_failures=0\n" +
@@ -65,7 +65,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	if got := string(out); got != want {
 		t.Errorf("kind registry report mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
-	// Exit code is the bijection-failure count — 0 proves the whole 197-entry
+	// Exit code is the bijection-failure count — 0 proves the whole 196-entry
 	// table round-tripped, an independent check of the report's bijection_ok.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("ir_kind_run exit code = %d, want 0 (bijection failures)", code)

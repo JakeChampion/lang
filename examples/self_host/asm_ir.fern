@@ -4787,7 +4787,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // call, drop the arg slot, push the result. 0 / -errno.
             s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("tcp_close");
-        } else if (o.kind_tag == 197) {  // tcp_pollable
+        } else if (o.kind_tag == 112) {  // tcp_pollable
             // [fd]; __fern_tcp_pollable(%rdi=fd) -> the fd unchanged (native's
             // readiness token IS the fd).
             s = s.write("    popq %rdi\n    call __fern_tcp_pollable\n    pushq %rax\n");
