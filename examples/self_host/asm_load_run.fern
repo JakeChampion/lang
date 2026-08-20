@@ -444,9 +444,9 @@ function main(): i32 {
     // (#6961). checker.is_build_gate_code decides the set — every coded
     // diagnostic except the partial-port rules measured to false-positive.
     // A hit prints the diagnostic to stderr and fails the build.
-    var gated: checker.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
+    var gated: util.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
     if (gated.len() > 0) {
-        eprint(checker.format_diags(gated));
+        eprint(util.format_diags(gated));
         return 1;
     }
 

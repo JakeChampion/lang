@@ -1329,10 +1329,10 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
 // well as `-check` — native REFUSES TO BUILD such a program, and accepting it
 // here is the divergence. True means the program is refused.
 function bundle_visibility_diags(b: Bundle): boolean {
-    var vis_diags: checker.Diag[] = visibility.export_diags(b.entry, b.loaded);
+    var vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.loaded);
     var vi: i32 = 0;
     while (vi < vis_diags.len()) {
-        var vd: checker.Diag = vis_diags[vi];
+        var vd: util.Diag = vis_diags[vi];
         eprint(checker.itoa_nn(vd.line) + ":" + checker.itoa_nn(vd.col) + ": " + vd.message + "\n");
         vi = vi + 1;
     }
@@ -1352,7 +1352,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // is `error[E0XX]: message` without a line:col prefix for now.
     var di: i32 = 0;
     while (di < mt.diags.len()) {
-        var d: checker.Diag = mt.diags[di];
+        var d: util.Diag = mt.diags[di];
         // An empty code renders with no `error[…]` segment — some native
         // diagnostics are uncoded (the const-grammar rule is one), and
         // parity is on the text native actually prints.
@@ -1385,10 +1385,10 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // can't model yet (#4346). Surface a best-effort hint so `-check`
     // never exits 1 silently; the native `fern` remains the full oracle.
     if (mt.diags.len() == 0) {
-        var hints: checker.Diag[] = checker.ill_typed_hint(merged);
+        var hints: util.Diag[] = checker.ill_typed_hint(merged);
         var hi: i32 = 0;
         while (hi < hints.len()) {
-            var h: checker.Diag = hints[hi];
+            var h: util.Diag = hints[hi];
             if (h.line > 0) {
                 eprint(checker.itoa_nn(h.line) + ":" + checker.itoa_nn(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
             } else {
@@ -2213,11 +2213,11 @@ function run(): i32 {
     // diagnostic except the partial-port rules measured to false-positive —
     // and a hit is reported with the same `line:col: error[CODE]: message`
     // shape as `-check`.
-    var gated: checker.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
+    var gated: util.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
     if (gated.len() > 0) {
         var ii: i32 = 0;
         while (ii < gated.len()) {
-            var idg: checker.Diag = gated[ii];
+            var idg: util.Diag = gated[ii];
             if (idg.line > 0) {
                 eprint(checker.itoa_nn(idg.line) + ":" + checker.itoa_nn(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
             } else {

@@ -9,6 +9,7 @@ import "std/io";
 import "./lexer";
 import "./parser";
 import "./checker";
+import "./util";
 
 function main(): i32 {
     var src: string = io.read_all_stdin();
@@ -17,6 +18,6 @@ function main(): i32 {
     if (mt.all_well_typed) { return 0; }
     // Surface the rejection to stderr before exiting non-zero — the
     // bootstrap error-reporting path (the self-host `fern -check`).
-    eprint(checker.format_diags(mt.diags));
+    eprint(util.format_diags(mt.diags));
     return 1;
 }

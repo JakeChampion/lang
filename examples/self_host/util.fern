@@ -690,3 +690,45 @@ pub function str_join_range(parts: string[], lo: i32, hi: i32): string {
 pub function str_join_chunks(parts: string[]): string {
     return str_join_range(parts, 0, parts.len());
 }
+
+// Diag is a coded diagnostic — the stable `E0XX` code (matching the Go
+// checker's `internal/checker` codes) plus a human message and an
+// optional 1-based source position (line/col, 0 when no position is
+// available yet). Positions are being threaded through the AST node by
+// node; a diagnostic emitted from a node that already carries a position
+// renders `line:col: error[E0XX]: …` like the Go checker, the rest still
+// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
+pub struct Diag { code: string, message: string, line: i32, col: i32 }
+
+// is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
+// `P` followed by three digits. The checker also emits the pseudo-code "type"
+// (ill_typed_hint's marker for an expression it cannot represent yet, #4346)
+// and leaves `code` empty on the uncoded diagnostics. Neither states that the
+// program is wrong, so neither can reject a build.
+pub function is_diagnostic_code(code: string): boolean {
+  if (code.len() != 4) { return false; }
+  var head: i32 = (code[0] as i32);
+  if (head != 69 && head != 80) { return false; }
+  var i: i32 = 1;
+  while (i < 4) {
+    var b: i32 = (code[i] as i32);
+    if (b < 48 || b > 57) { return false; }
+    i = i + 1;
+  }
+  return true;
+}
+
+// format_diags renders diagnostics one-per-line as
+// `error[CODE]: message (line:col)` — the self-host counterpart of the Go
+// driver's diag.Format. Used by the checking drivers to surface a rejection
+// to stderr before exiting non-zero (bootstrap error-reporting).
+pub function format_diags(diags: Diag[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < diags.len()) {
+    var d: Diag = diags[i];
+    out = out + "error[" + d.code + "]: " + d.message + " (" + i32_to_string(d.line) + ":" + i32_to_string(d.col) + ")\n";
+    i = i + 1;
+  }
+  return out;
+}

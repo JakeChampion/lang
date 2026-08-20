@@ -1388,8 +1388,8 @@ function map_key_type_error(s: Scope, kt: Type): string {
 // argument, method-set conformance) keep it from false-firing on the
 // self-host bundle's own pervasive bounded-generic calls, which all carry
 // their impls or derives. Mirrors native checker.go's call-site E021 arm.
-function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i32): Diag[] {
-  var out: Diag[] = [];
+function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i32): util.Diag[] {
+  var out: util.Diag[] = [];
   var cty: string = type_label(at);
   if (cty.len() == 0) {
     return out;
@@ -3939,7 +3939,7 @@ function e042_ret_label(t: Type): string {
 }
 
 // append_diags concatenates two diagnostic lists.
-function append_diags(a: Diag[], b: Diag[]): Diag[] {
+function append_diags(a: util.Diag[], b: util.Diag[]): util.Diag[] {
   var i: i32 = 0;
   while (i < b.len()) {
     a = a.append(b[i]);
@@ -3949,8 +3949,8 @@ function append_diags(a: Diag[], b: Diag[]): Diag[] {
 }
 
 // keep_code filters a diagnostic list to one code.
-function keep_code(diags: Diag[], code: string): Diag[] {
-  var out: Diag[] = [];
+function keep_code(diags: util.Diag[], code: string): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < diags.len()) {
     if (diags[i].code == code) {
@@ -3970,8 +3970,8 @@ function keep_code(diags: Diag[], code: string): Diag[] {
 // attaches the stable code. Branch-local bindings don't leak (each
 // sub-body re-threads from the scope at the block), and a return value /
 // ret_type that infers `unknown` is skipped (a separate error already).
-function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSig[]): Diag[] {
-  var out: Diag[] = [];
+function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   if (is_unknown(ret_ty)) {
     return out;
   }
@@ -4039,8 +4039,8 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
 // blocks the same way ret_diags does; the scope is threaded so a returned
 // expression sees earlier `var` bindings (it's still type-checked for the
 // message, though any concrete type is a mismatch against void).
-function void_ret_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
-  var out: Diag[] = [];
+function void_ret_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -4160,8 +4160,8 @@ function slc_expr_escapes(e: parser.Expr, cur: Scope, localarr: string[], tainte
 // init is a slice of a *parameter* lands in neither set, so returning it
 // (or a sub-slice of it) is not flagged. Mirrors the native checker's
 // checkSliceEscape (internal/checker/checker.go).
-function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: string[]): Diag[] {
-  var out: Diag[] = [];
+function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -4215,7 +4215,7 @@ function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: s
 
 // slice_escape_diags is the E063 entry point: seed empty name sets and
 // walk a function body. See slc_walk.
-function slice_escape_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
+function slice_escape_diags(stmts: parser.Stmt[], s: Scope): util.Diag[] {
   var localarr: string[] = [];
   var tainted: string[] = [];
   return slc_walk(stmts, s, localarr, tainted);
@@ -4453,8 +4453,8 @@ function mc_mentions_stmts(stmts: parser.Stmt[], name: string): boolean {
 
 // mc_list_consumes scans an expression list for a consuming use (recursing —
 // the direct bare-binding checks happen in the callers before this).
-function mc_list_consumes(list: parser.Expr[], name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
-  var out: Diag[] = [];
+function mc_list_consumes(list: parser.Expr[], name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < list.len()) {
     let (c2, d2) = mc_expr_consumes(list[i], name, tname, report, structs, enums);
@@ -4472,8 +4472,8 @@ function mc_list_consumes(list: parser.Expr[], name: string, tname: string, repo
 // self-host spelling of the native EnumLit: storing into a MARKED enum
 // consumes; an unmarked enum launders the obligation (violation at the
 // store site, still treated as consuming so it reports exactly once).
-function mc_call_consumes(c: parser.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
-  var none: Diag[] = [];
+function mc_call_consumes(c: parser.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  var none: util.Diag[] = [];
   var owner: string = "";
   match (c.callee) {
     parser.ExprIdent(cid) => {
@@ -4490,7 +4490,7 @@ function mc_call_consumes(c: parser.ExprCall, name: string, tname: string, repor
       if (owner.len() == 0 || mc_enum_marked(owner, enums)) {
         return (true, none);
       }
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       if (report) {
         d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into unmarked enum \"" + owner + "\" — the consumption obligation is lost; mark \"" + owner + "\" @must_consume or consume the value directly", c.line, c.col));
       }
@@ -4525,15 +4525,15 @@ function mc_call_consumes(c: parser.ExprCall, name: string, tname: string, repor
 // an unmarked struct launders (violation at the store site). The `...base`
 // spread is neutral for the bare binding (a functional update reads the old
 // value, it doesn't discharge it) — only recursed for nested uses.
-function mc_structlit_consumes(sl: parser.ExprStructLit, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
-  var none: Diag[] = [];
+function mc_structlit_consumes(sl: parser.ExprStructLit, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  var none: util.Diag[] = [];
   var i: i32 = 0;
   while (i < sl.field_values.len()) {
     if (mc_is_binding(sl.field_values[i], name)) {
       if (mc_struct_marked(sl.type_name, structs)) {
         return (true, none);
       }
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       if (report) {
         d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into unmarked struct \"" + sl.type_name + "\" — the consumption obligation is lost; mark \"" + sl.type_name + "\" @must_consume or consume the value directly", sl.line, sl.col));
       }
@@ -4554,8 +4554,8 @@ function mc_structlit_consumes(sl: parser.ExprStructLit, name: string, tname: st
 // binding (the native mcExprConsumes). Laundering into an array/tuple
 // literal and lambda capture are violations reported here, treated as
 // consuming so each misuse reports exactly once. Field reads are neutral.
-function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
-  var none: Diag[] = [];
+function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  var none: util.Diag[] = [];
   match (e) {
     parser.ExprCall(c) => {
       return mc_call_consumes(c, name, tname, report, structs, enums);
@@ -4567,7 +4567,7 @@ function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: b
       var i: i32 = 0;
       while (i < ar.elements.len()) {
         if (mc_is_binding(ar.elements[i], name)) {
-          var d: Diag[] = [];
+          var d: util.Diag[] = [];
           if (report) {
             d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into an array literal — arrays cannot carry consumption obligations; consume the value directly", expr_line(ar.elements[i]), expr_col(ar.elements[i])));
           }
@@ -4581,7 +4581,7 @@ function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: b
       var j: i32 = 0;
       while (j < tp.elements.len()) {
         if (mc_is_binding(tp.elements[j], name)) {
-          var d2: Diag[] = [];
+          var d2: util.Diag[] = [];
           if (report) {
             d2 = d2.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into a tuple — tuples cannot carry consumption obligations; consume the value directly", tp.line, tp.col));
           }
@@ -4593,7 +4593,7 @@ function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: b
     },
     parser.ExprLambda(lm) => {
       if (mc_mentions_stmts(lm.body, name)) {
-        var d3: Diag[] = [];
+        var d3: util.Diag[] = [];
         if (report) {
           d3 = d3.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" captured by a closure — obligations cannot flow into closures; consume the value directly", 0, 0));
         }
@@ -4643,8 +4643,8 @@ function mc_expr_consumes(e: parser.Expr, name: string, tname: string, report: b
 // mc_stmt_consumes reports whether the statement definitely contains a
 // consuming use of the binding (the native mcStmtConsumesImpl). `report`
 // false is the detection-only variant the overwrite re-scan uses.
-function mc_stmt_consumes(st: parser.Stmt, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, Diag[]) {
-  var none: Diag[] = [];
+function mc_stmt_consumes(st: parser.Stmt, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  var none: util.Diag[] = [];
   match (st) {
     parser.StmtExpr(es) => {
       return mc_expr_consumes(es.value, name, tname, report, structs, enums);
@@ -4690,8 +4690,8 @@ function mc_stmt_consumes(st: parser.Stmt, name: string, tname: string, report: 
 // the second flag; falling off the end unconsumed reports false for the
 // first (the caller decides that's the scope-exit violation). Loop bodies
 // are opaque; defer is neutral.
-function mc_seq(stmts: parser.Stmt[], from: i32, name: string, tname: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, boolean, Diag[]) {
-  var out: Diag[] = [];
+function mc_seq(stmts: parser.Stmt[], from: i32, name: string, tname: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, boolean, util.Diag[]) {
+  var out: util.Diag[] = [];
   var i: i32 = from;
   while (i < stmts.len()) {
     var st: parser.Stmt = stmts[i];
@@ -4765,7 +4765,7 @@ function mc_seq(stmts: parser.Stmt[], from: i32, name: string, tname: string, st
 // mc_check_binding runs the at-least-once analysis for one binding over the
 // remainder of its scope, plus the straight-line overwrite scan (the native
 // mcCheckBinding).
-function mc_check_binding(stmts: parser.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): Diag[] {
+function mc_check_binding(stmts: parser.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   let (con, div, out) = mc_seq(stmts, from, name, tname, structs, enums);
   if (!con || div) {
     out = out.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" bound to \"" + name + "\" may go out of scope without being consumed — pass it, return it, match on it, or store it into another @must_consume type on every path", bline, bcol));
@@ -4820,8 +4820,8 @@ function mc_var_type_name(v: parser.StmtVar, cur: Scope, structs: parser.StructD
 // checks each against the remainder of ITS block (the native mcWalkBlock).
 // The scope is threaded like slc_walk so an unannotated binding's init type
 // resolves.
-function mc_walk_body(stmts: parser.Stmt[], s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): Diag[] {
-  var out: Diag[] = [];
+function mc_walk_body(stmts: parser.Stmt[], s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -4865,8 +4865,8 @@ function mc_walk_body(stmts: parser.Stmt[], s: Scope, structs: parser.StructDecl
 // caller-side at-least-once plus the sink-side at-most-once compose to
 // exactly-once across the call boundary). Then walk the body for local
 // bindings.
-function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): Diag[] {
-  var out: Diag[] = [];
+function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var pi: i32 = 0;
   while (pi < fn.params.len()) {
     var p: parser.ParamDecl = fn.params[pi];
@@ -4895,8 +4895,8 @@ function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.Struc
 // its own name is pre-bound to its function type so a self-call inside the
 // body resolves rather than inferring unknown. After checking the lambda's
 // own returns it recurses into the body via lret_stmts for nested lambdas.
-function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: string): Diag[] {
-  var out: Diag[] = [];
+function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprLambda(lm) => {
       var pts: Type[] = [];
@@ -4999,8 +4999,8 @@ function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: st
 // and dispatching every contained expression through lret_expr. A
 // `var f = function…` passes its own name as self_name so a recursive
 // local resolves inside its body.
-function lret_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
-  var out: Diag[] = [];
+function lret_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -5220,8 +5220,8 @@ function mx_arm_compatible(a: Type, b: Type, unions: UnionSig[], enums: parser.E
 
 // mx_e031 emits one E031 if the collected arm types aren't all mutually
 // compatible. Skips when fewer than two arms or any arm is `unknown`.
-function mx_e031(types: Type[], unions: UnionSig[], enums: parser.EnumDecl[], line: i32, col: i32): Diag[] {
-  var out: Diag[] = [];
+function mx_e031(types: Type[], unions: UnionSig[], enums: parser.EnumDecl[], line: i32, col: i32): util.Diag[] {
+  var out: util.Diag[] = [];
   if (types.len() < 2) {
     return out;
   }
@@ -5306,8 +5306,8 @@ function mx_if_branch_types(f: parser.StmtIf, s: Scope): Type[] {
 // expression IIFE it finds and P002 for an out-of-range float literal, and
 // recursing into sub-expressions (so nested match/if-expressions, and ones
 // inside calls / operators / literals, are all covered).
-function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
-  var out: Diag[] = [];
+function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprCall(c) => {
       // Recognise the desugared value match/if-expression: a 0-arg
@@ -5406,8 +5406,8 @@ function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.Enu
 // E061 for a value-position block with no trailing value (the marker
 // StmtUnknown parse_branch_body leaves), reached here because the walk
 // descends into the value-if/match IIFE lambda bodies where that marker lives.
-function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
-  var out: Diag[] = [];
+function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -5503,8 +5503,8 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
 // isn't a known struct is skipped (a separate error / a variant
 // constructor), as is a struct-update `Name { ...base, … }` (partial
 // overrides are legal).
-function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
-  var out: Diag[] = [];
+function slit_diags(e: parser.Expr, structs: StructSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprStructLit(sl) => {
       var fv: i32 = 0;
@@ -5590,8 +5590,8 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
 // stmts_slit_diags walks a statement list (recursing into nested blocks
 // and lambda bodies via slit_diags) collecting the struct-literal E005s
 // from every expression it contains.
-function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
-  var out: Diag[] = [];
+function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -5737,12 +5737,12 @@ function label_in_scope(labels: string[], name: string): boolean {
 // callee is never also seen as a bare lambda, and a nested lambda is reached
 // when its own enclosing body is walked rather than here.
 //
-// The accumulator is Diag[] rather than a list of bodies: a `parser.Stmt[][]`
+// The accumulator is util.Diag[] rather than a list of bodies: a `parser.Stmt[][]`
 // does not lower in the self-host — `append` on an array-of-arrays of a union
 // resolves to `i32.append` and the module falls off the IR path.
-function loop_diags_in_exprs(st: parser.Stmt, in_loop: boolean, labels: string[]): Diag[] {
-  var acc: Diag[] = [];
-  return astwalk.fold_stmt_pruned(st, acc, function (e: parser.Expr, a: Diag[]): Diag[] {
+function loop_diags_in_exprs(st: parser.Stmt, in_loop: boolean, labels: string[]): util.Diag[] {
+  var acc: util.Diag[] = [];
+  return astwalk.fold_stmt_pruned(st, acc, function (e: parser.Expr, a: util.Diag[]): util.Diag[] {
     match (e) {
       parser.ExprCall(c) => {
         if (parser.is_value_block(c)) { return append_diags(a, loop_diags(parser.vb_body(c), in_loop, labels)); }
@@ -5767,8 +5767,8 @@ function not_a_scope_root(e: parser.Expr): boolean {
   return true;
 }
 
-function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): Diag[] {
-  var out: Diag[] = [];
+function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -5911,8 +5911,8 @@ function dot_index(s: string): i32 {
 // field positions (where the Go checker reports E019 on its own); a `var`
 // / return annotation with the wrong arity additionally trips E003 / E002
 // in Go, so those positions are left out to keep the code sets matching.
-function type_arity_diag(t: string, structs: parser.StructDecl[]): Diag[] {
-  var out: Diag[] = [];
+function type_arity_diag(t: string, structs: parser.StructDecl[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var nargs: i32 = count_type_args(t);
   if (nargs >= 0) {
     var tpc: i32 = struct_type_param_count(structs, util.base_type_name(t));
@@ -5965,8 +5965,8 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
 // does not declare, named one twice, or missed one — or the variant carries
 // positional payloads and cannot be matched by name at all. Mirrors native's
 // resolveVariantBindings (checker.go:9363-9397).
-function record_pattern_diags(pv: parser.PatVariant, structs: StructSig[], line: i32, col: i32): Diag[] {
-  var out: Diag[] = [];
+function record_pattern_diags(pv: parser.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
+  var out: util.Diag[] = [];
   var ss: StructSig = find_struct_sig(structs, pv.type_name);
   if (ss.name.len() == 0) {
     return out;
@@ -6031,8 +6031,8 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
 // shape (resolveVariantBindings); this is that rule, scoped the same way — the
 // name must be a variant of the enum THIS slot holds, so an unrelated binder
 // that happens to share a variant's name elsewhere is untouched.
-function payloadless_binder_diags(pv: parser.PatVariant, structs: StructSig[], unions: UnionSig[], line: i32, col: i32): Diag[] {
-  var out: Diag[] = [];
+function payloadless_binder_diags(pv: parser.PatVariant, structs: StructSig[], unions: UnionSig[], line: i32, col: i32): util.Diag[] {
+  var out: util.Diag[] = [];
   var ss: StructSig = find_struct_sig(structs, pv.type_name);
   if (ss.name.len() == 0) { return out; }
   var slot: i32 = 0;
@@ -6050,8 +6050,8 @@ function payloadless_binder_diags(pv: parser.PatVariant, structs: StructSig[], u
   return out;
 }
 
-function match_diags(stmts: parser.Stmt[], structs: StructSig[], unions: UnionSig[]): Diag[] {
-  var out: Diag[] = [];
+function match_diags(stmts: parser.Stmt[], structs: StructSig[], unions: UnionSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -6159,8 +6159,8 @@ function digits_fit_i32(text: string): boolean {
   return true;
 }
 
-function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
-  var out: Diag[] = [];
+function dupvar_diags(stmts: parser.Stmt[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var declared: string[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -6426,8 +6426,8 @@ function settles_or_assignable(e: parser.Expr, want: Type, s: Scope): boolean {
 // It takes the variant NAME rather than the callee node because both spellings
 // reach it: the bare `Wrap(1)` and the qualified `W.Wrap(1)` (#6657), whose
 // callee is an ExprFieldAccess.
-function variant_ctor_diags(vname: string, c: parser.ExprCall, s: Scope): Diag[] {
-  var out: Diag[] = [];
+function variant_ctor_diags(vname: string, c: parser.ExprCall, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   if (union_of_variant(vname, s.unions).len() == 0) {
     return out;
   }
@@ -6655,8 +6655,8 @@ function assoc_hit_type(h: AssocHit, obj: parser.Expr, s: Scope): Type {
   return type_from_name_with_structs_unions(parser.subst_self(h.ret, self_name), s.structs, s.unions);
 }
 
-function call_diags(e: parser.Expr, s: Scope): Diag[] {
-  var out: Diag[] = [];
+function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprCall(c) => {
       // A method-call callee (`obj.m(...)`) is an ExprFieldAccess
@@ -7557,8 +7557,8 @@ function is_collection_mutator(field: string): boolean {
 // the receiver is a Map or array, so a user method that happens to share the
 // name (e.g. HeaderMap.append) is left alone — matching the Go checker's
 // narrow scope.
-function e055_diag(e: parser.Expr, s: Scope): Diag[] {
-  var none: Diag[] = [];
+function e055_diag(e: parser.Expr, s: Scope): util.Diag[] {
+  var none: util.Diag[] = [];
   match (e) {
     parser.ExprCall(c) => {
       match (c.callee) {
@@ -7579,7 +7579,7 @@ function e055_diag(e: parser.Expr, s: Scope): Diag[] {
           if (!is_coll) {
             return none;
           }
-          var d: Diag[] = [dg_at("E055", "result of `." + fa.field + "(...)` is unused; assign it back (e.g. `x = x." + fa.field + "(...)`) — collection operations return a new value, they do not mutate in place", fa.line, fa.col)];
+          var d: util.Diag[] = [dg_at("E055", "result of `." + fa.field + "(...)` is unused; assign it back (e.g. `x = x." + fa.field + "(...)`) — collection operations return a new value, they do not mutate in place", fa.line, fa.col)];
           return d;
         },
         _ => {
@@ -7634,8 +7634,8 @@ function array_elem_type_of(t: Type): Type {
 // the expected element type is statically known: a `: T[]` var binding, a
 // `T[]`-returning function's `return`, an assignment to a `T[]` variable,
 // and a `T[]` call argument.
-function array_elem_check(elem_ty: Type, init: parser.Expr, s: Scope): Diag[] {
-  var out: Diag[] = [];
+function array_elem_check(elem_ty: Type, init: parser.Expr, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   if (is_unknown(elem_ty) || is_primitive_type(elem_ty)) {
     return out;
   }
@@ -7655,7 +7655,7 @@ function array_elem_check(elem_ty: Type, init: parser.Expr, s: Scope): Diag[] {
   return out;
 }
 
-function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope): Diag[] {
+function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope): util.Diag[] {
   if (type_name.len() == 0) {
     return [];
   }
@@ -7663,8 +7663,8 @@ function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope):
   return array_elem_check(array_elem_type_of(declared), init, s);
 }
 
-function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
-  var out: Diag[] = [];
+function stmts_call_diags(stmts: parser.Stmt[], s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -8016,8 +8016,8 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
 // qualified). A name bound as a local (parameter / var) is skipped, and a
 // QUALIFIED reference `Enum.Variant` is an ExprFieldAccess whose field
 // isn't visited as a bare ident, so it's fine.
-function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
-  var out: Diag[] = [];
+function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprIdent(id) => {
       if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name))) {
@@ -8081,8 +8081,8 @@ function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
 
 // vref_stmts is the scope-threaded statement walk behind vref_expr (so a
 // variant name shadowed by a local `var` isn't flagged).
-function vref_stmts(stmts: parser.Stmt[], s: Scope, ambig: string[]): Diag[] {
-  var out: Diag[] = [];
+function vref_stmts(stmts: parser.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -8141,8 +8141,8 @@ function vref_stmts(stmts: parser.Stmt[], s: Scope, ambig: string[]): Diag[] {
 // condition isn't boolean. It reuses the same predicates check_stmt uses,
 // so it fires exactly where the checker already flags the problem (no new
 // false positives); unknown types are skipped.
-function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
-  var out: Diag[] = [];
+function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -8273,34 +8273,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
 // and (separately) type-checks top-level stmts in a scope that
 // has the sigs available — so `function main(): i32 { … }` and
 // loose `var x = add(1, 2);` both resolve `add`.
-pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean, diags: Diag[] }
-
-// Diag is a coded diagnostic — the stable `E0XX` code (matching the Go
-// checker's `internal/checker` codes) plus a human message and an
-// optional 1-based source position (line/col, 0 when no position is
-// available yet). Positions are being threaded through the AST node by
-// node; a diagnostic emitted from a node that already carries a position
-// renders `line:col: error[E0XX]: …` like the Go checker, the rest still
-// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
-pub struct Diag { code: string, message: string, line: i32, col: i32 }
-
-// is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
-// `P` followed by three digits. The checker also emits the pseudo-code "type"
-// (ill_typed_hint's marker for an expression it cannot represent yet, #4346)
-// and leaves `code` empty on the uncoded diagnostics. Neither states that the
-// program is wrong, so neither can reject a build.
-function is_diagnostic_code(code: string): boolean {
-  if (code.len() != 4) { return false; }
-  var head: i32 = (code[0] as i32);
-  if (head != 69 && head != 80) { return false; }
-  var i: i32 = 1;
-  while (i < 4) {
-    var b: i32 = (code[i] as i32);
-    if (b < 48 || b > 57) { return false; }
-    i = i + 1;
-  }
-  return true;
-}
+pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean, diags: util.Diag[] }
 
 // is_partial_checker_gap_code reports whether `code` is one this checker still
 // raises on programs the native compiler accepts. The port is partial (#4346):
@@ -8321,13 +8294,13 @@ function is_partial_checker_gap_code(code: string): boolean {
 // ported for parity gates the compile path the day it lands instead of being
 // reachable only through `-check` (#6961).
 pub function is_build_gate_code(code: string): boolean {
-  if (!is_diagnostic_code(code)) { return false; }
+  if (!util.is_diagnostic_code(code)) { return false; }
   return !is_partial_checker_gap_code(code);
 }
 
 // filter_build_gate keeps the diagnostics the compile path enforces.
-pub function filter_build_gate(diags: Diag[]): Diag[] {
-  var out: Diag[] = [];
+pub function filter_build_gate(diags: util.Diag[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < diags.len()) {
     if (is_build_gate_code(diags[i].code)) {
@@ -8338,30 +8311,15 @@ pub function filter_build_gate(diags: Diag[]): Diag[] {
   return out;
 }
 
-// format_diags renders diagnostics one-per-line as
-// `error[CODE]: message (line:col)` — the self-host counterpart of the Go
-// driver's diag.Format. Used by the checking drivers to surface a rejection
-// to stderr before exiting non-zero (bootstrap error-reporting).
-pub function format_diags(diags: Diag[]): string {
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < diags.len()) {
-    var d: Diag = diags[i];
-    out = out + "error[" + d.code + "]: " + d.message + " (" + itoa_nn(d.line) + ":" + itoa_nn(d.col) + ")\n";
-    i = i + 1;
-  }
-  return out;
-}
-
 // dg builds a position-less diagnostic; dg_at attaches a 1-based source
 // position. Most emitters use dg today and migrate to dg_at as their AST
 // node gains a position.
-function dg(code: string, message: string): Diag {
-  return Diag { code: code, message: message, line: 0, col: 0 };
+function dg(code: string, message: string): util.Diag {
+  return util.Diag { code: code, message: message, line: 0, col: 0 };
 }
 
-function dg_at(code: string, message: string, line: i32, col: i32): Diag {
-  return Diag { code: code, message: message, line: line, col: col };
+function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
+  return util.Diag { code: code, message: message, line: line, col: col };
 }
 
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
@@ -8380,7 +8338,7 @@ function dg_at(code: string, message: string, line: i32, col: i32): Diag {
 //
 // if-let / let-else desugars are skipped: their scrutinee is an enum and
 // native reports E022 on a non-enum source, from a different path.
-function scalar_match_exhaustive_diags(m: parser.StmtMatch, acc: Diag[]): Diag[] {
+function scalar_match_exhaustive_diags(m: parser.StmtMatch, acc: util.Diag[]): util.Diag[] {
   if (m.origin.len() > 0) {
     return acc;
   }
@@ -8579,8 +8537,8 @@ function const_expr_err(e: parser.Expr, earlier: string[]): string {
 //
 // The diagnostic is UNCODED, matching native: an empty `code` renders as
 // `<line>:<col>: <message>` with no `error[…]` segment.
-function const_grammar_diags(mod: parser.Module): Diag[] {
-  var out: Diag[] = [];
+function const_grammar_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = [];
   var earlier: string[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -8607,8 +8565,8 @@ function const_grammar_diags(mod: parser.Module): Diag[] {
 }
 
 
-function collect_decl_diags(mod: parser.Module): Diag[] {
-  var out: Diag[] = append_diags([], const_grammar_diags(mod));
+function collect_decl_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = append_diags([], const_grammar_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
   // most one `__ev` field, so they never trip this).
   var si: i32 = 0;
@@ -8825,7 +8783,7 @@ pub struct OwnFunc { name: string, flags: boolean[] }
 
 struct MovedEntry { mname: string, mline: i32 }
 
-struct OwnWalk { moved: MovedEntry[], diags: Diag[] }
+struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
 // `admit` names the ONE local admitted as an owned argument while
 // walking the RHS of a self-reassign `x = f(..., x, ...)` (#4873 step 0
@@ -9068,8 +9026,8 @@ function ow_self_move_admits(target: string, value: parser.Expr, ctx: OwnCtx): b
 
 // ow_guard_call: E051 — each argument passed to an `own` parameter of a
 // plain (ident-callee) callee must be an owned value.
-function ow_guard_call(c: parser.ExprCall, ctx: OwnCtx): Diag[] {
-  var out: Diag[] = [];
+function ow_guard_call(c: parser.ExprCall, ctx: OwnCtx): util.Diag[] {
+  var out: util.Diag[] = [];
   match (c.callee) {
     parser.ExprIdent(id) => {
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
@@ -9113,7 +9071,7 @@ function ow_call_arg_flags(callee: parser.Expr, ctx: OwnCtx): boolean[] {
 function ru_borrow(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     parser.ExprIdent(id) => {
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
         d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
       }
@@ -9131,7 +9089,7 @@ function ru_borrow(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     parser.ExprIdent(id) => {
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       var m: MovedEntry[] = moved;
       if (ow_is_owned(ctx, id.name)) {
         if (ow_moved_has(moved, id.name)) {
@@ -9169,11 +9127,11 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         },
         _ => {}
       }
-      var d0: Diag[] = ow_guard_call(c, ctx);
+      var d0: util.Diag[] = ow_guard_call(c, ctx);
       // The callee is a borrow (function ref / closure / method receiver).
       var rc: OwnWalk = ru_borrow(c.callee, moved, ctx);
       var m: MovedEntry[] = rc.moved;
-      var d: Diag[] = append_diags(d0, rc.diags);
+      var d: util.Diag[] = append_diags(d0, rc.diags);
       // Precise affine model: an owned value is CONSUMED only when passed
       // to an `own` parameter; an argument to a borrowed parameter is a
       // read (borrow), not a move — so a borrowing helper can be passed an
@@ -9201,7 +9159,7 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     parser.ExprArray(a) => {
       var m: MovedEntry[] = moved;
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       var i: i32 = 0;
       while (i < a.elements.len()) {
         var r: OwnWalk = ru_expr(a.elements[i], m, ctx);
@@ -9213,7 +9171,7 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     parser.ExprTuple(t) => {
       var m: MovedEntry[] = moved;
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       var i: i32 = 0;
       while (i < t.elements.len()) {
         var r: OwnWalk = ru_expr(t.elements[i], m, ctx);
@@ -9225,7 +9183,7 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     parser.ExprStructLit(s) => {
       var m: MovedEntry[] = moved;
-      var d: Diag[] = [];
+      var d: util.Diag[] = [];
       // `S { ...base, f: v }`: the spread READS base's fields (the new
       // struct co-owns its pointer fields via the construction
       // alias-inc) — a borrow, not a transfer, so the record-update
@@ -9255,9 +9213,9 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 // param it consumes that was live at entry — a later iteration would use
 // it after move. The fall-through state is left unchanged (the loop may
 // run zero times).
-function ow_loop(body: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): Diag[] {
+function ow_loop(body: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
   var r: OwnWalk = ow_stmts(body, moved, ctx);
-  var out: Diag[] = r.diags;
+  var out: util.Diag[] = r.diags;
   var i: i32 = 0;
   while (i < r.moved.len()) {
     var nm: string = r.moved[i].mname;
@@ -9306,18 +9264,18 @@ function ow_stmt(st: parser.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     parser.StmtWhile(w) => {
       var rc: OwnWalk = ru_expr(w.cond, moved, ctx);
-      var ld: Diag[] = ow_loop(w.body, rc.moved, ctx);
+      var ld: util.Diag[] = ow_loop(w.body, rc.moved, ctx);
       return OwnWalk { moved: rc.moved, diags: append_diags(rc.diags, ld) };
     },
     parser.StmtFor(fr) => {
       var ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
-      var ld: Diag[] = ow_loop(fr.body, ri.moved, ctx);
+      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ctx);
       return OwnWalk { moved: ri.moved, diags: append_diags(ri.diags, ld) };
     },
     parser.StmtMatch(m) => {
       var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
       var mv: MovedEntry[] = rs.moved;
-      var d: Diag[] = rs.diags;
+      var d: util.Diag[] = rs.diags;
       var a: i32 = 0;
       while (a < m.arms.len()) {
         var ra: OwnWalk = ow_stmts(m.arms[a].body, rs.moved, ctx);
@@ -9339,7 +9297,7 @@ function ow_stmt(st: parser.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 
 function ow_stmts(stmts: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   var m: MovedEntry[] = moved;
-  var d: Diag[] = [];
+  var d: util.Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
     var r: OwnWalk = ow_stmt(stmts[i], m, ctx);
@@ -9392,9 +9350,9 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
 // any owned-param function exists — every function (the E051 call-site
 // guard). No-op when the module declares no `own` parameter anywhere, so
 // ordinary programs are untouched.
-pub function own_diags(mod: parser.Module): Diag[] {
+pub function own_diags(mod: parser.Module): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
-  var out: Diag[] = [];
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var fn: parser.FuncDecl = mod.funcs[i];
@@ -9568,8 +9526,8 @@ function e049_lambda_locals(lm: parser.ExprLambda): string[] {
 // is a reference-typed enclosing capture not shadowed by a lambda local.
 // Descends into control blocks but not nested lambdas (those are checked
 // separately from the enclosing function's scope).
-function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: string[]): Diag[] {
-  var out: Diag[] = [];
+function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -9608,13 +9566,13 @@ function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: s
 
 // e049_expr_lambdas finds lambdas in an expression and checks each one's
 // body for captured-reference assignments.
-function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
+function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): util.Diag[] {
   match (e) {
     parser.ExprLambda(lm) => {
       return e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm));
     },
     parser.ExprCall(c) => {
-      var out: Diag[] = e049_expr_lambdas(c.callee, enclosing);
+      var out: util.Diag[] = e049_expr_lambdas(c.callee, enclosing);
       var i: i32 = 0;
       while (i < c.args.len()) {
         out = append_diags(out, e049_expr_lambdas(c.args[i], enclosing));
@@ -9629,7 +9587,7 @@ function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
       return e049_expr_lambdas(u.operand, enclosing);
     },
     parser.ExprArray(a) => {
-      var out: Diag[] = [];
+      var out: util.Diag[] = [];
       var i: i32 = 0;
       while (i < a.elements.len()) {
         out = append_diags(out, e049_expr_lambdas(a.elements[i], enclosing));
@@ -9638,7 +9596,7 @@ function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
       return out;
     },
     parser.ExprTuple(t) => {
-      var out: Diag[] = [];
+      var out: util.Diag[] = [];
       var i: i32 = 0;
       while (i < t.elements.len()) {
         out = append_diags(out, e049_expr_lambdas(t.elements[i], enclosing));
@@ -9653,7 +9611,7 @@ function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
       return e049_expr_lambdas(fa.obj, enclosing);
     },
     parser.ExprStructLit(s) => {
-      var out: Diag[] = [];
+      var out: util.Diag[] = [];
       var i: i32 = 0;
       while (i < s.field_values.len()) {
         out = append_diags(out, e049_expr_lambdas(s.field_values[i], enclosing));
@@ -9662,7 +9620,7 @@ function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
       return out;
     },
     _ => {
-      var none: Diag[] = [];
+      var none: util.Diag[] = [];
       return none;
     }
   }
@@ -9671,8 +9629,8 @@ function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
 // e049_find walks a statement list for lambda-bearing expressions (var
 // inits, returns, expr/assign values) and control blocks, checking each
 // lambda against the function-level enclosing scope.
-function e049_find(stmts: parser.Stmt[], enclosing: NameTy[]): Diag[] {
-  var out: Diag[] = [];
+function e049_find(stmts: parser.Stmt[], enclosing: NameTy[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -9716,8 +9674,8 @@ function e049_find(stmts: parser.Stmt[], enclosing: NameTy[]): Diag[] {
   return out;
 }
 
-pub function e049_diags(mod: parser.Module): Diag[] {
-  var out: Diag[] = [];
+pub function e049_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var fn: parser.FuncDecl = mod.funcs[i];
@@ -9918,8 +9876,8 @@ function annot_of_expr(e: parser.Expr, acc: Annot[]): Annot[] {
 // undefined. The caller restricts this to functions with no type parameters, so
 // a plain identifier that resolves to unknown is a genuine typo, never an
 // erased generic parameter.
-function e064_annot_diags(an: Annot[], struct_names: string[], union_names: string[], extra_known: string[]): Diag[] {
-  var out: Diag[] = [];
+function e064_annot_diags(an: Annot[], struct_names: string[], union_names: string[], extra_known: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < an.len()) {
     var vu: string = e064_unknown_name(an[i].type_name, struct_names, union_names, extra_known);
@@ -9977,8 +9935,8 @@ function e057_annot_labels_tref(tr: parser.TypeRef): string[] {
 // e057_annot_diags parses one annotation spelling and emits E057 (at the
 // caller-supplied anchor) for each offending `Cell[X]` in it, byte-matching
 // the native message. An empty / un-annotated spelling emits nothing.
-function e057_annot_diags(type_name: string, line: i32, col: i32): Diag[] {
-  var out: Diag[] = [];
+function e057_annot_diags(type_name: string, line: i32, col: i32): util.Diag[] {
+  var out: util.Diag[] = [];
   if (type_name.len() == 0) {
     return out;
   }
@@ -9994,8 +9952,8 @@ function e057_annot_diags(type_name: string, line: i32, col: i32): Diag[] {
 // e057_var_annot_diags reports the annotation-form E057 for any annotation
 // embedding a `Cell[<composite>]`. Reads the same annotation set E064 does,
 // which is why the caller collects it once and hands it to both.
-function e057_var_annot_diags(an: Annot[]): Diag[] {
-  var out: Diag[] = [];
+function e057_var_annot_diags(an: Annot[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < an.len()) {
     out = append_diags(out, e057_annot_diags(an[i].type_name, an[i].line, an[i].col));
@@ -10022,8 +9980,8 @@ function e057_var_annot_diags(an: Annot[]): Diag[] {
 // enclosing statement, naming the suspect's annotation spelling like
 // native ("T" / "void"). Nested blocks re-walk with a copy of the suspect
 // set so block-scoped vars don't leak.
-function e044_lambda_check(lam: parser.ExprLambda, line: i32, col: i32, suspects: string[], labels: string[]): Diag[] {
-  var out: Diag[] = [];
+function e044_lambda_check(lam: parser.ExprLambda, line: i32, col: i32, suspects: string[], labels: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < suspects.len()) {
     var shadowed: boolean = false;
@@ -10042,8 +10000,8 @@ function e044_lambda_check(lam: parser.ExprLambda, line: i32, col: i32, suspects
   return out;
 }
 
-function e044_expr(e: parser.Expr, line: i32, col: i32, suspects: string[], labels: string[]): Diag[] {
-  var out: Diag[] = [];
+function e044_expr(e: parser.Expr, line: i32, col: i32, suspects: string[], labels: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprLambda(lm) => {
       // Report and stop: stmts_mention already recursed into any
@@ -10106,8 +10064,8 @@ function e044_expr(e: parser.Expr, line: i32, col: i32, suspects: string[], labe
   return out;
 }
 
-function e044_stmts(stmts: parser.Stmt[], is_generic: boolean, struct_names: string[], union_names: string[], void_fns: string[], suspects0: string[], labels0: string[]): Diag[] {
-  var out: Diag[] = [];
+function e044_stmts(stmts: parser.Stmt[], is_generic: boolean, struct_names: string[], union_names: string[], void_fns: string[], suspects0: string[], labels0: string[]): util.Diag[] {
+  var out: util.Diag[] = [];
   var suspects: string[] = suspects0;
   var labels: string[] = labels0;
   var i: i32 = 0;
@@ -10183,7 +10141,7 @@ function e044_stmts(stmts: parser.Stmt[], is_generic: boolean, struct_names: str
   return out;
 }
 
-function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: string[], void_fns: string[]): Diag[] {
+function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: string[], void_fns: string[]): util.Diag[] {
   var suspects: string[] = [];
   var labels: string[] = [];
   var is_generic: boolean = efn.type_params.len() > 0 || efn.type_param_count > 0;
@@ -10282,8 +10240,8 @@ function e053_stringish(e: parser.Expr, cur: Scope): boolean {
 // allowance. The checker never counts n — the count is the IR's.
 struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[], variants: string[], own: string[] }
 
-function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): Diag[] {
-  var out: Diag[] = [];
+function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprArray(a) => {
       out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", 0, 0));
@@ -10417,8 +10375,8 @@ function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): Diag[] {
   return out;
 }
 
-function e053_stmts(stmts: parser.Stmt[], fx: E053Ctx, s: Scope): Diag[] {
-  var out: Diag[] = [];
+function e053_stmts(stmts: parser.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -10477,7 +10435,7 @@ function e053_stmts(stmts: parser.Stmt[], fx: E053Ctx, s: Scope): Diag[] {
 
 // e053_diags walks one annotated function. `fips` / `fbips` are the module's
 // two claim sets; the callee rule picks which of them this function may reach.
-function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], variants: string[], s: Scope): Diag[] {
+function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], variants: string[], s: Scope): util.Diag[] {
   var own: string[] = [];
   var pi: i32 = 0;
   while (pi < efn.params.len()) {
@@ -10521,8 +10479,8 @@ function e065_ident_in(name: string, xs: string[]): boolean {
   return false;
 }
 
-function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], s: Scope): Diag[] {
-  var out: Diag[] = [];
+function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -10645,7 +10603,7 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
   return out;
 }
 
-function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], s: Scope): Diag[] {
+function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], s: Scope): util.Diag[] {
   var params: string[] = [];
   var pi: i32 = 0;
   while (pi < efn.params.len()) {
@@ -10669,8 +10627,8 @@ function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], s: Scope): Di
 // least one argument. (The native generic-unification failure arm is not
 // ported — the self-host's erased-generics model has no substitution to
 // fail; that arm stays native-only until the checker grows unification.)
-function e032_call_check(c: parser.ExprCall, lastfn: string[], cur: Scope): Diag[] {
-  var out: Diag[] = [];
+function e032_call_check(c: parser.ExprCall, lastfn: string[], cur: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   if (c.args.len() == 0) {
     return out;
   }
@@ -10747,8 +10705,8 @@ function e032_call_check(c: parser.ExprCall, lastfn: string[], cur: Scope): Diag
   return out;
 }
 
-function e032_expr(e: parser.Expr, lastfn: string[], cur: Scope): Diag[] {
-  var out: Diag[] = [];
+function e032_expr(e: parser.Expr, lastfn: string[], cur: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   match (e) {
     parser.ExprCall(c) => {
       out = append_diags(out, e032_call_check(c, lastfn, cur));
@@ -10808,8 +10766,8 @@ function e032_expr(e: parser.Expr, lastfn: string[], cur: Scope): Diag[] {
   return out;
 }
 
-function e032_stmts(stmts: parser.Stmt[], lastfn: string[], s: Scope): Diag[] {
-  var out: Diag[] = [];
+function e032_stmts(stmts: parser.Stmt[], lastfn: string[], s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
   var cur: Scope = s;
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -10966,8 +10924,8 @@ function e021_has_impl(mod: parser.Module, trait_name: string, impl_type: string
   return false;
 }
 
-function e021_diags(mod: parser.Module): Diag[] {
-  var out: Diag[] = [];
+function e021_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = [];
   var i: i32 = 0;
   while (i < mod.impls.len()) {
     var im: parser.ImplInfo = mod.impls[i];
@@ -11084,7 +11042,7 @@ function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty
 // module prefix, so an arbitrary user trait reaches here — hence the
 // explicit list. Default is excluded on both sides: it composes through
 // zero literals and `Type.default()`, not a call on the field value.
-function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): Diag[] {
+function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): util.Diag[] {
   var kind: string = parser.derive_simple_name(tr);
   if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json") {
     return [];
@@ -11168,8 +11126,8 @@ function derive_body_suppressed(fn: parser.FuncDecl, keys: string[]): boolean {
 //
 // Also returns the "Type.method" key of every derive it condemned, for
 // derive_body_suppressed to silence the matching synthesised body.
-function e021_derive_field_diags(mod: parser.Module): (Diag[], string[]) {
-  var out: Diag[] = [];
+function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
+  var out: util.Diag[] = [];
   var keys: string[] = [];
   var si: i32 = 0;
   while (si < mod.structs.len()) {
@@ -11185,7 +11143,7 @@ function e021_derive_field_diags(mod: parser.Module): (Diag[], string[]) {
       }
       var di: i32 = 0;
       while (di < sd.derives.len()) {
-        var sdd: Diag[] = e021_derive_one_diag(mod, sd.derives[di], sd.name, labels, ftys, sd.type_params, sd.line, sd.col);
+        var sdd: util.Diag[] = e021_derive_one_diag(mod, sd.derives[di], sd.name, labels, ftys, sd.type_params, sd.line, sd.col);
         if (sdd.len() > 0) {
           var smn: string = derive_method_name(parser.derive_simple_name(sd.derives[di]));
           if (smn.len() > 0) {
@@ -11222,7 +11180,7 @@ function e021_derive_field_diags(mod: parser.Module): (Diag[], string[]) {
     }
     var edi: i32 = 0;
     while (edi < ederives.len()) {
-      var edd: Diag[] = e021_derive_one_diag(mod, ederives[edi], ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
+      var edd: util.Diag[] = e021_derive_one_diag(mod, ederives[edi], ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
       if (edd.len() > 0) {
         var emn: string = derive_method_name(parser.derive_simple_name(ederives[edi]));
         if (emn.len() > 0) {
@@ -11290,8 +11248,8 @@ function e021_dyn_target(type_name: string): string {
 // positions — the sites the Go checker flags (a `dyn T` struct field is NOT
 // flagged there, so it's deliberately excluded to keep parity). A dyn of an
 // object-safe or unknown trait is left alone.
-function e021_object_safety_diags(mod: parser.Module): Diag[] {
-  var out: Diag[] = [];
+function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = [];
   var fi: i32 = 0;
   while (fi < mod.funcs.len()) {
     var fn: parser.FuncDecl = mod.funcs[fi];
@@ -11472,8 +11430,8 @@ function e060_is_primitive_name(t: string): boolean {
 //   any trait in d's set (every trait known) → the not-implementing arm, with
 //   the missing traits joined " + " exactly like native's missingDynTraits.
 //   E062 — `d.m(args)` where d's set has 2+ traits and 2+ of them declare m.
-function e060_e062_expr(e: parser.Expr, dyns: string[], mod: parser.Module, acc: Diag[]): Diag[] {
-  var out: Diag[] = acc;
+function e060_e062_expr(e: parser.Expr, dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
+  var out: util.Diag[] = acc;
   match (e) {
     parser.ExprUnary(u) => {
       if (u.op.len() > 4 && u.op[0:4] == "as?_") {
@@ -11597,8 +11555,8 @@ function e060_e062_expr(e: parser.Expr, dyns: string[], mod: parser.Module, acc:
   return out;
 }
 
-function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Module, acc: Diag[]): Diag[] {
-  var out: Diag[] = acc;
+function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
+  var out: util.Diag[] = acc;
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -11680,8 +11638,8 @@ function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
 
 // e060_e062_diags: per function, collect the dyn-annotated params/locals then
 // walk the body for the two expression-level checks.
-function e060_e062_diags(mod: parser.Module): Diag[] {
-  var out: Diag[] = [];
+function e060_e062_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = [];
   var fi: i32 = 0;
   while (fi < mod.funcs.len()) {
     var fn: parser.FuncDecl = mod.funcs[fi];
@@ -11737,7 +11695,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
   var st: SigTable = sig_table(sigs);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
-  var body_diags: Diag[] = [];
+  var body_diags: util.Diag[] = [];
   var ambig: string[] = ambiguous_variants(mod.enums);
   // E067 runs only when the module declares a @must_consume type — the
   // fast path that keeps the obligation walk free for unmarked modules
@@ -12026,7 +11984,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
   // for move / capture analysis.
-  var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+  var dd: util.Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
   if (dd.len() > 0) {
     well_typed = false;
   }
@@ -12048,7 +12006,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
 // its head), then reports the first function whose body has an un-inferable
 // expression (at its declaration), else the first offending top-level
 // statement, else a module-level note.
-pub function ill_typed_hint(mod: parser.Module): Diag[] {
+pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var alias_names: string[] = [];
   var an: i32 = 0;
   while (an < mod.aliases.len()) {
