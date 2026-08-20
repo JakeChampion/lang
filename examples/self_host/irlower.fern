@@ -3126,15 +3126,18 @@ pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string, funcs: parser.Fun
 }
 
 // display_arg wraps a `print` / `write` / `eprint` argument in `.to_string()`
-// unless it is already a string — the lowering half of native's Display spine
+// when it is a STRUCT value — the lowering half of native's Display spine
 // (#2696), whose checker rewrites the same three builtins' sole argument.
-// The synthesised call re-enters the ordinary `.to_string()` dispatch, which
-// covers the primitive helpers and a struct's own method alike. asmcore's
-// display_arg_errs refuses an argument whose type has no `to_string` before
-// lowering runs; one that slipped past it resolves to no method and bails the
-// module, so the failure mode here is a refusal, never a wrong answer.
+//
+// The test is "positively a struct", NOT "not provably a string". expr_is_str
+// is a conservative prover: it says false for a string it cannot trace, such as
+// a `m.get_or(k, d)` result or a call through a closure. Rewriting on its
+// negative answer wrapped those in `.to_string()`, which has an i32 fallback,
+// so the string's POINTER was formatted as a decimal — `write(g())` printed
+// "40" for "hi". A struct type recovered by expr_struct_type is the positive
+// signal, and every other shape lowers exactly as it did before.
 function display_arg(e: parser.Expr, line: i32, col: i32, s: LowerState): parser.Expr {
-    if (expr_is_str(e, s)) { return e; }
+    if (expr_struct_type(e, s).len() == 0) { return e; }
     return parser.ExprCall {
         callee: parser.ExprFieldAccess { obj: e, field: "to_string", line: line, col: col, ty: "" },
         args: [],

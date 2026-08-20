@@ -3941,8 +3941,14 @@ function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): util.Di
                         var at: Ty = infer_expr_type(c.args[0], st);
                         if (ty_is_unknown(at) || ty_is_string(at)) { return []; }
                         var an: string = ty_friendly(at);
-                        if (has_to_string(an, st)) {
-                            if (!is_prim_recv_name(an, st)) { return []; }
+                        // Accept only what irlower's display_arg will actually
+                        // rewrite: a NAMED STRUCT carrying a `to_string`. This gate
+                        // has to stay the narrower of the two — rejecting is loud,
+                        // whereas accepting something the lowering then leaves alone
+                        // hands the raw value to the string-only helper, which is
+                        // the #5742 silent wrong answer.
+                        if (ty_struct_name(at).len() > 0 && has_to_string(an, st)) { return []; }
+                        if (has_to_string(an, st) && is_prim_recv_name(an, st)) {
                             // A PRIMITIVE receiver's `.to_string()` resolves to the
                             // built-in formatter in irlower, never to a declared
                             // method, so rewriting here would print the builtin's
