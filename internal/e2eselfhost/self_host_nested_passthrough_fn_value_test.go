@@ -94,6 +94,19 @@ function main(): i32 { var fs: ((i32) => i32)[] = mk(Err(4i32)); return fs[0i32]
 function id[T](x: T): T { return x; }
 function main(): i32 { var v1: Status = Pending; var v3: ((i32) => i32)[] = (match (v1) { Active => [((a: i32) => (match (v1) { Active => a, Inactive => a, Pending => 673i32 }))], Inactive => [((b: i32) => b)], Pending => id([((c: i32) => 126i32)]) }); return v3[0i32](3i32) & 63i32; }`}, // 62
 
+	// The forwarded literal one passthrough FURTHER in: `id(pick(c, […], […]))`
+	// rather than `id([…])`. The forwarding walk stopped at the first argument
+	// and demanded a literal there, so a chain abandoned the rewrite exactly as
+	// the single hop used to, stranding the sibling arm's capturing lambda. The
+	// element-side twin above already recursed through such a chain
+	// (array_elem_nested_passthrough_lambda); the arm-value side did not.
+	// fernsmith does not emit this shape — it came from widening the single-hop
+	// case by hand and asking what the next hop did.
+	{"arm_array_nested_passthrough_forwards_literal", `function id[T](x: T): T { return x; }
+function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+enum S { A, B }
+function main(): i32 { var p: i32 = 5i32; var v: S = B; var fs: ((i32) => i32)[] = (match (v) { A => [((x: i32) => (x + p))], B => id(pick(true, [((y: i32) => (y * 2i32))], [((z: i32) => 9i32)])) }); return fs[0i32](3i32) & 63i32; }`}, // 6
+
 	// The control: one passthrough deep, built and consumed in the same
 	// function, which both sides already agreed on.
 	{"array_elem_single_passthrough_control", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
