@@ -234,13 +234,15 @@ pub function (s: EmitState) mark_str_concat(): EmitState {
 }
 
 // rt_src_str_concat backs `+` on strings (#2649), via the raw-memory intrinsic
-// floor (docs/RUNTIME-INTRINSICS.md). Size lenA+lenB, alloc the buffer, copy A
-// then B byte-by-byte (__raw_store8 of a[i]/b[j]), box it (__raw_string). Tier-2
-// (builds a fresh buffer); the intrinsics lower to single instructions + one
-// __fern_alloc, so heap is its sole dep (mark_str_concat). No string `+` inside,
-// so no self-recursion. Empty operands → a 0-length copy loop, correct.
+// floor (docs/RUNTIME-INTRINSICS.md). Size lenA+lenB, alloc the buffer, bulk-copy
+// each operand in, box it (__raw_string). Tier-2 (builds a fresh buffer); heap is
+// its sole dep (mark_str_concat). No string `+` inside, so no self-recursion.
+// Empty operands are a 0-length __memcpy, which every backend treats as a no-op.
+//
+// The destination half of the second copy needs __raw_addr rather than `p + la`:
+// a raw pointer's surface type is i32, so arm64 would narrow the sum back.
 pub function rt_src_str_concat(): string {
-    return "function __fern_str_concat(a: string, b: string): string { var la: i32 = a.len(); var lb: i32 = b.len(); var p: i32 = __raw_alloc(la + lb); var i: i32 = 0; while (i < la) { __raw_store8(p, i, a[i]); i = i + 1; } var j: i32 = 0; while (j < lb) { __raw_store8(p, la + j, b[j]); j = j + 1; } return __raw_string(p, la + lb); }";
+    return "function __fern_str_concat(a: string, b: string): string { var la: i32 = a.len(); var lb: i32 = b.len(); var p: i32 = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(__raw_addr(p, la), __raw_data(b), lb); return __raw_string(p, la + lb); }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
