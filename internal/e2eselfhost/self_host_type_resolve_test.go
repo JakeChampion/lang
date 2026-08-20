@@ -32,13 +32,15 @@ func TestSelfHostTypeResolve(t *testing.T) {
 	copySelfHostDriver(t, dir, "type_resolve_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "type_resolve_run.fern", "type_resolve_run")
 
-	// Golden — the exact type_from_name_with_structs_unions resolution the former
-	// byte scan produced, captured before the TypeRef migration. Byte-identical.
+	// Golden — the exact type_from_name_with_structs_unions resolution for a
+	// corpus spanning every decode branch.
 	const want = "i32 => i32\n" +
 		"i64 => i64\n" +
 		"u32 => u32\n" +
 		"u64 => u64\n" +
-		"bool => bool\n" +
+		// `bool` is not a Fern type name — only `boolean` is, matching native,
+		// which has no synonym either. The row pins the rejection.
+		"bool => unknown(unrecognised type name: bool)\n" +
 		"boolean => bool\n" +
 		"string => string\n" +
 		"f64 => f64\n" +
@@ -56,8 +58,8 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"Foo[][] => array<array<struct:Foo>>\n" +
 		"(i32, string) => tuple<i32, string>\n" +
 		"(Foo, Shape) => tuple<struct:Foo, union:Shape>\n" +
-		"(i32, string, bool) => tuple<i32, string, bool>\n" +
-		"(string, (i32, bool)) => tuple<string, tuple<i32, bool>>\n" +
+		"(i32, string, boolean) => tuple<i32, string, bool>\n" +
+		"(string, (i32, boolean)) => tuple<string, tuple<i32, bool>>\n" +
 		"(i32) => unknown(unrecognised type name: (i32))\n" +
 		"() => unknown(unrecognised type name: ())\n" +
 		"Map[string, i32] => map<string, i32>\n" +

@@ -31,7 +31,7 @@ function main(): i32 {
         "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32", "float",
         "Foo", "Bar", "Shape", "Baz",
         "i32[]", "string[]", "Foo[]", "Shape[]", "i32[][]", "Foo[][]",
-        "(i32, string)", "(Foo, Shape)", "(i32, string, bool)", "(string, (i32, bool))",
+        "(i32, string)", "(Foo, Shape)", "(i32, string, boolean)", "(string, (i32, boolean))",
         "(i32)", "()",
         "Map[string, i32]", "Map[i32, Foo]", "Map[string, Map[i32, string]]",
         "Map[string, Foo[]]", "Map[Foo, Shape]", "Map[string]",

@@ -1942,7 +1942,7 @@ function type_from_name(name: string): Type {
   if (name == "u64") {
     return t_u64();
   }
-  if (name == "bool" || name == "boolean") {
+  if (name == "boolean") {
     return t_bool();
   }
   if (name == "string") {
@@ -3245,7 +3245,7 @@ pub function type_from_name_with_structs(name: string, structs: StructSig[]): Ty
   if (name == "u64") {
     return t_u64();
   }
-  if (name == "bool" || name == "boolean") {
+  if (name == "boolean") {
     return t_bool();
   }
   if (name == "string") {
@@ -3298,7 +3298,7 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
   if (name == "u64") {
     return t_u64();
   }
-  if (name == "bool" || name == "boolean") {
+  if (name == "boolean") {
     return t_bool();
   }
   if (name == "string") {
@@ -3392,7 +3392,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   if (name == "u64") {
     return t_u64();
   }
-  if (name == "bool" || name == "boolean") {
+  if (name == "boolean") {
     return t_bool();
   }
   if (name == "string") {
@@ -3666,7 +3666,7 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
   if (name == "u64") {
     return t_u64();
   }
-  if (name == "bool" || name == "boolean") {
+  if (name == "boolean") {
     return t_bool();
   }
   if (name == "string") {
@@ -9844,6 +9844,18 @@ function annot_of_expr(e: parser.Expr, acc: Annot[]): Annot[] {
   return acc;
 }
 
+// unknown_type_hint suggests the right spelling for the handful of
+// cross-language slips native's checker names, appended to the E064 message.
+// The hint text is inside the differential, so the two must agree verbatim.
+function unknown_type_hint(name: string): string {
+  if (name == "bool") { return " (did you mean `boolean`?)"; }
+  if (name == "int" || name == "long") { return " (did you mean `i32`?)"; }
+  if (name == "uint") { return " (did you mean `u32`?)"; }
+  if (name == "double") { return " (did you mean `f64`?)"; }
+  if (name == "String") { return " (did you mean `string`?)"; }
+  return "";
+}
+
 // e064_annot_diags reports E064 for any annotation whose bare nominal type is
 // undefined. The caller restricts this to functions with no type parameters, so
 // a plain identifier that resolves to unknown is a genuine typo, never an
@@ -9854,7 +9866,7 @@ function e064_annot_diags(an: Annot[], struct_names: string[], union_names: stri
   while (i < an.len()) {
     var vu: string = e064_unknown_name(an[i].type_name, struct_names, union_names, extra_known);
     if (vu.len() > 0) {
-      out = out.append(dg_at("E064", "unknown type \"" + vu + "\"", an[i].line, an[i].col));
+      out = out.append(dg_at("E064", "unknown type \"" + vu + "\"" + unknown_type_hint(vu), an[i].line, an[i].col));
     }
     i = i + 1;
   }
@@ -11851,7 +11863,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       while (epi < efn.params.len()) {
         var pu: string = e064_unknown_name(efn.params[epi].type_name, struct_names, union_names, e064_extra);
         if (pu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"", efn.line, efn.col));
+          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"" + unknown_type_hint(pu), efn.line, efn.col));
         }
         // E057 annotation form: a `Cell[<composite>]` anywhere in a
         // parameter annotation (same conservative non-generic scope,
@@ -11861,7 +11873,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       }
       var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names, e064_extra);
       if (ru.len() > 0) {
-        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"", efn.line, efn.col));
+        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"" + unknown_type_hint(ru), efn.line, efn.col));
       }
       body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `var x: T` annotations (same non-generic scope).
@@ -11944,7 +11956,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       while (efj < esd.fields.len()) {
         var fu: string = e064_unknown_name(esd.fields[efj].type_name, struct_names, union_names, e064_extra);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"", esd.line, esd.col));
+          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"" + unknown_type_hint(fu), esd.line, esd.col));
         }
         // E057 annotation form for a struct FIELD (`c: Cell[P]`),
         // same non-generic, non-enum-variant scope as E064.
@@ -12026,8 +12038,8 @@ function main(): i32 {
   // Well-typed program:
   //   var a = 1 + 2 * 3;            // a: i32 = 7
   //   var b = "hi" + " there";      // b: string
-  //   var c = a < 10;               // c: bool
-  //   var d = !c;                   // d: bool
+  //   var c = a < 10;               // c: boolean
+  //   var d = !c;                   // d: boolean
   //   return a + 1;                 // i32
   var src1: string = "var a = 1 + 2 * 3; var b = \"hi\" + \" there\"; var c = a < 10; var d = !c; return a + 1;";
   var toks1: lexer.Token[] = lexer.tokenize(src1);
@@ -12378,7 +12390,7 @@ function main(): i32 {
   }
 
   // Var annotation with primitive type: well-typed.
-  var src32: string = "function main(): i32 { var n: i32 = 7; var b: bool = true; var s: string = \"x\"; return n; }";
+  var src32: string = "function main(): i32 { var n: i32 = 7; var b: boolean = true; var s: string = \"x\"; return n; }";
   var mod32: parser.Module = parser.parse_module(lexer.tokenize(src32));
   var mt32: ModuleTypes = check_module(mod32);
   if (!mt32.all_well_typed) {
@@ -12460,7 +12472,7 @@ function main(): i32 {
   }
 
   // Float comparison — well-typed, returns bool.
-  var src41: string = "function main(): i32 { var b: bool = 3.14 > 3.0; return 0; }";
+  var src41: string = "function main(): i32 { var b: boolean = 3.14 > 3.0; return 0; }";
   var mod41: parser.Module = parser.parse_module(lexer.tokenize(src41));
   var mt41: ModuleTypes = check_module(mod41);
   if (!mt41.all_well_typed) {
@@ -12632,7 +12644,7 @@ function main(): i32 {
   }
 
   // Map method `.has(k)` returns bool.
-  var src61: string = "function check(m: Map[string, i32], k: string): bool { return m.has(k); } function main(): i32 { return 0; }";
+  var src61: string = "function check(m: Map[string, i32], k: string): boolean { return m.has(k); } function main(): i32 { return 0; }";
   var mod61: parser.Module = parser.parse_module(lexer.tokenize(src61));
   var mt61: ModuleTypes = check_module(mod61);
   if (!mt61.all_well_typed) {
@@ -12686,8 +12698,8 @@ function main(): i32 {
   }
 
   // Return-type matching: methods are checked too. `(c: Circle)
-  // area(): bool { return c.r; }` declares bool but returns i32.
-  var src67: string = "struct Circle { r: i32 } function (c: Circle) area(): bool { return c.r; } function main(): i32 { return 0; }";
+  // area(): boolean { return c.r; }` declares boolean but returns i32.
+  var src67: string = "struct Circle { r: i32 } function (c: Circle) area(): boolean { return c.r; } function main(): i32 { return 0; }";
   var mod67: parser.Module = parser.parse_module(lexer.tokenize(src67));
   var mt67: ModuleTypes = check_module(mod67);
   if (mt67.all_well_typed) {

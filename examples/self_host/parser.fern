@@ -18594,8 +18594,8 @@ function main(): i32 {
     if (modRP.funcs[0].receiver_type != "") { return 973; }
 
     // Receiver method with zero-arg param list — still parses
-    // cleanly. `function (s: Scope) is_empty(): bool { … }`.
-    var srcR0: string = "function (s: Scope) is_empty(): bool { return false; }";
+    // cleanly. `function (s: Scope) is_empty(): boolean { … }`.
+    var srcR0: string = "function (s: Scope) is_empty(): boolean { return false; }";
     var modR0: Module = parse_module(lexer.tokenize(srcR0));
     if (modR0.funcs.len() != 1) { return 980; }
     if (modR0.funcs[0].name != "is_empty") { return 981; }
