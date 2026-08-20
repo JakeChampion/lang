@@ -836,7 +836,8 @@ regressing the self-host gates. It needs traits in two slices:
 - **Self-host slice 4 (shipped): parametric impls over struct-typed
   type parameters.** `impl[T: Bound] Trait for Box[T]` now parses in the
   self-host: `parse_impl_decl` consumes the leading `[T: Bound]` list
-  and stamps the impl's type params onto each desugared receiver method;
+  and stamps the impl's type params — with their bounds, which run
+  parallel — onto each desugared receiver method;
   the `for` type keeps its `Box[T]` spelling. The x86-64 + arm64
   emitters gained `base_type_name` (mirroring the wasm backend's
   helper), applied at the method-symbol-formation and
@@ -1032,13 +1033,15 @@ regressing the self-host gates. It needs traits in two slices:
   default; an abstract `;` signature comes back body-less and is dropped)
   and returns the defaults tagged with the simple trait name.
   `parse_impl_decl` retains the trait name + impl type + bounded type
-  params + the method names the impl provides, and the receiver-peel /
+  params and their bounds + the method names the impl provides, and the receiver-peel /
   `Self`→type / type-param-merge desugar it shared inline with default
   synthesis is factored into `finalize_impl_method`. After the whole
   module is parsed (so a trait declared *after* its impl still resolves),
   `parse_module` synthesises, for each impl, every default of its trait
   that the impl omitted — `finalize_impl_method(default, impl_type,
-  impl_tps)` — exactly the desugaring a written method gets. Mirrors the
+  impl_tps, impl_tbs)` — exactly the desugaring a written method gets.
+  The bounds reach that call through `ImplInfo`, which is why they are
+  recorded on the struct rather than kept as a local (#7224). Mirrors the
   Go checker's `synthesizeTraitDefaults`. **Same-module only**: a trait
   and an impl in *different* modules don't yet inherit (the synthesis runs
   per `parse_module`, before `merge_module`); cross-module defaults are a

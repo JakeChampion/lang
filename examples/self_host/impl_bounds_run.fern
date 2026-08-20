@@ -1,0 +1,47 @@
+// examples/self_host/impl_bounds_run.fern — stdin-driven driver that prints
+// each parsed function's type parameters beside their trait bounds, one
+// `name<TAB>T=bound,U=bound` line per function.
+//
+// bound_traits runs PARALLEL to type_params (parser.fern's FuncDecl), so the
+// pairing is the invariant worth showing: a type param that reads back with an
+// empty bound is one the parser believes is unbounded. finalize_impl_method
+// merges an impl block's bounded params into each method's type_params, which
+// is the merge this driver exists to pin (#7224).
+//
+// Reads a module from stdin so the companion Go test supplies the corpus.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+
+function bound_at(bt: string[], i: i32): string {
+    if (i < bt.len()) { return bt[i]; }
+    // Short of type_params: the parser dropped this param's bound entirely.
+    return "<missing>";
+}
+
+function pairs_of(fd: parser.FuncDecl): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < fd.type_params.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + fd.type_params[i] + "=" + bound_at(fd.bound_traits, i);
+        i = i + 1;
+    }
+    if (out.len() == 0) { return "<none>"; }
+    return out;
+}
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        var label: string = fd.name;
+        if (fd.receiver_type.len() > 0) { label = fd.receiver_type + "." + fd.name; }
+        print(label + "\t" + pairs_of(fd));
+        i = i + 1;
+    }
+    return 0;
+}
