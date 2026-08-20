@@ -41,10 +41,11 @@ import (
 // exist. A test that only looks at literals carrying `type_params` forward is
 // blind to it by construction.
 //
-// KNOWN BLIND SPOT: matching on the literal only, this misses a rebuild that
-// launders `type_params` through a local first. `finalize_impl_method` does
-// exactly that and loses the impl block's bounds — #7224, which widens this
-// test to follow one level of indirection as part of its fix.
+// Matching the literal alone was not enough: `finalize_impl_method` laundered
+// `type_params` through a local and lost the impl block's bounds unseen (#7224).
+// So a `type_params: <local>` counts as carrying a declaration too, when that
+// local is declared from one in the same function. One level only — that is the
+// shape the code actually uses, and chasing further would need real dataflow.
 var selfHostSources = []string{
 	"../../examples/self_host/parser.fern",
 	"../../examples/self_host/irlower.fern",
@@ -52,18 +53,34 @@ var selfHostSources = []string{
 }
 
 // carriesTypeParams matches `type_params: <ident>.type_params`, i.e. a rebuild
-// carrying an EXISTING declaration's type parameters forward. A fresh list
-// (`type_params: notp`) does not match.
+// carrying an EXISTING declaration's type parameters forward directly. A fresh
+// list (`type_params: notp`) does not match.
 var carriesTypeParams = regexp.MustCompile(`type_params:\s*\w+\.type_params`)
 
 // clearsTypeParams matches a rebuild that writes a FRESH type-param list —
 // `type_params: notp`, the monomorphised-clone shape — rather than carrying one
-// forward. `[]` counts too; `<ident>.type_params` does not.
+// forward. `[]` counts too; `<ident>.type_params` does not. A bare `\w+` also
+// matches a local DERIVED from a declaration, which is not fresh at all, so the
+// inverse check below pairs this with readsDerivedLocal.
 var clearsTypeParams = regexp.MustCompile(`type_params:\s*(\[\]|\w+)(?:,|\s|$)`)
 
 // carriesBoundTraits matches `bound_traits: <ident>.bound_traits`, a bound list
 // taken off an existing declaration.
 var carriesBoundTraits = regexp.MustCompile(`bound_traits:\s*\w+\.bound_traits`)
+
+// typeParamsLocal captures the local a literal reads its type params from, for
+// the indirect case: `type_params: mtps`.
+var typeParamsLocal = regexp.MustCompile(`type_params:\s*(\w+)\s*[,}]`)
+
+// derivedLocal matches a local declared FROM a declaration's type params —
+// `var mtps: string[] = m.type_params;`. Such a local carries the declaration
+// forward just as the field access does.
+var derivedLocal = regexp.MustCompile(`var\s+(\w+)\s*:\s*string\[\]\s*=\s*\w+\.type_params`)
+
+// fernFuncStart matches a top-level Fern function header, used to bound the
+// search for a derived local to the function the literal sits in — two
+// functions may both spell a local `mtps` while only one derives it.
+var fernFuncStart = regexp.MustCompile(`^(pub )?function\b`)
 
 // funcDeclOpen matches the opening of a `FuncDecl { … }` literal, qualified or
 // not. The match index is where the literal starts, so braces earlier on the
@@ -92,20 +109,22 @@ func TestFuncDeclRebuildsKeepBoundTraits(t *testing.T) {
 				continue
 			}
 			lit, end := funcDeclLiteral(lines, i, loc[0])
+			derived := readsDerivedLocal(lines, i, lit)
 			// The INVERSE desync: a rebuild that writes a fresh type-param list
 			// but keeps the source's bounds. `clone_bg` did this — a
 			// monomorphised clone has no type params, so the generic's bounds
 			// are indexed against parameters that no longer exist. The check
-			// above cannot see it: it only looks at literals that CARRY
-			// type_params forward.
-			if clearsTypeParams.MatchString(lit) && carriesBoundTraits.MatchString(lit) {
+			// below cannot see it: it only looks at literals that CARRY
+			// type_params forward. A derived local is excluded because it is not
+			// a fresh list — it is the indirect form of carrying one.
+			if clearsTypeParams.MatchString(lit) && !derived && carriesBoundTraits.MatchString(lit) {
 				t.Errorf("%s:%d-%d: this FuncDecl rebuild writes a fresh `type_params` but keeps "+
 					"`bound_traits` from the source declaration, so the bounds are indexed against "+
 					"type parameters the rebuild does not have.\n"+
 					"Clear both — they are parallel arrays.\n%s",
 					path, i+1, end+1, lit)
 			}
-			if !carriesTypeParams.MatchString(lit) {
+			if !carriesTypeParams.MatchString(lit) && !derived {
 				continue
 			}
 			if strings.Contains(lit, "bound_traits: []") {
@@ -118,6 +137,25 @@ func TestFuncDeclRebuildsKeepBoundTraits(t *testing.T) {
 			}
 		}
 	}
+}
+
+// readsDerivedLocal reports whether the literal takes its `type_params` from a
+// local that the enclosing function declared from another declaration's — the
+// indirection that hid #7224's two sites.
+func readsDerivedLocal(lines []string, i int, lit string) bool {
+	m := typeParamsLocal.FindStringSubmatch(lit)
+	if m == nil {
+		return false
+	}
+	for j := i; j >= 0; j-- {
+		if d := derivedLocal.FindStringSubmatch(lines[j]); d != nil && d[1] == m[1] {
+			return true
+		}
+		if fernFuncStart.MatchString(lines[j]) {
+			return false
+		}
+	}
+	return false
 }
 
 // funcDeclLiteral returns the text of the `FuncDecl { … }` literal starting at

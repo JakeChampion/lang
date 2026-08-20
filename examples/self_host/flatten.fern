@@ -690,8 +690,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // `E021 ... missing method`, and because a bundle's diagnostics are checked as
 // a SET, that poisoned every program importing std/string (which reaches
 // core/bigint + core/cmp since #6314) in the Go-vs-self-host differential.
-// Only the target is rewritten: trait_name lives in the trait namespace, and
-// method_names are bare method names, neither of which flatten mangles.
+// Only the target is rewritten: trait_name and bounds are trait-namespace
+// names, and method_names are bare method names, none of which flatten mangles.
 function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInfo[] {
     var out: parser.ImplInfo[] = [];
     var i: i32 = 0;
@@ -701,6 +701,7 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
             trait_name: im.trait_name,
             impl_type: rewrite_type_name(im.impl_type, ctx),
             type_params: im.type_params,
+            bounds: im.bounds,
             method_names: im.method_names,
             trait_spelling: im.trait_spelling
         });

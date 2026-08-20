@@ -15399,7 +15399,10 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // parse_module matches against the trait's default methods and what the
 // emitter needs — so the spelling rides beside it rather than replacing it.
 // Empty for an inherent impl, which has no trait.
-pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], method_names: string[], trait_spelling: string }
+// bounds runs PARALLEL to type_params: both halves reach the synthesised
+// default through finalize_impl_method, so the bound cannot be left behind
+// as a local of the parse (#7224).
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], bounds: string[], method_names: string[], trait_spelling: string }
 
 // MethodClaim is claim_method_name's answer: the (possibly renamed) function,
 // and the claim table extended with the key it took.
@@ -16303,7 +16306,7 @@ function parse_resource_decl_name(p: Par): (string, Par) {
 // The trait name is parsed and discarded: the self-host resolves
 // `obj.method()` by the receiver's concrete type, not via the
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
-function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string, ImplDecl, Par) {
+function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string[], string, ImplDecl, Par) {
     var out: FuncDecl[] = [];
     var method_names: string[] = [];
     var iline: i32 = p.peek_line();
@@ -16321,9 +16324,16 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     var (impl_tpl, impl_tp_p) = parse_type_param_list(p);
     p = impl_tp_p;
     var impl_tps: string[] = [];
+    // Parallel to impl_tps. finalize_impl_method merges both halves into every
+    // method of the block, so a name kept without its bound gives a method that
+    // still declares `T` and reads back unbounded.
+    var impl_tbs: string[] = [];
     var itpi: i32 = 0;
     while (itpi < impl_tpl.tnames.len()) {
-        if (impl_tpl.tbounds[itpi].len() > 0) { impl_tps = impl_tps.append(impl_tpl.tnames[itpi]); }
+        if (impl_tpl.tbounds[itpi].len() > 0) {
+            impl_tps = impl_tps.append(impl_tpl.tnames[itpi]);
+            impl_tbs = impl_tbs.append(impl_tpl.tbounds[itpi]);
+        }
         itpi = itpi + 1;
     }
     // First name after `impl` (possibly `mod.Name`). For a trait impl
@@ -16374,7 +16384,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
         // finalize_impl_method does the receiver-peel / associated-function
         // encoding, the `Self` -> impl_type rewrite, and the bounded-type-
         // param merge (shared with trait default-method synthesis).
-        out = out.append(finalize_impl_method(m, impl_type, impl_tps));
+        out = out.append(finalize_impl_method(m, impl_type, impl_tps, impl_tbs));
         method_names = method_names.append(m.name);
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
@@ -16384,7 +16394,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the trait decl's bracket-free simple name). Without the strip,
     // `impl Greet[i32] for P` records trait_name "Greet[i32]", never matches
     // the `Greet` trait, and its default methods are never synthesised (#4340).
-    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, method_names, trait_spelling,
+    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, impl_tbs, method_names, trait_spelling,
             ImplDecl { trait_ref: trait_name, type_ref: impl_type, type_params: impl_tpl.tnames, bounds: impl_tpl.tbounds, methods: out, line: iline, col: icol },
             p);
 }
@@ -16755,11 +16765,20 @@ pub function subst_self(ty: string, impl_type: string): string {
     return out;
 }
 
-function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]): FuncDecl {
+function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
     var rt: string = subst_self(m.ret_type, impl_type);
     var mtps: string[] = m.type_params;
+    // bound_traits is allowed to run short of type_params — a promoted unbounded
+    // param contributes no entry — so pad before appending, or the impl's bounds
+    // land on the method's own type params.
+    var mtbs: string[] = m.bound_traits;
+    while (mtbs.len() < m.type_params.len()) { mtbs = mtbs.append(""); }
     var ti: i32 = 0;
-    while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
+    while (ti < impl_tps.len()) {
+        mtps = mtps.append(impl_tps[ti]);
+        mtbs = mtbs.append(impl_tbs[ti]);
+        ti = ti + 1;
+    }
     var has_self: boolean = false;
     if (m.params.len() > 0) {
         if (m.params[0].name == "self") { has_self = true; }
@@ -16775,17 +16794,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
             aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret, fn_param_dyn: m.params[ai].fn_param_dyn, fn_param_types: m.params[ai].fn_param_types });
             ai = ai + 1;
         }
-        return FuncDecl {
-            name: m.name,
-            receiver_name: "",
-            receiver_type: impl_type,
-            type_params: mtps,
-            params: aparams,
-            ret_type: rt,
-            body: m.body, line: m.line, col: m.col,
-            import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, fbip: m.fbip, fip_allowance: m.fip_allowance, ret_str: m.ret_str, async: m.async,
-            is_pub: m.is_pub
-       , is_const: m.is_const };
+        return FuncDecl { ...m, receiver_name: "", receiver_type: impl_type, type_params: mtps, bound_traits: mtbs, params: aparams, ret_type: rt };
     }
     // Receiver method: peel the first param (`self`) into the receiver
     // and rewrite `Self` -> impl_type across the remaining params.
@@ -16802,17 +16811,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
         }
         i = i + 1;
     }
-    return FuncDecl {
-        name: m.name,
-        receiver_name: rname,
-        receiver_type: impl_type,
-        type_params: mtps,
-        params: newparams,
-        ret_type: rt,
-        body: m.body, line: m.line, col: m.col,
-        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, fbip: m.fbip, fip_allowance: m.fip_allowance, ret_str: m.ret_str, async: m.async,
-        is_pub: m.is_pub
-   , is_const: m.is_const };
+    return FuncDecl { ...m, receiver_name: rname, receiver_type: impl_type, type_params: mtps, bound_traits: mtbs, params: newparams, ret_type: rt };
 }
 
 // parse_trait_decl consumes a `trait Name { <method>; … }` block. The
@@ -17827,7 +17826,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             continue;
         }
         if (kw == "impl") {
-            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_method_names, imr_trait_spelling, imr_decl, imr_p) = parse_impl_decl(p);
+            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_bounds, imr_method_names, imr_trait_spelling, imr_decl, imr_p) = parse_impl_decl(p);
             p = imr_p;
             impl_decls = impl_decls.append(imr_decl);
             // Under verbatim the methods live on the ImplDecl alone: adding them
@@ -17841,7 +17840,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 funcs = funcs.append(im_cl.fn);
                 mi = mi + 1;
             }
-            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, method_names: imr_method_names, trait_spelling: imr_trait_spelling });
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
@@ -17882,7 +17881,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             var td: TraitDefault = trait_defaults[ddi];
             if (td.trait_name == info.trait_name) {
                 if (!str_list_contains(info.method_names, td.method.name)) {
-                    var td_cl: MethodClaim = claim_method_name(finalize_impl_method(td.method, info.impl_type, info.type_params), info.trait_name, mth_keys, mth_traits);
+                    var td_cl: MethodClaim = claim_method_name(finalize_impl_method(td.method, info.impl_type, info.type_params, info.bounds), info.trait_name, mth_keys, mth_traits);
                     mth_keys = td_cl.keys;
                     mth_traits = td_cl.traits;
                     funcs = funcs.append(td_cl.fn);
