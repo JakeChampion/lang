@@ -821,6 +821,11 @@ function wasm_helper_symbol(name: string): string {
     // block) — then frees the buffer; a shared array just decs; literals /
     // immortal views are guarded no-ops inside the per-element dec.
     if (name == "__fern_str_arr_free") { return "$__fern_arr_dec_ptr"; }
+    // The VIEW-aware sibling (#6544): same walk, and on wasm the same helper.
+    // Its whole reason for existing is the register backends' immortal view
+    // boxes; wasm's split copies, so its elements are ordinary rc-headered
+    // blocks that $__fern_arr_dec_ptr already frees.
+    if (name == "__fern_str_arr_view_free") { return "$__fern_arr_dec_ptr"; }
     // arr-of-arr reclaim (#4355 slice 9): a SCALAR-element inner buffer is
     // fully freed by one per-element dec, so the outer walk is exactly
     // $__fern_arr_dec_ptr; a STRING-element inner (string[][]) needs the

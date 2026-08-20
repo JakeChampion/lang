@@ -116,6 +116,13 @@ pub function is_fern_helper(name: string): boolean {
         // per-element $__fern_arr_dec IS the wasm string free). Never
         // user-callable — only the irlower exit sweep emits it.
         || name == "__fern_str_arr_free"
+        // The VIEW-aware sibling (#6544): the same walk with __fern_str_view_free
+        // per element instead of __fern_str_free, so an immortal-rc view box gets
+        // freed rather than skipped. Emitted only for the builtin string[] class
+        // (irlower strarr_free_helper), whose elements the runtime made and stored
+        // nowhere else; wasm_helper_symbol routes it to $__fern_arr_dec_ptr like
+        // its sibling, wasm having no view boxes to begin with.
+        || name == "__fern_str_arr_view_free"
         // arr-of-arr reclaim (#4355 slice 9): __fern_arrarr_free walks a fresh
         // arr-of-arr's elements (each a scalar-element inner buffer, one
         // rc-guarded __fern_arr_dec apiece) then frees the outer buffer;
@@ -1695,6 +1702,81 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
     s = s.write("    call __fern_large_push\n");
     s = s.write("    jmp .Lsaf_pop\n");
+    // __fern_str_arr_view_free(arr) — __fn___fern_str_arr_free with one line
+    // changed: the per-element call is __fn___fern_str_view_free, so an element
+    // carrying the immortal rc sentinel has its 24-byte BOX returned to the
+    // freelist instead of being skipped. Every other rc value takes the same
+    // rc-aware path (str_view_free tail-jumps to str_free), so a mixed array —
+    // a split result one of whose elements was later overwritten by a fresh
+    // string — reclaims completely and exactly once.
+    //
+    // The skip this undoes is load-bearing everywhere ELSE: an immortal rc means
+    // a second holder is uncounted, so nothing can prove the box dead from the rc
+    // alone. The warrant here is the CLASS, not the count — irlower emits this
+    // only for a builtin `s.split(sep)` / `s.lines()` result whose boxes the
+    // runtime made and stored into this array and nowhere else, and whose slot is
+    // proven non-escaping. Same guard chain, buffer free and large tier as the
+    // sibling; separate labels so the two bodies never share a tail.
+    if (s.has_need("str_arr_view_free")) {
+    s = s.write("__fn___fern_str_arr_view_free:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");        // arr
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lsavf_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
+    s = s.write("    jb .Lsavf_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lsavf_ret\n");             // negative = immortal buffer -> skip
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    jg .Lsavf_dec\n");             // rc>1 -> dec, keep
+    s = s.write("    jl .Lsavf_uf\n");              // rc==0 -> underflow (double free)
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    movq %rax, %rbx\n");           // arr
+    s = s.write("    movq (%rbx), %r12\n");         // len @ [arr]
+    s = s.write("    movq $0, %r13\n");             // i
+    s = s.write(".Lsavf_loop:\n");
+    s = s.write("    cmpq %r12, %r13\n");
+    s = s.write("    jge .Lsavf_freebuf\n");
+    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // element i @ [arr+8+i*8]
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_str_view_free\n"); // view-aware per-element free
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    incq %r13\n");
+    s = s.write("    jmp .Lsavf_loop\n");
+    s = s.write(".Lsavf_freebuf:\n");
+    s = s.write("    movl $0, -8(%rbx)\n");         // rc = 0 (defensive vs re-free)
+    s = s.write("    movl -16(%rbx), %ecx\n");      // cap
+    s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
+    s = s.write("    cmpq $65536, %rcx\n");
+    s = s.write("    jae .Lsavf_large\n");
+    s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
+    s = hev_free(s, "%rdx", "%rcx");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
+    s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
+    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
+    s = s.write(".Lsavf_pop:\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    jmp .Lsavf_ret\n");
+    s = s.write(".Lsavf_dec:\n");
+    s = s.write("    subl $1, %ecx\n");
+    s = s.write("    movl %ecx, -8(%rax)\n");
+    s = s.write("    jmp .Lsavf_ret\n");
+    s = s.write(".Lsavf_uf:\n");
+    s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
+    s = s.write(".Lsavf_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lsavf_large:\n");
+    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .Lsavf_pop\n");
+    }
     // __fern_arrarr_free(arr) — SCALAR-array-of-arrays reclaim (#4355 slice 9):
     // the arr-of-arr sibling of __fn___fern_str_arr_free with the identical
     // guard chain and buffer free; only the per-element call differs — each
@@ -3989,7 +4071,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // string[] ELEMENT reclaim (#4355): a library module whose exit sweep
         // frees a fresh-element string[] references this symbol; the entry owns
         // the single definition (emit_ir_runtime).
-        "__fn___fern_str_arr_free",
+        "__fn___fern_str_arr_free", "__fn___fern_str_arr_view_free",
         // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
         // fresh arr-of-arr local references these; the entry owns the bodies.
         "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
@@ -5339,6 +5421,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
             // through the freelist, so they need the heap runtime.
             if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
+            // The VIEW-aware string[] element walk (#6544) is gated the same way
+            // and for the same reason: its body's inner
+            // `call __fn___fern_str_view_free` must not appear in a binary that
+            // never reclaims a builtin string[]. Frees through the freelist, so
+            // it needs the heap runtime.
+            if (o.str == "__fern_str_arr_view_free") { s = s.need("heap"); s = s.need("str_arr_view_free"); }
             // The box-VALUE-column map frees (#4353 item 3) free that column
             // through __fern_arrarr_free, so they pull in its body as well as
             // their own.
@@ -6503,7 +6591,7 @@ pub function all_runtime_need_roots(): string[] {
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
-        "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf",
+        "optarrarr_free", "str_arr_view_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf",
         // The platform helpers. These were absent for as long as the list
         // existed, which made the "closed set" claim above false: the
         // bootstrap compiler marks none of them, so nothing noticed until a

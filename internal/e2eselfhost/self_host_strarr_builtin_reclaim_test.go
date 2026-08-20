@@ -33,29 +33,42 @@ import (
 // and on x86-64 a churn string is handed the freed box and the read-back fails
 // (97). Both compilers here return 0.
 //
-// Measured, two compilers from the same commit, 400 rounds of the harness below:
+// Measured, 400 rounds of the harness below; each arrow is a pair of compilers
+// built from the same commit:
 //
-//	case                     x86-64          wasm
-//	split                    172800        204800 -> 67200
-//	lines                      9600         57600 ->  9600
-//	split + lines            182400        262400 -> 76800
+//	case                  x86-64                    wasm
+//	split          172800 -> 0            204800 -> 67200
+//	lines            9600 -> 0             57600 ->  9600
+//	split + lines  182400 -> 0            262400 -> 76800
 //
-// The register columns do not move, and the reason is a second half this change
-// does NOT do: on x86-64/arm64 `split` yields zero-copy VIEWS over the source,
-// each a 24-byte box carrying the immortal rc sentinel, and __fern_str_arr_free's
-// per-element __fern_str_free skips an immortal rc by contract. Freeing those
-// boxes needs a view-aware sibling of the helper (__fern_str_view_free's
-// treatment, applied per element) in both register backends. The register
-// ceilings below are therefore regression gates on today's number, deliberately
-// slack rather than tight — they must not become a floor that the follow-up has
-// to argue with.
+// The two columns were fixed by two different pieces. wasm's split COPIES, so
+// crediting the class was enough there. The register backends' split yields
+// zero-copy VIEWS — a 24-byte box over the source's bytes carrying the immortal
+// rc sentinel — and __fern_str_arr_free's per-element __fern_str_free skips an
+// immortal rc BY CONTRACT, that skip being what stops a view freeing bytes it
+// does not own. So the credit fired there and reclaimed nothing until
+// __fern_str_arr_view_free landed: the same walk with __fern_str_view_free per
+// element, emitted only for this class.
+//
+// What is left on wasm (67200 for the 18-part split) is a separate question from
+// this one and is not the element boxes.
+//
+// One honest limit, on the NON-ESCAPE half rather than the type half. Building a
+// compiler with strarr_unsafe_for's verdict dropped for this class does change
+// emission — `first_of` below goes from __fern_arr_dec to the element walk, so
+// the guard demonstrably decides something — but no probe here faults under it,
+// including with slice decoys sized to the 24-byte class a freed element box
+// lands in. So the escape cases below are correctness gates, not fault
+// witnesses; the half they rest on is the one the `SARR:` class already carries,
+// unchanged.
 
 const strArrBuiltinPrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
 // strArrBuiltinHeap wraps a `round` body in the churn/heap-delta harness, with
-// the ceiling baked in per leg — the two backends leak different amounts, so one
-// shared constant could only be the looser of the two.
+// the ceiling baked in per leg. The register legs sit at 0 and are gated tight;
+// the wasm ones carry a residue that is not the element boxes, so their ceilings
+// are set between the fixed number and the parent's.
 func strArrBuiltinHeap(body string, limit int) string {
 	return strArrBuiltinPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
@@ -84,11 +97,11 @@ var strArrBuiltinHeapCases = []struct {
 	// 204800 -> 67200 on wasm. What is left is the buffer plus the boxes the
 	// per-element walk still declines; the elements themselves are gone.
 	{"strarr-builtin-split", `    var parts: string[] = base.split("-");
-    return parts.len();`, 180000, 100000},
+    return parts.len();`, 4096, 100000},
 	// 57600 -> 9600. One line, so one element — the smallest shape that shows the
 	// walk happening at all.
 	{"strarr-builtin-lines", `    var ls: string[] = base.lines();
-    return ls.len();`, 16000, 16000},
+    return ls.len();`, 4096, 16000},
 	// Reading the elements does not disturb the credit: an index READ is not an
 	// escape, and strarr_unsafe_for says so.
 	{"strarr-builtin-split-elements-read", `    var parts: string[] = base.split("-");
@@ -96,12 +109,12 @@ var strArrBuiltinHeapCases = []struct {
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (parts[1] != "a") { return 0 - 2; }
     if (!parts[n - 1].starts_with("0123")) { return 0 - 3; }
-    return n;`, 180000, 100000},
+    return n;`, 4096, 100000},
 	// Two builtin producers in one frame, so the sweep has to credit both slots
 	// rather than the first one it meets.
 	{"strarr-builtin-split-and-lines", `    var parts: string[] = base.split("-");
     var ls: string[] = base.lines();
-    return parts.len() + ls.len();`, 190000, 110000},
+    return parts.len() + ls.len();`, 4096, 110000},
 }
 
 // strArrBuiltinTypeGateSrc is the type gate's witness. `parts` never escapes
@@ -171,6 +184,82 @@ function round(pre: string): i32 {
     return ps.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+	// The SOURCE is a .rodata literal, so its element views point outside the
+	// arena and the view free's heap-range guard has to decline them; and the
+	// second half overwrites one view element with a fresh string, leaving a MIXED
+	// array the walk has to reclaim completely and exactly once (str_view_free
+	// tail-jumps to str_free for a non-immortal rc).
+	{"strarr-builtin-literal-source-and-mixed", strArrBuiltinPrelude + `function litround(): i32 {
+    var parts: string[] = "alpha-beta-gamma-delta".split("-");
+    var n: i32 = parts.len();
+    if (parts[0] != "alpha") { return 0 - 1; }
+    if (parts[3] != "delta") { return 0 - 2; }
+    return n;
+}
+function mixround(pre: string): i32 {
+    var base: string = w(pre);
+    var parts: string[] = base.split("-");
+    parts = parts.with(1, w("MMMMMMMM"));
+    var n: i32 = parts.len();
+    var p1: string = w("XXXXXXXX");
+    if (p1.len() < 0) { return 0; }
+    if (parts[0] != "abcdefgh") { return 0 - 1; }
+    if (!parts[1].starts_with("MMMMMMMM-")) { return 0 - 2; }
+    if (parts[2] != "wide") { return 0 - 3; }
+    return n;
+}
+function main(): i32 {
+    var pre: string = "abcdefgh";
+    var i: i32 = 0;
+    while (i < 1500) {
+        if (litround() != 4) { return 96; }
+        if (mixround(pre) != 18) { return 97; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`},
+	// Separator absent: ONE part covering the whole source. If the runtime handed
+	// back the source's own box rather than a fresh view over it, freeing that box
+	// would destroy `base` and its scope-exit dec would double-free.
+	{"strarr-builtin-whole-source-single-part", strArrBuiltinPrelude + `function round(pre: string): i32 {
+    var base: string = w(pre);
+    var parts: string[] = base.split("|");
+    var n: i32 = parts.len();
+    var ls: string[] = base.lines();
+    var m: i32 = ls.len();
+    var p1: string = w("XXXXXXXX");
+    var p2: string = w("YYYYYYYY");
+    if (p1.len() + p2.len() < 0) { return 0; }
+    if (n != 1) { return 0 - 1; }
+    if (m != 1) { return 0 - 2; }
+    if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 3; }
+    if (base.index_of("XXXX") >= 0) { return 0 - 4; }
+    return n;
+}
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+	// An ELEMENT outliving the array: the credit must be withheld, or the sweep
+	// frees the box the caller is holding. The decoys are slices, so they allocate
+	// from the same 24-byte class a freed element box lands in.
+	{"strarr-builtin-escaping-element", strArrBuiltinPrelude + `function first_of(base: string): string {
+    var parts: string[] = base.split("-");
+    return parts[0];
+}
+function churn(src: string): i32 {
+    var a: string = src[1:9];
+    var b: string = src[2:10];
+    var c: string = src[3:11];
+    var d: string = src[4:12];
+    return a.len() + b.len() + c.len() + d.len();
+}
+function round(pre: string): i32 {
+    var base: string = w(pre);
+    var head: string = first_of(base);
+    if (churn(w("QQQQQQQQ")) < 0) { return 0; }
+    if (head != "abcdefgh") { return 0 - 1; }
+    return head.len();
+}
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 8) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
 	// LIVENESS across both producers at once, with every element read after decoy
 	// allocations that would be handed a freed box if the sweep landed early.
 	{"strarr-builtin-elements-live", strArrBuiltinPrelude + `function round(pre: string): i32 {

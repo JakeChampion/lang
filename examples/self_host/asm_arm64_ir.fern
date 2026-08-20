@@ -1562,6 +1562,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // gating: an unrelated binary must not carry the strarrarr body's
             // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
             if (o.str == "__fern_arrarr_free") { s = s.need("arrarr_free"); }
+            // The VIEW-aware string[] element walk (#6544), gated the same way:
+            // a binary that never reclaims a builtin string[] must not carry a
+            // body whose inner `bl __fn___fern_str_view_free` the negative
+            // asm-grep contracts would see.
+            if (o.str == "__fern_str_arr_view_free") { s = s.need("str_arr_view_free"); }
             // The box-VALUE-column map frees (#4353 item 3) free that column
             // through __fern_arrarr_free, so they pull in its body as well as
             // their own.
@@ -3928,6 +3933,81 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sub x1, x19, #16\n");          // base = arr-16
     s = s.write("    bl __fern_large_push\n");
     s = s.write("    b .Lsaf_pop\n");
+    // __fern_str_arr_view_free(arr) — the arm64 twin of the x86-64 body in
+    // asm_ir.emit_ir_runtime: __fn___fern_str_arr_free with the per-element call
+    // changed to __fn___fern_str_view_free, so an element carrying the immortal
+    // rc sentinel has its 24-byte BOX freed instead of skipped. Every other rc
+    // value takes the same rc-aware path (str_view_free tail-jumps to str_free),
+    // so a mixed array reclaims completely and exactly once.
+    //
+    // The skip this undoes is load-bearing elsewhere: an immortal rc means a
+    // second holder is uncounted, so the warrant is the CLASS, not the count —
+    // irlower emits this only for a builtin `s.split(sep)` / `s.lines()` result
+    // (strarr_free_helper). Same register discipline (x19/x20/x21 + x30 saved
+    // across the bl) and the same buffer free / large tier; separate labels so
+    // the two bodies never share a tail.
+    if (s.has_need("str_arr_view_free")) {
+    s = s.write("__fn___fern_str_arr_view_free:\n");
+    s = s.write("    ldr x0, [sp]\n");              // arr
+    s = s.write("    cbz x0, .Lsavf_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Lsavf_ret\n");            // low-addr guard
+    s = s.write("    ldur w1, [x0, #-8]\n");        // rc
+    s = s.write("    tbnz w1, #31, .Lsavf_ret\n");  // negative = immortal buffer -> skip
+    s = s.write("    cmp w1, #1\n");
+    s = s.write("    bgt .Lsavf_dec\n");            // rc>1 -> dec, keep
+    s = s.write("    blt .Lsavf_uf\n");             // rc==0 -> underflow (double free)
+    s = s.write("    stp x19, x30, [sp, #-16]!\n"); // save callee-saved + link
+    s = s.write("    stp x20, x21, [sp, #-16]!\n");
+    s = s.write("    mov x19, x0\n");               // arr
+    s = s.write("    ldr x20, [x19]\n");            // len @ [arr]
+    s = s.write("    mov x21, #0\n");               // i
+    s = s.write(".Lsavf_loop:\n");
+    s = s.write("    cmp x21, x20\n");
+    s = s.write("    bge .Lsavf_freebuf\n");
+    s = s.write("    add x9, x21, #1\n");
+    s = s.write("    ldr x0, [x19, x9, lsl #3]\n"); // element i @ [arr+(i+1)*8]
+    s = s.write("    str x0, [sp, #-16]!\n");       // push stack arg (16-aligned)
+    s = s.write("    bl __fn___fern_str_view_free\n"); // view-aware per-element free
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    add x21, x21, #1\n");
+    s = s.write("    b .Lsavf_loop\n");
+    s = s.write(".Lsavf_freebuf:\n");
+    s = s.write("    stur wzr, [x19, #-8]\n");      // rc = 0 (defensive vs re-free)
+    s = s.write("    ldur x1, [x19, #-16]\n");      // cap
+    s = s.write("    add x1, x1, #3\n");            // class = cap + 3 words
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x1, x9\n");
+    s = s.write("    bhs .Lsavf_large\n");
+    s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");  // old head
+    s = s.write("    str x9, [x2]\n");              // *base = old head
+    s = s.write("    str x2, [x3, x1, lsl #3]\n");  // freelist[class] = base
+    s = s.write(".Lsavf_pop:\n");
+    s = s.write("    ldp x20, x21, [sp], #16\n");
+    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write("    b .Lsavf_ret\n");
+    s = s.write(".Lsavf_dec:\n");
+    s = s.write("    sub w1, w1, #1\n");
+    s = s.write("    stur w1, [x0, #-8]\n");
+    s = s.write("    b .Lsavf_ret\n");
+    s = s.write(".Lsavf_uf:\n");
+    s = s.write("    adrp x2, __fern_rc_underflow\n");
+    s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
+    s = s.write("    ldr w3, [x2]\n");
+    s = s.write("    add w3, w3, #1\n");
+    s = s.write("    str w3, [x2]\n");
+    s = s.write(".Lsavf_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lsavf_large:\n");
+    s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
+    s = s.write("    sub x1, x19, #16\n");          // base = arr-16
+    s = s.write("    bl __fern_large_push\n");
+    s = s.write("    b .Lsavf_pop\n");
+    }
     // __fern_arrarr_free(arr) — SCALAR arr-of-arr reclaim (#4355 slice 9),
     // the arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime:
     // identical shell to __fn___fern_str_arr_free above, but each element is

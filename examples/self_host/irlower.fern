@@ -21603,12 +21603,12 @@ function emit_arrarr_reclaim_store(se: LowerState, slot: i32): LowerState {
 
 // emit_strarr_reclaim_store stores `new` (on the operand stack) into a
 // reclaimable string[] LOOP-LOCAL (#4353 item 4) and frees the slot's PRIOR
-// value — the ELEMENT strings AND the buffer — via __fern_str_arr_free before
-// the store (the loop-rebind reclamation), cow-guarded so a self-store never
-// frees the live value. The string[] sibling of emit_arrarr_reclaim_store, and
-// the per-iteration counterpart of the exit sweep's string[] reclaim (16565,
-// same helper); the first binding sees old = the zero-initialised slot →
-// __fern_str_arr_free's null guard no-ops. Without this a re-declared
+// value — the ELEMENT strings AND the buffer — via the slot's element-walking
+// helper (strarr_free_helper) before the store (the loop-rebind reclamation),
+// cow-guarded so a self-store never frees the live value. The string[] sibling
+// of emit_arrarr_reclaim_store, and the per-iteration counterpart of the exit
+// sweep's string[] reclaim (16565, same helper); the first binding sees old =
+// the zero-initialised slot → the null guard no-ops. Without this a re-declared
 // `var xs: string[]` per iteration took the shallow emit_arr_store dec (buffer
 // only) and leaked every element string.
 function emit_strarr_reclaim_store(se: LowerState, slot: i32): LowerState {
@@ -21621,7 +21621,7 @@ function emit_strarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
     st = st.emit(ir.op_if(0));
     st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+    st = st.emit(ir.op_call_direct(strarr_free_helper(st, slot), 1));
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));
@@ -21663,7 +21663,7 @@ function lower_strarr_with_store(idx: parser.Expr, val: parser.Expr, slot: i32, 
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_load_local(islot));
     st = st.emit(ir.op_arr_get(32));
-    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+    st = st.emit(ir.op_call_direct(strarr_elem_free_helper(st, slot), 1));
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());
 
@@ -23900,11 +23900,11 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             } else {
                 if (slot_is_reclaimable_strarr(st, i)) {
                     // string[] ELEMENT reclaim (#4355): a proven fresh-element string
-                    // array frees its element boxes too — __fern_str_arr_free walks the
+                    // array frees its element boxes too — the helper walks the
                     // elements (rc==1-gated, each via the rc-aware string free) and then
                     // frees the buffer. Every other array slot keeps the shallow
                     // buffer-only dec (elements leak — sound).
-                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                    st = st.emit(ir.op_call_direct(strarr_free_helper(st, i), 1));
                 } else {
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                 }
@@ -39879,6 +39879,26 @@ function emit_structarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     return st.emit(ir.op_store_local(slot));
 }
 
+// strarr_free_helper / strarr_elem_free_helper: which element-walking release a
+// reclaimable string[] slot gets. The SARRB class — a builtin `s.split(sep)` /
+// `s.lines()` result — is the one whose elements are zero-copy VIEWS on the
+// register backends: a 24-byte box over the source's bytes carrying the immortal
+// rc sentinel, which __fern_str_free skips BY CONTRACT so a view cannot free
+// bytes it does not own. The view-aware siblings free that box alone.
+//
+// Only this class may take them. The immortal rc makes a second holder uncounted
+// and undetectable, so the warrant has to come from the classification: the
+// runtime helper made these boxes and stored them into this array and nowhere
+// else, and the slot is proven non-escaping.
+function strarr_free_helper(s: LowerState, i: i32): string {
+    if (s.is_strarr_builtin_slot(i)) { return "__fern_str_arr_view_free"; }
+    return "__fern_str_arr_free";
+}
+function strarr_elem_free_helper(s: LowerState, i: i32): string {
+    if (s.is_strarr_builtin_slot(i)) { return "__fern_str_view_free"; }
+    return "__fern_str_free";
+}
+
 function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
@@ -39887,7 +39907,7 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     // The builtin-producer class needs BOTH halves: the "SARRB:" credit carries
     // the non-escape proof, the slot flag carries the type confirmation the
     // name-level collector could not make.
-    return s.locals[i].strarr_builtin
+    return s.is_strarr_builtin_slot(i)
         && reclaim_has(s.reclaimable_names, "SARRB:", reclaim_slot_name(s, i));
 }
 
