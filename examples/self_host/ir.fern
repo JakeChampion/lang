@@ -1387,8 +1387,12 @@ pub function op_return(): Op { return op0("return"); }
 // (asm_arm64.fern imports ./ir). Each chunk stays near render_op's proven-safe
 // size.
 
-// kind_count is the number of registered op kinds (ids 1..kind_count()).
-pub function kind_count(): i32 { return 197; }
+// kind_count is the number of registered op kinds (ids 1..kind_count()), which
+// must stay DENSE — ir_kind_run sweeps every id in that range and a hole reads
+// as a half-registered op. Retiring one therefore moves the last entry into its
+// slot rather than leaving a gap; the moved op's membership in every id-keyed
+// classifier below has to move with it, or it lands in the wrong emitter.
+pub function kind_count(): i32 { return 196; }
 
 function kind_id_0(name: string): i32 {
     if (name == "const_i32") { return 1; }
@@ -1603,7 +1607,10 @@ function kind_id_4(name: string): i32 {
     if (name == "tcp_send") { return 194; }
     if (name == "tcp_recv") { return 195; }
     if (name == "tcp_close") { return 196; }
-    if (name == "tcp_pollable") { return 197; }
+    // 112, not 197: it took the slot str_chars freed (#7231). The 1..kind_count()
+    // sweep requires the id space to stay dense, and moving the last entry into
+    // the hole beats renumbering every id above it.
+    if (name == "tcp_pollable") { return 112; }
     // Extension tags beyond kind_count() (like struct_copy=198 / store_i64=199):
     // the server-half tcp ops (#4371). Not in the 1..kind_count() bijection
     // sweep (ir_kind_run sweeps them separately by name), but nameable so
@@ -1791,6 +1798,7 @@ function kind_name_2(id: i32): string {
     if (id == 109) { return "str_trim"; }
     if (id == 110) { return "str_reverse"; }
     if (id == 111) { return "str_replace"; }
+    if (id == 112) { return "tcp_pollable"; }
     if (id == 113) { return "str_lines"; }
     if (id == 114) { return "str_starts_with"; }
     if (id == 115) { return "str_ends_with"; }
@@ -1881,7 +1889,6 @@ function kind_name_4(id: i32): string {
     if (id == 194) { return "tcp_send"; }
     if (id == 195) { return "tcp_recv"; }
     if (id == 196) { return "tcp_close"; }
-    if (id == 197) { return "tcp_pollable"; }
     if (id == 198) { return "struct_copy"; }
     if (id == 199) { return "store_i64"; }
     if (id == 200) { return "tcp_listen"; }
@@ -2016,7 +2023,7 @@ function pops1_io(t: i32): boolean {
         || t == 231                                                      // create_dir_all
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
-        || t == 196 || t == 197 || t == 200 || t == 201 || t == 203;     // tcp_close/pollable/listen/accept, open_file
+        || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
 }
 
 function pops2_arith(t: i32): boolean {
@@ -3199,7 +3206,7 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 209) { return true; }
     if (tag == 106 || tag == 107) { return true; }
     if (tag == 108 || tag == 109 || tag == 110) { return true; }
-    if (tag == 111 || tag == 112 || tag == 113) { return true; }
+    if (tag == 111 || tag == 113) { return true; }
     // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
     // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
     if (tag == 146 || tag == 148) { return true; }
@@ -3234,7 +3241,7 @@ pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106
         || tag == 107 || tag == 108 || tag == 109
-        || tag == 110 || tag == 111 || tag == 112 || tag == 113
+        || tag == 110 || tag == 111 || tag == 113
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227;

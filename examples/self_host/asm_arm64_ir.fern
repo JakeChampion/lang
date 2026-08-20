@@ -1011,7 +1011,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
             s = s.need("tcp_close");
             s = s.write("    bl __fn___fern_tcp_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 197) {  // tcp_pollable
+        } else if (o.kind_tag == 112) {  // tcp_pollable
             // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_pollable\n    str x0, [sp, #-16]!\n");

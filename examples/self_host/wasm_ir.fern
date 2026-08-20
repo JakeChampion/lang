@@ -3427,7 +3427,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 201) {  // tcp_accept
             // tcp_accept(listener) -> a fresh connection struct, or -errno.
             out = out + "    call $__fern_tcp_accept\n";
-        } else if (o.kind_tag == 197) {  // tcp_pollable
+        } else if (o.kind_tag == 112) {  // tcp_pollable
             // tcp_pollable(conn) -> a wasi:io/poll pollable for the socket.
             out = out + "    call $__fern_tcp_pollable\n";
         } else if (o.kind_tag == 194) {  // tcp_send
