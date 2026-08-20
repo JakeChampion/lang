@@ -4084,9 +4084,59 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm
 	return allReturnsArePairFormShape(fn.Body, variantNames, pairForm)
 }
 
-// pairFormVariantsFor returns the set of valid variant
-// constructor names for fn's return type when the type is
-// eligible for pair-form lowering. Returns nil if the type
+// pairFormVariantsFor returns the constructor names that are VALID for t in
+// this program, which is the raw variant set minus any name a user-declared
+// function shadows.
+//
+// The prune belongs here rather than at the use sites because both of them —
+// the eligibility walk's `variantNames` and the builder's `pairVariants` —
+// come from this one call, and the recursive shape walk threads only the set,
+// not the checker info. A shadowed name is simply not a constructor name for
+// this program, so removing it makes every downstream check decline on its own.
+//
+// Same rule and same reason as nameShadowsVariant at the call-site dispatch:
+// the checker already resolved `Ok(v)` to a user function, and re-deciding by
+// spelling made a pair-form RETURN of it construct the built-in variant
+// instead — native alone disagreeing with -interp and the self-host (#7162).
+// Locals are not pruned here: they are per-scope, while a declared function is
+// program-wide, and the call-site check covers the local half.
+func pairFormVariantsFor(t ast.EnumType, info *checker.Info, ptrW int) map[string]bool {
+	return pruneShadowedVariants(pairFormVariantNames(t, info, ptrW), info)
+}
+
+// pruneShadowedVariants drops from `names` every name bound to a user-declared
+// function. Returns `names` untouched when nothing is shadowed, so the common
+// path keeps the shared optionVariants / resultVariants maps and allocates
+// nothing — those are package-level and must never be mutated.
+func pruneShadowedVariants(names map[string]bool, info *checker.Info) map[string]bool {
+	if names == nil || info == nil {
+		return names
+	}
+	shadowed := false
+	for n := range names {
+		if _, ok := info.FuncSigs[n]; ok {
+			shadowed = true
+			break
+		}
+	}
+	if !shadowed {
+		return names
+	}
+	out := map[string]bool{}
+	for n := range names {
+		if _, ok := info.FuncSigs[n]; !ok {
+			out[n] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// pairFormVariantNames returns the raw variant-constructor names for fn's
+// return type when the type is eligible for pair-form lowering. Shadowing is
+// applied by the pairFormVariantsFor wrapper, not here. Returns nil if the type
 // doesn't match a known shape or if any payload type isn't
 // pair-form-shaped on this target (see
 // `isPairFormPayloadShape` — i32-fitting on every backend,
@@ -4109,7 +4159,7 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm
 // for the nullary one, and the consumer-side tag dispatch
 // reads the variant's `varIdx` from the enum decl, so the
 // two must agree.
-func pairFormVariantsFor(t ast.EnumType, info *checker.Info, ptrW int) map[string]bool {
+func pairFormVariantNames(t ast.EnumType, info *checker.Info, ptrW int) map[string]bool {
 	switch t.Name {
 	case "Option":
 		if len(t.Args) != 1 || !isPairFormPayloadShape(t.Args[0], ptrW) {
@@ -12692,6 +12742,30 @@ func (b *builder) emitGrowBracket(entries []growBracketEntry, kind OpKind, helpe
 	}
 }
 
+// nameShadowsVariant reports whether `name` is bound to something that wins
+// over a same-named variant constructor, so a call to it is an ordinary call
+// rather than a construction.
+//
+// This is the checker's rule, not a second opinion: checker.go's
+// `isVar := vrOk && !c.isUserFuncOrLocal(id.Name, s)` picks the local or the
+// user function over the variant, and its comment states the intent — "a
+// user-defined `Red` should win over `Color.Red`". Deciding again here by
+// spelling alone let a free function named `Ok` / `Err` / `Some` type-check as
+// itself and then lower as the built-in constructor, so native alone answered
+// differently from -interp and from all three self-host backends (#7162).
+//
+// Only the local half was honoured before. FuncSigs is the same table the
+// checker consulted, and it holds user-declared (and checker-synthesised)
+// functions only — a built-in variant name is absent from it unless a program
+// actually declares one.
+func (b *builder) nameShadowsVariant(name string) bool {
+	if _, isLocal := b.locals[name]; isLocal {
+		return true
+	}
+	_, isUserFunc := b.info.FuncSigs[name]
+	return isUserFunc
+}
+
 func (b *builder) callBody(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
@@ -12701,7 +12775,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
 	if enumName, varIdx, payloads, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
-		if _, isLocal := b.locals[id.Name]; !isLocal {
+		if !b.nameShadowsVariant(id.Name) {
 			return b.emitEnumNew(n, enumName, varIdx, payloads, n.Args)
 		}
 	}
