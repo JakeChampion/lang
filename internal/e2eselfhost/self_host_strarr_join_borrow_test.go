@@ -26,22 +26,31 @@ import (
 // Measured, 400 rounds of the harness below, a pair of compilers from the same
 // commit:
 //
-//	elements        x86-64             arm64              wasm
-//	1        102400 -> 51200    102400 -> 51200     89600 -> 44800
-//	4        377600 -> 172800   377600 -> 172800   345600 -> 166400
-//	8        742400 -> 332800   742400 -> 332800   688000 -> 329600
+//	elements   x86-64                  arm64                   wasm
+//	1          102400 -> 51200 -> 0    102400 -> 51200 -> 0    89600 -> 44800 -> 0
+//	4          377600 -> 172800 -> 0   377600 -> 172800 -> 0   345600 -> 166400 -> 0
+//	8          742400 -> 332800 -> 0   742400 -> 332800 -> 0   688000 -> 329600 -> 0
 //
-// What is left is the join RESULT, and it is a different gap with a different
-// fix. Crediting a `var s = xs.join(sep)` binding as fresh has to happen where
-// the RECEIVER's type is known: str_local_binding_is_fresh is deliberately
-// state-free, and a syntactic `field == "join"` arm there is UNSOUND — a
-// user-declared `(h: Holder) join(sep)` returning `h.name` types as a string, so
-// the result gets freed while the receiver still owns it (witnessed: exit 97 on
-// x86-64, a trap on wasm). That is why the ceilings below sit between the fixed
-// number and the parent's rather than at zero. They cannot become a floor: the
-// follow-up only makes the number smaller.
+// Two arrows because it took two pieces: the receiver borrow above, then the
+// RESULT credit below.
 //
-// The receiver half needs no such gate. The escape analysis runs over a slot
+// The RESULT half needed a gate the receiver half did not. Crediting a
+// `var s = xs.join(sep)` binding as fresh has to happen where the RECEIVER's
+// type is known: str_local_binding_is_fresh is deliberately state-free, and a
+// syntactic `field == "join"` arm there is UNSOUND — a user-declared
+// `(h: Holder) join(sep)` returning `h.name` types as a string, so the result
+// gets freed while the receiver still owns it. That version was written,
+// measured at 0, and reverted; the fault is witnessed on both backends (exit 97
+// on x86-64, a trap on wasm) and is pinned by the last case below.
+//
+// The credit therefore rides `join_strarr_init`, which reads the receiver's
+// DECLARED type out of the body the way the `.to_string()` collector already
+// does. Its limit is the same one: an unannotated receiver, or a `string[]`
+// PARAM, carries no `var` declaration to read, so it is refused. A param
+// receiver still leaks the result (131200 on x86-64), which is the next thing to
+// pull on in this shape.
+//
+// The receiver half needed no such gate: the escape analysis runs over a slot
 // already known to be `string[]`, and a user method cannot be called on one.
 
 const strArrJoinPrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
@@ -77,9 +86,9 @@ var strArrJoinHeapCases = []struct {
 	elems           int
 	regMax, wasmMax int
 }{
-	{"strarr-join-1-element", 1, 70000, 60000},
-	{"strarr-join-4-elements", 4, 250000, 250000},
-	{"strarr-join-8-elements", 8, 450000, 450000},
+	{"strarr-join-1-element", 1, 4096, 4096},
+	{"strarr-join-4-elements", 4, 4096, 4096},
+	{"strarr-join-8-elements", 8, 4096, 4096},
 }
 
 var strArrJoinFaultCases = []struct {
@@ -126,12 +135,35 @@ function round(pre: string): i32 {
     return ys.len();
 }
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 2) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+	// A `string[]` PARAM receiver: refused for want of a declaration to read the
+	// type from, so the result still leaks — sound, and here so the limit is a
+	// recorded fact rather than an assumption. Correctness only; no ceiling,
+	// which would otherwise pin the leak as a floor.
+	{"strarr-join-param-receiver-live", strArrJoinPrelude + `function joined(xs: string[]): i32 {
+    var s: string = xs.join("|");
+    return s.len() % 251;
+}
+function round(xs: string[]): i32 {
+    var n: i32 = joined(xs);
+    var p1: string = w("XXXXXXXX");
+    if (p1.len() < 0) { return 0; }
+    if (!xs[0].starts_with("e0-")) { return 0 - 1; }
+    if (xs[1].index_of("XXXX") >= 0) { return 0 - 2; }
+    return n;
+}
+function main(): i32 {
+    var xs: string[] = [w("e0"), w("e1")];
+    var i: i32 = 0;
+    var want: i32 = round(xs);
+    while (i < 2000) { if (round(xs) != want) { return 97; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`},
 	// A USER method named `join` whose result aliases a field the receiver still
-	// owns. Nothing here should credit it. This is the shape that made the
-	// result-side half of this work unsound and got it deferred, so it is kept
-	// as the standing guard against re-introducing that arm without a
-	// receiver-type gate: a compiler with a bare syntactic `field == "join"` in
-	// str_local_binding_is_fresh exits 97 here on x86-64 and traps on wasm.
+	// owns. Nothing may credit it, and this is what proves join_strarr_init's
+	// receiver-type test carries its weight: a compiler with a bare syntactic
+	// `field == "join"` in str_local_binding_is_fresh instead exits 97 here on
+	// x86-64 and traps on wasm, while the heap cases above go to 0 either way.
 	{"strarr-join-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) join(sep: string): string { return h.name; }
 function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); var c: string = w(pre + "3"); return a.len() + b.len() + c.len(); }
