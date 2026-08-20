@@ -176,6 +176,28 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		code:     "E045",
 		spelling: "`@derive(cmp.Eq, cmp.Hash)`",
 	},
+	{
+		// `bool` is the cross-language slip a Fern reader is likeliest to
+		// write, so this row pins it being REJECTED rather than quietly taken
+		// as a synonym for `boolean` — which is what the self-host's five
+		// type-name resolvers did while native errored.
+		name:     "E064 bool for boolean",
+		src:      `function main(): i32 { var b: bool = true; return 0; }`,
+		code:     "E064",
+		spelling: "did you mean `boolean`?",
+	},
+	{
+		name:     "E064 int for i32",
+		src:      `function main(): i32 { var n: int = 1; return 0; }`,
+		code:     "E064",
+		spelling: "did you mean `i32`?",
+	},
+	{
+		name:     "E064 String for string",
+		src:      `function main(): i32 { var s: String = "x"; return 0; }`,
+		code:     "E064",
+		spelling: "did you mean `string`?",
+	},
 }
 
 // hintTextDivergences records the rows where the two checkers are meant to

@@ -16,10 +16,7 @@ import (
 // same peel proven byte-identical in slice 4).
 //
 // The type_resolve_simple_run driver resolves a corpus through all three and
-// prints type_debug of each result. The golden below is the EXACT output the old
-// magic-byte scan produced (verified before/after by restoring the scan and
-// diffing — byte-identical across every corpus entry), so this is the
-// byte-identical guard.
+// prints type_debug of each result.
 //
 // The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTypeResolveSimple(t *testing.T) {
@@ -35,7 +32,9 @@ func TestSelfHostTypeResolveSimple(t *testing.T) {
 		"i64 => structs=i64 names=i64 names+unions=i64\n" +
 		"u32 => structs=u32 names=u32 names+unions=u32\n" +
 		"u64 => structs=u64 names=u64 names+unions=u64\n" +
-		"bool => structs=bool names=bool names+unions=bool\n" +
+		// `bool` is not a Fern type name — only `boolean` is, matching native,
+		// which has no synonym either. The row pins the rejection.
+		"bool => structs=unknown(unrecognised type name: bool) names=unknown(unrecognised type name: bool) names+unions=unknown(unrecognised type name: bool)\n" +
 		"boolean => structs=bool names=bool names+unions=bool\n" +
 		"string => structs=string names=string names+unions=string\n" +
 		"f64 => structs=f64 names=f64 names+unions=f64\n" +

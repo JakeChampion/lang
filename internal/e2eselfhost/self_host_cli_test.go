@@ -1699,8 +1699,8 @@ function main(): i32 {
 		// reported at the operator token: the binary operator, or the
 		// unary `!`.
 		for _, c := range []struct{ name, src, want string }{
-			{"and_nonbool", "function main(): i32 { var b: bool = true; var x: bool = b && 5; return 0; }\n", "1:60: error[E009]"},
-			{"not_nonbool", "function main(): i32 { var x: bool = !5; return 0; }\n", "1:38: error[E009]"},
+			{"and_nonbool", "function main(): i32 { var b: boolean = true; var x: boolean = b && 5; return 0; }\n", "1:66: error[E009]"},
+			{"not_nonbool", "function main(): i32 { var x: boolean = !5; return 0; }\n", "1:41: error[E009]"},
 			{"compare_mismatch", "function main(): i32 { var t = (1 == \"x\"); return 0; }\n", "1:35: error[E041]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
