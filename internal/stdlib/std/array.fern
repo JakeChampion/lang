@@ -317,8 +317,8 @@ pub function __method_Array_count_non_empty(arr: string[]): i32 {
 }
 
 // `(arr: string[]) distinct_count()` — number of unique
-// elements. Same algorithm as distinct but skips building
-// the output array.
+// elements. Same algorithm as `cmp.distinct` but skips
+// building the output array.
 pub function __method_Array_distinct_count(arr: string[]): i32 {
     var n: i32 = arr.len();
     var seen: string[] = [];
@@ -1496,11 +1496,11 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // so `==` here would reject a caller's `@derive(Eq)` element type (#6846).
 //
 // The free-function `contains` / `index_of` / `distinct` / `eq_arrays` verbs
-// live in core/cmp with the `Eq` trait they depend on (#5348 removed the
-// duplicate copies that used to live here); `import "core/cmp"` for those. The
-// `.contains()` / `.index_of()` receiver methods are element-generic over the
-// same bound (see the method-form block at the end of this file); the
-// string[]-specific `.distinct()` above is not.
+// live in core/cmp with the `Eq` trait they depend on; `import "core/cmp"` for
+// those, and do not add a second copy here. The `.contains()` / `.index_of()` /
+// `.distinct()` receiver methods (method-form block at the end of this file)
+// are element-generic over the same bound and delegate to core/cmp; the only
+// string[]-specific member of this family is `.distinct_count()`.
 
 // `all_equal(xs)` — true iff every element equals the first (i.e. the array has
 // at most one DISTINCT value). Vacuously true for an empty or single-element
@@ -1519,39 +1519,16 @@ pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
 }
 
 // `dedup(xs)` — fresh `T[]` with each run of CONSECUTIVE equal elements
-// collapsed to a single element: `[1,1,2,2,1]` → `[1,2,1]`. Unlike `distinct`
-// (which removes ALL duplicates anywhere), `dedup` only removes adjacent ones —
-// so on a sorted array it behaves like `distinct` but in a single O(n) pass,
-// and on unsorted data it compresses runs while keeping later repeats. Empty →
-// empty. Same `T: cmp.Eq` bound / per-type monomorphisation as `distinct`.
+// collapsed to a single element: `[1,1,2,2,1]` → `[1,2,1]`. Unlike
+// `cmp.distinct` (which removes ALL duplicates anywhere), `dedup` only removes
+// adjacent ones — so on a sorted array it behaves like `cmp.distinct` but in a
+// single O(n) pass, and on unsorted data it compresses runs while keeping later
+// repeats. Empty → empty. Same `T: cmp.Eq` bound / per-type monomorphisation.
 pub function dedup[T: cmp.Eq](xs: T[]): T[] {
     var out: T[] = [];
     var i: i32 = 0;
     while (i < xs.len()) {
         if (i == 0 || !xs[i].eq(xs[i - 1])) { out = out.append(xs[i]); }
-        i = i + 1;
-    }
-    return out;
-}
-
-// `distinct(xs)` — every element ONCE, in first-seen order
-// (`distinct([3,1,3,2,1]) == [3,1,2]`). Unlike `dedup`, which only collapses
-// CONSECUTIVE runs, this removes duplicates anywhere in the array; unlike a
-// `Set` round-trip, it keeps the original order. The generic `T: cmp.Eq`
-// sibling of the string-only `(arr: string[]) distinct()`. O(n²) membership
-// scans — fine for the small-n CLI / edge-handler workloads; reach for a
-// Set/Map at larger N.
-pub function distinct[T: cmp.Eq](xs: T[]): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        var seen: boolean = false;
-        var j: i32 = 0;
-        while (j < out.len()) {
-            if (xs[i].eq(out[j])) { seen = true; }
-            j = j + 1;
-        }
-        if (!seen) { out = out.append(xs[i]); }
         i = i + 1;
     }
     return out;
@@ -1583,7 +1560,7 @@ pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
 
 // `union(a, b)` — set union: the distinct elements of `a`, then the distinct
 // elements of `b` not already present. First-seen order across `a` then `b`
-// (equivalent to `distinct(concat(a, b))`, one pass).
+// (equivalent to `cmp.distinct(concat(a, b))`, one pass).
 pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
     var out: T[] = [];
     for x in a {
@@ -1895,7 +1872,7 @@ pub function (xs: T[]) take(n: i32): T[] { return take(xs, n); }
 pub function (xs: T[]) drop(n: i32): T[] { return drop(xs, n); }
 
 // `xs.distinct()` — duplicates removed, first occurrence wins, order kept.
-pub function (xs: T[]) distinct[T: cmp.Eq](): T[] { return distinct(xs); }
+pub function (xs: T[]) distinct[T: cmp.Eq](): T[] { return cmp.distinct(xs); }
 
 // `xs.position(pred)` — index of the first element satisfying `pred`, or
 // `None`. Predicate-driven, matching the free `position(xs, pred)`; the

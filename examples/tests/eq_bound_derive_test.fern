@@ -31,7 +31,14 @@ function test_dedup(): test.TestOutcome {
 
 function test_distinct(): test.TestOutcome {
     var runs: Point[] = [p(3, 4), p(1, 2), p(3, 4)];
-    return test.assert_eq_array(array.distinct(runs), [p(3, 4), p(1, 2)]);
+    return test.assert_eq_array(cmp.distinct(runs), [p(3, 4), p(1, 2)]);
+}
+
+// `.distinct()` is std/array's method form of the same verb, delegating to
+// core/cmp — so it has to accept the derived element type too.
+function test_distinct_method(): test.TestOutcome {
+    var runs: Point[] = [p(3, 4), p(1, 2), p(3, 4)];
+    return test.assert_eq_array(runs.distinct(), [p(3, 4), p(1, 2)]);
 }
 
 function test_count(): test.TestOutcome {
@@ -74,6 +81,7 @@ function main(): i32 {
     r = r.it("all_equal",      test_all_equal);
     r = r.it("dedup",          test_dedup);
     r = r.it("distinct",       test_distinct);
+    r = r.it("distinct method", test_distinct_method);
     r = r.it("count",          test_count);
     r = r.it("index_of_last",  test_index_of_last);
     r = r.it("starts_with",    test_starts_with);
