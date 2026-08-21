@@ -1108,6 +1108,20 @@ same code(s) the Go checker does — restricted to
   sub-messages map to E054 (the differential gate compares codes).
   Checker-only, fixpoint-safe (x86 + arm64 verified). Gated by new corpus
   cases `export-generic`, `export-method`, `export-plain-ok`.
+- **Slice 65 (done): E021 — a trait ASSOCIATED function called as a method.**
+  A requirement with no leading `self` (`trait Num { function zero(): Self; }`)
+  is reached as `T.zero()`, never through a value. Called through one, the call
+  carried a receiver the callee has no parameter for, and nothing said so until
+  the IR verifier refused the lowered call at codegen — so `-check` passed a
+  program the compiler then rejected (#7221). `trait_assoc_req` already answers
+  "is this requirement receiver-less?" for the `T.zero()` side; what was missing
+  was a way to tell that a RECEIVER is a bounded type parameter, since `T` erases
+  to unknown like every generic type here. `Scope.tpvars` / `tpvar_tps` record
+  the parameters declared with a type parameter, and `call_diags`' unknown-
+  receiver arm consults the bound. Message and position match native word for
+  word (pinned by the hint-text differential). Gated by corpus cases
+  `tp-assoc-fn-as-method{,-with-arg}` plus the two controls
+  `tp-trait-method-on-value-ok` / `tp-assoc-fn-on-type-param-ok`.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice (done): `if let` / `let … else` diagnostics** (E022). The

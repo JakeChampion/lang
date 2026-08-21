@@ -210,6 +210,19 @@ function main(): i32 { return 0; }`,
 		spelling: "got boolean",
 	},
 	{
+		// The message spells out the call that DOES work, so the reader is
+		// not left to guess that a receiver-less trait requirement is
+		// reached through the type parameter rather than through a value.
+		name: "E021 associated function called as a method",
+		src: `trait Show { function show(): i32; }
+struct P { v: i32 }
+impl Show for P { function show(): i32 { return 5; } }
+function pick[T: Show](a: T): i32 { return a.show(); }
+function main(): i32 { return pick(P { v: 42 }); }`,
+		code:     "E021",
+		spelling: "call it as T.show(...)",
+	},
+	{
 		name: "E021 receiver type not a valid receiver",
 		src: `function (x: bool) foo(): i32 { return 0; }
 function main(): i32 { return 0; }`,
