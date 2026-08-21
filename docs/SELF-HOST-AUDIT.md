@@ -187,9 +187,9 @@ findings. Ranked by leverage.
     hand-synced **on purpose** and pinned by `TestSelfHostParseF64MirrorsAgree`.
     **Not a dedupe target.**
 
-  Genuinely liftable leftovers: `block_index` and `pred_slot` (4 copies each,
-  `ssa` + the three SSA backends — SH-025), `split_commas` (`irlower`,
-  `printer`). The `join_path` strand is closed by SH-055
+  Genuinely liftable leftovers: `split_commas` (`irlower`, `printer`). The
+  `block_index` / `pred_slot` strand is closed by SH-025 (`pub` on `ssa.fern`'s
+  pair, the three backend copies deleted). The `join_path` strand is closed by SH-055
   (`util.module_path_join`; `mvs.join_path` is a different function that stays).
 
   **The `trim` strand is closed, and it was a BUG, not a dedupe.** The three
@@ -335,14 +335,32 @@ findings. Ranked by leverage.
   (`push`/`pop`/`load_local`/`branch_if_zero`/`call`/`syscall`) driven from
   shared code, with the need-key table as shared data; each backend implements
   only the leaves.
-- [ ] **SH-025 — Create `ssabackend.fern`** (the SSA analogue of `asmcore`).
-  `block_index` and `pred_slot` are byte-identical across all four SSA modules
-  (`ssa`, `ssa_x86`, `ssa_arm64`, `ssa_wasm`), and the three backends
-  hand-mirror `emit_inst` / `emit_term` / `emit_func` / `emit_program` /
-  `emit_phi_moves` dispatch ladders. Align the gratuitously-divergent `emit_term`
-  signatures first — `ssa_x86:479` takes a `name` param, `ssa_arm64:453` reads
-  `f.name`, `ssa_wasm:233` takes neither — then lift a parameterised
-  `emit_func`/`emit_program` driver.
+- [~] **SH-025 — lift what the three SSA backends hand-mirror.**
+  _Helper half done:_ `block_index` and `pred_slot` were byte-identical across
+  all four SSA modules; `ssa.fern`'s two are now `pub` and the three backend
+  copies are gone (−48 lines, no new import — the backends already import
+  `./ssa` for `SFunc`/`SBlock`, and `ssa.fern` imports none of them).
+
+  **This entry used to ask for a new `ssabackend.fern` (the SSA analogue of
+  `asmcore`). That module cannot exist**: it would have to import `ssa` for
+  `SFunc`/`SBlock`, and `ssa` would have to import it back for its own six
+  `block_index` call sites — a cycle. `asmcore` is not a precedent, because it
+  declares the types it shares rather than borrowing them. Lift to the module
+  that already declares the types.
+
+  _Still open:_ the three backends hand-mirror `emit_inst` / `emit_term` /
+  `emit_func` / `emit_program` / `emit_phi_moves` dispatch ladders. Align the
+  gratuitously-divergent `emit_term` signatures first — `ssa_x86` takes a `name`
+  param, `ssa_arm64` reads `f.name`, `ssa_wasm` takes neither — then lift a
+  parameterised `emit_func`/`emit_program` driver. Note the trap recorded under
+  T1: `regn` is byte-identical TEXT across `ssa_x86` and `ssa_arm64` with
+  per-ISA behaviour, so it is not liftable and a byte-diff will say otherwise.
+
+  _Noted, not changed:_ `pred_slot` returns 0 rather than −1 on a miss — the
+  shape SH-007 closed for `index_of_str`. It is consistent across all four
+  copies (so not drift), and whether a miss is reachable depends on the
+  phi-predecessor invariant. Changing it is a behaviour change wanting its own
+  analysis and test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
 - [ ] **SH-026 — Stop overloading value types for errors/signals.** Surviving
