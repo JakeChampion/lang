@@ -611,18 +611,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
-        funcs = funcs.append(parser.FuncDecl {
-            name: new_name,
-            receiver_name: fd.receiver_name,
-            receiver_type: rewrite_type_name(fd.receiver_type, ctx),
-            type_params: fd.type_params,
-            params: rewrite_params(fd.params, bctx),
-            ret_type: rewrite_type_name(fd.ret_type, ctx),
-            body: rewrite_block(fd.body, bctx),
-            line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
-            is_pub: true
-       , is_const: fd.is_const });
+        funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), body: rewrite_block(fd.body, bctx), is_pub: true });
         i = i + 1;
     }
     var structs: parser.StructDecl[] = [];

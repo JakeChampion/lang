@@ -1240,7 +1240,7 @@ pub function resolve_labels_module(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        funcs = funcs.append(FuncDecl { ...fd, body: resolve_labels_block(fd.body, none) });
         i = i + 1;
     }
     return Module { ...mod, funcs: funcs, top_stmts: resolve_labels_block(mod.top_stmts, none) };
@@ -9786,12 +9786,7 @@ pub function monomorphize_module(mod: Module): Module {
             var env: MEnv = env_from_params(fd.params);
             var rb: RStmts = mono_stmts(fd.body, env, fns, ins, fd.ret_type);
             ins = rb.rins3;
-            rewritten = rewritten.append(FuncDecl {
-                name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
-                type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts, line: fd.line, col: fd.col,
-                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
-                is_pub: fd.is_pub
-           , is_const: fd.is_const });
+            rewritten = rewritten.append(FuncDecl { ...fd, body: rb.rstmts });
         }
         i = i + 1;
     }
@@ -10311,13 +10306,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
     var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
     var notp: string[] = [];
-    return FuncDecl {
-        name: m.name, receiver_name: m.receiver_name, receiver_type: mang,
-        type_params: notp, params: nparams, ret_type: rt,
-        body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), line: m.line, col: m.col,
-        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, fbip: m.fbip, fip_allowance: m.fip_allowance, ret_str: m.ret_str, async: m.async,
-        is_pub: m.is_pub
-   , is_const: m.is_const };
+    return FuncDecl { ...m, receiver_type: mang, type_params: notp, params: nparams, ret_type: rt, body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
@@ -13309,7 +13298,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
 }
 
 pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
-    return FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_ranges_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+    return FuncDecl { ...fd, body: desugar_ranges_block(fd.body) };
 }
 
 pub function desugar_ranges_module(mod: Module): Module {
@@ -13536,7 +13525,7 @@ pub function resolve_variant_fields_module(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rvf_block(fd.body, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        funcs = funcs.append(FuncDecl { ...fd, body: rvf_block(fd.body, mod.structs) });
         i = i + 1;
     }
     return Module { ...mod, funcs: funcs, top_stmts: rvf_block(mod.top_stmts, mod.structs) };
@@ -13554,7 +13543,7 @@ pub function desugar_prepass_module(mod: Module): Module {
         var body: Stmt[] = resolve_labels_block(fd.body, none);
         if (need_fda) { body = fda_stmts(body, mod.funcs); }
         body = desugar_ranges_block(body);
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: body, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        funcs = funcs.append(FuncDecl { ...fd, body: body });
         i = i + 1;
     }
     var tops: Stmt[] = resolve_labels_block(mod.top_stmts, none);
@@ -13923,7 +13912,7 @@ pub function fill_default_args_module(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        funcs = funcs.append(FuncDecl { ...fd, body: fda_stmts(fd.body, mod.funcs) });
         i = i + 1;
     }
     return Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) };
@@ -14349,7 +14338,7 @@ function irt_set_ret(funcs: FuncDecl[], idx: i32, rt: string): FuncDecl[] {
     while (i < funcs.len()) {
         if (i == idx) {
             var f: FuncDecl = funcs[i];
-            out = out.append(FuncDecl { name: f.name, receiver_name: f.receiver_name, receiver_type: f.receiver_type, type_params: f.type_params, params: f.params, ret_type: rt, body: f.body, line: f.line, col: f.col, import_iface: f.import_iface, import_wit: f.import_wit, type_param_count: f.type_param_count, bound_traits: f.bound_traits, fip: f.fip, fbip: f.fbip, fip_allowance: f.fip_allowance, ret_str: f.ret_str, async: f.async, is_const: f.is_const, is_pub: f.is_pub });
+            out = out.append(FuncDecl { ...f, ret_type: rt });
         } else {
             out = out.append(funcs[i]);
         }
@@ -15196,13 +15185,7 @@ pub function inline_callonly_fn_values(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
-        funcs = funcs.append(FuncDecl {
-            name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
-            type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type,
-            body: cf_inline_fn_body(fd.body, mod.funcs), line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
-            is_pub: fd.is_pub
-       , is_const: fd.is_const });
+        funcs = funcs.append(FuncDecl { ...fd, body: cf_inline_fn_body(fd.body, mod.funcs) });
         i = i + 1;
     }
     return Module { ...mod, funcs: funcs, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs) };
@@ -15367,7 +15350,7 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
     while (i < mod.funcs.len()) {
         var fd: FuncDecl = mod.funcs[i];
         var nbody: Stmt[] = fnv_rewrite_block(fd.body, fd.body, mod.funcs, mod.structs);
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        funcs = funcs.append(FuncDecl { ...fd, body: nbody });
         i = i + 1;
     }
     return Module { ...mod, funcs: funcs };
@@ -17496,7 +17479,7 @@ pub function settle_module(mod: Module): Module {
             names = names.append(fd.receiver_name);
             types = types.append(fd.receiver_type);
         }
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: settle_block(fd.body, fd.ret_type, names, types, mod.funcs, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
+        funcs = funcs.append(FuncDecl { ...fd, body: settle_block(fd.body, fd.ret_type, names, types, mod.funcs, mod.structs) });
         i = i + 1;
     }
     var nonames: string[] = [];
@@ -17956,17 +17939,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var fi: i32 = 0;
     while (fi < from.funcs.len()) {
         var fd: FuncDecl = from.funcs[fi];
-        nfuncs = nfuncs.append(FuncDecl {
-            name: prefix + "." + fd.name,
-            receiver_name: fd.receiver_name,
-            receiver_type: fd.receiver_type,
-            type_params: fd.type_params,
-            params: fd.params,
-            ret_type: fd.ret_type,
-            body: fd.body, line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
-            is_pub: true
-       , is_const: fd.is_const });
+        nfuncs = nfuncs.append(FuncDecl { ...fd, name: prefix + "." + fd.name, is_pub: true });
         fi = fi + 1;
     }
     var nstructs: StructDecl[] = into.structs;
