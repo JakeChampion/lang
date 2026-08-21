@@ -812,8 +812,7 @@ pub struct Scope {
   // The module's function table, name-indexed. Every scope in a module
   // shares one SigTable by reference — bind / enter_loop / with_ret_type
   // carry it through unchanged — so the index is built once per module,
-  // not once per scope. That matters: build_func_scope runs nine times per
-  // function across the diagnostic passes.
+  // not once per scope.
   sigs: SigTable,
   structs: StructSig[],
   unions: UnionSig[],
@@ -3810,8 +3809,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[
   return s;
 }
 
-function check_func_body(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): boolean {
-  var s: Scope = build_func_scope(fd, st, structs, unions, methods).with_impls(impls, trait_reqs);
+// `s` is the function's body scope, built by build_func_scope and carrying the
+// impl table (with_impls) for the E021 bound check. It is passed in rather than
+// rebuilt because check_module already holds the identical scope.
+function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   // A GENERIC function's body operates on opaque-typed values — its type
   // parameters erase to unknown in this partial type system, so `v: T`
   // binds `v` to unknown and any expression over it infers unknown. That's
@@ -3832,7 +3833,7 @@ function check_func_body(fd: parser.FuncDecl, st: SigTable, structs: StructSig[]
   // the uncoded over-reject, the same way a `[T]` function does (#4346
   // piece 2). A concrete receiver resolves without unknown and stays strict.
   if (!generic && fd.receiver_type.len() > 0) {
-    if (type_contains_unknown(type_from_name_with_structs_unions(fd.receiver_type, structs, unions))) {
+    if (type_contains_unknown(type_from_name_with_structs_unions(fd.receiver_type, s.structs, s.unions))) {
       generic = true;
     }
   }
@@ -11696,7 +11697,14 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       i = i + 1;
       continue;
     }
-    if (!check_func_body(mod.funcs[i], st, structs, unions, methods, mod.impls, mod.trait_reqs)) {
+    // build_func_scope is a pure function of (fd, st, structs, unions,
+    // methods), none of which change across this loop body, so the body
+    // passes below share one build instead of repeating it per pass. `csc`
+    // is the same scope carrying the impl table, which only the call walk
+    // (E021) and check_func_body may see — see Scope.impls.
+    var fsc: Scope = build_func_scope(mod.funcs[i], st, structs, unions, methods);
+    var csc: Scope = fsc.with_impls(mod.impls, mod.trait_reqs);
+    if (!check_func_body(mod.funcs[i], csc)) {
       well_typed = false;
     }
     var dbody: parser.Stmt[] = mod.funcs[i].body;
@@ -11707,10 +11715,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       // E052 — falling off the end is the normal exit) and must not
       // return a value (E002 on any `return <expr>;`). Matches the Go
       // checker, which treats void specially on both fronts.
-      var vsc: Scope = build_func_scope(mod.funcs[i], st, structs, unions, methods);
-      body_diags = util.append_diags(body_diags, void_ret_diags(dbody, vsc, unions));
+      body_diags = util.append_diags(body_diags, void_ret_diags(dbody, fsc, unions));
     } else if (mod.funcs[i].ret_type.len() > 0) {
-      var fsc: Scope = build_func_scope(mod.funcs[i], st, structs, unions, methods);
       body_diags = util.append_diags(body_diags, ret_diags(dbody, fsc, fsc.ret_type, unions));
       // E052: a non-void function whose body can fall off the end
       // without returning, reported at the function declaration.
@@ -11727,30 +11733,30 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // E063: returning a `[T]` slice that views function-local storage
     // (a use-after-free once the frame is reclaimed). Runs for every
     // function — a slice can escape from an inferred-return body too.
-    body_diags = util.append_diags(body_diags, slice_escape_diags(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods)));
+    body_diags = util.append_diags(body_diags, slice_escape_diags(dbody, fsc));
     // E067: a value of a @must_consume struct/enum type must be consumed
     // on every path before its binding leaves scope (the native
     // checkMustConsume — docs/MUST-CONSUME.md).
     if (mc_on) {
-      body_diags = util.append_diags(body_diags, must_consume_diags(mod.funcs[i], build_func_scope(mod.funcs[i], st, structs, unions, methods), mod.structs, mod.enums));
+      body_diags = util.append_diags(body_diags, must_consume_diags(mod.funcs[i], fsc, mod.structs, mod.enums));
     }
     // E002 (lambda bodies): return-type mismatch inside a lambda is
     // checked against the lambda's own declared return type, not the
     // enclosing function's. Runs for every function (even void ones —
     // a lambda can be declared anywhere), scope-threaded so a lambda
     // sees earlier locals.
-    body_diags = util.append_diags(body_diags, lret_stmts(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), unions));
+    body_diags = util.append_diags(body_diags, lret_stmts(dbody, fsc, unions));
     // E031: match/if-expression arms must have compatible types
     // (scope-threaded so an arm sees earlier locals + its payload).
-    body_diags = util.append_diags(body_diags, mx_stmts(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), unions, mod.enums));
+    body_diags = util.append_diags(body_diags, mx_stmts(dbody, fsc, unions, mod.enums));
     // E005: struct literal missing a declared field (any expression in
     // the body, struct table is module-global so no scope needed).
     body_diags = util.append_diags(body_diags, stmts_slit_diags(dbody, structs));
     // E004: free-function call arity (scope-threaded so a shadowing
     // local isn't mistaken for the function).
-    body_diags = util.append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods).with_impls(mod.impls, mod.trait_reqs)));
+    body_diags = util.append_diags(body_diags, stmts_call_diags(dbody, csc));
     // E003: assignment / annotated-var type mismatch (scope-threaded).
-    body_diags = util.append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), unions));
+    body_diags = util.append_diags(body_diags, stmts_assign_diags(dbody, fsc, unions));
     // E011 / E058: break / continue outside a loop, and a labeled
     // break/continue whose label names no enclosing loop (structural).
     body_diags = util.append_diags(body_diags, loop_diags(dbody, false, []));
@@ -11781,7 +11787,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // E036: unqualified reference to a variant shared by 2+ enums.
     if (ambig.len() > 0) {
-      body_diags = util.append_diags(body_diags, vref_stmts(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), ambig));
+      body_diags = util.append_diags(body_diags, vref_stmts(dbody, fsc, ambig));
     }
     i = i + 1;
   }
@@ -11798,13 +11804,16 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     j = j + 1;
   }
   var dtop: parser.Stmt[] = mod.top_stmts;
-  body_diags = util.append_diags(body_diags, lret_stmts(dtop, new_scope_full(st, structs, unions, methods), unions));
-  body_diags = util.append_diags(body_diags, mx_stmts(dtop, new_scope_full(st, structs, unions, methods), unions, mod.enums));
+  // A BARE module scope, not the `s` above: each pass re-threads the top-level
+  // bindings itself, and `s` has already accumulated all of them.
+  var tsc: Scope = new_scope_full(st, structs, unions, methods);
+  body_diags = util.append_diags(body_diags, lret_stmts(dtop, tsc, unions));
+  body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
   body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, structs));
-  body_diags = util.append_diags(body_diags, stmts_call_diags(dtop, new_scope_full(st, structs, unions, methods)));
-  body_diags = util.append_diags(body_diags, stmts_assign_diags(dtop, new_scope_full(st, structs, unions, methods), unions));
+  body_diags = util.append_diags(body_diags, stmts_call_diags(dtop, tsc));
+  body_diags = util.append_diags(body_diags, stmts_assign_diags(dtop, tsc, unions));
   if (ambig.len() > 0) {
-    body_diags = util.append_diags(body_diags, vref_stmts(dtop, new_scope_full(st, structs, unions, methods), ambig));
+    body_diags = util.append_diags(body_diags, vref_stmts(dtop, tsc, ambig));
   }
   body_diags = util.append_diags(body_diags, loop_diags(dtop, false, []));
   body_diags = util.append_diags(body_diags, dupvar_diags(dtop));
@@ -11940,13 +11949,14 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   var exi: i32 = 0;
   while (exi < mod.funcs.len()) {
     var xfn: parser.FuncDecl = mod.funcs[exi];
+    var xsc: Scope = build_func_scope(xfn, st, structs, unions, methods);
     if (xfn.fip || xfn.fbip) {
-      body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, build_func_scope(xfn, st, structs, unions, methods)));
+      body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
     }
     if (xfn.ret_str) {
-      body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, build_func_scope(xfn, st, structs, unions, methods)));
+      body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, xsc));
     }
-    body_diags = util.append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, build_func_scope(xfn, st, structs, unions, methods)));
+    body_diags = util.append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, xsc));
     exi = exi + 1;
   }
   var esi: i32 = 0;
@@ -12016,7 +12026,7 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (!check_func_body(mod.funcs[i], st, structs, unions, methods, mod.impls, mod.trait_reqs)) {
+    if (!check_func_body(mod.funcs[i], build_func_scope(mod.funcs[i], st, structs, unions, methods).with_impls(mod.impls, mod.trait_reqs))) {
       return [dg_at("type", "\"" + mod.funcs[i].name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", mod.funcs[i].line, mod.funcs[i].col)];
     }
     i = i + 1;
