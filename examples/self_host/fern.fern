@@ -274,68 +274,6 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
     return string_from_bytes_unchecked(to_u8(bin));
 }
 
-// last_slash returns the index of the final '/' in p, or -1.
-function last_slash(p: string): i32 {
-    var i: i32 = 0;
-    var last: i32 = 0 - 1;
-    while (i < p.len()) {
-        if (p[i] == b'/') { last = i; }
-        i = i + 1;
-    }
-    return last;
-}
-
-// dir_of returns the directory portion of a path ("" if none).
-function dir_of(p: string): string {
-    var ls: i32 = last_slash(p);
-    if (ls < 0) { return ""; }
-    return p[0:ls] + "";
-}
-
-// module_name maps an import path to its bundle name: the final path
-// segment (`./a/lexer` → `lexer`, `./parser` → `parser`).
-function module_name(import_path: string): string {
-    var ls: i32 = last_slash(import_path);
-    if (ls >= 0) { return import_path[ls + 1:import_path.len()] + ""; }
-    return import_path;
-}
-
-// is_local is true for `./…` / `../…` imports (loaded from the entry's
-// directory), false for `core/…` / `std/…` (resolved under the stdlib
-// root, when one is configured).
-function is_local(import_path: string): boolean {
-    if (import_path.len() == 0) { return false; }
-    return import_path[0] == b'.';
-}
-
-// join_path builds `<dir>/<name>.fern` (or `<name>.fern` if dir empty).
-function join_path(dir: string, name: string): string {
-    if (dir.len() == 0) { return name + ".fern"; }
-    return dir + "/" + name + ".fern";
-}
-
-// contains_name -> util.has_str (SH-020).
-
-// should_load decides whether an import path names a module file to
-// load. Local (`./…`) imports always load; a name `deps` declares (the entry
-// manifest's dependencies) loads through the manifest; `std/…` / `core/…`
-// load only when a stdlib root is given.
-function should_load(import_path: string, root: string, deps: string[]): boolean {
-    if (import_path.len() == 0) { return false; }
-    if (is_local(import_path)) { return true; }
-    if (util.has_str(deps, module_name(import_path))) { return true; }
-    if (root.len() == 0) { return false; }
-    return true;
-}
-
-// resolve_path maps an import path to a file on disk.
-function resolve_path(import_path: string, entry_dir: string, root: string): string {
-    if (is_local(import_path)) {
-        return join_path(entry_dir, module_name(import_path));
-    }
-    return root + "/" + import_path + ".fern";
-}
-
 // ImportQueue is the breadth-first import worklist: each path paired with the
 // directory of the module that imported it. A dependency's `import "./util"`
 // names a file beside the DEPENDENCY, and a dependency's own dependencies are
@@ -352,7 +290,7 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
-        if (should_load(ip, root, deps) && !util.has_str(paths, ip)) {
+        if (util.should_load(ip, root, deps) && !util.has_str(paths, ip)) {
             paths = paths.append(ip);
             dirs = dirs.append(from_dir + "");
         }
@@ -680,7 +618,7 @@ function find_manifest_dir(dir: string): string {
         }
         if (found) { return d; }
         if (d.len() <= 1) { return ""; }
-        var up: string = dir_of(d);
+        var up: string = util.dir_of(d);
         if (up.len() == 0) { up = "/"; }
         d = up;
     }
@@ -705,7 +643,7 @@ function run_resolve(start: string): i32 {
     }
     var dir: string = start;
     match (read_file(start)) {
-        Ok(s) => { dir = dir_of(start); },
+        Ok(s) => { dir = util.dir_of(start); },
         Err(e) => { },
     }
     var mdir: string = find_manifest_dir(dir);
@@ -741,7 +679,7 @@ function run_resolve(start: string): i32 {
         eprint("index " + ipath + ": " + ix.err);
         return 1;
     }
-    ix = mvs.with_dir(ix, mvs.join_path(dir_of(ipath), "."));
+    ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
 
     var bans: mvs.Ban[] = [];
     var bi: i32 = 0;
@@ -959,7 +897,7 @@ function run_vendor(start: string): i32 {
             eprint("vendor: cannot read " + start);
             return 1;
         }
-        dir = dir_of(start);
+        dir = util.dir_of(start);
     }
     var mdir: string = find_manifest_dir(dir);
     if (mdir.len() == 0) {
@@ -1209,9 +1147,9 @@ function copy_package(src: string, dst: string): string {
             match (read_file(child)) { Ok(s) => { body = s; read_ok = true; }, Err(e) => { } }
             if (!read_ok) { return "cannot read " + child; }
             var out: string = dst + "/" + child_rel;
-            match (create_dir_all(dir_of(out))) {
+            match (create_dir_all(util.dir_of(out))) {
                 Ok(u) => { },
-                Err(e) => { return "cannot create " + dir_of(out); },
+                Err(e) => { return "cannot create " + util.dir_of(out); },
             }
             match (write_file(out, body)) {
                 Ok(u) => { },
@@ -1248,7 +1186,7 @@ struct Bundle {
 // entry is parsed by the caller, which needs it for `-fmt` before any import
 // is resolved.
 function load_bundle(entry_path: string, entry_mod: parser.Module, root: string): Bundle {
-    var dir: string = dir_of(entry_path);
+    var dir: string = util.dir_of(entry_path);
     // The entry's own manifest, when it has one: it names the dependency
     // packages, which are both a way to RESOLVE an import the sibling-file and
     // stdlib-root rules cannot name, and the identity every capability grant
@@ -1272,7 +1210,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             done = done.append(ipath);
             var from_dir: string = from;
             if (from_dir.len() > 1) { from_dir = from_dir[0:from_dir.len() - 1] + ""; }
-            var mpath: string = resolve_path(ipath, from_dir, root);
+            var mpath: string = util.resolve_path(ipath, from_dir, root);
             var msrc: string = "";
             var mok: boolean = false;
             // The root the module's OWN imports resolve against. A module read
@@ -1293,7 +1231,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 // the only way to reach a package that carries its own
                 // manifest — the rules above can only name a sibling file or
                 // something under the stdlib root.
-                var r: modloader.Resolved = modloader.resolve_module(from, ipath, module_name(ipath));
+                var r: modloader.Resolved = modloader.resolve_module(from, ipath, util.module_name(ipath));
                 if (r.ok) { msrc = r.src; mok = true; mdir = r.dir; }
             }
             if (!mok) {
@@ -1303,7 +1241,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
+            loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), mod: m });
             // Attribute and expand against the manifest GOVERNING the importer,
             // which is the entry's only for a direct import.
             var from_man: fern_toml.Manifest = read_manifest(from);
@@ -1505,7 +1443,7 @@ function tangle_emit(code: string, out_path: string): i32 {
     // Parents are created, matching native's writeGeneratedFile: a `file=`
     // root naming `sub/util.fern` writes into a subdirectory the document
     // describes and the caller has no reason to have made.
-    var parent: string = dir_of(out_path);
+    var parent: string = util.dir_of(out_path);
     if (parent.len() > 0) {
         match (create_dir_all(parent)) {
             Ok(u) => { },
@@ -1564,7 +1502,7 @@ function run_doc(path: string, out_path: string): i32 {
         eprint("fern: -doc: cannot read " + path);
         return 1;
     }
-    var page: string = ferndoc.render_page(src, doc_module_path(path_base(dir_of(path)), doc_stem(path_base(path))));
+    var page: string = ferndoc.render_page(src, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
     if (out_path.len() == 0) {
         write(page);
         return 0;
@@ -1831,9 +1769,9 @@ function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): 
 // driver's loader resolves: a dependency's own dependencies are not reachable
 // from here, so there is no deeper package to attribute.
 function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, import_path: string): caps.Pkg[] {
-    var mod: string = module_name(import_path);
+    var mod: string = util.module_name(import_path);
     var no_grants: string[] = [];
-    if (is_local(import_path)) {
+    if (util.is_local(import_path)) {
         return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
     }
     if (fern_toml.dep_kind(man, mod).len() == 0) { return pkgs; }
@@ -2078,7 +2016,7 @@ function run(): i32 {
 
     // Load the entry + its transitive imports off disk and flatten them
     // into one module (the import-driven scheme from asm_load_run).
-    var dir: string = dir_of(entry_path);
+    var dir: string = util.dir_of(entry_path);
     var esrc: string = "";
     var eok: boolean = false;
     // `-` names stdin for the two modes native reads it in, and only those:

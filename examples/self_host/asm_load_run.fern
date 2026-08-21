@@ -21,77 +21,13 @@ import "./asm_arm64_ir";
 import "./asm_ir";
 import "./treeshake";
 
-// last_slash returns the index of the final '/' in p, or -1.
-function last_slash(p: string): i32 {
-    var i: i32 = 0;
-    var last: i32 = 0 - 1;
-    while (i < p.len()) {
-        if (p[i] == b'/') { last = i; }
-        i = i + 1;
-    }
-    return last;
-}
-
-// dir_of returns the directory portion of a path ("" if none).
-function dir_of(p: string): string {
-    var ls: i32 = last_slash(p);
-    if (ls < 0) { return ""; }
-    return p[0:ls] + "";
-}
-
-// module_name maps an import path to its bundle name: the final path
-// segment (`./a/lexer` → `lexer`, `./parser` → `parser`).
-function module_name(import_path: string): string {
-    var ls: i32 = last_slash(import_path);
-    if (ls >= 0) { return import_path[ls + 1:import_path.len()] + ""; }
-    return import_path;
-}
-
-// is_local is true for `./…` / `../…` imports (loaded from the entry's
-// directory), false for `core/…` / `std/…` (resolved under the stdlib
-// root, when one is configured).
-function is_local(import_path: string): boolean {
-    if (import_path.len() == 0) { return false; }
-    return import_path[0] == b'.';
-}
-
-// join_path builds `<dir>/<name>.fern` (or `<name>.fern` if dir empty).
-function join_path(dir: string, name: string): string {
-    if (dir.len() == 0) { return name + ".fern"; }
-    return dir + "/" + name + ".fern";
-}
-
-// contains_name -> util.has_str (SH-020).
-
-// should_load decides whether an import path names a module file to
-// load. Local (`./…`) imports always load (from the entry's dir).
-// `std/…` / `core/…` imports load only when a stdlib root is given.
-// With no root the std/core paths are skipped — identical to
-// the pre-stdlib-root behaviour.
-function should_load(import_path: string, root: string): boolean {
-    if (import_path.len() == 0) { return false; }
-    if (is_local(import_path)) { return true; }
-    if (root.len() == 0) { return false; }
-    return true;
-}
-
-// resolve_path maps an import path to a file on disk. Local imports
-// resolve to `<entry_dir>/<name>.fern`; std/core imports resolve to
-// `<root>/<import_path>.fern` (e.g. `std/math` → `<root>/std/math.fern`).
-function resolve_path(import_path: string, entry_dir: string, root: string): string {
-    if (is_local(import_path)) {
-        return join_path(entry_dir, module_name(import_path));
-    }
-    return root + "/" + import_path + ".fern";
-}
-
 // add_imports appends each of mod's loadable import paths to paths
 // (deduped by full path), returning the grown list.
 function add_imports(paths: string[], mod: parser.Module, root: string): string[] {
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
-        if (should_load(ip, root) && !util.has_str(paths, ip)) {
+        if (util.should_load(ip, root, []) && !util.has_str(paths, ip)) {
             paths = paths.append(ip);
         }
         i = i + 1;
@@ -180,7 +116,7 @@ function main(): i32 {
         return 2;
     }
     var entry_path: string = av[1];
-    var dir: string = dir_of(entry_path);
+    var dir: string = util.dir_of(entry_path);
     // Optional stdlib root: the first non-flag arg after the entry. When given,
     // `std/…` / `core/…` imports are resolved under it (`<root>/std/foo.fern`);
     // without it those imports are skipped (the entry must be self-contained
@@ -286,7 +222,7 @@ function main(): i32 {
         j = j + 1;
         if (!util.has_str(done, ipath)) {
             done = done.append(ipath);
-            var mpath: string = resolve_path(ipath, dir, root);
+            var mpath: string = util.resolve_path(ipath, dir, root);
             var msrc: string = "";
             var mok: boolean = false;
             match (read_file(mpath)) {
@@ -300,7 +236,7 @@ function main(): i32 {
                 return 1;
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
+            loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), mod: m });
             paths = add_imports(paths, m, root);
         }
     }
