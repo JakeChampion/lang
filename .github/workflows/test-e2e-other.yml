@@ -84,7 +84,13 @@ jobs:
         # alternation lacks. Anything not matching the listed
         # prefixes runs here, so adding a new uncategorised test
         # is automatically gated on this lane.
+        # This lane is the only e2e one that had no explicit `-timeout`,
+        # so it inherited Go's 10m default — a number nobody chose. At
+        # 7,347 tests it ran ~9m40s against it, and the first change to
+        # add ~1% anywhere in the compiler hit the ceiling and reported
+        # as four failed tests with conclusion "unknown" rather than as
+        # a timeout. 18m matches the arm64 e2e lane.
         run: |
-          gotestsum --format pkgname-and-test-fails -- \
+          gotestsum --format pkgname-and-test-fails -- -timeout 18m \
             -skip '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)' \
             ./internal/e2e/
