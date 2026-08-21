@@ -4784,6 +4784,12 @@ func (g *generator) emitAbort(label string) {
 // (once): the bounds / arena / slice sites jmp here instead of exiting
 // silently (#5538). The messages sit in .rodata; the reporter's write length
 // excludes the .asciz NUL.
+//
+// The frame-pointer walk under the cause line is gated on
+// ast.BacktraceEnabled (FERN_BACKTRACE=0 / -backtrace=false): with it off the
+// walk, __fern_print_hex, and the "backtrace:" string are unemitted, leaving
+// the write-then-exit reporter a size-critical build wants. Exit codes are
+// identical either way.
 const abortBacktraceMsg = "backtrace:\n"
 
 func (g *generator) emitAbortRuntime() {
@@ -4801,16 +4807,28 @@ func (g *generator) emitAbortRuntime() {
 		g.emitAbortMessages(false)
 		return
 	}
-	// Abort sites reach here by `jmp`, so rsp arrives at the aborting
-	// function's alignment, which the operand stack makes arbitrary. Nothing
-	// here returns, so the cheapest fix is to take alignment rather than
-	// preserve it — otherwise `call __fern_print_hex` below is the one call
-	// in the program System V cannot vouch for.
-	g.emit("and rsp, -16")
+	if ast.BacktraceEnabled {
+		// Abort sites reach here by `jmp`, so rsp arrives at the aborting
+		// function's alignment, which the operand stack makes arbitrary.
+		// Nothing here returns, so the cheapest fix is to take alignment
+		// rather than preserve it — otherwise `call __fern_print_hex` below
+		// is the one call in the program System V cannot vouch for.
+		g.emit("and rsp, -16")
+	}
 	g.emit("mov r15d, edi") // save exit code (r15 survives the writes below; we never return)
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("mov edi, 2")             // fd = stderr
 	g.emitSyscallPreloaded(sysWrite) // write(2, msg, len)
+	if !ast.BacktraceEnabled {
+		// Backtrace suppressed (#5538 slice 4): the cause line is the whole
+		// diagnostic, so the reporter ends here and neither the walk nor
+		// __fern_print_hex is emitted at all.
+		g.emit("mov edi, r15d")
+		g.emitSyscall(sysExitGroup) // exit_group(code)
+		g.line(".size __fern_report, .-__fern_report")
+		g.emitAbortMessages(false)
+		return
+	}
 	// Backtrace (#5538): walk the frame-pointer chain and print each return
 	// address in hex. With `-g` (the .symtab) they resolve to functions via
 	// addr2line / nm. Bounded to 64 frames; terminates at rbp == 0 (main's
@@ -4883,8 +4901,8 @@ func (g *generator) emitAbortRuntime() {
 }
 
 // emitAbortMessages writes the .rodata strings the abort sites point at.
-// withBacktrace adds the reporter's own "backtrace:" header, which only
-// the process-entry reporter writes.
+// withBacktrace adds the reporter's own "backtrace:" header, which only a
+// process-entry reporter with the walk emitted writes.
 func (g *generator) emitAbortMessages(withBacktrace bool) {
 	g.line(".section .rodata")
 	for _, m := range abortMessages {

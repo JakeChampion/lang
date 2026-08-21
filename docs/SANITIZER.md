@@ -32,7 +32,10 @@ bounds and arena checks use, so each names its cause on stderr and prints the
 frame-pointer backtrace under it. Build with `-g` and the addresses resolve to
 functions through `addr2line` / `nm`. Under gdb, `break __fern_report` stops
 with the offending frame still on the stack — the old bare-`ud2` recipe's
-answer, without needing gdb to get it.
+answer, without needing gdb to get it. (`-backtrace=false` suppresses the walk
+for size-critical builds — see `ARRAY-BOUNDS.md`. Turning it off under
+`-sanitize` leaves each finding named but unlocated, which is the opposite of
+what this mode is for.)
 
 **Integers need none of this.** They are total and never-trap by policy
 (`INTEGER-SEMANTICS.md`), so unlike C there is no integer UB to sanitize. The

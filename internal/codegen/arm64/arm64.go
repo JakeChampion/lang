@@ -1234,6 +1234,12 @@ func (g *generator) emitAbort(label string) {
 // arena / slice sites branch here instead of exiting silently (#5538). x19
 // (callee-saved, kernel-preserved across the write syscall) holds the exit
 // code; the reporter never returns so no frame is needed.
+//
+// The frame-pointer walk under the cause line is gated on
+// ast.BacktraceEnabled (FERN_BACKTRACE=0 / -backtrace=false): with it off the
+// walk, __fern_print_hex, and the "backtrace:" string are unemitted, leaving
+// the write-then-exit reporter a size-critical build wants. Exit codes are
+// identical either way.
 const abortBacktraceMsg = "backtrace:\n"
 
 func (g *generator) emitAbortRuntime() {
@@ -1254,6 +1260,17 @@ func (g *generator) emitAbortRuntime() {
 	g.emit("mov x19, x0") // stash exit code (x19 survives the writes; we never return)
 	g.emit("mov x0, #2")  // fd = stderr; x1/x2 already set by emitAbort
 	g.syscall("write")
+	if !ast.BacktraceEnabled {
+		// Backtrace suppressed (#5538 slice 4): the cause line is the whole
+		// diagnostic, so the reporter ends here and neither the walk nor
+		// __fern_print_hex is emitted at all.
+		g.emit("mov x0, x19")
+		g.syscallExit()
+		g.sizeDirective("__fern_report")
+		g.line(".ltorg")
+		g.emitAbortMessages(false)
+		return
+	}
 	// Backtrace (#5538): walk the x29 frame-pointer chain and print each
 	// return address (the saved x30 at [fp+8]) in hex. With `-g` (the
 	// .symtab) they resolve to functions via addr2line / nm. Bounded to 64
@@ -1325,8 +1342,8 @@ func (g *generator) emitAbortRuntime() {
 }
 
 // emitAbortMessages writes the read-only strings the abort sites point at.
-// withBacktrace adds the reporter's own "backtrace:" header, which only the
-// process-entry reporter writes.
+// withBacktrace adds the reporter's own "backtrace:" header, which only a
+// process-entry reporter with the walk emitted writes.
 //
 // Mach-O has no `.rodata`; its read-only constants live in __TEXT,__const
 // (matching emitDataSections).

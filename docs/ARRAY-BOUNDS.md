@@ -43,6 +43,33 @@ both a negative index and `index >= len`.
 All four agree on the observable contract: an out-of-bounds index
 aborts before producing a value.
 
+## What an abort prints (#5538)
+
+The natives do not exit silently. Every abort site — bounds, slice
+range, string index, arena exhaustion, and the sanitizer's two fatal
+findings — routes through `__fern_report`, which writes a fixed cause
+line to stderr and then exits with the code above:
+
+```
+fern: array index out of range
+backtrace:
+  0x0000000000401234
+  0x0000000000401290
+```
+
+Under the header is a frame-pointer walk (the `x29` / `rbp` chain,
+bounded to 64 frames). The addresses are raw; build with `-g` and
+`addr2line` / `nm` resolve them to functions against the emitted
+`.symtab`.
+
+`-backtrace=false` (or `FERN_BACKTRACE=0` on the compiler) drops the
+walk. It is a **compile-time** switch: with it off the walk, the hex
+printer, and the `backtrace:` string are not emitted at all, so a
+size-critical build pays nothing for a feature it does not want —
+roughly 190 bytes of `.text` on x86-64 and 184 on arm64. The cause line
+and every exit code are unchanged either way, so the contract above
+holds in both modes.
+
 ## Slice construction
 
 Constructing a slice — `a[lo:hi]` — is checked the same way
