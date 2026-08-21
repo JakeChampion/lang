@@ -28,7 +28,7 @@ import (
 // so the credit says "this box MAY be ours" and a guard settles it where the
 // answer exists. `emit_str_slot_release` frees under `result != receiver`, the
 // same cow test `emit_str_reclaim_store` already uses, pointed at the receiver
-// slot that `LocalInfo.str_replace_src` records at the binding site.
+// slot that `LocalInfo.str_identity_src` records at the binding site.
 //
 // Measured, 400 rounds of the harness below, a pair of compilers from the same
 // commit:

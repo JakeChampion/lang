@@ -54,18 +54,21 @@ pub struct LocalInfo {
     // not types, and a user method named `split` on another type would
     // otherwise answer for this one.
     strarr_builtin: boolean,
-    // str_view_local: this string slot was bound from `<string>.trim()`, whose
-    // result is a fresh BOX over the receiver's bytes. The box is this frame's;
-    // the data is not. Picks __fern_str_view_free over __fern_str_free at the
-    // release sites, which frees the box alone when the rc is the immortal view
-    // sentinel and takes the ordinary path otherwise (wasm's trim copies).
+    // str_view_local: this string slot may hold a fresh BOX over ANOTHER
+    // string's bytes — `<string>.trim()`, or a chain of SFRRECV string methods
+    // that can return `s[a:b]`. The box is this frame's; the data is not. Picks
+    // __fern_str_view_free over __fern_str_free at the release sites, which
+    // frees the box alone when the rc is the immortal view sentinel and takes
+    // the ordinary path otherwise (wasm's slices copy).
     str_view_local: boolean,
-    // str_replace_src: for a slot bound from `<string>.replace(old, new)`, the
-    // RECEIVER's slot; -1 otherwise. replace has a genuine identity fast-path —
-    // with the needle absent it hands the receiver's own box back, measured at
-    // zero bytes allocated — so its result is releasable only behind a guard
-    // that the two are different pointers.
-    str_replace_src: i32,
+    // str_identity_src: the slot this binding's box may turn out to BE, or -1
+    // when the binding always owns a box of its own. Two producers record it:
+    // `<string>.replace(old, new)`, whose identity fast-path hands the receiver's
+    // own box back when the needle is absent (measured at zero bytes allocated),
+    // and an SFRRECV method chain, whose every link may return its receiver
+    // (sfrrecv_chain_root_slot resolves the root). Such a result is releasable
+    // only behind a guard that the two are different pointers.
+    str_identity_src: i32,
     // struct_type: the slot's struct type name ("" = not a struct), so `p.x`
     // resolves x's field index in p's decl.
     struct_type: string,
@@ -192,7 +195,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_replace_src: 0 - 1, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -220,8 +223,8 @@ pub function li_set_strarr_builtin(li: LocalInfo, v: boolean): LocalInfo {
 pub function li_set_str_view_local(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, str_view_local: v };
 }
-pub function li_set_str_replace_src(li: LocalInfo, v: i32): LocalInfo {
-    return LocalInfo { ...li, str_replace_src: v };
+pub function li_set_str_identity_src(li: LocalInfo, v: i32): LocalInfo {
+    return LocalInfo { ...li, str_identity_src: v };
 }
 
 pub function li_set_is_bool(li: LocalInfo, v: boolean): LocalInfo {
@@ -1900,14 +1903,14 @@ pub function (s: LowerState) is_str_view_local_slot(i: i32): boolean {
     return s.locals[i].str_view_local;
 }
 
-pub function (s: LowerState) mark_str_replace_src(i: i32, v: i32): LowerState {
-    return LowerState { ...s, locals: s.locals.with(i, li_set_str_replace_src(s.locals[i], v)) };
+pub function (s: LowerState) mark_str_identity_src(i: i32, v: i32): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_str_identity_src(s.locals[i], v)) };
 }
 
-pub function (s: LowerState) str_replace_src_slot(i: i32): i32 {
+pub function (s: LowerState) str_identity_src_slot(i: i32): i32 {
     if (i < 0) { return 0 - 1; }
     if (i >= s.locals.len()) { return 0 - 1; }
-    return s.locals[i].str_replace_src;
+    return s.locals[i].str_identity_src;
 }
 
 // replace_src_slot_of: the RECEIVER's slot for `<string ident>.replace(a, b)`,
@@ -17184,11 +17187,25 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // The type gate the reclaim collector cannot make: confirm here, where the
     // receiver's type is known, that a `SARRB:` candidate really is the builtin.
     if (vt.is_strarr) { sb = sb.mark_strarr_builtin(slot, init_is_builtin_strarr_producer(v.init, se)); }
+    // An SFRRECV method chain (`base.drop(2)`) that reclaimable_names_of admitted
+    // as a candidate, and whose root the SLOT walk agrees on. Resolved against
+    // `se`, so the root ident answers with the slot it had BEFORE this binding
+    // shadowed it. The candidate becomes a real "STR:" credit only here, because
+    // the release it earns is only sound behind the guard this slot carries.
+    var sfroot: i32 = 0 - 1;
+    if (vt.is_str && reclaim_has(sb.reclaimable_names, "SFRCAND:", v.name)) { sfroot = sfrrecv_chain_root_slot(v.init, se, 0); }
     // Same shape for the trim class: the receiver's type is known here, and the
-    // flag is what makes the release site pick the view-aware free.
-    if (vt.is_str) { sb = sb.mark_str_view_local(slot, init_is_str_trim(v.init, se)); }
-    // …and the replace receiver's slot, for the identity guard the release needs.
-    if (vt.is_str) { sb = sb.mark_str_replace_src(slot, replace_src_slot_of(v.init, se)); }
+    // flag is what makes the release site pick the view-aware free. A chain link
+    // can return `s[a:b]` too, so its result gets the same view-aware release.
+    if (vt.is_str) { sb = sb.mark_str_view_local(slot, init_is_str_trim(v.init, se) || sfroot >= 0); }
+    // …and the slot the result may BE, for the identity guard the release needs:
+    // replace's receiver, or the chain's root.
+    if (vt.is_str) {
+        var idsrc: i32 = replace_src_slot_of(v.init, se);
+        if (idsrc < 0) { idsrc = sfroot; }
+        sb = sb.mark_str_identity_src(slot, idsrc);
+    }
+    if (sfroot >= 0) { sb = LowerState { ...sb, reclaimable_names: sb.reclaimable_names.append("STR:" + v.name) }; }
     sb = sb.mark_f64arr(slot, vt.is_f64arr);
     sb = sb.mark_bool(slot, vt.is_bool);
     sb = sb.mark_boolarr(slot, vt.is_boolarr);
@@ -21752,9 +21769,8 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
 // reclaimable fresh-string slot and frees the slot's PRIOR value (the loop-rebind
 // reclamation) via __fern_str_free, cow-guarded (`if old != new`) so a self-store
 // never frees the live box. The string sibling of emit_arr_store's do_dec branch,
-// but with NO alias_inc — a reclaimable string is proven non-aliased, and its box
-// is header-less on the asm backends (an rc_inc would corrupt the adjacent block),
-// so it is never inc'd. The first binding sees old = the zero-initialised slot →
+// but with NO alias_inc — a reclaimable string is proven non-aliased, so it is
+// never inc'd. The first binding sees old = the zero-initialised slot →
 // __fern_str_free's null guard makes it a no-op. On wasm __fern_str_free maps to
 // $__fern_arr_dec (rc-headered strings), which rc-guards the free; on asm it is
 // the box + data-buffer freelist release.
@@ -22860,8 +22876,8 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // This BALANCES the Perceus dup (__fern_rc_inc) the struct-lit / bind / return /
 // assign paths add when a struct/enum-array field aliases a local: rc 1 →inc 2
 // →source-owner dec 1 →this field-drop 0 (freed once). A fresh-literal field is
-// the sole owner (rc 1) → freed directly. A `string` field is NEVER dec'd (IR
-// string boxes are header-less, so an rc-dec would corrupt the adjacent block).
+// the sole owner (rc 1) → freed directly. A `string` field is NEVER dec'd: no
+// path incs a string on alias, so a field drop would be an unpaired release.
 //
 // Emitted as a per-type runtime helper __struct_drop_<T>(box) -> box, NEVER
 // inline: a single function can sweep many reclaimable struct locals at exit, and
@@ -27915,6 +27931,89 @@ function replace_str_init(init: parser.Expr, ns: string[], ts: string[]): boolea
     return false;
 }
 
+// sfrrecv_str_init: `init` is a chain of SFRRECV-proven string METHODS rooted at
+// an ident declared `string` — `base.drop(2)`, `base.tail(4).to_owned()`. Fifth
+// consumer of the declared-name/type pair, and the BINDING half of #6544.
+//
+// SFRRECV admits a method whose every return is fresh, the RECEIVER, or a view of
+// it, so no static answer says which one arrived. That is replace's situation
+// exactly, and it takes replace's answer: credit the binding and let the release
+// site settle it at run time against the chain ROOT's pointer. A fresh box is
+// never a box that already existed, and a view is an allocation like any other,
+// so pointer equality with the root means — and only means — that every link took
+// its identity path.
+//
+// Only a BARE IDENT root qualifies, for the reason replace_src_slot_of gives: the
+// guard has to reload a slot the frame still holds, with nothing re-evaluated and
+// no second allocation to confuse the compare.
+function sfrrecv_str_init(init: parser.Expr, ns: string[], ts: string[], str_fresh_ret: string[]): boolean {
+    match (init) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (util.index_of_str(str_fresh_ret, "SFRRECV:string." + fa.field) < 0) { return false; }
+                    return sfrrecv_str_chain_rooted(fa.obj, ns, ts, str_fresh_ret, 0);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// sfrrecv_str_chain_rooted: `e` is another proven link, or the bare ident declared
+// `string` the chain roots at. The syntactic twin of sfrrecv_chain_root_slot,
+// which answers the same question with SLOTS once lowering reaches the binding —
+// and the two must agree, which is why the credit this feeds is only a CANDIDATE
+// until bind_var_slot's slot walk confirms it. Every link is keyed
+// `SFRRECV:string.<m>` because an SFRRECV method returns `string`, so a chain that
+// starts on a string stays on one.
+function sfrrecv_str_chain_rooted(e: parser.Expr, ns: string[], ts: string[], str_fresh_ret: string[], depth: i32): boolean {
+    if (depth > 8) { return false; }
+    match (e) {
+        parser.ExprIdent(rid) => {
+            var at: i32 = util.index_of_str(ns, rid.name);
+            if (at < 0) { return false; }          // unknown type -> refuse
+            if (at >= ts.len()) { return false; }
+            return ts[at] == "string";
+        },
+        parser.ExprCall(cc) => {
+            match (cc.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (util.index_of_str(str_fresh_ret, "SFRRECV:string." + cfa.field) < 0) { return false; }
+                    return sfrrecv_str_chain_rooted(cfa.obj, ns, ts, str_fresh_ret, depth + 1);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// collect_sfrrecv_local_names gathers every `var v: str = base.drop(2)` binding,
+// recursing through nested blocks like its siblings.
+function collect_sfrrecv_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], str_fresh_ret: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (sfrrecv_str_init(v.init, ns, ts, str_fresh_ret)) { a = push_str_unique(a, v.name); } },
+            parser.StmtIf(f) => { a = collect_sfrrecv_local_names(f.then_body, ns, ts, str_fresh_ret, a); a = collect_sfrrecv_local_names(f.else_body, ns, ts, str_fresh_ret, a); },
+            parser.StmtWhile(w) => { a = collect_sfrrecv_local_names(w.body, ns, ts, str_fresh_ret, a); },
+            parser.StmtFor(fo) => { a = collect_sfrrecv_local_names(fo.body, ns, ts, str_fresh_ret, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_sfrrecv_local_names(m.arms[mi].body, ns, ts, str_fresh_ret, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_replace_local_names gathers every `var r: string = s.replace(a, b)`
 // binding, recursing through nested blocks like its siblings.
 function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
@@ -28660,10 +28759,11 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
 }
 
 // "SFRFRESHNAME:<method>" — the STRICT half of SFRRECV. SFRRECV admits a method
-// that returns its RECEIVER or a view of it, which is exactly what a consuming
-// site's pointer compare exists to sort out at runtime; a BINDING has no such
-// discriminator, so it may only take ownership of a result that is nobody's box
-// but its own. This key says every return is a freshly allocated one:
+// that returns its RECEIVER or a view of it, which a consuming site sorts out
+// with a pointer compare against the chain root — in binding position as well as
+// receiver position (sfrrecv_str_init). This key is for the consumers that have
+// no root to compare against, so they may only take ownership of a result that is
+// nobody's box but its own. It says every return is a freshly allocated one:
 // `(s: string) to_owned(): string { return s + ""; }` qualifies, and `trim` /
 // `replace` — both able to hand the receiver straight back — do not.
 //
@@ -31661,7 +31761,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         tmi = tmi + 1;
     }
     // `<string>.replace(old, new)` locals — same gates, released behind the
-    // identity guard (the slot's str_replace_src is what carries the receiver to
+    // identity guard (the slot's str_identity_src is what carries the receiver to
     // compare against).
     var rps: string[] = collect_replace_local_names(body, tsn, tst, []);
     var rpi: i32 = 0;
@@ -31672,6 +31772,24 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + rps[rpi]);
         }
         rpi = rpi + 1;
+    }
+    // `var v: str = base.drop(2)` — an SFRRECV method chain in BINDING position
+    // (#6544), released behind the same identity guard, pointed at the chain root.
+    // Same two gates as its siblings, but credited "SFRCAND:" rather than "STR:":
+    // the guard needs the root's SLOT and only the binding site can resolve one,
+    // so bind_var_slot promotes a candidate whose root walk agrees and leaves the
+    // rest uncredited. That is what makes a credit without a guard impossible —
+    // an unguarded release here would free the receiver's own box on the identity
+    // path.
+    var sfrs: string[] = collect_sfrrecv_local_names(body, tsn, tst, str_fresh_ret, []);
+    var sfi: i32 = 0;
+    while (sfi < sfrs.len()) {
+        if (util.index_of_str(strs, sfrs[sfi]) < 0
+            && util.index_of_str(reassigned, sfrs[sfi]) < 0
+            && !body_unsafe_for_clo(body, sfrs[sfi], borrowable, clo_ok, recv_borrow)) {
+            out = out.append("SFRCAND:" + sfrs[sfi]);
+        }
+        sfi = sfi + 1;
     }
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
@@ -36396,25 +36514,27 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
 // loop-rebind (emit_str_reclaim_store) and at scope exit (the string sweep).
 // String literals / aliasing forms never reach here (str_local_binding_is_fresh
 // admits only fresh producers), so a freed box is always this frame's sole own.
-// str_free_helper: which release a reclaimable string slot gets. A trim result
-// is a fresh box over the RECEIVER's bytes, so freeing it as an ordinary string
-// would free data the receiver still owns; __fern_str_view_free frees the box
-// alone when the rc is the immortal view sentinel and takes __fern_str_free's
-// path otherwise, which is what wasm needs (its trim copies, so the result is an
-// ordinary owned block).
+// str_free_helper: which release a reclaimable string slot gets. A trim or
+// SFRRECV-chain result can be a fresh box over ANOTHER string's bytes, so freeing
+// it as an ordinary string would free data that string still owns;
+// __fern_str_view_free frees the box alone when the rc is the immortal view
+// sentinel and takes __fern_str_free's path otherwise, which is both what a
+// chain link that really allocated needs and what wasm needs (its slices copy, so
+// the result is an ordinary owned block).
 // emit_str_slot_release emits the release for a reclaimable string slot: the
-// plain call, or — for a `replace` result — the same call under a guard that the
-// box is not the receiver's own. replace's identity fast-path returns the
-// receiver when the needle is absent (measured: zero bytes allocated), so an
-// unguarded free would release a box the receiver still owns. The guard is the
-// `old != new` cow test emit_str_reclaim_store already uses, pointed at the
-// recorded source slot instead.
+// plain call, or — when the slot records a slot its box may BE — the same call
+// under a guard that the two differ. `replace`'s identity fast-path returns the
+// receiver when the needle is absent (measured: zero bytes allocated), and every
+// link of an SFRRECV chain may hand its receiver back, so an unguarded free would
+// release a box that source still owns. The guard is the `old != new` cow test
+// emit_str_reclaim_store already uses, pointed at the recorded source slot
+// instead.
 //
 // Comparing against a slot the sweep may have freed already is safe: the guard
 // only compares the pointers, never dereferences, and either order gives the
 // right answer — identical means skip, different means this box is ours.
 function emit_str_slot_release(s: LowerState, i: i32): LowerState {
-    var src: i32 = s.str_replace_src_slot(i);
+    var src: i32 = s.str_identity_src_slot(i);
     if (src < 0) {
         var d: LowerState = s.emit(ir.op_load_local(i));
         d = d.emit(ir.op_call_direct(str_free_helper(d, i), 1));
@@ -44750,7 +44870,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_replace_src: 0 - 1, struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the
