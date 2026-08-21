@@ -17,25 +17,32 @@ import (
 
 var backtraceHexRe = regexp.MustCompile(`0x[0-9a-f]{16}`)
 
-// runBacktraceCase builds a nested inner→mid→main chain that aborts in `inner`
-// with `-g` for `target`, runs it via `run`, and asserts the frame-pointer
-// backtrace (#5538 slice 2) prints return addresses that resolve — through the
-// -g .symtab — to mid, main, and _start (inner is the aborting leaf; the
-// printed addresses are the *return* sites up the chain).
-func runBacktraceCase(t *testing.T, target string, run func(bin string) *exec.Cmd) {
-	t.Helper()
-	src := `function inner(xs: i32[]): i32 { return xs[7]; }
+// deepAbortSrc is the shared inner→mid→main chain: `inner` indexes past the
+// end of a 3-element array, so the abort fires three frames deep and a walk
+// has something to report.
+const deepAbortSrc = `function inner(xs: i32[]): i32 { return xs[7]; }
 function mid(xs: i32[]): i32 { return inner(xs); }
 function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
 `
+
+// buildAndAbort compiles deepAbortSrc with `-g` for target (plus extraArgs,
+// with extraEnv added to the COMPILER's environment — the backtrace toggle is
+// a build-time switch), runs the binary, and asserts the abort's exit code and
+// cause line. Returns the binary path and its stderr for the caller to make
+// its backtrace-specific assertions against.
+func buildAndAbort(t *testing.T, target string, run func(bin string) *exec.Cmd, extraArgs, extraEnv []string) (string, string) {
+	t.Helper()
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "deep.fern")
-	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(deepAbortSrc), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, "deep.bin")
-	if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, p).CombinedOutput(); err != nil {
+	args := append([]string{"-g", "-target", target, "-o", out}, extraArgs...)
+	build := exec.Command(bin, append(args, p)...)
+	build.Env = append(os.Environ(), extraEnv...)
+	if o, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, o)
 	}
 
@@ -43,6 +50,9 @@ function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	_ = cmd.Run()
+	// The opt-out suppresses the backtrace, never the safety contract: an
+	// out-of-range index still exits 134 and still names its cause
+	// (ARRAY-BOUNDS.md).
 	if code := cmd.ProcessState.ExitCode(); code != 134 {
 		t.Errorf("exit = %d, want 134", code)
 	}
@@ -50,6 +60,16 @@ function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
 	if !strings.Contains(errOut, "fern: array index out of range") {
 		t.Errorf("stderr missing cause line:\n%s", errOut)
 	}
+	return out, errOut
+}
+
+// runBacktraceCase asserts the DEFAULT build's frame-pointer backtrace (#5538
+// slice 2) prints return addresses that resolve — through the -g .symtab — to
+// mid, main, and _start (inner is the aborting leaf; the printed addresses are
+// the *return* sites up the chain).
+func runBacktraceCase(t *testing.T, target string, run func(bin string) *exec.Cmd) {
+	t.Helper()
+	out, errOut := buildAndAbort(t, target, run, nil, nil)
 	if !strings.Contains(errOut, "backtrace:") {
 		t.Fatalf("stderr missing backtrace header:\n%s", errOut)
 	}
@@ -116,6 +136,51 @@ func TestX86_64AbortBacktrace(t *testing.T) {
 func TestArm64AbortBacktrace(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	runBacktraceCase(t, "arm64-linux", func(bin string) *exec.Cmd {
+		if qemu == "" {
+			return exec.Command(bin)
+		}
+		return exec.Command(qemu, bin)
+	})
+}
+
+// runBacktraceOffCase is the #5538 slice-4 opt-out: with the walk suppressed at
+// compile time the abort keeps its exit code and its cause line, but writes no
+// backtrace header and no addresses at all. Run for both surfaces — the
+// FERN_BACKTRACE=0 env var the issue names and the -backtrace=false CLI flag —
+// since they set the same compile-time switch by different routes.
+func runBacktraceOffCase(t *testing.T, target string, run func(bin string) *exec.Cmd) {
+	t.Helper()
+	for _, tc := range []struct {
+		name string
+		args []string
+		env  []string
+	}{
+		{"env", nil, []string{"FERN_BACKTRACE=0"}},
+		{"flag", []string{"-backtrace=false"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errOut := buildAndAbort(t, target, run, tc.args, tc.env)
+			if strings.Contains(errOut, "backtrace:") {
+				t.Errorf("backtrace header still printed with the walk suppressed:\n%s", errOut)
+			}
+			if got := backtraceHexRe.FindAllString(errOut, -1); len(got) != 0 {
+				t.Errorf("frame addresses still printed with the walk suppressed: %v\n%s", got, errOut)
+			}
+		})
+	}
+}
+
+// TestX86_64AbortBacktraceOff: -backtrace=false / FERN_BACKTRACE=0 drops the
+// x86-64 walk without touching the exit code or the cause line.
+func TestX86_64AbortBacktraceOff(t *testing.T) {
+	qemu := x86QemuOrEmpty(t)
+	runBacktraceOffCase(t, "x86-64-linux", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
+}
+
+// TestArm64AbortBacktraceOff is the arm64 parity check for the opt-out.
+func TestArm64AbortBacktraceOff(t *testing.T) {
+	qemu := arm64QemuOrEmpty(t)
+	runBacktraceOffCase(t, "arm64-linux", func(bin string) *exec.Cmd {
 		if qemu == "" {
 			return exec.Command(bin)
 		}

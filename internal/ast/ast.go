@@ -1418,6 +1418,29 @@ var RcTrace = os.Getenv("FERN_RC_TRACE") == "1"
 // implied by SanitizeEnabled.
 var RcUnderflowTrap = os.Getenv("FERN_RC_UNDERFLOW_TRAP") == "1"
 
+// BacktraceEnabled gates the frame-pointer backtrace the natives print
+// under a fatal abort (#5538 slice 4). Default ON: an abort writes its
+// cause line, then walks the x29 / rbp chain and prints each return
+// address, which `-g` plus addr2line resolves to functions.
+//
+// This is a COMPILE-time switch, not a runtime one. The opt-out exists
+// for size-critical builds, and a binary that reads an env var at abort
+// time still carries the walk and the hex printer it would skip — the
+// cost the opt-out is meant to remove. With the flag off the walk, the
+// hex printer, and the "backtrace:" string are simply not emitted, and
+// __fern_report is a write-then-exit again.
+//
+// The CAUSE line stays either way: it is one write of a fixed string,
+// the abort's exit code is meaningless without it, and slice 3 (the
+// named diagnostics) is a separate feature from the backtrace this
+// suppresses. Exit codes are untouched — 134 / ExitArenaExhausted /
+// ExitSanitizer are the same with the walk gone, so ARRAY-BOUNDS.md's
+// contract holds in both modes.
+//
+// Settable via FERN_BACKTRACE=0 (the RcFreeDebug precedent) or the CLI's
+// -backtrace=false, which defaults to whatever the env var left here.
+var BacktraceEnabled = os.Getenv("FERN_BACKTRACE") != "0"
+
 // TrmcEnabled gates tail-recursion-modulo-cons. A function whose recursive
 // call sits in the LAST payload position of a constructor in tail position
 // (the canonical `map(xs) -> Cons(g(h), map(t))` shape) is normally
