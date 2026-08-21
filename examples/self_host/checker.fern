@@ -846,6 +846,14 @@ pub struct Scope {
   // Empty on every other scope.
   tparams: string[],
   tbounds: string[],
+  // tpvars / tpvar_tps run parallel: a parameter whose declared type is
+  // exactly one of tparams (`a: T`), and the type parameter it names. `T`
+  // erases to unknown like every type in a generic body, so the binding's
+  // TYPE cannot answer "is this receiver a bounded type parameter?" — this
+  // pair can, which is what the associated-function-as-method rejection in
+  // call_diags reads (#7221). Empty on every other scope.
+  tpvars: string[],
+  tpvar_tps: string[],
 }
 
 // SigTable is the module's function signature table plus a bucket index over
@@ -964,32 +972,56 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
   var ns: string[] = s.names.append(name);
   var ts: Type[] = s.types.append(t);
-  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
+  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // with_impls attaches the module's impl table + trait requirement records
 // to a scope so call_diags can run the E021 generic-bound conformance
 // check (#4842). Applied to the func-body scope in check_module.
 function (s: Scope) with_impls(impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
 // trait bounds. Read by assoc_call_req to resolve `T.zero()`.
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+}
+
+// bind_tpvar records that value `name` was declared with the type parameter
+// `tp` as its type (`function pick[T: Show](a: T)`). Paired with the ordinary
+// bind, which gives the same name the erased unknown every generic type has.
+function (s: Scope) bind_tpvar(name: string, tp: string): Scope {
+  var vs: string[] = s.tpvars.append(name);
+  var ps: string[] = s.tpvar_tps.append(tp);
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: vs, tpvar_tps: ps };
+}
+
+// tpvar_of returns the type parameter a value binding was declared with, or ""
+// when the name is not one. Its caller reaches it only for a receiver that
+// typed to unknown, so a local shadowing the parameter with a real type is
+// already out of the picture.
+function (s: Scope) tpvar_of(name: string): string {
+  var i: i32 = s.tpvars.len() - 1;
+  while (i >= 0) {
+    if (s.tpvars[i] == name) {
+      return s.tpvar_tps[i];
+    }
+    i = i - 1;
+  }
+  return "";
 }
 
 // defines reports whether `name` is bound in scope (param, receiver,
@@ -1199,11 +1231,11 @@ function for_iter_is_range(iter: parser.Expr): boolean {
 }
 
 function (s: Scope) enter_loop(): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 function (s: Scope) with_ret_type(rt: Type): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -3770,6 +3802,9 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[
   var i: i32 = 0;
   while (i < fd.params.len()) {
     s = s.bind(fd.params[i].name, type_from_name_with_structs_unions(fd.params[i].type_name, structs, unions));
+    if (util.index_of_str(fd.type_params, fd.params[i].type_name) >= 0) {
+      s = s.bind_tpvar(fd.params[i].name, fd.params[i].type_name);
+    }
     i = i + 1;
   }
   return s;
@@ -6392,11 +6427,13 @@ function qual_variant_exists(en: string, field: string, s: Scope): boolean {
 // receiver-less function at all, and — when the trait requirement that
 // provides it is in scope — that requirement's declared return-type
 // spelling, still written in `Self`. An empty `ret` means "resolved, but the
-// return type is not recoverable here" and types to unknown.
-struct AssocHit { found: boolean, ret: string }
+// return type is not recoverable here" and types to unknown. `owner` is the
+// trait that declared the requirement (empty for an inherent impl), which the
+// E021 "called as a method" message names.
+struct AssocHit { found: boolean, ret: string, owner: string }
 
 function assoc_miss(): AssocHit {
-  return AssocHit { found: false, ret: "" };
+  return AssocHit { found: false, ret: "", owner: "" };
 }
 
 // trait_req_idx resolves a bound's trait SPELLING to its requirement record.
@@ -6435,10 +6472,10 @@ function trait_assoc_req(s: Scope, tr: string, field: string, depth: i32): Assoc
     var rs: parser.FuncDecl = req.req_sigs[i];
     if (rs.name == field) {
       if (rs.params.len() == 0) {
-        return AssocHit { found: true, ret: rs.ret_type };
+        return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
       }
       if (rs.params[0].name != "self") {
-        return AssocHit { found: true, ret: rs.ret_type };
+        return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
       }
     }
     i = i + 1;
@@ -6486,6 +6523,18 @@ function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
   return assoc_miss();
 }
 
+// tpvar_receiver returns the type parameter a method call's RECEIVER was
+// declared with — "" for anything but a bare identifier bound to one.
+function tpvar_receiver(obj: parser.Expr, s: Scope): string {
+  match (obj) {
+    parser.ExprIdent(id) => {
+      return s.tpvar_of(id.name);
+    },
+    _ => {}
+  }
+  return "";
+}
+
 // type_assoc_req resolves a CONCRETE `i32.zero()` / `Point.origin()`: some
 // `impl … for <tyname>` in the module lists `field`, and `field` is not a
 // receiver method on that type (parse_impl_decl gives an associated function
@@ -6503,7 +6552,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
         if (h.found) {
           return h;
         }
-        return AssocHit { found: true, ret: "" };
+        return AssocHit { found: true, ret: "", owner: "" };
       }
     }
     i = i + 1;
@@ -6923,7 +6972,25 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
                 }
               }
             },
-            _ => {}
+            _ => {
+              // A bounded type parameter receiver: `a.f(...)` where `a: T`
+              // and `T: Tr`. T erases to unknown, so the receiver lands
+              // here rather than in a nominal arm above. A requirement of
+              // one of T's bounds that has no leading `self` is an
+              // ASSOCIATED function — `T.f(...)`, never a value's method —
+              // and calling it through a value built a call one argument
+              // wider than the callee, which only the IR verifier refused,
+              // at codegen, in the language of an internal invariant
+              // (#7221). A receiver method, and a `T.f(...)` written the
+              // way it is meant to be, are resolved elsewhere and untouched.
+              var tpn: string = tpvar_receiver(mfa.obj, s);
+              if (tpn.len() > 0) {
+                var tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
+                if (tph.found) {
+                  out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
+                }
+              }
+            }
           }
         },
         _ => {}

@@ -413,6 +413,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"derive-char-field-broken", "trait Debug { function to_debug(self: Self): string; }\n@derive(Debug)\nstruct Foo { c: char }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
+		// E021 (#7221): a trait requirement with no leading `self` is an
+		// ASSOCIATED function — `T.show()` — and calling it through a VALUE
+		// of the bounded type parameter is a user error. The self-host said
+		// nothing, so `-check` passed a program the compiler then refused at
+		// codegen with the IR verifier's internal-invariant message. Both
+		// forms: the zero-parameter one, and the one with a parameter (where
+		// the receiver made the call one argument wider than the callee).
+		{"tp-assoc-fn-as-method", "trait Show { function show(): i32; }\nstruct P { v: i32 }\nimpl Show for P { function show(): i32 { return 5; } }\nfunction pick[T: Show](a: T): i32 { return a.show(); }\nfunction main(): i32 { return pick(P { v: 42 }); }\n", []string{"E021"}},
+		{"tp-assoc-fn-as-method-with-arg", "trait Show { function show(x: i32): i32; }\nstruct P { v: i32 }\nimpl Show for P { function show(x: i32): i32 { return x + 1; } }\nfunction pick[T: Show](a: T): i32 { return a.show(1); }\nfunction main(): i32 { return pick(P { v: 41 }); }\n", []string{"E021"}},
+		// The two shapes the rejection must not widen into: an ordinary trait
+		// METHOD reached through a value, and an associated function reached
+		// the way it is meant to be, through the type parameter.
+		{"tp-trait-method-on-value-ok", "trait Show { function show(self: Self): i32; }\nstruct P { v: i32 }\nimpl Show for P { function show(self: Self): i32 { return self.v; } }\nfunction pick[T: Show](a: T): i32 { return a.show(); }\nfunction main(): i32 { return pick(P { v: 42 }); }\n", nil},
+		{"tp-assoc-fn-on-type-param-ok", "trait Zero { function zero(): Self; }\nstruct P { v: i32 }\nimpl Zero for P { function zero(): Self { return P { v: 7 }; } }\nfunction mk[T: Zero](): i32 { var z: T = T.zero(); return 1; }\nfunction main(): i32 { return 42; }\n", nil},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
 		// object-safe draws E021 — T has an associated function (no self) or a
 		// Self-returning method, neither of which can dispatch through a dyn
