@@ -1,6 +1,6 @@
 # What the language does to the self-hosted compiler
 
-An analysis of `examples/self_host/` (91 files, 172,450 lines) asking one
+An analysis of `examples/self_host/` (93 files, 175,326 lines) asking one
 question: **which parts of Fern make writing the self-hosted compiler harder
 than it needs to be?** Not "which parts of the self-host are badly written" —
 that is `docs/SELF-HOST-AUDIT.md`, and its findings are largely structural
@@ -10,8 +10,10 @@ semantics that push the code into a worse shape.
 
 Method: a census of what the self-host's sources actually use, read against the
 feature surface the language actually has (`docs/FEATURE-AUDIT.md`), plus
-`cmd/fern` probes for every behavioural claim. Every number below is
-reproducible from the tree at the commit this landed on; the probes are in §7.
+`cmd/fern` probes for every behavioural claim. The census is counted **after
+`//` comments and string, f-string and char literals are stripped**, and the
+counted rows are pinned by a test rather than re-grepped — see §1's method note.
+The probes are in §7.
 
 ---
 
@@ -36,29 +38,55 @@ That last one is the important one: it is a ratchet, and it only turns one way.
 
 ## 1. The census
 
-What a 167k-line compiler written in a modern language uses, counted across
-`examples/self_host/*.fern`:
+What a 175k-line compiler written in a modern language uses, counted across
+`examples/self_host/*.fern` with comments and literals stripped. The `Gate`
+column says what `TestSelfHostFeatureCensus` holds the row to.
 
-| Construct | The language has it | Self-host uses it |
-|---|---|---|
-| Generic functions / structs | ✅ monomorphised, with trait bounds | **6** (`astwalk`'s fold spine, #6993) |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **3** capturing visitors + **10** top-level fn values + **2** no-op lambdas (`astwalk`, #6993) |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **0** |
-| `?` error propagation | ✅ incl. `From`-converting widening | **0** |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **2** (`irverify`'s `NameIndex`, `wasm_ir`'s call set — #6993) |
-| `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** |
-| `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) |
-| stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) |
-| `while` + manual index | — | **4,573** loops, 1,979 `i = i + 1` |
-| `-1` as "absent" | — | **497** `return 0 - 1` |
-| String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces |
-| Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** |
-| Explicit `as` casts | — | **3,275** |
-| Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` |
-| Wildcard `_ =>` match arms | — | **2,364** of 8,606 arms (27%) |
-| Locals with a written type annotation | inference exists | **17,084** of 17,727 (96%) |
+| Construct | The language has it | Self-host uses it | Gate |
+|---|---|---|---|
+| Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
+| Generic structs | ✅ | **0** | pinned |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **8** capturing — 4 anonymous `function(…)` exprs, 4 nested named visitors — plus **2** no-op arrow lambdas | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **15**, all in `visibility.fern` | pinned |
+| `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
+| `astwalk` call sites (walkers on the shared spine) | — | **85** across 11 modules | floor |
+| `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
+| `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
+| stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
+| `while` + manual index | — | **4,694** loops, **5,037** `x = x + 1` | ceiling on the increments |
+| `-1` as "absent" | — | **243** `return 0 - 1` | logged |
+| String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
+| Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
+| Explicit `as` casts | — | **682** | logged |
+| Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
+| Wildcard `_ =>` match arms | — | **2,557** of **9,223** arrow tokens (28%) | ceiling |
+| Locals with a written type annotation | inference exists | **17,615** of 17,622 (99.9%) | logged |
+| Methods (`function (r: T) name(…)`) | ✅ | **269** in 9 modules | logged |
 
-The single largest file, `irlower.fern`, is **59,315 lines** and contains a
+**Method.** Every counted row is taken after `//` comments and string, f-string
+and char literals are stripped out. The self-host embeds whole test programs as
+string literals and discusses its own syntax in prose, so a raw grep counts the
+compiler talking ABOUT a construct as one that uses it — and the error is large,
+not marginal: `as` appears 3,856 times raw and **682** times in code. Three
+successive hand-measurements of this table disagreed with each other, in both
+directions, for exactly that reason.
+
+So the rows are no longer re-grepped. `TestSelfHostFeatureCensus`
+(`internal/e2eselfhost/self_host_feature_census_test.go`) does the strip and the
+count in under a second, and
+
+```
+go test ./internal/e2eselfhost/ -run TestSelfHostFeatureCensus -v
+```
+
+prints the whole table. `pinned` rows fail on any move in either direction —
+they are small, and a move means this table needs editing; `floor` fails only on
+a fall; `ceiling` allows ~10% of headroom over the measurement before failing;
+`logged` rows are printed by the same run but not asserted. A row marked `—` is
+hand-counted and not covered by the test.
+
+The single largest file, `irlower.fern`, is **60,552 lines** and contains a
 **1,704-line function** (`lower_call_method`). `LowerState`, the value threaded
 through all of it, has **31 fields**, fourteen of which are `string[]` sets
 carrying ownership facts.
@@ -116,10 +144,11 @@ means finishing `str` can never help RC without also un-erasing it.
 Every self-host module imports siblings and `std/io` (which exports exactly two
 functions). Nothing else. The consequences:
 
-- **A compiler that had no hash map.** One `Map[K, V]` in 167k lines —
-  `irverify`'s `NameIndex`, converted in #6993 slice four. Everything else is
-  still a linear scan over a `string[]` or a hand-rolled bucket table: 290 sites
-  comparing an array element to a name, 114 hand-rolled
+- **A compiler that had almost no hash map.** Eleven `Map[K, V]` spellings in
+  175k lines, across three modules — `irverify`'s `NameIndex`, converted in
+  #6993 slice four, and `wasm_ir`'s call set. Everything else is still a linear
+  scan over a `string[]` or a hand-rolled bucket table: 290 sites comparing an
+  array element to a name, 114 hand-rolled
   `contains`/`index_of`/`find` helpers, and five hand-written hash tables
   (`checker.SigTable`, `irlower`'s borrow registry and `MFuncs`,
   `x86_native`'s label table, and the one now deleted). The 65 string-tag
@@ -144,7 +173,7 @@ functions). Nothing else. The consequences:
 with one-module-per-file and no package concept, a mutually-recursive compiler
 pass cannot be split at all. `lower_expr` ↔ `lower_stmt` ↔ `lower_call_method`
 ↔ `lower_stmt_var` are irreducibly mutually recursive, so they live in one
-59,315-line file, and the functions inside it grow to 1,704 lines because
+60,552-line file, and the functions inside it grow to 1,704 lines because
 splitting *them* out is the only decomposition the language permits and it
 does not reduce the file.
 
@@ -436,7 +465,7 @@ Ranked by measured cost, highest first.
 ### 3.1 A traversal abstraction (needs usable closures)
 
 ~130 `Expr` walkers and ~247 `Stmt` walkers are hand-written, each
-re-enumerating 17 `Expr` and 12 `Stmt` variants. 2,364 wildcard `_ =>` arms mean
+re-enumerating 17 `Expr` and 12 `Stmt` variants. 2,557 wildcard `_ =>` arms mean
 a new AST node silently no-ops in most of them rather than failing to compile.
 This is the single largest line-count and correctness cost in the tree, and the
 fix is one generic visitor parameterised by a callback — which needs closures
@@ -677,7 +706,7 @@ Ordered by (unblocking value) ÷ (cost), not by size.
    `docs/SELFHOST-SYMBOL-INTERNING.md` and route the 65 string-tag registries
    through it. The interning plan already exists and is unblocked.
 7. **Multi-file packages, or intra-package import cycles** (§2.3). The largest
-   language change here, and the only fix for a 59,315-line file and a 397-file
+   language change here, and the only fix for a 60,552-line file and a 397-file
    staging edit. Worth scoping even if it is not worth doing yet.
 8. **Surface the append cliff** (§4.5). A diagnostic mode reporting which
    `.append` / `.with` sites took the copying path, and a way to assert it in a
