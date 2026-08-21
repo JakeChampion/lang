@@ -49,12 +49,20 @@ var eqBoundDeriveCases = []struct {
     if (array.dedup(none).len() != 0) { return 5; }`,
 	},
 	{
+		// Both spellings: core/cmp's free function and std/array's `.distinct()`
+		// receiver method, which delegates to it.
 		name: "distinct",
 		body: `    var runs: Point[] = [Point { x: 3, y: 4 }, Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
-    var d: Point[] = array.distinct(runs);
+    var d: Point[] = cmp.distinct(runs);
     if (d.len() != 2) { return 1; }
     if (!d[0].eq(Point { x: 3, y: 4 })) { return 2; }
-    if (!d[1].eq(Point { x: 1, y: 2 })) { return 3; }`,
+    if (!d[1].eq(Point { x: 1, y: 2 })) { return 3; }
+    var m: Point[] = runs.distinct();
+    if (m.len() != 2) { return 4; }
+    if (!m[0].eq(Point { x: 3, y: 4 })) { return 5; }
+    if (!m[1].eq(Point { x: 1, y: 2 })) { return 6; }
+    var none: Point[] = [];
+    if (none.distinct().len() != 0) { return 7; }`,
 	},
 	{
 		name: "count",
