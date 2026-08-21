@@ -569,7 +569,7 @@ func parseProvidedTally(out string) (int, int) {
 }
 
 // providedCorpusExpectedDirty are the conformance fixtures the resolution pass
-// reports, and is a list of three rather than a tolerance because each one is
+// reports, and is a list of two rather than a tolerance because each one is
 // the pass being RIGHT about a program that is deliberately wrong.
 //
 // This driver runs the front end and the lowerer, not the checker — that is
@@ -580,16 +580,11 @@ func parseProvidedTally(out string) (int, int) {
 //
 //   - diag_e065 calls `name()`, which the fixture never defines.
 //   - diag_p004 calls `add()`, likewise.
-//   - diag_e019 does not reach the pass at all: `Pair[i32]` on a two-parameter
-//     struct crashes the lowerer, and it does so on this driver's ordinary emit
-//     path too — the fixture exists to be rejected by the checker, and nothing
-//     downstream of that is defined behaviour.
 //
 // Every other fixture in the corpus resolves clean.
 var providedCorpusExpectedDirty = map[string]bool{
 	"diag_e065": true,
 	"diag_p004": true,
-	"diag_e019": true,
 }
 
 // TestSelfHostIRVerifyProvidedCorpusClean sweeps the conformance corpus.
