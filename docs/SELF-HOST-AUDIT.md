@@ -188,9 +188,27 @@ findings. Ranked by leverage.
     **Not a dedupe target.**
 
   Genuinely liftable leftovers: `block_index` and `pred_slot` (4 copies each,
-  `ssa` + the three SSA backends — SH-025), `join_path` (`asm_load_run`, `fern`,
-  `mvs` — SH-055), `trim` (`fern_toml`, `literate`, `mvs`), `split_commas`
-  (`ferndoc`, `irlower`, `printer`).
+  `ssa` + the three SSA backends — SH-025), `trim` (`fern_toml`, `mvs`),
+  `split_commas` (`irlower`, `printer`). The `join_path` strand is closed by
+  SH-055 (`util.module_path_join`; `mvs.join_path` is a different function that
+  stays).
+
+  Two corrections to that list. **`trim`'s three copies are not identical**:
+  `fern_toml.fern:66` strips only space and tab where `literate.fern:88` and
+  `mvs.fern:558` also strip `\r`, so a CRLF `fern.toml` leaves a trailing `\r`
+  on every value — an SH-010-class drift to fix, not a pure dedupe. And
+  **`literate`'s copies cannot be lifted at all**: the Go gates hand
+  `literate.fern` to the compiler as one standalone source with no module
+  staging (`literate.fern:54-56` states the import-free design), so its `trim`
+  and `contains` stay. `ferndoc`'s `split_commas` is likewise excluded — it
+  annotates its slices `own(...)`, a different ownership contract from the
+  `irlower`/`printer` pair.
+
+  **A second naming hazard, worse than the `index_of_str` one below.** `regn`
+  (`ssa_x86.fern:79`, `ssa_arm64.fern:62`) is **byte-identical text with
+  divergent behaviour**: it dispatches to `regname` / `regname64` / `slot`,
+  which are per-ISA leaves (`%r10d` vs `w12`, `-N(%rbp)` vs `[sp, #N]`). A
+  byte-diff reports it as safe to lift and it is not. **Not a dedupe target.**
 
   **Naming hazard — a naive `util.`-qualification sweep binds the wrong
   function.** `index_of_str` names **two different functions**: array index-of
@@ -396,15 +414,23 @@ appendix §6.)
 - [ ] **SH-044 — `asmcore.fern:2704-3200`** `infer_expr_type` is a **497-line**
   function with hundreds of hardcoded builtin-name string compares —
   table-drive `builtin_return_type(name, args)` + per-receiver method resolvers.
-- [ ] **SH-045 — `checker.fern:11599-11932`** `check_module` is **334 lines** and
-  calls `build_func_scope` (defined `checker.fern:3717`) **12 times — 9 of them
-  inside the single per-function pass loop**, rebuilding the same scope for
-  `slice_escape_diags`, `must_consume_diags`, `lret_stmts`, `mx_stmts`,
-  `stmts_call_diags`, `stmts_assign_diags`, and `vref_stmts` in turn. The
-  `Scope` doc comment at `checker.fern:812` concedes it ("build_func_scope runs
-  nine times per function across the diagnostic passes") and mitigates only the
-  `SigTable` share. _Fix:_ build the scope once per function; extract
-  `run_body_passes(stmts, scope)`.
+- [x] **SH-045 — `check_module` rebuilt one function's scope 10-13 times.**
+  _Done:_ the count was worse than this entry recorded — 9 rebuilds across the
+  body diagnostic passes, a 10th inside `check_func_body` (which the same loop
+  calls), and up to 3 more in the `e053`/`e065`/`e032` loop. `build_func_scope`
+  is a pure function of `(fd, st, structs, unions, methods)` and none of those
+  change across the loop, so every rebuild re-resolved the same parameter types
+  — `O(P × (parse_type_ref + |structs| + |unions|))` plus `O(P²)` array copying
+  per call, since each `bind`/`with_*` allocates a fresh 14-field `Scope`.
+  Now one build per function, shared by every pass; `check_func_body` takes the
+  built `Scope` instead of the five tables; the five top-level passes share one
+  bare module scope. Two things deliberately stay unshared: `.with_impls` is
+  derived separately (only the call walk and `check_func_body` may see a
+  populated impl table — `Scope.impls` records that E021 no-ops on an empty
+  one), and the P002 default-value check keeps its own bare `new_scope_full`,
+  since a parameter default binds no parameters. Pure CSE: no pass mutates the
+  scope it is handed. The `Scope` doc comment conceding the nine rebuilds is
+  deleted.
 - [x] **SH-046 — builtin function / enum-variant membership as hand-kept `||`
   chains.** _Done:_ `is_builtin_variant` (`checker.fern:1048`) derives from the
   single variant→enum table in `mx_builtin_enum_of`, and `is_builtin_function`
@@ -496,21 +522,33 @@ appendix §6.)
   a defaulted `mode`.
 
 ### Drivers / glue
-- [ ] **SH-055 — Extract `modload.fern`.** The ~90-line import-resolution suite
-  (`last_slash`, `dir_of`, `module_name`, `is_local`, `join_path`, `should_load`,
-  `resolve_path`, `queue_imports`/`add_imports`) is duplicated between
-  `fern.fern:278-365` and `asm_load_run.fern:25-107`. **The two copies have
-  already drifted**, which is the whole reason to extract:
-  `fern.fern:323 should_load` takes a third `deps: string[]` param and gained a
-  manifest-dependency arm (`if (util.has_str(deps, module_name(import_path)))
-  { return true; }`) that `asm_load_run.fern:71` does not have; `fern.fern` also
-  carries an `ImportQueue { paths, dirs }` struct (`:344`) and a
-  `queue_imports` breadth-first worklist (`:349`) with no counterpart in the
-  other copy. So a manifest-dependency import resolves under `fern` and silently
-  does not under the asm loader.
-  _Note:_ `modloader.fern` (614 lines) is a different, newer loader and does
-  **not** subsume this suite — extracting still means a new shared module or
-  folding these callers onto `modloader`.
+- [x] **SH-055 — the import-resolution suite was duplicated across two
+  drivers.** _Done:_ `last_slash` / `dir_of` / `module_name` / `is_local` /
+  `join_path` / `should_load` / `resolve_path` lived twice, in `fern.fern` and
+  `asm_load_run.fern`, byte-identical for the first five (comments included).
+  They had drifted where it counted: only fern's `should_load` took a `deps`
+  param and consulted the manifest dependency list, so a manifest-declared
+  import resolved under `fern` and silently did not under the asm loader.
+  Lifted to `util.fern` — which imports nothing, so neither driver's compile
+  closure grows and both already imported it. The shared `should_load` is
+  fern's three-argument superset; `asm_load_run` passes an empty `deps` because
+  it reads no manifest at all (stdlib root on argv, no `fern_toml` dependency),
+  so that is the driver's true dependency set rather than a stub. `join_path`
+  became `util.module_path_join`: `mvs.join_path` is a different function
+  (normalises `.`/`..`, appends no extension) and `fern.fern` calls both.
+  126 duplicated lines deleted.
+  _Not folded onto `modloader`_, despite this entry's original phrasing:
+  `modloader.dirname` keeps the trailing slash `dir_of` drops,
+  `modloader.resolve_module` is a richer manifest/vendor/workspace/lock
+  resolver with a different dedupe policy, and importing it into
+  `asm_load_run` would drag `modloader` + `fern_toml` (~1085 lines) into a
+  driver needing neither — the closure widening `visibility.fern:43-46`
+  records having broken six minimal drivers before.
+  _Still open:_ `fern`'s `ImportQueue` / `queue_imports` breadth-first worklist
+  (which tags each queued import with the directory of the module that wrote
+  it, #6756) has no counterpart in `asm_load_run`'s flat `add_imports`. Folding
+  those together is a behaviour change to the asm loader, so it is its own
+  change.
 - [ ] **SH-056 — Retire the redundant `*_run.fern` shims.** There are **56
   `main()`s across 45 `*_run.fern` files**, and no shared `run_stdin` helper
   exists. Two large groups are **keepers, not targets**:
@@ -548,7 +586,8 @@ appendix §6.)
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
 2. **SH-058 then SH-054/SH-027** — the wasm path is the worst area by every
    metric, and decomposing `emit_function_ir` unblocks the rest of it.
-3. **SH-045 and SH-023** — mechanical, high payoff, low risk.
+3. **SH-023** — mechanical, high payoff, low risk (SH-045 and SH-055 landed
+   from this tier).
 4. **T3 visitor** (SH-022, starting with `wasm_ir`'s 28 walkers) then the giant
    function splits (SH-044/SH-050) it unlocks.
 5. **T2 structured types** (SH-021 endgame — parser stores `TypeRef`).
