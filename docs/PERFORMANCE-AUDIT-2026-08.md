@@ -390,8 +390,10 @@ workload the roadmap cares about — it loses:
 | baseline | 105 MB | 21.3 MB | 26 s | 6.03 s |
 | `ir.Inline` on | 285 MB (2.7×) | 59.5 MB (2.8×) | 68 s (2.6×) | 6.15–6.20 s (**+2–3%**) |
 
-Runtime is the mean of five interleaved rounds of the self-host driver compiling
-`checker.fern`, output byte-identical throughout; the same shape repeated at a
+Measured at 6cc95e2; the cull's own numbers above were re-measured at bf591f5
+and are unchanged. Runtime is the mean of five interleaved rounds of the
+self-host driver compiling `checker.fern`, output byte-identical throughout;
+the same shape repeated at a
 24-op size cap (150 MB `.s`, 30.8 MB driver, a wash on the clock) and with a 20%
 whole-program growth budget (31.2 MB driver, +1.8%).
 
