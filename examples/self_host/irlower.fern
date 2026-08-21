@@ -3412,6 +3412,72 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
     return is_enum_like_name(t[0 : n - 2], structs);
 }
 
+// is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
+// admitted array field type (scalar / struct / enum element). Its elements are
+// array POINTERS, so the outer buffer rides the same 4-byte-slot layout as an
+// i32[] and needs no element-width dispatch. Nothing ever frees it:
+// __struct_drop_<T> classifies no arm for a `T[][]` field, so both the outer
+// buffer and every row leak with the struct — which is what makes a shallow
+// clone of the outer buffer (the `.append` / `.with` value form) sound, since
+// the rows it shares with the source are released by neither owner.
+//
+// ONE level of nesting, matching decl_is_leaksafe_at_d's own admission (which
+// calls this): a `T[][][]` field keeps its whole struct off the IR path, so
+// recognising it here would classify a receiver that can never be reached.
+pub function is_nested_array_field_type(structs: parser.StructDecl[], t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 5) { return false; }
+    if (t[n - 2 : n] != "[]") { return false; }
+    var elt: str = t[0 : n - 2];
+    return is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt)
+        || is_enum_array_field_type(structs, elt);
+}
+
+// arrarr_elem_kind_of_type: the inner element KIND a `T[][]` spelling records on
+// its slot — "i64" / "u64" / "f64" / "string", "arr" for a deeper nesting, or ""
+// when the element rides the 4-byte default (i32 and friends). "u64" stays
+// DISTINCT from "i64" so a nested read `m[i][j]` chained in an unsigned op picks
+// shr_u / lt_u (#5206). Anything that is not a depth-2 array spelling answers "".
+pub function arrarr_elem_kind_of_type(t: string): string {
+    if (!is_array_type_name(t) || t.len() < 4) { return ""; }
+    if (!is_array_type_name(t[0 : t.len() - 2])) { return ""; }
+    var innr: str = t[0 : t.len() - 4];
+    if (innr == "i64") { return "i64"; }
+    if (innr == "u64") { return "u64"; }
+    if (innr == "f64") { return "f64"; }
+    if (innr == "string") { return "string"; }
+    // A THREE-deep array (`i32[][][]`): the inner element is itself an array,
+    // which the scalar kinds above cannot say. "arr" records it so a foreach
+    // marking can re-mark the loop var as an array-of-arrays.
+    if (is_array_type_name(innr)) { return "arr"; }
+    return "";
+}
+
+// arrarr_index_elem_kind returns the element KIND that indexing `arr` yields
+// when `arr` is ITSELF the index of an array-of-arrays — the recorded slot tag
+// for an array-of-array LOCAL (`m[i]`), and the field declaration's for an
+// array-of-array struct FIELD (`h.m[i]`), a level no slot records. "" when `arr`
+// is not such an index.
+//
+// The width classifiers read the nesting through this one leaf so the local and
+// the field answer identically: while the field half was missing, `h.m[0][0]`
+// over an `f64[][]` field read four bytes of a double and every consumer of the
+// result then treated it as an integer.
+function arrarr_index_elem_kind(arr: parser.Expr, s: LowerState): string {
+    match (arr) {
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)); },
+                parser.ExprFieldAccess(_) => { return arrarr_elem_kind_of_type(nested_arr_field_read_type(ix.array, s)); },
+                _ => { return ""; }
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // is_leaksafe_payload reports whether a payload type is a leak-safe scalar/string.
 // u32 rides one full i32 slot exactly like i32 (no narrowing on read), so an
 // Option/Result box carrying a u32 stores / reads at the default 32-bit width
@@ -3715,6 +3781,32 @@ pub function enum_arr_field_read_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// nested_arr_field_read_type is the ARRAY-OF-ARRAY twin of the three classifiers
+// above: it returns the field type of a `T[][]` struct field read (`a.rows`
+// where rows: i32[][]), else "". Without it such a receiver was the ONE array
+// field shape no classifier claimed, so `a.rows.append(r)` fell through the
+// array-method intercepts to the primitive-receiver cascade, which answers "i32"
+// for anything it cannot type — dispatching `i32.append` and refusing the whole
+// module (#7208). The level the receiver lost is recoverable from the field
+// declaration, which is all this reads.
+//
+// The read is a BORROW of a buffer the struct still owns, exactly like the
+// scalar / struct / enum array field reads, so the `.append` / `.with` value
+// forms clone it rather than growing it in place.
+pub function nested_arr_field_read_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (is_nested_array_field_type(s.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // enum_field_read_type is the DIRECT-enum twin of enum_arr_field_read_type: it
 // returns the field type of a plain ENUM struct field read (`p.node` where
 // `node: RNode` and RNode is an enum), else "". Storing such a read into a
@@ -3930,15 +4022,13 @@ function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, de
                 fi = fi + 1;
                 continue;
             }
-            // An array-of-ARRAY field `T[][]` whose element `T[]` is
-            // itself a leaf-safe array (scalar / struct / enum array), or
-            // an array-of-Option/Result field `Option[T][]` whose element
-            // `Option[T]` is a leak-safe Option/Result, or an array-of-
-            // TUPLE field `(i32, string)[]` whose element tuple is a
-            // leak-safe tuple: the whole nested structure leaks with the
-            // struct. Covers the common 2-D field; deeper nesting still
-            // bails.
-            if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field_d(structs, elt)) {
+            // An array-of-ARRAY field `T[][]`, an array-of-Option/Result
+            // field `Option[T][]` whose element `Option[T]` is a leak-safe
+            // Option/Result, or an array-of-TUPLE field `(i32, string)[]`
+            // whose element tuple is a leak-safe tuple: the whole nested
+            // structure leaks with the struct. Covers the common 2-D field;
+            // deeper nesting still bails.
+            if (is_nested_array_field_type(structs, t) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field_d(structs, elt)) {
                 fi = fi + 1;
                 continue;
             }
@@ -4858,8 +4948,16 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // answer. Refusing bails the module with a diagnostic naming the site
     // instead. Same failure this function's u8 / expr_scalar_type's u32 and
     // u64 branches exist to prevent, one receiver kind further out.
+    //
+    // An array-of-array struct FIELD read is the same hazard reached by a
+    // different route: the ownership-carrying predicates above all report false
+    // for a field read by design, so a `T[][]` field receiver whose method the
+    // intercepts did not claim would take the "i32" fallback too. `rotate_left`
+    // / `rotate_right` are declared on BOTH std/array and std/i32, so that is a
+    // live silent mis-dispatch rather than a hypothetical one.
     if (expr_is_arr_src(e, s) || expr_is_strarr(e, s)
-        || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) {
+        || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)
+        || nested_arr_field_read_type(e, s) != "") {
         return "";
     }
     return expr_scalar_type(e, s);
@@ -5203,13 +5301,7 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
         // as a string and `m[i][j].len()` dispatches to str_len, #4081). Mirrors
         // the ExprIndex case in expr_is_f64arr; the slot's inner element kind is
         // recorded "string" at the `var m: string[][] = …` binding.
-        parser.ExprIndex(ix) => {
-            match (ix.array) {
-                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)) == "string"; },
-                _ => { return false; }
-            }
-            return false;
-        },
+        parser.ExprIndex(_) => { return arrarr_index_elem_kind(e, s) == "string"; },
         parser.ExprCall(c) => {
             // A call to a string[]-returning user function (strarr_ret_fns), the
             // `str_split(s, sep)` builtin (string→string[]), or the `s.split(sep)`
@@ -5323,13 +5415,7 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
         parser.ExprIdent(id) => { return s.is_f64arr_slot(s.slot_of(id.name)); },
         // `m[i]` over an f64[][] slot is itself an f64[] (so `var r = m[i]` tracks
         // r as f64[] and its `r[j]` reads 8-byte). #2691.
-        parser.ExprIndex(ix2) => {
-            match (ix2.array) {
-                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)) == "f64"; },
-                _ => { return false; }
-            }
-            return false;
-        },
+        parser.ExprIndex(_) => { return arrarr_index_elem_kind(e, s) == "f64"; },
         parser.ExprCall(c) => {
             // A call to an f64[]-returning free function OR method (f64arr_ret_fns,
             // methods keyed "<Type>.<method>").
@@ -7273,14 +7359,9 @@ pub function f64_math_builtin_kind(name: string): string {
 pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
     match (arr) {
         parser.ExprIdent(id) => { return s.is_f64arr_slot(s.slot_of(id.name)); },
-        // Nested read `m[i][j]` over an f64[][] slot — 8-byte (f64) element. #2691.
-        parser.ExprIndex(ix2) => {
-            match (ix2.array) {
-                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)) == "f64"; },
-                _ => { return false; }
-            }
-            return false;
-        },
+        // Nested read `m[i][j]` over an f64[][] slot or field — 8-byte (f64)
+        // element. #2691.
+        parser.ExprIndex(_) => { return arrarr_index_elem_kind(arr, s) == "f64"; },
         parser.ExprCall(c) => {
             // Direct index of an f64[]-returning call: `f()[i]` or `obj.m()[i]`.
             match (c.callee) {
@@ -7343,15 +7424,12 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
             return s.is_i64arr_slot(sl) || (s.is_arr_slot(sl) && s.is_u64_slot(sl));
         },
         // Nested read `m[i][j]`: the outer array here is `m[i]` (an ExprIndex over
-        // a T[][] slot). Its element width is the arrarr slot's recorded inner
-        // kind — "i64" or "u64" both select the 8-byte arr_get_i64 (the
-        // unsigned-ness is recovered separately by expr_is_u64). #2691 / #5206.
-        parser.ExprIndex(ix2) => {
-            match (ix2.array) {
-                parser.ExprIdent(aid) => { var ae: string = s.arrarr_elem_of_slot(s.slot_of(aid.name)); return ae == "i64" || ae == "u64"; },
-                _ => { return false; }
-            }
-            return false;
+        // a T[][] slot or field). Its element width is the recorded inner kind —
+        // "i64" or "u64" both select the 8-byte arr_get_i64 (the unsigned-ness is
+        // recovered separately by expr_is_u64). #2691 / #5206.
+        parser.ExprIndex(_) => {
+            var ae: string = arrarr_index_elem_kind(arr, s);
+            return ae == "i64" || ae == "u64";
         },
         parser.ExprCall(c) => {
             // Direct index of an i64[]-returning call: `f()[i]` or `obj.m()[i]`.
@@ -7452,12 +7530,9 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
         // `m[i]` over an i64[][] or u64[][] slot is itself an 8-byte-element
         // array (so `var r = m[i]` tracks r for 8-byte `r[j]` reads). #2691 /
         // #5206 — the width is shared; expr_is_u64 recovers the u64 sign.
-        parser.ExprIndex(ix2) => {
-            match (ix2.array) {
-                parser.ExprIdent(aid) => { var ae: string = s.arrarr_elem_of_slot(s.slot_of(aid.name)); return ae == "i64" || ae == "u64"; },
-                _ => { return false; }
-            }
-            return false;
+        parser.ExprIndex(_) => {
+            var ae: string = arrarr_index_elem_kind(e, s);
+            return ae == "i64" || ae == "u64";
         },
         parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
         // An `i64[]` TUPLE element `t.N` (`([x as i64], y)`): its recorded tuple
@@ -7910,15 +7985,9 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
             match (ix.array) {
                 parser.ExprIdent(aid) => { return s.is_u64_slot(s.slot_of(aid.name)); },
                 // Nested index of a u64[][] (`m[i][j]`): the inner array `m[i]`
-                // names a u64[][] slot whose arrarr layer now records "u64", so a
-                // chained `>> 1` / `> x` selects shr_u / gt_u. #5206.
-                parser.ExprIndex(inner) => {
-                    match (inner.array) {
-                        parser.ExprIdent(aid2) => { return s.arrarr_elem_of_slot(s.slot_of(aid2.name)) == "u64"; },
-                        _ => { return false; }
-                    }
-                    return false;
-                },
+                // names a u64[][] slot or field whose arrarr layer records "u64",
+                // so a chained `>> 1` / `> x` selects shr_u / gt_u. #5206.
+                parser.ExprIndex(_) => { return arrarr_index_elem_kind(ix.array, s) == "u64"; },
                 // Direct index of a u64[] LITERAL (`[big, …][i]`) or a u64[] SLICE
                 // (`a[lo:hi][i]`): the element is u64, so a chained `>> 1` / `> x`
                 // selects shr_u / gt_u. Mirrors arr_index_is_i64's width arms.
@@ -11442,11 +11511,16 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // clone), the same sound shape as the value-producing `.with`.
     // This is what admits the immutable-update idiom
     // `State { xs: s.xs.append(v), … }` as a struct-field value.
+    // An ARRAY-OF-ARRAY field (`xs: i32[][]`) takes the same clone form: its
+    // elements are row POINTERS in the 4-byte slots arr_slice / arr_push
+    // already copy, and the field is leak-only (no drop arm classifies it), so
+    // the rows the clone shares with the source outlive both (#7208).
     if (fa.field == "append" && c.args.len() == 1
         && (scalar_arr_field_type(fa.obj, s) != ""
             || strarr_field_read_type(fa.obj, s) != ""
             || struct_arr_field_read_type(fa.obj, s) != ""
-            || enum_arr_field_read_type(fa.obj, s) != "")) {
+            || enum_arr_field_read_type(fa.obj, s) != ""
+            || nested_arr_field_read_type(fa.obj, s) != "")) {
         return lower_arr_append_value(fa.obj, c.args[0], s);
     }
     if (fa.field == "append" && c.args.len() == 1
@@ -11493,16 +11567,19 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // caller still holds, or a borrowed `s.xs` field read), so we
     // CLONE then set into the clone (lower_arr_with_value). Fires for
     // any leak-safe scalar / string-element array source — an array
-    // local / fresh array / slice (expr_is_arr_src & friends) OR a
-    // scalar-element array struct-field read (scalar_arr_field_type).
-    // Array-of-struct / array-of-enum receivers are NOT admitted
-    // (deep-element copy is a later slice); they fall through / bail.
+    // local / fresh array / slice (expr_is_arr_src & friends) — or an
+    // array struct-field read of any element kind the field classifiers
+    // recognise: scalar, array-of-struct, array-of-enum, or array-of-array
+    // (#7208). Every one of those clones the buffer SHALLOW, which is what
+    // keeps the pointer-element kinds sound: their elements are owned by the
+    // source struct and freed by neither copy.
     if (fa.field == "with" && c.args.len() == 2
         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s)
             || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
             || scalar_arr_field_type(fa.obj, s) != ""
             || struct_arr_field_read_type(fa.obj, s) != ""
-            || enum_arr_field_read_type(fa.obj, s) != "")) {
+            || enum_arr_field_read_type(fa.obj, s) != ""
+            || nested_arr_field_read_type(fa.obj, s) != "")) {
         return lower_arr_with_value(fa.obj, c.args[0], c.args[1], s);
     }
     // `arr.to_json()` on an ARRAY receiver — the element-poly
@@ -18720,6 +18797,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             if (se.is_arr_slot(se.slot_of(id.name))) { is_arr = true; alias_inc = true; }
         },
         parser.ExprFieldAccess(sfa) => {
+            // An ARRAY-OF-ARRAY field read (`var rows = a.xs`, xs: i32[][]): the
+            // scalar / struct / enum array field reads take their own early-return
+            // binds above, and this is the one array field shape left to the
+            // general path. Tracking it is_arr is what a later `for row in rows`
+            // requires (it reads is_arr_slot), and the alias-inc block below
+            // retains the buffer so the slot's exit-sweep dec balances (#7208).
+            if (nested_arr_field_read_type(v.init, se) != "") { is_arr = true; }
             // #4355: `var t = s.name` — a STRING field read of a local whose
             // consume-rebind routes through the string-widened
             // __field_reclaim_<T>. The read is UNCOUNTED (strings have no
@@ -18850,6 +18934,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprIndex(ixx) => {
             match (ixx.array) {
                 parser.ExprIdent(aid) => { if (se.is_arrarr_slot(se.slot_of(aid.name))) { is_arr = true; } },
+                // The same row read out of an array-of-array FIELD (`var row =
+                // g.rows[i]`), whose level the field declaration carries (#7208).
+                parser.ExprFieldAccess(_) => { if (nested_arr_field_read_type(ixx.array, se) != "") { is_arr = true; } },
                 _ => {}
             }
         },
@@ -18940,6 +19027,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 }
             },
             _ => {}
+        }
+    }
+    // An UNANNOTATED `T[][]` FIELD read (`var rows = g.rows`, rows: P[][]): the
+    // innermost element type comes from the field declaration, exactly as the
+    // `var a: P[][]` annotation above takes it from the spelling — so `for row in
+    // g.rows { for p in row { p.field } }`, whose hidden iteration binding has no
+    // annotation at all, resolves the element (#7208).
+    if (struct_ty == "") {
+        var nfrt: string = nested_arr_field_read_type(v.init, se);
+        if (nfrt != "") {
+            var nfel: str = nfrt[0 : nfrt.len() - 4];
+            if (decl_is_struct(se.structs, nfel) || is_enum_like_name(nfel, se.structs)) { struct_ty = nfel + ""; }
         }
     }
     // LAST resort: an UNANNOTATED binding to an enum VALUE (`var c = Green`,
@@ -19333,6 +19432,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             if (aarr.elements.len() > 0 && expr_is_arr_src(aarr.elements[0], se)) { is_arrarr = true; }
         },
         parser.ExprIdent(aaid) => { if (se.is_arrarr_slot(se.slot_of(aaid.name))) { is_arrarr = true; } },
+        // A `T[][]` struct FIELD read (`var rows = a.xs`): no slot records that
+        // level, but the field's declaration does (#7208).
+        parser.ExprFieldAccess(_) => { if (nested_arr_field_read_type(v.init, se) != "") { is_arrarr = true; } },
         _ => {}
     }
     // Inner element kind of a T[][] binding ("i64"/"f64"/"string"/"") so a
@@ -19344,26 +19446,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // the "string" tag to recognise `m[i]` of a string[][] as a string[].
     var arrarr_e: string = "";
     if (is_arrarr) {
-        if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])) {
-            var innr: str = v.type_name[0 : v.type_name.len() - 4];
-            // "u64" is kept DISTINCT from "i64" so a nested read m[i][j] chained
-            // in an unsigned op selects shr_u / lt_u (#5206); both still route
-            // the 8-byte WIDTH load via arr_index_is_i64 (which accepts "u64").
-            if (innr == "i64") { arrarr_e = "i64"; }
-            if (innr == "u64") { arrarr_e = "u64"; }
-            if (innr == "f64") { arrarr_e = "f64"; }
-            if (innr == "string") { arrarr_e = "string"; }
-            // A THREE-deep array (`i32[][][]`): the inner element is itself an
-            // array, which the four scalar kinds above cannot say. "arr" records
-            // it so the foreach marking can re-mark the loop var as an
-            // array-of-arrays and a third `for` level keeps its element type —
-            // without it `for plane in cube` bound `plane` as a plain array, the
-            // next level bound a SCALAR, and the innermost loop bailed the module.
-            // The reclaim consumers compare against the scalar
-            // kinds, so "arr" falls through to their leak-safe default; a FOUR-deep
-            // array is still out of the model (its loop var gets arrarr_elem "").
-            if (is_array_type_name(innr)) { arrarr_e = "arr"; }
-        }
+        arrarr_e = arrarr_elem_kind_of_type(v.type_name);
         match (v.init) {
             parser.ExprArray(aarr2) => {
                 if (aarr2.elements.len() > 0) {
@@ -19377,6 +19460,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 }
             },
             parser.ExprIdent(aaid2) => { arrarr_e = se.arrarr_elem_of_slot(se.slot_of(aaid2.name)); },
+            // A `T[][]` field read: the field declaration names the inner kind an
+            // unannotated binding has nowhere else to get. It never DOWNGRADES an
+            // annotation — a "" answer leaves what the spelling recorded.
+            parser.ExprFieldAccess(_) => {
+                var nfk: string = arrarr_elem_kind_of_type(nested_arr_field_read_type(v.init, se));
+                if (nfk != "") { arrarr_e = nfk; }
+            },
             _ => {}
         }
     }
