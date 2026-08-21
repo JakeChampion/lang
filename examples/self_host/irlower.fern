@@ -56580,7 +56580,7 @@ function iife_scope_fd(fd: parser.FuncDecl, body: parser.Stmt[]): parser.FuncDec
     var nb: parser.Stmt[] = fd.body;
     var i: i32 = 0;
     while (i < body.len()) { nb = nb.append(body[i]); i = i + 1; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+    return parser.FuncDecl { ...fd, body: nb };
 }
 
 // Returns the number of lambda arms found, or -1 as soon as an arm yields
@@ -59508,7 +59508,7 @@ function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.
     if (!has_wide_cap_stmts(fd.body, fd, gfns, structs, mfuncs, atargets)) { return fd; }
     var b: WCapBody = box_wide_captures_stmts(fd.body, fd, gfns, structs, mfuncs, atargets);
     if (!b.changed) { return fd; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: b.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+    return parser.FuncDecl { ...fd, body: b.stmts };
 }
 
 // box_mutated_scalar_captures finds `fd`'s locals to box into shared cells
@@ -59887,7 +59887,7 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
                             // the tail return (desugar_nontail_lambda_returns).
                             // Without it an arm lambda asked for a `<fd>$clo`
                             // nothing built.
-                            return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_nontail_lambda_returns(lam.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+                            return parser.FuncDecl { ...fd, body: desugar_nontail_lambda_returns(lam.body) };
                         },
                         _ => { return fd; }
                     }
@@ -59979,7 +59979,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         var wf: parser.FuncDecl = mod.funcs[wlcp];
         var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0);
         if (wdlr.counter != 0) {
-            wf = parser.FuncDecl { name: wf.name, receiver_name: wf.receiver_name, receiver_type: wf.receiver_type, type_params: wf.type_params, params: wf.params, ret_type: wf.ret_type, body: wdlr.body, line: wf.line, col: wf.col, import_iface: wf.import_iface, import_wit: wf.import_wit, type_param_count: wf.type_param_count, bound_traits: wf.bound_traits, fip: wf.fip, fbip: wf.fbip, fip_allowance: wf.fip_allowance, ret_str: wf.ret_str, async: wf.async, is_const: wf.is_const, is_pub: wf.is_pub };
+            wf = parser.FuncDecl { ...wf, body: wdlr.body };
         }
         worklist = worklist.append(wf); wlcp = wlcp + 1;
     }
