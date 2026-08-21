@@ -401,25 +401,62 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	// IR pass battery (#4377) — per-function rewrites the wasm backend runs
-	// that neither add nor remove functions, so the emitFunc AST↔IR
-	// parallel-index walk below stays valid. FuseTee fuses store+reload into
-	// OpTeeLocal (both natives already emit it); FlattenBranches drops
-	// `if (false) { … }` bodies before they reach asm; EliminateDeadCode trims
-	// ops after a terminator (slice 1, #4678).
-	//
-	// OptimizeCleanup (the copyprop/constprop/Fold/strength fixpoint) now runs
-	// on the natives too (slice 1b, #4377). The ir.Fold emitter crash it used
-	// to hit is fixed (the index zero-extend in emitInlineIdxHelper above — a
-	// folded-constant array index otherwise carried dirty upper bits into a
-	// scaled `lea` past the 32-bit bounds check), and the fixpoint's old
-	// up-to-8× whole-program convergence snapshot is gone (each sub-pass now
-	// reports a changed bool), so it no longer balloons self-host build time.
-	// ir.Inline + the whole-function cull remain slice 2 (name-keyed walk).
+	// IR pass battery (#4377) — per-function rewrites shared with the wasm
+	// backend. FuseTee fuses store+reload into OpTeeLocal (both natives already
+	// emit it); FlattenBranches drops `if (false) { … }` bodies before they
+	// reach asm; EliminateDeadCode trims ops after a terminator; OptimizeCleanup
+	// is the copyprop/constprop/Fold/strength fixpoint.
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
 	ir.OptimizeCleanup(ip)
+	// IR-level dead-function elimination (#4377), the wasm backend's twin.
+	// Treeshake already dropped what no AST call site names; this catches what
+	// only the IR knows is dead — a helper whose sole caller the emitter
+	// rewrites to an alias, or one the defunctionaliser's direct-call rewrite
+	// orphaned. It is also the pass that has to be in place before whole-
+	// function-adding passes can be: see ir.Inline's note in wasmbin/build.go.
+	//
+	// MUST run before the use-flag pre-scan below: that scan walks ip.Funcs to
+	// decide which runtime helpers and .bss reservations to emit, so culling
+	// afterwards would reserve for helpers no longer reachable.
+	//
+	// Roots beyond main/handle:
+	//   - `dynRoots` (the AST tree-shake roots): `dyn` coercion + downcast +
+	//     Drop impl methods, and any -shared exports.
+	//   - every vtable method and the trailing drop slot: OpConstVtable names
+	//     them in a `.rodata` cell, an indirect reference the reachability walk
+	//     cannot follow, and a culled one is a dangling label at link time.
+	//   - the per-set `__drop_dyn_<set>` helpers, called by name from the exit
+	//     sweep but only in programs that actually reclaim a `dyn`.
+	// ir.CodegenAliases closes the Map `_impl` gap: the IR emits `map_new` and
+	// only emitOp knows that resolves to `map_new_impl`, so without it every Map
+	// impl is culled as unreachable and the link fails on a dangling label
+	// (#6609). The emit-time rewrite is still the `switch` in emitOp — the two
+	// have to agree, which is what ir.CodegenAliases's doc comment records.
+	liveExtras := append([]string(nil), dynRoots...)
+	for _, vt := range ip.Vtables {
+		for _, m := range vt.Methods {
+			liveExtras = append(liveExtras, m.Func)
+		}
+		if vt.Drop != "" {
+			liveExtras = append(liveExtras, vt.Drop)
+		}
+	}
+	for _, fn := range ip.Funcs {
+		if strings.HasPrefix(fn.Name, "__drop_dyn_") {
+			liveExtras = append(liveExtras, fn.Name)
+		}
+	}
+	if live := ir.LiveFunctionsWithAliases(ip, ir.CodegenAliases, liveExtras...); live != nil {
+		kept := ip.Funcs[:0]
+		for _, irFn := range ip.Funcs {
+			if live[irFn.Name] {
+				kept = append(kept, irFn)
+			}
+		}
+		ip.Funcs = kept
+	}
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole, syscalls: map[int]bool{}, entry: opts.Entry.OrDefault()}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
@@ -465,13 +502,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.entry == platforms.EntryProcess {
 		g.emitStartRuntime()
 	}
-	// AST↔IR pairing is BY NAME, not by index. The two slices are still built
-	// in lockstep today, so this emits the same functions in the same order and
-	// the output is byte-identical — but an index walk silently mispairs the
-	// moment an IR-level pass adds or removes a whole function, which is what
-	// blocked ir.Inline + the dead-function cull from running here (#4377).
-	// A name with no IR function was culled: skip it rather than emit a body
-	// the optimiser proved unreachable.
+	// AST↔IR pairing is BY NAME, not by index: the dead-function cull above
+	// removes entries from ip.Funcs, which an index walk would mispair silently
+	// (#4377).
 	irIdx := make(map[string]int, len(ip.Funcs))
 	for i, f := range ip.Funcs {
 		irIdx[f.Name] = i
@@ -479,13 +512,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	for _, fn := range prog.Funcs {
 		i, ok := irIdx[fn.Name]
 		if !ok {
-			// Nothing removes whole functions from ip.Funcs yet, so a name with
-			// no IR function means lowering dropped it — a bug, not a cull.
-			// Report it rather than emitting nothing: a silent skip here would
-			// produce a binary missing a function body and fail at the link,
-			// far from the cause. The change that turns on the dead-function
-			// cull flips this to a `continue`.
-			return "", nil, fmt.Errorf("codegen: no IR function for %q", fn.Name)
+			// Culled as unreachable — emit no body for it.
+			continue
 		}
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", nil, err

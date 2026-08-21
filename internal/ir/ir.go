@@ -2928,11 +2928,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			if thunk == nil {
 				continue
 			}
-			// Codegen pairs prog.Funcs[i] (AST) with ip.Funcs[i] (IR)
-			// by index and emits from the IR ops, so append a stub AST
-			// decl in lockstep (same index) for the synthetic thunk —
-			// it carries the name/params the prologue needs; the body
-			// is unused (emission reads the IR Func's ops).
+			// Codegen walks prog.Funcs (AST) and looks the IR up BY NAME,
+			// so append a stub AST decl for the synthetic thunk — it
+			// carries the name/params the prologue needs; the body is
+			// unused (emission reads the IR Func's ops).
 			stub := &ast.FuncDecl{
 				Name:       thunk.Name,
 				Params:     thunk.Params,
@@ -3151,10 +3150,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			}
 			generated[name] = true
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
-			// Codegen pairs prog.Funcs[i] (AST) with out.Funcs[i] (IR) by
-			// index; append a stub AST decl in lockstep — emission reads
-			// the IR Func's ops, the stub carries the name/params the
-			// prologue needs.
+			// Codegen walks prog.Funcs (AST) and looks the IR up by name;
+			// append a stub AST decl — emission reads the IR Func's ops,
+			// the stub carries the name/params the prologue needs.
 			prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 				Name:       fn.Name,
 				Params:     fn.Params,
@@ -3166,9 +3164,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	}
 	// `dyn` over a primitive/string: synthesize the unboxing wrappers the
 	// vtable slots point at (docs/DYN-TRAITS.md §4.2.3). Each loads the
-	// boxed concrete value and calls the real `__method_<C>_<m>`. Appended
-	// in lockstep — an AST stub into prog.Funcs (codegen pairs prog.Funcs[i]
-	// with out.Funcs[i] by index) and the IR Func into out.Funcs.
+	// boxed concrete value and calls the real `__method_<C>_<m>`. Each gets
+	// an AST stub in prog.Funcs (codegen walks that list and looks the IR up
+	// by name) plus the IR Func in out.Funcs.
 	dynWrappers, wrErr := buildDynboxWrappers(info, ptrW, out.Vtables)
 	if wrErr != nil {
 		return nil, wrErr
@@ -3188,8 +3186,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// (ptrW==4, slice 4a — inline) + x86-64 (DynRcSupported, slice 4b —
 	// boxed) + arm64 (DynRcSupported, slice 4c — boxed, the structural
 	// mirror of x86-64). buildDynDropHelpers no-ops only when a ptrW==8
-	// backend omits DynRcSupported (none today). Appended in lockstep
-	// like the other synthesized helpers.
+	// backend omits DynRcSupported (none today). AST stub + IR Func like
+	// the other synthesized helpers.
 	for _, fn := range buildDynDropHelpers(prog, info, ptrW, lo.dynRcSupported) {
 		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 			Name:       fn.Name,
