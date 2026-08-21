@@ -869,3 +869,16 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
   }
   return root + "/" + import_path + ".fern";
 }
+
+// trim strips leading and trailing ASCII spaces, tabs and carriage
+// returns. `\r` is in the set because the callers split their input on
+// '\n' alone: on a CRLF file every line then ends in a `\r` that an
+// exact-match comparison downstream would reject (a CRLF fern.lock
+// parsed to zero entries before this was shared — SH-020).
+pub function trim(s: string): string {
+  var a: i32 = 0;
+  var b: i32 = s.len();
+  while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) { a = a + 1; }
+  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) { b = b - 1; }
+  return s[a:b] + "";
+}

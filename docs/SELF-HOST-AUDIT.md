@@ -188,15 +188,27 @@ findings. Ranked by leverage.
     **Not a dedupe target.**
 
   Genuinely liftable leftovers: `block_index` and `pred_slot` (4 copies each,
-  `ssa` + the three SSA backends — SH-025), `trim` (`fern_toml`, `mvs`),
-  `split_commas` (`irlower`, `printer`). The `join_path` strand is closed by
-  SH-055 (`util.module_path_join`; `mvs.join_path` is a different function that
-  stays).
+  `ssa` + the three SSA backends — SH-025), `split_commas` (`irlower`,
+  `printer`). The `join_path` strand is closed by SH-055
+  (`util.module_path_join`; `mvs.join_path` is a different function that stays).
 
-  Two corrections to that list. **`trim`'s three copies are not identical**:
-  `fern_toml.fern:66` strips only space and tab where `literate.fern:88` and
-  `mvs.fern:558` also strip `\r`, so a CRLF `fern.toml` leaves a trailing `\r`
-  on every value — an SH-010-class drift to fix, not a pure dedupe. And
+  **The `trim` strand is closed, and it was a BUG, not a dedupe.** The three
+  copies were not identical: `fern_toml`'s stripped only space and tab where
+  `mvs`'s and `literate`'s also stripped `\r`. `fern_toml` splits its input on
+  `'\n'` alone, so on a CRLF file every line kept a trailing `\r` — and
+  `parse_lock` compares a line for exact equality against `"[[package]]"`, so
+  that header never matched, `have` never went true, and **a CRLF `fern.lock`
+  parsed to zero packages**: the loader saw an empty lock rather than an error.
+  Native does not have this bug — `internal/mvs/lock.go:66` makes the identical
+  comparison but trims with `strings.TrimSpace`, which strips `\r` — so this
+  was a self-host-only divergence from the reference it mirrors. One
+  CRLF-aware `util.trim` now serves `fern_toml` and `mvs`, pinned by
+  `toml_crlf_run.fern` + `TestSelfHostTomlCRLF`, which parses the same
+  documents LF and CRLF and requires the halves to agree.
+  Only the lock half ever misbehaved, which is why it went unseen: the manifest
+  half reads values through `quoted_value`, which scans to the closing quote and
+  steps over a trailing `\r`.
+
   **`literate`'s copies cannot be lifted at all**: the Go gates hand
   `literate.fern` to the compiler as one standalone source with no module
   staging (`literate.fern:54-56` states the import-free design), so its `trim`

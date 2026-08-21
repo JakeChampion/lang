@@ -155,7 +155,7 @@ pub function parse_index(src: string): Index {
     var lines: string[] = split_char(src, b'\n');
     var ln: i32 = 0;
     while (ln < lines.len()) {
-        var line: string = trim(lines[ln]);
+        var line: string = util.trim(lines[ln]);
         ln = ln + 1;
         if (line.len() == 0) { continue; }
         if (line[0] == b'#') { continue; }
@@ -163,7 +163,7 @@ pub function parse_index(src: string): Index {
             if (line[line.len() - 1] != b']') {
                 return index_err(entries, "line " + util.i32_to_string(ln) + ": malformed section header " + quoted(line));
             }
-            pkg = trim(line[1:line.len() - 1] + "");
+            pkg = util.trim(line[1:line.len() - 1] + "");
             if (pkg.len() == 0) {
                 return index_err(entries, "line " + util.i32_to_string(ln) + ": empty package name");
             }
@@ -176,7 +176,7 @@ pub function parse_index(src: string): Index {
         if (eq < 0) {
             return index_err(entries, "line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
         }
-        var key: string = trim(line[0:eq] + "");
+        var key: string = util.trim(line[0:eq] + "");
         if (!is_quoted(key)) {
             return index_err(entries, "line " + util.i32_to_string(ln) + ": version key: " + unquote_error(key));
         }
@@ -184,7 +184,7 @@ pub function parse_index(src: string): Index {
         if (!parse_version(ver).ok) {
             return index_err(entries, "line " + util.i32_to_string(ln) + ": " + version_error(ver));
         }
-        var val: string = trim(line[eq + 1:line.len()] + "");
+        var val: string = util.trim(line[eq + 1:line.len()] + "");
         var src_res: SourceResult = parse_source(val);
         if (src_res.err.len() > 0) {
             return index_err(entries, "line " + util.i32_to_string(ln) + ": " + ver + ": " + src_res.err);
@@ -208,18 +208,18 @@ function parse_source(val: string): SourceResult {
     var path: string = "";
     var url: string = "";
     var hash: string = "";
-    var parts: string[] = split_char(trim(val[1:val.len() - 1] + ""), b',');
+    var parts: string[] = split_char(util.trim(val[1:val.len() - 1] + ""), b',');
     var i: i32 = 0;
     while (i < parts.len()) {
-        var part: string = trim(parts[i]);
+        var part: string = util.trim(parts[i]);
         i = i + 1;
         if (part.len() == 0) { continue; }
         var eq: i32 = index_of_char(part, b'=', 0);
         if (eq < 0) {
             return SourceResult { src: none, err: "expected `key = value`, got " + quoted(part) };
         }
-        var k: string = trim(part[0:eq] + "");
-        var raw: string = trim(part[eq + 1:part.len()] + "");
+        var k: string = util.trim(part[0:eq] + "");
+        var raw: string = util.trim(part[eq + 1:part.len()] + "");
         if (!is_quoted(raw)) {
             return SourceResult { src: none, err: k + ": " + unquote_error(raw) };
         }
@@ -554,14 +554,6 @@ pub function lock_text(sel: Sel[]): string {
 }
 
 // ---- small string helpers ---------------------------------------------
-
-pub function trim(s: string): string {
-    var a: i32 = 0;
-    var b: i32 = s.len();
-    while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) { a = a + 1; }
-    while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) { b = b - 1; }
-    return s[a:b] + "";
-}
 
 // split_char splits `s` on the byte `c`, keeping empty fields.
 pub function split_char(s: string, c: u8): string[] {

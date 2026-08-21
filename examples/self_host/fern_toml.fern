@@ -20,6 +20,8 @@
 // fern.lock is present, so a manifest-less build (every current compiler
 // source) is byte-for-byte unchanged.
 
+import "./util";
+
 // Dep is one declared dependency. `kind` tags the form the loader must
 // resolve: "path" (dir given by `path`), "workspace" (a sibling
 // workspace member, located by name), "version" (an MVS dependency
@@ -60,15 +62,6 @@ pub struct Manifest {
     members: string[],
     excl_pkg: string[],
     excl_ver: string[],
-}
-
-// trim strips leading and trailing ASCII spaces and tabs.
-function trim(s: string): string {
-    var a: i32 = 0;
-    var b: i32 = s.len();
-    while (a < b && (s[a] == b' ' || s[a] == b'\t')) { a = a + 1; }
-    while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) { b = b - 1; }
-    return s[a:b] + "";
 }
 
 // index_of returns the first index of the single-char needle `c` in `s`
@@ -135,7 +128,7 @@ pub function parse(src: string): Manifest {
     var lines: string[] = split_lines(src);
     var li: i32 = 0;
     while (li < lines.len()) {
-        var line: string = trim(lines[li]);
+        var line: string = util.trim(lines[li]);
         li = li + 1;
         if (line.len() == 0) { continue; }
         if (line[0] == b'#') { continue; }        // comment
@@ -146,8 +139,8 @@ pub function parse(src: string): Manifest {
         }
         var eq: i32 = index_of(line, b'=', 0);
         if (eq < 0) { continue; }
-        var key: string = trim(line[0:eq]);
-        var val: string = trim(line[eq + 1:line.len()]);
+        var key: string = util.trim(line[0:eq]);
+        var val: string = util.trim(line[eq + 1:line.len()]);
         if (section == "package") {
             if (key == "name") {
                 match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
@@ -386,7 +379,7 @@ pub function parse_lock(src: string): LockEntry[] {
     var lines: string[] = split_lines(src);
     var li: i32 = 0;
     while (li < lines.len()) {
-        var line: string = trim(lines[li]);
+        var line: string = util.trim(lines[li]);
         li = li + 1;
         if (line.len() == 0) { continue; }
         if (line[0] == b'#') { continue; }
@@ -401,8 +394,8 @@ pub function parse_lock(src: string): LockEntry[] {
         }
         var eq: i32 = index_of(line, b'=', 0);
         if (eq < 0) { continue; }
-        var key: string = trim(line[0:eq]);
-        var val: string = trim(line[eq + 1:line.len()]);
+        var key: string = util.trim(line[0:eq]);
+        var val: string = util.trim(line[eq + 1:line.len()]);
         if (key == "name") {
             match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
         }
