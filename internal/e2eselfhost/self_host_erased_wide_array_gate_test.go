@@ -195,7 +195,7 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide element-blind wasm cases")
 	}
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -215,7 +215,7 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 			}
 			outWat := filepath.Join(proj, "out.wat")
 			var stderr strings.Builder
-			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
 			cmd.Stderr = &stderr
 			if cerr := cmd.Run(); cerr != nil {
 				t.Fatalf("compile: %v (%s) — a callee that never reads an element uses no stride, so the gate must not refuse it", cerr, stderr.String())
@@ -235,7 +235,7 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 // TestSelfHostErasedWideArrayGateWasm asserts a wide-element instantiation of a
 // `T[]`-param generic is REFUSED on the wasm IR path rather than miscompiled.
 func TestSelfHostErasedWideArrayGateWasm(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	// fern.fern — the real CLI — because these programs `import "std/array"`, and
 	// a driver without a loader silently ignores the import and then reports a
@@ -256,7 +256,7 @@ func TestSelfHostErasedWideArrayGateWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
 			var stderr strings.Builder
 			cmd.Stderr = &stderr
 			_ = cmd.Run()
@@ -273,7 +273,7 @@ func TestSelfHostErasedWideArrayFixedWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide promoted wasm cases")
 	}
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -292,7 +292,7 @@ func TestSelfHostErasedWideArrayFixedWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			if out, cerr := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)
@@ -313,7 +313,7 @@ func TestSelfHostErasedWideArrayGateNarrowWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide narrow-element wasm gate")
 	}
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -332,7 +332,7 @@ func TestSelfHostErasedWideArrayGateNarrowWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			if out, cerr := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)

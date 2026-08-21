@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,7 +116,7 @@ function main(): i32 {
 
 func TestSelfHostMapKeyedArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
 	driver := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
@@ -132,7 +131,7 @@ func TestSelfHostMapKeyedArm64IR(t *testing.T) {
 			if err := os.WriteFile(entry, []byte(tc.src+"\n"), 0o644); err != nil {
 				t.Fatalf("write entry: %v", err)
 			}
-			out, err := exec.Command(driver, entry, root, "-target", "arm64-linux").Output()
+			out, err := runX86_64Bin(x86runner, driver, entry, root, "-target", "arm64-linux").Output()
 			if err != nil || len(out) == 0 {
 				t.Fatalf("%s: arm64 driver failed (%d bytes, err %v)", tc.name, len(out), err)
 			}

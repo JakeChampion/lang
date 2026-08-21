@@ -132,8 +132,7 @@ function main(): i32 {
 // TestSelfHostLambdaRetInferIR_X86_64 pins irt_guess's ExprIndex /
 // ExprFieldAccess arms through the self-host x86-64 IR path.
 func TestSelfHostLambdaRetInferIR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, interpBin := annotateF64ProjDir(t)
-	_, runner := x86_64Tooling(t)
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
 	for _, tc := range lambdaRetInferCases {
 		t.Run(tc.name, func(t *testing.T) {

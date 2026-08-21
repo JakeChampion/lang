@@ -7,7 +7,6 @@ package e2eharness
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,15 +19,7 @@ import (
 // and stay unchanged.
 func RunCapture(t *testing.T, gcc string, runner []string, bin string, stdin []byte, extraArgs ...string) []byte {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin, extraArgs...)
-	} else {
-		args := append([]string{}, runner[1:]...)
-		args = append(args, bin)
-		args = append(args, extraArgs...)
-		cmd = exec.Command(runner[0], args...)
-	}
+	cmd := RunX86_64Bin(runner, bin, extraArgs...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -51,15 +42,7 @@ func RunCapture(t *testing.T, gcc string, runner []string, bin string, stdin []b
 // the functions that did lower.
 func RunCaptureStrictIR(t *testing.T, gcc string, runner []string, bin string, stdin []byte, extraArgs ...string) []byte {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin, extraArgs...)
-	} else {
-		args := append([]string{}, runner[1:]...)
-		args = append(args, bin)
-		args = append(args, extraArgs...)
-		cmd = exec.Command(runner[0], args...)
-	}
+	cmd := RunX86_64Bin(runner, bin, extraArgs...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

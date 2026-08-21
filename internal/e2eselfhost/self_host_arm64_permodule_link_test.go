@@ -29,7 +29,7 @@ import (
 // run to exit 42 under qemu.
 func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64linkdriver")
@@ -51,7 +51,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 
 	drive := func(args ...string) string {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...).Output()
+		out, err := runX86_64Bin(x86runner, driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...).Output()
 		if err != nil {
 			t.Fatalf("driver %v: %v", args, err)
 		}

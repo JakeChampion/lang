@@ -71,12 +71,12 @@ func writePerModuleCounterProject(t *testing.T) string {
 // disk, returning the paths. The native runtime's global string buffer holds only
 // ONE emit per process, so — like a real build system — each module is emitted by
 // its own driver invocation.
-func perModuleUnits(t *testing.T, driverBin, entry string, targetArgs []string, minModules int) []string {
+func perModuleUnits(t *testing.T, runner []string, driverBin, entry string, targetArgs []string, minModules int) []string {
 	t.Helper()
 	drive := func(args ...string) string {
 		t.Helper()
 		full := append(append([]string{entry}, targetArgs...), args...)
-		out, err := exec.Command(driverBin, full...).Output()
+		out, err := runX86_64Bin(runner, driverBin, full...).Output()
 		if err != nil {
 			t.Fatalf("driver %v: %v", args, err)
 		}
@@ -142,7 +142,7 @@ func TestSelfHostPerModuleCounterBSSLinkX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "counterbss")
 
 	entry := writePerModuleCounterProject(t)
-	objs := perModuleUnits(t, driverBin, entry, nil, 2)
+	objs := perModuleUnits(t, runner, driverBin, entry, nil, 2)
 
 	bin := filepath.Join(filepath.Dir(entry), "prog")
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)
@@ -167,12 +167,12 @@ func TestSelfHostPerModuleCounterBSSLinkX86_64(t *testing.T) {
 // adrp/add/ldr.
 func TestSelfHostPerModuleCounterBSSLinkArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "counterbssarm64")
 
 	entry := writePerModuleCounterProject(t)
-	objs := perModuleUnits(t, driverBin, entry, []string{"-target", "arm64-linux"}, 2)
+	objs := perModuleUnits(t, x86runner, driverBin, entry, []string{"-target", "arm64-linux"}, 2)
 
 	bin := filepath.Join(filepath.Dir(entry), "prog")
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)

@@ -6,7 +6,6 @@ package e2eharness
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -16,12 +15,7 @@ import (
 // opposed to choosing any exit status). Used by the cache warmers as a smoke
 // check that a freshly-compiled driver actually runs.
 func RunDriverStdinExits(runner []string, bin, src string) error {
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-	}
+	cmd := RunX86_64Bin(runner, bin)
 	cmd.Stdin = strings.NewReader(src)
 	_ = cmd.Run()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
@@ -34,12 +28,7 @@ func RunDriverStdinExits(runner []string, bin, src string) error {
 // code, failing the test if it did not exit normally.
 func runStdinExit(t *testing.T, runner []string, bin, src string) int {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-	}
+	cmd := RunX86_64Bin(runner, bin)
 	cmd.Stdin = strings.NewReader(src)
 	_ = cmd.Run()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {

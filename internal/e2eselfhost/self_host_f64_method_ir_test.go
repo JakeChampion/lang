@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,7 +55,7 @@ func f64MethodSrc(body string) string {
 // compiling + linking + running on the self-host x86-64 native-binary path
 // (#4361, re-pointed off the deleted AST emitter by #3457 slice 5).
 func TestSelfHostF64MethodIR_X86_64(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
@@ -78,7 +77,7 @@ func TestSelfHostF64MethodIR_X86_64(t *testing.T) {
 			}
 
 			// Assert the module routes IR — the only path there is now.
-			route, derr := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+			route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
 			if derr != nil {
 				t.Fatalf("route decide: %v", derr)
 			}
@@ -86,7 +85,7 @@ func TestSelfHostF64MethodIR_X86_64(t *testing.T) {
 				t.Fatalf("%s routed %q, want \"ir\" (import set now busts the IR budget — prune it)", tc.name, got)
 			}
 
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -94,7 +93,7 @@ func TestSelfHostF64MethodIR_X86_64(t *testing.T) {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "f64m_"+tc.name, string(asm))
-			cmd := exec.Command(progBin)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)

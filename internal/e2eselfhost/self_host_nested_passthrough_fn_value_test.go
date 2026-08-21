@@ -135,7 +135,7 @@ func TestSelfHostNestedPassthroughFnValueX86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			asmPath := filepath.Join(proj, "out.s")
-			cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
+			cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			if out, cerr := cmd.CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
@@ -165,7 +165,7 @@ func TestSelfHostNestedPassthroughFnValueWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping nested-passthrough fn-value wasm cases")
 	}
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -185,7 +185,7 @@ func TestSelfHostNestedPassthroughFnValueWasm(t *testing.T) {
 			}
 			outWat := filepath.Join(proj, "out.wat")
 			var stderr strings.Builder
-			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			cmd.Stderr = &stderr
 			if cerr := cmd.Run(); cerr != nil {

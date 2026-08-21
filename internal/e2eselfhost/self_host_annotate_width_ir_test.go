@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,7 +46,7 @@ function main(): i32 { return d(1) as i32; }`}, // 15
 // TestSelfHostAnnotateWidthIR_X86_64 pins the checker-stamped result type feeding
 // irlower's infer_expr_width through the IR path (#5531).
 func TestSelfHostAnnotateWidthIR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, interpBin := annotateF64ProjDir(t)
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
 	for _, tc := range annotateWidthCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,14 +56,14 @@ func TestSelfHostAnnotateWidthIR_X86_64(t *testing.T) {
 			if err := os.WriteFile(mainPath, []byte(tc.src), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			route, derr := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+			route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
 			if derr != nil {
 				t.Fatalf("route decide: %v", derr)
 			}
 			if got := strings.TrimSpace(string(route)); got != "ir" {
 				t.Fatalf("%s routed %q, want \"ir\" (case no longer exercises the IR annotate path)", tc.name, got)
 			}
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -72,7 +71,7 @@ func TestSelfHostAnnotateWidthIR_X86_64(t *testing.T) {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "annwidth_"+tc.name, string(asm))
-			cmd := exec.Command(progBin)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s (IR annotate path) exited %d, want %d (interp oracle)", tc.name, code, want)

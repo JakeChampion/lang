@@ -31,7 +31,7 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host SSA→wasm e2e")
 	}
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "ssa_wasm_emit_run.fern")
@@ -168,7 +168,7 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			emit := exec.Command(bin)
+			emit := runX86_64Bin(runner, bin)
 			emit.Stdin = strings.NewReader(tc.src)
 			wat, err := emit.Output()
 			if err != nil {

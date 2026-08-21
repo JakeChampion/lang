@@ -72,6 +72,11 @@ func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
 // qemu-x86_64 prefix X86_64Tooling returned. Centralises the "qemu prefix or
 // not" dispatch so callers don't sprinkle the same conditional through every
 // test. Mirrors RunArm64Bin.
+//
+// Every exec of an emitted x86-64 binary (or of a self-host driver, which is
+// one) goes through here. binfmt_misc can make a bare exec appear to work on an
+// aarch64 host, but a program that mmaps its arena then SIGSEGVs where the
+// explicit qemu-x86_64 prefix runs it correctly.
 func RunX86_64Bin(runner []string, binPath string, args ...string) *exec.Cmd {
 	if len(runner) == 0 {
 		return exec.Command(binPath, args...)

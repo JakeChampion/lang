@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,11 +72,7 @@ return t as i32;
 // TestSelfHostAnnotateTopLevelIR_X86_64 pins the checker-stamped result type on
 // TOP-LEVEL calls through the self-host x86-64 IR path (#5520 / #5531).
 func TestSelfHostAnnotateTopLevelIR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, _ := annotateF64ProjDir(t)
-	// Runner prefix: nil on an x86_64 host, qemu-x86_64 on an aarch64 dev box
-	// (these programs mmap an arena, which SIGSEGVs under binfmt-direct exec).
-	_, runner := x86_64Tooling(t)
-
+	dir, mmc, stdlibRoot, gcc, runner, _ := annotateF64ProjDir(t)
 	for _, tc := range annotateTopLevelCases {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()
@@ -85,14 +80,14 @@ func TestSelfHostAnnotateTopLevelIR_X86_64(t *testing.T) {
 			if err := os.WriteFile(mainPath, []byte(tc.src), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			route, derr := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+			route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
 			if derr != nil {
 				t.Fatalf("route decide: %v", derr)
 			}
 			if got := strings.TrimSpace(string(route)); got != "ir" {
 				t.Fatalf("%s routed %q, want \"ir\" (a script must normalise through script_normalized before the gate)", tc.name, got)
 			}
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -103,8 +98,7 @@ func TestSelfHostAnnotateTopLevelIR_X86_64(t *testing.T) {
 				t.Fatalf("%s: emitted asm has no `call __fn_main` — the script did not lower through the IR", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "anntop_"+tc.name, string(asm))
-			argv := append(append([]string{}, runner...), progBin)
-			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.want {
 				t.Errorf("%s (IR annotate path) exited %d, want %d", tc.name, code, tc.want)

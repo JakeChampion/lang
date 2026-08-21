@@ -3,7 +3,6 @@ package e2eselfhost
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -90,12 +89,7 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if qemu == "" {
-				cmd = exec.Command(echoBin)
-			} else {
-				cmd = exec.Command(qemu, echoBin)
-			}
+			cmd := runArm64Bin(qemu, echoBin)
 			cmd.Stdin = bytes.NewReader([]byte(tc.input))
 			out, err := cmd.Output()
 			if err != nil {

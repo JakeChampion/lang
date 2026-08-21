@@ -75,7 +75,7 @@ func TestSelfHostStringX86_64(t *testing.T) {
 			if err := os.WriteFile(mainPath, stringImportSource(tc.main), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -105,7 +105,7 @@ func TestSelfHostStringX86_64(t *testing.T) {
 // assembles and qemu runs.
 func TestSelfHostStringArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc")
@@ -121,7 +121,7 @@ func TestSelfHostStringArm64(t *testing.T) {
 			if err := os.WriteFile(mainPath, stringImportSource(tc.main), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot, "-target", "arm64-linux").Output()
+			asm, cerr := runX86_64Bin(x86runner, mmc, mainPath, stdlibRoot, "-target", "arm64-linux").Output()
 			if cerr != nil {
 				t.Fatalf("loader compile (arm64): %v", cerr)
 			}

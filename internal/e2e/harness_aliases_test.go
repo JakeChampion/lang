@@ -45,6 +45,7 @@ var runDriverFile = e2eharness.RunDriverFile
 var runDriverStdinExits = e2eharness.RunDriverStdinExits
 var runFixtureInterp = e2eharness.RunFixtureInterp
 var runInterpExit = e2eharness.RunInterpExit
+var runX86_64Bin = e2eharness.RunX86_64Bin
 var selfHostImportClosure = e2eharness.SelfHostImportClosure
 
 const uuidV4Program = e2eharness.UuidV4Program

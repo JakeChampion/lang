@@ -35,7 +35,7 @@ import (
 // the resulting compiler is run under qemu-aarch64.
 func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
@@ -44,7 +44,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 	drive := func(t *testing.T, args ...string) (string, error) {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...).Output()
+		out, err := runX86_64Bin(x86runner, driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...).Output()
 		return string(out), err
 	}
 

@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -62,8 +61,7 @@ function main(): i32 {
 // TestSelfHostFnValueParamShadowIR_X86_64 drives fnValueParamShadowCases through
 // the self-host x86-64 IR path under FERN_STRICT_IR.
 func TestSelfHostFnValueParamShadowIR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, interpBin := annotateF64ProjDir(t)
-	_, runner := x86_64Tooling(t)
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
 	for _, tc := range fnValueParamShadowCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,7 +72,7 @@ func TestSelfHostFnValueParamShadowIR_X86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 
-			cmd := exec.Command(mmc, mainPath, stdlibRoot)
+			cmd := runX86_64Bin(runner, mmc, mainPath, stdlibRoot)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			asm, cerr := cmd.Output()
 			if cerr != nil {
@@ -84,8 +82,7 @@ func TestSelfHostFnValueParamShadowIR_X86_64(t *testing.T) {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "fnshadow_"+tc.name, string(asm))
-			argv := append(append([]string{}, runner...), progBin)
-			run := exec.Command(argv[0], argv[1:]...)
+			run := runX86_64Bin(runner, progBin)
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
