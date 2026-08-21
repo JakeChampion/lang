@@ -99,6 +99,25 @@ Only `__rc_underflow()` separates the two readings — the same lesson the sibli
 `string[]` entry records from the other direction, and the reason every probe in
 `self_host_tuple_ident_elem_retain_test.go` now ends with that check.
 
+## The registry is keyed on the SLOT, not the name
+
+`clo_cap_kinds`, the model for this registry, keys on the variable name. That is
+wrong here. `tagged_value_of` returns the **first** entry matching a key, and two
+same-named tuple locals in sibling blocks are two slots under one name — so a name
+key hands one block's kinds to the other block's slot and releases a position that
+tuple never retained. Measured as a 4000-byte strand on
+
+```fern
+{ var t: (i32, i32[]) = (i, xs); … }     // retains position 1
+{ var t: (i32[], i32) = (xs, i); … }     // retains position 0
+```
+
+and it is a live-buffer release waiting to happen the moment the two positions
+disagree about what is owned. Slot indices are assigned by `add_local` and never
+renumbered, and unlike a name they also survive `retire_locals`' block-exit rename
+— which is why the sweep previously had to reach for `reclaim_slot_name` and now
+does not.
+
 ## What is still open on #7226
 
 - **The string limb**, and it is the larger leak: **80 B/round, unbounded**

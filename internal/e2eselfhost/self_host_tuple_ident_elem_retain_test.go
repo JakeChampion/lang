@@ -101,6 +101,26 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
 			want: 57,
 		},
 		{
+			// Two same-named tuple locals in SIBLING BLOCKS, retaining at
+			// DIFFERENT positions. The kinds registry is keyed on the SLOT for
+			// this case: tagged_value_of returns the first entry matching a key,
+			// so a name key would hand block A's ".a" to block B's slot and
+			// release position 1 of a tuple that retained position 0 — measured
+			// as a 4000-byte strand before the key changed, and a live-buffer
+			// release waiting to happen once the positions disagree about what is
+			// owned.
+			name: "same_name_sibling_blocks",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var acc: i32 = 0;
+    { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    { var t: (i32[], i32) = (xs, i); acc = acc + t.0[1]; }
+    return acc;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 40,
+		},
+		{
 			// The tuple is built only on one branch, so on the other the slot still
 			// holds its entry zero when the sweep runs. __fern_rc_dec null-guards the
 			// box; op_tuple_get would dereference. A missing guard here is a segfault,
