@@ -303,15 +303,29 @@ findings. Ranked by leverage.
   and the "added a field, forgot a walker" hazard.
 
 ### T4 — Struct-copy boilerplate (use the spread the parser already supports)
-- [ ] **SH-023 — Replace full struct-literal rebuilds with `{ ...x, field: y }`.**
-  `FuncDecl` (`parser.fern:359`) now carries **20 fields**, and `parser.fern`
-  spells out **77 `FuncDecl {` literals** of which only **8** use the spread —
-  every other one restates all 20 fields to change one. `Module {` is worse:
-  **45 literals, 0 of them spread**. `checker.fern`'s scope constructors are down
-  to **2** (`new_scope:957`, `new_scope_full:967`), so that half is effectively
-  resolved. Apply the spread consistently across the `FuncDecl` / `Module`
-  rebuilds; removes the "added a field, forgot a copy site" bug class, which the
-  20-field `FuncDecl` makes near-certain.
+- [~] **SH-023 — Replace full struct-literal rebuilds with `{ ...x, field: y }`.**
+  _`Module` half done:_ the 22 rebuild literals across `parser.fern` and
+  `flatten.fern` now spread, eliding **185 field restatements** (−116 lines).
+  _Still open:_ `FuncDecl` (**20 fields**) has **61** full-restate literals in
+  `parser.fern` against 16 that spread. `checker.fern`'s scope constructors are
+  down to **2** (`new_scope`, `new_scope_full`), so that half is resolved.
+
+  **Not every literal is a rewrite target, and the count alone will mislead
+  you.** A literal that builds a value from computed parts legitimately names
+  every field — the spread is wrong there, not merely noisy. Three `Module`
+  literals are of that kind and stay. Rewrite only a genuine REBUILD: every
+  declared field present, and 2+ of them a verbatim `<src>.<field>`
+  passthrough from one source.
+
+  **Trap if you automate it:** a literal-finder keyed on `Name {` also matches
+  `): Name {` — a return type followed by the FUNCTION's opening brace. Require
+  the whole body to parse as `field: value` pairs covering the declared field
+  set, or the rewrite eats function bodies. 22 such matches occur for `Module`
+  in `parser.fern` alone.
+
+  The point of the row is the bug class, not the line count: adding a field to
+  a struct means finding every rebuild and threading it through, and a missed
+  one silently drops that field rather than failing to compile.
 
 ### T5 — Backend duplication beyond what asmcore/CLAUDE.md claims
 - [ ] **SH-024 — Introduce an `Emitter` interface to dedupe `asm_ir.fern` ↔
