@@ -1819,6 +1819,21 @@ pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
     return tagged_value_of(s.reclaimable_names, "CLO:", name);
 }
 
+// add_tup_elem_kinds (#7226): record a "TUP:" tuple local's per-element rc kinds
+// ("<name>|<kinds>", one char per position: '.' nothing to release, 'a' an rc
+// container the construction retain inc'd). Written by bind_var_slot from the
+// SAME slot_is_rc_container test that decides the retain, on the same slots, so
+// the retain and the release it owes cannot drift apart.
+pub function (s: LowerState) add_tup_elem_kinds(entry: string): LowerState {
+    return LowerState { ...s, reclaimable_names: s.reclaimable_names.append("TUPELEM:" + entry) };
+}
+
+// tup_elem_kinds_of returns the registered element-kinds string for tuple local
+// `name` ("" when the tuple retained nothing).
+pub function (s: LowerState) tup_elem_kinds_of(name: string): string {
+    return tagged_value_of(s.reclaimable_names, "TUPELEM:", name);
+}
+
 // clo_rc_approved reports whether lower_func approved `name` for capture RC
 // (an "OK:<name>" seed entry — see the clo_cap_kinds field doc).
 pub function (s: LowerState) clo_rc_approved(name: string): boolean {
@@ -16428,8 +16443,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             // simply hands the caller its own counted ref (field rc N →inc N+1
             // →caller decs N); if `h` is a fresh RECLAIMABLE local, the exit sweep's
             // struct field-drop decs the field (array rc 1 →inc 2 →field-drop 1
-            // →caller decs 0). Sound either way (never under-frees). Only the scalar-
-            // element field; array-of-struct / array-of-enum fields still bail.
+            // →caller decs 0). Sound either way (never under-frees).
             var rfft: string = scalar_arr_field_type(r.value, s);
             if (rfft != "") {
                 var rfs: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
@@ -16438,16 +16452,18 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                 rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
                 return rfs.emit(ir.op_return());
             }
-            // Returning an ARRAY-OF-STRUCT field (`return h.params`) or an ARRAY-OF-
-            // ENUM field (`return h.args`, args: Expr[]) aliases it out to the caller
-            // exactly like the scalar case above — the Perceus dup is on the buffer
-            // POINTER (element-type-agnostic), and NO deep-drop recursion is
-            // involved: the struct keeps owning the elements, the caller receives a
-            // counted reference to the buffer. Same balance as the scalar field
-            // return (borrowed param: caller decs; reclaimable local: field-drop +
-            // caller dec).
+            // Returning an ARRAY-OF-STRUCT field (`return h.params`), an ARRAY-OF-
+            // ENUM field (`return h.args`, args: Expr[]) or a STRING-ARRAY field
+            // (`return h.xs`, xs: string[]) aliases it out to the caller exactly like
+            // the scalar case above — the Perceus dup is on the buffer POINTER
+            // (element-type-agnostic), and NO deep-drop recursion is involved: the
+            // struct keeps owning the elements, the caller receives a counted
+            // reference to the buffer. Same balance as the scalar field return
+            // (borrowed param: caller decs; reclaimable local: field-drop + caller
+            // dec).
             var rsaft: string = struct_arr_field_read_type(r.value, s);
             if (rsaft == "") { rsaft = enum_arr_field_read_type(r.value, s); }
+            if (rsaft == "") { rsaft = strarr_field_read_type(r.value, s); }
             if (rsaft != "") {
                 var rss: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
                 if (!rss.ok) { return rss; }
@@ -17555,6 +17571,40 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (v.type_name.len() >= 2 && v.type_name[0:1] == "(" && sb.tuple_elem_tag(slot, 0).len() == 0) {
         sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
     }
+    // Per-element rc kinds for a tuple built from bare idents (#7226). The
+    // construction retain in lower_expr's ExprTuple arm incs an element naming an
+    // rc-container local, so the tuple is a second owner; recording which
+    // positions took one lets the scope-exit sweep give exactly those back.
+    // Only the ARRAY/tuple-box limb is recorded: a string element's source local
+    // is escape-flagged by expr_unsafe_for and so earns no "STR:" credit, which
+    // means releasing it here would balance the tuple's ref while the local's own
+    // box still never reaches 0 — a credit-side gap, not a release-side one.
+    if (sb.tuple_elem_tag(slot, 0).len() > 0) {
+        match (v.init) {
+            parser.ExprTuple(tinit) => {
+                var tk: string = "";
+                var tki: i32 = 0;
+                var tkany: boolean = false;
+                while (tki < tinit.elements.len()) {
+                    var kc: string = ".";
+                    match (tinit.elements[tki]) {
+                        parser.ExprIdent(kid) => {
+                            var kslot: i32 = sb.slot_of(kid.name);
+                            if (sb.slot_is_rc_container(kslot) && !sb.is_str_slot(kslot)) {
+                                kc = "a";
+                                tkany = true;
+                            }
+                        },
+                        _ => {}
+                    }
+                    tk = tk + kc;
+                    tki = tki + 1;
+                }
+                if (tkany) { sb = sb.add_tup_elem_kinds(v.name + "|" + tk); }
+            },
+            _ => {}
+        }
+    }
     // A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at
     // 2^32 and its `>>` is logical (expr_is_u32 / the binary-op masking).
     // An un-annotated binding has an empty type_name, so also infer the
@@ -17779,6 +17829,14 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // store itself is the unchanged shared tail.
     if (slot_is_reclaimable_map(sb, slot)) {
         sb = emit_map_buffers_free(sb, slot);
+    }
+    // A reclaimable tuple that retained a bare-ident element takes the tuple
+    // reclaim store, so the rebind gives those retains back with the box it
+    // supersedes (#7226). alias_inc never co-occurs — the credit is for a fresh
+    // tuple literal, which is a move, not an alias.
+    var vtek: string = sb.tup_elem_kinds_of(v.name);
+    if (vtek.len() > 0 && !vt.alias_inc && slot_is_reclaimable_tuple(sb, slot)) {
+        return emit_tup_elem_reclaim_store(sb, slot, vtek);
     }
     return emit_arr_store(sb, slot, vt.alias_inc, vt.is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
     return s.fail();
@@ -21717,6 +21775,59 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32): LowerState {
     return st.emit(ir.op_store_local(slot));
 }
 
+// emit_tup_elem_releases emits a null-guarded rc-dec of each element position
+// `kinds` marks (#7226) — the give-back for the construction retain in
+// lower_expr's ExprTuple arm. A zeroed slot (untaken branch, or the first pass of
+// a loop rebind) must skip the walk entirely: __fern_rc_dec null-guards, but the
+// op_tuple_get that reaches the element dereferences the box. Emits nothing at
+// all when the tuple retained no element, so a tuple of pure scalars is
+// byte-identical to before.
+function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): LowerState {
+    if (kinds.len() == 0) { return se; }
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));     // slot != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var ki: i32 = 0;
+    while (ki < kinds.len()) {
+        if (kinds[ki] != b'.') {
+            st = emit_load_tuple_path(st, slot, [ki]);
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+        }
+        ki = ki + 1;
+    }
+    return st.emit(ir.op_end());
+}
+
+// emit_tup_elem_reclaim_store stores `new` (already on the operand stack) into a
+// reclaimable tuple slot, releasing the element retains of the box this store
+// SUPERSEDES before the box itself (#7226). The tuple sibling of
+// emit_str_reclaim_store, and the rebind half of the scope-exit release: a
+// loop-body `var t = (i, xs)` re-binds one slot every iteration, so without this
+// only the final tuple's retains are ever given back and the rest strand — the
+// n-1-of-n signature. Cow-guarded (`old != new`) so a self-store never releases
+// the live box, and the element walk carries its own null guard for the first
+// pass, when the slot still holds its entry zero.
+function emit_tup_elem_reclaim_store(se: LowerState, slot: i32, kinds: string): LowerState {
+    var scratch: string = "$trea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = st.emit(ir.op_load_local(slot));        // OLD value the slot holds
+    st = st.emit(ir.op_load_local(tmp));         // new value
+    st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
+    st = st.emit(ir.op_if(0));
+    st = emit_tup_elem_releases(st, slot, kinds);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
+}
+
 // emit_arrarr_reclaim_store stores `new` (on the operand stack) into a
 // reclaimable arr-of-arr slot (#4355 slice 9) and frees the slot's PRIOR
 // two-level structure (the loop-rebind reclamation) via the kind-picked
@@ -24164,6 +24275,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var tj: i32 = st.n_params;
     while (tj < st.locals.len()) {
         if (!slot_list_has(keeps, tj) && slot_is_reclaimable_tuple(st, tj)) {
+            // Give back the construction retains first (#7226): an element that
+            // named an rc-container local made the tuple a second owner, and the
+            // is_arr sweep above only ever decs the LOCAL's own reference. The
+            // positions come from the same predicate that took the retain.
+            // Under a null guard: the box dec below tolerates a zeroed
+            // (untaken-branch) slot because __fern_rc_dec null-guards, but
+            // tuple_get dereferences.
+            st = emit_tup_elem_releases(st, tj, st.tup_elem_kinds_of(reclaim_slot_name(st, tj)));
             st = st.emit(ir.op_load_local(tj));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
