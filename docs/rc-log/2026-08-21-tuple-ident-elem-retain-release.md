@@ -118,6 +118,60 @@ renumbered, and unlike a name they also survive `retire_locals`' block-exit rena
 — which is why the sweep previously had to reach for `reclaim_slot_name` and now
 does not.
 
+## The third release site, and why the fix looked barely effective
+
+A `"TUP:"` box has more than two release sites, and the element release was added
+to two of them. The **precise drop-on-last-use** (`irlower.fern`, the
+`slot_is_reclaimable_tuple` branch of the precise-drop loop) frees the box and
+then **zeroes the slot** — so the exit sweep, the one site that does replay the
+element kinds, finds null under its guard and releases nothing. The two are
+*alternatives, not a sequence*.
+
+It fires whenever the tuple's last top-level mention is **not** the final
+statement, which is most code:
+
+| body, 60 rounds | before | after |
+| --- | --- | --- |
+| `return t.1[0];` | 0 | 0 |
+| `var acc = t.1[0]; return acc;` | **2880** | 0 |
+| `var acc = t.0;` — a *scalar* element read | **2880** | 0 |
+| `var acc = t.1.len();` | **2880** | 0 |
+| `acc = t.1[0];` — plain assignment | **2880** | 0 |
+
+The stranded bytes track the SOURCE array's size (2 elems → 40 B/round, 3 → 48,
+6 → 72), not the tuple box's — the box is freed either way; what is lost is the
+construction retain.
+
+Its comment asserted "the scalar-literal gate means no rc element to walk". That
+was true when the precise drop was written and became false the moment
+`slot_is_rc_container` idents began retaining at construction:
+`tuple_lit_is_fresh_scalar` accepts a bare `ExprIdent` as a "scalar" element.
+
+**The rule this establishes:** the invariant in `add_tup_elem_kinds`' own header —
+*"the retain and the release it owes cannot drift apart"* — binds every site that
+can free a `"TUP:"` box, not just the sweep. Enumerate them from
+`grep tup_elem_kinds_of` against every `slot_is_reclaimable_tuple` release, not
+from the site the bug was found in.
+
+One site remains unaudited on that list: the tuple cross-block reuse path
+(`emit_reuse_recip_prior_release`), a bare cow-guarded `__fern_rc_dec` of the
+recipient's prior box with no element release, whose donor path also zeroes the
+donor slot. Predicted to strand one source buffer per iteration for the same
+reason; not measured.
+
+### Two false leads recorded, because both cost time
+
+- **"Nested blocks deny the credit."** Wrong. A block is irrelevant — an `if`
+  *before* the tuple is clean, and a plain extra statement with no block at all
+  leaks. Every probe behind that reading happened to use a `var acc = …` binding.
+- **"It is the new `TUPELEMOK:` gate over-denying."** Also wrong, and it looked
+  compelling because `frees` showed the box being freed, which does prove `TUP:`
+  is granted. Rebuilt with the gate removed: still leaks. The gate is not on this
+  path at all.
+
+Both were settled the same way, and only that way: rebuild with one thing changed
+and measure. Neither survived contact with that test.
+
 ## What is still open on #7226
 
 - **The string limb**, and it is the larger leak: **80 B/round, unbounded**

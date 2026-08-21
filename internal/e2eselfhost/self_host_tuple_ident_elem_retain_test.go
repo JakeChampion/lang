@@ -101,6 +101,42 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
 			want: 57,
 		},
 		{
+			// The tuple's last mention is NOT the final statement, so the
+			// precise drop-on-last-use fires as LIVE code instead of being
+			// emitted after the return as dead code. That path frees the box and
+			// ZEROES the slot, so the exit sweep — the one that does replay the
+			// element kinds — then finds null and releases nothing. The two are
+			// alternatives, not a sequence, and every release site that can claim
+			// a "TUP:" box has to give the element retains back.
+			//
+			// This is most real code: any use of the tuple other than in the
+			// final return reaches it.
+			name: "last_use_before_return",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    var acc: i32 = t.1[0];
+    return acc;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 53,
+		},
+		{
+			// The same path reached through a SCALAR element read. Nothing about
+			// the tuple's own use is rc-relevant here — it is purely that `t` is
+			// mentioned before the last statement — which is what rules out the
+			// extraction gate as the cause and pins it on the drop site.
+			name: "last_use_scalar_read",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    var acc: i32 = t.0;
+    return acc;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 53,
+		},
+		{
 			// Two same-named tuple locals in SIBLING BLOCKS, retaining at
 			// DIFFERENT positions. The kinds registry is keyed on the SLOT for
 			// this case: tagged_value_of returns the first entry matching a key,

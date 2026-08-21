@@ -45353,14 +45353,22 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                     s = s.emit(ir.op_store_local(dslot));
                 } else if (dslot >= s.n_params && slot_is_reclaimable_tuple(s, dslot)
                         && util.index_of_str(xtuple.donors, pdrops.names[pi]) < 0) {
-                    // Fresh scalar tuple local, last-used at statement j: free its box
-                    // now (shallow __fern_rc_dec — the scalar-literal gate means no rc
-                    // element to walk) and zero the slot, so the exit sweep's tuple
-                    // loop decs a guarded null. The tuple sibling of the struct precise
-                    // drop above. Skipped when the tuple is a tuple cross-reuse DONOR
-                    // (xtuple.donors): emit_cross_tuple_reuse recycles its box for the
-                    // recipient, so freeing it here would race that reuse (a
-                    // double-free / write-to-freed box — the UAF this guard prevents).
+                    // Fresh scalar tuple local, last-used at statement j: give back any
+                    // element retains, free its box, and zero the slot, so the exit
+                    // sweep's tuple loop decs a guarded null. The tuple sibling of the
+                    // struct precise drop above. Skipped when the tuple is a tuple
+                    // cross-reuse DONOR (xtuple.donors): emit_cross_tuple_reuse recycles
+                    // its box for the recipient, so freeing it here would race that
+                    // reuse (a double-free / write-to-freed box — the UAF this guard
+                    // prevents).
+                    //
+                    // The element release is not optional here, and this branch is why
+                    // the #7226 retain looked like it barely worked: this drop and the
+                    // exit sweep are alternatives, not a sequence — it ZEROES the slot,
+                    // so the sweep that does know about element retains then finds null
+                    // and releases nothing. It fires whenever the tuple's last mention
+                    // is not the final statement, which is most code.
+                    s = emit_tup_elem_releases(s, dslot, s.tup_elem_kinds_of(dslot));
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
