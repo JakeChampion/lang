@@ -108,13 +108,13 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 // bound (arm64's IR runtime is ~48-55 KB, close to the AST runtime size).
 func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 	for _, tc := range enumArrayFieldIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(driverBin, "-target", "arm64-linux")
+			cmd := runX86_64Bin(x86runner, driverBin, "-target", "arm64-linux")
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
 			if err != nil || len(asm) == 0 {

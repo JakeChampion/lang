@@ -6,7 +6,6 @@ package e2eharness
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -41,14 +40,7 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 // stdout (the emitted asm).
 func RunDriverFile(t *testing.T, runner []string, bin, entry string, extraArgs ...string) []byte {
 	t.Helper()
-	argv := append([]string{entry}, extraArgs...)
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin, argv...)
-	} else {
-		args := append(append(append([]string{}, runner[1:]...), bin), argv...)
-		cmd = exec.Command(runner[0], args...)
-	}
+	cmd := RunX86_64Bin(runner, bin, append([]string{entry}, extraArgs...)...)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("run driver on %s: %v", entry, err)

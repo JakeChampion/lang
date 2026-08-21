@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -27,7 +26,7 @@ import (
 // CACHE contract: correct hit/miss invalidation and byte-identical reuse of
 // whatever arm64 asm the emitter produced.
 func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
@@ -62,7 +61,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	// The driver is an x86 host binary — run it directly.
 	drive := func(args ...string) (string, string) {
 		t.Helper()
-		cmd := exec.Command(driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...)
+		cmd := runX86_64Bin(x86runner, driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...)
 		var errb strings.Builder
 		cmd.Stderr = &errb
 		out, err := cmd.Output()

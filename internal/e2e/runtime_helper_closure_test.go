@@ -149,14 +149,14 @@ func TestNativeRuntimeHelperClosureArm64(t *testing.T) {
 // the link dangles. (str_lines → str_split and strbuf → heap are the edges this
 // most directly guards.)
 func TestSelfHostIRRuntimeHelperClosure(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun_closure")
 
 	runDriver := func(t *testing.T, prog string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command(driverBin, args...)
+		cmd := runX86_64Bin(runner, driverBin, args...)
 		cmd.Stdin = bytes.NewReader([]byte(prog))
 		out, err := cmd.Output()
 		if err != nil {

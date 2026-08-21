@@ -160,7 +160,7 @@ func TestSelfHostArrayElemTypeStrideWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping array-element stride wasm cases")
 	}
-	fernBin, stdlibRoot, _ := arrayElemFernDriver(t)
+	fernBin, stdlibRoot, runner := arrayElemFernDriver(t)
 	interpBin := buildLangBinForInterp(t)
 
 	for _, tc := range arrayElemTypeStrideCases {
@@ -168,7 +168,7 @@ func TestSelfHostArrayElemTypeStrideWasm(t *testing.T) {
 			want := arrayElemOracle(t, interpBin, tc.files)
 			mainPath := writeArrayElemCase(t, tc.files)
 			outWat := filepath.Join(filepath.Dir(mainPath), "out.wat")
-			if out, cerr := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)
@@ -196,7 +196,7 @@ func TestSelfHostArrayElemTypeStrideX86_64(t *testing.T) {
 			want := arrayElemOracle(t, interpBin, tc.files)
 			mainPath := writeArrayElemCase(t, tc.files)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, cerr := exec.Command(fernBin, "-target", "x86-64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			var rcmd *exec.Cmd
@@ -220,7 +220,7 @@ func TestSelfHostArrayElemTypeStrideX86_64(t *testing.T) {
 // produces the finished binary itself (emit + assemble + link in-process).
 func TestSelfHostArrayElemTypeStrideArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
-	fernBin, stdlibRoot, _ := arrayElemFernDriver(t)
+	fernBin, stdlibRoot, runner := arrayElemFernDriver(t)
 	interpBin := buildLangBinForInterp(t)
 
 	for _, tc := range arrayElemTypeStrideCases {
@@ -228,7 +228,7 @@ func TestSelfHostArrayElemTypeStrideArm64(t *testing.T) {
 			want := arrayElemOracle(t, interpBin, tc.files)
 			mainPath := writeArrayElemCase(t, tc.files)
 			binPath := filepath.Join(filepath.Dir(mainPath), "out.bin")
-			if out, cerr := exec.Command(fernBin, "-target", "arm64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
+			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			var rcmd *exec.Cmd

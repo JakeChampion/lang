@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,9 +45,9 @@ function main(): i32 { return (half(9.0) * 2.0) as i32; }`}, // 9
 function main(): i32 { return add(add(10, 20), 12); }`}, // 42
 }
 
-func annotateF64ProjDir(t *testing.T) (dir, mmc, stdlibRoot string, gcc string, interpBin string) {
+func annotateF64ProjDir(t *testing.T) (dir, mmc, stdlibRoot string, gcc string, runner []string, interpBin string) {
 	t.Helper()
-	gcc, _ = x86_64Tooling(t)
+	gcc, runner = x86_64Tooling(t)
 	interpBin = buildLangBinForInterp(t)
 	dir = writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
@@ -58,13 +57,13 @@ func annotateF64ProjDir(t *testing.T) (dir, mmc, stdlibRoot string, gcc string, 
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
-	return dir, mmc, stdlibRoot, gcc, interpBin
+	return dir, mmc, stdlibRoot, gcc, runner, interpBin
 }
 
 // TestSelfHostAnnotateF64IR_X86_64 pins the typed-IR annotation feeding
 // irlower's expr_is_f64 through the self-host x86-64 IR path (#5531 slice 2).
 func TestSelfHostAnnotateF64IR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, interpBin := annotateF64ProjDir(t)
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
 	for _, tc := range annotateF64Cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,7 +76,7 @@ func TestSelfHostAnnotateF64IR_X86_64(t *testing.T) {
 
 			// The annotation is consumed on the IR path; assert the module
 			// routes there so the case keeps exercising c.ty.
-			route, derr := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+			route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
 			if derr != nil {
 				t.Fatalf("route decide: %v", derr)
 			}
@@ -85,7 +84,7 @@ func TestSelfHostAnnotateF64IR_X86_64(t *testing.T) {
 				t.Fatalf("%s routed %q, want \"ir\" (case no longer exercises the IR annotate path)", tc.name, got)
 			}
 
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -93,7 +92,7 @@ func TestSelfHostAnnotateF64IR_X86_64(t *testing.T) {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "annf64_"+tc.name, string(asm))
-			cmd := exec.Command(progBin)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s (IR annotate path) exited %d, want %d (interp oracle)", tc.name, code, want)

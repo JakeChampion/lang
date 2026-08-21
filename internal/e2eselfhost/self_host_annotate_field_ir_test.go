@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,13 +81,7 @@ function main(): i32 {
 // TestSelfHostAnnotateFieldIR_X86_64 pins the checker-stamped field-read type
 // feeding irlower's fa_type_tag through the self-host x86-64 IR path (#5986).
 func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, interpBin := annotateF64ProjDir(t)
-	// Runner prefix: nil on an x86_64 host, qemu-x86_64 on an aarch64 dev box.
-	// These programs allocate a heap (arena mmap), which SIGSEGVs under
-	// binfmt-direct exec in a cross-arch container but runs correctly under
-	// explicit qemu — so run via the runner, not bare exec.
-	_, runner := x86_64Tooling(t)
-
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateFieldCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
@@ -100,7 +93,7 @@ func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
 
 			// The annotation is consumed on the IR path; assert the module
 			// routes there so the case keeps exercising fa.ty.
-			route, derr := exec.Command(mmc, mainPath, stdlibRoot, "-decide").Output()
+			route, derr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot, "-decide").Output()
 			if derr != nil {
 				t.Fatalf("route decide: %v", derr)
 			}
@@ -108,7 +101,7 @@ func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
 				t.Fatalf("%s routed %q, want \"ir\" (case no longer exercises the IR annotate path)", tc.name, got)
 			}
 
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			asm, cerr := runX86_64Bin(runner, mmc, mainPath, stdlibRoot).Output()
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
@@ -116,8 +109,7 @@ func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "annfield_"+tc.name, string(asm))
-			argv := append(append([]string{}, runner...), progBin)
-			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd := runX86_64Bin(runner, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s (IR annotate path) exited %d, want %d (interp oracle)", tc.name, code, want)

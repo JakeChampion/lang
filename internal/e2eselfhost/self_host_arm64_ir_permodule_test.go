@@ -29,7 +29,7 @@ import (
 // asm); the emitted units are assembled+linked with the aarch64 cross gcc.
 func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
-	x86gcc, _ := x86_64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 	// The arm64 backend + its per-module driver, alongside the shared modload
 	// project (which already holds util/lexer/parser/flatten/asm_ir/builtins/…).
@@ -60,7 +60,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 
 	drive := func(t *testing.T, args ...string) string {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entryPath, "-target", "arm64-linux"}, args...)...).Output()
+		out, err := runX86_64Bin(x86runner, driverBin, append([]string{entryPath, "-target", "arm64-linux"}, args...)...).Output()
 		if err != nil {
 			t.Fatalf("driver failed (args %v): %v", args, err)
 		}

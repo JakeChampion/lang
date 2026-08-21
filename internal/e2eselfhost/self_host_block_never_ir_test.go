@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,8 +59,7 @@ function main(): i32 {
 // TestSelfHostBlockNeverIR_X86_64 drives blockNeverCases through the self-host
 // x86-64 IR path under FERN_STRICT_IR.
 func TestSelfHostBlockNeverIR_X86_64(t *testing.T) {
-	dir, mmc, stdlibRoot, gcc, interpBin := annotateF64ProjDir(t)
-	_, runner := x86_64Tooling(t)
+	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
 	for _, tc := range blockNeverCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +70,7 @@ func TestSelfHostBlockNeverIR_X86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 
-			cmd := exec.Command(mmc, mainPath, stdlibRoot)
+			cmd := runX86_64Bin(runner, mmc, mainPath, stdlibRoot)
 			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			asm, cerr := cmd.Output()
 			if cerr != nil {
@@ -82,8 +80,7 @@ func TestSelfHostBlockNeverIR_X86_64(t *testing.T) {
 				t.Fatal("loader emitted 0 bytes")
 			}
 			progBin := buildBin(t, gcc, dir, "blocknever_"+tc.name, string(asm))
-			argv := append(append([]string{}, runner...), progBin)
-			run := exec.Command(argv[0], argv[1:]...)
+			run := runX86_64Bin(runner, progBin)
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
@@ -101,7 +98,7 @@ func TestSelfHostBlockNeverIR_X86_64(t *testing.T) {
 // asserted on that bail's wording; gating every coded diagnostic (#6961) means
 // the checker now speaks first, which is the convergence worth pinning.
 func TestSelfHostBlockValuelessStillRejected(t *testing.T) {
-	_, mmc, stdlibRoot, _, _ := annotateF64ProjDir(t)
+	_, mmc, stdlibRoot, _, runner, _ := annotateF64ProjDir(t)
 	const src = `function side(): i32 { return 1; }
 function main(): i32 {
     var x: i32 = { side(); };
@@ -112,7 +109,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	cmd := exec.Command(mmc, mainPath, stdlibRoot)
+	cmd := runX86_64Bin(runner, mmc, mainPath, stdlibRoot)
 	out, _ := cmd.CombinedOutput()
 	if cmd.ProcessState.ExitCode() == 0 {
 		t.Fatalf("a fall-through value-less block was accepted; driver emitted %d bytes of asm", len(out))
