@@ -39,9 +39,9 @@ x86_64/enum_match.text	735
 x86_64/enum_match.ir	228600067
 x86_64/int_loop.text	114
 x86_64/int_loop.ir	66000032
-x86_64/map_int.text	3641
+x86_64/map_int.text	3471
 x86_64/map_int.ir	114365112
-x86_64/map_string.text	4908
+x86_64/map_string.text	4738
 x86_64/map_string.ir	228119826	2
 x86_64/sort_inplace.text	919
 x86_64/sort_inplace.ir	153911104
@@ -82,9 +82,9 @@ aarch64/enum_match.text	682
 aarch64/enum_match.ir	194175068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
-aarch64/map_int.text	3332
+aarch64/map_int.text	3173
 aarch64/map_int.ir	100592487
-aarch64/map_string.text	4562
+aarch64/map_string.text	4403
 aarch64/map_string.ir	223648093	2
 aarch64/sort_inplace.text	860
 aarch64/sort_inplace.ir	132740196

@@ -315,21 +315,42 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	// IR pass battery (#4377) — mirrors the x86-64 backend: in-place
-	// per-function rewrites that keep ip.Funcs index-aligned with prog.Funcs
-	// for the parallel walk below (slice 1, #4678). OptimizeCleanup (the
-	// copyprop/constprop/Fold/strength fixpoint) now runs too (slice 1b): the
-	// ir.Fold emitter crash it hit is fixed (the index zero-extend in
-	// emitInlineIdxHelper above — a folded-constant array index otherwise
-	// carried dirty upper bits into the scaled address add, past the 32-bit
-	// bounds check), and the fixpoint's old up-to-8× whole-program convergence
-	// snapshot is gone (each sub-pass reports a changed bool), so it no longer
-	// balloons self-host build time. ir.Inline + the whole-function cull remain
-	// slice 2 (parallel-index → name-keyed walk).
+	// IR pass battery (#4377) — mirrors the x86-64 backend: FuseTee fuses
+	// store+reload into OpTeeLocal, FlattenBranches drops `if (false) { … }`
+	// bodies before they reach asm, EliminateDeadCode trims ops after a
+	// terminator, OptimizeCleanup is the copyprop/constprop/Fold/strength
+	// fixpoint.
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
 	ir.OptimizeCleanup(ip)
+	// IR-level dead-function elimination — the x86-64 backend's twin, and see
+	// its comment for the root set and why ir.CodegenAliases has to be passed.
+	// MUST run before the use-flag pre-scan below, which walks ip.Funcs to
+	// decide which runtime helpers the prologue emits.
+	liveExtras := append([]string(nil), dynRoots...)
+	for _, vt := range ip.Vtables {
+		for _, m := range vt.Methods {
+			liveExtras = append(liveExtras, m.Func)
+		}
+		if vt.Drop != "" {
+			liveExtras = append(liveExtras, vt.Drop)
+		}
+	}
+	for _, fn := range ip.Funcs {
+		if strings.HasPrefix(fn.Name, "__drop_dyn_") {
+			liveExtras = append(liveExtras, fn.Name)
+		}
+	}
+	if live := ir.LiveFunctionsWithAliases(ip, ir.CodegenAliases, liveExtras...); live != nil {
+		kept := ip.Funcs[:0]
+		for _, irFn := range ip.Funcs {
+			if live[irFn.Name] {
+				kept = append(kept, irFn)
+			}
+		}
+		ip.Funcs = kept
+	}
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault()}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
@@ -387,11 +408,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.entry == platforms.EntryProcess {
 		g.emitStartRuntime()
 	}
-	// Name-keyed AST↔IR pairing, mirroring the x86-64 backend: the slices are
-	// still built in lockstep so the emission order and output are unchanged,
-	// but an index walk mispairs silently as soon as an IR pass adds or removes
-	// a whole function — the blocker on ir.Inline + the dead-function cull
-	// (#4377). A name with no IR function was culled; skip it.
+	// Name-keyed AST↔IR pairing, mirroring the x86-64 backend: the dead-function
+	// cull above removes entries from ip.Funcs, which an index walk would
+	// mispair silently (#4377).
 	irIdx := make(map[string]int, len(ip.Funcs))
 	for i, f := range ip.Funcs {
 		irIdx[f.Name] = i
@@ -399,13 +418,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	for _, fn := range prog.Funcs {
 		i, ok := irIdx[fn.Name]
 		if !ok {
-			// Nothing removes whole functions from ip.Funcs yet, so a name with
-			// no IR function means lowering dropped it — a bug, not a cull.
-			// Report it rather than emitting nothing: a silent skip here would
-			// produce a binary missing a function body and fail at the link,
-			// far from the cause. The change that turns on the dead-function
-			// cull flips this to a `continue`.
-			return "", fmt.Errorf("codegen: no IR function for %q", fn.Name)
+			// Culled as unreachable — emit no body for it.
+			continue
 		}
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
