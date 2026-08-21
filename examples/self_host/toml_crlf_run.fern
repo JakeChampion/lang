@@ -1,0 +1,89 @@
+// examples/self_host/toml_crlf_run.fern — golden driver for the manifest
+// reader's line handling on CRLF input (fern_toml.fern via util.trim —
+// docs/SELF-HOST-AUDIT.md T1 / SH-020).
+//
+// fern_toml splits its input on '\n' alone, so on a CRLF file every line
+// arrives with a trailing '\r' and it is trim's job to remove it. It did not:
+// fern_toml carried a private trim stripping only space and tab, where the
+// tree's other two copies also stripped '\r'. The lock reader compares a line
+// for exact equality against "[[package]]", so on CRLF that header never
+// matched and EVERY entry was dropped — a CRLF fern.lock parsed to zero
+// packages and the loader saw an empty lock rather than an error.
+//
+// This driver parses the same manifest and lock text twice, once LF and once
+// CRLF, and prints what each yields. The two halves must agree line for line;
+// the companion Go test pins the exact output, so a trim that stops handling
+// '\r' fails here rather than silently emptying a lock file.
+
+import "./fern_toml";
+import "./util";
+
+function render_manifest(label: string, src: string): string {
+    var m: fern_toml.Manifest = fern_toml.parse(src);
+    var out: string = label + " name=" + m.name + "\n";
+    out = out + label + " deps=" + util.i32_to_string(m.deps.len()) + "\n";
+    var i: i32 = 0;
+    while (i < m.deps.len()) {
+        out = out + label + " dep " + m.deps[i].name + " kind=" + m.deps[i].kind + " version=" + m.deps[i].version + " path=" + m.deps[i].path + "\n";
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < m.members.len()) {
+        out = out + label + " member " + m.members[j] + "\n";
+        j = j + 1;
+    }
+    return out;
+}
+
+function render_lock(label: string, src: string): string {
+    var es: fern_toml.LockEntry[] = fern_toml.parse_lock(src);
+    var out: string = label + " entries=" + util.i32_to_string(es.len()) + "\n";
+    var i: i32 = 0;
+    while (i < es.len()) {
+        out = out + label + " entry " + es[i].name + " version=" + es[i].version + " path=" + es[i].path + " hash=" + es[i].hash + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+// crlf rewrites every '\n' in `s` as "\r\n", producing the same document as
+// written by a CRLF editor.
+function crlf(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == b'\n') { out = out + "\r\n"; } else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+function main(): i32 {
+    var manifest: string = "[package]\n" +
+        "name = \"acme\"\n" +
+        "\n" +
+        "# a comment line\n" +
+        "[dependencies]\n" +
+        "dbl = { path = \"../dbl\" }\n" +
+        "shout = \"1.2.3\"\n" +
+        "\n" +
+        "[workspace]\n" +
+        "members = [\"a\", \"b/c\"]\n";
+    var lock: string = "[[package]]\n" +
+        "name = \"dbl\"\n" +
+        "version = \"1.0.0\"\n" +
+        "path = \"../dbl\"\n" +
+        "\n" +
+        "[[package]]\n" +
+        "name = \"shout\"\n" +
+        "version = \"1.2.3\"\n" +
+        "hash = \"sha256:abc123\"\n";
+
+    var out: string = "";
+    out = out + render_manifest("LF  ", manifest);
+    out = out + render_manifest("CRLF", crlf(manifest));
+    out = out + render_lock("LF  ", lock);
+    out = out + render_lock("CRLF", crlf(lock));
+    write(out);
+    return 0;
+}

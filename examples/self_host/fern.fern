@@ -830,7 +830,7 @@ function insert_dependency(src: string, line: string): string {
     var lines: string[] = mvs.split_char(src, b'\n');
     var i: i32 = 0;
     while (i < lines.len()) {
-        if (mvs.trim(lines[i]) == "[dependencies]") {
+        if (util.trim(lines[i]) == "[dependencies]") {
             var out: string = "";
             var k: i32 = 0;
             while (k < lines.len()) {
