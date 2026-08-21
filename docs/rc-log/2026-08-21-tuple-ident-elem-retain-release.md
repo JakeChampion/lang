@@ -67,6 +67,38 @@ Reverting the change and rebuilding: all five cases fail with the leak signature
 (`allocs=200 frees=100 live_bytes=4000` on the headline shape) and pass with it.
 `internal/e2eselfhost/self_host_tuple_ident_elem_retain_test.go`, three legs.
 
+## The gate the first version was missing
+
+The release as first landed over-released a tuple whose owned-pointer element is
+EXTRACTED — `return t.1`, or `var u = t.1`. The extraction hands the element's
+reference to a NEW owner, so a release at the tuple's scope exit is the second
+claim on one reference:
+
+| `return t.1` out of a frame, 100 rounds | native | self-host |
+| --- | --- | --- |
+| first version | 40 | **99** (rc underflow) |
+| gated | 40 | 40, flat |
+
+The fix is the gate the `TUPRC:` class has always applied for exactly this shape
+— `rctuple_payload_escapes`, whose own comment names the failure mode: *"a whole
+owned-pointer-element extraction … leaving a live alias to over-release"*. It
+distinguishes a scalar element copy (`t.0`), an indexed read (`t.1[j]`) and
+`.len()`, which stay borrows, from a bare pointer extraction, which does not.
+
+The credit now requires a tuple type ANNOTATION rather than skipping the gate
+when the type is unknown, which is the opposite of what `TUPRC:` does with an
+un-annotated binding. Without a type there is no way to tell a scalar copy from a
+pointer extraction, and the wrong guess in that direction is an over-release; an
+un-annotated tuple keeps `TUP:` and simply does not earn the element release.
+
+**The trap this set, twice.** The over-release is invisible to both the answer and
+the byte count: a doubly-released block returns to the freelist, so the arithmetic
+still comes out right and `live_bytes` still reads 0. The first version of the
+hazard test asserted only the answer and **passed against the broken compiler**.
+Only `__rc_underflow()` separates the two readings — the same lesson the sibling
+`string[]` entry records from the other direction, and the reason every probe in
+`self_host_tuple_ident_elem_retain_test.go` now ends with that check.
+
 ## What is still open on #7226
 
 - **The string limb**, and it is the larger leak: **80 B/round, unbounded**
@@ -83,8 +115,13 @@ Reverting the change and rebuilding: all five cases fail with the leak signature
   `emit_arr_store`, which this change does not mirror; each assign's retain
   strands. The `var` form is covered.
 
-None of the three is a regression: this change only ever adds decs, and the
-underflow counter reads 0 on every probe above.
+None of the three is a regression, but note the reasoning that is NOT available
+for saying so. "This change only adds decs, so it cannot regress anything" is what
+I concluded while triaging the leaks above, and it is **false** — the extraction
+over-release was an added dec. Adding a dec is safe only where the matching inc is
+provably still outstanding, which is precisely what the credit gates decide. Each
+of the three above is instead a leak the change leaves untouched, checked
+individually with the underflow counter reading 0.
 
 ## Trap
 

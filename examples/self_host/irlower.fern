@@ -17579,7 +17579,8 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // is escape-flagged by expr_unsafe_for and so earns no "STR:" credit, which
     // means releasing it here would balance the tuple's ref while the local's own
     // box still never reaches 0 — a credit-side gap, not a release-side one.
-    if (sb.tuple_elem_tag(slot, 0).len() > 0) {
+    if (sb.tuple_elem_tag(slot, 0).len() > 0
+        && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", v.name)) {
         match (v.init) {
             parser.ExprTuple(tinit) => {
                 var tk: string = "";
@@ -31471,6 +31472,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
                 && all_assigns_fresh_scalar_tuple(body, tups[ti],
                         scalar_tuple_decl_ann_all_scalar(body, tups[ti]))) {
                 out = out.append("TUPREBIND:" + tups[ti]);
+            }
+            // The bare-ident element release (#7226) needs the owned-pointer-element
+            // extraction gate the "TUPRC:" class below applies, for exactly the reason
+            // its comment gives: `return t.1` / `var u = t.1` hands the element's
+            // reference to a NEW owner, so releasing it here over-releases it (witnessed
+            // as exit 99 on the escaping form). A scalar read `t.0`, an indexed read
+            // `t.1[j]` and their `.len()` stay borrows and keep the credit.
+            //
+            // The annotation is REQUIRED rather than skipped-when-absent: without a
+            // tuple type there is no way to tell a scalar element copy from a pointer
+            // extraction, and the wrong guess here is an over-release. An un-annotated
+            // tuple keeps "TUP:" and simply does not earn the element release.
+            var tupelemty: string = rctuple_type_of_decl(body, tups[ti]);
+            if (tupelemty != "" && !rctuple_payload_escapes(body, tups[ti], tupelemty, structs)) {
+                out = out.append("TUPELEMOK:" + tups[ti]);
             }
         }
         ti = ti + 1;

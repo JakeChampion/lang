@@ -117,6 +117,88 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 	}
 }
 
+// TestSelfHostTupleIdentElemExtractionHazardX86_64 — a tuple whose owned-pointer
+// element is EXTRACTED must not earn the element release.
+//
+// `return t.1` / `var u = t.1` hands the element's reference to a new owner, so
+// releasing it at the tuple's scope exit releases a reference the frame no longer
+// holds. The escaping form witnessed this as **exit 99** (rc underflow) against 40
+// on native and interp alike; the fix is the same `rctuple_payload_escapes` gate
+// the "TUPRC:" class has always applied, for the reason its own comment gives —
+// "leaving a live alias to over-release".
+//
+// Each probe ends with an explicit `__rc_underflow()` check, and that is the
+// load-bearing part: WITHOUT it both cases pass on a compiler that over-releases,
+// because a doubly-released block goes back to the freelist and the arithmetic
+// still comes out at 40. The first version of this test was vacuous for exactly
+// that reason. The counter is the only thing that separates the two readings.
+//
+// These assert the ANSWER, not leak counts, and deliberately so: the local form
+// falls back to leak-mode under the gate (a bare pointer extraction is refused
+// whether or not it leaves the frame), which is the safe direction and the same
+// trade "TUPRC:" makes. A wrongly-granted credit here is a wrong answer or a
+// crash, not a number.
+//
+// Both wants came from bin/fern -interp and the native x86-64 backend agreeing.
+func TestSelfHostTupleIdentElemExtractionHazardX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// THE over-release. The extracted element leaves the frame and the
+			// caller binds it to an exit-swept slot, so a release here is the
+			// second claim on one reference. The decoy allocation recycles the
+			// freed block, so a surviving bug corrupts the value as well as
+			// tripping the counter.
+			name: "elem_extracted_escaping",
+			src: `function grab(i: i32): i32[] {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    return t.1;
+}
+function decoy(n: i32): i32[] { return [n * 7, n * 11, n * 13]; }
+function round(i: i32): i32 {
+    var u: i32[] = grab(i);
+    var d: i32[] = decoy(i);
+    if (d[0] < 0) { return 0; }
+    return u[0] + u[1];
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 40,
+		},
+		{
+			// The same extraction without leaving the frame. Refused too — the
+			// gate is about a second owner existing, not about where it lives.
+			name: "elem_extracted_local",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    var u: i32[] = t.1;
+    return u[0] + u[1];
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 40,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			progBin := buildBin(t, gcc, dir, "tupextract_"+tc.name, asm)
+			_, exit := hevRun(t, runner, progBin)
+			if exit != tc.want {
+				t.Errorf("%s exited %d, want %d (99 = rc underflow: the element release "+
+					"claimed a reference the frame handed to another owner)", tc.name, exit, tc.want)
+			}
+		})
+	}
+}
+
 // TestSelfHostTupleIdentElemRetainX86_64 — the retained element references are
 // given back, so allocs and frees balance exactly.
 //
