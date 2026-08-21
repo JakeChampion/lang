@@ -660,24 +660,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         });
         k = k + 1;
     }
-    return parser.Module {
-        funcs: funcs,
-        structs: structs,
-        aliases: aliases,
-        imports: mod.imports,
-        top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
-            modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames,
-            declnames_mangled: ctx.declnames_mangled,
-            locals: astwalk.collect_bound_stmts(mod.top_stmts, []),
-            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
-            reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
-        }),
-        enums: mangle_enum_decls(mod.enums, ctx),
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mangle_impls(mod.impls, ctx),
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
 }
 
 // mangle_impls rewrites an impl block's TARGET type the same way every other

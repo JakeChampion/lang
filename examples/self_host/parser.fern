@@ -1243,7 +1243,7 @@ pub function resolve_labels_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: resolve_labels_block(mod.top_stmts, none) };
 }
 
 
@@ -9436,18 +9436,7 @@ pub function register_array_method_generics(mod: Module): Module {
         }
         i = i + 1;
     }
-    return Module {
-        funcs: out,
-        structs: mod.structs,
-        aliases: mod.aliases,
-        imports: mod.imports,
-        top_stmts: mod.top_stmts,
-        enums: mod.enums,
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mod.impls,
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return Module { ...mod, funcs: out };
 }
 
 // ---- generic map-method monomorphisation (the Map sibling of the array
@@ -9551,18 +9540,7 @@ pub function register_map_method_generics(mod: Module): Module {
         }
         i = i + 1;
     }
-    return Module {
-        funcs: out,
-        structs: mod.structs,
-        aliases: mod.aliases,
-        imports: mod.imports,
-        top_stmts: mod.top_stmts,
-        enums: mod.enums,
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mod.impls,
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return Module { ...mod, funcs: out };
 }
 
 // ---- generic-struct method type parameters (the third sibling of the
@@ -9775,18 +9753,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         }
         i = i + 1;
     }
-    return Module {
-        funcs: out,
-        structs: mod.structs,
-        aliases: mod.aliases,
-        imports: mod.imports,
-        top_stmts: mod.top_stmts,
-        enums: mod.enums,
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mod.impls,
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return Module { ...mod, funcs: out };
 }
 
 // monomorphize_module expands trait-bounded generics. Non-generic
@@ -9856,18 +9823,7 @@ pub function monomorphize_module(mod: Module): Module {
         wi = wi + 1;
     }
 
-    return Module {
-        funcs: rewritten,
-        structs: mod.structs,
-        aliases: mod.aliases,
-        imports: mod.imports,
-        top_stmts: tr.rstmts,
-        enums: mod.enums,
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mod.impls,
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return Module { ...mod, funcs: rewritten, top_stmts: tr.rstmts };
 }
 
 // ---- generic-struct monomorphisation --------------------------------
@@ -10463,18 +10419,7 @@ pub function monomorphize_structs(mod: Module): Module {
         wi = wi + 1;
     }
 
-    return Module {
-        funcs: nfuncs,
-        structs: nstructs,
-        aliases: mod.aliases,
-        imports: mod.imports,
-        top_stmts: tr.rstmts,
-        enums: mod.enums,
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mod.impls,
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return Module { ...mod, funcs: nfuncs, structs: nstructs, top_stmts: tr.rstmts };
 }
 
 // ---- generic-enum monomorphisation ----------------------------------
@@ -11584,18 +11529,7 @@ pub function monomorphize_enums(mod: Module): Module {
     var k3: i32 = 0;
     while (k3 < cl_structs.len()) { out_structs = out_structs.append(cl_structs[k3]); k3 = k3 + 1; }
 
-    return Module {
-        funcs: nfuncs,
-        structs: out_structs,
-        aliases: mod.aliases,
-        imports: mod.imports,
-        top_stmts: tr.rstmts,
-        enums: out_enums,
-        resources: mod.resources,
-        exports: mod.exports,
-        impls: mod.impls,
-        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
-    };
+    return Module { ...mod, funcs: nfuncs, structs: out_structs, top_stmts: tr.rstmts, enums: out_enums };
 }
 
 // str_in reports membership of `s` in `xs`.
@@ -12761,7 +12695,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     var top_body: Stmt[] = hl_apply_lifts(tr_stmts, tr_lifts);
     var j: i32 = 0;
     while (j < hoisted.len()) { funcs = funcs.append(hoisted[j]); j = j + 1; }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: top_body };
 }
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {
@@ -12941,7 +12875,7 @@ pub function lower_defers_module(mod: Module): Module {
         funcs = funcs.append(lower_defers_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs };
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
@@ -13250,7 +13184,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
        , is_const: false }));
         k = k + 1;
     }
-    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: out_funcs };
 }
 
 // ---------------------------------------------------------------------------
@@ -13385,7 +13319,7 @@ pub function desugar_ranges_module(mod: Module): Module {
         funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: desugar_ranges_block(mod.top_stmts) };
 }
 
 // desugar_prepass_module fuses the three leading whole-module DESUGAR passes —
@@ -13605,7 +13539,7 @@ pub function resolve_variant_fields_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rvf_block(fd.body, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: rvf_block(mod.top_stmts, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: rvf_block(mod.top_stmts, mod.structs) };
 }
 
 // or named args), so it is evaluated once on the incoming module and gates the
@@ -13626,7 +13560,7 @@ pub function desugar_prepass_module(mod: Module): Module {
     var tops: Stmt[] = resolve_labels_block(mod.top_stmts, none);
     if (need_fda) { tops = fda_stmts(tops, mod.funcs); }
     tops = desugar_ranges_block(tops);
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tops, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: tops };
 }
 
 // ---------------------------------------------------------------------------
@@ -13992,7 +13926,7 @@ pub function fill_default_args_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) };
 }
 
 // ---- return-type inference -----------------------------------------
@@ -14454,7 +14388,7 @@ pub function infer_ret_types_module(mod: Module): Module {
         }
         pass = pass + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs };
 }
 
 // ---- call-only 0-arg fn-value inlining ------------------------------
@@ -15271,7 +15205,7 @@ pub function inline_callonly_fn_values(mod: Module): Module {
        , is_const: fd.is_const });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs) };
 }
 
 // ===== #3640 slice B.2: use-directed struct-fn-value-local inference =====
@@ -15436,7 +15370,7 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs };
 }
 
 pub function module_with_builtins(mod: Module): Module {
@@ -15448,18 +15382,7 @@ pub function module_with_builtins(mod: Module): Module {
     // lower_defers_prepass_module (#5460). One module rebuild each instead
     // of three + three (byte-identical — see their doc comments).
     var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
-    return Module {
-        funcs: mono.funcs,
-        structs: inject_builtin_enums(mono.structs),
-        aliases: mono.aliases,
-        imports: mono.imports,
-        top_stmts: mono.top_stmts,
-        enums: mono.enums,
-        resources: mono.resources,
-        exports: mono.exports,
-        impls: mono.impls,
-        trait_reqs: mono.trait_reqs, trait_decls: mono.trait_decls
-    };
+    return Module { ...mono, structs: inject_builtin_enums(mono.structs) };
 }
 
 // parse_impl_block yields the parser plus the desugared receiver-method
@@ -17577,7 +17500,7 @@ pub function settle_module(mod: Module): Module {
         i = i + 1;
     }
     var nonames: string[] = [];
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, mod.funcs, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
+    return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, mod.funcs, mod.structs) };
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
@@ -18020,18 +17943,7 @@ pub function merge_module(into: Module, from: Module): Module {
     var ntreqs: TraitReq[] = into.trait_reqs;
     var nti: i32 = 0;
     while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
-    return Module {
-        funcs: nfuncs,
-        structs: nstructs,
-        aliases: naliases,
-        imports: into.imports,
-        top_stmts: into.top_stmts,
-        enums: concat_enums(into.enums, from.enums),
-        resources: nresources,
-        exports: nexports,
-        impls: nimpls,
-        trait_reqs: ntreqs, trait_decls: ntdecls
-    };
+    return Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls };
 }
 
 // merge_module_prefixed adds `from`'s decls to `into` with
@@ -18094,18 +18006,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var ntreqs: TraitReq[] = into.trait_reqs;
     var nti: i32 = 0;
     while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
-    return Module {
-        funcs: nfuncs,
-        structs: nstructs,
-        aliases: naliases,
-        imports: into.imports,
-        top_stmts: into.top_stmts,
-        enums: concat_enums(into.enums, from.enums),
-        resources: nresources,
-        exports: nexports,
-        impls: nimpls,
-        trait_reqs: ntreqs, trait_decls: ntdecls
-    };
+    return Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls };
 }
 
 // =================== VALIDATION ====================
