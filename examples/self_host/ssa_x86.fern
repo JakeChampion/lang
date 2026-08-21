@@ -91,22 +91,6 @@ function store_res(reg_of: i32[], widths: i32[], v: i32, cls: string, out: strin
     return out + "    " + w_mov(w) + " " + xreg(cls, w) + ", " + regn(reg_of, v, w) + "\n";
 }
 
-function block_index(f: ssa.SFunc, id: i32): i32 {
-    var i: i32 = 0;
-    while (i < f.blocks.len()) {
-        if (f.blocks[i].id == id) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
-    var i: i32 = 0;
-    while (i < blk.preds.len()) {
-        if (blk.preds[i] == prev) { return i; }
-        i = i + 1;
-    }
-    return 0;
-}
 
 // emit_binary emits a binary op assuming %eax/%rax = lhs and %ecx/%rcx = rhs
 // (per `width`), leaving the result in %eax/%rax. `width` is the OPERANDS'
@@ -456,10 +440,10 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
 // emit_phi_moves copies the phi operands flowing along the edge pred → tgt
 // into the phi result slots (out-of-SSA on this edge), at each phi's width.
 function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], widths: i32[], pred: i32, tgt: i32, out: string): string {
-    var ti: i32 = block_index(f, tgt);
+    var ti: i32 = ssa.block_index(f, tgt);
     if (ti < 0) { return out; }
     var tb: ssa.SBlock = f.blocks[ti];
-    var sl: i32 = pred_slot(tb, pred);
+    var sl: i32 = ssa.pred_slot(tb, pred);
     var k: i32 = 0;
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
