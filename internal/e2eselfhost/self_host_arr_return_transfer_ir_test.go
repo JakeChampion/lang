@@ -77,6 +77,23 @@ function f(s: i32[]): i32 { var t: i32[] = pick(s, s, 1); var u: i32[] = pick(s,
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-mixed-paths", 0)
+
+	// A `string[]` STRUCT FIELD returned by a method (#7232). The buffer-pointer
+	// Perceus dup on the return path was a chain of per-element-type
+	// classifiers (scalar / array-of-struct / array-of-enum) where native's
+	// `needsRcIncOnAlias` is one element-type-agnostic ArrayType test, so
+	// `string[]` fell through the seam: the callee handed back an uncounted
+	// alias of h.xs while the caller's `var parts` slot is unconditionally
+	// exit-swept. The first call took the field's buffer to rc 0 and FREED it
+	// (silently — the detector only sees the second call go below), so this
+	// needs more than one call to witness. Native exits 0 on the same program.
+	run(t, `struct Holder { xs: string[] }
+function (h: Holder) get(): string[] { return h.xs; }
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+function f(keep: Holder): i32 { var parts: string[] = keep.get(); return parts.len(); }
+function churn(keep: Holder, m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(keep)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`,
+		"strarr-field-return-transfer", 0)
 }
 
 // TestSelfHostArrReturnTransferWasmIR: the wasm sibling — same programs
@@ -103,6 +120,12 @@ function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (_
 function f(s: i32[]): i32 { var t: i32[] = mk(s[0]); var u: i32 = t[0] + s[1]; return u; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+		{"strarr-field-return-transfer-wasm", `struct Holder { xs: string[] }
+function (h: Holder) get(): string[] { return h.xs; }
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+function f(keep: Holder): i32 { var parts: string[] = keep.get(); return parts.len(); }
+function churn(keep: Holder, m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(keep)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,14 +168,29 @@ func TestSelfHostArrReturnTransferIRArm64(t *testing.T) {
 function f(s: i32[]): i32 { var t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
-	if len(asm) == 0 {
-		t.Fatalf("self-host arm64 compiler emitted 0 bytes")
-	}
-	bin := buildBinArm64(t, arm64gcc, dir, "arr-return-transfer-alias-arm64", string(asm))
-	cmd := runArm64Bin(qemu, bin)
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("arr-return-transfer-alias-arm64 exited %d, want 0 (99 = over-release/UAF)", code)
+	// The `string[]` struct-field return (#7232) alongside the bare-param one:
+	// both are the same buffer-pointer Perceus dup, reached through different
+	// classifiers.
+	strArrProg := `struct Holder { xs: string[] }
+function (h: Holder) get(): string[] { return h.xs; }
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+function f(keep: Holder): i32 { var parts: string[] = keep.get(); return parts.len(); }
+function churn(keep: Holder, m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(keep)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`
+
+	for _, tc := range []struct{ name, src string }{
+		{"arr-return-transfer-alias-arm64", prog},
+		{"strarr-field-return-transfer-arm64", strArrProg},
+	} {
+		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
+		if len(asm) == 0 {
+			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
+		}
+		bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
+		cmd := runArm64Bin(qemu, bin)
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Errorf("%s exited %d, want 0 (98 = leak; 99 = over-release/UAF; 97 = value corrupted)", tc.name, code)
+		}
 	}
 }

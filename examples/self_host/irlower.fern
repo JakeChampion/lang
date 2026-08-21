@@ -16428,8 +16428,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             // simply hands the caller its own counted ref (field rc N →inc N+1
             // →caller decs N); if `h` is a fresh RECLAIMABLE local, the exit sweep's
             // struct field-drop decs the field (array rc 1 →inc 2 →field-drop 1
-            // →caller decs 0). Sound either way (never under-frees). Only the scalar-
-            // element field; array-of-struct / array-of-enum fields still bail.
+            // →caller decs 0). Sound either way (never under-frees).
             var rfft: string = scalar_arr_field_type(r.value, s);
             if (rfft != "") {
                 var rfs: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
@@ -16438,16 +16437,18 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                 rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
                 return rfs.emit(ir.op_return());
             }
-            // Returning an ARRAY-OF-STRUCT field (`return h.params`) or an ARRAY-OF-
-            // ENUM field (`return h.args`, args: Expr[]) aliases it out to the caller
-            // exactly like the scalar case above — the Perceus dup is on the buffer
-            // POINTER (element-type-agnostic), and NO deep-drop recursion is
-            // involved: the struct keeps owning the elements, the caller receives a
-            // counted reference to the buffer. Same balance as the scalar field
-            // return (borrowed param: caller decs; reclaimable local: field-drop +
-            // caller dec).
+            // Returning an ARRAY-OF-STRUCT field (`return h.params`), an ARRAY-OF-
+            // ENUM field (`return h.args`, args: Expr[]) or a STRING-ARRAY field
+            // (`return h.xs`, xs: string[]) aliases it out to the caller exactly like
+            // the scalar case above — the Perceus dup is on the buffer POINTER
+            // (element-type-agnostic), and NO deep-drop recursion is involved: the
+            // struct keeps owning the elements, the caller receives a counted
+            // reference to the buffer. Same balance as the scalar field return
+            // (borrowed param: caller decs; reclaimable local: field-drop + caller
+            // dec).
             var rsaft: string = struct_arr_field_read_type(r.value, s);
             if (rsaft == "") { rsaft = enum_arr_field_read_type(r.value, s); }
+            if (rsaft == "") { rsaft = strarr_field_read_type(r.value, s); }
             if (rsaft != "") {
                 var rss: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
                 if (!rss.ok) { return rss; }
