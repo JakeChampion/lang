@@ -47,22 +47,6 @@ function loc(v: i32): string {
 // block_index maps a block id to its position in f.blocks (its dispatch
 // index), or -1. pred_slot finds prev's position in blk.preds (the phi
 // operand slot for the edge prev → blk).
-function block_index(f: ssa.SFunc, id: i32): i32 {
-    var i: i32 = 0;
-    while (i < f.blocks.len()) {
-        if (f.blocks[i].id == id) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
-    var i: i32 = 0;
-    while (i < blk.preds.len()) {
-        if (blk.preds[i] == prev) { return i; }
-        i = i + 1;
-    }
-    return 0;
-}
 
 // wasm_binop maps a binary operator to its WAT s-expression over the two
 // operand reads a and b. Fern i32 is signed, so comparisons / div / rem
@@ -212,10 +196,10 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
 // only from the `br` terminator. Sequential copies mirror the native
 // backends.
 function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32): string {
-    var ti: i32 = block_index(f, tgt);
+    var ti: i32 = ssa.block_index(f, tgt);
     if (ti < 0) { return ""; }
     var tb: ssa.SBlock = f.blocks[ti];
-    var sl: i32 = pred_slot(tb, pred);
+    var sl: i32 = ssa.pred_slot(tb, pred);
     var out: string = "";
     var k: i32 = 0;
     while (k < tb.insts.len()) {
@@ -237,13 +221,13 @@ function emit_term(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
     }
     if (t.kind_tag == 2) {  // const_bool
         var out: string = emit_phi_moves(f, blk.id, t.target);
-        out = out + "    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.target)) + "))\n";
+        out = out + "    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(ssa.block_index(f, t.target)) + "))\n";
         return out + "    (br $L)\n";
     }
     if (t.kind_tag == 3) {  // const_i64
         var out2: string = "    (if " + loc(t.cond) + "\n";
-        out2 = out2 + "      (then (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.t)) + ")))\n";
-        out2 = out2 + "      (else (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.f)) + "))))\n";
+        out2 = out2 + "      (then (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(ssa.block_index(f, t.t)) + ")))\n";
+        out2 = out2 + "      (else (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(ssa.block_index(f, t.f)) + "))))\n";
         return out2 + "    (br $L)\n";
     }
     return "";
@@ -319,7 +303,7 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
     var pc: i32 = f.nvals;
     var nb: i32 = f.blocks.len();
     // Initialise $pc to the entry block's dispatch index.
-    chunks = chunks.append("    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, f.entry)) + "))\n");
+    chunks = chunks.append("    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(ssa.block_index(f, f.entry)) + "))\n");
     chunks = chunks.append("    (block $exit (loop $L\n");
     // Open the nested dispatch blocks, outermost ($blk nb-1) to innermost
     // ($blk0), then the br_table that branches to each by dispatch index.

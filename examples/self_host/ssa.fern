@@ -3511,7 +3511,7 @@ function vtab_set(tab: i32[], id: i32, v: i32): i32[] {
     return out;
 }
 
-function block_index(f: SFunc, id: i32): i32 {
+pub function block_index(f: SFunc, id: i32): i32 {
     var i: i32 = 0;
     while (i < f.blocks.len()) {
         if (f.blocks[i].id == id) { return i; }
@@ -3520,7 +3520,7 @@ function block_index(f: SFunc, id: i32): i32 {
     return 0 - 1;
 }
 
-function pred_slot(blk: SBlock, prev: i32): i32 {
+pub function pred_slot(blk: SBlock, prev: i32): i32 {
     var i: i32 = 0;
     while (i < blk.preds.len()) {
         if (blk.preds[i] == prev) { return i; }
