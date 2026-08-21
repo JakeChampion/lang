@@ -101,6 +101,62 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
 			want: 57,
 		},
 		{
+			// The tuple's last mention is NOT the final statement, so the
+			// precise drop-on-last-use fires as LIVE code instead of being
+			// emitted after the return as dead code. That path frees the box and
+			// ZEROES the slot, so the exit sweep — the one that does replay the
+			// element kinds — then finds null and releases nothing. The two are
+			// alternatives, not a sequence, and every release site that can claim
+			// a "TUP:" box has to give the element retains back.
+			//
+			// This is most real code: any use of the tuple other than in the
+			// final return reaches it.
+			name: "last_use_before_return",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    var acc: i32 = t.1[0];
+    return acc;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 53,
+		},
+		{
+			// The same path reached through a SCALAR element read. Nothing about
+			// the tuple's own use is rc-relevant here — it is purely that `t` is
+			// mentioned before the last statement — which is what rules out the
+			// extraction gate as the cause and pins it on the drop site.
+			name: "last_use_scalar_read",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    var acc: i32 = t.0;
+    return acc;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 53,
+		},
+		{
+			// Two same-named tuple locals in SIBLING BLOCKS, retaining at
+			// DIFFERENT positions. The kinds registry is keyed on the SLOT for
+			// this case: tagged_value_of returns the first entry matching a key,
+			// so a name key would hand block A's ".a" to block B's slot and
+			// release position 1 of a tuple that retained position 0 — measured
+			// as a 4000-byte strand before the key changed, and a live-buffer
+			// release waiting to happen once the positions disagree about what is
+			// owned.
+			name: "same_name_sibling_blocks",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var acc: i32 = 0;
+    { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    { var t: (i32[], i32) = (xs, i); acc = acc + t.0[1]; }
+    return acc;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 40,
+		},
+		{
 			// The tuple is built only on one branch, so on the other the slot still
 			// holds its entry zero when the sweep runs. __fern_rc_dec null-guards the
 			// box; op_tuple_get would dereference. A missing guard here is a segfault,
@@ -114,6 +170,88 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 43,
 		},
+	}
+}
+
+// TestSelfHostTupleIdentElemExtractionHazardX86_64 — a tuple whose owned-pointer
+// element is EXTRACTED must not earn the element release.
+//
+// `return t.1` / `var u = t.1` hands the element's reference to a new owner, so
+// releasing it at the tuple's scope exit releases a reference the frame no longer
+// holds. The escaping form witnessed this as **exit 99** (rc underflow) against 40
+// on native and interp alike; the fix is the same `rctuple_payload_escapes` gate
+// the "TUPRC:" class has always applied, for the reason its own comment gives —
+// "leaving a live alias to over-release".
+//
+// Each probe ends with an explicit `__rc_underflow()` check, and that is the
+// load-bearing part: WITHOUT it both cases pass on a compiler that over-releases,
+// because a doubly-released block goes back to the freelist and the arithmetic
+// still comes out at 40. The first version of this test was vacuous for exactly
+// that reason. The counter is the only thing that separates the two readings.
+//
+// These assert the ANSWER, not leak counts, and deliberately so: the local form
+// falls back to leak-mode under the gate (a bare pointer extraction is refused
+// whether or not it leaves the frame), which is the safe direction and the same
+// trade "TUPRC:" makes. A wrongly-granted credit here is a wrong answer or a
+// crash, not a number.
+//
+// Both wants came from bin/fern -interp and the native x86-64 backend agreeing.
+func TestSelfHostTupleIdentElemExtractionHazardX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// THE over-release. The extracted element leaves the frame and the
+			// caller binds it to an exit-swept slot, so a release here is the
+			// second claim on one reference. The decoy allocation recycles the
+			// freed block, so a surviving bug corrupts the value as well as
+			// tripping the counter.
+			name: "elem_extracted_escaping",
+			src: `function grab(i: i32): i32[] {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    return t.1;
+}
+function decoy(n: i32): i32[] { return [n * 7, n * 11, n * 13]; }
+function round(i: i32): i32 {
+    var u: i32[] = grab(i);
+    var d: i32[] = decoy(i);
+    if (d[0] < 0) { return 0; }
+    return u[0] + u[1];
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 40,
+		},
+		{
+			// The same extraction without leaving the frame. Refused too — the
+			// gate is about a second owner existing, not about where it lives.
+			name: "elem_extracted_local",
+			src: `function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32, i32[]) = (i, xs);
+    var u: i32[] = t.1;
+    return u[0] + u[1];
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+			want: 40,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			progBin := buildBin(t, gcc, dir, "tupextract_"+tc.name, asm)
+			_, exit := hevRun(t, runner, progBin)
+			if exit != tc.want {
+				t.Errorf("%s exited %d, want %d (99 = rc underflow: the element release "+
+					"claimed a reference the frame handed to another owner)", tc.name, exit, tc.want)
+			}
+		})
 	}
 }
 

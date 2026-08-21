@@ -1823,18 +1823,27 @@ pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
 }
 
 // add_tup_elem_kinds (#7226): record a "TUP:" tuple local's per-element rc kinds
-// ("<name>|<kinds>", one char per position: '.' nothing to release, 'a' an rc
+// ("<slot>|<kinds>", one char per position: '.' nothing to release, 'a' an rc
 // container the construction retain inc'd). Written by bind_var_slot from the
 // SAME slot_is_rc_container test that decides the retain, on the same slots, so
 // the retain and the release it owes cannot drift apart.
+//
+// Keyed on the SLOT, not the name, unlike its clo_cap_kinds model. tagged_value_of
+// returns the FIRST entry matching a key, and two same-named tuple locals in
+// sibling blocks are two slots under one name — so a name key hands one block's
+// kinds to the other block's slot, and a position the second tuple never retained
+// gets released. Witnessed as exit 99 on sibling blocks binding `t` to
+// `(i, xs)` and `(i, [i+7, i+9])`, in either order. Slot indices are assigned by
+// add_local and never renumbered, and unlike a name they survive retire_locals'
+// block-exit rename.
 pub function (s: LowerState) add_tup_elem_kinds(entry: string): LowerState {
     return LowerState { ...s, reclaimable_names: s.reclaimable_names.append("TUPELEM:" + entry) };
 }
 
-// tup_elem_kinds_of returns the registered element-kinds string for tuple local
-// `name` ("" when the tuple retained nothing).
-pub function (s: LowerState) tup_elem_kinds_of(name: string): string {
-    return tagged_value_of(s.reclaimable_names, "TUPELEM:", name);
+// tup_elem_kinds_of returns the registered element-kinds string for the tuple in
+// slot `i` ("" when that tuple retained nothing).
+pub function (s: LowerState) tup_elem_kinds_of(i: i32): string {
+    return tagged_value_of(s.reclaimable_names, "TUPELEM:", util.i32_to_string(i));
 }
 
 // clo_rc_approved reports whether lower_func approved `name` for capture RC
@@ -17673,7 +17682,8 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // is escape-flagged by expr_unsafe_for and so earns no "STR:" credit, which
     // means releasing it here would balance the tuple's ref while the local's own
     // box still never reaches 0 — a credit-side gap, not a release-side one.
-    if (sb.tuple_elem_tag(slot, 0).len() > 0) {
+    if (sb.tuple_elem_tag(slot, 0).len() > 0
+        && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", v.name)) {
         match (v.init) {
             parser.ExprTuple(tinit) => {
                 var tk: string = "";
@@ -17694,7 +17704,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                     tk = tk + kc;
                     tki = tki + 1;
                 }
-                if (tkany) { sb = sb.add_tup_elem_kinds(v.name + "|" + tk); }
+                if (tkany) { sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + tk); }
             },
             _ => {}
         }
@@ -17928,7 +17938,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // reclaim store, so the rebind gives those retains back with the box it
     // supersedes (#7226). alias_inc never co-occurs — the credit is for a fresh
     // tuple literal, which is a move, not an alias.
-    var vtek: string = sb.tup_elem_kinds_of(v.name);
+    var vtek: string = sb.tup_elem_kinds_of(slot);
     if (vtek.len() > 0 && !vt.alias_inc && slot_is_reclaimable_tuple(sb, slot)) {
         return emit_tup_elem_reclaim_store(sb, slot, vtek);
     }
@@ -24388,7 +24398,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // Under a null guard: the box dec below tolerates a zeroed
             // (untaken-branch) slot because __fern_rc_dec null-guards, but
             // tuple_get dereferences.
-            st = emit_tup_elem_releases(st, tj, st.tup_elem_kinds_of(reclaim_slot_name(st, tj)));
+            st = emit_tup_elem_releases(st, tj, st.tup_elem_kinds_of(tj));
             st = st.emit(ir.op_load_local(tj));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -31661,6 +31671,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
                 && all_assigns_fresh_scalar_tuple(body, tups[ti],
                         scalar_tuple_decl_ann_all_scalar(body, tups[ti]))) {
                 out = out.append("TUPREBIND:" + tups[ti]);
+            }
+            // The bare-ident element release (#7226) needs the owned-pointer-element
+            // extraction gate the "TUPRC:" class below applies, for exactly the reason
+            // its comment gives: `return t.1` / `var u = t.1` hands the element's
+            // reference to a NEW owner, so releasing it here over-releases it (witnessed
+            // as exit 99 on the escaping form). A scalar read `t.0`, an indexed read
+            // `t.1[j]` and their `.len()` stay borrows and keep the credit.
+            //
+            // The annotation is REQUIRED rather than skipped-when-absent: without a
+            // tuple type there is no way to tell a scalar element copy from a pointer
+            // extraction, and the wrong guess here is an over-release. An un-annotated
+            // tuple keeps "TUP:" and simply does not earn the element release.
+            var tupelemty: string = rctuple_type_of_decl(body, tups[ti]);
+            if (tupelemty != "" && !rctuple_payload_escapes(body, tups[ti], tupelemty, structs)) {
+                out = out.append("TUPELEMOK:" + tups[ti]);
             }
         }
         ti = ti + 1;
@@ -45538,14 +45563,22 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                     s = s.emit(ir.op_store_local(dslot));
                 } else if (dslot >= s.n_params && slot_is_reclaimable_tuple(s, dslot)
                         && util.index_of_str(xtuple.donors, pdrops.names[pi]) < 0) {
-                    // Fresh scalar tuple local, last-used at statement j: free its box
-                    // now (shallow __fern_rc_dec — the scalar-literal gate means no rc
-                    // element to walk) and zero the slot, so the exit sweep's tuple
-                    // loop decs a guarded null. The tuple sibling of the struct precise
-                    // drop above. Skipped when the tuple is a tuple cross-reuse DONOR
-                    // (xtuple.donors): emit_cross_tuple_reuse recycles its box for the
-                    // recipient, so freeing it here would race that reuse (a
-                    // double-free / write-to-freed box — the UAF this guard prevents).
+                    // Fresh scalar tuple local, last-used at statement j: give back any
+                    // element retains, free its box, and zero the slot, so the exit
+                    // sweep's tuple loop decs a guarded null. The tuple sibling of the
+                    // struct precise drop above. Skipped when the tuple is a tuple
+                    // cross-reuse DONOR (xtuple.donors): emit_cross_tuple_reuse recycles
+                    // its box for the recipient, so freeing it here would race that
+                    // reuse (a double-free / write-to-freed box — the UAF this guard
+                    // prevents).
+                    //
+                    // The element release is not optional here, and this branch is why
+                    // the #7226 retain looked like it barely worked: this drop and the
+                    // exit sweep are alternatives, not a sequence — it ZEROES the slot,
+                    // so the sweep that does know about element retains then finds null
+                    // and releases nothing. It fires whenever the tuple's last mention
+                    // is not the final statement, which is most code.
+                    s = emit_tup_elem_releases(s, dslot, s.tup_elem_kinds_of(dslot));
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
