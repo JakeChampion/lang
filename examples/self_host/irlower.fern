@@ -23305,7 +23305,12 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // DISPROVEN — with the marker visible, granting the deep drop still segfaults.
 function slot_nodeep(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
-    return reclaim_has(s.reclaimable_names, "NODEEP:", reclaim_slot_name(s, i));
+    // Keyed on the binding SITE, like the credit it qualifies (#7253): the marker
+    // is derived from the same entry, so the two move together. A slot with no
+    // recorded site answers false — which for THIS marker is the unsafe
+    // direction (it withholds a deep drop), so the producers that bind a struct
+    // slot outside bind_var_slot record their site rather than relying on it.
+    return reclaim_has(s.reclaimable_names, "NODEEP:", s.reclaim_site_key(i));
 }
 
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
@@ -24609,7 +24614,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         var scoped_credit: boolean = !live_credit && slot_is_reclaimable_struct_scoped(st, j);
         // A scoped slot deep-drops only when the move scan could type-check it.
         var scoped_deep_ok: boolean = scoped_credit
-            && reclaim_has(st.reclaimable_names, "FLDCHECKED:", reclaim_slot_name(st, j));
+            && reclaim_has(st.reclaimable_names, "FLDCHECKED:", st.reclaim_site_key(j));
         if (!slot_list_has(keeps, j) && (live_credit || scoped_credit)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
@@ -25436,12 +25441,12 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         }
         if (soi >= 0) {
             match (stmts[i]) {
-                parser.StmtVar(rv) => { st = emit_self_overwrite_reuse(rv.name, rv.init, so.bases[soi], true, st); },
+                parser.StmtVar(rv) => { st = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, so.bases[soi], true, st); },
                 _ => { st = lower_stmt(stmts[i], st); },
             }
         } else if (xri >= 0) {
             match (stmts[i]) {
-                parser.StmtVar(rv) => { st = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xri], xreuse.dtypes[xri], true, st); },
+                parser.StmtVar(rv) => { st = emit_cross_struct_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xreuse.donors[xri], xreuse.dtypes[xri], true, st); },
                 _ => { st = lower_stmt(stmts[i], st); },
             }
         } else if (xti >= 0) {
@@ -25492,7 +25497,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 match (stmts[i]) {
                     parser.StmtVar(rv) => {
                         match (rv.init) {
-                            parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd_name, xbd_type, true, st); },
+                            parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xbd_name, xbd_type, true, st); },
                             parser.ExprTuple(tup) => {
                                 if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xbd_name, true, st); }
                                 else { st = lower_stmt(stmts[i], st); }
@@ -26673,8 +26678,11 @@ function is_fresh_struct_init(e: parser.Expr, structs: parser.StructDecl[]): boo
     }
 }
 
-// collect_fresh_struct_names gathers every var-name bound from a fresh struct
-// literal, recursing through nested blocks.
+// collect_fresh_struct_names gathers every local bound from a fresh struct
+// literal, recursing through nested blocks. Entries are BINDING-SITE keys
+// ("name@line:col", #7253 step 1) — two `var s` in sibling blocks are two slots
+// under one name, and the struct credit is the one class where letting them
+// share a verdict frees a live box rather than merely leaking.
 function collect_fresh_struct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -26685,7 +26693,7 @@ function collect_fresh_struct_names(stmts: parser.Stmt[], structs: parser.Struct
 function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (is_fresh_struct_init(v.init, structs)) { return push_str_unique(acc, v.name); }
+            if (is_fresh_struct_init(v.init, structs)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         parser.StmtIf(iff) => {
@@ -29689,7 +29697,7 @@ function collect_fresh_ret_call_names(stmts: parser.Stmt[], structs: parser.Stru
                     && util.index_of_str(reassigned, v.name) < 0
                     && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, structs, fresh_ret, reassigned, a); a = collect_fresh_ret_call_names(f.else_body, structs, fresh_ret, reassigned, a); },
@@ -31922,9 +31930,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // recv_borrow_escapes_via_result. Without that gate `keep = b.me()`
         // left `keep` on b's own box and b's per-rebind reclaim freed it
         // underneath, which is an over-release rather than a leak.
-        if (!body_unsafe_for(body, fresh[i], borrowable, recv_borrow) && !reassigned_from_alias(body, fresh[i])
-            && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fresh[i], structs), body, fresh[i], borrowable)
-            && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fresh[i]), body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
+        // `fresh` holds BINDING-SITE keys; every gate below asks about the
+        // VARIABLE, so each takes the bare name back out of the key.
+        var fnm: string = reclaim_site_name(fresh[i]);
+        if (!body_unsafe_for(body, fnm, borrowable, recv_borrow) && !reassigned_from_alias(body, fnm)
+            && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
+            && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) { out = out.append(fresh[i]); }
         i = i + 1;
     }
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
@@ -31957,13 +31968,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // keeps the deep drop that releases its string / array fields. Keyed on
         // the declared type as well as the literal one, since a local bound from
         // a call has no struct-literal init to read a type off.
-        var mvty: string = fresh_struct_lit_type_deep(body, out[mvi]);
+        // The markers are keyed on whatever `out[mvi]` is — a binding-SITE key
+        // since #7253 — so they follow the credit they qualify. The body walks
+        // below all take a NAME.
+        var mvnmk: string = reclaim_site_name(out[mvi]);
+        var mvty: string = fresh_struct_lit_type_deep(body, mvnmk);
         var mvsty: string = mvty;
-        if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
+        if (mvsty == "") { mvsty = declared_struct_type_of(body, mvnmk, structs); }
         var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
-        mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, out[mvi], borrowable));
+        mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, mvnmk, borrowable));
         if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
-        var mv_moves: boolean = moves_fields_stmts(body, out[mvi], mvnm);
+        var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm);
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
         // receiver use does, and moves_fields_expr cannot see it: its
         // ExprFieldAccess arm only recurses into the object, and a bare ExprIdent
@@ -31978,7 +31993,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // reporting every field read and exempting borrows — see its header for why
         // that polarity matters. Only when the local's struct type is known, so an
         // untyped local keeps its prior verdict exactly.
-        if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs, borrowable)) { mv_moves = true; }
+        if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, mvnmk, mvsty, structs, borrowable)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
         // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
         // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
@@ -33825,7 +33840,7 @@ function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs:
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
                     && struct_has_reclaim_array_field(structs, v.type_name)
                     && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [])) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
@@ -36777,10 +36792,17 @@ function emit_opt_struct_payload_drop(s: LowerState, slot: i32, sty: string): Lo
 }
 
 // slot_is_reclaimable_struct: slot i holds a reclaimable struct — a non-param
-// struct slot whose name was proven fresh + non-escaping. Such a box is the sole
-// reference (rc=1) and outlives nothing, so a shallow rc-dec at scope exit /
+// struct slot whose BINDING was proven fresh + non-escaping. Such a box is the
+// sole reference (rc=1) and outlives nothing, so a shallow rc-dec at scope exit /
 // loop-rebind frees it safely. Scalar/leak-safe fields mean no rc-tracked field
 // dangles (strings / inner arrays leak, as everywhere on this path).
+//
+// Keyed on the binding SITE (#7253 step 1), not the name. This class is the one
+// where a shared verdict is not a leak: two `var v` in sibling blocks, one bound
+// from a fresh producer and one aliasing a param, are two slots under one name,
+// and the name lookup hands the alias the fresh one's credit — freeing the
+// caller's box under a live reference. Witnessed as a SIGSEGV rather than an rc
+// underflow, and the same program with the second local renamed is correct.
 function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
@@ -36790,15 +36812,39 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     // it is released by the dedicated DYN sweep loop (#4351), never here
     // (double-firing both loops over-released the concrete's box).
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
-    return util.index_of_str(s.reclaimable_names, s.locals[i].slot_name) >= 0;
+    // A RETIRED slot stays refused here, and that refusal has to be written out
+    // now that the key is not the name. The old lookup was an exact `slot_name`
+    // compare, so retire_locals' block-exit rename hid a block-scoped slot from
+    // it for free; a site key survives that rename, so resolving it alone would
+    // newly credit those slots. That is not a re-key, it is the flip
+    // reclaim_slot_name's class note records as segfaulting the gen1
+    // self-compile — the scoped sibling below is where it is asked for.
+    if (slot_name_retired(s.locals[i].slot_name)) { return false; }
+    return slot_struct_credit_at(s, i);
 }
 
-// slot_is_reclaimable_struct_scoped: slot_is_reclaimable_struct with the
-// RETIRED-name lookup (#6127) — the credit is keyed on the source name, and a
-// BLOCK-SCOPED local's slot_name carries the "!retired!" prefix once its block
-// ends, so the exact-match lookup above misses it and a struct declared inside a
-// `while` body is never swept. Measured 8800 bytes over 100 rounds on a
-// `S { xs: i32[], n: i32 }` declared in a loop, against 0 on native.
+// slot_struct_credit_at: the credit lookup both struct predicates share. A slot
+// with NO recorded site resolves nothing — deliberately, and this is the half a
+// missed producer lands on: it denies the credit (a leak) rather than matching
+// an empty entry, which is the safe direction and the one the emit-hash gate
+// makes loud.
+function slot_struct_credit_at(s: LowerState, i: i32): boolean {
+    var site: string = s.reclaim_site_key(i);
+    if (site.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, site) >= 0;
+}
+
+// slot_is_reclaimable_struct_scoped: slot_is_reclaimable_struct WITHOUT its
+// retirement refusal (#6127). retire_locals renames a block-scoped local on block
+// exit, and the sibling above still declines a renamed slot, so a struct declared
+// inside a `while` body is never swept by it. Measured 8800 bytes over 100 rounds
+// on a `S { xs: i32[], n: i32 }` declared in a loop, against 0 on native.
+//
+// The two differ only in that refusal now. Before #7253 the credit was keyed on
+// the NAME and this variant reached a retired slot by stripping the prefix
+// (reclaim_slot_name); the site key is carried on the SLOT and survives the
+// rename by itself, so what used to be an extra lookup step is now the plain
+// lookup and the strictness lives in the sibling.
 //
 // #6285 gave nine other classes this lookup by switching it inside their shared
 // predicate. That is exactly what must NOT happen here: slot_is_reclaimable_struct
@@ -36822,7 +36868,7 @@ function slot_is_reclaimable_struct_scoped(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
-    return util.index_of_str(s.reclaimable_names, reclaim_slot_name(s, i)) >= 0;
+    return slot_struct_credit_at(s, i);
 }
 
 // slot_is_reclaimable_tuple: slot `i` is a fresh, non-escaping SCALAR-tuple local
@@ -41958,7 +42004,7 @@ function lower_stmt_or_self_assign_reuse(st: parser.Stmt, s: LowerState): LowerS
                 match (a.value) {
                     parser.ExprStructLit(slit) => {
                         if (sa_is_self_update(a.value, a.target, slit.type_name)) {
-                            return emit_self_overwrite_reuse(a.target, a.value, a.target, false, s);
+                            return emit_self_overwrite_reuse(a.target, "", a.value, a.target, false, s);
                         }
                     },
                     _ => {}
@@ -42000,7 +42046,7 @@ function lower_stmt_or_self_assign_reuse(st: parser.Stmt, s: LowerState): LowerS
 // roles, so c binds no new local and step 5's donor zeroing is skipped. Step 1
 // is what makes it work at all — an override that reads p (`n: p.n + 1`) has
 // already been evaluated into its temp before the box is touched.
-function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
+function emit_self_overwrite_reuse(c_name: string, c_site: string, init: parser.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(base_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -42037,6 +42083,11 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
             var self_assign: boolean = c_name == base_name;
             if (!self_assign) { st = st.add_local(c_name); }
             var cslot: i32 = st.slot_of(c_name);
+            // As in emit_cross_struct_reuse: this path binds the recipient without
+            // bind_var_slot, so it records the binding-SITE key itself (#7253). A
+            // self-assign reuses the EXISTING slot, which already carries its own
+            // site — hence the empty key there, and the guard that keeps it.
+            if (c_site.len() > 0) { st = st.mark_reclaim_site(cslot, c_site); }
             st = st.mark_struct_type(cslot, slit.type_name);
             // Loop body: free the recipient's prior (previous-iteration) box first —
             // only when the recipient is a RECLAIMABLE (non-escaping) local (an
@@ -42643,7 +42694,7 @@ function emit_reuse_recip_prior_release(s: LowerState, cslot: i32, dslot: i32): 
 // null for d. When `release_prior` (the loop-body path), the recipient's
 // prior loop-carried box is released before any of this
 // (emit_reuse_recip_prior_release).
-function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: string, donor_type: string, release_prior: boolean, s: LowerState): LowerState {
+function emit_cross_struct_reuse(c_name: string, c_site: string, init: parser.Expr, donor_name: string, donor_type: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -42651,8 +42702,13 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
             var st: LowerState = s;
             var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
             // Bind c's slot up front — both guard arms store the result box there.
+            // The binding-SITE key goes on before anything reads a class credit off
+            // the slot (#7253): this path binds the recipient itself rather than
+            // going through bind_var_slot, and a siteless slot resolves no credit —
+            // silently, as a leak. The same gap #7272 hit on the tuple sibling.
             st = st.add_local(c_name);
             var cslot: i32 = st.slot_of(c_name);
+            if (c_site.len() > 0) { st = st.mark_reclaim_site(cslot, c_site); }
             st = st.mark_struct_type(cslot, slit.type_name);
             // Loop body: free the recipient's prior (previous-iteration) box first —
             // only when the recipient is a RECLAIMABLE (non-escaping) local (an
@@ -45388,7 +45444,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     while (snj < snaps.len()) { reclaim = reclaim.append("SNAP:" + snaps[snj]); snj = snj + 1; }
     // Snapshot-LOCAL reclaim (#3457): fresh-ret-bound struct LOCALS threaded +
     // moved out (`var st = se.emit(op); st = st.emit(..); return st`). Added as
-    // PLAIN names so slot_is_reclaimable_struct fires — each rebind reclaims via
+    // BINDING-SITE keys so slot_is_reclaimable_struct fires — this is the SECOND
+    // producer of that credit, in a different function from the first, and a key
+    // migration has to enumerate producers rather than callers (#7292's lesson:
+    // a writer need not be a caller of the thing being changed). Each rebind
+    // reclaims via
     // the StmtAssign emit_field_reclaim_store path (snap = 0) and the moved-out
     // final is kept by the struct move-on-return in StmtReturn. Sound because the
     // binding is a FRESH-struct-returning call (st owns a fresh box, not an alias
@@ -45396,6 +45456,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params);
     var sli: i32 = 0;
     while (sli < snap_locals.len()) {
+        // Key-to-key against the credits reclaimable_names_of already published,
+        // and the comparison gets SHARPER for it: two same-named bindings no
+        // longer collapse into one another.
         if (util.index_of_str(reclaim, snap_locals[sli]) < 0) {
             reclaim = reclaim.append(snap_locals[sli]);
             // Same "NODEEP:" marking reclaimable_names_of applies to its own
@@ -45407,7 +45470,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             // chain (`var st = se.emit(op); st = st.emit(..); return st`) stays
             // unmarked — self-rebinds are exempt and a bare `return st` is a
             // read — so its rebind field-reclaim and deep sweep both survive.
-            if (moves_fields_stmts(fn.body, snap_locals[sli], [])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
+            if (moves_fields_stmts(fn.body, reclaim_site_name(snap_locals[sli]), [])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
         }
         sli = sli + 1;
     }
@@ -45915,26 +45978,26 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             }
         } else if (reuse_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], false, s); },
+                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, reuse.bases[reuse_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xreuse_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], xreuse.dtypes[xreuse_i], false, s); },
+                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xreuse.donors[xreuse_i], xreuse.dtypes[xreuse_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (ownxr_i >= 0) {
             // Own-param struct donor (#4356 divergence 3): same emitter as the
             // cross-local donor — the donor name resolves to a param slot.
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, ownxr.donors[ownxr_i], ownxr.dtypes[ownxr_i], false, s); },
+                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, ownxr.donors[ownxr_i], ownxr.dtypes[ownxr_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (ownso_i >= 0) {
             // Own-param functional-update base (#4356 slice 12): same emitter as a
             // fresh-literal self-overwrite base — the base name resolves to a param slot.
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, ownso.bases[ownso_i], false, s); },
+                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, ownso.bases[ownso_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xtuple_i >= 0) {
