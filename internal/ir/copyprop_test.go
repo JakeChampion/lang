@@ -183,3 +183,58 @@ func TestPropagateCopiesDeadDynStoreDropsBothWords(t *testing.T) {
 	}
 	t.Errorf("expected either the store or a wide drop to remain:\n%s", p)
 }
+
+// The two-word string ABI is not "wasm32 only": `ast.TwoWordOverride`
+// opts arm64 (ptrW 8) into it, and there a dead store to a string slot
+// consumed two operand values. Rewriting it to a one-word drop leaves
+// half the value parked on the machine stack — #7303, where the arm64
+// emitter pushed the low word of a match arm's unread `string` binding
+// and only the epilogue's `mov sp, x29` swept it up.
+func TestPropagateCopiesDeadStringStoreDropsBothWordsOnArm64(t *testing.T) {
+	newFn := func() *Func {
+		return &Func{
+			Name:   "f",
+			Locals: []*ast.Var{{Name: "s", Type: ast.StringType{}}},
+			Ops: []Op{
+				{Kind: OpConstI32, I32: 0},
+				{Kind: OpConstI32, I32: 0},
+				{Kind: OpStoreLocal, I32: 0}, // dead: slot 0 is never read
+				{Kind: OpReturnVoid},
+			},
+		}
+	}
+	dropWidth := func(t *testing.T, p *Program) (int, bool) {
+		t.Helper()
+		for _, op := range p.Funcs[0].Ops {
+			if op.Kind == OpDrop {
+				return op.Width, true
+			}
+		}
+		return 0, false
+	}
+
+	prev := ast.TwoWordOverride
+	defer func() { ast.TwoWordOverride = prev }()
+
+	ast.TwoWordOverride = true
+	two := &Program{Funcs: []*Func{newFn()}, PtrW: 8}
+	PropagateCopies(two)
+	w, ok := dropWidth(t, two)
+	if !ok {
+		t.Fatalf("dead string store should have become OpDrop:\n%s", two)
+	}
+	if w != WidthString {
+		t.Errorf("two-word target rewrote the dead string store to a one-word drop (Width=%d) — half the operand stays on the stack:\n%s", w, two)
+	}
+
+	ast.TwoWordOverride = false
+	one := &Program{Funcs: []*Func{newFn()}, PtrW: 8}
+	PropagateCopies(one)
+	w, ok = dropWidth(t, one)
+	if !ok {
+		t.Fatalf("dead string store should have become OpDrop:\n%s", one)
+	}
+	if w == WidthString {
+		t.Errorf("one-word-string target rewrote the dead string store to a two-word drop — it would pop an operand that was never pushed:\n%s", one)
+	}
+}

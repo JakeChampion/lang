@@ -1990,7 +1990,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push() // payload (unused for None)
 
 	case ir.OpDrop:
-		// Skip the top operand-stack slot.
+		// Skip the top operand-stack slot. One slot is always right
+		// here: x86-64 never opts into the two-word string ABI (it
+		// leaves `ast.TwoWordOverride` alone), so nothing on this
+		// backend's operand stack occupies two slots and no OpDrop
+		// reaching it carries `WidthString`. arm64, which does opt
+		// in, has to read the width — see its OpDrop and #7303.
 		g.rspFree(slotBytes)
 
 	// -------- arithmetic --------

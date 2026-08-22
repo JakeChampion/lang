@@ -10717,13 +10717,14 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// function falls off the end without an explicit return
 	// (e.g. void functions), we land here naturally.
 	//
-	// `mov sp, x29` restores sp to the saved-pair address
-	// regardless of how the operand stack ended up — robust
-	// to void-call leaks where OpCallDirect always pushes
-	// x0 even when the function returns nothing. Without
-	// the fp-based unwind, leaked operand-stack pushes leave
-	// sp below where the prologue put it, and the `ldp`
-	// loads garbage as fp/lr → ret to a bad address → SEGV.
+	// `mov sp, x29` releases the locals frame: sp goes back to
+	// the saved-pair address so the `ldp` below reads fp/lr and
+	// not a local. Restoring sp from x29 rather than adding
+	// localsSize back also absorbs anything the operand stack
+	// still holds, which MASKS a stack-discipline break instead
+	// of crashing on it (#7303). Nothing observable here can
+	// catch that; `TestOperandStackBalancedAcrossTwoWordDiscard`
+	// checks the balance on the emitted text instead.
 	g.label(retLabel)
 	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
