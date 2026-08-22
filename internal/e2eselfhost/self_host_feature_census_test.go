@@ -355,8 +355,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Every one is astwalk's fold spine. It is the only generic code the self-host compiles, so it is the only monomorphisation the fixpoint exercises.")
 	pinned(t, c, "generic structs", 0,
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions.")
-	pinned(t, c, "arrow lambdas", 2,
-		"Both are astwalk's no-op statement visitors. They are the whole of the self-host's arrow-lambda coverage.")
+	pinned(t, c, "arrow lambdas", 5,
+		"Two are astwalk's no-op statement visitors; the other three are constfold's assert probe, the first arrow lambdas here that compute rather than return the accumulator untouched.")
 	pinned(t, c, "anonymous function exprs", 4,
 		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the nested named fns are the self-host's only closures.")
 	pinned(t, c, "nested named fns", 4,
