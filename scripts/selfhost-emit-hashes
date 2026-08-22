@@ -17,7 +17,7 @@
 # structurally blind to a stable miscompile. Comparing emitted bytes over a
 # broad corpus is the check that actually bites.
 #
-#   usage: scripts/selfhost-emit-hashes <compiler-binary> <output-file>
+#   usage: scripts/selfhost-emit-hashes [--ssa] <compiler-binary> <output-file>
 #
 #   make selfhost-cli
 #   cp bin/fern-selfhost /tmp/before          # on the base commit
@@ -26,16 +26,45 @@
 #   scripts/selfhost-emit-hashes bin/fern-selfhost /tmp/hashes-after.txt
 #   diff /tmp/hashes-before.txt /tmp/hashes-after.txt && echo PURE
 #
-# Runs ~8 minutes for ~1000 (fixture, target) pairs. Fixtures the compiler
-# refuses are recorded as FAILED rather than skipped, so a refactor that
-# changes WHICH programs compile shows up as a diff too.
+# Runs ~28 minutes for the 1491 (fixture, target) pairs (measured 2026-08-22 on
+# a 4-core dev container; the header said ~8 for a smaller corpus). Fixtures the
+# compiler refuses are recorded as FAILED rather than skipped, so a refactor
+# that changes WHICH programs compile shows up as a diff too.
+#
+# --ssa gates the SSA backends (ssa_arm64 / ssa_x86 / ssa_wasm) instead, which
+# the default sweep NEVER REACHES: the SSA pipeline is opt-in behind `-ssa`
+# (fern.fern), so every row above comes from the IR emitters. Passing `-ssa`
+# alone is not enough either — `try_ssa` is all-or-nothing and FALLS THROUGH to
+# the IR path for any program outside the SSA subset, silently. Hashing that
+# output would produce a file where most rows are IR bytes, identical across
+# any SSA-backend change, and the gate would report PURE for a broken one.
+#
+# So --ssa emits each case BOTH ways and classifies the row by whether they
+# differ:
+#
+#   <sha>        the SSA backend emitted this one — the rows that gate
+#   IR-FALLBACK  `-ssa` produced the same bytes as the IR path; not covered
+#   FAILED       `-ssa` refused the case
+#
+# It costs twice the emits — ~55 minutes — and about a third of the corpus lands
+# in the gating class. Both counts are printed, and a run whose gating class is
+# too small to be evidence is refused rather than reported.
+#
+# --ssa emits `-emit asm`, not the default binary form, because that is where
+# all three SSA backends produce their own text. The binary forms would hide
+# most of them: wasm has no SSA consumer at all and always takes the IR path.
 
 set -u
 
+SSA=0
+if [ "${1:-}" = "--ssa" ]; then
+    SSA=1
+    shift
+fi
 BIN="${1:-}"
 OUT="${2:-}"
 if [ -z "$BIN" ] || [ -z "$OUT" ]; then
-    echo "usage: $0 <compiler-binary> <output-file>" >&2
+    echo "usage: $0 [--ssa] <compiler-binary> <output-file>" >&2
     exit 2
 fi
 if [ ! -x "$BIN" ]; then
@@ -58,7 +87,20 @@ trap 'rm -rf "$TMP"' EXIT
 for f in $(find "$CASES" -name '*.fern' | sort); do
     for tgt in x86-64-linux arm64-linux wasm32-wasi; do
         o="$TMP/out"
-        if "$BIN" -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
+        if [ "$SSA" -eq 1 ]; then
+            ir="$TMP/ir"
+            "$BIN" -emit asm -target "$tgt" "$f" "$STD" -o "$ir" >/dev/null 2>&1 || : > "$ir"
+            if "$BIN" -ssa -emit asm -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
+                if cmp -s "$o" "$ir"; then
+                    printf 'IR-FALLBACK%053d  %s  %s\n' 0 "$tgt" "${f#"$CASES"/}" >> "$OUT"
+                else
+                    printf '%s  %s  %s\n' "$(sha256sum < "$o" | cut -d' ' -f1)" "$tgt" "${f#"$CASES"/}" >> "$OUT"
+                fi
+            else
+                printf 'FAILED%058d  %s  %s\n' 0 "$tgt" "${f#"$CASES"/}" >> "$OUT"
+            fi
+            rm -f "$ir"
+        elif "$BIN" -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
             printf '%s  %s  %s\n' "$(sha256sum < "$o" | cut -d' ' -f1)" "$tgt" "${f#"$CASES"/}" >> "$OUT"
         else
             printf 'FAILED%058d  %s  %s\n' 0 "$tgt" "${f#"$CASES"/}" >> "$OUT"
@@ -67,17 +109,36 @@ for f in $(find "$CASES" -name '*.fern' | sort); do
     done
 done
 
-ok=$(grep -vc '^FAILED' "$OUT" || true)
+ok=$(grep -vc -e '^FAILED' -e '^IR-FALLBACK' "$OUT" || true)
 bad=$(grep -c '^FAILED' "$OUT" || true)
-echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted, $bad refused)"
+if [ "$SSA" -eq 1 ]; then
+    fell=$(grep -c '^IR-FALLBACK' "$OUT" || true)
+    echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted by the SSA backends," \
+         "$fell fell through to the IR path, $bad refused)"
+else
+    echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted, $bad refused)"
+fi
 
-# A run where NOTHING emitted is indistinguishable from a pure refactor: both
-# sides of the diff are all-FAILED, so the comparison reports PURE for any
-# change at all. That is how a wrong -target spelling made this gate vacuous
-# rather than red. Refuse to produce such a file.
-if [ "$ok" -eq 0 ]; then
-    echo "$0: every case refused — the gate would compare all-FAILED against" >&2
-    echo "  all-FAILED and call any refactor pure. Check that $BIN runs and" >&2
-    echo "  that the -target spellings above are ones it accepts." >&2
+# A run where nothing landed in the gating class is indistinguishable from a
+# pure refactor: both sides of the diff carry the same placeholders, so the
+# comparison reports PURE for any change at all. That is how a wrong -target
+# spelling made this gate vacuous rather than red. Under --ssa the same trap
+# is reachable with a NON-zero count, because every IR-FALLBACK row is
+# insensitive to an SSA-backend change by construction — so require enough
+# real rows to be evidence, not merely one.
+MIN=1
+if [ "$SSA" -eq 1 ]; then
+    MIN=100
+fi
+if [ "$ok" -lt "$MIN" ]; then
+    echo "$0: only $ok row(s) in the gating class, need $MIN — the comparison" >&2
+    echo "  would be between placeholders and would call any refactor pure." >&2
+    if [ "$SSA" -eq 1 ]; then
+        echo "  Under --ssa this usually means try_ssa is falling through for" >&2
+        echo "  everything; check that $BIN accepts -ssa." >&2
+    else
+        echo "  Check that $BIN runs and that the -target spellings above are" >&2
+        echo "  ones it accepts." >&2
+    fi
     exit 1
 fi
