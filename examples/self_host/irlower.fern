@@ -69,6 +69,14 @@ pub struct LocalInfo {
     // (sfrrecv_chain_root_slot resolves the root). Such a result is releasable
     // only behind a guard that the two are different pointers.
     str_identity_src: i32,
+    // reclaim_site: the BINDING-SITE key ("name@line:col") of the `var` that
+    // created this slot, or "" for a slot no StmtVar bound (a param, a temporary,
+    // a loop variable). The tuple class credits are keyed on it rather than on the
+    // name, so two same-named tuple locals in sibling blocks resolve to their own
+    // credit instead of sharing one — #7272, where sharing handed one slot both
+    // the "TUP:" shallow dec and the "TUPRCS:" deep free and released its box
+    // twice. Unlike the name it also survives retire_locals' block-exit rename.
+    reclaim_site: string,
     // struct_type: the slot's struct type name ("" = not a struct), so `p.x`
     // resolves x's field index in p's decl.
     struct_type: string,
@@ -195,7 +203,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -204,6 +212,10 @@ pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
 
 pub function li_set_names(li: LocalInfo, v: string): LocalInfo {
     return LocalInfo { ...li, slot_name: v };
+}
+
+pub function li_set_reclaim_site(li: LocalInfo, v: string): LocalInfo {
+    return LocalInfo { ...li, reclaim_site: v };
 }
 
 pub function li_set_is_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -1211,6 +1223,20 @@ function reclaim_slot_name(s: LowerState, i: i32): string {
         return bare;
     }
     return n;
+}
+
+// mark_reclaim_site / reclaim_site_key record and read slot i's binding-SITE key
+// (#7272). Empty for a slot no `var` bound, which is why every tuple predicate
+// below treats "" as "no credit" rather than falling back to the name: the tuple
+// class credits are only ever produced from a StmtVar, so a slot without a site
+// key never had one to lose.
+pub function (s: LowerState) mark_reclaim_site(i: i32, k: string): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_reclaim_site(s.locals[i], k)) };
+}
+
+pub function (s: LowerState) reclaim_site_key(i: i32): string {
+    if (i < 0 || i >= s.locals.len()) { return ""; }
+    return s.locals[i].reclaim_site;
 }
 
 // set_local_name rewrites slot i's NAME (used by retire_locals). Mirrors mark_arr
@@ -17213,6 +17239,10 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     var opt_ty: string = vt.opt_ty;
     var sb: LowerState = se.add_local(v.name);
     var slot: i32 = sb.slot_of(v.name);
+    // The binding-SITE key, recorded before anything reads a credit off this slot
+    // (#7272). Two `var t` in sibling blocks are two slots under one name; the
+    // tuple class credits are keyed on this instead, so each resolves its own.
+    sb = sb.mark_reclaim_site(slot, reclaim_site_key_of(v.name, v.line, v.col));
     sb = sb.mark_arr(slot, vt.is_arr);
     sb = sb.mark_str(slot, vt.is_str);
     // #4297 CS4: record the ownership class this BINDING acquires on the
@@ -17645,7 +17675,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // reference to a view leaks; that is the safe direction and it is the only
     // string shape this does not close.
     if (sb.tuple_elem_tag(slot, 0).len() > 0
-        && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", v.name)) {
+        && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
         match (v.init) {
             parser.ExprTuple(tinit) => {
                 var tk: string = "";
@@ -17961,6 +17991,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         if (!vfs.ok) { return vfs; }
         vfs = vfs.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
         var vfb: LowerState = vfs.add_local(v.name);
+        vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var vfslot: i32 = vfb.slot_of(v.name);
         vfb = vfb.mark_arr(vfslot, true);
         if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); }
@@ -17991,6 +18022,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         if (!sas.ok) { return sas; }
         sas = sas.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
         var sab: LowerState = sas.add_local(v.name);
+        sab = sab.mark_reclaim_site(sab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var saslot: i32 = sab.slot_of(v.name);
         sab = sab.mark_arr(saslot, true);
         // A closure/fn ARRAY field (`hs: (() => T)[]`, spelled "fn[]") aliased
@@ -18030,6 +18062,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     var das: LowerState = lower_dyn_array_lit(darr, s);
                     if (!das.ok) { return das; }
                     var dab: LowerState = das.add_local(v.name);
+                    dab = dab.mark_reclaim_site(dab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                     var daslot: i32 = dab.slot_of(v.name);
                     dab = dab.mark_arr(daslot, true);
                     // Record the coarse element type `"dyn <Trait>"` (strip
@@ -18061,6 +18094,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var dvs: LowerState = lower_dyn_arg(v.init, s);
         if (!dvs.ok) { return dvs; }
         var dvb: LowerState = dvs.add_local(v.name);
+        dvb = dvb.mark_reclaim_site(dvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var dvslot: i32 = dvb.slot_of(v.name);
         dvb = dvb.mark_struct_type(dvslot, v.type_name);
         // op_dyn_box COPIES a non-string primitive into a fresh rc-headered
@@ -18102,6 +18136,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         var fes: LowerState = lower_expr(v.init, s);   // arr_get -> fn pointer
                         if (!fes.ok) { return fes; }
                         var feb: LowerState = fes.add_local(v.name);
+                        feb = feb.mark_reclaim_site(feb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                         var feslot: i32 = feb.slot_of(v.name);
                         return feb.emit(ir.op_store_local(feslot));
                     }
@@ -18109,6 +18144,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         var ces: LowerState = lower_expr(v.init, s);   // arr_get -> element box ptr
                         if (!ces.ok) { return ces; }
                         var ceb: LowerState = ces.add_local(v.name);
+                        ceb = ceb.mark_reclaim_site(ceb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                         var ceslot: i32 = ceb.slot_of(v.name);
                         ceb = ceb.mark_closure_local(v.name);
                         return ceb.emit(ir.op_store_local(ceslot));
@@ -18275,6 +18311,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var cv: LowerState = lower_expr(v.init, s);
         if (!cv.ok) { return cv; }
         var cvb: LowerState = cv.add_local(v.name);
+        cvb = cvb.mark_reclaim_site(cvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var cslot: i32 = cvb.slot_of(v.name);
         cvb = cvb.mark_arr(cslot, true);
         cvb = cvb.mark_closure_local(v.name);
@@ -18352,6 +18389,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var iv: LowerState = lower_i64(v.init, s);
         if (!iv.ok) { return iv; }
         var ivb: LowerState = iv.add_local(v.name);
+        ivb = ivb.mark_reclaim_site(ivb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var islot: i32 = ivb.slot_of(v.name);
         ivb = ivb.mark_i64(islot, true);
         // A `u64` binding (annotated, or an init that is itself u64) marks
@@ -18370,6 +18408,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var fv: LowerState = lower_expr(v.init, s);
         if (!fv.ok) { return fv; }
         var fvb: LowerState = fv.add_local(v.name);
+        fvb = fvb.mark_reclaim_site(fvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var fslot: i32 = fvb.slot_of(v.name);
         fvb = fvb.mark_f64(fslot, true);
         // An f32 local is ALSO f32-tagged (overlay on f64) so its method
@@ -18425,6 +18464,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     }
                     ia = ia.emit(ir.op_arr_make_i64(iarr.elements.len()));
                     var iab: LowerState = ia.add_local(v.name);
+                    iab = iab.mark_reclaim_site(iab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                     var iaslot: i32 = iab.slot_of(v.name);
                     iab = iab.mark_arr(iaslot, true);
                     iab = iab.mark_i64arr(iaslot, true);
@@ -18642,6 +18682,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             if (kkind == 2) { mnfns = ktag + ".hash|" + ktag + ".eq"; }
                             mns = mns.emit(ir.op_map_new(kkind, mnfns));
                             var mnsb: LowerState = mns.add_local(v.name);
+                            mnsb = mnsb.mark_reclaim_site(mnsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                             var mnslot: i32 = mnsb.slot_of(v.name);
                             mnsb = mnsb.mark_map_type(mnslot, v.type_name);
                             // Loop-reinit reclaim (#4357): a re-declared reclaimable
@@ -18688,6 +18729,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             var vcs: LowerState = lower_opt_make_payload_exp(vtag, vc.args[0], vexp, s);
                             if (!vcs.ok) { return vcs; }
                             var vsb: LowerState = vcs.add_local(v.name);
+                            vsb = vsb.mark_reclaim_site(vsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                             var vslot: i32 = vsb.slot_of(v.name);
                             vsb = vsb.mark_opt_type(vslot, v.type_name);
                             return vsb.emit(ir.op_store_local(vslot));
@@ -18714,6 +18756,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 if (s.slot_of(fvid.name) < 0 && s.is_const_fn(fvid.name)) {
                     var fvs: LowerState = s.emit(ir.op_const_func(0, fvid.name));
                     var fvb: LowerState = fvs.add_local(v.name);
+                    fvb = fvb.mark_reclaim_site(fvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                     var fvslot: i32 = fvb.slot_of(v.name);
                     return fvb.emit(ir.op_store_local(fvslot));
                 }
@@ -18754,6 +18797,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     }
                     fcs = fcs.emit(ir.op_arr_make(fva.elements.len(), 32));
                     var fcb: LowerState = fcs.add_local(v.name);
+                    fcb = fcb.mark_reclaim_site(fcb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
                     var fcslot: i32 = fcb.slot_of(v.name);
                     fcb = fcb.mark_arr(fcslot, true);
                     // Plain-fn-pointer array: a later `fns = fns.append(g)`
@@ -23428,7 +23472,11 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
                     // the name anywhere but that one payload position, so a
                     // second, genuinely escaping use is never skipped with it.
                     parser.ExprTuple(_) => {
-                        if (util.index_of_str(clo_ok, "TUP:" + v.name) >= 0
+                        // clo_ok's tuple entries are seeded from the credits, which
+                        // carry BINDING-SITE keys (#7272) — so the lookup is keyed on
+                        // this `var`'s own site, not on its name.
+                        var vsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+                        if (util.index_of_str(clo_ok, "TUP:" + vsite) >= 0
                             && tuple_union_payload_sole_use(v.init, name)) { skip = true; }
                         // The BARE-IDENT element twin (#7226's string limb), same
                         // arithmetic one construction shape over: the tuple literal
@@ -23444,7 +23492,7 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
                         // interlock: the exit sweep's tuple loop runs BEFORE its
                         // string loop, so the tuple's dec always precedes the
                         // local's free.
-                        if (util.index_of_str(clo_ok, "TUPE:" + v.name) >= 0
+                        if (util.index_of_str(clo_ok, "TUPE:" + vsite) >= 0
                             && tuple_bare_ident_sole_use(v.init, name)) { skip = true; }
                     },
                     _ => {}
@@ -25192,7 +25240,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 parser.StmtVar(rv) => {
                     match (rv.init) {
                         parser.ExprTuple(tup) => {
-                            if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, rv.init, xtuple.donors[xti], true, st); }
+                            if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xtuple.donors[xti], true, st); }
                             else { st = lower_stmt(stmts[i], st); }
                         },
                         _ => { st = lower_stmt(stmts[i], st); },
@@ -25237,7 +25285,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                         match (rv.init) {
                             parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd_name, xbd_type, true, st); },
                             parser.ExprTuple(tup) => {
-                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, rv.init, xbd_name, true, st); }
+                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xbd_name, true, st); }
                                 else { st = lower_stmt(stmts[i], st); }
                             },
                             _ => { st = lower_stmt(stmts[i], st); },
@@ -25500,6 +25548,37 @@ pub function is_f64_scalar_type_name(t: string): boolean {
 function push_str_unique(xs: string[], s: string): string[] {
     if (util.index_of_str(xs, s) >= 0) { return xs; }
     return xs.append(s);
+}
+
+// --- Binding-SITE keys for the tuple class credits (#7272 / #7253 step 1) ---
+//
+// The class credits are collected from the AST, before any slot exists, so their
+// key has always been the variable NAME — and a name has no scope. Two `var t`
+// in sibling blocks are two slots under one key, and when they are not the same
+// class the table hands each slot BOTH credits: the box takes the "TUP:" shallow
+// dec AND the "TUPRCS:" deep free, and is released twice. Measured as exit 99
+// (rc underflow) against 10 on native and interp, with `live_bytes=0` throughout
+// — only the underflow counter dissents. Renaming one of the two locals, and
+// nothing else, made it correct.
+//
+// A `StmtVar` carries line and col, so `name@line:col` names the BINDING rather
+// than the name, and the two blocks stop colliding. bind_var_slot records it on
+// the slot, so every consumer resolves the credit its own binding earned.
+//
+// Only the tuple family moves here. The other ~70 namespaces multiplexed into
+// reclaimable_names are still name-keyed, and #7253 is the issue for the rest —
+// so `reclaim_slot_name` keeps its meaning and this is a parallel accessor
+// rather than a change to it.
+function reclaim_site_key_of(name: string, line: i32, col: i32): string {
+    return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
+}
+
+// reclaim_site_name recovers the bare variable name from a site key, for the
+// escape gates and declaration lookups, which all take a name.
+function reclaim_site_name(key: string): string {
+    var i: i32 = 0;
+    while (i < key.len() && key[i] != b'@') { i = i + 1; }
+    return key[0:i] + "";
 }
 
 // walk_fieldread_obj walks the OBJECT of a field-read chain (p.x, p.a.b): a bare
@@ -26657,7 +26736,7 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
             if (!tfresh && tuple_type_is_all_scalar(v.type_name)) {
                 match (v.init) { parser.ExprTuple(_) => { tfresh = true; }, _ => {} }
             }
-            if (tfresh) { return push_str_unique(acc, v.name); }
+            if (tfresh) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         parser.StmtIf(iff) => {
@@ -26778,7 +26857,7 @@ function collect_fresh_rc_tuple_names(stmts: parser.Stmt[], structs: parser.Stru
 function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return push_str_unique(acc, v.name); }
+            if (tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         parser.StmtIf(iff) => {
@@ -26882,7 +26961,7 @@ function collect_sweepable_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.Str
             if (v.type_name.len() < 2 || v.type_name[0:1] != "(") { return acc; }
             if (!tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return acc; }
             if (!tuple_arg_payload_fresh(v.type_name, v.init, structs)) { return acc; }
-            return push_str_unique(acc, v.name);
+            return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
         },
         parser.StmtIf(iff) => {
             var a: string[] = collect_sweepable_rc_tuple_names(iff.then_body, structs, acc);
@@ -29332,7 +29411,7 @@ function collect_fresh_tuple_ret_call_names(stmts: parser.Stmt[], tup_fresh_ret:
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0 && is_fresh_ret_binding(v.init, "", tup_fresh_ret)) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_fresh_tuple_ret_call_names(f.then_body, tup_fresh_ret, reassigned, a); a = collect_fresh_tuple_ret_call_names(f.else_body, tup_fresh_ret, reassigned, a); },
@@ -31715,7 +31794,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
     var ti: i32 = 0;
     while (ti < tups.len()) {
-        if (!body_unsafe_for(body, tups[ti], borrowable, recv_borrow)) {
+        // tups holds BINDING-SITE keys (#7272); every gate below asks about the
+        // variable, so each takes the bare name back out of the key.
+        var tnm: string = reclaim_site_name(tups[ti]);
+        if (!body_unsafe_for(body, tnm, borrowable, recv_borrow)) {
             out = out.append("TUP:" + tups[ti]);
             // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
             // assignment builds a fresh tuple (#6127), which lets lower_stmt_assign
@@ -31724,9 +31806,9 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // A separate credit rather than a widened "TUP:" because the two answer
             // different questions — "TUP:" that the box is non-escaping and freeable
             // at exit, this that the SUPERSEDED box is freeable at the assignment.
-            if (util.index_of_str(reassigned, tups[ti]) >= 0
-                && all_assigns_fresh_scalar_tuple(body, tups[ti],
-                        scalar_tuple_decl_ann_all_scalar(body, tups[ti]))) {
+            if (util.index_of_str(reassigned, tnm) >= 0
+                && all_assigns_fresh_scalar_tuple(body, tnm,
+                        scalar_tuple_decl_ann_all_scalar(body, tnm))) {
                 out = out.append("TUPREBIND:" + tups[ti]);
             }
             // The bare-ident element release (#7226) needs the owned-pointer-element
@@ -31740,8 +31822,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // tuple type there is no way to tell a scalar element copy from a pointer
             // extraction, and the wrong guess here is an over-release. An un-annotated
             // tuple keeps "TUP:" and simply does not earn the element release.
-            var tupelemty: string = rctuple_type_of_decl(body, tups[ti]);
-            if (tupelemty != "" && !rctuple_payload_escapes(body, tups[ti], tupelemty, structs)) {
+            var tupelemty: string = rctuple_type_of_decl(body, tnm);
+            if (tupelemty != "" && !rctuple_payload_escapes(body, tnm, tupelemty, structs)) {
                 out = out.append("TUPELEMOK:" + tups[ti]);
             }
         }
@@ -31762,9 +31844,11 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, []);
     var rti: i32 = 0;
     while (rti < rctups.len()) {
-        if (!body_unsafe_for(body, rctups[rti], borrowable, recv_borrow)) {
-            var rctty: string = rctuple_type_of_decl(body, rctups[rti]);
-            if (rctty == "" || !rctuple_payload_escapes(body, rctups[rti], rctty, structs)) {
+        // Binding-SITE keys here too (#7272); the gates take the bare name.
+        var rnm: string = reclaim_site_name(rctups[rti]);
+        if (!body_unsafe_for(body, rnm, borrowable, recv_borrow)) {
+            var rctty: string = rctuple_type_of_decl(body, rnm);
+            if (rctty == "" || !rctuple_payload_escapes(body, rnm, rctty, structs)) {
                 out = out.append("TUPRC:" + rctups[rti]);
                 // "TUPRCS:" additionally lets the scope-exit sweep deep-free the FINAL
                 // value (#6127). "TUPRC:" alone is consumed only by the StmtVar rebind
@@ -31788,8 +31872,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
                 //     chain, and proving every assignment rebuilds the same shape is
                 //     what makes the declaration's type a sound description of the
                 //     final value the sweep frees by.
-                var rc_rebind_ok: boolean = util.index_of_str(reassigned, rctups[rti]) < 0
-                    || all_assigns_fresh_rc_tuple(body, rctups[rti], rctty, structs);
+                var rc_rebind_ok: boolean = util.index_of_str(reassigned, rnm) < 0
+                    || all_assigns_fresh_rc_tuple(body, rnm, rctty, structs);
                 if (rctty != "" && rc_rebind_ok
                         && util.index_of_str(sweeprc, rctups[rti]) >= 0) {
                     out = out.append("TUPRCS:" + rctups[rti]);
@@ -36508,7 +36592,7 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "TUP:", reclaim_slot_name(s, i));
+    return reclaim_has(s.reclaimable_names, "TUP:", s.reclaim_site_key(i));
 }
 
 // slot_is_reclaimable_tuple_rebind: slot `i` is a "TUP:" tuple whose every
@@ -36517,7 +36601,7 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
 // slot_is_reclaimable_tuple — the credit is only ever appended alongside "TUP:".
 function slot_is_reclaimable_tuple_rebind(s: LowerState, i: i32): boolean {
     if (!slot_is_reclaimable_tuple(s, i)) { return false; }
-    return reclaim_has(s.reclaimable_names, "TUPREBIND:", s.locals[i].slot_name);
+    return reclaim_has(s.reclaimable_names, "TUPREBIND:", s.reclaim_site_key(i));
 }
 
 // slot_is_reclaimable_rctuple: a fresh, non-escaping tuple local carrying a fresh
@@ -36529,7 +36613,7 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "TUPRC:", reclaim_slot_name(s, i));
+    return reclaim_has(s.reclaimable_names, "TUPRC:", s.reclaim_site_key(i));
 }
 
 // slot_is_reclaimable_rctuple_sweep: a "TUPRC:" slot whose FINAL value the scope-exit
@@ -36541,7 +36625,7 @@ function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "TUPRCS:", reclaim_slot_name(s, i));
+    return reclaim_has(s.reclaimable_names, "TUPRCS:", s.reclaim_site_key(i));
 }
 
 // emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
@@ -42751,7 +42835,7 @@ function emit_tup_box_child_releases(se: LowerState, slot: i32): LowerState {
 // element expressions when it has none), and d's slot is zeroed so the exit
 // sweep frees the box once (via c). A shared donor degrades to a fresh box + a
 // dec of d's reference instead of corrupting.
-function emit_cross_tuple_reuse(c_name: string, c_type: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
+function emit_cross_tuple_reuse(c_name: string, c_type: string, c_site: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -42779,8 +42863,12 @@ function emit_cross_tuple_reuse(c_name: string, c_type: string, init: parser.Exp
                 pe = pe + 1;
             }
             // Bind c's slot up front — both guard arms store the result box there.
+            // The binding-SITE key goes on before anything reads a class credit off
+            // the slot (#7272): this path binds the recipient itself rather than
+            // going through bind_var_slot, and a siteless slot resolves no credit.
             st = st.add_local(c_name);
             var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_reclaim_site(cslot, c_site);
             st = st.mark_tuple_elems(cslot, enc);
             // Loop body: free the recipient's prior (previous-iteration) box first —
             // only when the recipient is a RECLAIMABLE (non-escaping) tuple local
@@ -45111,7 +45199,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the
@@ -45621,7 +45709,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 parser.StmtVar(rv) => {
                     match (rv.init) {
                         parser.ExprTuple(tup) => {
-                            if (tuple_lit_ctor_eligible(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.type_name, rv.init, xtuple.donors[xtuple_i], false, s); }
+                            if (tuple_lit_ctor_eligible(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.type_name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, xtuple.donors[xtuple_i], false, s); }
                             else { s = lower_stmt(fn.body[j], s); }
                         },
                         _ => { s = lower_stmt(fn.body[j], s); },
