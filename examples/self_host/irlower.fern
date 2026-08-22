@@ -505,6 +505,14 @@ pub struct LowerState {
     // plain call_indirect. A small list (grown only at closure bindings), not a
     // per-slot array.
     closure_locals: string[],
+    // clo_rc: the closure capture-RC registry (#4354): "OK:<name>" rows are
+    // lower_func's approvals, "<name>|<kinds>" rows the build site's
+    // per-capture kinds the exit sweep releases by. A dedicated field, not a
+    // "CLO:"-prefixed slice of reclaimable_names — the 33-field pin that
+    // forced the multiplexing died with the legacy AST backends (#7253
+    // step 2). Still NAME-keyed under a first-match lookup, the collision
+    // hazard add_tup_elem_kinds documents; the slot/site key is a follow-up.
+    clo_rc: string[],
     // closure_opt_rets: "<paramname>|<Option/Result type>" for each closure/fn-
     // typed PARAM whose signature return type is an Option/Result (the coarsened
     // "fn" type_name discards it, but ParamDecl.fn_ret keeps the spelling). Lets a
@@ -730,9 +738,9 @@ pub function (s: LowerState) loop_blk_at_depth(n: i32): i32 {
 
 // ret_i64arr / ret_dyn / for_wasm decode the ret_arrdyn flag word (bit 0 =
 // returns i64[], bit 1 = returns a scalar `dyn Trait`, bit 2 = the wasm
-// backend is lowering, so erased-generic slots are typed i64 — #5464) -- the
-// folded boolean fields keep LowerState at 33 fields (see the #4554 note in
-// lower_func).
+// backend is lowering, so erased-generic slots are typed i64 — #5464). The
+// folding predates the deleted legacy backends' 33-field LowerState pin and
+// is kept as-is; new facts need no such folding.
 pub function (s: LowerState) ret_i64arr(): boolean { return s.ret_arrdyn % 2 == 1; }
 pub function (s: LowerState) ret_dyn(): boolean { return (s.ret_arrdyn / 2) % 2 == 1; }
 pub function (s: LowerState) for_wasm(): boolean { return (s.ret_arrdyn / 4) % 2 == 1; }
@@ -1962,13 +1970,13 @@ function closure_init_opt_ret(init: parser.Expr, s: LowerState): string {
 // add_clo_cap_kinds (#4354): record a closure local's per-capture kinds
 // ("<name>|<kinds>") in the capture-RC registry — see the field doc.
 pub function (s: LowerState) add_clo_cap_kinds(entry: string): LowerState {
-    return LowerState { ...s, reclaimable_names: s.reclaimable_names.append("CLO:" + entry) };
+    return LowerState { ...s, clo_rc: s.clo_rc.append(entry) };
 }
 
 // clo_cap_kinds_of returns the registered capture-kinds string for closure
 // local `name` ("" when not registered / approval never consumed).
 pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
-    return tagged_value_of(s.reclaimable_names, "CLO:", name);
+    return tagged_value_of(s.clo_rc, "", name);
 }
 
 // add_tup_elem_kinds (#7226): record a "TUP:" tuple local's per-element rc kinds
@@ -1996,9 +2004,9 @@ pub function (s: LowerState) tup_elem_kinds_of(i: i32): string {
 }
 
 // clo_rc_approved reports whether lower_func approved `name` for capture RC
-// (an "OK:<name>" seed entry — see the clo_cap_kinds field doc).
+// (an "OK:<name>" seed entry — see the clo_rc field doc).
 pub function (s: LowerState) clo_rc_approved(name: string): boolean {
-    return reclaim_has(s.reclaimable_names, "CLO:OK:", name);
+    return reclaim_has(s.clo_rc, "OK:", name);
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -45928,19 +45936,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
-    // #4354: approve closure locals for capture RC. The approvals and the
-    // build-site kind registrations both live in reclaimable_names under a
-    // "CLO:" prefix ("CLO:OK:<name>" / "CLO:<name>|<kinds>") rather than a
-    // dedicated LowerState field: the legacy AST x86 backend — which still
-    // builds the bootstrap self-compile (the merged bundle routes `ast`) —
-    // miscompiles 34-field structs (silent field corruption with a pointer
-    // 34th field, segfaults with a scalar one; see the stage-2 fixpoint
-    // break this folding fixed), so LowerState must stay at 33 fields until
-    // that backend bug is fixed. Prefix-tagged entries are the established
-    // reclaimable_names convention ("SNAP:" / "STR:" / "ENUMRE:").
+    // #4354: approve closure locals for capture RC — seeded into the dedicated
+    // clo_rc field. This family used to be "CLO:"-multiplexed into
+    // reclaimable_names to hold LowerState at 33 fields for a legacy AST
+    // backend that miscompiled 34-field structs; that backend is deleted
+    // (#3457/#5972), so the pin is dead and new fact families get fields.
     var clo_seed: string[] = clo_rc_candidate_names(fn.body, sg.borrowable_params);
-    var clo_si: i32 = 0;
-    while (clo_si < clo_seed.len()) { reclaim = reclaim.append("CLO:" + clo_seed[clo_si]); clo_si = clo_si + 1; }
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
     // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
     // lower_stmt_assign releases it before storing the new one; the final value is
@@ -45960,7 +45961,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // positions as "FNDYN:<name>|<positions>" (comma-separated indices), so an
     // indirect call `f(7)` through the fn value dyn-boxes the argument at those
     // positions. The flat "fn" type tag dropped the per-param dyn-ness; parser's
-    // fn_param_dyn preserved it. Prefix-tagged (33-field pin), inert elsewhere.
+    // fn_param_dyn preserved it. Prefix-tagged (a #7253 step-2 migration
+    // candidate now that the 33-field pin is dead), inert elsewhere.
     var fpdi: i32 = 0;
     while (fpdi < fn.params.len()) {
         if (fn.params[fpdi].type_name == "fn" && fn.params[fpdi].fn_param_dyn.len() > 0) {
@@ -46132,7 +46134,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -47471,8 +47473,8 @@ function body_has_nonfresh_opt_payload(stmts: parser.Stmt[], err: boolean): bool
 // ownership — see collect_try_str_binding_names), else "a" (box-free only;
 // the aliased payload keeps its sound leak). lower_func seeds each name as
 // the opt-fresh registry, which lower_try's consume-edge box
-// free can check eligibility from LowerState (pinned at 33 fields — no new
-// registry field).
+// free can check eligibility from LowerState (rides the existing opt-fresh
+// registry rather than a new field; the old 33-field pin is dead).
 pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -54833,7 +54835,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
