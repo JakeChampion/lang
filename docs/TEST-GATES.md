@@ -117,6 +117,31 @@ bytes over ~1000 (fixture, target) pairs will. ~8 minutes per side.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **Operand-stack balance in the EMITTED native asm — now gated on arm64, by
+  `TestOperandStackBalancedAcrossTwoWordDiscard`**
+  (`internal/codegen/arm64/stack_balance_test.go`). Two separate things hide a
+  stack-discipline break on the natives, and they cover for each other.
+
+  First, `ir.Verify`'s stack half is *wasm validation*, deliberately: after a
+  `br` the operand stack is polymorphic and `end` truncates it back to the
+  frame height. A residual slot on a path that ends in a branch is therefore
+  legal there and correctly not reported — but arm64 maps the operand stack
+  onto `sp` and re-syncs it at no label, so the same IR leaks. `ir.Verify` is
+  not, and cannot be, the gate for this class on a native backend.
+
+  Second, the arm64 epilogue's `mov sp, x29` restores `sp` from the frame
+  pointer, so the leaked slots die with the frame and the program still
+  returns the right answer. #7303 leaked 2 x 16 bytes per call of every
+  function whose match arm bound an unread `string`, and no exit-code
+  assertion anywhere in the tree could see it. Inlining, which deletes the
+  callee epilogue, turns it into five miscompiles.
+
+  So the invariant is checked by walking the emitted text: depth through
+  straight-line code, per-label agreement across branches, zero at the return
+  label. Anything sp-touching the walk does not model fails the test rather
+  than being skipped. There is no equivalent gate on x86-64 (which has no
+  two-word values on its operand stack) or on the SSA backends.
+
 - **A checker driver that DIED, versus one that found nothing — now
   distinguished, by `checkerDriverFault`** (`internal/e2eselfhost`). The checker
   differentials turn the driver's stdout into a code SET, and empty is a
