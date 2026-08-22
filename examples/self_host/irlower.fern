@@ -977,8 +977,8 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 // written against the name inside the block. Reach this through
 // retire_locals_for_scope, which records the slots for that one reader first.
 //
-// The original name is KEPT after the sentinel so reclaim_slot_name can recover
-// it (#6127). The reclaim credits are name-keyed, so a flat "!retired!" made
+// The original name is KEPT after the sentinel rather than replaced (#6127).
+// The reclaim credits were name-keyed then, so a flat "!retired!" made
 // every block-scoped local miss its own credit at the function-exit sweep — the
 // loop's re-declaration freed the PRIOR iteration's value and the final one
 // leaked, n-1 of n freed per round on every class. `emit_dec_sweep_except_list`
@@ -996,10 +996,13 @@ pub function (s: LowerState) retire_locals(from: i32): LowerState {
     while (i < st.locals.len()) {
         // Prefix ONCE. Nested blocks retire the same slot repeatedly — an inner
         // `if` inside a `while` body retires it, then the while body retires it
-        // again — and stacking sentinels would leave reclaim_slot_name returning
+        // again — and stacking sentinels would leave the recovered name as
         // "!retired!t" instead of "t", so a doubly-nested local would still miss
-        // its credit. Measured: exactly half of a sibling-branch corpus stayed
-        // unreclaimed until this guard. #6127.
+        // its credit while the credits were name-keyed. Measured: exactly half of
+        // a sibling-branch corpus stayed unreclaimed until this guard. #6127.
+        // The credits are site-keyed now (#7253) and no longer depend on this,
+        // but `slot_name_retired` still gates the two predicates that must refuse
+        // a retired slot, so the sentinel must stay exactly one deep.
         if (!slot_name_retired(st.locals[i].slot_name)) {
             st = st.set_local_name(i, "!retired!" + st.locals[i].slot_name);
         }
@@ -1144,109 +1147,58 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
     return util.digits_to_i32(e[key.len() : e.len()] + "");
 }
 
-// reclaim_slot_name: slot `i`'s name for a reclaim-CREDIT lookup — its source
-// name, with any "!retired!" prefix removed. Name RESOLUTION must keep using
-// slot_name (a retired slot is out of scope and must stay unfindable); this is
-// only for asking "was this slot's local credited", which stays true after the
-// block that declared it ends. #6127.
+// RECLAIM CREDITS ARE KEYED ON THE BINDING SITE, NOT THE NAME (#7253).
 //
-// Sound because the slot index space is MONOTONIC: retire_locals renames, never
-// truncates or reuses, so a retired slot still holds its block's final value at
-// function exit and is the sole reference to it. Entry-zeroing is universal —
-// the prologue zeroes every body slot — so an untaken branch's slot routes a
-// guarded null rather than stack garbage.
+// There used to be a `reclaim_slot_name` here: a slot's source name with any
+// "!retired!" prefix stripped, so a credit collected from the AST could be
+// looked up per slot. Every family now resolves `reclaim_site_key` instead
+// (`slot_credit_at`), the key being "name@line:col" recorded on the slot by
+// whichever path bound it, so it survives retire_locals' rename by itself and
+// two same-named bindings never share a verdict. The function is gone because
+// nothing reads it.
 //
-// Each class is admitted on its own probe rather than by a blanket flip —
-// switching one on turns on an exit-sweep release that has never run for these
-// slots. The first four were "TUP:" / "OPTTUP:" / "OPTSTRUCT:" / "OPTARRARR:";
-// these measured the same n-1-of-n signature and followed, each verified to go
-// to 0 with allocs == frees:
+// Why the name key had to go, since the answer is not tidiness. It handed a
+// credited local's verdict to any same-named sibling — and, because a lookup
+// only compares spellings, to any BINDER that shared the spelling without being
+// a declaration at all (a for-in element, a match payload, a destructure key).
+// The severity of that is not a property of the class: it depends on whether the
+// aliased source has another owner. Where the class also LEAKS, the stray
+// release lands on a box nothing else claimed, no counter dissents, and the
+// census reads better than the correct program's — so the class looks benign
+// and becomes a double free the moment someone fixes the leak. Where the source
+// is released elsewhere it faults immediately. Both halves were measured across
+// the struct (#7349) and Option (#7356) families.
 //
-//   ARRARR / ARRARRS   7200      OPTAARR   12000      TUPRC / TUPRCS   8000
-//   SARR               4800      STRUCTARR(A)   9600
+// What that history is worth keeping. Each class was admitted to the sweep on
+// its own probe rather than by a blanket flip, because switching one on turns on
+// an exit-sweep release that had never run for those slots; the byte counts each
+// flip closed were ARRARR / ARRARRS 7200, OPTAARR 12000, TUPRC / TUPRCS 8000,
+// SARR 4800, STRUCTARR(A) 9600. "TUPRC:" needed BOTH its credits switched —
+// "TUPRC:" drives the rebind and "TUPRCS:" (#6251) the exit sweep — and flipping
+// only the first left the shape at exactly its unfixed 8000.
 //
-// TUPRC needs BOTH its credits switched: "TUPRC:" drives the rebind and
-// "TUPRCS:" (#6251) the exit sweep, and flipping only the first left the shape
-// measuring exactly its unfixed 8000.
+// Three disjointness rules outlived the migration and are enforced at the
+// predicates rather than here:
 //
-// MOST OF THE CLASSES NAMED ABOVE NO LONGER READ THIS FUNCTION. The tuple,
-// string, string[] and arr-of-arr families (#7272 / #7292 / #7253 / #7335), the
-// bare-name struct credit (#7349) and the whole Option family are keyed on the
-// BINDING SITE now, which survives retire_locals' rename by itself — the site
-// lives on the slot, not in the name. What this function still serves is the
-// classes that have not been converted: ARRTUP, ARRSTRUCT(A), ARRENUM,
-// STRUCTARR(A), RCENUMS, SCENUMS. The history above is kept because it records
-// which releases each flip turned on, which is what a converter needs to know.
+//   - "OPTARR:"'s consuming-match analysis is per-block (#4357) and frees the
+//     value before the block ends, so a sweep claim on that half would be a
+//     second release. The no-match half is what carries the sweep credit.
+//   - "RCENUM:" is the same story one type over: the match-consumed half must
+//     not be swept, so #6606 credited the no-match half separately as
+//     "RCENUMS:" instead of widening "RCENUM:". The two are appended against ONE
+//     entry, so they cannot end up keyed differently; the exact-vs-retired
+//     distinction between them is written out in slot_is_reclaimable_rcenum.
+//   - "SCENUMS:" is held disjoint from the dyn credit at the predicate, because
+//     `var d: dyn Show = Add(41)` satisfies both classifiers and letting both
+//     claim it was an over-release rather than a leak.
 //
-// The reason to finish the migration is not tidiness. A name key hands a
-// credited local's verdict to any same-named sibling, and the severity of that
-// depends on whether the aliased source has another owner: where the class also
-// leaks, the stray release lands on a box nothing else claimed and looks
-// harmless, and it becomes a double free the moment someone fixes the leak.
-// Three of the Option classes faulted outright before the conversion; the other
-// three were the latent form.
-//
-// Three classes are deliberately NOT here, each for a different measured reason.
-//
-// "OPTARR:" is already flat at 0 — its consuming-match analysis is per-block
-// (#4357) and frees the value before the block ends. Switching it on would be a
-// second claim on a released box.
-//
-// "RCENUM:" was listed here for the same reason, and that held while every
-// credited rc-enum local had a consuming match. #6606 admitted the half with NO
-// consuming match, which nothing frees in-block — the rebind releases only the
-// PRIOR value — so that half leaked its final value and needed the sweep after
-// all. It is credited separately as "RCENUMS:" (slot_is_reclaimable_rcenum_sweep)
-// rather than by flipping "RCENUM:", because the match-consumed half is still
-// exactly the double-release this note warns about. A one-class-one-answer
-// assumption is what made the original note wrong once the class grew a second
-// shape.
-//
-// "SCENUMS:" is the scalar sibling admitted for the same reason RCENUMS was: an
-// all-scalar enum local with NO consuming match is claimed by neither
-// consumed_scalar_enum_frees (which only ever takes a name its own statement
-// list also matches) nor any sweep, and leaked its 40-byte box per iteration.
-// It needs no deep drop — every payload is a scalar — so one predicate serves
-// both the rebind and the sweep. It is held DISJOINT from the dyn credit at the
-// predicate: `var d: dyn Show = Add(41)` satisfies both classifiers, and letting
-// both claim it was an over-release, not a leak.
-//
-// The BARE-name struct credit (slot_is_reclaimable_struct) leaks 8800 here and
-// stays leaking, because switching it on **segfaults the gen1 self-compile**.
-// That credit is the most heavily used one in the compiler's own sources — the
-// threaded LowerState / EmitState builders — and it feeds the deep field drop,
-// the precise drop and the reuse-donor paths, not just the exit sweep. So the
-// releases it turns on for block-scoped slots are not all sole-owner. This is
-// the concrete case behind the warning above: the leak is the safe direction,
-// and the per-module fixpoint is what distinguishes it from the five that are
-// fine. Do not re-flip it without a narrower gate.
-//
-// "ARRSTRUCT:" and "ARRTUP:" are absent because switching them changed NOTHING
-// — and their leak is now CLOSED, by #6291 (`.len()` on an array-of-structs is
-// a borrow, not an escape), not by anything in this file.
-//
-// This note used to record them as leaking 35200 / 32000 and point the next
-// reader at "whether the slot's struct_type / arrarr_elem column is set at a
-// nested binding". That hypothesis was wrong, and following it would have cost
-// a day in the wrong predicate: the credit was never refused for a column
-// reason. `.len()` marked the local as ESCAPING, so the shape could not earn
-// any credit however the columns were set. Measured at #6285 the probes leak
-// 67200 / 60800; at #6291 both are 0 — and at #6285 only the `.len()` probes
-// leaked, while element-access and no-access variants were already clean, which
-// is what identifies the mechanism rather than merely dating the fix.
-// TestSelfHostBlockScopedClassesX86_64 now pins both shapes, since #6291 closed
-// them incidentally and nothing else keeps them closed.
-function reclaim_slot_name(s: LowerState, i: i32): string {
-    var n: string = s.locals[i].slot_name;
-    // `+ ""` materialises the slice as an owned `string` — a bare slice types as
-    // `str` and neither returns nor binds as one (E002/E003). Same idiom as the
-    // op-prefix strip at `op[3:op.len()] + ""`.
-    if (slot_name_retired(n)) {
-        var bare: string = n[9:n.len()] + "";
-        return bare;
-    }
-    return n;
-}
+// One warning survives in full. The bare-name struct credit
+// (slot_is_reclaimable_struct) feeds the deep field drop, the precise drop and
+// the reuse-donor paths, not just the exit sweep, and granting it for
+// block-scoped slots SEGFAULTS the gen1 self-compile — a failure
+// `internal/e2eselfhost` cannot reach and the per-module fixpoint can. That is
+// why its retirement refusal is spelled out explicitly rather than inherited
+// from a lookup that happened to miss.
 
 // mark_reclaim_site / reclaim_site_key record and read slot i's binding-SITE key
 // (#7272). Empty for a slot no `var` bound, which is why every tuple predicate
@@ -18294,8 +18246,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // A "string" payload is excluded: its cell holds a POINTER whose box may
         // be borrowed, and the sweep's string tag frees that box too. A string
         // LITERAL init keeps the analysis-time credit that proves it fresh.
-        if (dvprim.len() > 0 && dvprim != "string" && reclaim_has(dvb.reclaimable_names, "DYNCAND:", v.name)) {
-            dvb = LowerState { ...dvb, reclaimable_names: dvb.reclaimable_names.append("DYN:" + v.name + "|" + dvprim) };
+        if (dvprim.len() > 0 && dvprim != "string" && reclaim_has(dvb.reclaimable_names, "DYNCAND:", reclaim_site_key_of(v.name, v.line, v.col))) {
+            dvb = LowerState { ...dvb, reclaimable_names: dvb.reclaimable_names.append("DYN:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + dvprim) };
         }
         return dvb.emit(ir.op_store_local(dvslot));
     }
@@ -23312,8 +23264,8 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // the sweeps withhold __struct_drop_<T> and the reinit/rebind stores fall
 // back to emit_arr_store's shallow dec. See the marker computation in
 // reclaimable_names_of for the full soundness argument (#3425 residual).
-// The lookup is by slot_name and NOT reclaim_slot_name, which looks like an
-// oversight and is not one (#6127). Every consumer emits while the name is still
+// The lookup is by slot_name and NOT the retirement-aware form, which looks like
+// an oversight and is not one (#6127). Every consumer emits while the name is still
 // live — the four reinit/rebind stores run inside the declaring block, and the
 // exit sweep's scoped path withholds the deep drop outright — so a "!retired!"
 // name never reaches this predicate, and reading through the prefix was measured
@@ -24686,7 +24638,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var dj: i32 = st.n_params;
     while (dj < st.locals.len()) {
         if (!slot_list_has(keeps, dj) && slot_is_reclaimable_dyn(st, dj)) {
-            var dconc: string = dyn_reclaim_concrete_of(st, reclaim_slot_name(st, dj));
+            var dconc: string = dyn_reclaim_concrete_of(st, st.reclaim_site_key(dj));
             if (dconc == "string") {
                 // Prim dyn cell with a STRING payload (#4351 slice 2): free the
                 // sole-owned inner string box (value@8 — read as "field 0", the
@@ -25797,9 +25749,8 @@ function push_str_unique(xs: string[], s: string): string[] {
 // "SARRB:" and "ARRARR:" / "ARRARRS:" (#7253, #7335), the bare-name struct
 // credit and its "NODEEP:" / "FLDCHECKED:" markers (#7349), and the whole
 // Option family. The rest of the ~70 namespaces multiplexed into
-// reclaimable_names are still name-keyed and #7253 tracks them, so
-// `reclaim_slot_name` keeps its meaning and this stays a parallel accessor
-// rather than a replacement for it.
+// reclaimable_names are keyed on the site too as of the final-eight conversion,
+// which retired `reclaim_slot_name` outright — this is the only credit key now.
 function reclaim_site_key_of(name: string, line: i32, col: i32): string {
     return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
@@ -27580,7 +27531,7 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
                     || all_assigns_fresh_scalar_enum(stmts, v.name, structs);
                 if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0
                         && !body_unsafe_for(stmts, v.name, borrowable, [])) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, structs, borrowable, a); a = collect_fresh_scenum_names(iff.else_body, structs, borrowable, a); },
@@ -27623,7 +27574,7 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                         && !match_arm_binds_rc_payload(stmts[match_idx], structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
-                        a = push_str_unique(a, v.name);
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     } else if (match_idx < 0 && !body_unsafe_for(stmts, v.name, borrowable, [])) {
                         // NO consuming match in this block. Every gate above exists to
                         // prove the match neither retains the box nor hands out its
@@ -27649,7 +27600,7 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                         // credits; the marker keeps the split to a single walk of the
                         // body, which matters because this runs per lower_func inside
                         // the fixed bump arena.
-                        a = push_str_unique(a, "S:" + v.name);
+                        a = push_str_unique(a, "S:" + reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
             },
@@ -31033,7 +30984,7 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], struct
                     }
                     pi = pi + 1;
                 }
-                return acc.append(v.name + "|" + cty);
+                return acc.append(reclaim_site_key_of(v.name, v.line, v.col) + "|" + cty);
             }
             return acc;
         },
@@ -32602,10 +32553,13 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var ats: string[] = collect_fresh_arrtup_names(body, body, structs, fresh_ret, []);
     var ati: i32 = 0;
     while (ati < ats.len()) {
-        if (!body_unsafe_for(body, ats[ati], borrowable, recv_borrow)
-            && util.index_of_str(reassigned, ats[ati]) < 0
-            && !arrarr_row_escapes(body, ats[ati])
-            && !arrtup_elem_payload_escapes(body, ats[ati], arrtup_elem_type_of_decl(body, structs, ats[ati]), structs)) {
+        // `ats` holds BINDING-SITE keys (#7253); every gate asks about the
+        // VARIABLE, so each takes the bare name back out of the key.
+        var atnm: string = reclaim_site_name(ats[ati]);
+        if (!body_unsafe_for(body, atnm, borrowable, recv_borrow)
+            && util.index_of_str(reassigned, atnm) < 0
+            && !arrarr_row_escapes(body, atnm)
+            && !arrtup_elem_payload_escapes(body, atnm, arrtup_elem_type_of_decl(body, structs, atnm), structs)) {
             out = out.append("ARRTUP:" + ats[ati]);
         }
         ati = ati + 1;
@@ -32623,10 +32577,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
+        // Site keys here too; the "A|" marker rows are "A|" + the SAME key, so the
+        // self-lookup below stays key-to-key and gets sharper for it — two
+        // same-named bindings no longer share an append-built verdict.
+        var asnm: string = reclaim_site_name(asts[asti]);
         if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
-            && !arrstruct_unsafe_for(body, asts[asti], borrowable, structs, msites)
-            && !arrarr_row_escapes(body, asts[asti])
-            && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs, msites)) {
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites)
+            && !arrarr_row_escapes(body, asnm)
+            && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -32649,8 +32607,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var aens: string[] = collect_fresh_arrenum_names(body, structs, []);
     var aeni: i32 = 0;
     while (aeni < aens.len()) {
-        var aename: string = arrenum_entry_name(aens[aeni]);
-        if (aename.len() > 0 && !arrenum_escapes(body, aename) && !body_unsafe_for(body, aename, borrowable, recv_borrow)) {
+        // The entry is "<site key>#<Enum>"; the site key half is what the credit is
+        // keyed on and the bare name is what the gates ask about. A site key cannot
+        // contain '#', so the split is unambiguous either way.
+        var aesite: string = arrenum_entry_name(aens[aeni]);
+        var aename: string = reclaim_site_name(aesite);
+        if (aesite.len() > 0 && !arrenum_escapes(body, aename) && !body_unsafe_for(body, aename, borrowable, recv_borrow)) {
             out = out.append("ARRENUM:" + aens[aeni]);
         }
         aeni = aeni + 1;
@@ -32679,9 +32641,11 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // structarr_unsafe_for validates each rebind individually and is
         // otherwise body_unsafe_for, so it subsumes both former checks.
         // "A|" rows are append-BUILT markers, not candidates.
+        // As above: site keys, with the "A|" marker riding the same key.
+        var sanm: string = reclaim_site_name(sarrs2[sa2i]);
         if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
-            && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable, fresh_ret)
-            && !structarr_elem_escapes(body, sarrs2[sa2i], borrowable)) {
+            && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
+            && !structarr_elem_escapes(body, sanm, borrowable)) {
             // Append-built candidates take the SEPARATE STRUCTARRA: credit,
             // which slot_is_reclaimable_structarr additionally gates on the
             // element struct being all-scalar (#6127 / #6129). Literal-built
@@ -32722,11 +32686,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var dentry: string = dyns[dyi];
         var dbar: i32 = 0;
         while (dbar < dentry.len() && dentry[dbar] != b'|') { dbar = dbar + 1; }
-        var dname: str = dentry[0:dbar];
-        if (dname.len() > 0
+        // The entry is "<site key>|<Concrete>"; the key half is what the credit is
+        // keyed on and the bare name is what the gates ask about. A site key
+        // contains no '|', so the split is unambiguous either way.
+        var dsite: str = dentry[0:dbar];
+        var dname: string = reclaim_site_name(dsite + "");
+        if (dsite.len() > 0
             && util.index_of_str(reassigned, dname) < 0
             && !body_unsafe_for(body, dname, borrowable, recv_borrow)) {
-            if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dname); }
+            if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dsite); }
             else { out = out.append("DYN:" + dentry); }
         }
         dyi = dyi + 1;
@@ -36838,9 +36806,9 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     // now that the key is not the name. The old lookup was an exact `slot_name`
     // compare, so retire_locals' block-exit rename hid a block-scoped slot from
     // it for free; a site key survives that rename, so resolving it alone would
-    // newly credit those slots. That is not a re-key, it is the flip
-    // reclaim_slot_name's class note records as segfaulting the gen1
-    // self-compile — the scoped sibling below is where it is asked for.
+    // newly credit those slots. That is not a re-key, it is the flip the credit-key
+    // note records as segfaulting the gen1 self-compile — the scoped sibling below
+    // is where the retirement-aware answer is asked for.
     if (slot_name_retired(s.locals[i].slot_name)) { return false; }
     return slot_struct_credit_at(s, i);
 }
@@ -36850,17 +36818,18 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
 // missed producer lands on: it denies the credit (a leak) rather than matching
 // an empty entry, which is the safe direction and the one the emit-hash gate
 // makes loud.
-// opt_credit_at: the Option-family credit lookup, keyed on the BINDING SITE
-// (#7253 step 1) rather than the variable name. One helper for all seven tags so
-// they cannot drift apart, and so the "no recorded site" refusal is written once.
+// slot_credit_at: the reclaim-credit lookup for every site-keyed tag family
+// (#7253 step 1) — keyed on the BINDING SITE rather than the variable name. One
+// helper for all of them so they cannot drift apart, and so the "no recorded
+// site" refusal is written once.
 //
 // A slot with no site resolves NOTHING, deliberately. Every producer of these
 // credits walks `StmtVar`, and every `StmtVar` binding records its site — so a
-// siteless Option slot is one bound by a for-in element, a match payload or a
-// destructure key, which no collector ever credited and which only ever matched
-// by NAME COLLISION with a credited local. Refusing it is the point of the
-// change, not a side effect of it.
-function opt_credit_at(s: LowerState, i: i32, pfx: string): boolean {
+// siteless slot is one bound by a for-in element, a match payload, a destructure
+// key or a reuse recipient, which no collector ever credited and which only ever
+// matched by NAME COLLISION with a credited local. Refusing it is the point of
+// the change, not a side effect of it.
+function slot_credit_at(s: LowerState, i: i32, pfx: string): boolean {
     var site: string = s.reclaim_site_key(i);
     if (site.len() == 0) { return false; }
     return reclaim_has(s.reclaimable_names, pfx, site);
@@ -36879,10 +36848,10 @@ function slot_struct_credit_at(s: LowerState, i: i32): boolean {
 // on a `S { xs: i32[], n: i32 }` declared in a loop, against 0 on native.
 //
 // The two differ only in that refusal now. Before #7253 the credit was keyed on
-// the NAME and this variant reached a retired slot by stripping the prefix
-// (reclaim_slot_name); the site key is carried on the SLOT and survives the
-// rename by itself, so what used to be an extra lookup step is now the plain
-// lookup and the strictness lives in the sibling.
+// the NAME and this variant reached a retired slot by stripping the prefix; the
+// site key is carried on the SLOT and survives the rename by itself, so what used
+// to be an extra lookup step is now the plain lookup and the strictness lives in
+// the sibling.
 //
 // #6285 gave nine other classes this lookup by switching it inside their shared
 // predicate. That is exactly what must NOT happen here: slot_is_reclaimable_struct
@@ -36990,37 +36959,46 @@ function slot_is_reclaimable_rcenum(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "RCENUM:", s.locals[i].slot_name);
+    // The RETIRED refusal, explicit now that the key is not the name. This
+    // predicate used an exact `slot_name` compare, so retire_locals' block-exit
+    // rename hid a block-scoped slot from it for free; a site key survives that
+    // rename, so resolving it alone would newly credit those slots. Its sweep
+    // sibling below is where the retirement-aware answer is asked for, and the two
+    // read the SAME entry — collect_fresh_rcenum_names emits one key that both
+    // tags are appended against, so they cannot end up keyed differently.
+    if (slot_name_retired(s.locals[i].slot_name)) { return false; }
+    return slot_credit_at(s, i, "RCENUM:");
 }
 
 // slot_is_reclaimable_rcenum_sweep: an rc-payload enum slot whose FINAL value the
 // scope-exit sweep may deep-free — credited "RCENUMS:" (#6606 follow-up), which is
 // the strictly narrower half with NO consuming match in its block.
 //
-// Keyed on reclaim_slot_name, unlike slot_is_reclaimable_rcenum above, and that is
-// the whole point: retire_locals renames a block-scoped local to "!retired!<name>"
-// on block exit, so a name-keyed credit misses it and the sweep skips the slot.
-// That is the "n-1 of n freed per round" signature retire_locals' own note
-// describes — the loop rebind releases each PRIOR value and the last one survives.
+// Accepts a RETIRED slot, unlike slot_is_reclaimable_rcenum above, and that is the
+// whole point: retire_locals renames a block-scoped local on block exit, and a
+// lookup that refuses those skips the slot at the sweep. That is the "n-1 of n
+// freed per round" signature retire_locals' own note describes — the loop rebind
+// releases each PRIOR value and the last one survives. Both predicates read the
+// SAME site-keyed entry (#7253); only the refusal differs.
 //
 // The match-consumed half deliberately has no sweep credit. Its consuming match
 // frees the value inside the block on every iteration including the last, so
 // sweeping it would be a second claim on a released box — which is exactly what
-// reclaim_slot_name's class note recorded when it listed "RCENUM:" among the
-// classes that must NOT be switched on. That note was right for the whole class
+// the credit-key note records when it lists "RCENUM:" among the classes that must
+// NOT be swept. That note was right for the whole class
 // until the no-match half was admitted; it is now right for only one half.
 function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "RCENUMS:", reclaim_slot_name(s, i));
+    return slot_credit_at(s, i, "RCENUMS:");
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
-// credited "SCENUMS:" (#6758 follow-up). Keyed on reclaim_slot_name for the same
-// reason slot_is_reclaimable_rcenum_sweep is: retire_locals renames a
-// block-scoped local on block exit, and a name-keyed credit would miss the slot
-// at the sweep and free n-1 of n.
+// credited "SCENUMS:" (#6758 follow-up). Accepts a RETIRED slot for the same
+// reason slot_is_reclaimable_rcenum_sweep does: retire_locals renames a
+// block-scoped local on block exit, and a lookup that refuses those would miss
+// the slot at the sweep and free n-1 of n.
 //
 // One predicate serves both the rebind and the sweep here, unlike the rc half,
 // because the release is the same shallow dec either way — there is no deep drop
@@ -37036,7 +37014,7 @@ function slot_is_reclaimable_scenum(s: LowerState, i: i32): boolean {
     // site consults, rather than in the collector — the collector sees the
     // declared type, but a future overlap need not come through one.
     if (slot_is_reclaimable_dyn(s, i)) { return false; }
-    return reclaim_has(s.reclaimable_names, "SCENUMS:", reclaim_slot_name(s, i));
+    return slot_credit_at(s, i, "SCENUMS:");
 }
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
@@ -37160,7 +37138,7 @@ function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
     //     hide it. A block-scoped string local is swept like any other, closing
     //     the `{ var s = w("ab"); … }` leak (200 allocs / 0 frees per 100 rounds).
     //   - two same-named bindings resolve to their OWN credit. Switching the old
-    //     lookup to reclaim_slot_name instead would have swept a slot holding a
+    //     lookup to a retirement-aware NAME instead would have swept a slot holding a
     //     bare alias under a sibling block's credit — measured as exit 99 on
     //     str-bind-sfrrecv-same-name-alias-liveness, an over-release of a live
     //     struct field. The exact-match miss was accidentally shielding that.
@@ -37799,7 +37777,7 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[]
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (structarr_lit_is_fresh(v.init)) { a = push_str_unique(a, v.name); }
+                if (structarr_lit_is_fresh(v.init)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // APPEND-BUILT candidate (#6127): `var g: P[] = []` grown by
                 // `g = g.append(P { .. })`. structarr_lit_is_fresh rejects `[]`
                 // (no elements to prove fresh) — right for a literal-only
@@ -37808,11 +37786,11 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[]
                 // the leakcheck differential at 38400 bytes over 100 rounds,
                 // scaling linearly, where native leaks nothing.
                 else if (arrarr_lit_is_empty(v.init) && structarr_name_is_appended(stmts, v.name, fresh_ret)) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     // "A|" marks it append-BUILT so the crediting loop can grant
                     // the separate, stricter STRUCTARRA: credit — same marker
                     // trick collect_fresh_arrarr_names uses for its "S|" rows.
-                    a = push_str_unique(a, "A|" + v.name);
+                    a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, fresh_ret, a); a = collect_fresh_structarr_names(f.else_body, fresh_ret, a); },
@@ -38375,7 +38353,7 @@ function slot_is_reclaimable_optaarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arr) { return false; }
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
-    return opt_credit_at(s, i, "OPTAARR:");
+    return slot_credit_at(s, i, "OPTAARR:");
 }
 
 // emit_optaarr_reclaim_store: the option-element twin of
@@ -38408,7 +38386,7 @@ function slot_is_reclaimable_opttup(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return opt_credit_at(s, i, "OPTTUP:");
+    return slot_credit_at(s, i, "OPTTUP:");
 }
 
 // emit_opttup_deep_free frees the option box in `slot`: null-guarded, if the box
@@ -38733,7 +38711,7 @@ function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
     var inner: string = opttup_inner_type(s.locals[i].opt_type);
     if (!decl_is_struct(s.structs, inner)) { return false; }
     if (!optstruct_payload_reclaimable(s.structs, inner)) { return false; }
-    return opt_credit_at(s, i, "OPTSTRUCT:");
+    return slot_credit_at(s, i, "OPTSTRUCT:");
 }
 
 // emit_optstruct_deep_free frees the option box in `slot`: null-guarded, if Some
@@ -39620,11 +39598,11 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
 // "OPTARRERR:" — its Err payload is a proven-fresh string, so the deep free may
 // release it instead of stranding it (#6360).
 function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
-    return opt_credit_at(s, i, "OPTARRERR:");
+    return slot_credit_at(s, i, "OPTARRERR:");
 }
 
 function slot_is_reclaimable_optstr(s: LowerState, i: i32): boolean {
-    return opt_credit_at(s, i, "OPTSTR:");
+    return slot_credit_at(s, i, "OPTSTR:");
 }
 
 // slot_is_reclaimable_optarr: slot i holds a REBOUND, fresh, non-escaping
@@ -39635,7 +39613,7 @@ function slot_is_reclaimable_optarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return opt_credit_at(s, i, "OPTARR:");
+    return slot_credit_at(s, i, "OPTARR:");
 }
 
 // slot_is_reclaimable_optarrarr: slot i holds a fresh, non-escaping
@@ -39648,7 +39626,7 @@ function slot_is_reclaimable_optarrarr(s: LowerState, i: i32): boolean {
     // collect_fresh_optarrarr_names on the authoritative Option[<scalar-arr-of-arr>]
     // annotation, so it uniquely identifies genuine arr-of-arr option slots.
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return opt_credit_at(s, i, "OPTARRARR:");
+    return slot_credit_at(s, i, "OPTARRARR:");
 }
 
 // emit_optarrarr_deep_free frees the option box in `slot`: null-guarded, if Some
@@ -39771,7 +39749,7 @@ function collect_fresh_arrtup_names(stmts: parser.Stmt[], body: parser.Stmt[], s
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (arrtup_ann_is(v.type_name, structs) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name, structs), structs)) { a = push_str_unique(a, v.name); }
+                if (arrtup_ann_is(v.type_name, structs) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name, structs), structs)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL: the annotation supplies the element type the
                 // deep free walks, and the "ARRTUPF:" registry proves every
                 // returned buffer, element box and inner array is the callee's
@@ -39783,7 +39761,7 @@ function collect_fresh_arrtup_names(stmts: parser.Stmt[], body: parser.Stmt[], s
                             match (c.callee) {
                                 parser.ExprIdent(cid) => {
                                     if (util.index_of_str(fresh_ret, "ARRTUPF:" + cid.name) >= 0
-                                            && !body_declares_name(body, cid.name)) { a = push_str_unique(a, v.name); }
+                                            && !body_declares_name(body, cid.name)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                                 },
                                 _ => {}
                             }
@@ -40092,7 +40070,7 @@ function slot_is_reclaimable_arrtup(s: LowerState, i: i32): boolean {
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
     var et: string = s.locals[i].arrarr_elem;
     if (et.len() < 2 || et[0:1] != "(") { return false; }
-    return reclaim_has(s.reclaimable_names, "ARRTUP:", reclaim_slot_name(s, i));
+    return slot_credit_at(s, i, "ARRTUP:");
 }
 
 // emit_arrtup_deep_free frees the array-of-tuples buffer in `slot`: null-guarded, a
@@ -40385,11 +40363,11 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[]
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, v.name); }
+                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
-                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_call_producer(v.init, body, fresh_ret)) { a = push_str_unique(a, v.name); }
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_call_producer(v.init, body, fresh_ret)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // APPEND-BUILT candidate (#6535): `var vals: Val[] = []` grown by
                 // `vals = vals.append(Val { .. })`. arrstruct_lit_is_fresh rejects
                 // `[]` (no elements to prove fresh), which left every append-built
@@ -40399,8 +40377,8 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[]
                 else if (arrstruct_elem_struct_type(v.type_name, structs) != ""
                     && arrarr_lit_is_empty(v.init)
                     && arrstruct_name_is_appended(stmts, v.name, structs, msites)) {
-                    a = push_str_unique(a, v.name);
-                    a = push_str_unique(a, "A|" + v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, body, structs, fresh_ret, a, msites); a = collect_fresh_arrstruct_names(f.else_body, body, structs, fresh_ret, a, msites); },
@@ -40847,7 +40825,7 @@ function collect_fresh_arrenum_names(stmts: parser.Stmt[], structs: parser.Struc
             parser.StmtVar(v) => {
                 var owner: string = arrenum_lit_enum(v.init, structs);
                 if (owner.len() > 0 && util.index_of_str(reassigned, v.name) < 0) {
-                    a = push_str_unique(a, v.name + "#" + owner);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col) + "#" + owner);
                 }
             },
             parser.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, structs, a); a = collect_fresh_arrenum_names(f.else_body, structs, a); },
@@ -40881,7 +40859,11 @@ function arrenum_enum_of_slot(s: LowerState, i: i32): string {
     if (i >= s.locals.len()) { return ""; }
     if (!s.locals[i].is_arr) { return ""; }
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return ""; }
-    var pre: string = "ARRENUM:" + reclaim_slot_name(s, i) + "#";
+    // Keyed on the binding SITE like every other converted class; the '#' still
+    // separates the key from the element enum, and a site key contains none.
+    var site: string = s.reclaim_site_key(i);
+    if (site.len() == 0) { return ""; }
+    var pre: string = "ARRENUM:" + site + "#";
     var k: i32 = 0;
     while (k < s.reclaimable_names.len()) {
         var e: string = s.reclaimable_names[k];
@@ -40975,12 +40957,12 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    if (reclaim_has(s.reclaimable_names, "ARRSTRUCT:", reclaim_slot_name(s, i))) { return true; }
+    if (slot_credit_at(s, i, "ARRSTRUCT:")) { return true; }
     // APPEND-BUILT (#6535) carries a separate credit so the literal-built rule
     // is not widened by accident — the two reach the same deep walk, and the
     // rebind that distinguishes them is cow-guarded in
     // emit_arrstruct_reclaim_store.
-    return reclaim_has(s.reclaimable_names, "ARRSTRUCTA:", reclaim_slot_name(s, i));
+    return slot_credit_at(s, i, "ARRSTRUCTA:");
 }
 
 // emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
@@ -41080,7 +41062,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (sty.len() == 0) { return false; }
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    if (reclaim_has(s.reclaimable_names, "STRUCTARR:", reclaim_slot_name(s, i))) { return true; }
+    if (slot_credit_at(s, i, "STRUCTARR:")) { return true; }
     // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
     // rule: the element struct's fields must be scalar or `string`.
     //
@@ -41106,7 +41088,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     // which is the sound direction and measurably the same code. Without this,
     // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
     // rounds against the literal-built form's 9600 (the strings alone).
-    if (reclaim_has(s.reclaimable_names, "STRUCTARRA:", reclaim_slot_name(s, i))) {
+    if (slot_credit_at(s, i, "STRUCTARRA:")) {
         return struct_all_scalar_string_or_fn_fields(s.structs, sty);
     }
     return false;
@@ -41236,14 +41218,15 @@ function darr_kinds_of(s: LowerState, name: string): string {
 // A PRIM/STRING payload is an rc-headered op_dyn_box cell: the sweep decs it
 // ("string" first frees the sole-owned inner string box at cell@8).
 //
-// Keyed on reclaim_slot_name, like the rcenum / scenum sweeps: retire_locals
-// renames a BLOCK-SCOPED local to "!retired!<name>" on block exit, so a
-// slot_name-keyed lookup misses every dyn local declared inside an if / while /
-// for / match body and neither zeroes nor sweeps its slot.
+// Accepts a RETIRED slot, like the rcenum / scenum sweeps: retire_locals renames
+// a BLOCK-SCOPED local on block exit, so a lookup that refuses those would miss
+// every dyn local declared inside an if / while / for / match body and neither
+// zero nor sweep its slot. Site-keyed since #7253, so the rename is irrelevant to
+// the lookup and only the refusal would have been.
 function slot_is_reclaimable_dyn(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
-    return dyn_reclaim_concrete_of(s, reclaim_slot_name(s, i)) != "";
+    return dyn_reclaim_concrete_of(s, s.reclaim_site_key(i)) != "";
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
@@ -43459,7 +43442,7 @@ function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
 // exactly once (via y). A shared donor degrades to a fresh box + a dec of x's
 // reference (standing in for the suppressed post-match free) instead of
 // corrupting. Mirrors emit_cross_struct_reuse, minus its old-field releases.
-function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string, donor_name: string, s: LowerState): LowerState {
+function emit_enum_donor_reuse(y_name: string, y_site: string, init: parser.Expr, recip: string, donor_name: string, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -43469,6 +43452,10 @@ function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string,
             // Bind y's slot up front — both guard arms store the result box there.
             st = st.add_local(y_name);
             var yslot: i32 = st.slot_of(y_name);
+            // Binding-SITE key before any credit is read off the slot (#7253):
+            // this path binds the recipient outside bind_var_slot, and a siteless
+            // slot resolves no credit at all — a silent leak, not a loud fault.
+            if (y_site.len() > 0) { st = st.mark_reclaim_site(yslot, y_site); }
             st = st.mark_struct_type(yslot, slit.type_name);
             // Runtime uniqueness guard (#4350 slice 4, the shared token shape):
             // reused = __fern_rc_is_unique(x); box = __fern_alloc_reuse(reused ?
@@ -43697,7 +43684,7 @@ function enum_cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
 // the RESULT box is re-shaped to V and V's fresh array-literal payloads are written
 // into it, c binds the result box (marked enum E), and the donor slot is ZEROED so
 // the box is freed exactly once via c. Returns fail() on any non-`V([..])` shape.
-function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: string, enum_name: string, s: LowerState): LowerState {
+function emit_enum_cross_reuse(c_name: string, c_site: string, value: parser.Expr, donor_name: string, enum_name: string, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (value) {
@@ -43771,6 +43758,12 @@ function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: s
                     // Bind c to the result box; zero the donor slot.
                     var cb: LowerState = st.add_local(c_name);
                     var cslot: i32 = cb.slot_of(c_name);
+            // The binding-SITE key goes on before anything reads a class credit off
+            // the slot (#7253): this path binds the recipient itself rather than
+            // going through bind_var_slot, and a siteless slot resolves no credit —
+            // silently, as a leak. Same gap #7272 / #7349 hit on the tuple and
+            // struct siblings.
+                    if (c_site.len() > 0) { cb = cb.mark_reclaim_site(cslot, c_site); }
                     cb = cb.mark_struct_type(cslot, enum_name);
                     cb = cb.emit(ir.op_load_local(bslot));
                     cb = cb.emit(ir.op_store_local(cslot));
@@ -44158,7 +44151,7 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 // the inarm_reuse_match_ok shape
 // (scalar enum, i32/u32/boolean/i64/u64/f64 payloads, same-size scalar-variant
 // results, no guards/wildcards — see inarm_reuse_payload_type_ok).
-function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
+function emit_inarm_match_reuse(y_name: string, y_site: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
     var xslot: i32 = s.slot_of(donor_name);
     if (xslot < 0) { return s.fail(); }
     var arms: parser.MatchArm[] = inarm_iife_match(init, s.structs);
@@ -44175,6 +44168,10 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
     // resolves the payload. y holds the reused box pointer.
     var st: LowerState = s.add_local(y_name);
     var yslot: i32 = st.slot_of(y_name);
+    // Binding-SITE key before any credit is read off the slot (#7253): this path
+    // binds the recipient outside bind_var_slot, and a siteless slot resolves no
+    // credit at all — a silent leak, not a loud fault.
+    if (y_site.len() > 0) { st = st.mark_reclaim_site(yslot, y_site); }
     st = st.mark_struct_type(yslot, enum_name);
     // Runtime uniqueness guard (#4350 slice 5, the shared token shape), hoisted
     // BEFORE the arm dispatch: reused = __fern_rc_is_unique(x); token = reused ?
@@ -46006,12 +46003,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         }
         if (ecross_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_enum_cross_reuse(rv.name, rv.init, ecross.donors[ecross_i], ecross.enums[ecross_i], s); },
+                parser.StmtVar(rv) => { s = emit_enum_cross_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, ecross.donors[ecross_i], ecross.enums[ecross_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (inarm_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_inarm_match_reuse(rv.name, rv.init, inarm.donors[inarm_i], s); },
+                parser.StmtVar(rv) => { s = emit_inarm_match_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, inarm.donors[inarm_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (reuse_i >= 0) {
@@ -46057,7 +46054,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             }
         } else if (edon_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_enum_donor_reuse(rv.name, rv.init, edon.recips[edon_i], edon.donors[edon_i], s); },
+                parser.StmtVar(rv) => { s = emit_enum_donor_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, edon.recips[edon_i], edon.donors[edon_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else {
