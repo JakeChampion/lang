@@ -9000,6 +9000,36 @@ function e049_lambda_locals(lm: parser.ExprLambda): string[] {
 // is a reference-typed enclosing capture not shadowed by a lambda local.
 // Descends into control blocks but not nested lambdas (those are checked
 // separately from the enclosing function's scope).
+// e049_stmt_own_lambdas checks the lambdas sitting in a statement's OWN
+// expressions — the `var g = function() { … }` inside another lambda's body.
+// Nothing used to look there: e049_check_assigns walks statements for
+// StmtAssign and descends into if/while/for/match/defer bodies, but a nested
+// lambda arrives as a StmtVar INITIALISER and fell to its `_ => {}` arm, while
+// e049_expr_lambdas prunes at the enclosing lambda. So `s = "y"` inside a
+// lambda inside a lambda was accepted outright, where the Go checker reports it.
+//
+// One level, pruned at ExprLambda: e049_check_assigns walks the child blocks
+// itself, and each lambda body is handed on with that lambda's own locals, so
+// every lambda is reached exactly once however deep it nests.
+function e049_stmt_own_lambdas(st: parser.Stmt, enclosing: NameTy[]): util.Diag[] {
+  function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprLambda(lm) => {
+        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm)));
+      },
+      _ => { return acc; }
+    }
+  }
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+}
+
 function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for stmt in stmts {
@@ -9030,6 +9060,7 @@ function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: s
       },
       _ => {}
     }
+    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, enclosing));
   }
   return out;
 }
