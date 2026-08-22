@@ -117,6 +117,18 @@ cleanly and surfaces only as a miscompile. The fixpoint will not catch it
 bytes over 1491 (fixture, target) pairs will. **~28 minutes per side**
 (measured 2026-08-22; this said ~8, from a smaller corpus).
 
+**Delete `bin/fern` before building the after side.** `make selfhost-cli` is
+timestamp-driven and will happily reuse a `bin/fern` built from an older commit,
+while a fresh baseline worktree always builds a current one — so once `main` has
+moved under you, the two sides of the gate are built by TWO DIFFERENT Go
+compilers and the diff reports the intervening commits as your impurity. It
+looks like a real finding: 473 of 1491 rows, spread evenly across all three
+targets. The tell is scope — a change confined to one backend cannot move the
+other two — and the check is one fixture re-emitted after `rm bin/fern
+bin/fern-selfhost && make selfhost-cli`. Do not compare the two `bin/fern`
+binaries to test this: Go embeds build paths, so a worktree copy differs from an
+identical-source repo copy anyway.
+
 **If the refactor touches `ssa_x86` / `ssa_arm64` / `ssa_wasm`, that run proves
 nothing about it** — pass `--ssa`. Measured: changing one emitted string in
 `ssa_arm64.fern` leaves the default sweep byte-identical and moves every arm64
