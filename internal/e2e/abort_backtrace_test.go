@@ -20,8 +20,11 @@ var backtraceHexRe = regexp.MustCompile(`0x[0-9a-f]{16}`)
 // deepAbortSrc is the shared inner→mid→main chain: `inner` indexes past the
 // end of a 3-element array, so the abort fires three frames deep and a walk
 // has something to report.
-const deepAbortSrc = `function inner(xs: i32[]): i32 { return xs[7]; }
-function mid(xs: i32[]): i32 { return inner(xs); }
+// @noinline holds the chain together: the subject here is the frame WALK and
+// its symbolisation, and ir.Inline would otherwise substitute both helpers into
+// main and leave a correct one-frame backtrace with nothing to walk.
+const deepAbortSrc = `@noinline function inner(xs: i32[]): i32 { return xs[7]; }
+@noinline function mid(xs: i32[]): i32 { return inner(xs); }
 function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
 `
 
