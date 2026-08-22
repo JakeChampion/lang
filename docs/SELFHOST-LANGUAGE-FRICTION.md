@@ -1,6 +1,6 @@
 # What the language does to the self-hosted compiler
 
-An analysis of `examples/self_host/` (93 files, 175,326 lines) asking one
+An analysis of `examples/self_host/` (94 files, 175,194 lines) asking one
 question: **which parts of Fern make writing the self-hosted compiler harder
 than it needs to be?** Not "which parts of the self-host are badly written" —
 that is `docs/SELF-HOST-AUDIT.md`, and its findings are largely structural
@@ -32,7 +32,8 @@ container beyond the built-in array exists), a module system where a module is a
 file and cycles are illegal (so a mutually-recursive pass cannot be split), and
 a self-referential fixpoint gate that makes any feature the self-host does not
 already use untested on the self-host path — and therefore too risky to adopt.
-That last one is the important one: it is a ratchet, and it only turns one way.
+That last one is the important one: it is a ratchet, and nothing turns it back
+except a deliberate conversion.
 
 ---
 
@@ -47,22 +48,22 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
 | Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **8** capturing — 4 anonymous `function(…)` exprs, 4 nested named visitors — plus **2** no-op arrow lambdas | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **15**, all in `visibility.fern` | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **326** in 2 modules — 311 in `checker.fern`, 15 in `visibility.fern` | pinned |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
 | `astwalk` call sites (walkers on the shared spine) | — | **85** across 11 modules | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **4,694** loops, **5,037** `x = x + 1` | ceiling on the increments |
-| `-1` as "absent" | — | **243** `return 0 - 1` | logged |
+| `while` + manual index | — | **4,386** loops, **4,728** `x = x + 1` | ceiling on the increments |
+| `-1` as "absent" | — | **240** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **682** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,557** of **9,223** arrow tokens (28%) | ceiling |
-| Locals with a written type annotation | inference exists | **17,615** of 17,622 (99.9%) | logged |
-| Methods (`function (r: T) name(…)`) | ✅ | **269** in 9 modules | logged |
+| Wildcard `_ =>` match arms | — | **2,563** of **9,245** arrow tokens (28%) | ceiling |
+| Locals with a written type annotation | inference exists | **17,320** of 17,327 (99.9%) | logged |
+| Methods (`function (r: T) name(…)`) | ✅ | **276** in 9 modules | logged |
 
 **Method.** Every counted row is taken after `//` comments and string, f-string
 and char literals are stripped out. The self-host embeds whole test programs as
@@ -205,10 +206,11 @@ repeatedly, each time about a different feature:
 Read together these are not five notes, they are one mechanism. A feature the
 self-host does not use gets no fixpoint coverage; a feature with no fixpoint
 coverage is a risk to adopt in the self-host; so it does not get used. The
-ratchet only turns toward the smaller subset, and it has been turning for the
-whole life of the project. **This is why the census in §1 looks the way it
-does** — not because closures or generics fail on the self-host path (they are
-implemented there: `irlower.fern` carries 172 `ExprLambda` sites, and
+ratchet turns toward the smaller subset on its own, and it has been turning for
+the whole life of the project; only a deliberate conversion turns it back, and
+the `for..in` row is what one looks like. **This is why the census in §1 looks
+the way it does** — not because closures or generics fail on the self-host path
+(they are implemented there: `irlower.fern` carries 172 `ExprLambda` sites, and
 `docs/FEATURE-AUDIT.md` pins generic `Ord`-bound `sort`, the `Iterator[T]`
 protocol and a generic collector to the self-host IR path on x86-64 and wasm),
 but because nobody has ever had a safe first step to using them *here*.
@@ -424,7 +426,39 @@ here was equivalent to a complete one *by accident of what runs before it*. The
 consolidation is worth doing because that accident is not a contract — but the
 honest statement is that it removed a latent hazard, not a bug.
 
-Five slices, ten bugs. The census rows that remain are not blocked on the
+**What the sixth adoption cost (#6993).** The feature was `for x in xs`, the
+module `checker.fern`: 311 index-style `while` loops became `for` loops and that
+module went 13,150 → 12,495 lines. **Behaviourally it cost nothing** —
+`scripts/selfhost-emit-hashes` reports the emitted bytes identical across all
+1,479 (fixture, target) pairs, the same before-and-after check slice five used
+and the one that bites where the fixpoint cannot.
+
+**It is not free in the compiler's own binary: `fern.fern` grows 3.8%**
+(21,315,956 → 22,135,156 bytes on x86-64, same tree, checker.fern the only
+variable). The desugar is the reason — each `for` opens with an alias of the
+iterand and a captured `.len()`, two live locals plus their RC traffic where the
+index form had one `i32`, times 311 loops. The elided per-element bounds check
+pays some of it back and not all. That is inside `ci-check-driver-sizes`'
+5% advisory tolerance, but it is most of it, and a second module converted the
+same way will not fit under it: whoever does the next one should expect to
+refresh `.github/selfhost-driver-sizes.txt` and should read this as the real
+per-loop price of the construct, not as noise.
+
+This is the first slice whose subject is the ratchet's own two rows rather than
+a feature row: `for..in` 15 → 326, `x = x + 1` 5,039 → 4,728. Nothing had to be
+built and nothing had to be fixed, which is the point — the loops were
+convertible the whole time.
+
+68 of `checker.fern`'s index loops are still `while`, and the reasons are worth
+carrying to the next module because they are what a mechanical pass cannot take:
+45 use the index for more than the element read (a `i > 0` separator, a `return
+i`, two arrays walked in lockstep, `xs[i + 1]`), 11 bound on something other
+than `xs.len()`, 7 iterate an expression rather than a path, 4 advance the index
+more than once, and 1 never reads an element at all. The safe pass is a
+fixpoint: converting an outer loop turns `xs[i].ys` into a path and so exposes an
+inner loop the first pass could not see.
+
+Six slices, ten bugs. The census rows that remain are not blocked on the
 ratchet any more; they are blocked on their own prerequisites.
 
 ### 2.5 Types are strings
