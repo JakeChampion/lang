@@ -67,6 +67,27 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[E048]",
 		},
 		{
+			// #7273: an under-supplied call. Both oracles report E004; the
+			// self-host checker did too, and only `-check` ever saw it — the
+			// build emitted a binary that read the missing argument out of
+			// whatever was in the register.
+			name:     "call-too-few-args-E004",
+			src:      "function two(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return two(1); }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			// The shape that kept E004 off the gate: a FUNCTION-TYPED parameter
+			// shadowing a module-level function of the same name. The call
+			// `f(v)` is a closure call, but the arity branch was guarded on
+			// "the name has no known type" rather than "the name is not bound",
+			// and a fn-typed parameter has no known type here — so it compared
+			// the call against the module-level `f` and reported a bogus E004.
+			// Native accepts this program; it must still build.
+			name:     "fn-typed-param-shadows-module-fn-compiles",
+			src:      "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction f(): i32 { return 1; }\nfunction main(): i32 { return apply((x: i32) => x + 1, 1) + f(); }\n",
+			wantDiag: "",
+		},
+		{
 			// A valid i64 program compiles. This drew a spurious E043 when the
 			// checker ignored integer width, which is why E043 was excluded;
 			// #7011 closed that, and both checkers are now silent here. The
@@ -152,6 +173,11 @@ func TestSelfHostBuildGateMatchesCheckX86_64(t *testing.T) {
 		"enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Sm(1); match (o) { Sm(a) => { return a; }, Sm(b) => { return b; }, Nn => { return 3; } } }\n",
 		"struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n",
 		"enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Nn; match (o) { _ => { return 1; }, Nn => { return 3; } } }\n",
+		// #7273: this source is why the property matters — `-check` reported
+		// E004 and `-target` built it anyway, for as long as E004 sat on the
+		// exclusion list. IR lowering does not stop it either: the call is
+		// well-formed, it is simply short an argument.
+		"function two(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return two(1); }\n",
 	}
 	for i, src := range srcs {
 		progDir := t.TempDir()
