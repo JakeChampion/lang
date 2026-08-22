@@ -521,16 +521,17 @@ function clos_wrapper(f: ssa.SFunc): string {
 // closures are used, the runtime helpers a program actually uses, each
 // function body, then a `_start` that exits with main()'s value.
 pub function emit_program(funcs: ssa.SFunc[]): string {
-    var out: string = "(module\n";
-    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+    var parts: string[] = [];
+    parts = parts.append("(module\n");
+    parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
     var has_print: boolean = uses_kind(funcs, 19);
     if (has_print) {
-        out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+        parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
     }
     // A 16 MiB linear-memory arena (256 × 64 KiB pages) and a bump pointer
     // ($__hp) for the heap. The low 1 KiB is reserved (print scratch / null).
-    out = out + "  (memory (export \"memory\") 256)\n";
-    out = out + "  (global $__hp (mut i32) (i32.const 1024))\n";
+    parts = parts.append("  (memory (export \"memory\") 256)\n");
+    parts = parts.append("  (global $__hp (mut i32) (i32.const 1024))\n");
     // Function values: a value is a table slot index; call_indirect dispatches
     // through a $clos<arity> type. Emit the types, a table of every function
     // (slot i = the closure-callable form of funcs[i]: the function itself if
@@ -546,10 +547,10 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
             var ty: string = "  (type $clos" + util.i32_to_string(a) + " (func";
             var pj: i32 = 0;
             while (pj < a) { ty = ty + " (param i32)"; pj = pj + 1; }
-            out = out + ty + " (result i32)))\n";
+            parts = parts.append(ty + " (result i32)))\n");
             a = a + 1;
         }
-        out = out + "  (table " + util.i32_to_string(funcs.len()) + " funcref)\n";
+        parts = parts.append("  (table " + util.i32_to_string(funcs.len()) + " funcref)\n");
         var el: string = "  (elem (i32.const 0)";
         var ei: i32 = 0;
         while (ei < funcs.len()) {
@@ -560,27 +561,27 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
             }
             ei = ei + 1;
         }
-        out = out + el + ")\n";
+        parts = parts.append(el + ")\n");
         var wi: i32 = 0;
         while (wi < funcs.len()) {
             if (!funcs[wi].takes_env && is_funcaddr_target(funcs, funcs[wi].name)) {
-                out = out + clos_wrapper(funcs[wi]);
+                parts = parts.append(clos_wrapper(funcs[wi]));
             }
             wi = wi + 1;
         }
     }
-    if (uses_kind(funcs, 17)) { out = out + concat_helper(); }
-    if (uses_kind(funcs, 18)) { out = out + streq_helper(); }
-    if (has_print) { out = out + print_helper(); }
+    if (uses_kind(funcs, 17)) { parts = parts.append(concat_helper()); }
+    if (uses_kind(funcs, 18)) { parts = parts.append(streq_helper()); }
+    if (has_print) { parts = parts.append(print_helper()); }
     var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
         chunks = chunks.append(emit_func(funcs[i], fnnames));
         i = i + 1;
     }
-    out = out + util.str_join_chunks(chunks);
-    out = out + "  (func $_start (call $proc_exit (call $__fn_main)))\n";
-    out = out + "  (export \"_start\" (func $_start))\n";
-    out = out + ")\n";
-    return out;
+    parts = parts.append(util.str_join_chunks(chunks));
+    parts = parts.append("  (func $_start (call $proc_exit (call $__fn_main)))\n");
+    parts = parts.append("  (export \"_start\" (func $_start))\n");
+    parts = parts.append(")\n");
+    return util.str_join_chunks(parts);
 }

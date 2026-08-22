@@ -611,21 +611,22 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
 }
 
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
-    var out: string = "    .globl _start\n";
+    var parts: string[] = [];
+    parts = parts.append("    .globl _start\n");
     // Heap: a 1 GiB zero-initialised arena and an 8-byte bump pointer.
     // The arena is leak-everything (no reclamation yet — Perceus RC is a
     // separate track), so it is sized generously (1 GiB) to leave room for
     // a self-hosted SSA compiler to process a real source
     // bundle. It is .bss (demand-zero), so the large reservation costs
     // nothing on disk and no resident memory until actually touched.
-    out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 1073741824\n";
-    out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
+    parts = parts.append("    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 1073741824\n");
+    parts = parts.append("    .data\n__fern_ssa_hp:\n    .quad 0\n");
     // String literals as static [len, bytes…] .data constants.
-    out = out + emit_str_consts(funcs);
+    parts = parts.append(emit_str_consts(funcs));
     // f64 literals as .rodata .double constants (the assembler computes bits).
     var fconsts: string = emit_float_consts(funcs);
-    if (fconsts.len() > 0) { out = out + "    .section .rodata\n" + fconsts; }
-    out = out + "    .text\n";
+    if (fconsts.len() > 0) { parts = parts.append("    .section .rodata\n" + fconsts); }
+    parts = parts.append("    .text\n");
     // Collect each function body, then join once — a left fold here is
     // O(total²) and OOMs on a whole compiler's worth of asm.
     var chunks: string[] = [];
@@ -638,108 +639,108 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         chunks = chunks.append(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
-    out = out + util.str_join_chunks(chunks);
+    parts = parts.append(util.str_join_chunks(chunks));
     // __fern_ssa_print(%rdi = string handle): write each byte to stdout,
     // then a trailing newline — Fern's print / eprint append a '\n' (the
     // native backend, the interpreter, and the AST emitters all do).
     // The string is [len, b0, b1, …] as 8-byte words; each byte's low octet
     // sits at its word's address (little-endian), so write 1 byte per word.
-    out = out + "__fern_ssa_print:\n";
-    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n";
-    out = out + "    movq %rdi, %rbx\n";          // handle
-    out = out + "    movl %esi, %r14d\n";          // fd
-    out = out + "    movl (%rbx), %r12d\n";        // len = word[0]
-    out = out + "    xorl %r13d, %r13d\n";         // i = 0
-    out = out + ".Lfsp_loop:\n";
-    out = out + "    cmpl %r12d, %r13d\n    jge .Lfsp_done\n";
-    out = out + "    leal 1(%r13d), %eax\n";       // i+1
-    out = out + "    movl %eax, %eax\n";           // zero-extend to rax
-    out = out + "    leaq (%rbx,%rax,8), %rsi\n";   // &word[i+1] = byte address
-    out = out + "    movq $1, %rax\n    movl %r14d, %edi\n    movq $1, %rdx\n    syscall\n";
-    out = out + "    incl %r13d\n    jmp .Lfsp_loop\n";
-    out = out + ".Lfsp_done:\n";
+    parts = parts.append("__fern_ssa_print:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+    parts = parts.append("    movq %rdi, %rbx\n");          // handle
+    parts = parts.append("    movl %esi, %r14d\n");          // fd
+    parts = parts.append("    movl (%rbx), %r12d\n");        // len = word[0]
+    parts = parts.append("    xorl %r13d, %r13d\n");         // i = 0
+    parts = parts.append(".Lfsp_loop:\n");
+    parts = parts.append("    cmpl %r12d, %r13d\n    jge .Lfsp_done\n");
+    parts = parts.append("    leal 1(%r13d), %eax\n");       // i+1
+    parts = parts.append("    movl %eax, %eax\n");           // zero-extend to rax
+    parts = parts.append("    leaq (%rbx,%rax,8), %rsi\n");   // &word[i+1] = byte address
+    parts = parts.append("    movq $1, %rax\n    movl %r14d, %edi\n    movq $1, %rdx\n    syscall\n");
+    parts = parts.append("    incl %r13d\n    jmp .Lfsp_loop\n");
+    parts = parts.append(".Lfsp_done:\n");
     // Trailing newline: write one '\n' byte from a scratch stack slot.
-    out = out + "    subq $16, %rsp\n    movb $10, (%rsp)\n";
-    out = out + "    movq $1, %rax\n    movl %r14d, %edi\n    movq %rsp, %rsi\n    movq $1, %rdx\n    syscall\n";
-    out = out + "    addq $16, %rsp\n";
-    out = out + "    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    parts = parts.append("    subq $16, %rsp\n    movb $10, (%rsp)\n");
+    parts = parts.append("    movq $1, %rax\n    movl %r14d, %edi\n    movq %rsp, %rsi\n    movq $1, %rdx\n    syscall\n");
+    parts = parts.append("    addq $16, %rsp\n");
+    parts = parts.append("    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
     // __fern_ssa_concat(%rdi = a, %rsi = b) → %rax: new length-prefixed
     // string = lenA+lenB, then A's bytes, then B's bytes. Words are 8 bytes;
     // each byte is an i32 (we copy the low 4 bytes per word).
-    out = out + "__fern_ssa_concat:\n";
-    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
-    out = out + "    movq %rdi, %rbx\n";          // a
-    out = out + "    movq %rsi, %r12\n";          // b
-    out = out + "    movl (%rbx), %r13d\n";        // lenA
-    out = out + "    movl (%r12), %r14d\n";        // lenB
-    out = out + "    movl %r13d, %eax\n    addl %r14d, %eax\n";   // eax = total
-    out = out + "    movq __fern_ssa_hp(%rip), %r15\n";           // r15 = result ptr
-    out = out + "    leal 1(%rax), %ecx\n    movl %ecx, %ecx\n";   // ecx = total+1
-    out = out + "    leaq (,%rcx,8), %rdx\n    addq %rdx, __fern_ssa_hp(%rip)\n";   // hp += (total+1)*8
-    out = out + "    movl %eax, (%r15)\n";         // result[0] = total
-    out = out + "    xorl %ecx, %ecx\n";           // i = 0
-    out = out + ".Lcat_a:\n    cmpl %r13d, %ecx\n    jge .Lcat_a_done\n";
-    out = out + "    leal 1(%rcx), %eax\n    movl %eax, %eax\n";
-    out = out + "    movl (%rbx,%rax,8), %edx\n    movl %edx, (%r15,%rax,8)\n";
-    out = out + "    incl %ecx\n    jmp .Lcat_a\n.Lcat_a_done:\n";
-    out = out + "    xorl %ecx, %ecx\n";           // j = 0
-    out = out + ".Lcat_b:\n    cmpl %r14d, %ecx\n    jge .Lcat_b_done\n";
-    out = out + "    leal 1(%rcx), %eax\n    movl %eax, %eax\n";          // src word = j+1
-    out = out + "    movl (%r12,%rax,8), %edx\n";   // b[j+1]
-    out = out + "    movl %r13d, %edi\n    addl $1, %edi\n    addl %ecx, %edi\n    movl %edi, %edi\n";   // dst word = lenA+1+j
-    out = out + "    movl %edx, (%r15,%rdi,8)\n";
-    out = out + "    incl %ecx\n    jmp .Lcat_b\n.Lcat_b_done:\n";
-    out = out + "    movq %r15, %rax\n";           // return result ptr
-    out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    parts = parts.append("__fern_ssa_concat:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    parts = parts.append("    movq %rdi, %rbx\n");          // a
+    parts = parts.append("    movq %rsi, %r12\n");          // b
+    parts = parts.append("    movl (%rbx), %r13d\n");        // lenA
+    parts = parts.append("    movl (%r12), %r14d\n");        // lenB
+    parts = parts.append("    movl %r13d, %eax\n    addl %r14d, %eax\n");   // eax = total
+    parts = parts.append("    movq __fern_ssa_hp(%rip), %r15\n");           // r15 = result ptr
+    parts = parts.append("    leal 1(%rax), %ecx\n    movl %ecx, %ecx\n");   // ecx = total+1
+    parts = parts.append("    leaq (,%rcx,8), %rdx\n    addq %rdx, __fern_ssa_hp(%rip)\n");   // hp += (total+1)*8
+    parts = parts.append("    movl %eax, (%r15)\n");         // result[0] = total
+    parts = parts.append("    xorl %ecx, %ecx\n");           // i = 0
+    parts = parts.append(".Lcat_a:\n    cmpl %r13d, %ecx\n    jge .Lcat_a_done\n");
+    parts = parts.append("    leal 1(%rcx), %eax\n    movl %eax, %eax\n");
+    parts = parts.append("    movl (%rbx,%rax,8), %edx\n    movl %edx, (%r15,%rax,8)\n");
+    parts = parts.append("    incl %ecx\n    jmp .Lcat_a\n.Lcat_a_done:\n");
+    parts = parts.append("    xorl %ecx, %ecx\n");           // j = 0
+    parts = parts.append(".Lcat_b:\n    cmpl %r14d, %ecx\n    jge .Lcat_b_done\n");
+    parts = parts.append("    leal 1(%rcx), %eax\n    movl %eax, %eax\n");          // src word = j+1
+    parts = parts.append("    movl (%r12,%rax,8), %edx\n");   // b[j+1]
+    parts = parts.append("    movl %r13d, %edi\n    addl $1, %edi\n    addl %ecx, %edi\n    movl %edi, %edi\n");   // dst word = lenA+1+j
+    parts = parts.append("    movl %edx, (%r15,%rdi,8)\n");
+    parts = parts.append("    incl %ecx\n    jmp .Lcat_b\n.Lcat_b_done:\n");
+    parts = parts.append("    movq %r15, %rax\n");           // return result ptr
+    parts = parts.append("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
     // __fern_ssa_streq(%rdi = a, %rsi = b) → %eax (1 if equal content else 0).
-    out = out + "__fern_ssa_streq:\n";
-    out = out + "    movl (%rdi), %ecx\n";          // lenA
-    out = out + "    movl (%rsi), %edx\n";          // lenB
-    out = out + "    cmpl %edx, %ecx\n    jne .Lsne_no\n";   // lengths differ → 0
-    out = out + "    xorl %r8d, %r8d\n";            // i = 0
-    out = out + ".Lsne_loop:\n    cmpl %ecx, %r8d\n    jge .Lsne_yes\n";
-    out = out + "    leal 1(%r8d), %eax\n    movl %eax, %eax\n";
-    out = out + "    movl (%rdi,%rax,8), %r9d\n    movl (%rsi,%rax,8), %r10d\n";
-    out = out + "    cmpl %r10d, %r9d\n    jne .Lsne_no\n";
-    out = out + "    incl %r8d\n    jmp .Lsne_loop\n";
-    out = out + ".Lsne_yes:\n    movl $1, %eax\n    ret\n";
-    out = out + ".Lsne_no:\n    xorl %eax, %eax\n    ret\n";
+    parts = parts.append("__fern_ssa_streq:\n");
+    parts = parts.append("    movl (%rdi), %ecx\n");          // lenA
+    parts = parts.append("    movl (%rsi), %edx\n");          // lenB
+    parts = parts.append("    cmpl %edx, %ecx\n    jne .Lsne_no\n");   // lengths differ → 0
+    parts = parts.append("    xorl %r8d, %r8d\n");            // i = 0
+    parts = parts.append(".Lsne_loop:\n    cmpl %ecx, %r8d\n    jge .Lsne_yes\n");
+    parts = parts.append("    leal 1(%r8d), %eax\n    movl %eax, %eax\n");
+    parts = parts.append("    movl (%rdi,%rax,8), %r9d\n    movl (%rsi,%rax,8), %r10d\n");
+    parts = parts.append("    cmpl %r10d, %r9d\n    jne .Lsne_no\n");
+    parts = parts.append("    incl %r8d\n    jmp .Lsne_loop\n");
+    parts = parts.append(".Lsne_yes:\n    movl $1, %eax\n    ret\n");
+    parts = parts.append(".Lsne_no:\n    xorl %eax, %eax\n    ret\n");
     // strbuf — the global amortised-O(1) string builder. A byte buffer in
     // .bss (256 MiB, demand-zero) + a length. append copies a source string's
     // bytes (read from the [len, byte-per-word] layout) into the buffer; take
     // materialises a fresh [len, bytes…] string and clears the buffer.
-    out = out + "    .bss\n    .align 8\n__fern_ssa_strbuf_data:\n    .zero 268435456\n";
-    out = out + "    .data\n    .align 8\n__fern_ssa_strbuf_len:\n    .quad 0\n";
-    out = out + "    .text\n";
-    out = out + "__fern_ssa_strbuf_reset:\n    movq $0, __fern_ssa_strbuf_len(%rip)\n    ret\n";
-    out = out + "__fern_ssa_strbuf_append:\n";
-    out = out + "    movl (%rdi), %ecx\n";                  // src len (word0)
-    out = out + "    testl %ecx, %ecx\n    je .Lsba_done\n";
-    out = out + "    leaq __fern_ssa_strbuf_data(%rip), %rdx\n";
-    out = out + "    addq __fern_ssa_strbuf_len(%rip), %rdx\n";   // dst = data + curlen
-    out = out + "    xorl %eax, %eax\n";                   // i = 0
-    out = out + ".Lsba_loop:\n    cmpl %ecx, %eax\n    jge .Lsba_fin\n";
-    out = out + "    leal 1(%eax), %r8d\n    movl %r8d, %r8d\n";   // src word = i+1
-    out = out + "    movzbl (%rdi,%r8,8), %r9d\n";          // byte = low octet of word i+1
-    out = out + "    movb %r9b, (%rdx)\n    incq %rdx\n";
-    out = out + "    incl %eax\n    jmp .Lsba_loop\n";
-    out = out + ".Lsba_fin:\n    addq %rcx, __fern_ssa_strbuf_len(%rip)\n";
-    out = out + ".Lsba_done:\n    ret\n";
-    out = out + "__fern_ssa_strbuf_take:\n";
-    out = out + "    movq __fern_ssa_strbuf_len(%rip), %rcx\n";    // total bytes
-    out = out + "    movq __fern_ssa_hp(%rip), %r8\n";            // result ptr
-    out = out + "    leaq 1(%rcx), %rax\n    leaq (,%rax,8), %rdx\n";   // (total+1)*8
-    out = out + "    addq %rdx, __fern_ssa_hp(%rip)\n";
-    out = out + "    movl %ecx, (%r8)\n";                  // result[0] = total
-    out = out + "    leaq __fern_ssa_strbuf_data(%rip), %rsi\n";
-    out = out + "    xorl %eax, %eax\n";                   // i = 0
-    out = out + ".Lsbt_loop:\n    cmpq %rcx, %rax\n    jge .Lsbt_fin\n";
-    out = out + "    movzbl (%rsi,%rax), %edx\n";           // byte i
-    out = out + "    leaq 1(%rax), %r9\n";                  // dst word = i+1
-    out = out + "    movl %edx, (%r8,%r9,8)\n";             // result[i+1] = byte
-    out = out + "    incq %rax\n    jmp .Lsbt_loop\n";
-    out = out + ".Lsbt_fin:\n    movq $0, __fern_ssa_strbuf_len(%rip)\n";
-    out = out + "    movq %r8, %rax\n    ret\n";
+    parts = parts.append("    .bss\n    .align 8\n__fern_ssa_strbuf_data:\n    .zero 268435456\n");
+    parts = parts.append("    .data\n    .align 8\n__fern_ssa_strbuf_len:\n    .quad 0\n");
+    parts = parts.append("    .text\n");
+    parts = parts.append("__fern_ssa_strbuf_reset:\n    movq $0, __fern_ssa_strbuf_len(%rip)\n    ret\n");
+    parts = parts.append("__fern_ssa_strbuf_append:\n");
+    parts = parts.append("    movl (%rdi), %ecx\n");                  // src len (word0)
+    parts = parts.append("    testl %ecx, %ecx\n    je .Lsba_done\n");
+    parts = parts.append("    leaq __fern_ssa_strbuf_data(%rip), %rdx\n");
+    parts = parts.append("    addq __fern_ssa_strbuf_len(%rip), %rdx\n");   // dst = data + curlen
+    parts = parts.append("    xorl %eax, %eax\n");                   // i = 0
+    parts = parts.append(".Lsba_loop:\n    cmpl %ecx, %eax\n    jge .Lsba_fin\n");
+    parts = parts.append("    leal 1(%eax), %r8d\n    movl %r8d, %r8d\n");   // src word = i+1
+    parts = parts.append("    movzbl (%rdi,%r8,8), %r9d\n");          // byte = low octet of word i+1
+    parts = parts.append("    movb %r9b, (%rdx)\n    incq %rdx\n");
+    parts = parts.append("    incl %eax\n    jmp .Lsba_loop\n");
+    parts = parts.append(".Lsba_fin:\n    addq %rcx, __fern_ssa_strbuf_len(%rip)\n");
+    parts = parts.append(".Lsba_done:\n    ret\n");
+    parts = parts.append("__fern_ssa_strbuf_take:\n");
+    parts = parts.append("    movq __fern_ssa_strbuf_len(%rip), %rcx\n");    // total bytes
+    parts = parts.append("    movq __fern_ssa_hp(%rip), %r8\n");            // result ptr
+    parts = parts.append("    leaq 1(%rcx), %rax\n    leaq (,%rax,8), %rdx\n");   // (total+1)*8
+    parts = parts.append("    addq %rdx, __fern_ssa_hp(%rip)\n");
+    parts = parts.append("    movl %ecx, (%r8)\n");                  // result[0] = total
+    parts = parts.append("    leaq __fern_ssa_strbuf_data(%rip), %rsi\n");
+    parts = parts.append("    xorl %eax, %eax\n");                   // i = 0
+    parts = parts.append(".Lsbt_loop:\n    cmpq %rcx, %rax\n    jge .Lsbt_fin\n");
+    parts = parts.append("    movzbl (%rsi,%rax), %edx\n");           // byte i
+    parts = parts.append("    leaq 1(%rax), %r9\n");                  // dst word = i+1
+    parts = parts.append("    movl %edx, (%r8,%r9,8)\n");             // result[i+1] = byte
+    parts = parts.append("    incq %rax\n    jmp .Lsbt_loop\n");
+    parts = parts.append(".Lsbt_fin:\n    movq $0, __fern_ssa_strbuf_len(%rip)\n");
+    parts = parts.append("    movq %r8, %rax\n    ret\n");
     // File I/O — read_file / write_file lowered to the Linux x86-64 syscall
     // runtime (openat=257, read=0, write=1, close=3, lseek=8; AT_FDCWD -100).
     // Strings use the SSA [len, byte-per-8-byte-word] layout, so both helpers
@@ -749,126 +750,126 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     // counters that straddle a syscall live in callee-saved regs (a syscall
     // clobbers rcx/r11), so rcx counts only in syscall-free copy loops.
     // __fern_ssa_alloc(rdi = bytes) → rax = base (8-aligned bump off __fern_ssa_hp).
-    out = out + "__fern_ssa_alloc:\n";
-    out = out + "    addq $7, %rdi\n    andq $-8, %rdi\n";
-    out = out + "    movq __fern_ssa_hp(%rip), %rax\n    addq %rdi, __fern_ssa_hp(%rip)\n    ret\n";
+    parts = parts.append("__fern_ssa_alloc:\n");
+    parts = parts.append("    addq $7, %rdi\n    andq $-8, %rdi\n");
+    parts = parts.append("    movq __fern_ssa_hp(%rip), %rax\n    addq %rdi, __fern_ssa_hp(%rip)\n    ret\n");
     // __fern_ssa_read_file(rdi = path string box) → rax = Result box:
     // [tag=0@0, payload=string@8] Ok, or [tag=1@0, 0@8] Err on any I/O error.
-    out = out + "__fern_ssa_read_file:\n";
-    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
-    out = out + "    movq %rdi, %rbx\n";              // path box
-    out = out + "    movl (%rbx), %r13d\n";           // path len (word0)
-    out = out + "    leaq 1(%r13), %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r12\n";   // pathz
-    out = out + "    xorl %ecx, %ecx\n";
-    out = out + ".Lssa_rdf_copy:\n    cmpl %r13d, %ecx\n    jge .Lssa_rdf_copydone\n";
-    out = out + "    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl (%rbx,%rax,8), %edx\n";   // path word[i+1]
-    out = out + "    movb %dl, (%r12,%rcx)\n    incl %ecx\n    jmp .Lssa_rdf_copy\n";
-    out = out + ".Lssa_rdf_copydone:\n    movb $0, (%r12,%r13)\n";   // NUL
-    out = out + "    movq $-100, %rdi\n    movq %r12, %rsi\n    xorl %edx, %edx\n    xorl %r10d, %r10d\n    movl $257, %eax\n    syscall\n";   // openat O_RDONLY
-    out = out + "    testq %rax, %rax\n    js .Lssa_rdf_err\n    movq %rax, %r12\n";   // fd
-    out = out + "    movq %r12, %rdi\n    xorl %esi, %esi\n    movl $2, %edx\n    movl $8, %eax\n    syscall\n    movq %rax, %r14\n";   // lseek SEEK_END → size
-    out = out + "    movq %r12, %rdi\n    xorl %esi, %esi\n    xorl %edx, %edx\n    movl $8, %eax\n    syscall\n";   // lseek SEEK_SET 0
-    out = out + "    movq %r14, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r14\n    movq %rax, %r15\n    xorl %r13d, %r13d\n";   // packed buf / write ptr / total
-    out = out + ".Lssa_rdf_rdloop:\n    movq %r12, %rdi\n    movq %r15, %rsi\n    movq $1048576, %rdx\n    xorl %eax, %eax\n    syscall\n";   // read up to 1 MiB
-    out = out + "    testq %rax, %rax\n    jle .Lssa_rdf_rddone\n    addq %rax, %r13\n    addq %rax, %r15\n    jmp .Lssa_rdf_rdloop\n";
-    out = out + ".Lssa_rdf_rddone:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n";   // close
+    parts = parts.append("__fern_ssa_read_file:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    parts = parts.append("    movq %rdi, %rbx\n");              // path box
+    parts = parts.append("    movl (%rbx), %r13d\n");           // path len (word0)
+    parts = parts.append("    leaq 1(%r13), %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r12\n");   // pathz
+    parts = parts.append("    xorl %ecx, %ecx\n");
+    parts = parts.append(".Lssa_rdf_copy:\n    cmpl %r13d, %ecx\n    jge .Lssa_rdf_copydone\n");
+    parts = parts.append("    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl (%rbx,%rax,8), %edx\n");   // path word[i+1]
+    parts = parts.append("    movb %dl, (%r12,%rcx)\n    incl %ecx\n    jmp .Lssa_rdf_copy\n");
+    parts = parts.append(".Lssa_rdf_copydone:\n    movb $0, (%r12,%r13)\n");   // NUL
+    parts = parts.append("    movq $-100, %rdi\n    movq %r12, %rsi\n    xorl %edx, %edx\n    xorl %r10d, %r10d\n    movl $257, %eax\n    syscall\n");   // openat O_RDONLY
+    parts = parts.append("    testq %rax, %rax\n    js .Lssa_rdf_err\n    movq %rax, %r12\n");   // fd
+    parts = parts.append("    movq %r12, %rdi\n    xorl %esi, %esi\n    movl $2, %edx\n    movl $8, %eax\n    syscall\n    movq %rax, %r14\n");   // lseek SEEK_END → size
+    parts = parts.append("    movq %r12, %rdi\n    xorl %esi, %esi\n    xorl %edx, %edx\n    movl $8, %eax\n    syscall\n");   // lseek SEEK_SET 0
+    parts = parts.append("    movq %r14, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r14\n    movq %rax, %r15\n    xorl %r13d, %r13d\n");   // packed buf / write ptr / total
+    parts = parts.append(".Lssa_rdf_rdloop:\n    movq %r12, %rdi\n    movq %r15, %rsi\n    movq $1048576, %rdx\n    xorl %eax, %eax\n    syscall\n");   // read up to 1 MiB
+    parts = parts.append("    testq %rax, %rax\n    jle .Lssa_rdf_rddone\n    addq %rax, %r13\n    addq %rax, %r15\n    jmp .Lssa_rdf_rdloop\n");
+    parts = parts.append(".Lssa_rdf_rddone:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n");   // close
     // Build SSA string [total, byte-per-word] from the packed buffer (r14).
-    out = out + "    leaq 1(%r13), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r15\n";   // strbox
-    out = out + "    movl %r13d, (%r15)\n    xorl %ecx, %ecx\n";   // len = word0
-    out = out + ".Lssa_rdf_expand:\n    cmpl %r13d, %ecx\n    jge .Lssa_rdf_expanddone\n";
-    out = out + "    movzbl (%r14,%rcx), %edx\n    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl %edx, (%r15,%rax,8)\n";   // strbox[i+1] = byte
-    out = out + "    incl %ecx\n    jmp .Lssa_rdf_expand\n";
-    out = out + ".Lssa_rdf_expanddone:\n";
-    out = out + "    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq %r15, 8(%rax)\n";   // Ok box
-    out = out + "    jmp .Lssa_rdf_ret\n";
-    out = out + ".Lssa_rdf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n";   // Err box
-    out = out + ".Lssa_rdf_ret:\n";
-    out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    parts = parts.append("    leaq 1(%r13), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r15\n");   // strbox
+    parts = parts.append("    movl %r13d, (%r15)\n    xorl %ecx, %ecx\n");   // len = word0
+    parts = parts.append(".Lssa_rdf_expand:\n    cmpl %r13d, %ecx\n    jge .Lssa_rdf_expanddone\n");
+    parts = parts.append("    movzbl (%r14,%rcx), %edx\n    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl %edx, (%r15,%rax,8)\n");   // strbox[i+1] = byte
+    parts = parts.append("    incl %ecx\n    jmp .Lssa_rdf_expand\n");
+    parts = parts.append(".Lssa_rdf_expanddone:\n");
+    parts = parts.append("    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq %r15, 8(%rax)\n");   // Ok box
+    parts = parts.append("    jmp .Lssa_rdf_ret\n");
+    parts = parts.append(".Lssa_rdf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n");   // Err box
+    parts = parts.append(".Lssa_rdf_ret:\n");
+    parts = parts.append("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
     // __fern_ssa_write_file(rdi = path box, rsi = content box) → rax = Result
     // box: [tag=0@0, 0@8] Ok(()) on success, [tag=1@0, 0@8] Err on I/O error.
-    out = out + "__fern_ssa_write_file:\n";
-    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
-    out = out + "    movq %rdi, %rbx\n";              // path box
-    out = out + "    movq %rsi, %r12\n";              // content box
-    out = out + "    movl (%r12), %r13d\n";           // content len
-    out = out + "    leaq 1(%r13), %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r14\n";   // packed content buf
-    out = out + "    xorl %ecx, %ecx\n";
-    out = out + ".Lssa_wf_pack:\n    cmpl %r13d, %ecx\n    jge .Lssa_wf_packdone\n";
-    out = out + "    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl (%r12,%rax,8), %edx\n    movb %dl, (%r14,%rcx)\n";
-    out = out + "    incl %ecx\n    jmp .Lssa_wf_pack\n";
-    out = out + ".Lssa_wf_packdone:\n";
-    out = out + "    movl (%rbx), %r15d\n";           // path len
-    out = out + "    leaq 1(%r15), %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r12\n";   // pathz
-    out = out + "    xorl %ecx, %ecx\n";
-    out = out + ".Lssa_wf_pcopy:\n    cmpl %r15d, %ecx\n    jge .Lssa_wf_pcopydone\n";
-    out = out + "    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl (%rbx,%rax,8), %edx\n    movb %dl, (%r12,%rcx)\n";
-    out = out + "    incl %ecx\n    jmp .Lssa_wf_pcopy\n";
-    out = out + ".Lssa_wf_pcopydone:\n    movb $0, (%r12,%r15)\n";   // NUL
-    out = out + "    movq $-100, %rdi\n    movq %r12, %rsi\n    movl $577, %edx\n    movl $420, %r10d\n    movl $257, %eax\n    syscall\n";   // openat O_WRONLY|O_CREAT|O_TRUNC, 0644
-    out = out + "    testq %rax, %rax\n    js .Lssa_wf_err\n    movq %rax, %r12\n    xorl %r15d, %r15d\n";   // fd / written
-    out = out + ".Lssa_wf_loop:\n    cmpl %r13d, %r15d\n    jge .Lssa_wf_done\n";
-    out = out + "    movq %r12, %rdi\n    leaq (%r14,%r15), %rsi\n    movl %r13d, %edx\n    subl %r15d, %edx\n    movl $1, %eax\n    syscall\n";   // write remaining
-    out = out + "    testq %rax, %rax\n    js .Lssa_wf_errclose\n    addq %rax, %r15\n    jmp .Lssa_wf_loop\n";
-    out = out + ".Lssa_wf_done:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n";   // close
-    out = out + "    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq $0, 8(%rax)\n";   // Ok(()) box
-    out = out + "    jmp .Lssa_wf_ret\n";
-    out = out + ".Lssa_wf_errclose:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n";   // close, ignore result
-    out = out + ".Lssa_wf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n";   // Err box
-    out = out + ".Lssa_wf_ret:\n";
-    out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    parts = parts.append("__fern_ssa_write_file:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    parts = parts.append("    movq %rdi, %rbx\n");              // path box
+    parts = parts.append("    movq %rsi, %r12\n");              // content box
+    parts = parts.append("    movl (%r12), %r13d\n");           // content len
+    parts = parts.append("    leaq 1(%r13), %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r14\n");   // packed content buf
+    parts = parts.append("    xorl %ecx, %ecx\n");
+    parts = parts.append(".Lssa_wf_pack:\n    cmpl %r13d, %ecx\n    jge .Lssa_wf_packdone\n");
+    parts = parts.append("    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl (%r12,%rax,8), %edx\n    movb %dl, (%r14,%rcx)\n");
+    parts = parts.append("    incl %ecx\n    jmp .Lssa_wf_pack\n");
+    parts = parts.append(".Lssa_wf_packdone:\n");
+    parts = parts.append("    movl (%rbx), %r15d\n");           // path len
+    parts = parts.append("    leaq 1(%r15), %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r12\n");   // pathz
+    parts = parts.append("    xorl %ecx, %ecx\n");
+    parts = parts.append(".Lssa_wf_pcopy:\n    cmpl %r15d, %ecx\n    jge .Lssa_wf_pcopydone\n");
+    parts = parts.append("    leal 1(%ecx), %eax\n    movl %eax, %eax\n    movl (%rbx,%rax,8), %edx\n    movb %dl, (%r12,%rcx)\n");
+    parts = parts.append("    incl %ecx\n    jmp .Lssa_wf_pcopy\n");
+    parts = parts.append(".Lssa_wf_pcopydone:\n    movb $0, (%r12,%r15)\n");   // NUL
+    parts = parts.append("    movq $-100, %rdi\n    movq %r12, %rsi\n    movl $577, %edx\n    movl $420, %r10d\n    movl $257, %eax\n    syscall\n");   // openat O_WRONLY|O_CREAT|O_TRUNC, 0644
+    parts = parts.append("    testq %rax, %rax\n    js .Lssa_wf_err\n    movq %rax, %r12\n    xorl %r15d, %r15d\n");   // fd / written
+    parts = parts.append(".Lssa_wf_loop:\n    cmpl %r13d, %r15d\n    jge .Lssa_wf_done\n");
+    parts = parts.append("    movq %r12, %rdi\n    leaq (%r14,%r15), %rsi\n    movl %r13d, %edx\n    subl %r15d, %edx\n    movl $1, %eax\n    syscall\n");   // write remaining
+    parts = parts.append("    testq %rax, %rax\n    js .Lssa_wf_errclose\n    addq %rax, %r15\n    jmp .Lssa_wf_loop\n");
+    parts = parts.append(".Lssa_wf_done:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n");   // close
+    parts = parts.append("    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq $0, 8(%rax)\n");   // Ok(()) box
+    parts = parts.append("    jmp .Lssa_wf_ret\n");
+    parts = parts.append(".Lssa_wf_errclose:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n");   // close, ignore result
+    parts = parts.append(".Lssa_wf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n");   // Err box
+    parts = parts.append(".Lssa_wf_ret:\n");
+    parts = parts.append("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
     // __fern_ssa_write(rdi = string handle): like __fern_ssa_print but with NO
     // trailing newline — the driver's raw-output primitive. One write syscall
     // per byte over the [len, byte-per-word] layout (low octet of each word).
-    out = out + "__fern_ssa_write:\n";
-    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n";
-    out = out + "    movq %rdi, %rbx\n";          // handle
-    out = out + "    movl (%rbx), %r12d\n";        // len = word[0]
-    out = out + "    xorl %r13d, %r13d\n";         // i = 0
-    out = out + ".Lfsw_loop:\n";
-    out = out + "    cmpl %r12d, %r13d\n    jge .Lfsw_done\n";
-    out = out + "    leal 1(%r13d), %eax\n    movl %eax, %eax\n";   // i+1
-    out = out + "    leaq (%rbx,%rax,8), %rsi\n";   // &word[i+1] = byte address
-    out = out + "    movq $1, %rax\n    movl $1, %edi\n    movq $1, %rdx\n    syscall\n";   // write(1, &byte, 1)
-    out = out + "    incl %r13d\n    jmp .Lfsw_loop\n";
-    out = out + ".Lfsw_done:\n";
-    out = out + "    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    parts = parts.append("__fern_ssa_write:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n");
+    parts = parts.append("    movq %rdi, %rbx\n");          // handle
+    parts = parts.append("    movl (%rbx), %r12d\n");        // len = word[0]
+    parts = parts.append("    xorl %r13d, %r13d\n");         // i = 0
+    parts = parts.append(".Lfsw_loop:\n");
+    parts = parts.append("    cmpl %r12d, %r13d\n    jge .Lfsw_done\n");
+    parts = parts.append("    leal 1(%r13d), %eax\n    movl %eax, %eax\n");   // i+1
+    parts = parts.append("    leaq (%rbx,%rax,8), %rsi\n");   // &word[i+1] = byte address
+    parts = parts.append("    movq $1, %rax\n    movl $1, %edi\n    movq $1, %rdx\n    syscall\n");   // write(1, &byte, 1)
+    parts = parts.append("    incl %r13d\n    jmp .Lfsw_loop\n");
+    parts = parts.append(".Lfsw_done:\n");
+    parts = parts.append("    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
     // argv vector saved by _start (argc + &argv[0]) for __fern_ssa_args.
-    out = out + "    .bss\n    .align 8\n__fern_ssa_argc:\n    .zero 8\n__fern_ssa_argv:\n    .zero 8\n    .text\n";
+    parts = parts.append("    .bss\n    .align 8\n__fern_ssa_argc:\n    .zero 8\n__fern_ssa_argv:\n    .zero 8\n    .text\n");
     // __fern_ssa_args() → rax = SSA string[] [argc, strptr0, …], each strptr a
     // fresh SSA [len, byte-per-word] string copied from the C argv[i]. Mirrors
     // read_file's C-string → SSA-string packing. alloc preserves r8/r9/rcx/rdx
     // (it touches only rdi/rax), so those carry per-arg state across the call.
-    out = out + "__fern_ssa_args:\n";
-    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
-    out = out + "    movq __fern_ssa_argc(%rip), %r12\n";       // argc
-    out = out + "    leaq 1(%r12), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r13\n";   // arr base, (argc+1) words
-    out = out + "    movl %r12d, (%r13)\n";                     // arr[0] = argc
-    out = out + "    movq __fern_ssa_argv(%rip), %r14\n";       // &argv[0]
-    out = out + "    xorq %r15, %r15\n";                        // i = 0
-    out = out + ".Lssa_args_loop:\n    cmpq %r12, %r15\n    jge .Lssa_args_done\n";
-    out = out + "    movq (%r14,%r15,8), %rbx\n";               // argv[i] (C string)
-    out = out + "    xorq %rcx, %rcx\n";                        // strlen
-    out = out + ".Lssa_args_strlen:\n    movzbl (%rbx,%rcx), %eax\n    testb %al, %al\n    je .Lssa_args_strdone\n    incq %rcx\n    jmp .Lssa_args_strlen\n";
-    out = out + ".Lssa_args_strdone:\n    movq %rcx, %r8\n";    // r8 = len
-    out = out + "    leaq 1(%r8), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r9\n";   // SSA string box
-    out = out + "    movl %r8d, (%r9)\n";                       // box[0] = len
-    out = out + "    xorq %rcx, %rcx\n";                        // j = 0
-    out = out + ".Lssa_args_copy:\n    cmpq %r8, %rcx\n    jge .Lssa_args_copydone\n";
-    out = out + "    movzbl (%rbx,%rcx), %eax\n    leaq 1(%rcx), %rdx\n    movl %eax, (%r9,%rdx,8)\n";   // box[j+1] = byte
-    out = out + "    incq %rcx\n    jmp .Lssa_args_copy\n";
-    out = out + ".Lssa_args_copydone:\n    leaq 1(%r15), %rdx\n    movq %r9, (%r13,%rdx,8)\n";   // arr[i+1] = box
-    out = out + "    incq %r15\n    jmp .Lssa_args_loop\n";
-    out = out + ".Lssa_args_done:\n    movq %r13, %rax\n";
-    out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
-    out = out + "_start:\n";
+    parts = parts.append("__fern_ssa_args:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    parts = parts.append("    movq __fern_ssa_argc(%rip), %r12\n");       // argc
+    parts = parts.append("    leaq 1(%r12), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r13\n");   // arr base, (argc+1) words
+    parts = parts.append("    movl %r12d, (%r13)\n");                     // arr[0] = argc
+    parts = parts.append("    movq __fern_ssa_argv(%rip), %r14\n");       // &argv[0]
+    parts = parts.append("    xorq %r15, %r15\n");                        // i = 0
+    parts = parts.append(".Lssa_args_loop:\n    cmpq %r12, %r15\n    jge .Lssa_args_done\n");
+    parts = parts.append("    movq (%r14,%r15,8), %rbx\n");               // argv[i] (C string)
+    parts = parts.append("    xorq %rcx, %rcx\n");                        // strlen
+    parts = parts.append(".Lssa_args_strlen:\n    movzbl (%rbx,%rcx), %eax\n    testb %al, %al\n    je .Lssa_args_strdone\n    incq %rcx\n    jmp .Lssa_args_strlen\n");
+    parts = parts.append(".Lssa_args_strdone:\n    movq %rcx, %r8\n");    // r8 = len
+    parts = parts.append("    leaq 1(%r8), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r9\n");   // SSA string box
+    parts = parts.append("    movl %r8d, (%r9)\n");                       // box[0] = len
+    parts = parts.append("    xorq %rcx, %rcx\n");                        // j = 0
+    parts = parts.append(".Lssa_args_copy:\n    cmpq %r8, %rcx\n    jge .Lssa_args_copydone\n");
+    parts = parts.append("    movzbl (%rbx,%rcx), %eax\n    leaq 1(%rcx), %rdx\n    movl %eax, (%r9,%rdx,8)\n");   // box[j+1] = byte
+    parts = parts.append("    incq %rcx\n    jmp .Lssa_args_copy\n");
+    parts = parts.append(".Lssa_args_copydone:\n    leaq 1(%r15), %rdx\n    movq %r9, (%r13,%rdx,8)\n");   // arr[i+1] = box
+    parts = parts.append("    incq %r15\n    jmp .Lssa_args_loop\n");
+    parts = parts.append(".Lssa_args_done:\n    movq %r13, %rax\n");
+    parts = parts.append("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
+    parts = parts.append("_start:\n");
     // Save argc + &argv[0] before any stack use (rsp points at argc at entry).
-    out = out + "    movq (%rsp), %rax\n    movq %rax, __fern_ssa_argc(%rip)\n";
-    out = out + "    leaq 8(%rsp), %rax\n    movq %rax, __fern_ssa_argv(%rip)\n";
-    out = out + "    leaq __fern_ssa_heap(%rip), %rax\n";
-    out = out + "    movq %rax, __fern_ssa_hp(%rip)\n";
-    out = out + "    call __fn_main\n";
-    out = out + "    movl %eax, %edi\n";
-    out = out + "    movq $60, %rax\n";
-    out = out + "    syscall\n";
-    return out;
+    parts = parts.append("    movq (%rsp), %rax\n    movq %rax, __fern_ssa_argc(%rip)\n");
+    parts = parts.append("    leaq 8(%rsp), %rax\n    movq %rax, __fern_ssa_argv(%rip)\n");
+    parts = parts.append("    leaq __fern_ssa_heap(%rip), %rax\n");
+    parts = parts.append("    movq %rax, __fern_ssa_hp(%rip)\n");
+    parts = parts.append("    call __fn_main\n");
+    parts = parts.append("    movl %eax, %edi\n");
+    parts = parts.append("    movq $60, %rax\n");
+    parts = parts.append("    syscall\n");
+    return util.str_join_chunks(parts);
 }
