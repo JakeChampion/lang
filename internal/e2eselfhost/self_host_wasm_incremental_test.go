@@ -155,14 +155,19 @@ function main(): i32 { return leaf.value() + 1; }`
 	// The other direction: leaf's SIGNATURE changes, so entry's call-site
 	// tagging depends on it and entry must be re-emitted too. Without this a
 	// cache that never reused anything would pass the case above.
+	//
+	// The edit gains a defaulted PARAMETER rather than changing the return type,
+	// so `leaf.value()` in the unchanged entry still type-checks: an edit that
+	// leaves the importer unable to lower is refused at emit, and the verdicts
+	// this asserts are never reached.
 	t.Run("signature_edit_also_invalidates_the_importer", func(t *testing.T) {
-		writeLeaf(t, `pub function value(): i64 { return 20i64; }`)
+		writeLeaf(t, `pub function value(bump: i32 = 5): i32 { return 20 + bump; }`)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its signature changed, want cache-miss", got["leaf"])
 		}
 		if v := entryVerdict(t, got); v != "cache-miss" {
-			t.Errorf("entry reported %s after leaf's RETURN TYPE changed, want cache-miss — reusing entry's unit here would ship stale call-site tagging (full map: %v)", v, got)
+			t.Errorf("entry reported %s after leaf's PARAMETER LIST changed, want cache-miss — reusing entry's unit here would ship stale call-site tagging (full map: %v)", v, got)
 		}
 	})
 }
