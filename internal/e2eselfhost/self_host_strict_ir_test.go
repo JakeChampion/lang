@@ -828,25 +828,27 @@ function main(): i32 {
     return (u as i32) & 255i32;
 }
 `, "main", "did not lower: `var u` bound from immediately-invoked value block"},
-	// The OTHER half of func_ineligible_reason: the body lowered fine and the
-	// bail is a symbol that does not resolve — a different debugging task from a
-	// refused body, which the bare function name never distinguished.
+	// A capturing lambda that reaches lowering with no hoisted body behind it.
+	// The bail is minted where the name is: the escaping-closure lowering asks
+	// for `<fn>$clo`, and refusing there names the construct at its own site
+	// rather than leaving a dangling symbol for the resolution pass — or, on a
+	// route with no such pass, for the linker (#7215).
 	//
 	// The branch lambdas must CAPTURE. A no-capture one hoists to a top-level
-	// `__lam_N` and the module lowers; a capturing one cannot, so it stays an
-	// AST-only closure and `<fn>$clo` never resolves.
+	// `__lam_N` and the module lowers; a capturing one cannot, so nothing builds
+	// its `<fn>$clo`.
 	//
 	// The arms must also DISAGREE in shape. When every arm is an array literal
 	// they are rewritten into uniform env boxes and the module lowers; one arm
 	// naming a local array instead leaves the capturing lambda in the other with
 	// no box to be part of.
-	{"unresolved-function-value", `function main(): i32 {
+	{"unhoisted-closure-value", `function main(): i32 {
     var v1: i32 = 3i32;
     var ys: ((i32) => i32)[] = [((z: i32) => z)];
     var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys });
     return xs[0i32](1i32) & 63i32;
 }
-`, "main", "function value main$clo not defined"},
+`, "main", "did not lower: lambda: no lifted `main$clo` for the escaping closure"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own
@@ -934,4 +936,54 @@ func TestSelfHostStrictIRWasm(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelfHostStrictIRNamesUnresolvedFunctionValue pins the OTHER half of the
+// per-function bail: the body lowers fine and the refusal is a function VALUE
+// that does not resolve. That is a different debugging task from a refused body
+// — you look at the symbol, not the code — and the bare function name never
+// distinguished them.
+//
+// It needs its own driver. The reason table above runs on `asm_run`, which
+// compiles ONE self-contained module, and there every unresolvable const_func
+// name is a `<fn>$clo` the escaping-closure lowering now refuses at the site it
+// mints the name. `asm_ir_run` takes a program-wide known-symbol set
+// (`-ir-extern`), which is what makes a fn value naming a SIBLING unit's
+// function — the missing import, the monomorphised clone absent from this view,
+// the unregistered helper — reachable as an input.
+//
+// The `defined` case is the control, and it is what stops this passing for the
+// wrong reason: the same program with `bfoo` present emits, so the refusal is
+// caused by the missing definition rather than by the shape of the call.
+func TestSelfHostStrictIRNamesUnresolvedFunctionValue(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+
+	const apply = "function apply(f: (i32) => i32, x: i32): i32 { return f(x); }\n" +
+		"function main(): i32 { return apply(bfoo, 6); }\n"
+
+	t.Run("missing", func(t *testing.T) {
+		out, stderr, code := runDriver(t, runner, driverBin, []byte(apply), true)
+		if code != 3 {
+			t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
+		}
+		if !strings.Contains(stderr, "FERN_STRICT_IR: main ") {
+			t.Errorf("refusal did not name main as the bailing function:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "function value bfoo not defined") {
+			t.Errorf("refusal did not name the offending function value:\n%s", stderr)
+		}
+	})
+
+	t.Run("defined", func(t *testing.T) {
+		src := "function bfoo(x: i32): i32 { return x * 7; }\n" + apply
+		out, stderr, code := runDriver(t, runner, driverBin, []byte(src), true)
+		if code != 0 || len(out) == 0 {
+			t.Fatalf("the same program with bfoo defined must emit, else the refusal above "+
+				"is about the call shape rather than the missing definition: exited %d with %d bytes\n%s",
+				code, len(out), stderr)
+		}
+	})
 }
