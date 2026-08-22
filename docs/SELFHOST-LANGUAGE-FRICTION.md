@@ -47,7 +47,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **8** capturing — 4 anonymous `function(…)` exprs, 4 nested named visitors — plus **5** arrow lambdas (2 no-op visitors, 3 in `constfold`'s assert probe) | pinned |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **25** — 4 anonymous `function(…)` exprs and 21 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`); 6 of the 25 capture, the gate predicates mostly do not — plus **5** arrow lambdas (2 no-op visitors, 3 in `constfold`'s assert probe) | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **326** in 2 modules — 311 in `checker.fern`, 15 in `visibility.fern` | pinned |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
