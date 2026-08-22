@@ -122,8 +122,12 @@ const (
 	// 20k appends copies 2.3 GB.
 	arrPushCopiedAddr = arrPushSharedAddr + 4
 
+	// fdstatBufAddr is the 24-byte landing area for preview-1
+	// `fd_fdstat_get`, which `isatty` reads `fs_filetype` (byte 0) out of.
+	fdstatBufAddr = arrPushCopiedAddr + 8
+
 	// scratchEnd is the first address past the named scratch.
-	scratchEnd = arrPushCopiedAddr + 8
+	scratchEnd = fdstatBufAddr + 24
 )
 
 // allocMinStart is the floor for the bump cursor: past every reserved slot

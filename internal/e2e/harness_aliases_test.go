@@ -19,6 +19,7 @@ var cachedDriverBin = e2eharness.CachedDriverBin
 var cachedLink = e2eharness.CachedLink
 var compileAndRunArm64 = e2eharness.CompileAndRunArm64
 var compileArm64Bin = e2eharness.CompileArm64Bin
+var compileX86_64Bin = e2eharness.CompileX86_64Bin
 var compileAndRunWasmbinMain = e2eharness.CompileAndRunWasmbinMain
 var compileAndRunX86_64 = e2eharness.CompileAndRunX86_64
 var compileFilesModload = e2eharness.CompileFilesModload

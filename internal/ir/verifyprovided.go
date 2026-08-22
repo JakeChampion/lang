@@ -256,6 +256,7 @@ var providedSigs = map[string]providedSig{
 	"f32_from_bits":                 {-1, rFloat},
 	"f64_bits":                      {-1, rWord},
 	"f64_from_bits":                 {-1, rFloat},
+	"isatty":                        {1, rWord},
 	"map_new":                       {-1, rWord},
 	"monotonic_ns":                  {-1, rWord},
 	"now_ns":                        {-1, rWord},

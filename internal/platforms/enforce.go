@@ -129,13 +129,19 @@ var gatedBuiltins = map[string]string{
 //     gated above, so gating the wait too would double-count the same
 //     authority.
 //
-// `exit` is the deliberate judgement call. It is host-shaped — a hosted
-// process exits through the kernel — but every target can define
-// "stop", including a freestanding one (trap, reset, or return to the
-// embedder). So it is core with a target-specific lowering rather than
-// a capability an artifact could be refused.
+// `exit` and `isatty` are the deliberate judgement calls. `exit` is
+// host-shaped — a hosted process exits through the kernel — but every
+// target can define "stop", including a freestanding one (trap, reset,
+// or return to the embedder). `isatty` is the same shape: every target
+// can define "is this fd a terminal", and a target with no terminal
+// answers no. Gating it would make the question unaskable exactly where
+// the answer matters most, leaving a colouriser to assume a terminal —
+// the wrong default this primitive exists to fix. Both are core with a
+// target-specific lowering rather than a capability an artifact could be
+// refused.
 var coreBuiltins = map[string]bool{
-	"exit": true,
+	"exit":   true,
+	"isatty": true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

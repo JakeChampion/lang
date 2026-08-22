@@ -494,7 +494,7 @@ Greedy word wrapping for terminal / help text.
 ### `std/ansi`
 
 Raw, composable ANSI SGR terminal styling — the mechanism layer beneath
-`std/cli`'s NO_COLOR-gated `cli_*` helpers. Each wrapper always emits the
+`std/cli`'s tty- and NO_COLOR-gated `cli_*` helpers. Each wrapper always emits the
 escape codes; nesting composes because every wrap ends in a full reset.
 
 - `sgr(code, s)` — wrap `s` in `ESC[<code>m … ESC[0m`; exposed for

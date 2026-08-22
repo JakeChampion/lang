@@ -7489,7 +7489,7 @@ pub function builtin_function_names(): string[] {
         // asm_modload_run's batched per-module orchestrator uses all three.
         "proc_fork", "proc_waitpid", "proc_exec",
         // stdin / readers
-        "stdin", "stdout", "stderr", "read_line", "read_int", "read_all_stdin",
+        "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
         "open_reader", "open_writer", "open_appender",
         // filesystem
         "read_file", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
