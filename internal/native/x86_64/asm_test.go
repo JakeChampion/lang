@@ -34,6 +34,11 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"ud2", "0f0b"},
 		{"cdq", "99"},
 		{"cqo", "4899"},
+		// RFLAGS save/restore. The x86-64 SSA backend's heap guard is called
+		// from bump sites that may keep flags live, and every way to compare its
+		// cursor against the limit writes them.
+		{"pushfq", "9c"},
+		{"popfq", "9d"},
 		{"push rbp", "55"},
 		{"pop rbp", "5d"},
 		{"push r12", "4154"},

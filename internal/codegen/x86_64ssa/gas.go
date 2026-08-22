@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
@@ -110,10 +111,8 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w(".text")
 	w(".globl _start")
 	w("_start:")
-	// Initialise the bump-allocator cursor to the base of the .bss heap.
 	if heap {
-		w("\tlea rax, [rip + %s]", heapSym)
-		w("\tmov [rip + %s], rax", heapPtrSym)
+		emitHeapReserve(w)
 	}
 	// Load the entry arguments into the SysV argument registers before the call.
 	for i := range ep.ParamLocs {
@@ -135,6 +134,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	for _, h := range helpers {
 		runtimeHelperEmitters[h](w)
+	}
+	if heap {
+		emitHeapGuard(w)
 	}
 	if len(strOrder) > 0 {
 		w("")
@@ -180,8 +182,8 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w(".align 8")
 		w("%s:", heapPtrSym)
 		w("\t.quad 0")
-		w("%s:", heapSym)
-		w("\t.space %d", heapBytes)
+		w("%s:", heapEndSym)
+		w("\t.quad 0")
 	}
 	w(".section .note.GNU-stack,\"\",@progbits")
 	return b.String(), nil
@@ -802,6 +804,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 			fmt.Sprintf("add %s, %s", reg(scratch), reg(in.Src)),
 			fmt.Sprintf("add %s, 8", reg(scratch)), // header bytes
 			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
+			heapGuardCall,
 			fmt.Sprintf("add %s, 8", reg(in.Dst)), // return data = base + 8
 		}, "\n\t"), nil
 	case MemLoad:
@@ -991,14 +994,117 @@ func fConvSeq(in Inst, scratch int) (string, error) {
 	}
 }
 
-// heapPtrSym / heapSym / heapBytes back the SSA real-asm bump allocator. The
-// heap is a fixed .bss buffer; a lazy mmap/brk allocator (like the stack-machine
-// backend's) is a follow-up if real programs outgrow it.
+// Heap symbols + size backing the x86-64 SSA bump allocator: a lazy mmap
+// reservation seeded in _start, mirroring the stack-machine backend's
+// __fern_alloc arena (internal/codegen/x86_64) — same MAP_NORESERVE window at
+// the same hint, same diagnostic and exit status when a bump runs past it.
+// Pages commit only as they are touched, so the window costs nothing until a
+// program grows into it.
+//
+// The window ends at 0x8000_0000 rather than matching the native backend's
+// 16 GiB because this backend's address arithmetic is not 64-bit clean: an
+// i32-width add of a base and an offset is sign-extended back through maskFix
+// (`movsxd`), so an object above 0x7fffffff is addressed through a truncated,
+// negative pointer. That bound is what makes exhaustion REACHABLE: a wider
+// window hands out truncated pointers long before the cursor meets the limit,
+// and a bump site writes its rc header at the new base, so the program dies on
+// that store instead of reporting. Widening the window means fixing the
+// addressing first (#7329).
 const (
-	heapPtrSym = "__ssa_heap_ptr"
-	heapSym    = "__ssa_heap"
-	heapBytes  = 1 << 16 // 64 KiB
+	heapPtrSym   = "__ssa_heap_ptr"
+	heapEndSym   = "__ssa_heap_end"
+	heapGuardSym = "__ssa_heap_guard"
+	heapOOMLabel = ".Lssa_heap_oom"
+	heapOOMMsg   = "__ssa_msg_oom"
+
+	// The reservation: heapBytes at heapHint, ending exactly at 0x8000_0000.
+	heapHint  = 0x10000000
+	heapBytes = 0x80000000 - heapHint // 1.75 GiB
+
+	// The reservation's last page is not handed out: a bump site writes the
+	// object's rc header at the new block's base BEFORE it publishes the cursor
+	// and reaches the guard, so the bytes just past the limit must still be
+	// mapped for the guard to report exhaustion instead of faulting on that
+	// header.
+	heapSlackBytes = 4096
 )
+
+// emitHeapReserve seeds the arena in _start: one lazy anonymous mmap at the same
+// hint and with the same MAP_NORESERVE flags the stack-machine backend's
+// __fern_alloc uses, then the cursor/limit pair the guard compares.
+//
+// The limit is the reservation's end minus the slack page (see heapSlackBytes).
+// The hint is only a hint: a region the kernel placed elsewhere can sit above
+// the 0x7fffffff line this backend's address arithmetic is limited to, and
+// handing out addresses from it would truncate every pointer. Report that as out
+// of memory rather than miscompiling around it.
+func emitHeapReserve(w func(string, ...any)) {
+	w("\tmov edi, %d", heapHint)
+	w("\tmov esi, %d", heapBytes)
+	w("\tmov edx, 3")       // PROT_READ|PROT_WRITE
+	w("\tmov r10d, 0x4022") // MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE
+	w("\tmov r8d, -1")      // fd
+	w("\txor r9d, r9d")     // offset
+	w("\tmov eax, 9")       // mmap
+	w("\tsyscall")
+	w("\tcmp rax, 0")
+	w("\tjl %s", heapOOMLabel)
+	w("\tmov [rip + %s], rax", heapPtrSym)
+	w("\tmov rcx, rax")
+	w("\tadd rcx, %d", heapBytes-heapSlackBytes)
+	w("\tmov edx, %d", 0x80000000)
+	w("\tcmp rcx, rdx")
+	w("\tjae %s", heapOOMLabel)
+	w("\tmov [rip + %s], rcx", heapEndSym)
+}
+
+// emitHeapGuard writes __ssa_heap_guard: compare the freshly published cursor
+// against the limit and abort with the arena diagnostic if it has run past.
+//
+// A call rather than an inline compare because a bump site has no uniformly free
+// register and some keep flags live across the allocation, so the guard saves
+// both. The diagnostic and status come from the stack-machine backend so a
+// program's abort output does not depend on which x86-64 emitter built it.
+func emitHeapGuard(w func(string, ...any)) {
+	w("")
+	w("%s:", heapGuardSym)
+	w("\tpush rax")
+	w("\tpush rcx")
+	w("\tpushfq")
+	w("\tmov rax, [rip + %s]", heapPtrSym)
+	w("\tmov rcx, [rip + %s]", heapEndSym)
+	w("\tcmp rax, rcx")
+	w("\tja %s", heapOOMLabel)
+	w("\tpopfq")
+	w("\tpop rcx")
+	w("\tpop rax")
+	w("\tret")
+	// Exhausted: write the diagnostic to stderr and exit with the status the
+	// native backends use for it (pinned across emitters by
+	// internal/e2e/arena_exit_code_test.go).
+	w("%s:", heapOOMLabel)
+	w("\tmov edi, 2") // stderr
+	w("\tlea rsi, [rip + %s]", heapOOMMsg)
+	w("\tmov edx, %d", len(nativex86_64.MsgArenaExhausted))
+	w("\tmov eax, 1") // write
+	w("\tsyscall")
+	w("\tmov edi, %d", nativex86_64.ExitArenaExhausted)
+	w("\tmov eax, 231") // exit_group
+	w("\tsyscall")
+	w(".section .rodata")
+	w("%s:", heapOOMMsg)
+	bytes := make([]string, len(nativex86_64.MsgArenaExhausted))
+	for i := 0; i < len(nativex86_64.MsgArenaExhausted); i++ {
+		bytes[i] = strconv.Itoa(int(nativex86_64.MsgArenaExhausted[i]))
+	}
+	w("\t.byte %s", strings.Join(bytes, ", "))
+	w(".text")
+}
+
+// heapGuardCall is the instruction a bump site emits immediately after
+// publishing its new cursor. Every such site must carry it: one that does not
+// allocates past the end silently.
+const heapGuardCall = "call " + heapGuardSym
 
 // fnTableSym labels the module's function-address dispatch table: a reserved
 // null slot, then one `.quad` per function in the module's (sorted) emission
@@ -1084,6 +1190,7 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 			fmt.Sprintf("mov %s, %s", reg(scratch), reg(dst)),
 			fmt.Sprintf("add %s, %d", reg(scratch), bytes+8),
 			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
+			heapGuardCall,
 			fmt.Sprintf("add %s, 8", reg(dst)), // return data = base + 8
 		)
 	}
@@ -1533,6 +1640,7 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tadd r10, 8")
 	w("\tadd r10, r8")
 	w("\tmov [rip + %s], r10", heapPtrSym)
+	w("\t%s", heapGuardCall)
 	w("\tlea rax, [r9 + 8]") // data (return value)
 	// Copy a's la bytes: [rax + i] = [rdi + i].
 	w("\txor r10, r10")
