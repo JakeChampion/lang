@@ -195,6 +195,31 @@ function round(i: i32): i32 {
 }` + structKeyMain,
 			want: 34, allocs: 400, frees: 400,
 		},
+		{
+			// The "NODEEP:" witness. The header above explains that the marker is
+			// derived from the same entry as the credit and had to move with it —
+			// this is the row that FAILS if it ever stops resolving.
+			//
+			// The builder shape is the one the marker exists for: `s = s.emit(x)`
+			// hands the struct's array field to the callee's result with no counted
+			// reference (an in-place `b.ops.append(x)` returns the same buffer), so
+			// the deep drop of the superseded box must be withheld. A NODEEP that
+			// resolved to nothing would grant it and free a buffer the result still
+			// holds — an over-release the byte counts show as balanced, which is why
+			// `want` carries it rather than the frees column.
+			//
+			// Confirmed against both oracles: interp and native x86-64 each exit 51.
+			name: "builder_nodeep",
+			src: `struct B { ops: i32[] }
+function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
+function round(i: i32): i32 {
+    var s: B = B { ops: [1] };
+    s = s.emit(i);
+    s = s.emit(i + 1);
+    return s.ops.len();
+}` + structKeyMain,
+			want: 51, allocs: 800, frees: 800,
+		},
 	}
 }
 
