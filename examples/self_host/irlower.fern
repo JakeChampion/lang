@@ -32911,11 +32911,29 @@ function arr_field_ident_is_frame_built(name: string, fnbody: parser.Stmt[], arr
 // RETURN-POSITION struct literal, which is the move-out being proved. Every other
 // unsafe use, including a non-bare field value in that same literal, still flags.
 function body_unsafe_for_allow_structret(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    return body_unsafe_for_ret_ok(stmts, name, borrowable, false);
+}
+
+// body_unsafe_for_allow_bare_ret is the same gate with ONE more forgiveness: a
+// top-level `return <name>`. The struct-literal variant above forgives the name
+// only at a FIELD of a returned literal (`return P { xs: p }`), so a bare
+// `return p` still reads as an escape there — correct for its caller, which asks
+// about an array field moved INTO a returned struct, and wrong for a local that
+// IS the returned struct (#7343).
+//
+// Everything else stays flagged: an alias bind, a container store, a moved-out
+// field, a non-borrowable call argument. Only the one escape that is the point of
+// the shape is forgiven, and only in return position.
+function body_unsafe_for_allow_bare_ret(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    return body_unsafe_for_ret_ok(stmts, name, borrowable, true);
+}
+
+function body_unsafe_for_ret_ok(stmts: parser.Stmt[], name: string, borrowable: string[], bare_ret_ok: boolean): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_allow_structret(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_unsafe_for_ret_ok(stmts[i], name, borrowable, bare_ret_ok)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_unsafe_for_ret_ok(st: parser.Stmt, name: string, borrowable: string[], bare_ret_ok: boolean): boolean {
     match (st) {
         parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, []); },
         parser.StmtReturn(r) => {
@@ -32933,6 +32951,12 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
                     }
                     return false;
                 },
+                // A bare `return <name>` — the move-out this local exists for, and
+                // an escape for every other caller of this gate.
+                parser.ExprIdent(rid) => {
+                    if (bare_ret_ok && rid.name == name) { return false; }
+                    return expr_unsafe_for(r.value, name, borrowable, []);
+                },
                 _ => { return expr_unsafe_for(r.value, name, borrowable, []); }
             }
         },
@@ -32940,11 +32964,11 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
         parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable, []); },
         parser.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return body_unsafe_for_allow_structret(f.then_body, name, borrowable) || body_unsafe_for_allow_structret(f.else_body, name, borrowable);
+            return body_unsafe_for_ret_ok(f.then_body, name, borrowable, bare_ret_ok) || body_unsafe_for_ret_ok(f.else_body, name, borrowable, bare_ret_ok);
         },
         parser.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return body_unsafe_for_allow_structret(w.body, name, borrowable);
+            return body_unsafe_for_ret_ok(w.body, name, borrowable, bare_ret_ok);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -32953,14 +32977,14 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for_allow_structret(fo.body, name, borrowable);
+            return body_unsafe_for_ret_ok(fo.body, name, borrowable, bare_ret_ok);
         },
         parser.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, [])) { return true; }
-                if (body_unsafe_for_allow_structret(m.arms[ai].body, name, borrowable)) { return true; }
+                if (body_unsafe_for_ret_ok(m.arms[ai].body, name, borrowable, bare_ret_ok)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -33077,7 +33101,103 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
                 _ => { return false; }
             }
         },
+        // `return p` — a LOCAL this frame built and hands straight back. The form
+        // real code has: anything that assembles a struct's fields before
+        // returning it cannot use the literal-return form, so refusing this cost
+        // every caller of such a producer its whole reclaim (#7343).
+        //
+        // The proof is struct_ret_local_is_frame_fresh, the struct-level sibling
+        // of the arr_field_ident_is_frame_built check this same function already
+        // runs one level down for an ARRAY field.
+        parser.ExprIdent(rid) => {
+            return struct_ret_local_is_frame_fresh(rid.name, structs, fnbody, arr_fresh, fwd, fnparams, sfok);
+        },
         _ => { return false; }
+    }
+    return false;
+}
+
+// struct_ret_local_is_frame_fresh: `name` is a LOCAL this frame built from a
+// strict-fresh struct value and then returned, so what reaches the caller is the
+// same sole reference the literal-return form would have handed it.
+//
+// Four conditions, each ruling out a different way the box could already be
+// shared when it leaves:
+//
+//   - EXACTLY ONE declaration of the name in the body, so the init witness below
+//     cannot be a shadowed sibling in another block — the scans here are
+//     name-keyed and would not see the second one. Same first line, same reason,
+//     as arr_field_ident_is_frame_built.
+//   - not a PARAMETER: the caller owns that box, and handing it back is the
+//     `return self` shape this whole registry exists to refuse.
+//   - never REASSIGNED, which is what makes the declaration's init the whole
+//     story rather than one of several possible final values.
+//   - its init is itself strict-fresh, recursively — a literal, a forwarding
+//     call, or another such local. Fern requires declaration before use, so the
+//     chain walks strictly backwards and terminates.
+//
+// Then the escape gate, and the ALLOW_STRUCTRET variant is the load-bearing
+// choice: it forgives exactly one escape, the `return` that is the point of the
+// shape, and still flags an alias bind, a container store, a moved-out field or
+// a non-borrowable call argument. A second reference taken anywhere before the
+// return sinks the credit.
+function struct_ret_local_is_frame_fresh(name: string, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
+    if (local_decl_count(fnbody, name) != 1) { return false; }
+    var pi: i32 = 0;
+    while (pi < fnparams.len()) {
+        if (fnparams[pi].name == name) { return false; }
+        pi = pi + 1;
+    }
+    if (util.index_of_str(body_assign_targets(fnbody), name) >= 0) { return false; }
+    if (!struct_ret_local_init_strictfresh(fnbody, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
+    // A FIELD read out of the local is refused as well, and this is the one
+    // condition the escape gate above does not cover: `var stolen = p.xs;` is
+    // not an escape OF p — expr_unsafe_for sees a borrow — but it takes a second
+    // reference to the very buffer the caller's deep drop will free. The shape
+    // measures balanced today (200/200, underflow 0, all three oracles agreeing)
+    // because the reader dies at this frame's exit, so this refusal costs a leak
+    // rather than fixing a fault. It is the safe direction and it is deliberate:
+    // admitting it would rest on "no reader outlives the frame", which is a
+    // liveness claim this predicate does not make and moves_fields_stmts does.
+    var no_nomove: string[] = [];
+    if (moves_fields_stmts(fnbody, name, no_nomove)) { return false; }
+    var mvsty: string = declared_struct_type_of(fnbody, name, structs);
+    var no_mv_borrow: string[] = [];
+    if (mvsty != "" && optstruct_body_moves_field(fnbody, name, mvsty, structs, no_mv_borrow)) { return false; }
+    var no_borrow: string[] = [];
+    return !body_unsafe_for_allow_bare_ret(fnbody, name, no_borrow);
+}
+
+// struct_ret_local_init_strictfresh finds `name`'s single declaration anywhere in
+// `stmts` (nested blocks included) and asks whether its initialiser is a
+// strict-fresh struct value. Answers false when no declaration is found, which is
+// the conservative direction: an undeclared name is a parameter or a shadow the
+// caller already refused.
+function struct_ret_local_init_strictfresh(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    return return_value_is_strictfresh_struct(v.init, structs, fnbody, arr_fresh, fwd, fnparams, sfok);
+                }
+            },
+            parser.StmtIf(f) => {
+                if (struct_ret_local_init_strictfresh(f.then_body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; }
+                if (struct_ret_local_init_strictfresh(f.else_body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (struct_ret_local_init_strictfresh(w.body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
+            parser.StmtFor(fo) => { if (struct_ret_local_init_strictfresh(fo.body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (struct_ret_local_init_strictfresh(m.arms[mi].body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
     }
     return false;
 }
