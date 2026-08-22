@@ -907,6 +907,33 @@ function main(): i32 {
 			"}\n", 1, 5)
 	})
 
+	// The gate normalises with the lambda lift and the script-to-`main` desugar
+	// before asking eligible_core, and wasm applies that pair in the opposite
+	// order to the register backends. A script carrying both a lambda and an
+	// assert is where a divergence between the two orders would show up as an
+	// `-O` build refusing a program the default build compiles.
+	t.Run("opt-gate-normalises-a-script-with-a-lambda", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "optscript.fern")
+		src := "var f = function(x: i32): i32 { return x * 2; };\n" +
+			"var n: i32 = f(3);\n" +
+			"assert(n > 1, \"script\");\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+			for _, opt := range []bool{false, true} {
+				args := []string{"-target", target, "-emit", "asm", srcPath}
+				if opt {
+					args = append([]string{"-O"}, args...)
+				}
+				out, code := runDriver(t, args...)
+				if code != 0 {
+					t.Errorf("%s -O=%v exited %d, want 0:\n%s", target, opt, code, out)
+				}
+			}
+		}
+	})
+
 	t.Run("check-ok", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ok.fern")
 		if err := os.WriteFile(srcPath, []byte("function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }\n"), 0o644); err != nil {
