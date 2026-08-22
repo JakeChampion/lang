@@ -434,11 +434,16 @@ findings. Ranked by leverage.
   converting it means changing that chain's signatures to `string[]` together,
   not rewriting statements in place.
 
-  **`selfhost-emit-hashes` does not gate the SSA backends.** The SSA pipeline is
-  opt-in behind `-ssa` (`fern.fern:1873`), so a default-flag emit sweep never
-  reaches `ssa_arm64` / `ssa_x86` / `ssa_wasm`. Anything done there needs its
-  own byte-identity sweep — the same corpus emitted with `-ssa`, where the
-  programs outside the SSA subset record as FAILED and still compare.
+  **A default `selfhost-emit-hashes` run does not gate the SSA backends** — the
+  SSA pipeline is opt-in behind `-ssa` (`fern.fern:1873`), so the sweep never
+  reaches `ssa_arm64` / `ssa_x86` / `ssa_wasm`. Verified: changing one emitted
+  string in `ssa_arm64.fern` leaves that sweep byte-identical. Use
+  **`selfhost-emit-hashes --ssa`**, which exists for this and moves every arm64
+  row under the same probe. Note that `-ssa` alone would not have been enough:
+  `try_ssa` falls through to the IR path for any program outside the SSA subset,
+  silently, so most rows would have been IR bytes — the `--ssa` mode emits each
+  case both ways and marks those `IR-FALLBACK` so they cannot count as
+  coverage.
 
   **`printer.fern` does not take the same rewrite.** Almost every one of its
   accumulators ends `return out + ")"` / `return (out + pad + "}", g)` rather
