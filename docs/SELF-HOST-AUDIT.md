@@ -352,10 +352,57 @@ findings. Ranked by leverage.
     parameter before assuming a collector folds.
 
     Done so far: `mc_mentions_expr` / `mc_mentions_stmts`, `ow_count_ident`,
-    `e049_expr_lambdas`, `vref_expr`, `e032_expr`. A converted collector stops matching the
-    "hand-enumerated walk" heuristic entirely — it becomes a short visitor
-    naming one or two variants — which is how to tell the count is falling for
-    the right reason.
+    `e049_expr_lambdas`, `vref_expr`, `e032_expr`, `e060_e062_stmts` (which
+    absorbed `e060_e062_expr`), `e060_collect_dyn_locals`. A converted collector
+    stops matching the "hand-enumerated walk" heuristic entirely — it becomes a
+    short visitor naming one or two variants — which is how to tell the count is
+    falling for the right reason.
+
+    **A hand walk's `_ => {}` arm is an unreported coverage hole, and folding
+    it is a BUG FIX rather than a tidy-up.** `e060_e062_expr` enumerated nine
+    expression kinds and dropped every other one, so a bad `as?` downcast inside
+    a lambda body or a slice bound was accepted outright — the self-host printed
+    nothing where native reports E060, because native checks these on its
+    ordinary type-check traversal and therefore reaches every node by
+    construction.
+
+    **Count only the variants that REACH the pass.** The same wildcard also
+    dropped `ExprMapLit` and `ExprFString`, and those cost nothing: both reach
+    only the printer, every other parse having desugared them into a
+    `map_new(…).insert(…)` chain and a `+`-chain of `.to_string()` calls
+    (`parser.fern:150-162`). Reading native's arms and subtracting the
+    self-host's over-counts the gap every time, because the two checkers do not
+    see the same tree — native's runs on a LESS desugared AST. Measure the
+    program, do not diff the arm lists. `e060_collect_dyn_locals` had
+    the same hole on its own half: it never entered a lambda either, so a `dyn`
+    local DECLARED inside one was not even in the name set. Both are fixed by
+    the conversion, and both are pinned in the sequence gate.
+
+    This is what makes the fold the right shape rather than merely a shorter
+    one: a hand walk's coverage is whatever its author enumerated on the day,
+    and nothing ever reports the gap. Expect to find one in any collector whose
+    match ends in a wildcard — and check the wildcard FIRST, since it decides
+    whether the conversion changes behaviour at all.
+
+    **A conversion moves loops INTO a nested named function, which is its own
+    compiler surface.** The `for tr in trs` loops in `e060_e062_stmts`'s visitor
+    were the first `for..in` in the tree written inside a local function — no
+    other could have existed, since any would have failed to compile — and
+    neither for-in lowering walked one: a nested named function is
+    an `*ast.FuncDecl` STATEMENT whose body is its own block, and both the
+    parser's eager desugar and the checker's lazy stream lowering had no arm for
+    it, so the `ast.ForEach` reached IR, which has no case for one. Expect the
+    next conversion to land on something similar — the visitor body is code in a
+    position the self-host had not used before.
+
+    **The shared spine's child order need not match the hand walk's, and the
+    difference is invisible unless two DIFFERENT codes land in the two slots.**
+    `e060_e062_expr` visited a struct literal's `field_values` before its
+    `...base`; `astwalk` visits the base first, which is source order and what
+    native does. With the same code in both slots the sequence is unchanged and
+    only the messages move — which every gate here is blind to, the sequence
+    one included. The pinned row therefore puts an E062 in the base and an E060
+    in a field on purpose.
 
     **A collector may read fields that are not expressions.** `mc_mentions_*`
     tests `StmtAssign.target`, a bare string on the statement, which an
@@ -390,10 +437,12 @@ findings. Ranked by leverage.
     decision, not a mechanical change. Its order is pinned in the sequence gate
     either way.
 
-    Probing collectors for that gate has turned up **three divergences nothing
-    else can see**, all of them same-code-set differences in COUNT. The
-    nested-lambda E049 gap was a real bug and is fixed (#7363). The other two
-    are pinned and open:
+    Probing collectors for that gate has turned up **six divergences nothing
+    else can see**, every one of them same-code-set. Four were real bugs and
+    are fixed: the nested-lambda E049 gap (#7363), and the three E060/E062 ones
+    above — a downcast inside a lambda body, a `dyn` local declared inside one,
+    and the struct-literal base/field order. The remaining two are pinned and
+    open:
 
     - `e044_expr` **under-reports**. For a lambda nested in a lambda where the
       inner one captures an unsupported-typed variable, the Go checker reports

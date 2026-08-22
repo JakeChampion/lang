@@ -149,6 +149,29 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// decides whether the self-host should match the oracle's order.
 		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E038,E038,E032,E032"},
 		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    var f = function(): i32 { use n <- add(1); return n; };\n    return f();\n}\n", "E038,E032"},
+		// E060 / E062 from e060_e062_stmts. Captured against the UNCONVERTED hand
+		// walk first, which is how the three divergences below were found rather
+		// than inferred: it listed nine expression kinds and dropped the rest on a
+		// `_ => {}` arm, so a downcast it never reached was simply accepted.
+		//
+		// Folding it onto astwalk fixed all three. The first two rows already
+		// matched the Go checker and still do — they are the control that separates
+		// "coverage widened" from "behaviour changed".
+		{"two-bad-downcasts", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct Tri { t: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Square) { Some(sq) => { return sq.s; }, None => {} }\n    match (d as? Tri) { Some(tr) => { return tr.t; }, None => {} }\n    return 0;\n}\n", "E060,E060"},
+		// Was "" — the walk stopped at ExprLambda, so a bad downcast inside a
+		// lambda body was accepted outright. Go reports E060 here.
+		{"downcast-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    var f = function(): i32 {\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060"},
+		// Was "" for the other half of the same gap: e060_collect_dyn_locals never
+		// entered a lambda either, so a `dyn` local DECLARED inside one was not in
+		// the name set and nothing downstream could flag its downcast.
+		{"dyn-local-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var f = function(): i32 {\n        var d: dyn Shape = Circle { r: 3 };\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060"},
+		// Was "E060,E062" — the hand walk visited a struct literal's field_values
+		// before its `...base`, where source order and astwalk both put the base
+		// first. Two DIFFERENT codes, one in each slot, is what makes the order
+		// visible to this gate at all: with the same code in both, the sequence is
+		// unchanged and only the messages move, which every gate here is blind to.
+		{"structlit-base-before-fields", "trait Shape { function area(self: Self): i32; }\ntrait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct S { v: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nstruct Box { a: i32, b: i32 }\nfunction cs(o: Option[Square]): i32 { return 0; }\nfunction boxify(n: i32): Box { return Box { a: n, b: n }; }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    var e: dyn A + B = S { v: 1 };\n    var q: Box = Box { ...boxify(e.m()), a: cs(d as? Square) };\n    return q.a;\n}\n", "E062,E060"},
+		{"ambiguous-dyn-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 1 };\n    return d.m();\n}\n", "E062"},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049"},
