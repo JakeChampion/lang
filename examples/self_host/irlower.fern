@@ -518,6 +518,16 @@ pub struct LowerState {
     // field per #7253 step 2, formerly "TUPELEM:"-multiplexed into
     // reclaimable_names.
     tup_elem_kinds: string[],
+    // fn_dyn / fn_sig / fn_ret: the fn-typed value signature sidecars
+    // (#5276/#6282/#6862), one concept split by what an indirect call needs:
+    // "<name>|<positions>" dyn-boxed argument indices, "<name>|<sigtag>" the
+    // funcref width tag wasm validates against, "<name>|<ret>" the declared
+    // return spelling lower_i64 widens by. Seeded by lower_func's pre-pass for
+    // fn-typed params and locals; dedicated fields per #7253 step 2, formerly
+    // "FNDYN:"/"FNSIG:"/"FNRET:"-multiplexed into reclaimable_names.
+    fn_dyn: string[],
+    fn_sig: string[],
+    fn_ret: string[],
     // closure_opt_rets: "<paramname>|<Option/Result type>" for each closure/fn-
     // typed PARAM whose signature return type is an Option/Result (the coarsened
     // "fn" type_name discards it, but ParamDecl.fn_ret keeps the spelling). Lets a
@@ -1855,7 +1865,7 @@ function sig_reg_opt_payload_fresh(r: SigReg, name: string): boolean {
 // dispatch passes as the hidden first argument, so the tag always describes the
 // signature the funcref ACTUALLY has, which is what wasm validates against.
 pub function (s: LowerState) fn_value_sig(name: string, with_env: boolean): string {
-    var tag: string = tagged_value_of(s.reclaimable_names, "FNSIG:", name);
+    var tag: string = tagged_value_of(s.fn_sig, "", name);
     if (tag.len() == 0) { return ""; }
     if (with_env) { return "w" + tag; }
     return tag;
@@ -1866,7 +1876,7 @@ pub function (s: LowerState) fn_value_sig(name: string, with_env: boolean): stri
 // fn_value_sig reads: lower_i64 needs it to tell an indirect call that genuinely
 // yields an i64 from one whose i32 result it must sign-extend.
 pub function (s: LowerState) fn_value_ret(name: string): string {
-    return tagged_value_of(s.reclaimable_names, "FNRET:", name);
+    return tagged_value_of(s.fn_ret, "", name);
 }
 
 // fn_arg_width_char returns the wasm_width_char of parameter `ai` of the
@@ -1889,13 +1899,13 @@ pub function (s: LowerState) fn_arg_width_char(name: string, ai: i32): string {
 // fn_arg_is_dyn reports whether argument index `ai` of an indirect call through
 // the fn-value named `name` targets a `dyn Trait` parameter — so the arg must be
 // lowered via lower_dyn_arg (dyn-boxed), not plain lower_expr. Reads the
-// "FNDYN:<name>|<comma-separated positions>" seed lower_func plants for each
+// "<name>|<comma-separated positions>" fn_dyn seed lower_func plants for each
 // fn-typed param carrying dyn positions (parser's fn_param_dyn). #5276.
 pub function (s: LowerState) fn_arg_is_dyn(name: string, ai: i32): boolean {
     var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var e: string = s.reclaimable_names[i];
-        var st: i32 = tagged_value_start(e, "FNDYN:", name);
+    while (i < s.fn_dyn.len()) {
+        var e: string = s.fn_dyn[i];
+        var st: i32 = tagged_value_start(e, "", name);
         if (st >= 0 && st < e.len()) {
             // The tail is a comma-separated list of dyn positions ("0" / "0,2").
             // Parse each number numerically and test membership of `ai`.
@@ -46069,15 +46079,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         scrb_i = scrb_i + 1;
     }
     // #5276: seed each fn-typed PARAM whose fn-type has `dyn Trait` parameter
-    // positions as "FNDYN:<name>|<positions>" (comma-separated indices), so an
+    // positions as "<name>|<positions>" fn_dyn rows, so an
     // indirect call `f(7)` through the fn value dyn-boxes the argument at those
     // positions. The flat "fn" type tag dropped the per-param dyn-ness; parser's
-    // fn_param_dyn preserved it. Prefix-tagged (a #7253 step-2 migration
-    // candidate now that the 33-field pin is dead), inert elsewhere.
+    // fn_param_dyn preserved it. Seeded into the dedicated fn_dyn/fn_sig/fn_ret
+    // fields (#7253 step 2).
+    var fn_dyn0: string[] = [];
+    var fn_sig0: string[] = [];
+    var fn_ret0: string[] = [];
     var fpdi: i32 = 0;
     while (fpdi < fn.params.len()) {
         if (fn.params[fpdi].type_name == "fn" && fn.params[fpdi].fn_param_dyn.len() > 0) {
-            reclaim = reclaim.append("FNDYN:" + fn.params[fpdi].name + "|" + fn.params[fpdi].fn_param_dyn);
+            fn_dyn0 = fn_dyn0.append(fn.params[fpdi].name + "|" + fn.params[fpdi].fn_param_dyn);
         }
         // #6282: the same seeding for the fn-value's WIDTHS. A funcref type in
         // wasm is structural, so a `(i64) => boolean` dispatched through the
@@ -46091,8 +46104,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         if (fn.params[fpdi].type_name == "fn") {
             var fsg: string = fn_sig_of(fn.params[fpdi], fn.type_params);
             if (fsg.len() > 0) {
-                reclaim = reclaim.append("FNSIG:" + fn.params[fpdi].name + "|" + fsg);
-                reclaim = reclaim.append("FNRET:" + fn.params[fpdi].name + "|" + fn.params[fpdi].fn_ret);
+                fn_sig0 = fn_sig0.append(fn.params[fpdi].name + "|" + fsg);
+                fn_ret0 = fn_ret0.append(fn.params[fpdi].name + "|" + fn.params[fpdi].fn_ret);
             }
         }
         fpdi = fpdi + 1;
@@ -46110,12 +46123,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 var fnlp: parser.ParamDecl = fn_param_from_spelling(fnlv.name, fnlv.type_name);
                 if (fnlp.type_name == "fn") {
                     if (fnlp.fn_param_dyn.len() > 0) {
-                        reclaim = reclaim.append("FNDYN:" + fnlv.name + "|" + fnlp.fn_param_dyn);
+                        fn_dyn0 = fn_dyn0.append(fnlv.name + "|" + fnlp.fn_param_dyn);
                     }
                     var fnlsg: string = fn_sig_of(fnlp, fn.type_params);
                     if (fnlsg.len() > 0) {
-                        reclaim = reclaim.append("FNSIG:" + fnlv.name + "|" + fnlsg);
-                        reclaim = reclaim.append("FNRET:" + fnlv.name + "|" + fnlp.fn_ret);
+                        fn_sig0 = fn_sig0.append(fnlv.name + "|" + fnlsg);
+                        fn_ret0 = fn_ret0.append(fnlv.name + "|" + fnlp.fn_ret);
                     }
                 }
             },
@@ -46245,7 +46258,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -54946,7 +54959,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
