@@ -137,6 +137,34 @@ function main(): i32 {
     print((s * 10 + a.len()).to_string());
     return 0;
 }`},
+		// The interpreter grows an append's receiver in place when the
+		// slot it extends into is unclaimed (#6395), so a loop-built
+		// array carries spare capacity two views can reach. Only one of
+		// them may take a given slot; the other must copy, and both must
+		// agree with the backends' refcount-driven choice.
+		{"grown_buffer_two_appends", `import "std/i32";
+function main(): i32 {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < 5) { a = a.append(i); i = i + 1; }
+    var x: i32[] = a.append(100);
+    var y: i32[] = a.append(200);
+    print((x[5] + y[5] * 10 + a.len() * 100).to_string());
+    return 0;
+}`},
+		// Same split, with one view reached through a struct field.
+		{"grown_buffer_append_through_field", `import "std/i32";
+struct Box { items: i32[] }
+function main(): i32 {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < 5) { a = a.append(i); i = i + 1; }
+    var b: Box = Box { items: a };
+    var x: i32[] = b.items.append(100);
+    var y: i32[] = a.append(200);
+    print((x[5] + y[5] * 10 + b.items.len() * 100).to_string());
+    return 0;
+}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
