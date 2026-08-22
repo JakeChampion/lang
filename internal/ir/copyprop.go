@@ -33,8 +33,6 @@
 
 package ir
 
-import "github.com/jakechampion/lang/internal/ast"
-
 // PropagateCopies eliminates OpTeeLocal / OpStoreLocal sites whose
 // slot is unused elsewhere in the function. Functions without an
 // eligible site are unchanged.
@@ -55,36 +53,12 @@ func PropagateCopies(prog *Program) bool {
 	return changed
 }
 
-// slotIsTwoWord reports whether slot `idx` in `fn` materialises
-// as two wasm32 operand-stack values — a two-word-ABI string
-// (data, len) or a `dyn Trait` inline [data, vtable] pair, the
-// same set as the wasm backend's isTwoWordType. Used by the
-// dead-store rewrite below: a dead OpStoreLocal that targets a
-// two-word slot has to pop both halves, not one, so the
-// replacement drop must fan out to two `drop`s.
+// slotIsTwoWord reports whether slot `idx` in `fn` materialises as two
+// operand-stack values. Used by the dead-store rewrite below: a dead
+// OpStoreLocal that targets a two-word slot has to pop both halves, not
+// one, so the replacement drop must carry `Width: WidthString`.
 func slotIsTwoWord(fn *Func, idx int32, ptrW int) bool {
-	if ptrW != 4 {
-		return false
-	}
-	var t ast.Type
-	if int(idx) < len(fn.Params) {
-		t = fn.Params[idx].Type
-	} else if int(idx)-len(fn.Params) < len(fn.Locals) {
-		t = fn.Locals[int(idx)-len(fn.Params)].Type
-	} else {
-		i := int(idx) - len(fn.Params) - len(fn.Locals)
-		if i < len(fn.ScratchTypes) {
-			t = fn.ScratchTypes[i]
-		}
-	}
-	if _, isString := t.(ast.StringType); isString {
-		return true
-	}
-	// Latent today (nothing dead-stores into a dyn slot on the wasm
-	// path), but a single-drop rewrite of a two-value store would emit a
-	// stack-imbalanced module — see slotIsWide's dyn arm in constprop.go.
-	_, isDyn := t.(ast.DynTraitType)
-	return isDyn
+	return TypeIsTwoWord(slotTypeAt(fn, idx), ptrW)
 }
 
 func propagateCopiesOps(fn *Func, ops []Op, ptrW int) []Op {
@@ -122,10 +96,9 @@ func propagateCopiesOps(fn *Func, ops []Op, ptrW int) []Op {
 			// with OpDrop so the popped operand still leaves the
 			// stack — without that the stack would imbalance after
 			// the next op tries to consume the now-missing input.
-			// Two-word slots (string on wasm32) inherit `Width:
-			// WidthString` so the wasm codegen knows to fan the
-			// drop to two `drop` instructions; natives still emit
-			// one `drop`.
+			// Two-word slots inherit `Width: WidthString` so the
+			// backend drops both halves — two `drop`s on wasm, a
+			// two-slot `sp` bump on arm64.
 			if reads[op.I32] == 0 && storeOnly[op.I32] == 1 && teeOnly[op.I32] == 0 {
 				w := 0
 				if slotIsTwoWord(fn, op.I32, ptrW) {
