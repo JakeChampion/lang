@@ -17436,7 +17436,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // shadowed it. The candidate becomes a real "STR:" credit only here, because
     // the release it earns is only sound behind the guard this slot carries.
     var sfroot: i32 = 0 - 1;
-    if (vt.is_str && reclaim_has(sb.reclaimable_names, "SFRCAND:", v.name)) { sfroot = sfrrecv_chain_root_slot(v.init, se, 0); }
+    if (vt.is_str && reclaim_has(sb.reclaimable_names, "SFRCAND:", reclaim_site_key_of(v.name, v.line, v.col))) { sfroot = sfrrecv_chain_root_slot(v.init, se, 0); }
     // Same shape for the trim class: the receiver's type is known here, and the
     // flag is what makes the release site pick the view-aware free. A chain link
     // can return `s[a:b]` too, so its result gets the same view-aware release.
@@ -17448,7 +17448,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
         if (idsrc < 0) { idsrc = sfroot; }
         sb = sb.mark_str_identity_src(slot, idsrc);
     }
-    if (sfroot >= 0) { sb = LowerState { ...sb, reclaimable_names: sb.reclaimable_names.append("STR:" + v.name) }; }
+    if (sfroot >= 0) { sb = LowerState { ...sb, reclaimable_names: sb.reclaimable_names.append("STR:" + reclaim_site_key_of(v.name, v.line, v.col)) }; }
     sb = sb.mark_f64arr(slot, vt.is_f64arr);
     sb = sb.mark_bool(slot, vt.is_bool);
     sb = sb.mark_boolarr(slot, vt.is_boolarr);
@@ -25610,7 +25610,12 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_scenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
+        // A string local is entry-zeroed too, now that a BLOCK-SCOPED one is
+        // sweepable (#7292): the sweep would otherwise hand __fern_str_free
+        // whatever the stack held in a function whose block never ran. str_slots_of
+        // looks like this set but is diagnostic only — "Nothing on the emit path
+        // reads it" — so the zeroing had to be added here, not assumed.
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_str(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_scenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -28396,7 +28401,7 @@ function collect_sfrrecv_local_names(stmts: parser.Stmt[], ns: string[], ts: str
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (sfrrecv_str_init(v.init, ns, ts, str_fresh_ret)) { a = push_str_unique(a, v.name); } },
+            parser.StmtVar(v) => { if (sfrrecv_str_init(v.init, ns, ts, str_fresh_ret)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_sfrrecv_local_names(f.then_body, ns, ts, str_fresh_ret, a); a = collect_sfrrecv_local_names(f.else_body, ns, ts, str_fresh_ret, a); },
             parser.StmtWhile(w) => { a = collect_sfrrecv_local_names(w.body, ns, ts, str_fresh_ret, a); },
             parser.StmtFor(fo) => { a = collect_sfrrecv_local_names(fo.body, ns, ts, str_fresh_ret, a); },
@@ -28418,7 +28423,7 @@ function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: str
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (replace_str_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); } },
+            parser.StmtVar(v) => { if (replace_str_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_replace_local_names(f.then_body, ns, ts, a); a = collect_replace_local_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_replace_local_names(w.body, ns, ts, a); },
             parser.StmtFor(fo) => { a = collect_replace_local_names(fo.body, ns, ts, a); },
@@ -28440,7 +28445,7 @@ function collect_trim_local_names(stmts: parser.Stmt[], ns: string[], ts: string
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (trim_str_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); } },
+            parser.StmtVar(v) => { if (trim_str_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_trim_local_names(f.then_body, ns, ts, a); a = collect_trim_local_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_trim_local_names(w.body, ns, ts, a); },
             parser.StmtFor(fo) => { a = collect_trim_local_names(fo.body, ns, ts, a); },
@@ -28465,7 +28470,7 @@ function collect_join_strarr_names(stmts: parser.Stmt[], ns: string[], ts: strin
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (join_strarr_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); } },
+            parser.StmtVar(v) => { if (join_strarr_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_join_strarr_names(f.then_body, ns, ts, a); a = collect_join_strarr_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_join_strarr_names(w.body, ns, ts, a); },
             parser.StmtFor(fo) => { a = collect_join_strarr_names(fo.body, ns, ts, a); },
@@ -28488,7 +28493,7 @@ function collect_tostr_scalar_names(stmts: parser.Stmt[], ns: string[], ts: stri
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (tostr_scalar_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); }
+                if (tostr_scalar_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
             },
             parser.StmtIf(f) => { a = collect_tostr_scalar_names(f.then_body, ns, ts, a); a = collect_tostr_scalar_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_tostr_scalar_names(w.body, ns, ts, a); },
@@ -28513,7 +28518,7 @@ function collect_litstr_local_names(stmts: parser.Stmt[], acc: string[]): string
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 match (v.init) {
-                    parser.ExprString(_) => { a = push_str_unique(a, v.name); },
+                    parser.ExprString(_) => { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); },
                     _ => {}
                 }
             },
@@ -28540,7 +28545,7 @@ function collect_fresh_string_names(stmts: parser.Stmt[], acc: string[]): string
 function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (str_local_binding_is_fresh(v.init)) { return push_str_unique(acc, v.name); }
+            if (str_local_binding_is_fresh(v.init)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         parser.StmtIf(iff) => {
@@ -28723,7 +28728,7 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
                 if (util.index_of_str(reassigned, v.name) >= 0) {
                     var init_ok: boolean = str_local_binding_is_fresh(v.init);
                     match (v.init) { parser.ExprString(_) => { init_ok = true; }, _ => {} }
-                    if (init_ok) { a = push_str_unique(a, v.name); }
+                    if (init_ok) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 }
             },
             parser.StmtIf(f) => { a = collect_str_accumulator_names(f.then_body, reassigned, a); a = collect_str_accumulator_names(f.else_body, reassigned, a); },
@@ -29547,7 +29552,7 @@ function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: pars
             parser.StmtVar(v) => {
                 if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0
                         && owned_container_read_str_binding(v.init, body, fresh_ret, structs)) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_owned_container_read_str_names(f.then_body, body, fresh_ret, reassigned, structs, a); a = collect_owned_container_read_str_names(f.else_body, body, fresh_ret, reassigned, structs, a); },
@@ -29596,7 +29601,7 @@ function collect_fresh_str_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0 && is_fresh_ret_binding(v.init, "", str_fresh_ret)) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_fresh_str_ret_call_names(f.then_body, str_fresh_ret, reassigned, a); a = collect_fresh_str_ret_call_names(f.else_body, str_fresh_ret, reassigned, a); },
@@ -32123,7 +32128,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     }
     var si: i32 = 0;
     while (si < strs.len()) {
-        if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for_clo(body, strs[si], borrowable, clo_ok, recv_borrow)) {
+        // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
+        // all ask about the variable, so each takes the bare name back out. The
+        // cross-list `strs` dedupes below compare key-to-key and get sharper for
+        // it: two same-named bindings no longer collapse into one another.
+        var snm: string = reclaim_site_name(strs[si]);
+        if (util.index_of_str(reassigned, snm) < 0 && !body_unsafe_for_clo(body, snm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + strs[si]);
         }
         si = si + 1;
@@ -32135,10 +32145,11 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var lits: string[] = collect_litstr_local_names(body, []);
     var li2: i32 = 0;
     while (li2 < lits.len()) {
+        var lnm: string = reclaim_site_name(lits[li2]);
         if (util.index_of_str(strs, lits[li2]) < 0
-            && util.index_of_str(reassigned, lits[li2]) < 0
-            && !litstr_tostring_recv_body(body, lits[li2])
-            && !body_unsafe_for_clo(body, lits[li2], borrowable, clo_ok, recv_borrow)) {
+            && util.index_of_str(reassigned, lnm) < 0
+            && !litstr_tostring_recv_body(body, lnm)
+            && !body_unsafe_for_clo(body, lnm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + lits[li2]);
         }
         li2 = li2 + 1;
@@ -32153,9 +32164,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var tss: string[] = collect_tostr_scalar_names(body, tsn, tst, []);
     var ti2: i32 = 0;
     while (ti2 < tss.len()) {
+        var tnm: string = reclaim_site_name(tss[ti2]);
         if (util.index_of_str(strs, tss[ti2]) < 0
-            && util.index_of_str(reassigned, tss[ti2]) < 0
-            && !body_unsafe_for_clo(body, tss[ti2], borrowable, clo_ok, recv_borrow)) {
+            && util.index_of_str(reassigned, tnm) < 0
+            && !body_unsafe_for_clo(body, tnm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + tss[ti2]);
         }
         ti2 = ti2 + 1;
@@ -32165,9 +32177,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var jss: string[] = collect_join_strarr_names(body, tsn, tst, []);
     var ji: i32 = 0;
     while (ji < jss.len()) {
+        var jnm: string = reclaim_site_name(jss[ji]);
         if (util.index_of_str(strs, jss[ji]) < 0
-            && util.index_of_str(reassigned, jss[ji]) < 0
-            && !body_unsafe_for_clo(body, jss[ji], borrowable, clo_ok, recv_borrow)) {
+            && util.index_of_str(reassigned, jnm) < 0
+            && !body_unsafe_for_clo(body, jnm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + jss[ji]);
         }
         ji = ji + 1;
@@ -32179,9 +32192,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var tms: string[] = collect_trim_local_names(body, tsn, tst, []);
     var tmi: i32 = 0;
     while (tmi < tms.len()) {
+        var mnm: string = reclaim_site_name(tms[tmi]);
         if (util.index_of_str(strs, tms[tmi]) < 0
-            && util.index_of_str(reassigned, tms[tmi]) < 0
-            && !body_unsafe_for_clo(body, tms[tmi], borrowable, clo_ok, recv_borrow)) {
+            && util.index_of_str(reassigned, mnm) < 0
+            && !body_unsafe_for_clo(body, mnm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + tms[tmi]);
         }
         tmi = tmi + 1;
@@ -32192,9 +32206,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var rps: string[] = collect_replace_local_names(body, tsn, tst, []);
     var rpi: i32 = 0;
     while (rpi < rps.len()) {
+        var rnm: string = reclaim_site_name(rps[rpi]);
         if (util.index_of_str(strs, rps[rpi]) < 0
-            && util.index_of_str(reassigned, rps[rpi]) < 0
-            && !body_unsafe_for_clo(body, rps[rpi], borrowable, clo_ok, recv_borrow)) {
+            && util.index_of_str(reassigned, rnm) < 0
+            && !body_unsafe_for_clo(body, rnm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("STR:" + rps[rpi]);
         }
         rpi = rpi + 1;
@@ -32210,9 +32225,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var sfrs: string[] = collect_sfrrecv_local_names(body, tsn, tst, str_fresh_ret, []);
     var sfi: i32 = 0;
     while (sfi < sfrs.len()) {
+        var fnm: string = reclaim_site_name(sfrs[sfi]);
         if (util.index_of_str(strs, sfrs[sfi]) < 0
-            && util.index_of_str(reassigned, sfrs[sfi]) < 0
-            && !body_unsafe_for_clo(body, sfrs[sfi], borrowable, clo_ok, recv_borrow)) {
+            && util.index_of_str(reassigned, fnm) < 0
+            && !body_unsafe_for_clo(body, fnm, borrowable, clo_ok, recv_borrow)) {
             out = out.append("SFRCAND:" + sfrs[sfi]);
         }
         sfi = sfi + 1;
@@ -32229,7 +32245,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var accs: string[] = collect_str_accumulator_names(body, reassigned, []);
     var ci: i32 = 0;
     while (ci < accs.len()) {
-        if (!str_accum_unsafe_for(body, accs[ci], borrowable)) { out = out.append("STR:" + accs[ci]); }
+        if (!str_accum_unsafe_for(body, reclaim_site_name(accs[ci]), borrowable)) { out = out.append("STR:" + accs[ci]); }
         ci = ci + 1;
     }
     // Fresh-string-return-call locals (`var r = f(..)`, f a str-fresh-ret free
@@ -32239,7 +32255,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var frets: string[] = collect_fresh_str_ret_call_names(body, str_fresh_ret, reassigned, []);
     var fri: i32 = 0;
     while (fri < frets.len()) {
-        if (!body_unsafe_for(body, frets[fri], borrowable, recv_borrow)) { out = out.append("STR:" + frets[fri]); }
+        if (!body_unsafe_for(body, reclaim_site_name(frets[fri]), borrowable, recv_borrow)) { out = out.append("STR:" + frets[fri]); }
         fri = fri + 1;
     }
     // Owned-container READ destinations (#6491 pointer half): `var s: string =
@@ -32249,7 +32265,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, structs, []);
     var oci: i32 = 0;
     while (oci < ocrs.len()) {
-        if (!body_unsafe_for(body, ocrs[oci], borrowable, recv_borrow)) { out = out.append("STR:" + ocrs[oci]); }
+        if (!body_unsafe_for(body, reclaim_site_name(ocrs[oci]), borrowable, recv_borrow)) { out = out.append("STR:" + ocrs[oci]); }
         oci = oci + 1;
     }
     // `?`-bound string payloads (#4355): `var s: string = mk(pre)?` where mk is
@@ -32261,7 +32277,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var tstrs: string[] = collect_try_str_binding_names(body, opt_fresh_ret, reassigned, []);
     var tsi: i32 = 0;
     while (tsi < tstrs.len()) {
-        if (!body_unsafe_for(body, tstrs[tsi], borrowable, recv_borrow)) { out = out.append("STR:" + tstrs[tsi]); }
+        if (!body_unsafe_for(body, reclaim_site_name(tstrs[tsi]), borrowable, recv_borrow)) { out = out.append("STR:" + tstrs[tsi]); }
         tsi = tsi + 1;
     }
     // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
@@ -37007,7 +37023,19 @@ function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_str) { return false; }
-    return reclaim_has(s.reclaimable_names, "STR:", s.locals[i].slot_name);
+    // Keyed on the BINDING SITE, not the name (#7292 / #7253 step 1). Two things
+    // fall out, and the second is why the name key could not simply be made
+    // retirement-aware:
+    //
+    //   - the key lives ON the slot, so retire_locals' block-exit rename cannot
+    //     hide it. A block-scoped string local is swept like any other, closing
+    //     the `{ var s = w("ab"); … }` leak (200 allocs / 0 frees per 100 rounds).
+    //   - two same-named bindings resolve to their OWN credit. Switching the old
+    //     lookup to reclaim_slot_name instead would have swept a slot holding a
+    //     bare alias under a sibling block's credit — measured as exit 99 on
+    //     str-bind-sfrrecv-same-name-alias-liveness, an over-release of a live
+    //     struct field. The exact-match miss was accidentally shielding that.
+    return reclaim_has(s.reclaimable_names, "STR:", s.reclaim_site_key(i));
 }
 
 // slot_is_reclaimable_strarr: slot `i` is a fresh, non-escaping string[] local
@@ -47361,7 +47389,7 @@ function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: SigR
                                         match (c.callee) {
                                             parser.ExprIdent(cid) => {
                                                 if (sig_reg_has_exact(opt_fresh_ret, cid.name + "|string|f")) {
-                                                    a = push_str_unique(a, v.name);
+                                                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                                                 }
                                             },
                                             _ => {}
