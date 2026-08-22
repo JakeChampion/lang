@@ -2147,7 +2147,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
         consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
         // Struct returns resolve against the EmitState's struct view, which on
         // this path is wider than the module's own decls.
-        struct_ret_fns: irlower.struct_ret_fns_of(mod.funcs, s.struct_decls),
+        struct_ret_fns: irlower.sig_reg_of(irlower.struct_ret_fns_of(mod.funcs, s.struct_decls)),
     };
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
     var fi: i32 = 0;
@@ -2183,7 +2183,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
         ...irlower.fn_sigs_for_borrow(fns, all_structs, asm_ir.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
-        opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
+        opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls)),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
@@ -6605,7 +6605,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
         // These two stay scoped to THIS module rather than the whole program.
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
-        fn_names: irlower.fn_names_of(mod.funcs),
+        fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
     // [lo, hi) function-index window (function-sharding, #3425 — the arm64
     // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
