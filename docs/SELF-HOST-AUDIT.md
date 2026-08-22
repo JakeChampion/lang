@@ -309,14 +309,31 @@ findings. Ranked by leverage.
     AST types lifted into a base module both can import, or a second traversal
     spine living inside `parser.fern` — a decision, not a mechanical change.
     (Same shape as SH-025's proposed `ssabackend.fern`, which also cycles.)
-  - **`checker.fern` — 51** functions matching on 4+ Expr/Stmt variants,
-    ~4,957 lines, not the 15 this row claimed. `checker` DOES import `astwalk`,
-    so this half is convertible. Most of the 51 are not: `check_expr` (17
-    variants) and `check_stmt` (14) dispatch differently per node, which is the
-    checker's job rather than boilerplate. The convertible ones are the
-    collectors that look for one fact and otherwise just recurse — the
-    `mc_mentions_*` pair is done, `vref_*`, `ow_count_ident` and
-    `e049_expr_lambdas` are the same shape.
+  - **`checker.fern`** — the row said 15; the real surface, measured, is:
+
+    | | count | lines |
+    |---|---:|---|
+    | genuine self-recursive walks | 37 | 3,789 |
+    | per-node DISPATCH, should keep enumerating | 9 | 916 |
+
+    `checker` DOES import `astwalk`, so the walks are reachable. The dispatch
+    group is not a target and never was: `expr_line` / `expr_col` read each
+    node's own `line`/`col` field across the union — a field accessor, no
+    traversal — and `block_exits` looks only at a block's LAST statement and
+    recurses into branch bodies, which is control-flow analysis. A fold visits
+    everything and would be wrong for both.
+
+    Within the 37, separate the COLLECTORS (gather one fact, otherwise recurse
+    mechanically — the fold-shaped ones) from the SEMANTIC walks that do
+    different work per node and are the checker's actual job: `call_diags` (905
+    lines), `check_expr` (424), `stmts_call_diags` (297). Those are SH-044/050
+    territory, not this row.
+
+    Done so far: `mc_mentions_expr` / `mc_mentions_stmts`, `ow_count_ident`,
+    `e049_expr_lambdas`, `vref_expr`. A converted collector stops matching the
+    "hand-enumerated walk" heuristic entirely — it becomes a short visitor
+    naming one or two variants — which is how to tell the count is falling for
+    the right reason.
 
     **A collector may read fields that are not expressions.** `mc_mentions_*`
     tests `StmtAssign.target`, a bare string on the statement, which an
