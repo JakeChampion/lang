@@ -160,7 +160,14 @@ func walkFuncBalance(t *testing.T, name string, body []string) balanceReport {
 		case f[0] == "cbz", f[0] == "cbnz", f[0] == "tbz", f[0] == "tbnz":
 			deliver(f[len(f)-1])
 			inPrologue = false
-		case f[0] == "bl", f[0] == "ret", f[0] == "br", f[0] == "blr":
+		case f[0] == "bl", f[0] == "blr":
+			// A call is balanced by the callee; `blr` is the indirect
+			// form. Neither moves sp across the call.
+			inPrologue = false
+		case f[0] == "ret", f[0] == "br":
+			// Terminators: nothing falls through them, so continuing
+			// the walk with this depth would be a guess.
+			reachable = false
 			inPrologue = false
 		default:
 			// Anything else must not touch sp except as a base
