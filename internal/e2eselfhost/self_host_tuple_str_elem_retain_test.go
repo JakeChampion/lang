@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -183,12 +182,7 @@ func TestSelfHostTupleStrElemRetainX86_64(t *testing.T) {
 				t.Fatalf("%s exited %d, want %d (99 = rc underflow: __fern_str_free "+
 					"claimed a box someone else still owns)", tc.name, exit, tc.want)
 			}
-			summary := ""
-			for _, line := range strings.Split(stderr, "\n") {
-				if strings.HasPrefix(line, "leakcheck: ") {
-					summary = line
-				}
-			}
+			summary := leakSummaryLine(stderr)
 			if summary == "" {
 				t.Fatalf("%s: no leakcheck summary", tc.name)
 			}
