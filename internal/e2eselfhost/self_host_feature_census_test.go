@@ -358,9 +358,9 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	pinned(t, c, "arrow lambdas", 5,
 		"Two are astwalk's no-op statement visitors; the other three are constfold's assert probe, the first arrow lambdas here that compute rather than return the accumulator untouched.")
 	pinned(t, c, "anonymous function exprs", 4,
-		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the nested named fns are the self-host's only closures.")
-	pinned(t, c, "nested named fns", 4,
-		"All four are visitors closing over their enclosing function's locals — the capturing-closure spelling astwalk's consumers use.")
+		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the capturing nested named fns are the self-host's only closures.")
+	pinned(t, c, "nested named fns", 21,
+		"Four are astwalk visitors closing over their enclosing function's locals. The other seventeen are wasm_ir's helper-gate predicates: any_op(cache, pred) replaced seventeen copies of the same cache/ops walk, and each gate now spells its tag test as a nested function — two of which (module_calls_direct, module_emits_op_cached) capture a parameter, the rest capture nothing.")
 	pinned(t, c, "for..in loops", 326,
 		"311 in checker.fern and 15 in visibility.fern. Every other loop in the compiler is still a hand-indexed `while`, so these two modules are the whole of the fixpoint's for..in coverage.")
 	pinned(t, c, "try op", 0,
