@@ -540,6 +540,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_close":                     emitTcpCloseHelper,
 	"tcp_pollable":                  emitTcpPollableHelper,
 	"poll":                          emitPollHelper,
+	"isatty":                        emitIsattyHelper,
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
 	"wasm_poll":                     emitWasmPollHelper,
 	"wasm_pollable_drop":            emitWasmPollableDropHelper,
@@ -1060,6 +1061,23 @@ func emitRandomI32Helper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w("\tldr w0, [sp]") // 4 random bytes → i32
 	w("\tadd sp, sp, #16")
+	w("\tret")
+}
+
+// emitIsattyHelper writes isatty(fd) -> 0/1: one TCGETS ioctl, which only a
+// terminal answers. `struct termios` is 60 bytes; 80 keeps sp 16-aligned.
+// Leaf — the svc preserves every register but x0, so no frame save is needed.
+func emitIsattyHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("isatty"))
+	w("\tsub sp, sp, #80")
+	w("\tmov x1, #21505") // TCGETS
+	w("\tmov x2, sp")
+	w("\tmov x8, #29") // ioctl
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tcset w0, eq")
+	w("\tadd sp, sp, #80")
 	w("\tret")
 }
 
