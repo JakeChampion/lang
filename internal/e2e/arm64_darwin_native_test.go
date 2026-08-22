@@ -336,7 +336,10 @@ func TestArm64DarwinDwarfSymtab(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	prog := "function helper(x: i32): i32 { return x * 2; }\n" +
+	// @noinline keeps the probe a real function: this case is about what the
+	// symbol table NAMES, and ir.Inline would otherwise substitute helper into
+	// its sole call site and the dead-function cull remove it.
+	prog := "@noinline function helper(x: i32): i32 { return x * 2; }\n" +
 		"function main(): i32 { return helper(21); }\n"
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
