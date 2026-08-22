@@ -75,13 +75,10 @@ function sub_module(m: parser.Module, lo: i32, hi: i32): parser.Module {
 // PARSE-level work only: no lowering, so building it for every module on every
 // invocation stays cheap, which is what lets a cache hit skip the expensive part.
 function whole_program_view(parts: flatten.PerModule[]): parser.Module[] {
-    var out: parser.Module[] = [];
+    var mods: parser.Module[] = [];
     var i: i32 = 0;
-    while (i < parts.len()) {
-        out = out.append(parser.infer_ret_types_module(wasm_ir.lift_lambdas(parts[i].mod)));
-        i = i + 1;
-    }
-    return out;
+    while (i < parts.len()) { mods = mods.append(parts[i].mod); i = i + 1; }
+    return wasm_ir.lift_lambdas_parts(mods);
 }
 
 // ShardRef names one link unit: module `idx` over its [lo, hi) function window

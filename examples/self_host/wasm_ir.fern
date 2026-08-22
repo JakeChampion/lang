@@ -2975,6 +2975,22 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
     return irlower.lift_lambdas(mod);
 }
 
+// lift_lambdas_parts is asm_ir.lift_lambdas_parts for the wasm per-module route:
+// every part of a bundle lifted against the whole-program signature view the
+// others supply, so a capturing lambda handed to a SIBLING module's fn-param is
+// env-boxed instead of reaching lowering as a bare lambda that names a `<fd>$clo`
+// the lift never hoisted — a missing elem-table entry at link (#7215).
+pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
+    var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
+    var out: parser.Module[] = [];
+    var i: i32 = 0;
+    while (i < mods.len()) {
+        out = out.append(parser.infer_ret_types_module(irlower.lift_lambdas_view(mods[i], view)));
+        i = i + 1;
+    }
+    return out;
+}
+
 // fn_value_table collects the module's address-taken functions (the targets of
 // const_func ops) in first-seen, deduped order. The position of a name here is
 // its funcref-table slot index — both the const_func `i32.const <idx>` and the

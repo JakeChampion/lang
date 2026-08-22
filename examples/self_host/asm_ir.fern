@@ -6155,6 +6155,24 @@ pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): par
     return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls };
 }
 
+// lift_lambdas_parts lifts and return-type-infers every module of a PER-MODULE
+// bundle, each against the whole-program signature view the others supply. Every
+// per-module route goes through here rather than lifting a part on its own: a
+// part lifted against only its own functions cannot tell that a sibling module's
+// callee takes a fn-typed parameter, so a capturing lambda handed to one is left
+// unboxed and lowering then names a `<fd>$clo` the lift never hoisted — an
+// undefined symbol at link (#5698, #7215).
+pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
+    var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
+    var out: parser.Module[] = [];
+    var i: i32 = 0;
+    while (i < mods.len()) {
+        out = out.append(parser.infer_ret_types_module(lift_lambdas_view(mods[i], view)));
+        i = i + 1;
+    }
+    return out;
+}
+
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The
 // program is self-contained (pure i32 uses no runtime helpers): every
 // function via the IR, then a `_start` that calls __fn_main and exits with
