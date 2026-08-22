@@ -78,6 +78,27 @@ Ordered roughly by cost. All are *safe* leaks.
 over-approximation: any unknown shape ⇒ tainted/disqualified, costing
 reclamation but never safety.
 
+### Ownership needs a callee NAME at the call site
+
+`paramVerdict` is the one ladder both the definition side and the call site
+read, but only the call site can be *silent*: the owned model's caller-side
+retain is emitted by `calleeParamOwnedByDefault`, which is keyed by function
+name. Every indirect dispatch — `OpCallDyn` through a vtable slot, and
+`OpCallIndirect` through a function value — jumps through a pointer with no
+name to key on, so no retain is emitted there no matter what the ladder says.
+
+A function reachable that way therefore BORROWS its parameters under every
+ownership model, or its exit dec releases a reference nobody counted. Two rungs
+enforce it: `vtableDispatchedMethods` for `dyn Trait` slots (#6465) and
+`addressTakenFuncs` for anything used as a function value — a lambda held in a
+local, a named function passed as a callback (#7307). Over-approximating either
+set only forgoes a reclaim the caller still performs.
+
+Borrow inference reaches the same verdict from the escape facts for the common
+non-escaping case, so both bugs were invisible with it on: the gate that sees
+them is the `*BorrowInferMatchesOwned` differential, and the corpus needs a case
+of the shape for it to fire.
+
 ## 2. How we compare
 
 Every reference implementation sits at the **inferred** end of an

@@ -1,0 +1,13 @@
+// Two lambdas, each with a destructuring parameter, called through the
+// local that holds them. Dispatch goes through a function pointer, so no
+// call site names the callee: nothing there can hand ownership of the
+// argument tuple over, and the callee must not reclaim it either. A
+// stray release at the first site returns the block to the freelist,
+// and the second site's allocation is what trips over it.
+function main(): i32 {
+    var lam = function ((x, y): (i32, i32)): i32 { return x * 10 + y; };
+    if (lam((3, 4)) != 34) { return 1; }
+    var diff = function ((p, q): (i32, i32)): i32 { return p - q; };
+    if (diff((9, 5)) != 4) { return 2; }
+    return 0;
+}

@@ -2762,7 +2762,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// every `return` in its body produces `Some(EXPR)` or `None`
 	// directly. Captured here so callers know to consume two
 	// stack values from a OpCallDirectPair instead of one.
-	pairForm := findPairFormFuncs(prog, info, ptrW)
+	// Functions reachable through a function VALUE (addressTakenFuncs): both
+	// the pair-form return ABI and the owned-by-default param model have to
+	// treat them as indirect-dispatch targets.
+	addressTaken := addressTakenFuncs(prog, info)
+	pairForm := findPairFormFuncs(prog, info, ptrW, addressTaken)
 	// Per-closure capture lists (closureconv stamps Captures on each
 	// hoisted FuncDecl). Threaded into lowering so emitDec can route a
 	// closure local's drop to its per-closure __closure_drop_<name>
@@ -2864,7 +2868,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -3237,6 +3241,50 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	return out, nil
 }
 
+// addressTakenFuncs names every function whose name is used as a VALUE rather
+// than only as the callee of a direct call — a MakeClosure target (a lambda, or
+// a local function closureconv hoisted) or a bare Ident naming a top-level
+// function that is passed, stored or returned. closureconv does NOT wrap the
+// latter in a MakeClosure, so both forms have to be detected.
+//
+// Such a function is reachable through OpCallIndirect, which dispatches on a
+// function pointer and so has no callee name for calleeParamOwnedByDefault to
+// classify: no caller-side retain is emitted there. That makes its parameters
+// borrowed under every ownership model (paramVerdict) — the same reasoning
+// vtableDispatchedMethods applies to a `dyn Trait` slot — and disqualifies it
+// from the pair-form return ABI (findPairFormFuncs).
+//
+// Over-detecting is safe on both counts: heap-form returns are always correct,
+// and a borrowed param only forgoes a reclaim the caller still performs.
+func addressTakenFuncs(prog *ast.Program, info *checker.Info) map[string]bool {
+	calleeIdents := map[*ast.Ident]bool{}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if id, ok := c.Callee.(*ast.Ident); ok {
+				calleeIdents[id] = true
+			}
+		}
+		return true
+	})
+	out := map[string]bool{}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.MakeClosure:
+			if x.FuncName != "" {
+				out[x.FuncName] = true
+			}
+		case *ast.Ident:
+			if !calleeIdents[x] {
+				if _, isFunc := info.FuncSigs[x.Name]; isFunc {
+					out[x.Name] = true
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
 // findPairFormFuncs scans every top-level function in prog and
 // returns the names of those eligible for the register-based
 // (tag, payload) return ABI. Eligibility today is conservative:
@@ -3267,7 +3315,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 //
 // Tightening the analysis further (e.g. to accept
 // pointer-shaped payloads) is tracked as a follow-up.
-func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[string]bool {
+func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int, addressTaken map[string]bool) map[string]bool {
 	out := map[string]bool{}
 	// A function taken as a value (a MakeClosure / indirect-call
 	// target) must NOT use the two-word (tag, payload) pair-form
@@ -3276,46 +3324,15 @@ func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[stri
 	// one slot per result), so a pair-form return would mismatch the
 	// call-site signature and corrupt the stack (segfault on natives,
 	// validation error on wasm). Heap-form keeps the function's return
-	// shape and the indirect-call ABI in agreement. See #2753.
-	// Address-taken functions: a function whose name appears as a
-	// value rather than only as a direct call. closureconv leaves a
-	// top-level function passed as a value as a bare Ident (it does
-	// NOT wrap it in a MakeClosure), so detect both forms: a
-	// MakeClosure target, or an Ident naming a function that is not a
-	// Call's callee. Over-detecting here only forgoes the pair-form
-	// optimization (heap-form is always correct), so it's safe.
-	calleeIdents := map[*ast.Ident]bool{}
-	ast.WalkProgram(prog, func(n ast.Node) bool {
-		if c, ok := n.(*ast.Call); ok {
-			if id, ok := c.Callee.(*ast.Ident); ok {
-				calleeIdents[id] = true
-			}
-		}
-		return true
-	})
-	closureTargets := map[string]bool{}
-	ast.WalkProgram(prog, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.MakeClosure:
-			if x.FuncName != "" {
-				closureTargets[x.FuncName] = true
-			}
-		case *ast.Ident:
-			if !calleeIdents[x] {
-				if _, isFunc := info.FuncSigs[x.Name]; isFunc {
-					closureTargets[x.Name] = true
-				}
-			}
-		}
-		return true
-	})
+	// shape and the indirect-call ABI in agreement (addressTakenFuncs finds
+	// them). See #2753.
 	for {
 		grew := false
 		for _, fn := range prog.Funcs {
 			if out[fn.Name] {
 				continue
 			}
-			if closureTargets[fn.Name] {
+			if addressTaken[fn.Name] {
 				continue
 			}
 			if !isPairFormEligible(fn, info, ptrW, out) {
@@ -4784,6 +4801,11 @@ type builder struct {
 	// there is no callee name for calleeParamOwnedByDefault to consult and
 	// no caller-side retain is ever emitted. #6465.
 	vtableDispatched map[string]bool
+	// addressTaken is the set of functions reachable through a function
+	// VALUE (addressTakenFuncs). Like vtableDispatched they BORROW their
+	// params under every ownership model: OpCallIndirect has no callee name
+	// to hang a caller-side retain on.
+	addressTaken map[string]bool
 	// trmcFuncs is the set of functions lowered via TRMC (findTrmcFuncs); Slice 2
 	// excludes their params from owned-by-default (their exit bypasses the sweep).
 	trmcFuncs map[string]bool
@@ -5252,7 +5274,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5282,6 +5304,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		paramCountedRetain:   paramCountedRetain,
 		readOnlyComparators:  readOnlyComparators,
 		vtableDispatched:     vtableDispatched,
+		addressTaken:         addressTaken,
 		growParams:           growParams,
 		thisIsPair:           pairForm[fn.Name],
 		dynCoerceDone:        map[ast.Expr]bool{},
@@ -5807,7 +5830,8 @@ const (
 // paramVerdict classifies parameter `i` (declared type `t`) of function
 // `fnName` — the single ownership ladder both sides read. Precedence:
 // type-eligibility, then TRMC (consume-safe before plain — the consume-safe
-// call-site ownership overrides the escape facts), then the borrow facts.
+// call-site ownership overrides the escape facts), then the indirect-dispatch
+// rungs (a vtable slot, a function value), then the borrow facts.
 func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
 	if !b.isOwnedByDefaultType(t) {
 		return paramVerdictNotOwnedType
@@ -5828,6 +5852,16 @@ func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
 	// nobody had retained, freeing the caller's object out from under it.
 	// #6465.
 	if b.vtableDispatched[fnName] {
+		return paramVerdictBorrowed
+	}
+	// The same reasoning for a function reached through a function VALUE
+	// (addressTakenFuncs): a lambda kept in a local, a named function passed
+	// as a callback. OpCallIndirect dispatches on a function pointer, so the
+	// call site has no callee name either and emits no retain — while the
+	// definition side would otherwise classify the param Owned and dec it at
+	// exit, over-releasing the caller's value. Borrow inference hid this by
+	// reaching paramVerdictBorrowed on the escape facts first. #7307.
+	if b.addressTaken[fnName] {
 		return paramVerdictBorrowed
 	}
 	if esc, ok := b.paramEscapes[fnName]; ok && i < len(esc) && !esc[i] {
