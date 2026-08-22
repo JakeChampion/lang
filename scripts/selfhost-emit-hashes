@@ -46,9 +46,11 @@
 #   IR-FALLBACK  `-ssa` produced the same bytes as the IR path; not covered
 #   FAILED       `-ssa` refused the case
 #
-# It costs twice the emits — ~55 minutes — and about a third of the corpus lands
-# in the gating class. Both counts are printed, and a run whose gating class is
-# too small to be evidence is refused rather than reported.
+# It costs twice the emits — ~55 minutes. Measured 2026-08-22 over the 1491
+# rows: 421 emitted by the SSA backends, 941 IR-FALLBACK, 129 refused — so the
+# class that can gate is 28% of the sweep, and the other 72% is dead weight the
+# markers at least make countable. All three counts are printed, and a run whose
+# gating class is too small to be evidence is refused rather than reported.
 #
 # --ssa emits `-emit asm`, not the default binary form, because that is where
 # all three SSA backends produce their own text. The binary forms would hide
