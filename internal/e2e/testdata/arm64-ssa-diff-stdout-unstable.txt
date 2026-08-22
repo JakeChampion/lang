@@ -1,0 +1,26 @@
+# Corpus programs whose STDOUT is not a function of the compiler, so the
+# arm64 flat-vs-ssa differential compares their exit status only. Read by
+# internal/e2e/arm64_ssa_differential_test.go; format is `<path>  <reason>`.
+#
+# This is NOT an allowlist for a wrong answer. A program that prints something
+# different under the two backends belongs in
+# arm64-ssa-diff-known-divergences.txt; a program that prints something
+# different on two runs of the SAME binary belongs here, because comparing it
+# would report a flake as a compiler bug. Rows still run under both backends,
+# still count toward the leg's floor, and a crash or a wrong exit code under
+# either backend is still caught.
+#
+# Verified against the corpus: a row naming a program the walk does not find
+# fails the test, so a rename cannot leave a row that can never fire.
+#
+# Determinism is checked by running the flat build twice, not asserted — the
+# two timing rows below usually agree with themselves, which is exactly why
+# they are dangerous: they would fail rarely and look like a real divergence.
+
+examples/cli/yes.fern  writes its line forever, so stdout is however much the harness captured before the timeout kill
+examples/wasm/echo_handler.fern  an HTTP server: it listens until it is killed
+examples/wasm/native_http_handler.fern  an HTTP server: it listens until it is killed
+examples/wasm/url_router.fern  an HTTP server: it listens until it is killed
+examples/tests/batch8_test.fern  prints the path of a per-run temp directory; the unique suffix is a monotonic-clock reading on the flat backend and 8 random hex digits on arm64ssa, and neither repeats
+examples/tests/bench_test.fern  prints measured elapsed times
+examples/tests/rel_tol_and_ms_bench_test.fern  prints measured elapsed times

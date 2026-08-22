@@ -57,6 +57,16 @@ jobs:
         # the prefix. It silently asserted unmet behaviour for as long as
         # it existed — missing float bit-reinterprets (#5725) and i64[]
         # element corruption (#5729) both slipped past it.
+        #
+        # FERN_REQUIRE_ARM64_SSA_DIFF makes TestArm64SSABackendDifferential
+        # FAIL rather than skip when nothing here can execute an arm64 binary.
+        # On this runner that is satisfied by the host arch itself, so the flag
+        # costs nothing and turns "the corpus differential is running" from an
+        # assumption into a red build if the lane is ever moved off arm64 —
+        # which is precisely how its neighbour spent its whole existence
+        # asserting nothing.
+        env:
+          FERN_REQUIRE_ARM64_SSA_DIFF: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestArm64' ./internal/e2e/
 
   # The fifteen cross-compiler-on-host tests — see the header comment. The
