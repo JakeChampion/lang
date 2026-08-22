@@ -4,9 +4,6 @@
 // Desugars at parse time into a holder param plus a leading
 // `let P { x, y } = <holder>;`, so this exercises the same Destructure path
 // as the tuple spelling in param_destructure.
-//
-// One destructure site per function, on purpose: two in one function abort
-// the wasm owned model (#7307).
 struct Point { x: i32, y: i32 }
 
 struct Rect { w: i32, h: i32 }
