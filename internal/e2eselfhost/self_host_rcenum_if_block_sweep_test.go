@@ -108,12 +108,12 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 1, allocs: 100, frees: 100,
 		},
 		{
-			// STATUS-QUO PIN (#7364, found alongside): a STRING payload in the
-			// same position is never credited "RCENUMS:", so nothing sweeps it
-			// — a leak (150/0 with #7351's two-allocs-per-string), not a crash.
-			// MORE frees here means a credit widened; move this row with that
-			// change, not this one.
-			name: "string_payload_still_leaks",
+			// Formerly string_payload_still_leaks, the #7364 status-quo pin:
+			// a call payload from a str_fresh_ret_fns producer is now credited,
+			// so the sweep releases string + box (150/150 with #7351's
+			// two-allocs-per-string). This is now the row that fails if that
+			// credit is ever withdrawn.
+			name: "string_payload_swept",
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -122,7 +122,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 50, allocs: 150, frees: 0,
+			want: 50, allocs: 150, frees: 150,
 		}}
 }
 
