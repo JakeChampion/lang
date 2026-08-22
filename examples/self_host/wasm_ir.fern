@@ -3684,7 +3684,7 @@ struct WasmOpCtx {
 // return form drops all but the first as dead code -- which type-checks clean
 // and surfaces only as a wasm validation error far from the cause.
 function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
-    var out: string = "";
+    var parts: string[] = [];
     var ns: string = cx.ns;
     var str_vals: string[] = cx.str_vals;
     var cagg_vals: string[] = cx.cagg_vals;
@@ -3697,20 +3697,20 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     var i64tmp: i32 = cx.base + 3;
     var bctmp: i32 = cx.base + 4;
     if (o.kind_tag == 1) {  // const_i32
-        out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n";
+        parts = parts.append("    i32.const " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 2) {  // const_i32_text
         // Integer literal source text — the wasm text parser handles the base
         // (hex `0x..`) and the full i32/u32 immediate range.
-        out = out + "    i32.const " + o.str + "\n";
+        parts = parts.append("    i32.const " + o.str + "\n");
     } else if (o.kind_tag == 3) {  // const_i64
         // 64-bit immediate (source text). load_local / store_local on i64
         // slots use the same local.get/local.set — the local's declared i64
         // type carries the stack type.
-        out = out + "    i64.const " + o.str + "\n";
+        parts = parts.append("    i64.const " + o.str + "\n");
     } else if (o.kind_tag == 4) {  // const_f64
         // Float literal: wasm assembles the source text directly. f64 locals
         // are declared (local f64), so local.get/set carry the stack type.
-        out = out + "    f64.const " + o.str + "\n";
+        parts = parts.append("    f64.const " + o.str + "\n");
     } else if (o.kind_tag == 11) {  // i32_to_f64
         // Four opcodes, selected by the op's width + unsigned (#5992). This
         // was an unconditional convert_i32_s, which made `u32 as f64` convert
@@ -3718,89 +3718,89 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // an i64 stack value for `u64 as f64`, so the module failed to
         // validate rather than answering wrongly.
         if (o.width == 64) {
-            if (o.unsigned) { out = out + "    f64.convert_i64_u\n"; }
-            else { out = out + "    f64.convert_i64_s\n"; }
+            if (o.unsigned) { parts = parts.append("    f64.convert_i64_u\n"); }
+            else { parts = parts.append("    f64.convert_i64_s\n"); }
         } else if (o.unsigned) {
-            out = out + "    f64.convert_i32_u\n";
+            parts = parts.append("    f64.convert_i32_u\n");
         } else {
-            out = out + "    f64.convert_i32_s\n";
+            parts = parts.append("    f64.convert_i32_s\n");
         }
     } else if (o.kind_tag == 12) {  // f64_to_i32
         // Saturating truncation: NaN -> 0, overflow -> clamp (#4332). The
         // non-saturating i32.trunc_f64_s TRAPS on NaN/overflow, aborting the
         // module; the contract (docs/FLOAT-SEMANTICS.md) is total-saturating.
         // Unsigned (`f64 as u32`) saturates over the full u32 range.
-        if (o.unsigned) { out = out + "    i32.trunc_sat_f64_u\n"; }
-        else { out = out + "    i32.trunc_sat_f64_s\n"; }
+        if (o.unsigned) { parts = parts.append("    i32.trunc_sat_f64_u\n"); }
+        else { parts = parts.append("    i32.trunc_sat_f64_s\n"); }
     } else if (o.kind_tag == 13) {  // f64_to_i64
-        if (o.unsigned) { out = out + "    i64.trunc_sat_f64_u\n"; }
-        else { out = out + "    i64.trunc_sat_f64_s\n"; }
+        if (o.unsigned) { parts = parts.append("    i64.trunc_sat_f64_u\n"); }
+        else { parts = parts.append("    i64.trunc_sat_f64_s\n"); }
     } else if (o.kind_tag == 16) {  // f64_bits
         // f64 -> i64 bit reinterpret (typed stack flips f64 -> i64).
-        out = out + "    i64.reinterpret_f64\n";
+        parts = parts.append("    i64.reinterpret_f64\n");
     } else if (o.kind_tag == 17) {  // f64_from_bits
         // i64 -> f64 bit reinterpret (typed stack flips i64 -> f64).
-        out = out + "    f64.reinterpret_i64\n";
+        parts = parts.append("    f64.reinterpret_i64\n");
     } else if (o.kind_tag == 14) {  // f32_bits
         // f64 -> f32 (demote), reinterpret to its i32 bit pattern.
-        out = out + "    f32.demote_f64\n    i32.reinterpret_f32\n";
+        parts = parts.append("    f32.demote_f64\n    i32.reinterpret_f32\n");
     } else if (o.kind_tag == 15) {  // f32_from_bits
         // reinterpret the i32 bits as an f32, promote to f64.
-        out = out + "    f32.reinterpret_i32\n    f64.promote_f32\n";
+        parts = parts.append("    f32.reinterpret_i32\n    f64.promote_f32\n");
     } else if (o.kind_tag == 61) {  // fround
         // round-half-away-from-zero (Go's math.Round). wasm's f64.nearest is
         // ties-to-EVEN, so emulate via trunc(x + copysign(0.5, x)): stash x in
         // the f64 scratch local, then add copysign(0.5, x) and truncate. (The
         // other op_funary kinds are single instructions routed via wasm_binop_w;
         // this one needs the scratch to reuse x twice.)
-        out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n";
-        out = out + "    f64.const 0.5\n";
-        out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.copysign\n";
-        out = out + "    f64.add\n    f64.trunc\n";
+        parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(f64tmp) + "\n");
+        parts = parts.append("    f64.const 0.5\n");
+        parts = parts.append("    local.get " + util.i32_to_string(f64tmp) + "\n    f64.copysign\n");
+        parts = parts.append("    f64.add\n    f64.trunc\n");
     } else if (o.kind_tag == 62) {  // fexp
         // e^x: wasm has no transcendental instruction, so call the polynomial
         // runtime $__fern_exp_f64 (emitted caller-side in wasm_ir_run). The f64
         // operand is already on the stack; the call consumes it and pushes e^x.
         // The arm64 backend lowers fexp the same way (bl __fern_exp_f64); this
         // is the wasm sibling of that polynomial helper.
-        out = out + "    call $__fern_exp_f64\n";
+        parts = parts.append("    call $__fern_exp_f64\n");
     } else if (o.kind_tag == 63) {  // flog
         // ln(x): wasm has no transcendental instruction, so call the polynomial
         // runtime $__fern_log_f64 (emitted caller-side in wasm_ir_run). The f64
         // operand is already on the stack; the call consumes it and pushes ln(x).
         // The arm64 backend lowers flog the same way (bl __fern_log_f64); this is
         // the wasm sibling of that polynomial helper.
-        out = out + "    call $__fern_log_f64\n";
+        parts = parts.append("    call $__fern_log_f64\n");
     } else if (o.kind_tag == 64) {  // fsin
         // sin(x): no wasm instruction -> call the polynomial runtime
         // $__fern_sin_f64 (emitted caller-side in wasm_ir_run). f64 operand on
         // the stack; the call consumes it and pushes sin(x). arm64 lowers fsin
         // the same way (bl __fern_sin_f64).
-        out = out + "    call $__fern_sin_f64\n";
+        parts = parts.append("    call $__fern_sin_f64\n");
     } else if (o.kind_tag == 65) {  // fcos
         // cos(x): same as fsin, calling $__fern_cos_f64.
-        out = out + "    call $__fern_cos_f64\n";
+        parts = parts.append("    call $__fern_cos_f64\n");
     } else if (o.kind_tag == 178) {  // read_chunk
         // r.read_chunk(n) -> Option[string]. A Reader is just its fd (stdin =
         // fd 0), so fd + n are on the stack; $__fern_reader_read_chunk reads up
         // to n bytes via preview1 fd_read and boxes Some(chunk) / None at EOF.
         // Emitted caller-side in wasm_ir_run. Mirrors asm_ir's read_chunk op.
-        out = out + "    call $__fern_reader_read_chunk\n";
+        parts = parts.append("    call $__fern_reader_read_chunk\n");
     } else if (o.kind_tag == 179) {  // reader_close
         // r.close() -> Option[IoError] (always None). fd on the stack;
         // $__fern_reader_close calls preview1 fd_close and boxes None. Emitted
         // caller-side in wasm_ir_run. Mirrors asm_ir's reader_close op.
-        out = out + "    call $__fern_reader_close\n";
+        parts = parts.append("    call $__fern_reader_close\n");
     } else if (is_map_op_kind(o.kind_tag)) {
-        out = out + emit_map_op_wat(o);
+        parts = parts.append(emit_map_op_wat(o));
     } else if (o.kind_tag == 181) {  // sleep_ms
         // sleep_ms(ms): block for ms milliseconds, then push a dummy i32 the
         // statement drops (sleep_ms is void). wasm has no sleep syscall, so the
         // runtime $__fern_sleep_ms uses preview1 poll_oneoff with a single
         // monotonic-clock subscription (emitted caller-side in wasm_ir_run).
         // Standalone, not the reactor's wasi:io/poll path.
-        out = out + "    call $__fern_sleep_ms\n";
+        parts = parts.append("    call $__fern_sleep_ms\n");
     } else if (o.kind_tag == 232) {  // isatty
         // isatty(fd) -> 0. A component has no fd table to interrogate: its
         // stdout is a wasi:io output-stream resource, and the exact answer
@@ -3810,7 +3810,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // embedder that captures the output — and FORCE_COLOR still asks for
         // escapes. Matches what native's preview-2 helper emits. The fd is
         // on the stack and unused.
-        out = out + "    drop\n    i32.const 0\n";
+        parts = parts.append("    drop\n    i32.const 0\n");
     } else if (o.kind_tag == 189) {  // wasm_timer_pollable
         // wasm_timer_pollable(dur_ns: i64) -> pollable handle. The wasm
         // reactor's timer primitive: subscribe a monotonic-clock timer and
@@ -3819,13 +3819,13 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // duration — so a module using it composes to a component via
         // `wasm-tools component new` (a bare core module can't resolve the
         // preview2 interface). The i64 duration is already on the stack.
-        out = out + "    call $__fern_wasi_subscribe_duration\n";
+        parts = parts.append("    call $__fern_wasi_subscribe_duration\n");
     } else if (o.kind_tag == 190) {  // wasm_pollable_drop
         // wasm_pollable_drop(p: i32) -> i32. Drop the wasi:io/poll pollable
         // resource (wasi:io/poll.[resource-drop]pollable), then push 0 for the
         // op's i32 result. Preview-2 direct import, same component path.
-        out = out + "    call $__fern_wasi_pollable_drop\n";
-        out = out + "    i32.const 0\n";
+        parts = parts.append("    call $__fern_wasi_pollable_drop\n");
+        parts = parts.append("    i32.const 0\n");
     } else if (o.kind_tag == 191) {  // wasm_block
         // wasm_block(p: i32) -> i32. Synchronously wait until the pollable is
         // ready (wasi:io/poll.[method]pollable.block), then push 0 for the op's
@@ -3833,38 +3833,38 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // subscribe a timer, block on its pollable, and control returns after
         // the duration elapses. Preview-2 direct import, same component path as
         // the other pollable ops. The pollable handle is already on the stack.
-        out = out + "    call $__fern_wasi_pollable_block\n";
-        out = out + "    i32.const 0\n";
+        parts = parts.append("    call $__fern_wasi_pollable_block\n");
+        parts = parts.append("    i32.const 0\n");
     } else if (o.kind_tag == 208) {  // udp_send
         // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
         // malformed host literal. All three args are on the stack (#4375).
-        out = out + "    call $__fern_udp_send\n";
+        parts = parts.append("    call $__fern_udp_send\n");
     } else if (o.kind_tag == 193) {  // tcp_connect
         // tcp_connect(host_be, port) -> 12-byte connection struct pointer,
         // or -errno. Both args are already on the stack (#4318).
-        out = out + "    call $__fern_tcp_connect\n";
+        parts = parts.append("    call $__fern_tcp_connect\n");
     } else if (o.kind_tag == 200) {  // tcp_listen
         // tcp_listen(port) -> 12-byte listener struct pointer, or -errno.
-        out = out + "    call $__fern_tcp_listen\n";
+        parts = parts.append("    call $__fern_tcp_listen\n");
     } else if (o.kind_tag == 201) {  // tcp_accept
         // tcp_accept(listener) -> a fresh connection struct, or -errno.
-        out = out + "    call $__fern_tcp_accept\n";
+        parts = parts.append("    call $__fern_tcp_accept\n");
     } else if (o.kind_tag == 112) {  // tcp_pollable
         // tcp_pollable(conn) -> a wasi:io/poll pollable for the socket.
-        out = out + "    call $__fern_tcp_pollable\n";
+        parts = parts.append("    call $__fern_tcp_pollable\n");
     } else if (o.kind_tag == 194) {  // tcp_send
         // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
-        out = out + "    call $__fern_tcp_send\n";
+        parts = parts.append("    call $__fern_tcp_send\n");
     } else if (o.kind_tag == 195) {  // tcp_recv
         // tcp_recv(conn, max) -> a fresh string block (empty on error/EOF).
-        out = out + "    call $__fern_tcp_recv\n";
+        parts = parts.append("    call $__fern_tcp_recv\n");
     } else if (o.kind_tag == 196) {  // tcp_close
         // tcp_close(conn) -> 0. Drops the streams then the socket.
-        out = out + "    call $__fern_tcp_close\n";
+        parts = parts.append("    call $__fern_tcp_close\n");
     } else if (o.kind_tag == 187) {  // poll
         // poll(fds, timeout_ms) -> first ready index, or -1 on timeout.
         // Both args are already on the stack (#4316 follow-up).
-        out = out + "    call $__fern_poll\n";
+        parts = parts.append("    call $__fern_poll\n");
     } else if (o.kind_tag == 192) {  // wasm_poll
         // wasm_poll(ps: i32[]) -> i32. The readiness multiplexer: block until
         // at least one pollable in the array is ready, then push the FIRST
@@ -3874,7 +3874,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // area. Unlike the scalar pollable ops above this is a LIST-typed
         // import, so the module additionally needs component-type metadata
         // (see wasi_poll_import) — #4316.
-        out = out + "    call $__fern_wasm_poll\n";
+        parts = parts.append("    call $__fern_wasm_poll\n");
     } else if (o.kind_tag == 174) {  // temp_dir
         // temp_dir(prefix) -> create a unique `<prefix>-<ns>` directory under
         // the preopen, push a Result[string, IoError] box. $__fern_temp_dir
@@ -3882,14 +3882,14 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // $__fern_monotonic_ns; emitted caller-side in wasm_ir_run. The returned
         // path is preopen-relative (wasm has no absolute /tmp), matching the
         // other wasm fs ops.
-        out = out + "    call $__fern_temp_dir\n";
+        parts = parts.append("    call $__fern_temp_dir\n");
     } else if (o.kind_tag == 7) {  // int_extend
         // i32 -> i64: distinct wasm types, so an explicit widen.
-        if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
-        else { out = out + "    i64.extend_i32_s\n"; }
+        if (o.unsigned) { parts = parts.append("    i64.extend_i32_u\n"); }
+        else { parts = parts.append("    i64.extend_i32_s\n"); }
     } else if (o.kind_tag == 8) {  // int_wrap
         // i64 -> i32: drop the high 32 bits.
-        out = out + "    i32.wrap_i64\n";
+        parts = parts.append("    i32.wrap_i64\n");
     } else if (o.kind_tag == 10) {  // u32_wrap
         // No-op: wasm i32 ops are natively 32-bit (already wrap at 2^32), so
         // a u32 arithmetic result needs no extra mask here (unlike the 64-bit
@@ -3898,40 +3898,40 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // `x as <ty>` int→int width mask. u32/i32 are identity (the
         // i32 value's bit pattern is already the result); the narrowing
         // cast uses `and`.
-        if (o.str == "u8") { out = out + "    i32.const 255\n    i32.and\n"; }
+        if (o.str == "u8") { parts = parts.append("    i32.const 255\n    i32.and\n"); }
         // u32 / i32: no-op (value already a 32-bit i32).
     } else if (o.kind_tag == 92) {  // arr_push
         // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
-        out = out + "    call $__fern_arr_push\n";
+        parts = parts.append("    call $__fern_arr_push\n");
     } else if (o.kind_tag == 93) {  // arr_push_owned
         // The sole-owner self-append (irlower's !aliased `a = a.append(v)`):
         // reclaims the old buffer on a grow-realloc via $__fern_arr_push_owned
         // (arr_push_owned_helper — wraps $__fern_arr_push + frees the dead old
         // box through $__fern_arr_dec). Sound: the emit site proved the slot
         // unaliased.
-        out = out + "    call $__fern_arr_push_owned\n";
+        parts = parts.append("    call $__fern_arr_push_owned\n");
     } else if (o.kind_tag == 94) {  // arr_push_i64
         // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
         // 4-byte but i64[]/u64[] at 8-byte, so this needs its own helper).
-        out = out + "    call $__fern_arr_push_i64\n";
+        parts = parts.append("    call $__fern_arr_push_i64\n");
     } else if (o.kind_tag == 95) {  // arr_push_f64
         // stack: arr, f64 val -> the 8-byte-stride push for an f64[] (its own
         // helper takes an f64-typed value, mirroring f64.store in arr_set).
-        out = out + "    call $__fern_arr_push_f64\n";
+        parts = parts.append("    call $__fern_arr_push_f64\n");
     } else if (o.kind_tag == 103) {  // str_from_bytes
         // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
-        out = out + "    call $__fern_string_from_bytes\n";
+        parts = parts.append("    call $__fern_string_from_bytes\n");
     } else if (o.kind_tag == 219) {  // clz
         // wasm has all six as single opcodes with exactly these zero
         // semantics. The i64 forms produce an i64 count, so wrap to i32.
-        if (o.width == 64) { out = out + "    i64.clz\n    i32.wrap_i64\n"; }
-        else { out = out + "    i32.clz\n"; }
+        if (o.width == 64) { parts = parts.append("    i64.clz\n    i32.wrap_i64\n"); }
+        else { parts = parts.append("    i32.clz\n"); }
     } else if (o.kind_tag == 220) {  // ctz
-        if (o.width == 64) { out = out + "    i64.ctz\n    i32.wrap_i64\n"; }
-        else { out = out + "    i32.ctz\n"; }
+        if (o.width == 64) { parts = parts.append("    i64.ctz\n    i32.wrap_i64\n"); }
+        else { parts = parts.append("    i32.ctz\n"); }
     } else if (o.kind_tag == 221) {  // popcount
-        if (o.width == 64) { out = out + "    i64.popcnt\n    i32.wrap_i64\n"; }
-        else { out = out + "    i32.popcnt\n"; }
+        if (o.width == 64) { parts = parts.append("    i64.popcnt\n    i32.wrap_i64\n"); }
+        else { parts = parts.append("    i32.popcnt\n"); }
     } else if (o.kind_tag == 80) {  // heap_bump_bytes
         // bump high-water mark = $heap − heap_base. The $heap global is
         // initialised to heap_base (heap_alloc_helpers), so this reads 0
@@ -3945,105 +3945,105 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // a >2 GiB mark cannot read back negative), so zero-extend the i32
         // address difference. Zero-, not sign-extend: the cursor never sits
         // below heap_base, so the difference is a non-negative byte count.
-        out = out + "    global.get $heap\n    i32.const " + util.i32_to_string(heap_base_for_strs(str_vals, cagg_vals)) + "\n    i32.sub\n    i64.extend_i32_u\n";
+        parts = parts.append("    global.get $heap\n    i32.const " + util.i32_to_string(heap_base_for_strs(str_vals, cagg_vals)) + "\n    i32.sub\n    i64.extend_i32_u\n");
     } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
         // The cliff WEIGHT — an i64 load from the fixed low-memory slot
         // $__fern_arr_push accumulates on its un-share path. i64, not i32:
         // it counts bytes, not appends.
-        out = out + "    i32.const " + util.i32_to_string(arr_push_copied_addr()) + "\n    i64.load\n";
+        parts = parts.append("    i32.const " + util.i32_to_string(arr_push_copied_addr()) + "\n    i64.load\n");
     } else if (o.kind_tag == 216) {  // arr_push_shared_count
         // The rc==1 append cliff counter — a plain i32 load from the fixed
         // low-memory slot $__fern_arr_push bumps on its un-share path. i32,
         // not i64: it counts appends, not bytes.
-        out = out + "    i32.const " + util.i32_to_string(arr_push_shared_addr()) + "\n    i32.load\n";
+        parts = parts.append("    i32.const " + util.i32_to_string(arr_push_shared_addr()) + "\n    i32.load\n");
     } else if (o.kind_tag == 74) {  // memcpy
         // stack: dst, src, n -> copy n bytes src->dst via the bulk-memory
         // memory.copy (operand order [dest, src, size] matches the lowering
         // push order), then push a dummy 0 (value discarded). This is the
         // wasm sibling of rep movsb / the arm64 byte loop.
-        out = out + "    memory.copy\n    i32.const 0\n";
+        parts = parts.append("    memory.copy\n    i32.const 0\n");
     } else if (o.kind_tag == 75) {  // memset
         // stack: dst, byte, n -> fill n bytes at dst with byte (memory.fill;
         // operand order [dest, byte, size] matches the lowering push order),
         // then push a dummy 0. wasm sibling of rep stosb / the arm64 byte loop.
-        out = out + "    memory.fill\n    i32.const 0\n";
+        parts = parts.append("    memory.fill\n    i32.const 0\n");
     } else if (o.kind_tag == 78) {  // free
         // stack: ptr, size -> no-op under the bump heap; drop both, push dummy 0.
-        out = out + "    drop\n    drop\n    i32.const 0\n";
+        parts = parts.append("    drop\n    drop\n    i32.const 0\n");
     } else if (o.kind_tag == 69 || o.kind_tag == 71) {  // load_i32, load_ptr
         // stack: addr -> 4-byte load (ptr is i32-width on wasm32).
-        out = out + "    i32.load\n";
+        parts = parts.append("    i32.load\n");
     } else if (o.kind_tag == 70) {  // load_i64
         // stack: addr -> 8-byte i64 load.
-        out = out + "    i64.load\n";
+        parts = parts.append("    i64.load\n");
     } else if (o.kind_tag == 72 || o.kind_tag == 73) {  // store_i32, store_ptr
         // stack: addr, val (val on top) -> i32.store, then push dummy 0.
-        out = out + "    i32.store\n    i32.const 0\n";
+        parts = parts.append("    i32.store\n    i32.const 0\n");
     } else if (o.kind_tag == 199) {  // store_i64
         // stack: addr (i32), val (i64 on top) -> 8-byte i64.store, push dummy
         // 0. Unlike store_ptr (4-byte i32.store on wasm32), the i64 value
         // needs the full-width store (#4375 item 2).
-        out = out + "    i64.store\n    i32.const 0\n";
+        parts = parts.append("    i64.store\n    i32.const 0\n");
     } else if (o.kind_tag == 77) {  // alloc_u8
         // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
         // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header
         // (matching arr_make). Contents are not zeroed (callers zero
         // explicitly), like the register backends' __fern_alloc_u8.
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 76) {  // alloc
         // stack: n -> bump-alloc n raw bytes, push the pointer (core/map's
         // __alloc). $__fern_alloc is the wasm bump allocator (heap_alloc_helpers).
-        out = out + "    call $__fern_alloc\n";
+        parts = parts.append("    call $__fern_alloc\n");
     } else if (o.kind_tag == 79) {  // ptr_width
         // () -> heap-pointer width in bytes. 4 on wasm32 (NOT 8).
-        out = out + "    i32.const 4\n";
+        parts = parts.append("    i32.const 4\n");
     } else if (o.kind_tag == 18) {  // load_local
-        out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
+        parts = parts.append("    local.get " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 19) {  // store_local
-        out = out + "    local.set " + util.i32_to_string(o.i32_imm) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 20) {  // tee_local
         // store_local + load_local fused (#6638). This is the backend the
         // fusion is FOR: one `local.tee` is a byte and a load cheaper than
         // `local.set $X; local.get $X`, where the register backends generate
         // equivalent code either way.
-        out = out + "    local.tee " + util.i32_to_string(o.i32_imm) + "\n";
+        parts = parts.append("    local.tee " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 34) {  // not
-        out = out + "    i32.eqz\n";
+        parts = parts.append("    i32.eqz\n");
     } else if (o.kind_tag == 160) {  // return
-        out = out + "    return\n";
+        parts = parts.append("    return\n");
     } else if (o.kind_tag == 154) {  // if
-        out = out + "    if\n";
+        parts = parts.append("    if\n");
     } else if (o.kind_tag == 155) {  // else
-        out = out + "    else\n";
+        parts = parts.append("    else\n");
     } else if (o.kind_tag == 152) {  // block
-        out = out + "    block\n";
+        parts = parts.append("    block\n");
     } else if (o.kind_tag == 153) {  // loop
-        out = out + "    loop\n";
+        parts = parts.append("    loop\n");
     } else if (o.kind_tag == 156) {  // end
-        out = out + "    end\n";
+        parts = parts.append("    end\n");
     } else if (o.kind_tag == 157) {  // br
-        out = out + "    br " + util.i32_to_string(o.i32_imm) + "\n";
+        parts = parts.append("    br " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 158) {  // brif
-        out = out + "    br_if " + util.i32_to_string(o.i32_imm) + "\n";
+        parts = parts.append("    br_if " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 159) {  // drop
-        out = out + "    drop\n";
+        parts = parts.append("    drop\n");
     } else if (o.kind_tag == 84) {  // raw_store_ptr
         // pop v (top), off, ptr; store the 4-byte word slot at ptr+off*4
         // (W=4 on wasm32); push v back — the same contract as the register
         // backends' 8-byte slots (ir.fern:358). Used by the reuse guard's
         // fresh-arm shape/type-id copy (#4350).
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.mul\n    i32.add\n";
-        out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(eltmp) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.mul\n    i32.add\n");
+        parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n");
     } else if (o.kind_tag == 85) {  // raw_load_ptr
         // pop off (top), ptr; push the 4-byte word slot at ptr+off*4.
-        out = out + "    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n";
+        parts = parts.append("    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n");
     } else if (o.kind_tag == 87) {  // arr_make
         // n element values on the wasm stack (element n-1 on top).
         // __fern_arr_box(n*esz) -> a; store len@a, cap@a+4, then the
@@ -4054,47 +4054,47 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         var n: i32 = o.i32_imm;
         var esz: i32 = 4;
         if (o.width == 64) { esz = 8; }
-        out = out + "    i32.const " + util.i32_to_string(n * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
+        parts = parts.append("    i32.const " + util.i32_to_string(n * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n");
         var em: i32 = n - 1;
         while (em >= 0) {
             if (o.width == 64 && o.unsigned) {
-                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
             } else if (o.width == 64) {
-                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
             } else {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
             }
             em = em - 1;
         }
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 88) {  // arr_get
         // stack: base, idx -> load(base + 8 + idx*esz). 8-byte elements (width
         // 64) use an 8-byte stride: i64.load for an i64[] (unsigned flag),
         // f64.load for an f64[]; i32 elements the 4-byte path. The index is
         // bounds-checked (len @ base+0) before the address is formed — an
         // out-of-range read traps (exit 134) instead of reading past the end.
-        out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
         // Elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc — the foreach
         // counted reads) skips the len-load / compare / trap. The base is
         // still on the stack after the local.set; `local.get bctmp` re-pushes
         // the index, leaving `base, idx` for the address compute below — the
         // same shape wasm_arr_bounds_check leaves on its in-range path.
         if (o.i32_imm == 1) {
-            out = out + "    local.get " + util.i32_to_string(bctmp) + "\n";
+            parts = parts.append("    local.get " + util.i32_to_string(bctmp) + "\n");
         } else {
-            out = out + wasm_arr_bounds_check(arrtmp, bctmp);
+            parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
         }
         if (o.width == 64 && o.unsigned) {
-            out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n";
+            parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n");
         } else if (o.width == 64) {
-            out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n";
+            parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n");
         } else {
-            out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n";
+            parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n");
         }
     } else if (o.kind_tag == 89) {  // arr_set
         // stack: base, idx, val -> store val at base+8+idx*esz. 8-byte elements
@@ -4104,132 +4104,132 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // the address is formed — an out-of-range write traps (exit 134)
         // instead of clobbering memory past the end.
         if (o.width == 64 && o.unsigned) {
-            out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
-            out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
-            out = out + wasm_arr_bounds_check(arrtmp, bctmp);
-            out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
+            parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
+            parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+            parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
         } else if (o.width == 64) {
-            out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
-            out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
-            out = out + wasm_arr_bounds_check(arrtmp, bctmp);
-            out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
+            parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
+            parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+            parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
         } else {
-            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-            out = out + "    local.set " + util.i32_to_string(bctmp) + "\n";
-            out = out + wasm_arr_bounds_check(arrtmp, bctmp);
-            out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+            parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
+            parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+            parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
         }
     } else if (o.kind_tag == 90) {  // arr_len
         // stack: base -> i32.load(base)  (len @ a+0)
-        out = out + "    i32.load\n";
+        parts = parts.append("    i32.load\n");
     } else if (o.kind_tag == 91) {  // arr_rc
         // stack: base -> i32.load(base - 8)  (rc @ a-8)
-        out = out + "    i32.const 8\n    i32.sub\n    i32.load\n";
+        parts = parts.append("    i32.const 8\n    i32.sub\n    i32.load\n");
     } else if (o.kind_tag == 5) {  // const_str
         // String literal -> the data-section block pointer (its interned
         // offset). The block is `[len@0][bytes@4]`; static, no allocation.
         // Relative to $__str_base rather than absolute, so this unit's code
         // does not depend on where its literals land program-wide (#5331).
-        out = out + "    global.get " + str_base_global(ns) + "\n    i32.const "
-            + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n";
+        parts = parts.append("    global.get " + str_base_global(ns) + "\n    i32.const "
+            + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n");
     } else if (ir.is_str_op_kind(o.kind_tag)) {
-        out = out + emit_str_op_wat(o);
+        parts = parts.append(emit_str_op_wat(o));
     } else if (o.kind_tag == 214) {  // arr_reverse
         // stack: arr -> fresh reversed array block ($__fern_arr_reverse, the
         // WAT twin of the register backends' helper; gated @uses_arr_reverse).
-        out = out + "    call $__fern_arr_reverse\n";
+        parts = parts.append("    call $__fern_arr_reverse\n");
     } else if (o.kind_tag == 215) {  // arr_concat
         // stack: A, B -> fresh A-then-B array block. Natural operand order,
         // so wasm's first-pushed-is-param-0 binding needs no reordering.
-        out = out + "    call $__fern_arr_concat\n";
+        parts = parts.append("    call $__fern_arr_concat\n");
     } else if (o.kind_tag == 96) {  // arr_slice
         // stack: arr, start, end -> fresh array block. An f64[] slice (width
         // 64) copies 8-byte elements via $__fern_arr_slice8; i32[] / string[]
         // copy 4-byte elements via $__fern_arr_slice. The chosen helper is
         // emitted conditionally (module_uses_arr_slice / _arr_slice8).
-        if (o.width == 64) { out = out + "    call $__fern_arr_slice8\n"; }
-        else { out = out + "    call $__fern_arr_slice\n"; }
+        if (o.width == 64) { parts = parts.append("    call $__fern_arr_slice8\n"); }
+        else { parts = parts.append("    call $__fern_arr_slice\n"); }
     } else if (o.kind_tag == 185) {  // random_bytes
         // stack: n -> $__fern_random_bytes(n) -> fresh string block [len][bytes].
-        out = out + "    call $__fern_random_bytes\n";
+        parts = parts.append("    call $__fern_random_bytes\n");
     } else if (o.kind_tag == 186) {  // random_i32
         // -> $__fern_random_i32() -> i32.
-        out = out + "    call $__fern_random_i32\n";
+        parts = parts.append("    call $__fern_random_i32\n");
     } else if (o.kind_tag == 120 && o.width == 64) {  // opt_make
         // 8-byte-payload Option/Result box [tag@0, payload@8], 16 bytes — so an
         // i64/f64 payload fits. Distinct from the i32 box below (and from the
         // runtime's map-get box) BY the payload type: the match reads the same
         // width, so the offsets agree. Store the payload via i64/f64.store.
-        if (o.unsigned) { out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n"; }
-        else { out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n"; }
-        out = out + "    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n";
-        if (o.unsigned) { out = out + "    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n"; }
-        else { out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n"; }
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        if (o.unsigned) { parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n"); }
+        else { parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n"); }
+        parts = parts.append("    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n");
+        if (o.unsigned) { parts = parts.append("    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n"); }
+        else { parts = parts.append("    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n"); }
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 120) {  // opt_make
         // i32-payload Option/Result box [tag@0, payload@4], 8 bytes (matches
         // the runtime's map-get box). Payload on the stack; stash, alloc, store.
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 121) {  // opt_none
         // Payloadless box with tag 1 (None), 8 bytes (no payload read on None).
-        out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 122) {  // opt_tag
         // pop box; tag is the i32 at offset 0.
-        out = out + "    i32.load\n";
+        parts = parts.append("    i32.load\n");
     } else if (o.kind_tag == 123 && o.width == 64) {  // opt_payload
         // 8-byte payload at offset 8: i64.load (unsigned) or f64.load.
-        out = out + "    i32.const 8\n    i32.add\n";
-        if (o.unsigned) { out = out + "    i64.load\n"; }
-        else { out = out + "    f64.load\n"; }
+        parts = parts.append("    i32.const 8\n    i32.add\n");
+        if (o.unsigned) { parts = parts.append("    i64.load\n"); }
+        else { parts = parts.append("    f64.load\n"); }
     } else if (o.kind_tag == 123) {  // opt_payload
         // i32 payload at offset 4 (matches opt_make + the runtime map-get box).
-        out = out + "    i32.const 4\n    i32.add\n    i32.load\n";
+        parts = parts.append("    i32.const 4\n    i32.add\n    i32.load\n");
     } else if (o.kind_tag == 124) {  // map_new
         // stack: hint -> fresh map. i32 / string / struct keys.
         if (o.i32_imm == 2) {
             // Struct/enum key: push the derived hash + eq funcref-table slot
             // indices; $__fern_map_new_struct stores them in the box so
             // hk/keq dispatch them via call_indirect. #2671.
-            out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str)) - fn_table_base()) + "\n    i32.add\n";
-            out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str)) - fn_table_base()) + "\n    i32.add\n";
-            out = out + "    call $__fern_map_new_struct\n";
-        } else if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
-        else { out = out + "    call $__fern_map_new_str\n"; }
+            parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str)) - fn_table_base()) + "\n    i32.add\n");
+            parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str)) - fn_table_base()) + "\n    i32.add\n");
+            parts = parts.append("    call $__fern_map_new_struct\n");
+        } else if (o.i32_imm == 1) { parts = parts.append("    call $__fern_map_new\n"); }
+        else { parts = parts.append("    call $__fern_map_new_str\n"); }
     } else if (is_host_op_kind(o.kind_tag)) {
-        out = out + emit_host_op_wat(o);
+        parts = parts.append(emit_host_op_wat(o));
     } else if (o.kind_tag == 165) {  // putchar
         // stack: byte -> write its low byte to stdout. Inlines the same scratch
         // iovec + $fd_write path the AST backend uses (wasm.fern's putchar): the
         // byte is on the operand stack, so stash it in the eltmp scratch local to
         // store it at scratch addr 16, point the iovec (base@0, len@4) at it, and
         // fd_write fd 1. Push a dummy i32 for the statement-level drop (#2839).
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    i32.const 16\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n";
-        out = out + "    i32.const 0\n    i32.const 16\n    i32.store\n";
-        out = out + "    i32.const 4\n    i32.const 1\n    i32.store\n";
-        out = out + "    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n    drop\n";
-        out = out + "    i32.const 0\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    i32.const 16\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
+        parts = parts.append("    i32.const 0\n    i32.const 16\n    i32.store\n");
+        parts = parts.append("    i32.const 4\n    i32.const 1\n    i32.store\n");
+        parts = parts.append("    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n    drop\n");
+        parts = parts.append("    i32.const 0\n");
     } else if (o.kind_tag == 117) {  // strbuf_reset
         // no args -> clear the global string-builder length. Void helper, so
         // push a dummy i32 for the statement-level drop (mirrors print_str).
-        out = out + "    call $__fern_strbuf_reset\n    i32.const 0\n";
+        parts = parts.append("    call $__fern_strbuf_reset\n    i32.const 0\n");
     } else if (o.kind_tag == 118) {  // strbuf_append
         // stack: strblock ptr -> copy its bytes onto the builder. Void helper
         // (consumes the arg); push a dummy i32 for the statement-level drop.
-        out = out + "    call $__fern_strbuf_append\n    i32.const 0\n";
+        parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
     } else if (o.kind_tag == 119) {  // strbuf_take
         // no args -> snapshot the builder into a fresh string box and reset it
         // (a value op, allocates). Pushes the box ptr.
-        out = out + "    call $__fern_strbuf_take\n";
+        parts = parts.append("    call $__fern_strbuf_take\n");
     } else if (o.kind_tag == 125 && o.i64_imm != 0) {  // map_set, 8-byte VALUE
         // stack: map, k, v(8-byte) -> push kcons -> $__fern_map_set_w64 -> map.
         // The 8-byte value is boxed into a cell and stored as a vis-managed
@@ -4237,10 +4237,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // KEY-consume bit (o.width bit 1) varies here. i64/u64 (i64_imm 1) push
         // the value as i64 (lower_i64); an f64 value (i64_imm 2) is an f64 on the
         // stack, reinterpreted to the cell's raw i64 bits first. #5253.
-        if (o.i64_imm == 2) { out = out + "    i64.reinterpret_f64\n"; }
+        if (o.i64_imm == 2) { parts = parts.append("    i64.reinterpret_f64\n"); }
         var kcons_w: string = "0";
         if ((o.width / 2) % 2 == 1) { kcons_w = "1"; }
-        out = out + "    i32.const " + kcons_w + "\n    call $__fern_map_set_w64\n";
+        parts = parts.append("    i32.const " + kcons_w + "\n    call $__fern_map_set_w64\n");
     } else if (o.kind_tag == 125) {  // map_set
         // stack: map, k, v -> push vis -> map_set -> map. `vis` (value-is-
         // RC-pointer) comes from op_map_set's `unsigned` flag, set by
@@ -4265,7 +4265,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         if (o.width % 2 == 1) { vcons = "1"; }
         var kcons: string = "0";
         if ((o.width / 2) % 2 == 1) { kcons = "1"; }
-        out = out + "    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    call $__fern_map_set\n";
+        parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    call $__fern_map_set\n");
     } else if (o.kind_tag == 138) {  // struct_make
         // nf field values on the stack (field nf-1 on top, decl order). Box =
         // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
@@ -4279,8 +4279,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // is written and the f64.load/i64.load read-back returns garbage.
         // $arrtmp holds the base across the field pops.
         var nf: i32 = o.i32_imm;
-        out = out + "    i32.const " + util.i32_to_string(8 + nf * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n";
+        parts = parts.append("    i32.const " + util.i32_to_string(8 + nf * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n");
         var em: i32 = nf - 1;
         while (em >= 0) {
             var emoff: i32 = 8 + em * 8;
@@ -4291,18 +4291,18 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
             // 8 bytes, so they never saw it).
             var emft: string = irlower.decl_at_field_type(structs, o.decl, em);
             if (emft == "i64" || emft == "u64") {
-                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
             } else if (emft == "f64" || emft == "f32" || emft == "float") {
-                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
             } else {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
             }
             em = em - 1;
         }
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 218) {  // const_struct
         // The whole box is a compile-time constant (#6149): its block lives
         // in the data section, so this pushes an address where struct_make
@@ -4314,27 +4314,27 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
             eprint("wasm-ir: aggregate constant not interned: " + o.str);
             exit(1);
         }
-        out = out + "    global.get " + cagg_base_global(ns) + "\n    i32.const "
-            + util.i32_to_string(const_agg_rel(cagg_vals, kidx) + 8) + "\n    i32.add\n";
+        parts = parts.append("    global.get " + cagg_base_global(ns) + "\n    i32.const "
+            + util.i32_to_string(const_agg_rel(cagg_vals, kidx) + 8) + "\n    i32.add\n");
     } else if (o.kind_tag == 139) {  // struct_get
         // stack: struct ptr -> load(ptr + 8 + index*8). An 8-byte field
         // (width 64) reads via i64.load for an i64 field (unsigned) or
         // f64.load for an f64 field; i32 fields the 4-byte path.
-        out = out + "    i32.const " + util.i32_to_string(8 + o.i32_imm * 8) + "\n    i32.add\n";
-        if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
-        else if (o.width == 64) { out = out + "    f64.load\n"; }
-        else { out = out + "    i32.load\n"; }
+        parts = parts.append("    i32.const " + util.i32_to_string(8 + o.i32_imm * 8) + "\n    i32.add\n");
+        if (o.width == 64 && o.unsigned) { parts = parts.append("    i64.load\n"); }
+        else if (o.width == 64) { parts = parts.append("    f64.load\n"); }
+        else { parts = parts.append("    i32.load\n"); }
     } else if (o.kind_tag == 140) {  // struct_set
         // stack: box, val -> store val at box + 8 + index*8. Stash val in the
         // matching scratch (i64tmp for an i64 field, f64tmp for an f64 field,
         // else eltmp), recompute the address, then store.
         var soff: i32 = 8 + o.i32_imm * 8;
         if (o.width == 64 && o.unsigned) {
-            out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
         } else if (o.width == 64) {
-            out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
         } else {
-            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
         }
     } else if (o.kind_tag == 198) {  // struct_copy
         // stack: src box -> a fresh rc=1 box that is a byte-for-byte copy (the
@@ -4344,10 +4344,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // compact base copy of `T { ...base, f: v }` (#4650). $eltmp holds src,
         // $arrtmp the dst, across the alloc.
         var scpsz: i32 = 8 + o.i32_imm * 8;
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    i32.const " + util.i32_to_string(scpsz) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(scpsz) + "\n    memory.copy\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    i32.const " + util.i32_to_string(scpsz) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(scpsz) + "\n    memory.copy\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 144) {  // tuple_set
         // stack: box, val -> store val at box + index*8 (tuples have NO shape
         // slot, unlike struct_set's box+8+index*8). Uniform 8-byte slots; the
@@ -4356,22 +4356,22 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // mirroring tuple_make. The tuple constructor-reuse writer.
         var toff: i32 = o.i32_imm * 8;
         if (o.width == 64 && o.unsigned) {
-            out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
         } else if (o.width == 64) {
-            out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
         } else {
-            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
         }
     } else if (o.kind_tag == 141) {  // struct_set_shape
         // stack: box (kept). Write o.str's type-id (the SAME id struct_make
         // stores at offset 0 / variant_is compares) at box+0, leaving the box
         // on the stack. Used by the enum-donor in-place reuse to re-shape a
         // dead scalar-enum box as a same-size struct.
-        out = out + "    local.tee " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n";
+        parts = parts.append("    local.tee " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n");
     } else if (o.kind_tag == 145) {  // variant_is
         // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
-        out = out + "    i32.load\n" + tid_get(o.str) + "    i32.eq\n";
+        parts = parts.append("    i32.load\n" + tid_get(o.str) + "    i32.eq\n");
     } else if (o.kind_tag == 142) {  // tuple_make
         // n elements on the stack (element n-1 on top). Box = [e0@0, e1@8, …]
         // via $__fern_str_box (rc-headered), n*8 bytes (uniform 8-byte slots,
@@ -4379,30 +4379,30 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // type-id slot. Each element stores with the instruction its KIND
         // (o.str = "k0,k1,…") selects: i64.store / f64.store / i32.store.
         var tn: i32 = o.i32_imm;
-        out = out + "    i32.const " + util.i32_to_string(tn * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    i32.const " + util.i32_to_string(tn * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
         var tem: i32 = tn - 1;
         while (tem >= 0) {
             var tk: string = irlower.csv_nth(o.str, tem);
             if (tk == "i64") {
-                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
             } else if (tk == "f64") {
-                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
             } else {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+                parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
             }
             tem = tem - 1;
         }
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 143) {  // tuple_get
         // stack: tuple box -> load(box + index*8). An 8-byte element (width 64)
         // reads via i64.load (unsigned) or f64.load; i32 elements i32.load.
-        out = out + "    i32.const " + util.i32_to_string(o.i32_imm * 8) + "\n    i32.add\n";
-        if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
-        else if (o.width == 64) { out = out + "    f64.load\n"; }
-        else { out = out + "    i32.load\n"; }
+        parts = parts.append("    i32.const " + util.i32_to_string(o.i32_imm * 8) + "\n    i32.add\n");
+        if (o.width == 64 && o.unsigned) { parts = parts.append("    i64.load\n"); }
+        else if (o.width == 64) { parts = parts.append("    f64.load\n"); }
+        else { parts = parts.append("    i32.load\n"); }
     } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_inc") {  // call_direct
         // #4873/#5325 grow-bracket: retain the survivor across a may-grow
         // call. Wasm-IR arrays ARE rc-headered ($__fern_arr_box block
@@ -4418,17 +4418,17 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // co-resident with $__fern_arr_box wherever an append (and hence
         // a bracket) can appear. The op sequence is load → call → drop;
         // the helpers return the pointer, so the stack stays balanced.
-        out = out + "    call $__fern_rc_inc\n";
+        parts = parts.append("    call $__fern_rc_inc\n");
     } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {  // call_direct
-        out = out + "    call $__fern_arr_dec\n";
+        parts = parts.append("    call $__fern_arr_dec\n");
     } else if (o.kind_tag == 149 && asm_ir.is_fern_helper(o.str)) {  // call_direct
         // Runtime RC helper: the arg is already on the wasm stack; the
         // helper takes it as a param and returns the ptr / count.
-        out = out + "    call " + wasm_helper_symbol(o.str) + "\n";
+        parts = parts.append("    call " + wasm_helper_symbol(o.str) + "\n");
     } else if (o.kind_tag == 149) {  // call_direct
-        out = out + "    call $" + o.str + "\n";
+        parts = parts.append("    call $" + o.str + "\n");
     } else if (o.kind_tag == 147) {  // dyn_dispatch
-        out = out + emit_dyn_dispatch_wat(o, structs, funcs);
+        parts = parts.append(emit_dyn_dispatch_wat(o, structs, funcs));
     } else if (o.kind_tag == 146) {  // dyn_box
         // Heap-box a primitive/string value coerced into a `dyn Trait` slot
         // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8] via
@@ -4438,11 +4438,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // the operand stack: stash it in $eltmp, alloc into $arrtmp, store
         // id@0 + value@8, push the cell pointer. op_dyn_dispatch reads @0 and
         // unboxes @8.
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
     } else if (o.kind_tag == 148) {  // dyn_downcast
         // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
         // pointer carrying its concrete type id @0) is on the stack. Stash it,
@@ -4451,27 +4451,27 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // box [tag0@0, payload@4]; else → None box [tag1@0, 0@4] — the 8-byte
         // i32-payload Option box (matching opt_make/opt_none) a downstream
         // `match` reads with opt_tag/opt_payload.
-        out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n" + tid_get(o.str) + "    i32.eq\n";
-        out = out + "    if (result i32)\n";
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n" + tid_get(o.str) + "    i32.eq\n");
+        parts = parts.append("    if (result i32)\n");
         // hit: Some(value) — 8-byte box [tag0@0, payload(dyn ptr)@4].
-        out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 0\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    else\n";
+        parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 0\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    else\n");
         // miss: None — 8-byte box [tag1@0, 0@4].
-        out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
-        out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
-        out = out + "    end\n";
+        parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n");
+        parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
+        parts = parts.append("    end\n");
     } else if (o.kind_tag == 6) {  // const_func
         // A function VALUE is its slot index in the module's funcref table
         // (fn_table). The table is built over the address-taken functions in
         // first-seen order (fn_value_table), so the index here matches the
         // elem segment fn_support_section emits.
-        out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n";
+        parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n");
     } else if (o.kind_tag == 150) {  // call_indirect
         // Indirect call: args + the table index are already on the stack
         // (the index pushed last, on top). Dispatch through the signature the
@@ -4480,18 +4480,18 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // wasm, so the arity alone cannot tell `(i64) => boolean` from
         // `(i32) => i32` and dispatching one through the other is rejected at
         // load (#6282).
-        out = out + "    call_indirect (type " + fn_type_name(o) + ")\n";
+        parts = parts.append("    call_indirect (type " + fn_type_name(o) + ")\n");
     } else if (o.kind_tag == 66) {  // fpow
         // x^y: the one binary transcendental. Both f64 operands are on the
         // stack (x pushed first, y on top — irlower's op_fbin order), matching
         // $__fern_pow_f64(param x, param y). wasm has no pow instruction, so
         // call the runtime (= exp(y·ln x)); the arm64 backend lowers fpow the
         // same way (bl __fern_pow_f64).
-        out = out + "    call $__fern_pow_f64\n";
+        parts = parts.append("    call $__fern_pow_f64\n");
     } else {
-        out = out + "    " + wasm_binop_w(o.kind_tag, o.width) + "\n";
+        parts = parts.append("    " + wasm_binop_w(o.kind_tag, o.width) + "\n");
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // emit_str_op_wat renders one string IR op as WAT. Every arm is a fixed
