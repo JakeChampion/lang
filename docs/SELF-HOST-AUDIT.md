@@ -620,24 +620,62 @@ appendix §6.)
   already supersedes as the unified driver: give them one shared
   `run_stdin(emit_fn)` and make each a one-line wrapper, keeping only those a Go
   test pins.
-- [ ] **SH-058 — `wasm_ir.fern:3189-4445`** `emit_function_ir` is **1,257
-  lines** — the largest function named anywhere in this audit, bigger than
-  SH-044's and SH-050's giants combined. It takes 9 params (`ns`, `r`, `fd`,
-  `str_vals`, `cagg_vals`, `structs`, `fn_table`, `funcs`, `vsigs`), left-folds
-  its output into a single `out` string, and inlines the whole per-IR-op
-  instruction selection. _Fix:_ split the IR-op dispatch out as
-  `emit_ir_op(op, ctx) -> string` with the ambient params bundled into a context
-  struct (the wasm sibling of SH-053), and accumulate through chunks rather than
-  `out = out + …` (SH-027). Do this before SH-024/SH-025, not after — every
-  other wasm-path item is easier once this function is decomposed.
+- [~] **SH-058 — `wasm_ir.fern` `emit_function_ir`**, the largest function named
+  anywhere in this audit. **1254 → 867 lines (−31%)** over four slices, each
+  lifting one op family to a plain `Op -> string` helper behind a predicate:
+  string ops via the shared `ir.is_str_op_kind` (#7280), `dyn_dispatch` (#7284),
+  the host family and the map family (#7297).
+
+  **The row's proposed shape was wrong in two ways**, both found by measuring
+  rather than reading:
+
+  1. **`fd`, `r` and `vsigs` are never read in the op loop** — every apparent
+     hit is inside a comment (`fd 0`/`fd 3` is the WASI file descriptor;
+     `r.read_chunk` is a Reader method). Bundling all nine params carries three
+     dead fields, one of them a heavyweight `LowerResult`.
+  2. **98 of 124 arms (519 lines) touch no ambient state at all.** Introducing
+     the context struct first would have produced a 1,100-line `emit_ir_op` —
+     the same function one indent shallower — and made a byte-purity diff
+     maximally hard to bisect. Context-free families come out first; each one
+     shrinks what the struct must carry (`funcs` left with #7284).
+
+  _Remaining:_ the context struct, minimum shape
+  `{ns, str_vals, cagg_vals, structs, fn_table, base: i32}` — **6 fields, not
+  9** — where `base = r.n_locals` reconstructs all five scratch temps
+  (`arrtmp`=base, `eltmp`=+1, `f64tmp`=+2, `i64tmp`=+3, `bctmp`=+4). None of
+  the five is reassigned anywhere in the function, so that collapse is sound.
+  The 26 context-needing arms want the temps (`arrtmp` 14, `eltmp` 13,
+  `f64tmp` 8, `i64tmp` 7) far more than the tables (`ns` 5, `structs` 3, the
+  rest 2 each). **SH-027's chunk accumulation stays a separate change** —
+  landing extraction and an accumulation rewrite together makes a purity diff
+  unbisectable.
+
+  **Three traps, each of which cost something.** Encode them if you automate a
+  further slice:
+
+  - **Compute each arm's ambient references; never take a family by name.**
+    `temp_dir` reads `ns` while sitting mid-WASI, and `map_new` reads
+    `ns` + `fn_table`. A line-span move of "the WASI block" fails to compile.
+  - **Verify every hoisted tag is UNIQUE in the ladder.** `map_set` has two
+    arms — an `i64_imm != 0` 8-byte-value form checked *before* the plain one —
+    so routing tag 125 through one predicate arm emits a single width for both.
+    The checker cannot see it and the fixpoint reproduces it happily.
+  - **Assert each extracted arm ends with exactly ONE return, and compare
+    append counts before and after.** Several map arms append more than once
+    (`map_hash_seed` in four pieces); rewriting each append as a `return` makes
+    all but the first dead code. That **type-checks clean** — unreachable code
+    after a return is legal — and surfaces only as
+    `expected i32 but nothing on stack` from `wasm-tools validate`, at a byte
+    offset unrelated to the dropped op. It reached CI before it was caught.
 
 ---
 
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **SH-058 then SH-054/SH-027** — the wasm path is the worst area by every
-   metric, and decomposing `emit_function_ir` unblocks the rest of it.
+2. **SH-058 (in progress, 1254 → 867) then SH-054/SH-027** — the wasm path is
+   the worst area by every metric, and decomposing `emit_function_ir` unblocks
+   the rest of it.
 3. **SH-023** — mechanical, high payoff, low risk (SH-045 and SH-055 landed
    from this tier).
 4. **T3 visitor** (SH-022, starting with `wasm_ir`'s 28 walkers) then the giant
