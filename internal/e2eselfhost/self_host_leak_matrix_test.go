@@ -1,0 +1,420 @@
+package e2eselfhost
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// --- The leak matrix ---------------------------------------------------------
+//
+// Goal 2's RECLAIM gaps have been found one at a time, each as a side effect of
+// working on the previous one — #7364 surfaced while building #7360's controls,
+// #7281/#7282 alongside a tuple fix, and the #6127 sweep that found seven at
+// once was a hand-run session recorded in an issue, not a gate. This test is
+// that sweep made standing: it GENERATES one small program per cell of
+//
+//	value kind × scope × consumption
+//
+// compiles each under BOTH compilers with FERN_LEAKCHECK=1, runs both, and
+// classifies each side CLEAN (live_bytes == 0) or LEAK. The verdict pair per
+// cell is pinned in testdata/selfhost-leak-matrix.txt, so the file IS the gap
+// list: goal-2 progress flips recorded leak cells to clean deliberately, a
+// regression flips a clean cell to leak loudly, and — the #7357 point — the
+// generator reaches classes (shadowed siblings, conditional blocks) that no
+// hand-curated corpus stays honest about.
+//
+// WHAT IT DOES NOT ASSERT: byte counts. Layout, capacity schedules and the
+// #7351 per-string alloc split legitimately move totals; zero-vs-nonzero live
+// bytes is the layout-free classification (same reasoning as the alloc
+// differential's cliff counter). Exit codes must MATCH between compilers on
+// every cell — a mismatch is a miscompile, never a matrix update — and exit 99
+// (the underflow guard) fails hard on either side: an over-release is a bug in
+// any cell, listed or not.
+//
+// Native compiles through the fern CLI as a child process (FERN_LEAKCHECK is
+// read at init by internal/ast, so the in-process harness path cannot
+// instrument per-case), which is also the pipeline that CONST-FOLDS. Every
+// generated construction therefore embeds the loop variable, so no payload is
+// foldable and the two pipelines measure the same allocations — the trap the
+// #7364 log entry records.
+//
+// x86-64 only, deliberately: the comparison is between compilers, not targets
+// (the alloc differential states the same rule).
+//
+// KNOWN AXIS GAP, next to add: binding ORIGIN. Every cell today binds `x` from
+// a fresh construction — a local-var origin. #7253's probe-set audit shows the
+// defects of 2026-08-22 sat on the origin axis (a parameter alias reaching the
+// stdlib, a for-in binder no collector credits, a reuse recipient bound outside
+// bind_var_slot), so a v2 column should bind the same kinds from a parameter,
+// a field read, a container element and a for-in binder. The underflow guard
+// and exit-match already make such cells able to go red, which is the half a
+// leak census cannot do.
+
+// A leakKind is one value shape: decls it needs, an initializer for `var x`,
+// an optional second initializer (the rebind scope), a borrow-read expression
+// over x contributing to the checksum, and whether a consuming match exists.
+type leakKind struct {
+	name  string
+	decls string
+	init  string // uses `i`
+	init2 string // uses `i`; distinct shape guts, same type
+	read  string // expression over x yielding i32; "" = kind has no bare read
+	match string // full match statement consuming x into t; "" = no match form
+}
+
+var leakKinds = []leakKind{
+	{
+		name: "arr_i32",
+		init: "var x: i32[] = [i, i + 1];", init2: "x = [i + 2, i + 3, i + 4];",
+		read: "x.len()",
+	},
+	{
+		// mkstr is the importless fresh producer both pipelines accept: string
+		// METHODS are stdlib-gated in native (E043 without `import
+		// "std/string"`) and the self-host driver resolves no stdlib, while a
+		// user concat fn compiles in both and neither const-folds a call.
+		name:  "str",
+		decls: "function mkstr(a: string): string { return a + \"!\"; }",
+		init:  "var x: string = mkstr(\"x\");", init2: "x = mkstr(\"yz\");",
+		read: "x.len()",
+	},
+	{
+		name:  "str_arr",
+		decls: "function mkstr(a: string): string { return a + \"!\"; }",
+		init:  "var x: string[] = [mkstr(\"x\")];", init2: "x = [mkstr(\"y\"), mkstr(\"z\")];",
+		read: "x.len()",
+	},
+	{
+		name:  "struct_arr_field",
+		decls: "struct P { xs: i32[], k: i32 }",
+		init:  "var x: P = P { xs: [i, i + 1], k: i };", init2: "x = P { xs: [i + 2], k: i + 1 };",
+		read: "x.xs.len()",
+	},
+	{
+		name:  "enum_rc_payload",
+		decls: "enum E { Full(i32[]), None }",
+		init:  "var x: E = E.Full([i, i + 1]);", init2: "x = E.Full([i + 2, i + 3, i + 4]);",
+		match: "match (x) { E.Full(xs) => { t = t + xs.len(); }, E.None => {} }",
+	},
+	{
+		name:  "enum_str_payload",
+		decls: "enum G { Full(string), None }\nfunction mkstr(a: string): string { return a + \"!\"; }",
+		init:  "var x: G = G.Full(mkstr(\"x\"));", init2: "x = G.Full(mkstr(\"yz\"));",
+		match: "match (x) { G.Full(s) => { t = t + s.len(); }, G.None => {} }",
+	},
+	{
+		name:  "enum_scalar",
+		decls: "enum S { V(i32), W }",
+		init:  "var x: S = S.V(i);", init2: "x = S.V(i + 1);",
+		match: "match (x) { S.V(k) => { t = t + k; }, S.W => {} }",
+	},
+	{
+		name: "tuple_mixed",
+		init: "var x: (i32, i32[]) = (i, [i + 1, i + 2]);", init2: "x = (i + 1, [i + 3]);",
+		read: "x.0 + x.1.len()",
+	},
+	{
+		name: "opt_arr",
+		init: "var x: Option[i32[]] = Some([i, i + 1]);", init2: "x = Some([i + 2, i + 3, i + 4]);",
+		match: "match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }",
+	},
+}
+
+// A leakScope wraps a cell's body (declaration + consumption) in a lexical
+// position. `body` receives the statements and returns the round-function
+// body; every scope keeps the round's answer identical for a given
+// consumption, so exit codes compare across scopes too.
+type leakScope struct {
+	name    string
+	wrap    func(body string) string
+	rebinds bool // scope injects init2 as a rebind; needs kind.init2
+}
+
+var leakScopes = []leakScope{
+	{
+		name: "fnscope",
+		wrap: func(b string) string { return b + "\n    t = t + 1;" },
+	},
+	{
+		// The #7360 class: entered on half the calls, slot entry-zeroed on
+		// the other half.
+		name: "if_block",
+		wrap: func(b string) string {
+			return "if (i % 2 == 0) {\n    " + strings.ReplaceAll(b, "\n", "\n    ") + "\n    t = t + 1;\n    }"
+		},
+	},
+	{
+		name: "loop_local",
+		wrap: func(b string) string {
+			return "var j: i32 = 0;\n    while (j < 2) {\n    " + strings.ReplaceAll(b, "\n", "\n    ") + "\n    j = j + 1;\n    }\n    t = t + 1;"
+		},
+	},
+	{
+		name:    "rebind",
+		rebinds: true,
+		wrap:    func(b string) string { return b + "\n    t = t + 1;" },
+	},
+	{
+		// The #7357 class: two same-named siblings in disjoint blocks — the
+		// shape name-keyed credits collide on and no emit-hash corpus reaches.
+		name: "shadow_siblings",
+		wrap: func(b string) string {
+			ind := strings.ReplaceAll(b, "\n", "\n    ")
+			return "if (i % 2 == 0) {\n    " + ind + "\n    t = t + 1;\n    }\n" +
+				"    if (i % 2 == 1) {\n    " + ind + "\n    t = t + 2;\n    }"
+		},
+	},
+}
+
+// leakCell is one generated program.
+type leakCell struct {
+	name string
+	src  string
+}
+
+// leakMatrixCells generates the valid cells. Consumptions: `read` (a borrow
+// read feeding the checksum), `unused` (declared, never referenced), `match`
+// (a consuming match, kinds that have one). A rebind scope pairs only with
+// kinds carrying init2 (all of them today, kept explicit anyway).
+func leakMatrixCells() []leakCell {
+	var cells []leakCell
+	for _, k := range leakKinds {
+		type consumption struct{ name, stmts string }
+		var cons []consumption
+		if k.read != "" {
+			cons = append(cons, consumption{"read", k.init + "\nt = (t + " + k.read + ") % 101;"})
+		}
+		cons = append(cons, consumption{"unused", k.init})
+		if k.match != "" {
+			cons = append(cons, consumption{"match", k.init + "\n" + k.match})
+		}
+		for _, sc := range leakScopes {
+			for _, c := range cons {
+				stmts := c.stmts
+				if sc.rebinds {
+					if k.init2 == "" {
+						continue
+					}
+					// Rebind between declaration and consumption, so the
+					// superseded chain needs the rebind release and the final
+					// value the exit one.
+					parts := strings.SplitN(stmts, "\n", 2)
+					stmts = parts[0] + "\n" + k.init2
+					if len(parts) == 2 {
+						stmts += "\n" + parts[1]
+					}
+				}
+				body := sc.wrap(stmts)
+				src := ""
+				if k.decls != "" {
+					src = k.decls + "\n"
+				}
+				src += "function round(i: i32): i32 {\n    var t: i32 = 0;\n    " +
+					strings.ReplaceAll(body, "\n", "\n    ") +
+					"\n    return t;\n}\n" +
+					"function main(): i32 {\n" +
+					"    var acc: i32 = 0;\n    var i: i32 = 0;\n" +
+					"    while (i < 100) { acc = acc + round(i); i = i + 1; }\n" +
+					"    if (__rc_underflow_count() != 0) { return 99; }\n" +
+					"    return acc % 83;\n}\n"
+				cells = append(cells, leakCell{
+					name: k.name + "__" + sc.name + "__" + c.name,
+					src:  src,
+				})
+			}
+		}
+	}
+	return cells
+}
+
+// A leakVerdict classifies one compiler's behaviour on one cell.
+type leakVerdict string
+
+const (
+	verdictClean leakVerdict = "clean" // exit ok, live_bytes == 0
+	verdictLeak  leakVerdict = "leak"  // exit ok, live_bytes > 0
+	verdictError leakVerdict = "error" // did not compile
+	verdictCrash leakVerdict = "crash" // compiled, died on a signal
+)
+
+// loadLeakMatrix parses the pinned matrix. Line format:
+//
+//	<cell> <native-verdict> <selfhost-verdict> <note...>
+//
+// The note names the issue or reason for a leak cell; it is for the reader,
+// not the comparison.
+func loadLeakMatrix(t *testing.T) map[string][2]leakVerdict {
+	t.Helper()
+	path := filepath.Join("testdata", "selfhost-leak-matrix.txt")
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	out := map[string][2]leakVerdict{}
+	sc := bufio.NewScanner(f)
+	for ln := 1; sc.Scan(); ln++ {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			t.Fatalf("%s:%d: want `<cell> <native> <selfhost> <note>`, got %q", path, ln, line)
+		}
+		out[fields[0]] = [2]leakVerdict{leakVerdict(fields[1]), leakVerdict(fields[2])}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return out
+}
+
+// nativeLeakVerdict compiles src with the fern CLI (a child process, so
+// FERN_LEAKCHECK instruments the emitted program) and runs it.
+func nativeLeakVerdict(t *testing.T, cli, dir, name, src string) (leakVerdict, int) {
+	t.Helper()
+	srcPath := filepath.Join(dir, name+".fern")
+	binPath := filepath.Join(dir, name+".nat")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write %s: %v", srcPath, err)
+	}
+	compile := exec.Command(cli, "-target", "x86-64-linux", "-o", binPath, srcPath)
+	compile.Env = childEnv("FERN_LEAKCHECK=1")
+	if out, err := compile.CombinedOutput(); err != nil {
+		t.Logf("%s: native compile failed:\n%s", name, out)
+		return verdictError, -1
+	}
+	cmd := exec.Command(binPath)
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	_ = cmd.Run()
+	exit := cmd.ProcessState.ExitCode()
+	if exit == -1 || !cmd.ProcessState.Exited() {
+		return verdictCrash, exit
+	}
+	return verdictFromLeakcheck(t, name+" (native)", errBuf.String()), exit
+}
+
+// selfHostLeakVerdict compiles src with the self-host x86-64 driver and runs
+// the linked binary. Unlike runCaptureEnv this tolerates a driver refusal —
+// a cell outside the compilable subset is an `error` verdict, not a t.Fatal,
+// so the matrix records frontend gaps alongside reclaim ones.
+func selfHostLeakVerdict(t *testing.T, gcc string, runner []string, driverBin, dir, name, src string) (leakVerdict, int) {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+	}
+	cmd.Stdin = strings.NewReader(src)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1"}
+	asm, err := cmd.Output()
+	if err != nil || len(asm) == 0 {
+		t.Logf("%s: self-host compile refused: %v", name, err)
+		return verdictError, -1
+	}
+	bin := buildBin(t, gcc, dir, "leakmx_"+name, string(asm))
+	stderr, exit := hevRun(t, runner, bin)
+	if exit == -1 || exit == 139 || exit == 134 || exit == 137 {
+		return verdictCrash, exit
+	}
+	return verdictFromLeakcheck(t, name+" (self-host)", stderr), exit
+}
+
+func verdictFromLeakcheck(t *testing.T, label, stderr string) leakVerdict {
+	t.Helper()
+	summary := leakSummaryLine(stderr)
+	if summary == "" {
+		t.Fatalf("%s: no leakcheck summary on stderr", label)
+	}
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("%s: parse %q: %v", label, summary, err)
+	}
+	if live == 0 {
+		return verdictClean
+	}
+	return verdictLeak
+}
+
+// TestSelfHostLeakMatrixX86_64 is the gate. FERN_LEAK_MATRIX_DUMP=1 prints
+// every cell's measured line in matrix-file format instead of comparing, for
+// (re)generating the testdata pin after a deliberate change.
+func TestSelfHostLeakMatrixX86_64(t *testing.T) {
+	// CI-DARK: FERN_LEAK_MATRIX_DUMP — a regeneration tool, not coverage: it
+	// prints measured matrix-file lines INSTEAD of comparing, so a lane setting
+	// it would disable this gate. The compare path below is the CI behaviour.
+	dump := os.Getenv("FERN_LEAK_MATRIX_DUMP") == "1"
+	var known map[string][2]leakVerdict
+	if !dump {
+		known = loadLeakMatrix(t)
+	}
+
+	gcc, runner := x86_64Tooling(t)
+	cli := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	cells := leakMatrixCells()
+	seen := map[string]bool{}
+	for _, cell := range cells {
+		seen[cell.name] = true
+		t.Run(cell.name, func(t *testing.T) {
+			natV, natExit := nativeLeakVerdict(t, cli, dir, cell.name, cell.src)
+			shV, shExit := selfHostLeakVerdict(t, gcc, runner, driverBin, dir, cell.name, cell.src)
+
+			if dump {
+				fmt.Printf("%-45s %-6s %-6s (exit native=%d selfhost=%d)\n",
+					cell.name, natV, shV, natExit, shExit)
+				return
+			}
+
+			// Hard failures first — never matrix updates.
+			if natExit == 99 || shExit == 99 {
+				t.Fatalf("underflow guard tripped (native=%d self-host=%d): an "+
+					"over-release, which no matrix entry may pin", natExit, shExit)
+			}
+			if shV == verdictCrash {
+				t.Errorf("self-host binary crashed (exit %d) — the #7360 class; "+
+					"file it, do not pin it:\n%s", shExit, cell.src)
+				return
+			}
+			if natV != verdictError && shV != verdictError && natExit != shExit {
+				t.Errorf("exit codes disagree: native=%d self-host=%d — a wrong-code "+
+					"divergence, not a leak-matrix update:\n%s", natExit, shExit, cell.src)
+				return
+			}
+
+			rec, listed := known[cell.name]
+			if !listed {
+				t.Errorf("cell not in testdata/selfhost-leak-matrix.txt (measured "+
+					"native=%s selfhost=%s). Rerun with FERN_LEAK_MATRIX_DUMP=1 and add "+
+					"the line with a note naming the issue or reason", natV, shV)
+				return
+			}
+			if rec[0] != natV || rec[1] != shV {
+				t.Errorf("verdict moved: recorded native=%s selfhost=%s, measured "+
+					"native=%s selfhost=%s. A leak→clean move is progress — update the "+
+					"row (and its note) in the same change that caused it; clean→leak "+
+					"is a regression", rec[0], rec[1], natV, shV)
+			}
+		})
+	}
+
+	if !dump {
+		for name := range known {
+			if !seen[name] {
+				t.Errorf("testdata pins %q but the generator emits no such cell — "+
+					"rename or remove the row", name)
+			}
+		}
+	}
+}
