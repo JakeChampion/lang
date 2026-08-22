@@ -395,13 +395,13 @@ pub function tid_named(): string[] {
 // the program, every primitive dyn-box shape (prim_type_id), and the literal
 // names above. Emitted once per module by wasm.emit_ir_module.
 pub function tid_globals_section(structs: parser.StructDecl[]): string {
-    var out: string = "";
+    var parts: string[] = [];
     var seen: string[] = [];
     var i: i32 = 0;
     while (i < structs.len()) {
         if (util.index_of_str(seen, structs[i].name) < 0) {
             seen = seen.append(structs[i].name);
-            out = out + "  (global " + tid_global(structs[i].name) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, structs[i].name)) + "))\n";
+            parts = parts.append("  (global " + tid_global(structs[i].name) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, structs[i].name)) + "))\n");
         }
         i = i + 1;
     }
@@ -410,7 +410,7 @@ pub function tid_globals_section(structs: parser.StructDecl[]): string {
     while (p < prims.len()) {
         if (util.index_of_str(seen, prims[p]) < 0) {
             seen = seen.append(prims[p]);
-            out = out + "  (global " + tid_global(prims[p]) + " i32 (i32.const " + util.i32_to_string(irlower.prim_type_id(structs, prims[p])) + "))\n";
+            parts = parts.append("  (global " + tid_global(prims[p]) + " i32 (i32.const " + util.i32_to_string(irlower.prim_type_id(structs, prims[p])) + "))\n");
         }
         p = p + 1;
     }
@@ -419,11 +419,11 @@ pub function tid_globals_section(structs: parser.StructDecl[]): string {
     while (n < named.len()) {
         if (util.index_of_str(seen, named[n]) < 0) {
             seen = seen.append(named[n]);
-            out = out + "  (global " + tid_global(named[n]) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, named[n])) + "))\n";
+            parts = parts.append("  (global " + tid_global(named[n]) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, named[n])) + "))\n");
         }
         n = n + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 pub function str_offset(vals: string[], idx: i32): i32 {
@@ -3137,10 +3137,10 @@ function fn_type_decl(entry: string): string {
 // reproduces the historical output byte for byte.
 pub function fn_support_section_units(nss: string[], all_fns: string[], counts: i32[], fn_sigs: string[]): string {
     if (all_fns.len() == 0 && fn_sigs.len() == 0) { return ""; }
-    var out: string = "";
+    var parts: string[] = [];
     var ai: i32 = 0;
     while (ai < fn_sigs.len()) {
-        out = out + fn_type_decl(fn_sigs[ai]);
+        parts = parts.append(fn_type_decl(fn_sigs[ai]));
         ai = ai + 1;
     }
     var tsize: i32 = all_fns.len();
@@ -3148,21 +3148,21 @@ pub function fn_support_section_units(nss: string[], all_fns: string[], counts: 
     var base: i32 = 0;
     var ni: i32 = 0;
     while (ni < nss.len()) {
-        out = out + "  (global " + fn_base_global(nss[ni]) + " i32 (i32.const " + util.i32_to_string(base) + "))\n";
+        parts = parts.append("  (global " + fn_base_global(nss[ni]) + " i32 (i32.const " + util.i32_to_string(base) + "))\n");
         base = base + counts[ni];
         ni = ni + 1;
     }
-    out = out + "  (table " + util.i32_to_string(tsize) + " funcref)\n";
+    parts = parts.append("  (table " + util.i32_to_string(tsize) + " funcref)\n");
     if (all_fns.len() > 0) {
-        out = out + "  (elem (i32.const 0)";
+        parts = parts.append("  (elem (i32.const 0)");
         var ei: i32 = 0;
         while (ei < all_fns.len()) {
-            out = out + " $" + all_fns[ei];
+            parts = parts.append(" $" + all_fns[ei]);
             ei = ei + 1;
         }
-        out = out + ")\n";
+        parts = parts.append(")\n");
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // fn_support_section is whole-program emit: a single unit, so the table needs
@@ -3220,7 +3220,7 @@ function is_map_op_kind(tag: i32): boolean {
 // latter type-checks cleanly and silently drops the rest of the instructions,
 // which surfaces only as a wasm validation error far from the cause.
 function emit_map_op_wat(o: ir.Op): string {
-    var out: string = "";
+    var parts: string[] = [];
     if (o.kind_tag == 133) {  // map_iter
         // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
         // $__fern_map_iter materializes the live keys/values (map snapshots)
@@ -3228,19 +3228,19 @@ function emit_map_op_wat(o: ir.Op): string {
         // the raw 8-byte values via $__fern_map_iter_w64 (serving i64/u64 AND
         // f64 — mapiter_value reinterprets f64). Otherwise the narrow snapshot.
         if (o.i64_imm != 0) {
-            out = out + "    call $__fern_map_iter_w64\n";
+            parts = parts.append("    call $__fern_map_iter_w64\n");
         } else {
-            out = out + "    call $__fern_map_iter\n";
+            parts = parts.append("    call $__fern_map_iter\n");
         }
-        return out;
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 134) {  // mapiter_has_next
-        out = out + "    call $__fern_mapiter_has_next\n";
-        return out;
+        parts = parts.append("    call $__fern_mapiter_has_next\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 135) {  // mapiter_key
-        out = out + "    call $__fern_mapiter_key\n";
-        return out;
+        parts = parts.append("    call $__fern_mapiter_key\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 136) {  // mapiter_value
         // An 8-byte VALUE column (i64_imm != 0, #5253) reads the 8-byte element
@@ -3248,18 +3248,18 @@ function emit_map_op_wat(o: ir.Op): string {
         // i64/u64 (i64_imm 1) use it directly; f64 (i64_imm 2) reinterprets the
         // i64 bits back to f64.
         if (o.i64_imm == 2) {
-            out = out + "    call $__fern_mapiter_value_w64\n    f64.reinterpret_i64\n";
+            parts = parts.append("    call $__fern_mapiter_value_w64\n    f64.reinterpret_i64\n");
         } else if (o.i64_imm == 1) {
-            out = out + "    call $__fern_mapiter_value_w64\n";
+            parts = parts.append("    call $__fern_mapiter_value_w64\n");
         } else {
-            out = out + "    call $__fern_mapiter_value\n";
+            parts = parts.append("    call $__fern_mapiter_value\n");
         }
-        return out;
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 137) {  // mapiter_advance
         // bumps the box's cursor in place; pushes a dummy the statement drops.
-        out = out + "    call $__fern_mapiter_advance\n";
-        return out;
+        parts = parts.append("    call $__fern_mapiter_advance\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 222) {  // map_hash_seed
         // core/map's per-process string-hash seed: draw once via
@@ -3269,16 +3269,16 @@ function emit_map_op_wat(o: ir.Op): string {
         // runtime and does not consult this; the op exists so core/map's
         // bodies compile and link.
         var seed_at: string = util.i32_to_string(map_hash_seed_addr());
-        out = out + "    i32.const " + seed_at + "\n    i32.load\n    i32.eqz\n    if\n";
-        out = out + "    i32.const " + seed_at + "\n    call $__fern_random_i32\n";
-        out = out + "    i32.const 1\n    i32.or\n    i32.store\n    end\n";
-        out = out + "    i32.const " + seed_at + "\n    i32.load\n";
-        return out;
+        parts = parts.append("    i32.const " + seed_at + "\n    i32.load\n    i32.eqz\n    if\n");
+        parts = parts.append("    i32.const " + seed_at + "\n    call $__fern_random_i32\n");
+        parts = parts.append("    i32.const 1\n    i32.or\n    i32.store\n    end\n");
+        parts = parts.append("    i32.const " + seed_at + "\n    i32.load\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 126) {  // map_len
         // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
-        out = out + "    i32.load\n";
-        return out;
+        parts = parts.append("    i32.load\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 127) {  // map_get
         // stack: map, key -> Option box. An 8-byte VALUE (i64_imm != 0, #5253)
@@ -3287,15 +3287,15 @@ function emit_map_op_wat(o: ir.Op): string {
         // (opt_payload reads them i64.load / f64.load per the Option's V type).
         // Otherwise the narrow i32-payload path.
         if (o.i64_imm != 0) {
-            out = out + "    call $__fern_map_get_w64\n";
+            parts = parts.append("    call $__fern_map_get_w64\n");
         } else {
-            out = out + "    call $__fern_map_get\n";
+            parts = parts.append("    call $__fern_map_get\n");
         }
-        return out;
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 128) {  // map_has
-        out = out + "    call $__fern_map_has\n";
-        return out;
+        parts = parts.append("    call $__fern_map_has\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 130) {  // map_delete
         // stack: map, k -> $__fern_map_delete -> [map, existed] tuple box
@@ -3303,8 +3303,8 @@ function emit_map_op_wat(o: ir.Op): string {
         // keykind imm — used by the register backends — is unneeded here).
         // The tuple-destructure that consumes `.without`'s result reads
         // element i at offset i*4, matching $__fern_map_delete's box. #2933.
-        out = out + "    call $__fern_map_delete\n";
-        return out;
+        parts = parts.append("    call $__fern_map_delete\n");
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 129) {  // map_get_or
         // stack: map, k, default -> value. An 8-byte VALUE dereferences the boxed
@@ -3312,13 +3312,13 @@ function emit_map_op_wat(o: ir.Op): string {
         // an i64 default (lower_i64); f64 (i64_imm 2) has an f64 default,
         // reinterpreted to i64 in and the i64 result reinterpreted back to f64. #5253.
         if (o.i64_imm == 2) {
-            out = out + "    i64.reinterpret_f64\n    call $__fern_map_get_or_w64\n    f64.reinterpret_i64\n";
+            parts = parts.append("    i64.reinterpret_f64\n    call $__fern_map_get_or_w64\n    f64.reinterpret_i64\n");
         } else if (o.i64_imm == 1) {
-            out = out + "    call $__fern_map_get_or_w64\n";
+            parts = parts.append("    call $__fern_map_get_or_w64\n");
         } else {
-            out = out + "    call $__fern_map_get_or\n";
+            parts = parts.append("    call $__fern_map_get_or\n");
         }
-        return out;
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 131) {  // map_keys
         // hash map: snapshot the live keys into a fresh array (probe
@@ -3327,11 +3327,11 @@ function emit_map_op_wat(o: ir.Op): string {
         // shared post-loop deep release ($__fern_arr_dec_ptr) balances
         // and the per-loop string-column snapshot no longer leaks.
         if (o.i32_imm == 2) {
-            out = out + "    call $__fern_map_keys_inc\n";
+            parts = parts.append("    call $__fern_map_keys_inc\n");
         } else {
-            out = out + "    call $__fern_map_keys\n";
+            parts = parts.append("    call $__fern_map_keys\n");
         }
-        return out;
+        return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 132) {  // map_values
         // hash map: snapshot the live values into a fresh array (probe order).
@@ -3341,13 +3341,13 @@ function emit_map_op_wat(o: ir.Op): string {
         // reads them per the array's element type. Otherwise the narrow path,
         // with the same string-column retaining split as map_keys.
         if (o.i64_imm != 0) {
-            out = out + "    call $__fern_map_values_w64\n";
+            parts = parts.append("    call $__fern_map_values_w64\n");
         } else if (o.i32_imm == 2) {
-            out = out + "    call $__fern_map_values_inc\n";
+            parts = parts.append("    call $__fern_map_values_inc\n");
         } else {
-            out = out + "    call $__fern_map_values\n";
+            parts = parts.append("    call $__fern_map_values\n");
         }
-        return out;
+        return util.str_join_chunks(parts);
     }
     return unsupported_op_refuse(o.kind_tag);
 }
@@ -3546,7 +3546,7 @@ function emit_host_op_wat(o: ir.Op): string {
 // out leaves nothing else in the op loop needing the function list at all.
 // None of the five scratch locals are touched here.
 function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string {
-    var out: string = "";
+    var parts: string[] = [];
         // `dyn Trait` method call. Receiver (arg0) + args are in argc
         // consecutive locals from base_slot. Read the receiver's type id
         // (i32.load @0) and dispatch via a nested if/else chain over every
@@ -3583,20 +3583,20 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: pa
                     && (irlower.decl_is_struct(structs, dbn) || dprim)) {
                 // Shape compare: a struct value carries its type id @0; a
                 // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
-                out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n" + tid_get(dbn) + "    i32.eq\n";
-                out = out + "    if (result " + drt + ")\n";
+                parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n" + tid_get(dbn) + "    i32.eq\n");
+                parts = parts.append("    if (result " + drt + ")\n");
                 var dk: i32 = 0;
                 while (dk < dargc) {
                     if (dk == 0 && dprim) {
                         // arg0 is the receiver: UNBOX the value from box+8.
-                        out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    i32.load\n";
+                        parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    i32.load\n");
                     } else {
-                        out = out + "    local.get " + util.i32_to_string(dbase + dk) + "\n";
+                        parts = parts.append("    local.get " + util.i32_to_string(dbase + dk) + "\n");
                     }
                     dk = dk + 1;
                 }
-                out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
-                out = out + "    else\n";
+                parts = parts.append("    call $" + dbn + "." + funcs[dfi].name + "\n");
+                parts = parts.append("    else\n");
             }
             // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
             // value's type id @0 is its VARIANT's struct_type_id (the same
@@ -3618,29 +3618,29 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: pa
                 var dvi: i32 = 0;
                 while (dvi < structs.len()) {
                     if (structs[dvi].enum_owner == dbn) {
-                        out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n";
-                        if (denvn > 0) { out = out + "    i32.or\n"; }
+                        parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n");
+                        if (denvn > 0) { parts = parts.append("    i32.or\n"); }
                         denvn = denvn + 1;
                     }
                     dvi = dvi + 1;
                 }
-                out = out + "    if (result " + drt + ")\n";
+                parts = parts.append("    if (result " + drt + ")\n");
                 var dek: i32 = 0;
                 while (dek < dargc) {
-                    out = out + "    local.get " + util.i32_to_string(dbase + dek) + "\n";
+                    parts = parts.append("    local.get " + util.i32_to_string(dbase + dek) + "\n");
                     dek = dek + 1;
                 }
-                out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
-                out = out + "    else\n";
+                parts = parts.append("    call $" + dbn + "." + funcs[dfi].name + "\n");
+                parts = parts.append("    else\n");
             }
             dfi = dfi + 1;
         }
-        if (drt == "i64") { out = out + "    i64.const 0\n"; }
-        else if (drt == "f64") { out = out + "    f64.const 0\n"; }
-        else { out = out + "    i32.const 0\n"; }
+        if (drt == "i64") { parts = parts.append("    i64.const 0\n"); }
+        else if (drt == "f64") { parts = parts.append("    f64.const 0\n"); }
+        else { parts = parts.append("    i32.const 0\n"); }
         var de: i32 = 0;
-        while (de < nimpl) { out = out + "    end\n"; de = de + 1; }
-    return out;
+        while (de < nimpl) { parts = parts.append("    end\n"); de = de + 1; }
+    return util.str_join_chunks(parts);
 }
 
 
@@ -4631,53 +4631,54 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     var fn_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
-    var out: string = "  (func $" + fn_name;
+    var parts: string[] = [];
+    parts = parts.append("  (func $" + fn_name);
     var p: i32 = 0;
     while (p < r.n_params) {
         // An i64 param is in r.i64_slots, an f64 param in r.f64_slots (lower_func
         // marks them); the receiver slot 0 of a method never is.
-        if (slot_in_list(r.i64_slots, p)) { out = out + " (param i64)"; }
-        else if (slot_in_list(r.f64_slots, p)) { out = out + " (param f64)"; }
-        else { out = out + " (param i32)"; }
+        if (slot_in_list(r.i64_slots, p)) { parts = parts.append(" (param i64)"); }
+        else if (slot_in_list(r.f64_slots, p)) { parts = parts.append(" (param f64)"); }
+        else { parts = parts.append(" (param i32)"); }
         p = p + 1;
     }
     // u64 returns ride the i64 result type (8-byte; only signedness of the
     // value's own ops differs, handled at the producing expression) (#2904).
-    if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
-    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + " (result f64)\n"; }
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { parts = parts.append(" (result i64)\n"); }
+    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { parts = parts.append(" (result f64)\n"); }
     // A bare-typevar (erased-generic) return is typed i64 on wasm — the uniform
     // 8-byte slot the register backends give every value — so a wide value
     // survives pass-through; the caller coerces the i64 result to the concrete
     // type at the call boundary (#5464). Free functions only.
-    else if (irlower.erased_passthrough_safe(fd, structs)) { out = out + " (result i64)\n"; }
-    else { out = out + " (result i32)\n"; }
+    else if (irlower.erased_passthrough_safe(fd, structs)) { parts = parts.append(" (result i64)\n"); }
+    else { parts = parts.append(" (result i32)\n"); }
     // body locals + 5 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
     // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp), one i32
     // (bctmp, the bounds-check index holder).
     var nbody: i32 = r.n_locals - r.n_params;
     var nloc: i32 = nbody + 5;
-    out = out + "    (local";
+    parts = parts.append("    (local");
     var l: i32 = 0;
     while (l < nloc) {
         if (l == nbody + 2) {
-            out = out + " f64";
+            parts = parts.append(" f64");
         } else if (l == nbody + 3) {
-            out = out + " i64";
+            parts = parts.append(" i64");
         } else if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
-            out = out + " i64";
+            parts = parts.append(" i64");
         } else if (l < nbody && slot_in_list(r.f64_slots, r.n_params + l)) {
-            out = out + " f64";
+            parts = parts.append(" f64");
         } else {
-            out = out + " i32";
+            parts = parts.append(" i32");
         }
         l = l + 1;
     }
-    out = out + ")\n";
+    parts = parts.append(")\n");
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
-            out = out + emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: r.n_locals });
+            parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: r.n_locals }));
         i = i + 1;
     }
     // Fallthrough result. Subset functions end in `return`, so this lands in the
@@ -4685,13 +4686,13 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // type-match the declared result when the implicit end pops it (wasm's
     // stack-polymorphic typing accepts an underflow, not a wrong-typed top), so
     // the default's type tracks the result: i64 / f64 / i32.
-    if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + "    i64.const 0)\n"; }
-    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + "    f64.const 0)\n"; }
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { parts = parts.append("    i64.const 0)\n"); }
+    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { parts = parts.append("    f64.const 0)\n"); }
     // A bare-typevar (erased-generic) return is typed i64 on wasm (#5464), so its
     // fallthrough filler must be i64.const 0 to match the (result i64) signature.
-    else if (irlower.erased_passthrough_safe(fd, structs)) { out = out + "    i64.const 0)\n"; }
-    else { out = out + "    i32.const 0)\n"; }
-    return out;
+    else if (irlower.erased_passthrough_safe(fd, structs)) { parts = parts.append("    i64.const 0)\n"); }
+    else { parts = parts.append("    i32.const 0)\n"); }
+    return util.str_join_chunks(parts);
 }
 
 // emit_functions renders the user functions of an all-eligible module as WAT
@@ -4749,7 +4750,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
     // program, not per function, which is what keeps a ~3000-declaration
     // lookup out of the emit loop's inner cost.
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
-    var out: string = "";
+    var parts: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         // An `@import` extern is a DECLARATION, not a definition: its body-less
@@ -4764,11 +4765,11 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         // path: the bridge supplies the definition, so the lowering must not.
         if (mod.funcs[fi].import_iface.len() == 0) {
             lower_failed_refuse(mod.funcs[fi].name, cache[fi]);
-            out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs);
+            parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs));
         }
         fi = fi + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // emit_functions_ns is the single-unit case: the unit IS the whole program.
@@ -6369,16 +6370,16 @@ pub function divrem_helpers(): string {
         "(i32.or (i32.eqz (local.get $b))"
         + " (i32.and (i32.eq (local.get $a) (i32.const -2147483648))"
         + " (i32.eq (local.get $b) (i32.const -1))))";
-    var out: string = "";
-    out = out + "  (func $__fern_idiv (param $a i32) (param $b i32) (result i32)\n";
-    out = out + "    (local $safe i32)\n";
-    out = out + "    (local.set $safe (select (i32.const 1) (local.get $b) " + bad + "))\n";
-    out = out + "    (select (i32.const 0) (i32.div_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n";
-    out = out + "  (func $__fern_irem (param $a i32) (param $b i32) (result i32)\n";
-    out = out + "    (local $safe i32)\n";
-    out = out + "    (local.set $safe (select (i32.const 1) (local.get $b) " + bad + "))\n";
-    out = out + "    (select (local.get $a) (i32.rem_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n";
-    return out;
+    var parts: string[] = [];
+    parts = parts.append("  (func $__fern_idiv (param $a i32) (param $b i32) (result i32)\n");
+    parts = parts.append("    (local $safe i32)\n");
+    parts = parts.append("    (local.set $safe (select (i32.const 1) (local.get $b) " + bad + "))\n");
+    parts = parts.append("    (select (i32.const 0) (i32.div_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n");
+    parts = parts.append("  (func $__fern_irem (param $a i32) (param $b i32) (result i32)\n");
+    parts = parts.append("    (local $safe i32)\n");
+    parts = parts.append("    (local.set $safe (select (i32.const 1) (local.get $b) " + bad + "))\n");
+    parts = parts.append("    (select (local.get $a) (i32.rem_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n");
+    return util.str_join_chunks(parts);
 }
 // The integer→string runtime backing `(n).to_string()` (and so an f-string
 // interpolant, which desugars to it): format an i32 / i64 / u64 into a fresh
@@ -7453,16 +7454,16 @@ pub function divrem64_helpers(): string {
         "(i32.or (i64.eqz (local.get $b))"
         + " (i32.and (i64.eq (local.get $a) (i64.const -9223372036854775808))"
         + " (i64.eq (local.get $b) (i64.const -1))))";
-    var out: string = "";
-    out = out + "  (func $__fern_idiv64 (param $a i64) (param $b i64) (result i64)\n";
-    out = out + "    (local $safe i64)\n";
-    out = out + "    (local.set $safe (select (i64.const 1) (local.get $b) " + bad + "))\n";
-    out = out + "    (select (i64.const 0) (i64.div_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n";
-    out = out + "  (func $__fern_irem64 (param $a i64) (param $b i64) (result i64)\n";
-    out = out + "    (local $safe i64)\n";
-    out = out + "    (local.set $safe (select (i64.const 1) (local.get $b) " + bad + "))\n";
-    out = out + "    (select (local.get $a) (i64.rem_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n";
-    return out;
+    var parts: string[] = [];
+    parts = parts.append("  (func $__fern_idiv64 (param $a i64) (param $b i64) (result i64)\n");
+    parts = parts.append("    (local $safe i64)\n");
+    parts = parts.append("    (local.set $safe (select (i64.const 1) (local.get $b) " + bad + "))\n");
+    parts = parts.append("    (select (i64.const 0) (i64.div_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n");
+    parts = parts.append("  (func $__fern_irem64 (param $a i64) (param $b i64) (result i64)\n");
+    parts = parts.append("    (local $safe i64)\n");
+    parts = parts.append("    (local.set $safe (select (i64.const 1) (local.get $b) " + bad + "))\n");
+    parts = parts.append("    (select (local.get $a) (i64.rem_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n");
+    return util.str_join_chunks(parts);
 }
 // print_int64_helper mirrors print_int_helper for i64 values, formatting
 // into a 24-byte scratch buffer at `buf` (i64's widest decimal is 20
@@ -7989,18 +7990,18 @@ pub function hex_digit(d: i32): string {
 // printable ASCII passes through (except `"` and `\`), everything else
 // becomes a `\HH` hex escape — so embedded newlines / quotes survive.
 pub function wat_escape(s: string): string {
-    var out: string = "";
+    var parts: string[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var b: i32 = s[i] as i32;
         if (b >= 32 && b <= 126 && b != 34 && b != 92) {
-            out = out + s[i:i + 1];
+            parts = parts.append(s[i:i + 1]);
         } else {
-            out = out + "\\" + hex_digit(b / 16) + hex_digit(b % 16);
+            parts = parts.append("\\" + hex_digit(b / 16) + hex_digit(b % 16));
         }
         i = i + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 // le32_escape renders an i32 as four little-endian bytes in WAT `\HH` escape
 // form — the length prefix of a string block, and every word of an aggregate
@@ -8008,14 +8009,14 @@ pub function wat_escape(s: string): string {
 // is never negative, but an rc sentinel and a negative field constant are, and
 // `-1 / 256 % 256` does not name a byte.
 pub function le32_escape(n: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var b: i32 = 0;
     while (b < 4) {
         var v: i32 = (n >> (b * 8)) & 255;
-        out = out + "\\" + hex_digit(v / 16) + hex_digit(v % 16);
+        parts = parts.append("\\" + hex_digit(v / 16) + hex_digit(v % 16));
         b = b + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // const_agg_data lays out the aggregate constants (#6149) as data segments, one
@@ -8030,7 +8031,7 @@ pub function le32_escape(n: i32): string {
 // between a constant and an allocated box that a future wide-field read could
 // see.
 function const_agg_data(sv: string[], cv: string[], structs: parser.StructDecl[]): string {
-    var out: string = "";
+    var parts: string[] = [];
     var i: i32 = 0;
     while (i < cv.len()) {
         var vals: string[] = ir.const_struct_values(cv[i]);
@@ -8043,10 +8044,10 @@ function const_agg_data(sv: string[], cv: string[], structs: parser.StructDecl[]
             if (w < 0) { body = body + le32_escape(0 - 1); } else { body = body + le32_escape(0); }
             vi = vi + 1;
         }
-        out = out + "  (data (i32.const " + util.i32_to_string(const_agg_offset(sv, cv, i)) + ") \"" + body + "\")\n";
+        parts = parts.append("  (data (i32.const " + util.i32_to_string(const_agg_offset(sv, cv, i)) + ") \"" + body + "\")\n");
         i = i + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 // arr_push_wide emits a geometric-growth push for an 8-byte-slot array.
 // `vty` is the wasm value type of the appended element (i64 / f64);
@@ -8114,15 +8115,15 @@ pub function arr_push_wide(vty: string, sop: string): string {
 // exit trio instead — skip the whole section wholesale rather than threading a
 // mode flag through sixty individual gates.
 function preview1_imports(needs: string[]): string {
-    var out: string = "";
-    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+    var parts: string[] = [];
+    parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
     // wasi random_get import (issue #2747) — must precede the function
     // section. Emitted when the module uses random_bytes / random_i32.
-    if (need(needs, "@uses_random")) { out = out + random_get_import(); }
+    if (need(needs, "@uses_random")) { parts = parts.append(random_get_import()); }
     // print_int / print_str / eprint_str / putchar write via WASI fd_write
     // — import it only when the module writes to stdout or stderr.
     if (need(needs, "print_int") || need(needs, "print_i64") || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write")) {
-        out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+        parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
     }
     // read_file / write_file open paths under preopen fd 3: path_open +
     // fd_read + fd_close (write_file also uses the fd_write import above).
@@ -8132,60 +8133,60 @@ function preview1_imports(needs: string[]): string {
     // These imports must precede the function section.
     // remove_dir_all ALSO needs path_open + fd_close (+ fd_readdir below), so
     // it joins this union too.
-    if (need(needs, "read_file") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "open_file")) { out = out + file_imports(); }
+    if (need(needs, "read_file") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "open_file")) { parts = parts.append(file_imports()); }
     // read_dir / remove_dir_all list a directory via fd_readdir (path_open /
     // fd_close come from file_imports above) — emit the standalone fd_readdir
     // import once across both.
-    if (need(needs, "read_dir") || need(needs, "remove_dir_all")) { out = out + readdir_fd_import(); }
+    if (need(needs, "read_dir") || need(needs, "remove_dir_all")) { parts = parts.append(readdir_fd_import()); }
     // read_line / read_int / read_chunk read stdin (fd 0) via fd_read.
     // file_imports above already imports fd_read for path-based file I/O, so
     // emit the standalone fd_read import ONLY when the module reads stdin but
     // does NOT do file I/O — otherwise fd_read would be imported twice (an
     // invalid module).
     if ((need(needs, "read_line") || need(needs, "read_int") || need(needs, "read_chunk") || need(needs, "read_all_stdin")) && !(need(needs, "read_file") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "open_file"))) {
-        out = out + stdin_fd_read_import();
+        parts = parts.append(stdin_fd_read_import());
     }
     // reader_close calls preview1 fd_close. file_imports supplies fd_close for
     // path I/O, so emit the standalone fd_close import ONLY for a reader that
     // does no file I/O — otherwise fd_close would be imported twice.
     if (need(needs, "reader_close") && !(need(needs, "read_file") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "open_file"))) {
-        out = out + reader_fd_close_import();
+        parts = parts.append(reader_fd_close_import());
     }
     // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
     // preview1 wasi clock_time_get import — emitted (before the function
     // section, like the other imports) when the module reads any clock.
     if (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns") || need(needs, "temp_dir")) {
-        out = out + "  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n";
+        parts = parts.append("  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n");
     }
     // args() / arg_at(i) read the wasi argv vector — the shared args_sizes_get /
     // args_get imports must precede the function section, emitted once when the
     // module reads argv by either route.
-    if (need(needs, "args") || need(needs, "arg_at")) { out = out + args_helpers(); }
+    if (need(needs, "args") || need(needs, "arg_at")) { parts = parts.append(args_helpers()); }
     // env(name) scans the wasi environ vector — its environ_sizes_get /
     // environ_get imports must precede the function section, emitted when the
     // module reads an env var.
-    if (need(needs, "env")) { out = out + env_helpers(); }
+    if (need(needs, "env")) { parts = parts.append(env_helpers()); }
     // stat(path) uses the preview1 path_filestat_get import (must precede the
     // function section), emitted when the module stats a file.
-    if (need(needs, "stat")) { out = out + stat_import(); }
+    if (need(needs, "stat")) { parts = parts.append(stat_import()); }
     // remove_file / remove_dir_all use the preview1 path_unlink_file import
     // (remove_dir_all unlinks the regular files it finds) — emit it once across
     // both (must precede the function section).
-    if (need(needs, "remove_file") || need(needs, "remove_dir_all")) { out = out + remove_file_import(); }
+    if (need(needs, "remove_file") || need(needs, "remove_dir_all")) { parts = parts.append(remove_file_import()); }
     // remove_dir_all also rmdirs each emptied directory via path_remove_directory.
-    if (need(needs, "remove_dir_all")) { out = out + remove_dir_import(); }
+    if (need(needs, "remove_dir_all")) { parts = parts.append(remove_dir_import()); }
     // temp_dir(prefix) mkdirs a unique dir under the preopen via
     // path_create_directory, and create_dir_all issues the same import per
     // component — one gate across both, since a duplicate import is an invalid
     // module (must precede the function section).
-    if (need(needs, "temp_dir") || need(needs, "create_dir_all")) { out = out + temp_dir_import(); }
+    if (need(needs, "temp_dir") || need(needs, "create_dir_all")) { parts = parts.append(temp_dir_import()); }
     // sleep_ms blocks on a monotonic-clock timeout via poll_oneoff.
-    if (need(needs, "sleep_ms")) { out = out + sleep_ms_import(); }
+    if (need(needs, "sleep_ms")) { parts = parts.append(sleep_ms_import()); }
     // Preview-2 timer-pollable ops (#4317): direct component-model imports.
     // A module using them composes to a component (see wasm_ir helpers).
-    if (need(needs, "wasm_timer_pollable")) { out = out + wasi_subscribe_duration_import(); }
-    if (need(needs, "wasm_pollable_drop")) { out = out + wasi_pollable_drop_import(); }
-    if (need(needs, "wasm_block")) { out = out + wasi_pollable_block_import(); }
+    if (need(needs, "wasm_timer_pollable")) { parts = parts.append(wasi_subscribe_duration_import()); }
+    if (need(needs, "wasm_pollable_drop")) { parts = parts.append(wasi_pollable_drop_import()); }
+    if (need(needs, "wasm_block")) { parts = parts.append(wasi_pollable_block_import()); }
     // tcp_connect / tcp_close (#4318): the wasi:sockets + stream-drop imports.
     // connect also BLOCKS on the socket's pollable to wait for the connection
     // to establish, so it needs pollable.block / [resource-drop]pollable — but
@@ -8193,33 +8194,33 @@ function preview1_imports(needs: string[]): string {
     // wasm_pollable_drop, since a duplicate import is an invalid module.
     // instance-network is shared by the tcp set and udp_send; one gate so it
     // is emitted exactly once (a duplicate import is an invalid module).
-    if (need(needs, "tcp_connect") || need(needs, "tcp_close") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_pollable") || need(needs, "udp_send")) { out = out + wasi_instance_network_import(); }
-    if (need(needs, "tcp_connect") || need(needs, "tcp_close") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_pollable")) { out = out + wasi_sockets_imports(); }
+    if (need(needs, "tcp_connect") || need(needs, "tcp_close") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_pollable") || need(needs, "udp_send")) { parts = parts.append(wasi_instance_network_import()); }
+    if (need(needs, "tcp_connect") || need(needs, "tcp_close") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_pollable")) { parts = parts.append(wasi_sockets_imports()); }
     // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2).
-    if (need(needs, "tcp_send") || need(needs, "tcp_recv")) { out = out + wasi_stream_io_imports(); }
+    if (need(needs, "tcp_send") || need(needs, "tcp_recv")) { parts = parts.append(wasi_stream_io_imports()); }
     // tcp_listen / tcp_accept add bind + listen + accept; tcp_pollable and
     // tcp_accept both need the sockets base set (subscribe + the drops).
-    if (need(needs, "tcp_listen") || need(needs, "tcp_accept")) { out = out + wasi_sockets_server_imports(); }
+    if (need(needs, "tcp_listen") || need(needs, "tcp_accept")) { parts = parts.append(wasi_sockets_server_imports()); }
     // udp_send pulls the wasi:sockets/udp set plus the pollable block/drop it
     // uses for the send-permit wait (#4375). The network handle is shared
     // with the tcp ops; the pollable imports are gated so they are not
     // emitted twice when a tcp op already brought them in.
-    if (need(needs, "udp_send")) { out = out + wasi_udp_imports(); }
-    if (need(needs, "udp_send") && !need(needs, "wasm_block") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { out = out + wasi_pollable_block_import(); }
-    if (need(needs, "udp_send") && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept") && !need(needs, "poll")) { out = out + wasi_pollable_drop_import(); }
-    if ((need(needs, "tcp_connect") || need(needs, "tcp_accept")) && !need(needs, "wasm_block")) { out = out + wasi_pollable_block_import(); }
-    if ((need(needs, "tcp_connect") || need(needs, "tcp_accept")) && !need(needs, "wasm_pollable_drop")) { out = out + wasi_pollable_drop_import(); }
+    if (need(needs, "udp_send")) { parts = parts.append(wasi_udp_imports()); }
+    if (need(needs, "udp_send") && !need(needs, "wasm_block") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_block_import()); }
+    if (need(needs, "udp_send") && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept") && !need(needs, "poll")) { parts = parts.append(wasi_pollable_drop_import()); }
+    if ((need(needs, "tcp_connect") || need(needs, "tcp_accept")) && !need(needs, "wasm_block")) { parts = parts.append(wasi_pollable_block_import()); }
+    if ((need(needs, "tcp_connect") || need(needs, "tcp_accept")) && !need(needs, "wasm_pollable_drop")) { parts = parts.append(wasi_pollable_drop_import()); }
     // wasm_poll: the LIST-typed wasi:io/poll.poll multiplexer (#4316). Its
     // helper is heap-backed (it allocates the 8-byte canonical return area), so
     // the heap gate below folds it in.
-    if (need(needs, "wasm_poll") || need(needs, "poll")) { out = out + wasi_poll_import(); }
+    if (need(needs, "wasm_poll") || need(needs, "poll")) { parts = parts.append(wasi_poll_import()); }
     // poll(fds, timeout) expresses its timeout as a monotonic-clock timer
     // added to the polled set, so it needs subscribe-duration + the pollable
     // drop — each only when the module has not already imported it for the
     // op that owns it, since a duplicate import is invalid.
-    if (need(needs, "poll") && !need(needs, "wasm_timer_pollable")) { out = out + wasi_subscribe_duration_import(); }
-    if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { out = out + wasi_pollable_drop_import(); }
-    return out;
+    if (need(needs, "poll") && !need(needs, "wasm_timer_pollable")) { parts = parts.append(wasi_subscribe_duration_import()); }
+    if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_drop_import()); }
+    return util.str_join_chunks(parts);
 }
 
 // emit_ir_module_units links N per-module units into one core module (#5331
@@ -8283,15 +8284,16 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
 pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
-    var out: string = "(module\n";
-    if (mode == 0) { out = out + preview1_imports(needs); }
-    if (mode == 2) { out = out + component_io_imports(needs); }
+    var parts: string[] = [];
+    parts = parts.append("(module\n");
+    if (mode == 0) { parts = parts.append(preview1_imports(needs)); }
+    if (mode == 2) { parts = parts.append(component_io_imports(needs)); }
     // WIT `@import` externs. Emitted for EVERY mode: an extern is a declaration
     // in the source, not a property of the framing, and a module that calls one
     // without importing it fails at load with `unknown func`. This is half of
     // what the AST emitter did and the IR path did not.
-    out = out + extern_imports(mod, xslot_ir());
-    out = out + "  (memory (export \"memory\") 16)\n";
+    parts = parts.append(extern_imports(mod, xslot_ir()));
+    parts = parts.append("  (memory (export \"memory\") 16)\n");
     // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
     // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
     // distinct values + their offsets so the data + const_str ptrs agree.
@@ -8320,8 +8322,8 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
         var sbi: i32 = 0;
         var sbstart: i32 = 0;
         while (sbi < nss.len()) {
-            out = out + "  (global " + str_base_global(nss[sbi]) + " i32 (i32.const "
-                + util.i32_to_string(str_offset(sv, sbstart)) + "))\n";
+            parts = parts.append("  (global " + str_base_global(nss[sbi]) + " i32 (i32.const "
+                + util.i32_to_string(str_offset(sv, sbstart)) + "))\n");
             sbstart = sbstart + str_counts[sbi];
             sbi = sbi + 1;
         }
@@ -8331,11 +8333,11 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // index. See tid_globals_section for why type ids, unlike string
     // offsets and funcref indices, must stay globally agreed rather than
     // unit-relative.
-    out = out + tid_globals_section(mod.structs);
+    parts = parts.append(tid_globals_section(mod.structs));
     var di: i32 = 0;
     while (di < sv.len()) {
-        out = out + "  (data (i32.const " + util.i32_to_string(str_offset(sv, di)) + ") \""
-            + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
+        parts = parts.append("  (data (i32.const " + util.i32_to_string(str_offset(sv, di)) + ") \""
+            + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n");
         di = di + 1;
     }
     // Static aggregate constants (#6149), the region above the string literals.
@@ -8346,13 +8348,13 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
         var kbi: i32 = 0;
         var kbstart: i32 = 0;
         while (kbi < nss.len()) {
-            out = out + "  (global " + cagg_base_global(nss[kbi]) + " i32 (i32.const "
-                + util.i32_to_string(const_agg_offset(sv, cv, kbstart)) + "))\n";
+            parts = parts.append("  (global " + cagg_base_global(nss[kbi]) + " i32 (i32.const "
+                + util.i32_to_string(const_agg_offset(sv, cv, kbstart)) + "))\n");
             kbstart = kbstart + cagg_counts[kbi];
             kbi = kbi + 1;
         }
     }
-    out = out + const_agg_data(sv, cv, mod.structs);
+    parts = parts.append(const_agg_data(sv, cv, mod.structs));
     // mode 2 folds into the heap gate: the $fd_write shim allocates its
     // canonical-ABI return area through $__fern_alloc, so a component-io core
     // needs the heap even when the program itself never allocates.
@@ -8363,21 +8365,21 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
     if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
-        out = out + heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells());
-        out = out + rc_runtime_helpers(heap_base_for_strs(sv, cv));
+        parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells()));
+        parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
     // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
     // every $fd_write / $proc_exit call site the IR emits links unchanged.
     // Placed after the heap runtime they call into (as the AST path does).
-    if (mode == 2) { out = out + component_io_shims(needs); }
+    if (mode == 2) { parts = parts.append(component_io_shims(needs)); }
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not ride along unconditionally.
-    if (need(needs, "@calls_strarrarr_free")) { out = out + arr_dec_ptr2_func(heap_base_for_strs(sv, cv)); }
-    if (need(needs, "@calls_optarrarr_free")) { out = out + optarrarr_free_func(heap_base_for_strs(sv, cv)); }
+    if (need(needs, "@calls_strarrarr_free")) { parts = parts.append(arr_dec_ptr2_func(heap_base_for_strs(sv, cv))); }
+    if (need(needs, "@calls_optarrarr_free")) { parts = parts.append(optarrarr_free_func(heap_base_for_strs(sv, cv))); }
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
-    if (need(needs, "@uses_strbuf")) { out = out + strbuf_helpers(); }
+    if (need(needs, "@uses_strbuf")) { parts = parts.append(strbuf_helpers()); }
     // Per-type $__field_reclaim_<T> + $__struct_drop_<T> RC helper bodies
     // (#3457, Perceus slices 1c/1d + slice-3 nested deep-drop). emit_module's
     // own IR orchestration emits these; this differential driver assembles the
@@ -8386,95 +8388,95 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // links against an undefined function and traps under wasmtime
     // (`unknown func $__struct_drop_<T>`). Returns "" for modules with no rc
     // fields, so non-struct programs are unchanged.
-    out = out + rc_bodies;
+    parts = parts.append(rc_bodies);
     // The canonical-ABI wrappers a string/list-returning `@import` resolves to
     // (return-area alloc, raw import call, lift). Gated the same way the AST
     // emitter gates them, so a module with no such extern is unchanged.
-    if (module_needs_extern_wrappers(mod, xslot_ir())) { out = out + extern_wrappers(mod, xslot_ir()); }
-    if (need(needs, "@uses_divrem")) { out = out + divrem_helpers(); }
-    if (need(needs, "@uses_i64_divrem")) { out = out + divrem64_helpers(); }
+    if (module_needs_extern_wrappers(mod, xslot_ir())) { parts = parts.append(extern_wrappers(mod, xslot_ir())); }
+    if (need(needs, "@uses_divrem")) { parts = parts.append(divrem_helpers()); }
+    if (need(needs, "@uses_i64_divrem")) { parts = parts.append(divrem64_helpers()); }
     // $__fern_exp_f64: e^x via a polynomial (no transcendental wasm
     // instruction). Self-contained f64 math — no imports or heap. fpow (x^y =
     // exp(y·ln x)) reuses it, so its gate folds fpow in (emitted once).
-    if (need(needs, "fexp") || need(needs, "fpow")) { out = out + exp_func(); }
+    if (need(needs, "fexp") || need(needs, "fpow")) { parts = parts.append(exp_func()); }
     // $__fern_log_f64: ln x via a polynomial (same — self-contained f64 math).
     // fpow reuses it too, so its gate folds fpow in.
-    if (need(needs, "flog") || need(needs, "fpow")) { out = out + log_func(); }
+    if (need(needs, "flog") || need(needs, "fpow")) { parts = parts.append(log_func()); }
     // $__fern_pow_f64: x^y = exp(y·ln x) — composes the two helpers above.
-    if (need(needs, "fpow")) { out = out + pow_func(); }
+    if (need(needs, "fpow")) { parts = parts.append(pow_func()); }
     // $__fern_sin_f64 / $__fern_cos_f64: trig via argument reduction + Taylor
     // polynomials (no transcendental wasm instruction). Self-contained f64 math.
-    if (need(needs, "fsin")) { out = out + sin_func(); }
-    if (need(needs, "fcos")) { out = out + cos_func(); }
+    if (need(needs, "fsin")) { parts = parts.append(sin_func()); }
+    if (need(needs, "fcos")) { parts = parts.append(cos_func()); }
     // $__fern_strcat + $__fern_streq (concat / equality); references
     // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
     // in for any string program.
-    if (need(needs, "@uses_strings") || need(needs, "@uses_maps")) { out = out + strcat_streq_helpers(); }
+    if (need(needs, "@uses_strings") || need(needs, "@uses_maps")) { parts = parts.append(strcat_streq_helpers()); }
     // $__fern_i32_to_str / _i64_to_str / _u64_to_str back `.to_string()` on an
     // i32 / i64 / u64 receiver (wasm_helper_symbol maps each IR call_direct to
     // its body). One gate each, so a module formatting only one width carries
     // only that formatter.
-    if (need(needs, "@uses_i32_to_string")) { out = out + i32_to_string_helper(); }
-    if (need(needs, "@uses_i64_to_string")) { out = out + i64_to_string_helper(); }
-    if (need(needs, "@uses_u64_to_string")) { out = out + u64_to_string_helper(); }
-    if (need(needs, "@uses_u32_to_string")) { out = out + u32_to_string_helper(); }
+    if (need(needs, "@uses_i32_to_string")) { parts = parts.append(i32_to_string_helper()); }
+    if (need(needs, "@uses_i64_to_string")) { parts = parts.append(i64_to_string_helper()); }
+    if (need(needs, "@uses_u64_to_string")) { parts = parts.append(u64_to_string_helper()); }
+    if (need(needs, "@uses_u32_to_string")) { parts = parts.append(u32_to_string_helper()); }
     // $__fern_now_ns / $__fern_now_unix_ms / $__fern_monotonic_ns back the
     // clock builtins (each result i64), reading the preview1 clock_time_get
     // import into the 8-byte scratch at addr 16 — emitted as a trio (the AST
     // path does the same) when the module reads any clock.
-    if (mode != 2 && (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns") || need(needs, "temp_dir"))) { out = out + clock_funcs(); }
+    if (mode != 2 && (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns") || need(needs, "temp_dir"))) { parts = parts.append(clock_funcs()); }
     // $__fern_args builds the argv string[] via the wasi args_get import +
     // the heap runtime (module_allocates pulls the heap in for an args
     // module — op_allocates admits "args"). Emitted when the module reads argv.
-    if (mode != 2 && need(needs, "args")) { out = out + args_func(); }
+    if (mode != 2 && need(needs, "args")) { parts = parts.append(args_func()); }
     // $__fern_arg_at(i) copies just argv[i] into a fresh string block, sharing
     // the args imports above. Independent of the args need — a module can read
     // one argument without ever materialising the whole vector.
-    if (mode != 2 && need(needs, "arg_at")) { out = out + arg_at_func(); }
+    if (mode != 2 && need(needs, "arg_at")) { parts = parts.append(arg_at_func()); }
     // $__fern_env(name): scan the environ vector for `NAME=`, box an
     // Option[string] (Some(value)/None). Heap-backed (allocates the value +
     // box), so the heap gate above folds env in.
-    if (mode != 2 && need(needs, "env")) { out = out + env_func(); }
+    if (mode != 2 && need(needs, "env")) { parts = parts.append(env_func()); }
     // $__fern_build_io_error(errno, path): map a WASI errno to a real
     // IoError variant box, shared by every fs helper's error path (the wasm
     // sibling of native wasmbin's __build_io_error / asm_ir's
     // __fern_io_error). Emit it once whenever any fs op is present so the
     // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
-    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "write_file")) { out = out + build_io_error_func(8); }
+    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "write_file")) { parts = parts.append(build_io_error_func(8)); }
     // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
     // Result box. Heap-backed (allocates the buffer + boxes), so folded into
     // the heap gate above.
-    if (need(needs, "stat")) { out = out + stat_func(); }
+    if (need(needs, "stat")) { parts = parts.append(stat_func()); }
     // $__fern_remove_file(path): path_unlink_file -> Result[(), IoError] box.
     // Heap-backed (allocates the box), so folded into the heap gate above.
-    if (need(needs, "remove_file")) { out = out + remove_file_func(); }
+    if (need(needs, "remove_file")) { parts = parts.append(remove_file_func()); }
     // $__fern_create_dir_all(path): path_create_directory per missing component
     // -> Result[(), IoError] box. Heap-backed (allocates the box), so folded
     // into the heap gate above.
-    if (need(needs, "create_dir_all")) { out = out + create_dir_all_func(); }
+    if (need(needs, "create_dir_all")) { parts = parts.append(create_dir_all_func()); }
     // $__fern_read_dir(path): path_open + fd_readdir loop -> Result[string[],
     // IoError] box. Heap-backed (allocates names + array + box) and uses
     // $__fern_arr_push (emitted by the arr_push gate below, which folds
     // read_dir in).
-    if (need(needs, "read_dir")) { out = out + read_dir_func(); }
+    if (need(needs, "read_dir")) { parts = parts.append(read_dir_func()); }
     // $__fern_remove_dir_all(path): recursive rm -rf -> Result[(), IoError] box.
     // Heap-backed + uses $__fern_arr_push (both folded into the gates above).
-    if (need(needs, "remove_dir_all")) { out = out + remove_dir_func(); }
+    if (need(needs, "remove_dir_all")) { parts = parts.append(remove_dir_func()); }
     // $__fern_temp_dir(prefix): mkdir a unique `<prefix>-<ns>` dir under the
     // preopen -> Result[string, IoError]. Heap-backed + uses the clock helper.
-    if (need(needs, "temp_dir")) { out = out + temp_dir_func(); }
+    if (need(needs, "temp_dir")) { parts = parts.append(temp_dir_func()); }
     // $__fern_sleep_ms(ms): block via poll_oneoff. Heap-backed (scratch buffer).
-    if (need(needs, "sleep_ms")) { out = out + sleep_ms_func(); }
+    if (need(needs, "sleep_ms")) { parts = parts.append(sleep_ms_func()); }
     // wasm_poll returns a list<u32>, which the canonical ABI materialises in
     // GUEST memory via the exported cabi_realloc — without it `component new`
     // fails with "module does not export a function named cabi_realloc".
     // Shares $heap / $__fern_alloc with the heap runtime the gate above pulls
     // in for wasm_poll.
-    if (need(needs, "wasm_poll")) { out = out + wasm_poll_func(); }
+    if (need(needs, "wasm_poll")) { parts = parts.append(wasm_poll_func()); }
     // $__fern_poll delegates the indefinite case to $__fern_wasm_poll, so it
     // pulls that helper in too when the module uses only `poll`.
-    if (need(needs, "poll") && !need(needs, "wasm_poll")) { out = out + wasm_poll_func(); }
-    if (need(needs, "poll")) { out = out + poll_fds_func(); }
+    if (need(needs, "poll") && !need(needs, "wasm_poll")) { parts = parts.append(wasm_poll_func()); }
+    if (need(needs, "poll")) { parts = parts.append(poll_fds_func()); }
     // cabi_realloc is the canonical ABI's GUEST allocator, needed by every op
     // whose import RETURNS a list: wasm_poll (list<u32>) and tcp_recv
     // (list<u8>). One shared gate so it is emitted exactly once — a second
@@ -8497,94 +8499,94 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // host materialises it in guest memory — as does an export whose signature
     // needs the canonical allocator (export_needs_realloc). Like the heap gate
     // above, these come from the module's declarations, not from `needs`.
-    if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "arg_at") || need(needs, "read_file") || need(needs, "write_file")))) { out = out + cabi_realloc_helper(); }
+    if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "arg_at") || need(needs, "read_file") || need(needs, "write_file")))) { parts = parts.append(cabi_realloc_helper()); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
-    if (need(needs, "tcp_connect") || need(needs, "tcp_listen") || need(needs, "udp_send")) { out = out + network_handle_func(); }
-    if (need(needs, "tcp_connect")) { out = out + tcp_connect_func(); }
-    if (need(needs, "tcp_close")) { out = out + tcp_close_func(); }
-    if (need(needs, "tcp_send")) { out = out + tcp_send_func(); }
-    if (need(needs, "tcp_recv")) { out = out + tcp_recv_func(); }
-    if (need(needs, "tcp_listen")) { out = out + tcp_listen_func(); }
-    if (need(needs, "tcp_accept")) { out = out + tcp_accept_func(); }
-    if (need(needs, "tcp_pollable")) { out = out + tcp_pollable_func(); }
-    if (need(needs, "udp_send")) { out = out + ipv4_parse_func() + udp_send_func(); }
+    if (need(needs, "tcp_connect") || need(needs, "tcp_listen") || need(needs, "udp_send")) { parts = parts.append(network_handle_func()); }
+    if (need(needs, "tcp_connect")) { parts = parts.append(tcp_connect_func()); }
+    if (need(needs, "tcp_close")) { parts = parts.append(tcp_close_func()); }
+    if (need(needs, "tcp_send")) { parts = parts.append(tcp_send_func()); }
+    if (need(needs, "tcp_recv")) { parts = parts.append(tcp_recv_func()); }
+    if (need(needs, "tcp_listen")) { parts = parts.append(tcp_listen_func()); }
+    if (need(needs, "tcp_accept")) { parts = parts.append(tcp_accept_func()); }
+    if (need(needs, "tcp_pollable")) { parts = parts.append(tcp_pollable_func()); }
+    if (need(needs, "udp_send")) { parts = parts.append(ipv4_parse_func() + udp_send_func()); }
     // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
     // read/write the whole file, boxing a Result[string, IoError] /
     // Result[(), IoError]. They alloc via the heap runtime (module_allocates
     // pulls it in — op_allocates admits read_file/write_file). Emitted when
     // the module does the matching file op.
-    if (mode != 2 && need(needs, "read_file")) { out = out + readfile_func(); }
-    if (mode != 2 && need(needs, "write_file")) { out = out + writefile_func(); }
-    if (need(needs, "open_file")) { out = out + open_file_func(); }
-    if (need(needs, "writer_write")) { out = out + writer_write_func(); }
+    if (mode != 2 && need(needs, "read_file")) { parts = parts.append(readfile_func()); }
+    if (mode != 2 && need(needs, "write_file")) { parts = parts.append(writefile_func()); }
+    if (need(needs, "open_file")) { parts = parts.append(open_file_func()); }
+    if (need(needs, "writer_write")) { parts = parts.append(writer_write_func()); }
     // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates);
     // $__fern_read_int parses an int into scratch (no heap). Emitted when the
     // module reads stdin.
-    if (need(needs, "read_line")) { out = out + read_line_func(); }
-    if (need(needs, "read_int")) { out = out + read_int_func(); }
+    if (need(needs, "read_line")) { parts = parts.append(read_line_func()); }
+    if (need(needs, "read_int")) { parts = parts.append(read_int_func()); }
     // $__fern_read_all_stdin reads fd 0 to EOF into one string block (#5623);
     // allocates, so it rides the heap runtime gated above.
-    if (need(needs, "read_all_stdin")) { out = out + read_all_stdin_func(); }
+    if (need(needs, "read_all_stdin")) { parts = parts.append(read_all_stdin_func()); }
     // $__fern_reader_read_chunk(fd,n) / $__fern_reader_close(fd) back the
     // Reader intrinsics (r.read_chunk(n) / r.close()) — a Reader is just its fd
     // (stdin = fd 0). Both box (Option[string] / Option[IoError]), so they ride
     // the heap runtime (gated in above); read_chunk reads via fd_read, close
     // via fd_close (imports emitted above). Backs std/io read_all_stdin on wasm.
-    if (need(needs, "read_chunk")) { out = out + reader_read_chunk_func(); }
-    if (need(needs, "reader_close")) { out = out + reader_close_func(); }
+    if (need(needs, "read_chunk")) { parts = parts.append(reader_read_chunk_func()); }
+    if (need(needs, "reader_close")) { parts = parts.append(reader_close_func()); }
     // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
-    if (need(needs, "@uses_str_to_i32")) { out = out + str_to_i32_helper(); }
+    if (need(needs, "@uses_str_to_i32")) { parts = parts.append(str_to_i32_helper()); }
     // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
-    if (need(needs, "@uses_chr")) { out = out + chr_helper(); }
-    if (need(needs, "@uses_str_cmp")) { out = out + strcmp_helper(); }
+    if (need(needs, "@uses_chr")) { parts = parts.append(chr_helper()); }
+    if (need(needs, "@uses_str_cmp")) { parts = parts.append(strcmp_helper()); }
     // $__fern_substr backs str_slice AND str_split (split slices each
     // segment), so emit it for either — but only ONCE.
-    if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) { out = out + substr_helper(); }
-    if (need(needs, "@uses_memchr")) { out = out + memchr_helper(); }
-    if (need(needs, "@uses_ascii_run")) { out = out + ascii_run_helper(); }
+    if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(substr_helper()); }
+    if (need(needs, "@uses_memchr")) { parts = parts.append(memchr_helper()); }
+    if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
-    if (need(needs, "str_split") || need(needs, "@uses_str_lines")) { out = out + str_split_helper(); }
+    if (need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(str_split_helper()); }
     // $__fern_arr_str_join (a shim over $__fern_str_join) backs xs.join(sep) — the
     // register backends' __fern_arr_str_join runtime call. Self-contained (only
     // $__fern_str_box), emitted only when used.
-    if (need(needs, "@uses_arr_str_join")) { out = out + arr_str_join_helper(); }
+    if (need(needs, "@uses_arr_str_join")) { parts = parts.append(arr_str_join_helper()); }
     // $__fern_arr_reverse / $__fern_arr_concat back the builtin xs.reverse() /
     // xs.concat(ys) — the register backends' hand-asm helpers of the same name.
     // Self-contained apart from $__fern_arr_box (@allocates pulls it in, and
     // op_allocates lists both ops).
-    if (need(needs, "@uses_arr_reverse")) { out = out + arr_reverse_helper(); }
-    if (need(needs, "@uses_arr_concat")) { out = out + arr_concat_helper(); }
+    if (need(needs, "@uses_arr_reverse")) { parts = parts.append(arr_reverse_helper()); }
+    if (need(needs, "@uses_arr_concat")) { parts = parts.append(arr_concat_helper()); }
     // $__fern_arr_str_index_of backs xs.index_of(t) / .contains(t) on a string[]
     // — the register backends' Fern-source helper. It calls $__fern_streq, which
     // strcat_streq_helpers provides (module_uses_strings admits this call so the
     // bundle is present even in a module with no other string op).
-    if (need(needs, "@uses_arr_str_index_of")) { out = out + arr_str_index_of_helper(); }
+    if (need(needs, "@uses_arr_str_index_of")) { parts = parts.append(arr_str_index_of_helper()); }
     // The i32 builtin helpers backing xs.sum() / .product() / .index_of() /
     // .contains(), n.pow(k) and xs.min() / .max() (#3457). The register backends
     // compile these from Fern source (asmcore.rt_src_*); wasm has no such
     // mechanism, so the WAT lives in arr_i32_helpers — deliberately NOT
     // in this file, which #3457 deletes. min/max allocate their Option box via
     // $__fern_str_box, which @allocates already pulls in.
-    if (need(needs, "@uses_arr_i32_helpers")) { out = out + arr_i32_helpers(); }
+    if (need(needs, "@uses_arr_i32_helpers")) { parts = parts.append(arr_i32_helpers()); }
     // Scalar string search predicates (starts_with / ends_with / index_of /
     // contains) — self-contained, emitted only when used.
-    if (need(needs, "@uses_str_predicate")) { out = out + str_predicate_helpers(); }
+    if (need(needs, "@uses_str_predicate")) { parts = parts.append(str_predicate_helpers()); }
     // ASCII case transforms (to_upper / to_lower) — self-contained, emitted
     // only when used.
-    if (need(needs, "@uses_str_case")) { out = out + str_case_helpers(); }
+    if (need(needs, "@uses_str_case")) { parts = parts.append(str_case_helpers()); }
     // String repeat — self-contained, emitted only when used.
-    if (need(needs, "@uses_str_repeat")) { out = out + str_repeat_helper(); }
+    if (need(needs, "@uses_str_repeat")) { parts = parts.append(str_repeat_helper()); }
     // String trim — self-contained, emitted only when used (IR-only on wasm).
-    if (need(needs, "@uses_str_trim")) { out = out + str_trim_helper(); }
+    if (need(needs, "@uses_str_trim")) { parts = parts.append(str_trim_helper()); }
     // String reverse — self-contained, emitted only when used (IR-only on wasm).
-    if (need(needs, "@uses_str_reverse")) { out = out + str_reverse_helper(); }
+    if (need(needs, "@uses_str_reverse")) { parts = parts.append(str_reverse_helper()); }
     // String replace — self-contained, emitted only when used (IR-only on wasm).
-    if (need(needs, "@uses_str_replace")) { out = out + str_replace_helper(); }
+    if (need(needs, "@uses_str_replace")) { parts = parts.append(str_replace_helper()); }
     // String lines — split on \n + trailing-empty trim (IR-only on wasm).
-    if (need(needs, "@uses_str_lines")) { out = out + str_lines_helper(); }
-    if (need(needs, "@uses_arr_slice")) { out = out + arr_slice_helper(); }
-    if (need(needs, "@uses_arr_slice8")) { out = out + arr_slice8_helper(); }
+    if (need(needs, "@uses_str_lines")) { parts = parts.append(str_lines_helper()); }
+    if (need(needs, "@uses_arr_slice")) { parts = parts.append(arr_slice_helper()); }
+    if (need(needs, "@uses_arr_slice8")) { parts = parts.append(arr_slice8_helper()); }
     // `.append` (op_arr_push) emits a call to $__fern_arr_push; the IR path
     // needs the standalone push helper (the AST path's arr_helpers bundle —
     // which also defines arr_slice/slice8 — would double-define those, so use
@@ -8602,22 +8604,22 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // BOTH .split()/lines AND .append double-defines it → "duplicate func").
     var needs_arr_push: boolean = need(needs, "arr_push") || need(needs, "arr_push_owned") || need(needs, "read_dir") || need(needs, "remove_dir_all");
     var split_emits_push: boolean = need(needs, "str_split") || need(needs, "@uses_str_lines");
-    if (needs_arr_push && !split_emits_push) { out = out + arr_push_helper(); }
+    if (needs_arr_push && !split_emits_push) { parts = parts.append(arr_push_helper()); }
     // $__fern_str_split appends through $__fern_arr_push_owned so its own
     // intermediate buffers are reclaimed, so a split/lines module needs the
     // wrapper even with no self-reassign append of its own.
-    if (need(needs, "arr_push_owned") || split_emits_push) { out = out + arr_push_owned_helper(heap_base_for_strs(sv, cv)); }
-    if (need(needs, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
-    if (need(needs, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
-    if (need(needs, "@uses_maps")) { out = out + map_helpers(); }
+    if (need(needs, "arr_push_owned") || split_emits_push) { parts = parts.append(arr_push_owned_helper(heap_base_for_strs(sv, cv))); }
+    if (need(needs, "arr_push_i64")) { parts = parts.append(arr_push_i64_helper()); }
+    if (need(needs, "arr_push_f64")) { parts = parts.append(arr_push_f64_helper()); }
+    if (need(needs, "@uses_maps")) { parts = parts.append(map_helpers()); }
     // $__fern_map_set_w64 / $__fern_map_get_or_w64: the i64/u64-VALUED map runtime
     // (#5253), over the map_helpers primitives above. Emitted when a module
     // inserts/reads an 8-byte i64/u64 map value.
-    if (need(needs, "@uses_map_w64")) { out = out + map_w64_helpers(); }
+    if (need(needs, "@uses_map_w64")) { parts = parts.append(map_w64_helpers()); }
     // $__fern_map_iter + accessors: the wasm map-iterator runtime (materializes
     // keys/values via map_helpers above, so gated after it). Emitted when the
     // module iterates a map (m.iter() / for-in-map).
-    if (need(needs, "map_iter")) { out = out + map_iter_helpers(); }
+    if (need(needs, "map_iter")) { parts = parts.append(map_iter_helpers()); }
     // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
     // string block; str_bytes returns a u8[]; both reference the heap runtime
     // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
@@ -8625,28 +8627,28 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // mode 2 defines these three from the preview2 interfaces instead (see
     // component_io_shims); emitting the preview1 bodies too would duplicate
     // the function names.
-    if (mode != 2 && need(needs, "random_bytes")) { out = out + random_bytes_ir_func(); }
-    if (mode != 2 && need(needs, "random_i32")) { out = out + random_i32_func(); }
+    if (mode != 2 && need(needs, "random_bytes")) { parts = parts.append(random_bytes_ir_func()); }
+    if (mode != 2 && need(needs, "random_i32")) { parts = parts.append(random_i32_func()); }
     // The two decimal buffers, in the print_scratch_bytes() reservation right
     // above the string blocks: print_int's 16 bytes first, print_int64's 24
     // after them, so a module printing both widths never clobbers either.
-    if (need(needs, "print_int")) { out = out + print_int_helper(str_offset(sv, sv.len())); }
-    if (need(needs, "print_i64")) { out = out + print_int64_helper(str_offset(sv, sv.len()) + 16); }
-    if (need(needs, "print_str")) { out = out + print_str_helper(); }
-    if (need(needs, "eprint_str")) { out = out + eprint_str_helper(); }
-    if (need(needs, "str_bytes")) { out = out + str_bytes_func(); }
+    if (need(needs, "print_int")) { parts = parts.append(print_int_helper(str_offset(sv, sv.len()))); }
+    if (need(needs, "print_i64")) { parts = parts.append(print_int64_helper(str_offset(sv, sv.len()) + 16)); }
+    if (need(needs, "print_str")) { parts = parts.append(print_str_helper()); }
+    if (need(needs, "eprint_str")) { parts = parts.append(eprint_str_helper()); }
+    if (need(needs, "str_bytes")) { parts = parts.append(str_bytes_func()); }
     // string_from_bytes_unchecked(arr) packs a u8[] into a string block via
     // $__fern_string_from_bytes; op_str_from_bytes emits the call, so the
     // helper must be present (its absence left a dangling call -> the wasm
     // module failed to link). Depends on $__fern_alloc / $__fern_str_box,
     // which module_allocates pulls in via heap_alloc_helpers.
-    if (need(needs, "str_from_bytes")) { out = out + string_from_bytes_helper(); }
+    if (need(needs, "str_from_bytes")) { parts = parts.append(string_from_bytes_helper()); }
     // Function-value support: the $fn<N> call_indirect signature types, the
     // funcref table, and its elem segment (empty for non-closure modules).
-    out = out + fn_support_section_units(nss, all_fns, fn_counts, fn_sigs);
+    parts = parts.append(fn_support_section_units(nss, all_fns, fn_counts, fn_sigs));
     var ui: i32 = 0;
     while (ui < unit_texts.len()) {
-        out = out + unit_texts[ui];
+        parts = parts.append(unit_texts[ui]);
         ui = ui + 1;
     }
     // WIT `@export` bindings. Without these the IR path emitted a core whose only
@@ -8661,21 +8663,21 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // statements and no `main`, is handled upstream by asmcore.synth_script_main,
     // which gives it a real main; has_main is true by the time we get here.)
     if (!asmcore.has_main(mod)) {
-        out = out + "  (func $main (result i32)\n    (i32.const 0))\n";
+        parts = parts.append("  (func $main (result i32)\n    (i32.const 0))\n");
     }
     if (mode == 0) {
-        out = out + "  (func $_start (call $proc_exit (call $main)))\n";
-        out = out + xps;
-        out = out + "  (export \"_start\" (func $_start)))\n";
-        return out;
+        parts = parts.append("  (func $_start (call $proc_exit (call $main)))\n");
+        parts = parts.append(xps);
+        parts = parts.append("  (export \"_start\" (func $_start)))\n");
+        return util.str_join_chunks(parts);
     }
     // Component run entry: export main, and _lang_run = (main() == 0) mapped to
     // the 0 = ok / 1 = err result the canon lift expects.
-    out = out + "  (export \"main\" (func $main))\n";
-    out = out + xps;
-    out = out + "  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
-    out = out + "  (export \"_lang_run\" (func $_lang_run)))\n";
-    return out;
+    parts = parts.append("  (export \"main\" (func $main))\n");
+    parts = parts.append(xps);
+    parts = parts.append("  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n");
+    parts = parts.append("  (export \"_lang_run\" (func $_lang_run)))\n");
+    return util.str_join_chunks(parts);
 }
 
 // ---------------------------------------------------------------------------
@@ -8758,7 +8760,7 @@ pub function array_field_elem_is_ptr(ft: string, structs: parser.StructDecl[], m
 // The lists are merged across units at link; the struct world they resolve
 // against is shared, so a type appearing in two units yields one body.
 pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var mr_types: string[] = collect_method_types(mod);
     // #4355: replaced-STRING-field admission — the wasm IR driver is
     // single-module whole-program, so mod.funcs is the full read scope
@@ -8772,12 +8774,12 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // registered field is buffer-only-freed (its elements are raw code addresses).
     var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
     while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, fpk);
+        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, fpk));
         frti = frti + 1;
     }
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
-        out = out + emit_wasm_struct_drop_body(sdt[sdti], mod.structs, mr_types, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk);
+        parts = parts.append(emit_wasm_struct_drop_body(sdt[sdti], mod.structs, mr_types, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk));
         sdti = sdti + 1;
     }
     // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
@@ -8786,10 +8788,10 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // struct_drop_types already added each E so $__struct_drop_<E> exists).
     var aeti: i32 = 0;
     while (aeti < aet.len()) {
-        out = out + emit_wasm_struct_arr_elems_drop_body(aet[aeti], mod.structs, mr_types);
+        parts = parts.append(emit_wasm_struct_arr_elems_drop_body(aet[aeti], mod.structs, mr_types));
         aeti = aeti + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // emit_ir_rc_bodies is the single-unit case: derive the three type lists from
@@ -9861,7 +9863,7 @@ pub function extern_canon_record_size_nested(mod: parser.Module, tn: string): i3
 // The single local per depth is safe across siblings: a child's pointer is stored
 // into its parent before the next sibling at that depth overwrites the local.
 pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, canon_base: i32, depth: i32, slot: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var nf: i32 = struct_field_count(mod.structs, tn);
     var rc: i32 = 0;
     while (rc < nf) {
@@ -9869,18 +9871,18 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
         var coff: i32 = canon_base + extern_canon_top_off(mod, tn, rc);
         var foff: string = util.i32_to_string(xbox_field_off(slot, rc));
         if (extern_field_is_scalar(rcft)) {
-            out = out + "    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n";
+            parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n");
         } else {
             var inner_local: string = "$inner" + util.i32_to_string(depth);
             var inf: i32 = struct_field_count(mod.structs, rcft);
-            out = out + "    (local.set " + inner_local + " (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, inf, false)) + ")))\n";
-            out = out + "    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(mod.structs, rcft)) + "))\n";
-            out = out + extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1, slot);
-            out = out + "    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (local.get " + inner_local + "))\n";
+            parts = parts.append("    (local.set " + inner_local + " (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, inf, false)) + ")))\n");
+            parts = parts.append("    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(mod.structs, rcft)) + "))\n");
+            parts = parts.append(extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1, slot));
+            parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (local.get " + inner_local + "))\n");
         }
         rc = rc + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // extern_emit_record_param_leaves emits the flattened scalar leaves of a record
@@ -9892,20 +9894,20 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
 // depth. (The base sub-expression is re-evaluated per leaf, matching the one-level
 // shape this generalizes; the redundant inner-pointer loads are cheap.)
 pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string, slot: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var n: i32 = struct_field_count(mod.structs, tn);
     var fi: i32 = 0;
     while (fi < n) {
         var ft: string = struct_field_type_at(mod.structs, tn, fi);
         var field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(slot, fi)) + "))";
         if (extern_field_is_scalar(ft)) {
-            out = out + " (" + extern_field_load_op(ft) + " " + field_expr + ")";
+            parts = parts.append(" (" + extern_field_load_op(ft) + " " + field_expr + ")");
         } else {
-            out = out + extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft, slot);
+            parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft, slot));
         }
         fi = fi + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // struct_field_type_at returns the declared type of field `idx` in struct `tn`
@@ -10030,7 +10032,7 @@ pub function extern_needs_wrapper(mod: parser.Module, f: parser.FuncDecl, slot: 
 }
 
 pub function extern_imports(mod: parser.Module, slot: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
@@ -10039,83 +10041,83 @@ pub function extern_imports(mod: parser.Module, slot: i32): string {
                 // The raw import is named $name__import; the Fern $name resolves
                 // to the wrapper (see extern_wrappers). Each string param
                 // lowers to (ptr, len) = 2 i32s.
-                out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name + "__import";
+                parts = parts.append("  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name + "__import");
                 var sp: i32 = 0;
                 while (sp < f.params.len()) {
                     if (f.params[sp].type_name == "string" || extern_array_param_supported(f.params[sp].type_name) || extern_byte_array_param(f.params[sp].type_name)) {
                         // string / list<T> / list<u8>: canonical (ptr, len) = 2 i32s.
-                        out = out + " (param i32) (param i32)";
+                        parts = parts.append(" (param i32) (param i32)");
                     } else if (extern_record_param_supported(mod, f.params[sp].type_name)) {
                         // record: flattens to one i32 per leaf (recursing one
                         // level into a nested record field).
                         var rn: i32 = 0;
                         while (rn < extern_record_leaf_count(mod, f.params[sp].type_name)) {
-                            out = out + " (param i32)";
+                            parts = parts.append(" (param i32)");
                             rn = rn + 1;
                         }
                     } else if (extern_sum_param_supported(f.params[sp].type_name)) {
                         // option/result: flattens to (disc, payload) = 2 i32s.
-                        out = out + " (param i32) (param i32)";
+                        parts = parts.append(" (param i32) (param i32)");
                     } else if (extern_tuple_param_supported(f.params[sp].type_name)) {
                         // tuple: flattens to one i32 per element.
                         var tn: i32 = 0;
                         while (tn < tuple_type_elem_count(f.params[sp].type_name)) {
-                            out = out + " (param i32)";
+                            parts = parts.append(" (param i32)");
                             tn = tn + 1;
                         }
                     } else if (extern_plain_enum_param(mod, f.params[sp].type_name)) {
                         // WIT enum: flattens to a single i32 discriminant.
-                        out = out + " (param i32)";
+                        parts = parts.append(" (param i32)");
                     } else if (extern_variant_param_supported(mod, f.params[sp].type_name)) {
                         // variant: flattens to (disc:i32, payload-join). A multi-
                         // field variant joins to SlotCount i32 slots; otherwise the
                         // join is i64 (mixed-width / 64-bit-bearing) or i32.
-                        out = out + " (param i32)";
+                        parts = parts.append(" (param i32)");
                         if (extern_variant_is_multifield(mod, f.params[sp].type_name)) {
                             var sc: i32 = extern_variant_max_fields(mod, f.params[sp].type_name);
                             var si: i32 = 0;
-                            while (si < sc) { out = out + " (param i32)"; si = si + 1; }
+                            while (si < sc) { parts = parts.append(" (param i32)"); si = si + 1; }
                         } else if (extern_variant_is_uniform_f64(mod, f.params[sp].type_name)) {
-                            out = out + " (param f64)";
+                            parts = parts.append(" (param f64)");
                         } else if (extern_variant_join_is64(mod, f.params[sp].type_name)) {
-                            out = out + " (param i64)";
+                            parts = parts.append(" (param i64)");
                         } else {
-                            out = out + " (param i32)";
+                            parts = parts.append(" (param i32)");
                         }
                     } else {
-                        out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
+                        parts = parts.append(" (param " + wat_extern_valtype(f.params[sp].type_name) + ")");
                     }
                     sp = sp + 1;
                 }
                 if (extern_record_ret_direct(mod, f.ret_type)) {
                     // Single-field record result: returned by value (all
                     // self-host record fields are i32), no return area.
-                    out = out + " (result i32)))\n";
+                    parts = parts.append(" (result i32)))\n");
                 } else if (is_extern_composite_ret(mod, f.ret_type)) {
                     // Composite result: trailing return-area pointer, no result.
-                    out = out + " (param i32)))\n";
+                    parts = parts.append(" (param i32)))\n");
                 } else {
                     if (returns_value(f.ret_type)) {
-                        out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+                        parts = parts.append(" (result " + wat_extern_valtype(f.ret_type) + ")");
                     }
-                    out = out + "))\n";
+                    parts = parts.append("))\n");
                 }
             } else {
-                out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name;
+                parts = parts.append("  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name);
                 var p: i32 = 0;
                 while (p < f.params.len()) {
-                    out = out + " (param " + wat_extern_valtype(f.params[p].type_name) + ")";
+                    parts = parts.append(" (param " + wat_extern_valtype(f.params[p].type_name) + ")");
                     p = p + 1;
                 }
                 if (returns_value(f.ret_type)) {
-                    out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+                    parts = parts.append(" (result " + wat_extern_valtype(f.ret_type) + ")");
                 }
-                out = out + "))\n";
+                parts = parts.append("))\n");
             }
         }
         i = i + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // extern_exports emits a core wasm export `iface#wit-name` for each `@export`
@@ -10417,7 +10419,7 @@ pub function export_needs_realloc(mod: parser.Module): boolean {
 }
 
 pub function extern_exports(mod: parser.Module, slot: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var i: i32 = 0;
     while (i < mod.exports.len()) {
         var x: parser.ExportBinding = mod.exports[i];
@@ -10436,14 +10438,14 @@ pub function extern_exports(mod: parser.Module, slot: i32): string {
             // result repacked into the [ptr,len] return area, a numeric-array
             // `list<T>` result copied into an aligned (ptr,len) return area) to
             // the Fern func.
-            out = out + build_export_wrapper(x.func_name, params, ret, slot);
-            out = out + "  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n";
+            parts = parts.append(build_export_wrapper(x.func_name, params, ret, slot));
+            parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n");
         } else {
-            out = out + "  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n";
+            parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n");
         }
         i = i + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // module_has_extern_composite_result is true when any `@import` extern returns a
@@ -10487,7 +10489,7 @@ pub function module_needs_extern_wrappers(mod: parser.Module, slot: i32): boolea
 // the host (data_ptr, len) bytes into a self-host string (`[len][bytes]`) or a
 // u8[] (`[len@0]` header, elements at +8 with 4-byte slots).
 pub function extern_wrappers(mod: parser.Module, slot: i32): string {
-    var out: string = "";
+    var parts: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
@@ -10500,14 +10502,14 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             // first (a list<T> data pointer must be aligned). Scalars pass
             // through. Result is scalar/void (a composite result alongside a
             // memory param is not supported yet).
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var pp: i32 = 0;
             while (pp < f.params.len()) {
                 var ppn: string = "$ep" + util.i32_to_string(pp);
                 if (f.params[pp].type_name == "string" || extern_array_param_supported(f.params[pp].type_name) || extern_byte_array_param(f.params[pp].type_name) || extern_record_param_supported(mod, f.params[pp].type_name) || extern_sum_param_supported(f.params[pp].type_name) || extern_tuple_param_supported(f.params[pp].type_name) || extern_plain_enum_param(mod, f.params[pp].type_name) || extern_variant_param_supported(mod, f.params[pp].type_name)) {
-                    out = out + " (param " + ppn + " i32)";
+                    parts = parts.append(" (param " + ppn + " i32)");
                 } else {
-                    out = out + " (param " + ppn + " " + wat_extern_valtype(f.params[pp].type_name) + ")";
+                    parts = parts.append(" (param " + ppn + " " + wat_extern_valtype(f.params[pp].type_name) + ")");
                 }
                 pp = pp + 1;
             }
@@ -10515,22 +10517,22 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             // extern_needs_wrapper for why the convention demands it.
             var void_shim: boolean = slot >= 8 && !returns_value(f.ret_type);
             if (returns_value(f.ret_type)) {
-                out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+                parts = parts.append(" (result " + wat_extern_valtype(f.ret_type) + ")");
             } else if (void_shim) {
-                out = out + " (result i32)";
+                parts = parts.append(" (result i32)");
             }
-            out = out + "\n";
+            parts = parts.append("\n");
             // Locals: a buffer per array param + a shared loop counter / len.
             var na: i32 = 0;
             var qi: i32 = 0;
             while (qi < f.params.len()) {
                 if (extern_array_param_supported(f.params[qi].type_name) || extern_byte_array_param(f.params[qi].type_name)) {
-                    out = out + "    (local $ab" + util.i32_to_string(qi) + " i32)\n";
+                    parts = parts.append("    (local $ab" + util.i32_to_string(qi) + " i32)\n");
                     na = na + 1;
                 }
                 qi = qi + 1;
             }
-            if (na > 0) { out = out + "    (local $ai i32) (local $an i32)\n"; }
+            if (na > 0) { parts = parts.append("    (local $ai i32) (local $an i32)\n"); }
             // Copy each array param into an 8-aligned buffer before the call.
             var ci: i32 = 0;
             while (ci < f.params.len()) {
@@ -10541,14 +10543,14 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                     var k: str = tn[0:tn.len() - 2];
                     var ss: string = util.i32_to_string(elem_slot_size(k));
                     var lbl: string = util.i32_to_string(ci);
-                    out = out + "    (local.set $an (i32.load (local.get " + cppn + ")))\n";
-                    out = out + "    (local.set " + bn + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get $an) (i32.const " + ss + "))) (i32.const 7)) (i32.const -8)))\n";
-                    out = out + "    (local.set $ai (i32.const 0))\n";
-                    out = out + "    (block $d" + lbl + " (loop $c" + lbl + "\n";
-                    out = out + "      (br_if $d" + lbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n";
-                    out = out + "      (" + elem_store_op(k) + " (i32.add (local.get " + bn + ") (i32.mul (local.get $ai) (i32.const " + ss + "))) (" + elem_load_op(k) + " (i32.add (i32.add (local.get " + cppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const " + ss + ")))))\n";
-                    out = out + "      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n";
-                    out = out + "      (br $c" + lbl + ")))\n";
+                    parts = parts.append("    (local.set $an (i32.load (local.get " + cppn + ")))\n");
+                    parts = parts.append("    (local.set " + bn + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get $an) (i32.const " + ss + "))) (i32.const 7)) (i32.const -8)))\n");
+                    parts = parts.append("    (local.set $ai (i32.const 0))\n");
+                    parts = parts.append("    (block $d" + lbl + " (loop $c" + lbl + "\n");
+                    parts = parts.append("      (br_if $d" + lbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
+                    parts = parts.append("      (" + elem_store_op(k) + " (i32.add (local.get " + bn + ") (i32.mul (local.get $ai) (i32.const " + ss + "))) (" + elem_load_op(k) + " (i32.add (i32.add (local.get " + cppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const " + ss + ")))))\n");
+                    parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
+                    parts = parts.append("      (br $c" + lbl + ")))\n");
                 } else if (extern_byte_array_param(f.params[ci].type_name)) {
                     // u8[] / boolean[]: repack one byte per element into a
                     // `len`-byte buffer. Source elements live in 4-byte slots at
@@ -10557,32 +10559,32 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                     var ucppn: string = "$ep" + util.i32_to_string(ci);
                     var ubn: string = "$ab" + util.i32_to_string(ci);
                     var ulbl: string = util.i32_to_string(ci);
-                    out = out + "    (local.set $an (i32.load (local.get " + ucppn + ")))\n";
-                    out = out + "    (local.set " + ubn + " (call $__fern_alloc (local.get $an)))\n";
-                    out = out + "    (local.set $ai (i32.const 0))\n";
-                    out = out + "    (block $d" + ulbl + " (loop $c" + ulbl + "\n";
-                    out = out + "      (br_if $d" + ulbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n";
-                    out = out + "      (i32.store8 (i32.add (local.get " + ubn + ") (local.get $ai)) (i32.load (i32.add (i32.add (local.get " + ucppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const 4)))))\n";
-                    out = out + "      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n";
-                    out = out + "      (br $c" + ulbl + ")))\n";
+                    parts = parts.append("    (local.set $an (i32.load (local.get " + ucppn + ")))\n");
+                    parts = parts.append("    (local.set " + ubn + " (call $__fern_alloc (local.get $an)))\n");
+                    parts = parts.append("    (local.set $ai (i32.const 0))\n");
+                    parts = parts.append("    (block $d" + ulbl + " (loop $c" + ulbl + "\n");
+                    parts = parts.append("      (br_if $d" + ulbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
+                    parts = parts.append("      (i32.store8 (i32.add (local.get " + ubn + ") (local.get $ai)) (i32.load (i32.add (i32.add (local.get " + ucppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const 4)))))\n");
+                    parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
+                    parts = parts.append("      (br $c" + ulbl + ")))\n");
                 }
                 ci = ci + 1;
             }
             // Call with each param forwarded to its canonical shape.
-            out = out + "    (call $" + f.name + "__import";
+            parts = parts.append("    (call $" + f.name + "__import");
             var fi: i32 = 0;
             while (fi < f.params.len()) {
                 var fppn: string = "$ep" + util.i32_to_string(fi);
                 if (f.params[fi].type_name == "string") {
-                    out = out + " (i32.add (local.get " + fppn + ") (i32.const 4)) (i32.load (local.get " + fppn + "))";
+                    parts = parts.append(" (i32.add (local.get " + fppn + ") (i32.const 4)) (i32.load (local.get " + fppn + "))");
                 } else if (extern_array_param_supported(f.params[fi].type_name) || extern_byte_array_param(f.params[fi].type_name)) {
-                    out = out + " (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
+                    parts = parts.append(" (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))");
                 } else if (extern_record_param_supported(mod, f.params[fi].type_name)) {
                     // record: push each leaf flattened to its canonical i32 (a
                     // width+sign-aware load for sub-word fields), recursing into
                     // nested record fields to arbitrary depth (deref the inner
                     // value pointer, then its leaves).
-                    out = out + extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", f.params[fi].type_name, slot);
+                    parts = parts.append(extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", f.params[fi].type_name, slot));
                 } else if (extern_sum_param_supported(f.params[fi].type_name)) {
                     // option/result: push the discriminant (tag@0, remapped
                     // 1-tag for option) then the payload (@4).
@@ -10594,24 +10596,24 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                     // gate here admits only i32/u32 payloads). Only the
                     // ALLOCATION differs; see the sum-result branch.
                     if (extern_sum_param_is_option(f.params[fi].type_name)) {
-                        out = out + " (i32.sub (i32.const 1) (i32.load (local.get " + fppn + ")))";
+                        parts = parts.append(" (i32.sub (i32.const 1) (i32.load (local.get " + fppn + ")))");
                     } else {
-                        out = out + " (i32.load (local.get " + fppn + "))";
+                        parts = parts.append(" (i32.load (local.get " + fppn + "))");
                     }
-                    out = out + " (i32.load offset=4 (local.get " + fppn + "))";
+                    parts = parts.append(" (i32.load offset=4 (local.get " + fppn + "))");
                 } else if (extern_tuple_param_supported(f.params[fi].type_name)) {
                     // tuple: push each i32 element (element i @ i*slot, no header
                     // — a tuple box has no id word, so the stride is the slot
                     // width without the +1 a struct/variant box carries).
                     var tfi: i32 = 0;
                     while (tfi < tuple_type_elem_count(f.params[fi].type_name)) {
-                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(tfi * slot) + ")))";
+                        parts = parts.append(" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(tfi * slot) + ")))");
                         tfi = tfi + 1;
                     }
                 } else if (extern_plain_enum_param(mod, f.params[fi].type_name)) {
                     // WIT enum: push the discriminant (variant index), mapped
                     // from the value's [struct_id@0] via a select-chain.
-                    out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
+                    parts = parts.append(" " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn));
                 } else if (extern_variant_param_supported(mod, f.params[fi].type_name)) {
                     // variant: push the disc (struct_id → variant index) then the
                     // payload-join. A multi-field variant pushes SlotCount i32 slots
@@ -10619,57 +10621,57 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                     // join (mixed-width) coerces each arm to i64 via a disc-branch;
                     // else the single i32 payload at xbox_field_off(slot, 0). For a
                     // payloadless-case value the payload read is ignored garbage.
-                    out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
+                    parts = parts.append(" " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn));
                     if (extern_variant_is_multifield(mod, f.params[fi].type_name)) {
                         var msc: i32 = extern_variant_max_fields(mod, f.params[fi].type_name);
                         var msi: i32 = 0;
                         while (msi < msc) {
-                            out = out + " " + extern_variant_multifield_slot(mod, f.params[fi].type_name, msi, fppn, slot);
+                            parts = parts.append(" " + extern_variant_multifield_slot(mod, f.params[fi].type_name, msi, fppn, slot));
                             msi = msi + 1;
                         }
                     } else if (extern_variant_is_uniform_f64(mod, f.params[fi].type_name)) {
                         // uniform f64: push the box's f64 payload directly.
-                        out = out + " (f64.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))";
+                        parts = parts.append(" (f64.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))");
                     } else if (extern_variant_join_is64(mod, f.params[fi].type_name)) {
-                        out = out + " " + extern_variant_payload_join_i64(mod, f.params[fi].type_name, fppn, slot);
+                        parts = parts.append(" " + extern_variant_payload_join_i64(mod, f.params[fi].type_name, fppn, slot));
                     } else if (extern_variant_has_f32_arm(mod, f.params[fi].type_name)) {
                         // i32 join with an f32 arm (S2, #5327): per-arm bridge —
                         // the f32 arm's payload sits in the box as an f64.
-                        out = out + " " + extern_variant_payload_join_i32_f32(mod, f.params[fi].type_name, fppn, slot);
+                        parts = parts.append(" " + extern_variant_payload_join_i32_f32(mod, f.params[fi].type_name, fppn, slot));
                     } else {
-                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))";
+                        parts = parts.append(" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))");
                     }
                 } else {
-                    out = out + " (local.get " + fppn + ")";
+                    parts = parts.append(" (local.get " + fppn + ")");
                 }
                 fi = fi + 1;
             }
-            out = out + ")";
-            if (void_shim) { out = out + "\n    (i32.const 0)"; }
-            out = out + ")\n";
+            parts = parts.append(")");
+            if (void_shim) { parts = parts.append("\n    (i32.const 0)"); }
+            parts = parts.append(")\n");
         } else if (f.import_iface.len() > 0 && extern_record_ret_direct(mod, f.ret_type)) {
             // single-field record result (P4c): returned by value (one i32),
             // no return area. The wrapper materializes the one-field self-host
             // struct (type-id@0, field@+4) from the import's i32 result.
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var dp: i32 = 0;
             while (dp < f.params.len()) {
-                out = out + " (param $ep" + util.i32_to_string(dp) + " " + wat_extern_valtype(f.params[dp].type_name) + ")";
+                parts = parts.append(" (param $ep" + util.i32_to_string(dp) + " " + wat_extern_valtype(f.params[dp].type_name) + ")");
                 dp = dp + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (local $s i32)\n";
-            out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n";
-            out = out + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (local $s i32)\n");
+            parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n");
+            parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n");
             // field @ xbox_field_off(slot, 0) = the import's by-value i32 result.
-            out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")) (call $" + f.name + "__import";
+            parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")) (call $" + f.name + "__import");
             var da: i32 = 0;
             while (da < f.params.len()) {
-                out = out + " (local.get $ep" + util.i32_to_string(da) + ")";
+                parts = parts.append(" (local.get $ep" + util.i32_to_string(da) + ")");
                 da = da + 1;
             }
-            out = out + "))\n";
-            out = out + "    (local.get $s))\n";
+            parts = parts.append("))\n");
+            parts = parts.append("    (local.get $s))\n");
         } else if (f.import_iface.len() > 0 && extern_record_result_supported(mod, f.ret_type)) {
             // record result (P4c): a multi-field record returns indirectly; the
             // host writes the fields into the return area at the canonical memory
@@ -10683,95 +10685,95 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             var nf: i32 = struct_field_count(mod.structs, f.ret_type);
             var canonsz: i32 = extern_canon_record_size_nested(mod, f.ret_type);
             var maxdepth: i32 = extern_record_depth(mod, f.ret_type);
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var rp: i32 = 0;
             while (rp < f.params.len()) {
-                out = out + " (param $ep" + util.i32_to_string(rp) + " " + wat_extern_valtype(f.params[rp].type_name) + ")";
+                parts = parts.append(" (param $ep" + util.i32_to_string(rp) + " " + wat_extern_valtype(f.params[rp].type_name) + ")");
                 rp = rp + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (local $rb i32) (local $s i32)";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (local $rb i32) (local $s i32)");
             // One scratch local per nesting level for the inner structs.
             var dl: i32 = 0;
             while (dl < maxdepth) {
-                out = out + " (local $inner" + util.i32_to_string(dl) + " i32)";
+                parts = parts.append(" (local $inner" + util.i32_to_string(dl) + " i32)");
                 dl = dl + 1;
             }
-            out = out + "\n";
+            parts = parts.append("\n");
             // Return area: canonical size, 8-aligned. Over-allocate by 7 so the
             // aligned pointer + area stays within the reserved block (the heap
             // bump isn't aligned, so the next alloc would otherwise overlap).
-            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(canonsz + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
-            out = out + "    (call $" + f.name + "__import";
+            parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(canonsz + 7) + ")) (i32.const 7)) (i32.const -8)))\n");
+            parts = parts.append("    (call $" + f.name + "__import");
             var ra: i32 = 0;
             while (ra < f.params.len()) {
-                out = out + " (local.get $ep" + util.i32_to_string(ra) + ")";
+                parts = parts.append(" (local.get $ep" + util.i32_to_string(ra) + ")");
                 ra = ra + 1;
             }
-            out = out + " (local.get $rb))\n";
+            parts = parts.append(" (local.get $rb))\n");
             // Materialize the struct: type id at slot 0, then fill each field
             // (scalar or nested) recursively from the inlined canonical area.
-            out = out + "    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, nf, false)) + ")))\n";
-            out = out + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
-            out = out + extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0, slot);
-            out = out + "    (local.get $s))\n";
+            parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, nf, false)) + ")))\n");
+            parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n");
+            parts = parts.append(extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0, slot));
+            parts = parts.append("    (local.get $s))\n");
         } else if (f.import_iface.len() > 0 && extern_sum_param_supported(f.ret_type)) {
             // option/result result (P4c): flattens to (disc, payload), returned
             // indirectly (disc:u8 @0, payload:i32 @4). The wrapper materializes
             // a self-host enum box [tag:i32 @0][payload @4], remapping the
             // discriminant back (1-disc for option).
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var sp2: i32 = 0;
             while (sp2 < f.params.len()) {
-                out = out + " (param $ep" + util.i32_to_string(sp2) + " " + wat_extern_valtype(f.params[sp2].type_name) + ")";
+                parts = parts.append(" (param $ep" + util.i32_to_string(sp2) + " " + wat_extern_valtype(f.params[sp2].type_name) + ")");
                 sp2 = sp2 + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (local $rb i32) (local $s i32)\n";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (local $rb i32) (local $s i32)\n");
             // Return area: disc:u8 @0, payload @4 (8 bytes), 8-aligned with slack.
-            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n";
-            out = out + "    (call $" + f.name + "__import";
+            parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n");
+            parts = parts.append("    (call $" + f.name + "__import");
             var sa: i32 = 0;
             while (sa < f.params.len()) {
-                out = out + " (local.get $ep" + util.i32_to_string(sa) + ")";
+                parts = parts.append(" (local.get $ep" + util.i32_to_string(sa) + ")");
                 sa = sa + 1;
             }
-            out = out + " (local.get $rb))\n";
+            parts = parts.append(" (local.get $rb))\n");
             // Materialize the sum box: tag (remapped) @0, payload @4, 8 bytes —
             // the same geometry for both consumers (see the sum-param push).
             // Only the allocation is consumer-dependent: the IR consumer's own
             // sums are rc-headered through $__fern_str_box.
-            out = out + "    (local.set $s " + xbox_new(slot, 8) + ")\n";
+            parts = parts.append("    (local.set $s " + xbox_new(slot, 8) + ")\n");
             if (extern_sum_param_is_option(f.ret_type)) {
-                out = out + "    (i32.store (local.get $s) (i32.sub (i32.const 1) (i32.load8_u (local.get $rb))))\n";
+                parts = parts.append("    (i32.store (local.get $s) (i32.sub (i32.const 1) (i32.load8_u (local.get $rb))))\n");
             } else {
-                out = out + "    (i32.store (local.get $s) (i32.load8_u (local.get $rb)))\n";
+                parts = parts.append("    (i32.store (local.get $s) (i32.load8_u (local.get $rb)))\n");
             }
-            out = out + "    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
-            out = out + "    (local.get $s))\n";
+            parts = parts.append("    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n");
+            parts = parts.append("    (local.get $s))\n");
         } else if (f.import_iface.len() > 0 && extern_plain_enum_param(mod, f.ret_type)) {
             // WIT enum result: the import returns a single i32 discriminant; the
             // wrapper materializes the Fern payloadless enum value by mapping the
             // disc to the matching variant's struct_id and storing it in a fresh
             // `[struct_id@0]` box (the same shape a bare `Green` produces).
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var enp: i32 = 0;
             while (enp < f.params.len()) {
-                out = out + " (param $ep" + util.i32_to_string(enp) + " " + wat_extern_valtype(f.params[enp].type_name) + ")";
+                parts = parts.append(" (param $ep" + util.i32_to_string(enp) + " " + wat_extern_valtype(f.params[enp].type_name) + ")");
                 enp = enp + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (local $d i32) (local $s i32)\n";
-            out = out + "    (local.set $d (call $" + f.name + "__import";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (local $d i32) (local $s i32)\n");
+            parts = parts.append("    (local.set $d (call $" + f.name + "__import");
             var ena: i32 = 0;
             while (ena < f.params.len()) {
-                out = out + " (local.get $ep" + util.i32_to_string(ena) + ")";
+                parts = parts.append(" (local.get $ep" + util.i32_to_string(ena) + ")");
                 ena = ena + 1;
             }
-            out = out + "))\n";
-            out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 0, false)) + ")\n";
-            out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
-            out = out + "    (local.get $s))\n";
+            parts = parts.append("))\n");
+            parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 0, false)) + ")\n");
+            parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+            parts = parts.append("    (local.get $s))\n");
         } else if (f.import_iface.len() > 0 && extern_variant_result_supported(mod, f.ret_type)) {
             // variant result: returned indirectly. The canonical variant memory
             // layout is disc:u8 @0 then the payload aligned to the join width — @4
@@ -10784,32 +10786,32 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             var vj64: boolean = extern_variant_join_is64(mod, f.ret_type);
             var vmf: boolean = extern_variant_is_multifield(mod, f.ret_type);
             var vsc: i32 = extern_variant_max_fields(mod, f.ret_type);
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var vrp: i32 = 0;
             while (vrp < f.params.len()) {
-                out = out + " (param $ep" + util.i32_to_string(vrp) + " " + wat_extern_valtype(f.params[vrp].type_name) + ")";
+                parts = parts.append(" (param $ep" + util.i32_to_string(vrp) + " " + wat_extern_valtype(f.params[vrp].type_name) + ")");
                 vrp = vrp + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (local $rb i32) (local $d i32) (local $s i32)\n";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (local $rb i32) (local $d i32) (local $s i32)\n");
             // Return area, 8-aligned with slack: i32 join needs 8 usable bytes
             // (payload @4), i64 join 16 (payload @8), a multi-field join 4 +
             // SlotCount*4 (slots @4,8,…) — over-alloc by 7 to align.
             if (vmf) {
-                out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(4 + vsc * 4 + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
+                parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(4 + vsc * 4 + 7) + ")) (i32.const 7)) (i32.const -8)))\n");
             } else if (vj64) {
-                out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 23)) (i32.const 7)) (i32.const -8)))\n";
+                parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 23)) (i32.const 7)) (i32.const -8)))\n");
             } else {
-                out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n";
+                parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n");
             }
-            out = out + "    (call $" + f.name + "__import";
+            parts = parts.append("    (call $" + f.name + "__import");
             var vra: i32 = 0;
             while (vra < f.params.len()) {
-                out = out + " (local.get $ep" + util.i32_to_string(vra) + ")";
+                parts = parts.append(" (local.get $ep" + util.i32_to_string(vra) + ")");
                 vra = vra + 1;
             }
-            out = out + " (local.get $rb))\n";
-            out = out + "    (local.set $d (i32.load8_u (local.get $rb)))\n";
+            parts = parts.append(" (local.get $rb))\n");
+            parts = parts.append("    (local.set $d (i32.load8_u (local.get $rb)))\n");
             // Materialize [struct_id@0][payload in slot 1] (struct_id mapped from
             // disc); box sized for the join by xbox_bytes — `wide` for an 8-byte
             // payload, SlotCount slots for a multi-field one.
@@ -10819,123 +10821,123 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                 // into the box's field j (@xbox_field_off(slot, j)). The return area
                 // is sized for the widest arm, so reading all slots is in-bounds; a
                 // match on a shorter arm reads only its own fields.
-                out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, vsc, false)) + ")\n";
-                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
+                parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, vsc, false)) + ")\n");
+                parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
                 var cj: i32 = 0;
                 while (cj < vsc) {
-                    out = out + "    (i32.store offset=" + util.i32_to_string(xbox_field_off(slot, cj)) + " (local.get $s) (i32.load offset=" + util.i32_to_string(4 + cj * 4) + " (local.get $rb)))\n";
+                    parts = parts.append("    (i32.store offset=" + util.i32_to_string(xbox_field_off(slot, cj)) + " (local.get $s) (i32.load offset=" + util.i32_to_string(4 + cj * 4) + " (local.get $rb)))\n");
                     cj = cj + 1;
                 }
             } else if (extern_variant_is_uniform_f64(mod, f.ret_type)) {
                 // uniform f64: the return area packs the f64 payload @8 (8-aligned);
                 // store it into the box's payload slot as an f64. Checked before
                 // vj64 (which also fires for an f64 arm).
-                out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n";
-                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
-                out = out + "    (f64.store offset=" + poff + " (local.get $s) (f64.load offset=8 (local.get $rb)))\n";
+                parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n");
+                parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+                parts = parts.append("    (f64.store offset=" + poff + " (local.get $s) (f64.load offset=8 (local.get $rb)))\n");
             } else if (vj64) {
-                out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n";
-                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
-                out = out + "    (i64.store offset=" + poff + " (local.get $s) (i64.load offset=8 (local.get $rb)))\n";
+                parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n");
+                parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+                parts = parts.append("    (i64.store offset=" + poff + " (local.get $s) (i64.load offset=8 (local.get $rb)))\n");
             } else if (extern_variant_has_f32_arm(mod, f.ret_type)) {
                 // i32 join with an f32 arm (S2, #5327): the host's payload slot
                 // carries the f32's raw bits @4. The box stores an f32 payload
                 // widened to f64 (S1), so the store is branched per-arm on the
                 // disc: the f32 arm bridges bits → f32 → f64 into a wide-payload
                 // box; every other arm keeps the plain i32 copy.
-                out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n";
-                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
-                out = out + "    " + extern_variant_result_store_f32(mod, f.ret_type, slot) + "\n";
+                parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, true)) + ")\n");
+                parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+                parts = parts.append("    " + extern_variant_result_store_f32(mod, f.ret_type, slot) + "\n");
             } else {
-                out = out + "    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n";
-                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
-                out = out + "    (i32.store offset=" + poff + " (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
+                parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n");
+                parts = parts.append("    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n");
+                parts = parts.append("    (i32.store offset=" + poff + " (local.get $s) (i32.load offset=4 (local.get $rb)))\n");
             }
-            out = out + "    (local.get $s))\n";
+            parts = parts.append("    (local.get $s))\n");
         } else if (f.import_iface.len() > 0 && is_extern_composite_ret(mod, f.ret_type)) {
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var args: string = "";
             var p: i32 = 0;
             while (p < f.params.len()) {
                 var pn: string = "$ep" + util.i32_to_string(p);
-                out = out + " (param " + pn + " " + wat_extern_valtype(f.params[p].type_name) + ")";
+                parts = parts.append(" (param " + pn + " " + wat_extern_valtype(f.params[p].type_name) + ")");
                 args = args + " (local.get " + pn + ")";
                 p = p + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (local $rb i32) (local $dp i32) (local $ln i32) (local $s i32) (local $i i32)\n";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (local $rb i32) (local $dp i32) (local $ln i32) (local $s i32) (local $i i32)\n");
             // The canonical return area for a list/string result must be
             // 4-byte aligned; __fern_alloc bumps without aligning, so over-
             // allocate and round up. 12 = 8-byte area + 3 bytes of slack.
-            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
-            out = out + "    (call $" + f.name + "__import" + args + " (local.get $rb))\n";
-            out = out + "    (local.set $dp (i32.load (local.get $rb)))\n";
-            out = out + "    (local.set $ln (i32.load offset=4 (local.get $rb)))\n";
+            parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n");
+            parts = parts.append("    (call $" + f.name + "__import" + args + " (local.get $rb))\n");
+            parts = parts.append("    (local.set $dp (i32.load (local.get $rb)))\n");
+            parts = parts.append("    (local.set $ln (i32.load offset=4 (local.get $rb)))\n");
             if (f.ret_type == "u8[]" || f.ret_type == "boolean[]") {
                 // u8[] / boolean[]: `[len@0]` header, elements packed into 4-byte
                 // slots at +8 (the self-host array layout — see elem_slot_size).
                 // Both store one byte per element, so expand each host byte into
                 // its slot (a boolean[] element is the canonical list<bool> byte,
                 // 0/1, the same shape as a list<u8> byte).
-                out = out + "    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const 4))))\n";
-                out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
-                out = out + "    (local.set $i (i32.const 0))\n";
-                out = out + "    (block $d (loop $c\n";
-                out = out + "      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n";
-                out = out + "      (i32.store (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n";
-                out = out + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-                out = out + "      (br $c)))\n";
-                out = out + "    (local.get $s))\n";
+                parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const 4))))\n");
+                parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
+                parts = parts.append("    (local.set $i (i32.const 0))\n");
+                parts = parts.append("    (block $d (loop $c\n");
+                parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
+                parts = parts.append("      (i32.store (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n");
+                parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+                parts = parts.append("      (br $c)))\n");
+                parts = parts.append("    (local.get $s))\n");
             } else if (extern_array_param_supported(f.ret_type)) {
                 // numeric array list<T>: the slot size equals the canonical
                 // element size, so copy each element straight into its slot at
                 // +8 (no byte-expansion as for u8[]).
                 var rk: str = f.ret_type[0:f.ret_type.len() - 2];
                 var rss: string = util.i32_to_string(elem_slot_size(rk));
-                out = out + "    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n";
-                out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
-                out = out + "    (local.set $i (i32.const 0))\n";
-                out = out + "    (block $d (loop $c\n";
-                out = out + "      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n";
-                out = out + "      (" + elem_store_op(rk) + " (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + "))) (" + elem_load_op(rk) + " (i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rss + ")))))\n";
-                out = out + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-                out = out + "      (br $c)))\n";
-                out = out + "    (local.get $s))\n";
+                parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n");
+                parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
+                parts = parts.append("    (local.set $i (i32.const 0))\n");
+                parts = parts.append("    (block $d (loop $c\n");
+                parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
+                parts = parts.append("      (" + elem_store_op(rk) + " (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + "))) (" + elem_load_op(rk) + " (i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rss + ")))))\n");
+                parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+                parts = parts.append("      (br $c)))\n");
+                parts = parts.append("    (local.get $s))\n");
             } else {
                 // string: `[len][bytes]` block.
-                out = out + "    (local.set $s " + xstr_new(slot, "(local.get $ln)") + ")\n";
-                out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
-                out = out + "    (local.set $i (i32.const 0))\n";
-                out = out + "    (block $d (loop $c\n";
-                out = out + "      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n";
-                out = out + "      (i32.store8 (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n";
-                out = out + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-                out = out + "      (br $c)))\n";
-                out = out + "    (local.get $s))\n";
+                parts = parts.append("    (local.set $s " + xstr_new(slot, "(local.get $ln)") + ")\n");
+                parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
+                parts = parts.append("    (local.set $i (i32.const 0))\n");
+                parts = parts.append("    (block $d (loop $c\n");
+                parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
+                parts = parts.append("      (i32.store8 (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n");
+                parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+                parts = parts.append("      (br $c)))\n");
+                parts = parts.append("    (local.get $s))\n");
             }
         } else if (f.import_iface.len() > 0 && slot >= 8 && !returns_value(f.ret_type)) {
             // Void extern, scalar params: nothing to marshal, so the wrapper
             // exists only to satisfy the IR consumer's "every Fern-callable
             // results i32" convention (see extern_needs_wrapper). Forward the
             // params straight through and push the promised 0.
-            out = out + "  (func $" + f.name;
+            parts = parts.append("  (func $" + f.name);
             var vp: i32 = 0;
             while (vp < f.params.len()) {
-                out = out + " (param $ep" + util.i32_to_string(vp) + " " + wat_extern_valtype(f.params[vp].type_name) + ")";
+                parts = parts.append(" (param $ep" + util.i32_to_string(vp) + " " + wat_extern_valtype(f.params[vp].type_name) + ")");
                 vp = vp + 1;
             }
-            out = out + " (result i32)\n";
-            out = out + "    (call $" + f.name + "__import";
+            parts = parts.append(" (result i32)\n");
+            parts = parts.append("    (call $" + f.name + "__import");
             var va: i32 = 0;
             while (va < f.params.len()) {
-                out = out + " (local.get $ep" + util.i32_to_string(va) + ")";
+                parts = parts.append(" (local.get $ep" + util.i32_to_string(va) + ")");
                 va = va + 1;
             }
-            out = out + ")\n    (i32.const 0))\n";
+            parts = parts.append(")\n    (i32.const 0))\n");
         }
         i = i + 1;
     }
-    return out;
+    return util.str_join_chunks(parts);
 }
 
 // struct_field_count returns the number of fields in struct `tn` (0 if
