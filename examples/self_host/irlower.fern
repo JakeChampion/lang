@@ -19076,6 +19076,34 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // bare ident in binding position outright. An aliased view is heap-boxed
             // like every other string.
             else if (slot_is_reclaimable_str(se, aid_slot)) { alias_inc = true; }
+            // A struct box. The gate is the CREDIT predicate, not a type test, and
+            // the difference is the whole of #7368: struct_type_of_slot is a
+            // type-NAME carrier, set for enum names, dyn tags, "clo", and the
+            // ELEMENT type of a struct/enum array — and, as the crash showed, left
+            // on slots holding plain scalars. `__fern_i32_to_string` binds the
+            // negated input, so for INT_MIN the slot held 0x80000000: non-zero,
+            // even, and above 0x10000, so it passed every __fern_rc_inc guard and
+            // dereferenced 0x7FFFFFF8.
+            //
+            // slot_is_reclaimable_struct answers the operational question instead —
+            // was this slot bound from a struct producer proven fresh and
+            // non-escaping — which no integer, enum or struct-array slot can earn,
+            // and which refuses a parameter and a "dyn " tag outright. That makes
+            // the retain and the credit the same set by construction, exactly as
+            // the string limb's slot_is_reclaimable_str does.
+            //
+            // DO NOT "HARDEN" __fern_rc_inc WITH A HEAP-BASE GUARD. It has only a
+            // null, tagged-immediate and <0x10000 check where __fern_str_free also
+            // compares against __fern_heap_base, and that asymmetry looks like an
+            // oversight. It is load-bearing: a scalar reaching rc_inc is a compiler
+            // bug, and the missing guard is what turns it into an immediate SIGSEGV
+            // instead of a silent no-op that corrupts eight bytes and returns. The
+            // guard would not have prevented #7368 either — it would have hidden it,
+            // and the class of defect that cannot make an instrument go red is
+            // exactly the one that costs the most to find later. Constants are
+            // already safe by a different mechanism: a static box carries a
+            // NEGATIVE rc sentinel, which rc_inc's `js` test declines.
+            else if (slot_is_reclaimable_struct(se, aid_slot)) { alias_inc = true; }
         },
         parser.ExprFieldAccess(sfa) => {
             // An ARRAY-OF-ARRAY field read (`var rows = a.xs`, xs: i32[][]): the
@@ -32163,25 +32191,28 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // `fresh` holds BINDING-SITE keys; every gate below asks about the
         // VARIABLE, so each takes the bare name back out of the key.
         var fnm: string = reclaim_site_name(fresh[i]);
-        // STRUCTS ARE NOT IN THIS CHANGE. The bind-side retain only fires for
-        // slot_is_rc_container (array / string / tuple); a struct slot is not in
-        // that predicate, and the clause that tried to add one keyed on
-        // `struct_type_of_slot`, which is ALSO set for enum names and dyn tags —
-        // so it retained values that are not rc box pointers and segfaulted six
-        // integer fixtures and both differential shards. The two halves are
-        // coupled: crediting the alias without the retain double-frees at rc 1
-        // (measured, exit 99), so the struct half leaves together.
-        if (!body_unsafe_for(body, fnm, borrowable, recv_borrow) && !reassigned_from_alias(body, fnm)
+        // #7282: a plain `var v: T = t` alias shares the box, so it shares the
+        // credit — and the bind retained it, gated on slot_is_reclaimable_struct
+        // so the retain and the credit are the same set.
+        //
+        // That gate is the CREDIT predicate rather than a type test, which is the
+        // whole of #7368. The reverted clause asked `struct_type_of_slot`, a
+        // type-NAME carrier that is also set for enum names, dyn tags, "clo", the
+        // ELEMENT type of a struct/enum array — and, as the crash showed, for
+        // slots holding plain SCALARS. `__fern_i32_to_string` binds the negated
+        // input, so on INT_MIN the slot held 0x80000000: non-zero, even, above
+        // 0x10000, past every __fern_rc_inc guard, dereferencing 0x7FFFFFF8.
+        var sal: string[] = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, []);
+        if (!body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal) && !reassigned_from_alias(body, fnm)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
             && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
             out = out.append(fresh[i]);
-            // (struct alias credits removed with the struct retain — see above)
-            // The alias shares the box, so it shares the credit — but a struct's
+            // THE ALIAS TAKES A BOX-ONLY RELEASE, NEVER THE DEEP ONE. A struct's
             // release is a DEEP FIELD DROP plus a box dec, and only the box was
-            // retained at the bind. Two deep drops would free every field buffer
-            // twice: measured as exit 99 on `var t: P = P { xs: [..] }; var v: P
-            // = t;`, with allocs == frees at live_bytes 0, so only the underflow
-            // counter dissented.
+            // retained at the bind. Two deep drops free every field buffer twice:
+            // measured as exit 99 on `var t: P = P { xs: [..] }; var v: P = t;`,
+            // with allocs == frees at live_bytes 0, so only the underflow counter
+            // dissented.
             //
             // "NODEEP:" is exactly the marker for "keep this slot's free BOX-ONLY"
             // (#3425), so the alias takes the box dec and the source keeps the one
@@ -32191,6 +32222,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // This is the per-type difference the array, tuple and string classes
             // do not have: their release IS the box dec, so sharing the credit
             // shares the whole release.
+            out = credit_alias_sites(out, "", sal);
+            out = credit_alias_sites(out, "NODEEP:", sal);
         }
         i = i + 1;
     }

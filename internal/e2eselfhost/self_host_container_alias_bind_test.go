@@ -90,20 +90,15 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 40, allocs: 100, frees: 100,
 		},
 		{
-			// STRUCT IS NOT IN THIS CHANGE, and this row pins that it is left
-			// leaking rather than half-fixed. The bind-side retain fires only for
-			// slot_is_rc_container (array / string / tuple); the clause that tried
-			// to add structs keyed on `struct_type_of_slot`, which is ALSO set for
-			// enum names and dyn tags, so it retained values that are not rc box
-			// pointers — six integer fixtures and both differential shards
-			// segfaulted, none of them touching a container alias.
-			//
-			// The two halves are coupled and must leave together: crediting the
-			// alias without the retain double-frees at rc 1 (measured, exit 99),
-			// which is a strictly worse state than the leak. So the row asserts
-			// the ORIGINAL leak and, more importantly, that it does not become an
-			// over-release while it waits.
-			name: "struct_alias_still_leaks",
+			// The struct limb, and the one class whose release is NOT the box dec:
+			// a struct is a DEEP FIELD DROP (__struct_drop_P) plus a box dec. Only
+			// the box was retained at the bind, so the alias carries "NODEEP:" and
+			// takes a box-only release while the source keeps the single field
+			// walk. Verified in the emitted asm: `round` gains exactly one rc_inc
+			// and exactly one __struct_drop_P. Two deep drops would free `xs`
+			// twice — measured as exit 99, with allocs == frees at live_bytes 0.
+			// Base: allocs=200 frees=0, 8000 live.
+			name: "struct_alias",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
     var t: P = P { xs: [i, i + 1] };
@@ -111,7 +106,187 @@ function round(i: i32): i32 {
     return v.xs[0] + v.xs[1];
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 200, frees: 0,
+			want: 40, allocs: 200, frees: 200,
+		},
+		{
+			// The fresh-RET-CALL producer, the other half of the struct credit's
+			// collector pair (collect_fresh_ret_call_names). Base: 200/0, 8000.
+			name: "struct_alias_fresh_call",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 {
+    var t: P = mk(i);
+    var v: P = t;
+    return v.xs[0] + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 200,
+		},
+		{
+			// The conditional alias — duplication rather than transfer, so the
+			// source is swept on the branch that took no alias. Base: 200/0, 8000.
+			name: "struct_alias_in_a_conditional",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 {
+    var t: P = mk(i);
+    if (i % 2 == 0) { var v: P = t; return v.xs[0] + i; }
+    return t.xs[0] + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 200,
+		},
+		{
+			// THE ROW THAT CARRIES THE MOST WEIGHT. 161 of the 173 struct alias
+			// binds in examples/self_host are PARAMETER-origin — 93% — so the
+			// refusal, not the credit, is what this change mostly does. A parameter
+			// is borrowed and owns nothing, and slot_is_reclaimable_struct refuses
+			// one at its first line. frees=0 is the status quo (t escapes into the
+			// call); the failure guarded against is that count staying 0 while the
+			// caller's box stops reaching zero.
+			name: "struct_alias_of_a_parameter_refused",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function take(p: P): i32 { var v: P = p; return v.xs[0]; }
+function round(i: i32): i32 { var t: P = mk(i); return take(t) + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 0,
+		},
+		{
+			// A RECEIVER source, which is a parameter by another spelling and is
+			// refused by the same first line. Distinct row because the origin axis
+			// (#7253) names it separately and the builder-threaded
+			// `s = s.method(..)` shape is the dominant one in this compiler.
+			name: "struct_alias_of_a_receiver_refused",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+pub function (p: P) first(): i32 { var v: P = p; return v.xs[0]; }
+function round(i: i32): i32 { var t: P = mk(i); return t.first() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 100,
+		},
+		{
+			// REFUSED: a reassigned alias does not hold the box the credit
+			// describes at exit (alias_bind_sites_of's body_assign_targets check).
+			name: "struct_alias_reassigned_refused",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 { var t: P = mk(i); var v: P = t; v = mk(i + 1); return v.xs[0] + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 40, allocs: 400, frees: 0,
+		},
+		{
+			// REFUSED, conservatively: in a chain `var v = t; var u = v;` the middle
+			// binding escapes as a bare ident, so it is not an eligible alias site
+			// and t keeps no credit either. It leaks rather than over-releasing, and
+			// is pinned so widening the alias set later has to face it deliberately.
+			name: "struct_alias_chain_refused",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 { var t: P = mk(i); var v: P = t; var u: P = v; return u.xs[0] + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 0,
+		},
+		{
+			// AN ENUM with an rc payload, aliased. Unchanged, and this is the row
+			// that pins the #7368 discrimination from the credit side: enum locals
+			// carry their enum NAME in the same struct_type field a type test would
+			// have read, but they earn "RCENUM:" / "SCENUMS:" rather than the struct
+			// credit, so slot_is_reclaimable_struct refuses them.
+			name: "enum_alias_unchanged",
+			src: `enum E { A(i32[]), B }
+function mke(i: i32): E { if (i % 2 == 0) { return E.A([i, i + 1]); } return E.B; }
+function round(i: i32): i32 { var e: E = mke(i); var f: E = e; var n: i32 = 0; match (f) { E.A(k) => { n = k[0]; }, E.B => { n = 1; } } return n; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 10, allocs: 150, frees: 0,
+		},
+		{
+			// A STRUCT ARRAY, aliased. Unchanged, and the second half of the same
+			// discrimination: mark_struct_type doubles as the ELEMENT-type slot for
+			// struct and enum arrays, so this slot carries "P" while holding a
+			// BUFFER. It earns "ARRSTRUCT:", never the bare struct credit.
+			name: "struct_array_alias_unchanged",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 { var ps: P[] = [mk(i)]; var qs: P[] = ps; return qs[0].xs[0] + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 300, frees: 100,
+		},
+		{
+			// A STRUCT-PATTERN `if let`, which is an alias site because its
+			// SCRUTINEE desugars to a bare-ident `var` bind of the local. Nothing
+			// in the source text looks like `var v = p`, which is why a regex over
+			// `var x: T = y;` counted zero creditable sites in conformance while
+			// if_let_pattern_forms had two.
+			//
+			// This row exists because the emit-hash sweep FALSIFIED that
+			// prediction. Bisecting the fixture: this shape moves 100/0 -> 100/100
+			// (rc_inc 0 -> 1, arr_dec 0 -> 4), and so does the `..` rest form.
+			name: "struct_if_let_destructure_alias",
+			src: `struct P { x: i32, y: i32 }
+function round(i: i32): i32 {
+    var total: i32 = 0;
+    var p: P = P { x: 3 + i, y: 4 + i };
+    if let P { x, y } = p { total = total + x + y; }
+    return total;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 59, allocs: 100, frees: 100,
+		},
+		{
+			// The AS-PATTERN form of the same statement. It STILL LEAKS, and the
+			// name says so: this is an unfixed alias site, not a correct refusal.
+			//
+			// `w @ P { .. }` binds w to the whole scrutinee, so by the rule that
+			// governs every other row here it IS an alias site. It is not credited
+			// because build_struct_match caches the scrutinee first —
+			//     var __sm.._v = p;      <- alias level 1
+			//     var w = __sm.._v;      <- alias level 2
+			// — which makes it the second link of an ALIAS CHAIN, and chains are
+			// conservatively refused (struct_alias_chain_refused, same numbers).
+			// The middle binding escapes as a bare ident, so p loses its credit
+			// too: that is why adding `@` to a plain destructure SUPPRESSES the
+			// plain one's fix rather than merely failing to add its own.
+			//
+			// Measured against hand-written analogues, which match exactly:
+			//   one level  (`var t = p`)              100/0 -> 100/100
+			//   two levels (`var t = p; var w = t;`)  100/0 -> 100/0
+			// and `w` bound but NEVER USED is also 100/0, so it is the binding
+			// that costs the credit, not any use of w.
+			//
+			// Fixing the alias chain fixes this shape for free — they are one
+			// limitation, not two.
+			name: "struct_as_pattern_binder_leaks",
+			src: `struct P { x: i32, y: i32 }
+function round(i: i32): i32 {
+    var total: i32 = 0;
+    var p: P = P { x: 3 + i, y: 4 + i };
+    if let w @ P { x, y } = p { total = total + w.x + y; }
+    return total;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 59, allocs: 100, frees: 0,
+		},
+		{
+			// THE #7368 REGRESSION GUARD, and it is verified to fire rather than
+			// assumed to: recompiled under the reverted `struct_type_of_slot` clause
+			// this program SEGFAULTS (exit 139), where main and this change both
+			// return 74.
+			//
+			// It contains no struct at all. __fern_i32_to_string binds the negated
+			// input, and that scalar slot carries a struct_type name — so on
+			// INT_MIN the slot holds 0x80000000, which is non-zero, even, and above
+			// 0x10000, passing every __fern_rc_inc guard before dereferencing
+			// 0x7FFFFFF8. A type test cannot gate a retain; only the credit can.
+			name: "integer_slot_not_retained",
+			src: `import "std/i32";
+function round(i: i32): i32 {
+    var n: i32 = 0 - 2147483647 - 1 + i;
+    var s: string = n.to_string();
+    return s.len() + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 74, allocs: 200, frees: 200,
 		},
 		{
 			// The source read AFTER the alias, so both are live across the
