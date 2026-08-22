@@ -16,7 +16,10 @@ import (
 // same information gdb/lldb use to break by name and unwind frames. Without
 // -g there is no DWARF at all (default binaries stay small).
 func TestDWARFDebugInfo(t *testing.T) {
-	src := `function helper(x: i32): i32 { return x * 2; }
+	// @noinline keeps the probe a real function: this case asserts what the
+	// subprogram DIEs NAME, and ir.Inline would substitute helper into its sole
+	// call site with the dead-function cull then removing it.
+	src := `@noinline function helper(x: i32): i32 { return x * 2; }
 function main(): i32 { return helper(21); }
 `
 	bin := buildFernCLI(t)
@@ -114,7 +117,9 @@ function main(): i32 { return helper(21); }
 func TestDWARFLineTable(t *testing.T) {
 	// helper: decl line 1, `var y` line 2, `return` line 3.
 	// main:   decl line 5, `var a` line 6, `return` line 7.
-	src := "function helper(x: i32): i32 {\n    var y: i32 = x * 2;\n    return y + 1;\n}\nfunction main(): i32 {\n    var a: i32 = helper(20);\n    return a;\n}\n"
+	// @noinline on line 1 (so the line numbers above still hold) keeps helper a
+	// real function with its own PC range to carry line rows.
+	src := "@noinline function helper(x: i32): i32 {\n    var y: i32 = x * 2;\n    return y + 1;\n}\nfunction main(): i32 {\n    var a: i32 = helper(20);\n    return a;\n}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -248,7 +253,9 @@ func TestDWARFLocalVars(t *testing.T) {
 	// diverge: x86-64's single-word string makes every slot 8 bytes (n at -16),
 	// while arm64's two-word string is 16 bytes (n at -24). The DIE offsets
 	// must track that, so we assert the exact DW_OP_fbreg offset per target.
-	src := "function f(s: string, n: i32): i32 {\n    var m: i32 = n + 1;\n    return m + s.len();\n}\nfunction main(): i32 {\n    return f(\"hi\", 41);\n}\n"
+	// @noinline keeps f a real frame: the subject is f's own DW_OP_fbreg
+	// offsets, which do not exist once it is substituted into main.
+	src := "@noinline function f(s: string, n: i32): i32 {\n    var m: i32 = n + 1;\n    return m + s.len();\n}\nfunction main(): i32 {\n    return f(\"hi\", 41);\n}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -463,7 +470,9 @@ func TestDWARFStructVars(t *testing.T) {
 // field's slot is skipped), verified on both x86-64 and arm64.
 func TestDWARFMixedStructVars(t *testing.T) {
 	src := "struct Person { name: string, age: i32, score: i32 }\n" +
-		"function describe(p: Person): i32 { return p.age + p.score; }\n" +
+		// @noinline: the assertion reads describe's param `p` to reach the struct
+		// type, so the parameter DIE has to survive.
+		"@noinline function describe(p: Person): i32 { return p.age + p.score; }\n" +
 		"function main(): i32 {\n" +
 		"    var p: Person = Person { name: \"Ada\", age: 36, score: 99 };\n" +
 		"    return describe(p);\n" +
@@ -568,7 +577,9 @@ func TestDWARFMixedStructVars(t *testing.T) {
 func TestDWARFNestedStructVars(t *testing.T) {
 	src := "struct Point { x: i32, y: i32 }\n" +
 		"struct Rect { origin: Point, w: i32, h: i32 }\n" +
-		"function area(r: Rect): i32 { return r.w * r.h; }\n" +
+		// @noinline: the assertion reads area's param `r` to reach the nested
+		// struct type, so the parameter DIE has to survive.
+		"@noinline function area(r: Rect): i32 { return r.w * r.h; }\n" +
 		"function main(): i32 {\n" +
 		"    var r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
 		"    return area(r) + r.origin.x;\n" +
@@ -687,7 +698,9 @@ func TestDWARFNestedStructVars(t *testing.T) {
 // the tag as the variant name (e.g. `South`). Verified on both backends.
 func TestDWARFEnumVars(t *testing.T) {
 	src := "enum Direction { North, East, South, West }\n" +
-		"function turn(d: Direction): i32 {\n" +
+		// @noinline: the assertion reads turn's param `d` to reach the enum type,
+		// so the parameter DIE has to survive.
+		"@noinline function turn(d: Direction): i32 {\n" +
 		"    match (d) {\n" +
 		"        North => { return 0; },\n" +
 		"        East => { return 1; },\n" +
