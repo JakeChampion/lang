@@ -3946,6 +3946,26 @@ function f(): i32 {
 function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
 	},
 	{
+		// The same class one binding form later: a destructuring PARAMETER
+		// pattern inside a LAMBDA body, whose names shadow an enclosing
+		// local. The checker registers a lambda body's locals against the
+		// lambda's synthetic FuncDecl, not the enclosing function, so the
+		// rename found no synthetic Var to follow and the compiler died with
+		// the same `has no slot` refusal as the case above. Reached once the
+		// pass started walking lambda bodies at all (#7151); before that a
+		// shadowed name inside a lambda was never renamed, which was a wrong
+		// ANSWER rather than a refusal.
+		name: "shadowed_param_pattern_in_lambda_keeps_its_slot",
+		src: `
+struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var x: i32 = 1;
+    var f = function (Point { x, y }: Point): i32 { return x * 10 + y; };
+    var g = function ((x, y): (i32, i32)): i32 { return x + y; };
+    return f(Point { x: 3, y: 4 }) + g((2, 3)) - 39 + x - 1 + __rc_underflow_count();
+}`,
+	},
+	{
 		// A closure SHARED between a struct field and a live local (#6443).
 		// The field release dispatches through the drop-fn pointer the pair
 		// carries, so it has to respect the pair's own count: at rc>1 the

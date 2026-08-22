@@ -22,7 +22,7 @@ import (
 func TestWalksHandleEveryNodeKind(t *testing.T) {
 	for _, kind := range ast.NodeKinds() {
 		t.Run(fmt.Sprintf("%T", kind), func(t *testing.T) {
-			r := newRenamer()
+			r := newRenamer(nil)
 			r.pushFrame()
 			switch n := kind.(type) {
 			case ast.Stmt:

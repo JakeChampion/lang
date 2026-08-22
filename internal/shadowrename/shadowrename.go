@@ -33,10 +33,8 @@ import (
 // scopes never happens because params share one scope.
 func Rename(prog *ast.Program, info *checker.Info) {
 	for _, fn := range prog.Funcs {
-		r := newRenamer()
-		if info != nil {
-			r.locals = info.Locals[fn]
-		}
+		r := newRenamer(info)
+		r.enterBody(fn)
 		r.pushFrame()
 		for _, p := range fn.Params {
 			r.bindFresh(p.Name)
@@ -63,25 +61,57 @@ type renamer struct {
 	// the StmtIf/StmtMatch arms — and it over-released once per assignment
 	// statement in every program the compiler saw.
 	declared map[string]bool
-	// locals is info.Locals for the function being walked. A tuple /
-	// struct DESTRUCTURE binds through a plain []string on the
-	// Destructure node, and the checker registers each name as a
-	// SYNTHETIC *ast.Var that lives only in this slice — so renaming
-	// the Destructure's string alone leaves the slot registered under
-	// the old name and the IR build dies with `destructure name %q has
-	// no slot (compiler bug)`. Every other binding form the pass
-	// touches carries its name on a node the IR reads directly, which
-	// is why only this one needs the extra hop.
+	// locals is info.Locals for the body being walked. A tuple / struct
+	// DESTRUCTURE binds through a plain []string on the Destructure node,
+	// and the checker registers each name as a SYNTHETIC *ast.Var that
+	// lives only in this slice — so renaming the Destructure's string alone
+	// leaves the slot registered under the old name and the IR build dies
+	// with `destructure name %q has no slot (compiler bug)`. Every other
+	// binding form the pass touches carries its name on a node the IR reads
+	// directly, which is why only this one needs the extra hop.
+	//
+	// It is per BODY, not per top-level function: enterBody swaps it when
+	// the walk descends into a lambda or a nested function, whose locals the
+	// checker registered against that body's own decl.
 	locals  []*ast.Var
+	info    *checker.Info
 	counter int
 }
 
-func newRenamer() *renamer { return &renamer{declared: map[string]bool{}} }
+func newRenamer(info *checker.Info) *renamer {
+	return &renamer{declared: map[string]bool{}, info: info}
+}
+
+// enterBody points `locals` at the list the checker registered for fn's body
+// and returns the previous one, for the caller to restore on the way out. A
+// lambda's body-locals are keyed by its synthetic FuncDecl (checkExpr builds
+// one per Lambda) and a nested function's by its own node, so a rename inside
+// either has to look there — searching the ENCLOSING function's list finds
+// nothing, leaves the synthetic Var under the old name, and the IR build
+// fails on a name it cannot resolve to a slot.
+func (r *renamer) enterBody(fn *ast.FuncDecl) []*ast.Var {
+	prev := r.locals
+	if r.info != nil && fn != nil {
+		r.locals = r.info.Locals[fn]
+	}
+	return prev
+}
 
 // renameSyntheticLocal points the checker's synthetic *ast.Var for a
 // destructure name at the renamed form. Matched on (position, old name):
 // the synthetic Var carries the Destructure's own position, so this is
 // exact even with several destructures in one function.
+//
+// A miss is fatal here rather than quiet. Returning silently is what turned
+// a scoping oversight into a refusal to compile three passes later — twice:
+// once for the statement destructure (the sibling-scope rename, pinned by
+// rcCorpus/shadowed_tuple_destructure_keeps_its_slot) and once for the
+// parameter pattern inside a lambda body, whose locals the checker registers
+// against the lambda's synthetic decl. Both surfaced as
+// `ir: destructure name %q has no slot (compiler bug)`, naming a pass that
+// had done nothing wrong. A binding form that registers its synthetic Var
+// somewhere this pass does not look now fails in the pass that got it wrong,
+// with the name in hand.
 func (r *renamer) renameSyntheticLocal(pos ast.Position, from, to string) {
 	if from == to {
 		return
@@ -92,6 +122,9 @@ func (r *renamer) renameSyntheticLocal(pos ast.Position, from, to string) {
 			return
 		}
 	}
+	panic(fmt.Sprintf("shadowrename: no synthetic local %q at %d:%d to rename to %q "+
+		"(the checker registers destructure binders against the decl whose body declares "+
+		"them; this walk is looking at the wrong one)", from, pos.Line, pos.Col, to))
 }
 
 func (r *renamer) pushFrame() { r.stack = append(r.stack, map[string]string{}) }
@@ -235,12 +268,14 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 				n.Captures[i].Name = resolved
 			}
 		}
+		outer := r.enterBody(n)
 		r.pushFrame()
 		for _, p := range n.Params {
 			r.bindFresh(p.Name)
 		}
 		r.walkBlock(n.Body)
 		r.popFrame()
+		r.locals = outer
 	case *ast.ForEach:
 		// A for-in binds its element name for the body, and is walked
 		// here for completeness only: the parser lowers the plain form
@@ -410,12 +445,14 @@ func (r *renamer) walkExpr(e ast.Expr) {
 				n.Captures[i].Name = resolved
 			}
 		}
+		outer := r.enterBody(n.Synthetic)
 		r.pushFrame()
 		for _, p := range n.Params {
 			r.bindFresh(p.Name)
 		}
 		r.walkBlock(n.Body)
 		r.popFrame()
+		r.locals = outer
 	default:
 		panic(unhandled("walkExpr", e))
 	}
