@@ -312,7 +312,12 @@ Worth knowing so you do not assume coverage you do not have:
   as a clean 0. `FERN_LEAKCHECK=1` sees that a leak happened and
   `FERN_RC_TRACE=1` names the alloc site it came from (both below, on the
   native *and* the self-host x86-64 compilers), but neither runs as part of
-  any gate — you have to go looking.
+  any gate — you have to go looking. Partial exception:
+  `TestSelfHostLeakMatrixX86_64` runs the leakcheck differential over a
+  GENERATED kind × scope × consumption grid and pins each cell's verdict pair
+  in `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` — that file is
+  the live gap list for the shapes the generator covers, and a shape outside
+  the grid is still ungated.
 - **A syntactic form native accepts and the self-host does not.** Nothing
   enumerates the language's surface, so parity is only ever tested at the
   shapes some case happens to use. `conformance/cases/` is the one corpus that

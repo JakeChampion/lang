@@ -1,0 +1,100 @@
+# The leak matrix — verdict pairs per generated cell (self_host_leak_matrix_test.go).
+#
+# Format: <cell> <native-verdict> <selfhost-verdict> <note>
+# Verdicts: clean (live_bytes 0), leak, error (did not compile), crash.
+#
+# This file IS the goal-2 RECLAIM gap list for the shapes the generator covers:
+# a leak row is a known gap with its reason; flipping one to clean is progress
+# and belongs to the change that earns it; a clean row going leak is a
+# regression the gate reports. Regenerate measurements with
+# FERN_LEAK_MATRIX_DUMP=1 — never hand-edit a verdict without a measured run.
+arr_i32__fnscope__read                        clean  clean  clean on both sides
+arr_i32__fnscope__unused                      clean  clean  clean on both sides
+arr_i32__if_block__read                       clean  clean  clean on both sides
+arr_i32__if_block__unused                     clean  clean  clean on both sides
+arr_i32__loop_local__read                     clean  clean  clean on both sides
+arr_i32__loop_local__unused                   clean  clean  clean on both sides
+arr_i32__rebind__read                         clean  clean  clean on both sides
+arr_i32__rebind__unused                       clean  clean  clean on both sides
+arr_i32__shadow_siblings__read                clean  clean  clean on both sides
+arr_i32__shadow_siblings__unused              clean  clean  clean on both sides
+str__fnscope__read                            clean  clean  clean on both sides
+str__fnscope__unused                          clean  clean  clean on both sides
+str__if_block__read                           clean  clean  clean on both sides
+str__if_block__unused                         clean  clean  clean on both sides
+str__loop_local__read                         clean  clean  clean on both sides
+str__loop_local__unused                       clean  clean  clean on both sides
+str__rebind__read                             clean  leak   STR: credit is single-bind only; a rebound string local is refused and never swept
+str__rebind__unused                           clean  leak   same single-bind refusal as str__rebind__read
+str__shadow_siblings__read                    clean  clean  clean on both sides
+str__shadow_siblings__unused                  clean  clean  clean on both sides
+str_arr__fnscope__read                        clean  clean  clean on both sides
+str_arr__fnscope__unused                      clean  clean  clean on both sides
+str_arr__if_block__read                       clean  clean  clean on both sides
+str_arr__if_block__unused                     clean  clean  clean on both sides
+str_arr__loop_local__read                     clean  clean  clean on both sides
+str_arr__loop_local__unused                   clean  clean  clean on both sides
+str_arr__rebind__read                         clean  leak   string[] sibling of the STR: single-bind refusal
+str_arr__rebind__unused                       clean  leak   same as str_arr__rebind__read
+str_arr__shadow_siblings__read                clean  clean  clean on both sides
+str_arr__shadow_siblings__unused              clean  clean  clean on both sides
+struct_arr_field__fnscope__read               clean  clean  clean on both sides
+struct_arr_field__fnscope__unused             clean  clean  clean on both sides
+struct_arr_field__if_block__read              clean  clean  clean on both sides
+struct_arr_field__if_block__unused            clean  clean  clean on both sides
+struct_arr_field__loop_local__read            clean  clean  clean on both sides
+struct_arr_field__loop_local__unused          clean  clean  clean on both sides
+struct_arr_field__rebind__read                clean  clean  clean on both sides
+struct_arr_field__rebind__unused              clean  clean  clean on both sides
+struct_arr_field__shadow_siblings__read       clean  clean  clean on both sides
+struct_arr_field__shadow_siblings__unused     clean  clean  clean on both sides
+enum_rc_payload__fnscope__unused              clean  clean  clean on both sides
+enum_rc_payload__fnscope__match               clean  clean  clean on both sides
+enum_rc_payload__if_block__unused             clean  clean  clean on both sides
+enum_rc_payload__if_block__match              clean  clean  clean on both sides
+enum_rc_payload__loop_local__unused           clean  clean  clean on both sides
+enum_rc_payload__loop_local__match            clean  clean  clean on both sides
+enum_rc_payload__rebind__unused               clean  clean  clean on both sides
+enum_rc_payload__rebind__match                clean  clean  clean on both sides
+enum_rc_payload__shadow_siblings__unused      clean  clean  clean on both sides
+enum_rc_payload__shadow_siblings__match       clean  clean  clean on both sides
+enum_str_payload__fnscope__unused             clean  clean  clean on both sides
+enum_str_payload__fnscope__match              clean  clean  clean on both sides
+enum_str_payload__if_block__unused            clean  clean  clean on both sides
+enum_str_payload__if_block__match             clean  clean  clean on both sides
+enum_str_payload__loop_local__unused          clean  clean  clean on both sides
+enum_str_payload__loop_local__match           clean  clean  clean on both sides
+enum_str_payload__rebind__unused              clean  clean  clean on both sides
+enum_str_payload__rebind__match               clean  clean  clean on both sides
+enum_str_payload__shadow_siblings__unused     clean  clean  clean on both sides
+enum_str_payload__shadow_siblings__match      clean  clean  clean on both sides
+enum_scalar__fnscope__unused                  clean  clean  clean on both sides
+enum_scalar__fnscope__match                   clean  clean  clean on both sides
+enum_scalar__if_block__unused                 clean  clean  clean on both sides
+enum_scalar__if_block__match                  clean  clean  clean on both sides
+enum_scalar__loop_local__unused               clean  clean  clean on both sides
+enum_scalar__loop_local__match                clean  clean  clean on both sides
+enum_scalar__rebind__unused                   clean  clean  clean on both sides
+enum_scalar__rebind__match                    clean  clean  clean on both sides
+enum_scalar__shadow_siblings__unused          clean  clean  clean on both sides
+enum_scalar__shadow_siblings__match           clean  clean  clean on both sides
+tuple_mixed__fnscope__read                    clean  clean  clean on both sides
+tuple_mixed__fnscope__unused                  clean  clean  clean on both sides
+tuple_mixed__if_block__read                   clean  clean  clean on both sides
+tuple_mixed__if_block__unused                 clean  clean  clean on both sides
+tuple_mixed__loop_local__read                 clean  clean  clean on both sides
+tuple_mixed__loop_local__unused               clean  clean  clean on both sides
+tuple_mixed__rebind__read                     clean  clean  clean on both sides
+tuple_mixed__rebind__unused                   clean  clean  clean on both sides
+tuple_mixed__shadow_siblings__read            clean  clean  clean on both sides
+tuple_mixed__shadow_siblings__unused          clean  clean  clean on both sides
+opt_arr__fnscope__unused                      clean  clean  clean on both sides
+opt_arr__fnscope__match                       clean  clean  clean on both sides
+opt_arr__if_block__unused                     clean  clean  clean on both sides
+opt_arr__if_block__match                      clean  clean  clean on both sides
+opt_arr__loop_local__unused                   clean  clean  clean on both sides
+opt_arr__loop_local__match                    clean  clean  clean on both sides
+opt_arr__rebind__unused                       clean  leak   rebound Option[i32[]] with no consuming match; the match cell is clean
+opt_arr__rebind__match                        clean  clean  clean on both sides
+opt_arr__shadow_siblings__unused              clean  clean  clean on both sides
+opt_arr__shadow_siblings__match               clean  clean  clean on both sides
