@@ -337,15 +337,26 @@ func (s *stackChecker) localSlots(op Op) ([]valKind, bool) {
 }
 
 // isTwoWord reports whether a value of type t rides two operand-stack
-// slots on this target: a string under the two-word ABI (its data and
-// length), and a `dyn Trait` on wasm, where the fat pointer stays inline
-// rather than being boxed (OpBoxDyn is the native form).
+// slots on this target.
 func (s *stackChecker) isTwoWord(t ast.Type) bool {
+	return TypeIsTwoWord(t, s.ptrW)
+}
+
+// TypeIsTwoWord reports whether a value of type t rides two operand-stack
+// slots on the target with pointer width ptrW: a string under the two-word
+// ABI (its data and length), and a `dyn Trait` on wasm, where the fat
+// pointer stays inline rather than being boxed (OpBoxDyn is the native
+// form).
+//
+// The string half is NOT `ptrW == 4`: `ast.TwoWordOverride` opts arm64
+// (ptrW 8) into the same two-word ABI, so every pass that decides how many
+// slots a value occupies has to ask this rather than test the width.
+func TypeIsTwoWord(t ast.Type, ptrW int) bool {
 	switch t.(type) {
 	case ast.StringType:
-		return s.twoWordStr
+		return ast.UseTwoWordStrings(ptrW)
 	case ast.DynTraitType:
-		return s.ptrW == 4
+		return ptrW == 4
 	}
 	return false
 }
