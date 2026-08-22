@@ -20175,6 +20175,20 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     return s.fail();
 }
 
+// for_iter_is_map_local reports whether a foreach iterand is a map LOCAL — the
+// one iterable whose destructuring form walks key/value columns rather than
+// binding a pattern against each element.
+function for_iter_is_map_local(iter: parser.Expr, s: LowerState): boolean {
+    match (iter) {
+        parser.ExprIdent(mlid) => {
+            var mlslot: i32 = s.slot_of(mlid.name);
+            return mlslot >= 0 && s.map_type_of(mlslot) != "";
+        },
+        _ => {}
+    }
+    return false;
+}
+
 // lower_stmt_for: the parser.StmtFor arm of lower_stmt, split out so no single
 // function's per-function emit accumulation can exhaust the fixed bump
 // arena on the whole-compiler per-module emits (a ~3,000-line lower_stmt
@@ -20200,16 +20214,26 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // `for x in <EXPR>` over a non-ident iterable (array literal or a
     // call returning an array): snapshot it into a hidden local, then
     // iterate that local (lower_foreach_snapshot). The bare-ident forms
-    // — array foreach and the `for k, v in m` map foreach below — read
-    // the slot directly, so they stay on their own paths; a comma var
-    // (map form) is left to the map path.
+    // — array foreach and the `for (k, v) in m` map foreach below — read
+    // the slot directly, so they stay on their own paths.
     var for_iter_ident: boolean = false;
-    var for_var_comma: boolean = false;
     match (fr.iter) { parser.ExprIdent(_) => { for_iter_ident = true; }, _ => {} }
-    var fvci: i32 = 0;
-    while (fvci < fr.var_name.len()) {
-        if (fr.var_name[fvci] == b',') { for_var_comma = true; }
-        fvci = fvci + 1;
+    var for_var_comma: boolean = rc_fe_is_destructure(fr.var_name);
+    // A destructuring header over anything but a map local binds the pattern
+    // against each ELEMENT: bind the element to a hidden local and let the
+    // ordinary destructure lowering read it, which is the source spelling
+    // `for e in xs { var (a, b) = e; … }` and so reuses every iterable path
+    // below (array local, snapshot, string) unchanged. The map form is the
+    // one that walks key/value columns instead, so it stays on its own path.
+    if (for_var_comma && !for_iter_is_map_local(fr.iter, s)) {
+        var fdelem: string = "$fordes" + util.i32_to_string(s.locals.len());
+        var fdbind: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
+            init: parser.ExprIdent { name: fdelem, line: fr.line, col: 0 },
+            line: fr.line, col: 0, is_str: false, fn_ret: "" };
+        var fdbody: parser.Stmt[] = [fdbind];
+        var fdi: i32 = 0;
+        while (fdi < fr.body.len()) { fdbody = fdbody.append(fr.body[fdi]); fdi = fdi + 1; }
+        return lower_stmt_for(parser.StmtFor { ...fr, var_name: fdelem, body: fdbody }, s);
     }
     // `for b in STR` over a string iterable: iterate the bytes via a
     // counted loop, not the array layout (#2822). Checked before the
@@ -20500,18 +20524,24 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         parser.ExprIdent(mid0) => { mslot = s.slot_of(mid0.name); },
         _ => {}
     }
-    var kvcomma: i32 = 0 - 1;
-    var kvci: i32 = 0;
-    while (kvci < fr.var_name.len()) {
-        if (fr.var_name[kvci] == b',' && kvcomma < 0) { kvcomma = kvci; }
-        kvci = kvci + 1;
-    }
-    if (mslot >= 0 && s.map_type_of(mslot) != "" && kvcomma >= 0) {
+    // Split at TOP-LEVEL commas: a nested value position (`for (k, (lo, hi))
+    // in m`) carries its own commas inside parens.
+    var kvparts: string[] = rc_fe_split_csv(fr.var_name);
+    if (mslot >= 0 && s.map_type_of(mslot) != "" && kvparts.len() == 2) {
         var mty: string = s.map_type_of(mslot);
         var kkind: i32 = map_key_kind_of(mty);   // 1 = i32 keys, 0 = string
         var vty: string = map_value_of(mty);
-        var kname: string = trim_spaces(fr.var_name[0 : kvcomma]);
-        var vname: string = trim_spaces(fr.var_name[kvcomma + 1 : fr.var_name.len()]);
+        var kname: string = kvparts[0];
+        var vname: string = kvparts[1];
+        // A map key is never a tuple, so only the VALUE position can nest. It
+        // binds a hidden temp the destructure reads, the same shape the
+        // element path takes.
+        var vdes: string = "";
+        if (vname.len() > 2 && vname[0:1] == "(") {
+            vdes = "" + vname[1 : vname.len() - 1];
+            vname = "$forvd" + util.i32_to_string(s.locals.len());
+        }
+        if (kname.len() > 0 && kname[0:1] == "(") { return s.fail(); }
         // keys column -> hidden local
         var mkv_kflag: i32 = map_kv_elem_flag(mty, "keys");
         var mkv_vflag: i32 = map_kv_elem_flag(mty, "values");
@@ -20547,6 +20577,9 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         else if (vty == "i64") { fm = fm.mark_i64(vslot, true); }
         else if (vty == "u64") { fm = fm.mark_u64(vslot, true); }
         else if (vty == "f64") { fm = fm.mark_f64(vslot, true); }
+        // A tuple value carries its element tags so a `v.N` read — and the
+        // nested destructure below — resolve the element types.
+        else if (vty.len() >= 2 && vty[0:1] == "(") { fm = fm.mark_tuple_elems(vslot, tuple_elem_tags(vty)); }
         // loop: idx++ (top) ; idx < keys.len() ; bind k/v ; body ; back-edge.
         // The increment is at the top so a `continue` (br-to-header)
         // re-runs it instead of skipping it (#2788).
@@ -20575,6 +20608,12 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         else if (vty == "f64") { fm = fm.emit(ir.op_arr_get_nc(64)); }
         else { fm = fm.emit(ir.op_arr_get_nc(32)); }
         fm = fm.emit(ir.op_store_local(vslot));
+        if (vdes.len() > 0) {
+            fm = lower_stmt_var(parser.StmtVar { name: vdes, type_name: "",
+                init: parser.ExprIdent { name: vname, line: fr.line, col: 0 },
+                line: fr.line, col: 0, is_str: false, fn_ret: "" }, fm);
+            if (!fm.ok) { return fm; }
+        }
         fm = lower_block(fr.body, fm);
         if (!fm.ok) { return fm; }
         fm = fm.emit(ir.op_br(0));

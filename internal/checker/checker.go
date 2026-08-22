@@ -9491,8 +9491,8 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	} else {
 		c.mutualRecSiblings = nil
 	}
-	for _, st := range b.Stmts {
-		c.checkStmt(st, s)
+	for i, st := range b.Stmts {
+		b.Stmts[i] = c.checkStmtLoweringForEach(st, s)
 	}
 	c.mutualRecSiblings = prevMutualRec
 }
@@ -9509,8 +9509,8 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
-	for _, st := range n.Stmts {
-		c.checkStmt(st, s)
+	for i, st := range n.Stmts {
+		n.Stmts[i] = c.checkStmtLoweringForEach(st, s)
 	}
 	c.mutualRecSiblings = prevMutualRec
 	if n.Tail == nil {

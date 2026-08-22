@@ -124,7 +124,10 @@ isn't significant.
 - **`for (init; cond; step) { ... }`** — three-part loop.
 - **`for x in expr { ... }`** — foreach over an array, slice, range or
   iterator.
-- **`for (k, v) in m { ... }`** — foreach over a map's entries.
+- **`for (a, b) in expr { ... }`** — foreach with a destructuring binder,
+  the same irrefutable tuple pattern `var (a, b) = e;` takes (nested
+  elements and `_` discards included). Over an array it binds against
+  each element; over a map, against each entry's key and value.
 - **`loop { ... }`** — infinite loop; exit with `break` / `return`.
 - **`label: while … `** / **`label: for … `** / **`label: loop …`** —
   a named loop, so a nested `break label` / `continue label` can target

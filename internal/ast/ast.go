@@ -2563,10 +2563,11 @@ type For struct {
 }
 
 // ForEach is the un-desugared `for IDENT in Iter Body` loop (the plain,
-// non-range, non-map-tuple form). The parser emits it instead of desugaring at
-// parse time, so a later type-aware pass can choose the lowering by Iter's type:
-// an array/string/slice → the `.len()` + index loop; a `stream[T]` → a lazy
-// per-element read loop. ID gives the desugar unique helper-var names.
+// non-range form). The parser emits it instead of desugaring at parse time, so
+// a later type-aware pass can choose the lowering by Iter's type: an
+// array/string/slice → the `.len()` + index loop; a `stream[T]` → a lazy
+// per-element read loop; a `Map` under a destructuring header → the entry
+// cursor. ID gives the desugar unique helper-var names.
 // See docs/STREAM-TYPE-SURFACE.md.
 type ForEach struct {
 	P      Position
@@ -2582,26 +2583,43 @@ type ForEach struct {
 	// Block's Sugar.
 	RangeHigh Expr
 	RangeIncl bool
-	// Var2 is the value binder of the map form `for (K, V) in m` — Var is
-	// the key. Empty for every other form.
-	Var2 string
+	// Pattern is the destructuring header `for (a, b) in xs` — the very
+	// *Destructure that `var (a, b) = e;` builds, so one pattern grammar
+	// serves both. Its Init is left nil for the lowering to fill: over an
+	// array it reads the element bound to Var, over a Map its Names take the
+	// entry's key and value directly. Nil for the plain `for x in xs` form.
+	Pattern *Destructure
 }
+
+// ForEachIterName is the synthetic local a foreach's iterand is bound to. The
+// lowering evaluates the iterand once, into this slot; a type-aware caller
+// binds it first and reads its type back to choose between the lowerings below.
+func ForEachIterName(id int) string { return fmt.Sprintf("__foreach_iter_%d", id) }
 
 // DesugarForEachArray lowers a ForEach over an array/string/slice to the
 // `.len()` + index C-style loop — the exact shape the parser used to build at
-// parse time (moved here so a type-aware pass owns the choice of lowering). The
-// step lives on the For (not appended to the body) so `continue` still advances
-// the index; the index decls live on the enclosing block so an outer loop does
-// not re-zero them.
+// parse time (moved here so a type-aware pass owns the choice of lowering).
 func DesugarForEachArray(fe *ForEach) *Block {
+	iterName := ForEachIterName(fe.ID)
+	declIter := &Var{P: fe.P, Name: iterName, Init: fe.Iter}
+	stmts := append([]Stmt{declIter}, ForEachArrayLoop(fe, iterName)...)
+	return &Block{P: fe.P, Stmts: stmts, Sugar: fe}
+}
+
+// ForEachArrayLoop builds the array lowering's statements BELOW the iterand
+// binding — the caller supplies `iterName`, already bound to the iterand. The
+// step lives on the For (not appended to the body) so `continue` still advances
+// the index; the index decls sit beside the loop so an outer loop does not
+// re-zero them. A destructuring header binds the element to the synthetic Var
+// and hands it to the pattern, which is the same *Destructure `var (a, b) = e;`
+// produces.
+func ForEachArrayLoop(fe *ForEach, iterName string) []Stmt {
 	kw := fe.P
-	iterName := fmt.Sprintf("__foreach_iter_%d", fe.ID)
 	idxName := fmt.Sprintf("__foreach_idx_%d", fe.ID)
 	lenName := fmt.Sprintf("__foreach_len_%d", fe.ID)
 	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
 	mkNum := func(v int64) *NumberLit { return &NumberLit{P: kw, Value: v} }
 
-	declIter := &Var{P: kw, Name: iterName, Init: fe.Iter}
 	declLen := &Var{P: kw, Name: lenName, Init: &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "len", FieldPos: kw}}}
 	declIdx := &Var{P: kw, Name: idxName, Init: mkNum(0)}
 	// The element read is provably in bounds — idx starts at 0, the loop
@@ -2614,11 +2632,11 @@ func DesugarForEachArray(fe *ForEach) *Block {
 	stepStmt := &ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(idxName), Value: &Binary{P: kw, Op: "+", Left: mkIdent(idxName), Right: mkNum(1)}}}
 
 	innerStmts := []Stmt{bindUser}
-	if blk, ok := fe.Body.(*Block); ok {
-		innerStmts = append(innerStmts, blk.Stmts...)
-	} else {
-		innerStmts = append(innerStmts, fe.Body)
+	if fe.Pattern != nil {
+		fe.Pattern.Init = mkIdent(fe.Var)
+		innerStmts = append(innerStmts, fe.Pattern)
 	}
+	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
 	forLoop := &For{
 		P:     kw,
 		Cond:  &Binary{P: kw, Op: "<", Left: mkIdent(idxName), Right: mkIdent(lenName)},
@@ -2626,7 +2644,59 @@ func DesugarForEachArray(fe *ForEach) *Block {
 		Body:  &Block{P: kw, Stmts: innerStmts},
 		Label: fe.Label,
 	}
-	return &Block{P: kw, Stmts: []Stmt{declIter, declLen, declIdx, forLoop}, Sugar: fe}
+	return []Stmt{declLen, declIdx, forLoop}
+}
+
+// ForEachMapLoop builds the Map lowering's statements BELOW the iterand
+// binding, for a destructuring header over a Map. It walks the entry cursor
+// (`m.iter()` / `has_next()` / `key()` / `value()` / `advance()`), so entries
+// come out in insertion order with no per-iteration allocation. The pattern's
+// two top-level binders take the key and the value; any nested pattern below
+// them is its own Destructure reading the binder it names, exactly as in
+// `var ((a, b), v) = e;`.
+//
+//	var __foreach_iter_N = m.iter();          (the caller's binding)
+//	for (; __foreach_iter_N.has_next(); __foreach_iter_N.advance()) {
+//	  var K = __foreach_iter_N.key();
+//	  var V = __foreach_iter_N.value();
+//	  <body>
+//	}
+func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
+	kw := fe.P
+	iterIdent := func() *Ident { return &Ident{P: kw, Name: iterName} }
+	callOnIter := func(method string) *Call {
+		return &Call{P: kw, Callee: &FieldAccess{P: kw, Target: iterIdent(), Field: method, FieldPos: kw}}
+	}
+
+	innerStmts := []Stmt{
+		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[0], Init: callOnIter("key")},
+		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[1], Init: callOnIter("value")},
+	}
+	for _, sub := range fe.Pattern.Nested {
+		if sub != nil {
+			innerStmts = append(innerStmts, sub)
+		}
+	}
+	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+
+	forLoop := &For{
+		P:     kw,
+		Cond:  callOnIter("has_next"),
+		Step:  &ExprStmt{P: kw, Expr: callOnIter("advance")},
+		Body:  &Block{P: kw, Stmts: innerStmts},
+		Label: fe.Label,
+	}
+	return []Stmt{forLoop}
+}
+
+// foreachBodyStmts flattens a loop body into the statements a lowering splices
+// after its bindings, so the user's body shares the scope those bindings live
+// in.
+func foreachBodyStmts(fe *ForEach) []Stmt {
+	if blk, ok := fe.Body.(*Block); ok {
+		return blk.Stmts
+	}
+	return []Stmt{fe.Body}
 }
 
 // StreamElemKind returns the canonical kind string for a scalar stream element

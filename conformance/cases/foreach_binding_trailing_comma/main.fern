@@ -1,11 +1,5 @@
-// The map-foreach binder is a comma-separated list like any other, so it
-// takes a trailing comma: `for (k, v,) in m`.
-//
-// It was the one list position that did not. The binder is recognised by a
-// fixed `( IDENT , IDENT ) in` token lookahead, and a trailing comma shifts
-// the `)` and the `in` one token right — so the whole form fell through to
-// the C-style `for` and reported `expected ";", got ","`, which names
-// neither the construct nor the comma.
+// The foreach binder is a comma-separated list like any other, so it takes a
+// trailing comma: `for (k, v,) in m`.
 
 import "core/map";
 

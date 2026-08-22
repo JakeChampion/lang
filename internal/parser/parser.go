@@ -3007,7 +3007,7 @@ func (p *parser) ifStmtHasElse() bool {
 
 // parseFor produces a real For node so that `continue` can jump to the
 // step expression, not back to the top of the loop body. There are
-// two recognised shapes:
+// three recognised shapes:
 //
 //   - `for (init; cond; step) body`           — classic C-style.
 //   - `for IDENT in expr body`                — for-each over an
@@ -3015,6 +3015,9 @@ func (p *parser) ifStmtHasElse() bool {
 //     C-style loop with synthetic length / index slots, so the
 //     rest of the pipeline (checker, IR, codegen) never has to
 //     know foreach exists.
+//   - `for (a, b) in expr body`               — for-each with a
+//     destructuring binder (parseForEachPattern), the one shape
+//     whose lowering waits for the checker.
 func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	kw := p.advance()
 
@@ -3028,30 +3031,14 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 		}
 	}
 
-	// Map foreach shape: `for (K, V) in expr body`. The opening `(`
-	// is shared with the C-style for, so disambiguate by peeking the
-	// fixed `( IDENT , IDENT ) in` prefix. C-style starts with `var`,
-	// `;`, or an arbitrary expression — none of them match this
-	// pattern, so the lookahead is unambiguous.
-	if p.match(lexer.Punct, "(") && p.i+5 < len(p.tokens) {
-		t1, t2, t3 := p.tokens[p.i+1], p.tokens[p.i+2], p.tokens[p.i+3]
-		// The binder is a comma-separated list like any other, so it may
-		// carry a trailing comma — `for (k, v,) in m`. That shifts the
-		// `)` and the `in` one token right; without accounting for it the
-		// lookahead fails and the whole form falls through to the C-style
-		// `for`, which reports `expected ";", got ","`.
-		closeAt := p.i + 4
-		if p.tokens[closeAt].Kind == lexer.Punct && p.tokens[closeAt].Text == "," {
-			closeAt++
-		}
-		if closeAt+1 < len(p.tokens) &&
-			t1.Kind == lexer.Ident &&
-			t2.Kind == lexer.Punct && t2.Text == "," &&
-			t3.Kind == lexer.Ident &&
-			p.tokens[closeAt].Kind == lexer.Punct && p.tokens[closeAt].Text == ")" &&
-			p.tokens[closeAt+1].Kind == lexer.Ident && p.tokens[closeAt+1].Text == "in" {
-			return p.parseForEachMapTuple(kw, label)
-		}
+	// Destructuring foreach: `for ( PATTERN ) in expr body`. The opening
+	// `(` is shared with the C-style for, so the disambiguation rule is
+	// written down rather than discovered: a parenthesised group whose
+	// MATCHING `)` is followed by `in` opens a pattern. A C-style header
+	// closes on the body's `{`, and the plain `for x in xs` form has no
+	// parens at all, so nothing else in a `for` header can look like this.
+	if p.match(lexer.Punct, "(") && p.forHeaderPatternAhead() {
+		return p.parseForEachPattern(kw, label)
 	}
 
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -3293,9 +3280,11 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 	case *ast.ForEach:
 		x.Body = desugarForEachStmt(x.Body, streamFns)
 		desugarForEachExpr(x.Iter, streamFns)
-		// A lazy stream iterand keeps its ForEach node for the checker (L2);
-		// every other iterand lowers to the array `.len()`+index loop here.
-		if isLazyStreamIter(x.Iter, streamFns) {
+		// A lazy stream iterand keeps its ForEach node for the checker (L2),
+		// and so does a destructuring header, whose lowering is chosen by the
+		// iterand's type; every other iterand lowers to the array
+		// `.len()`+index loop here.
+		if x.Pattern != nil || isLazyStreamIter(x.Iter, streamFns) {
 			return x
 		}
 		return ast.DesugarForEachArray(x)
@@ -3359,38 +3348,62 @@ func desugarForEachExpr(e ast.Expr, streamFns map[string]bool) {
 	})
 }
 
-// parseForEachMapTuple desugars `for (K, V) in expr body` — the
-// only form this language supports for iterating a Map. Builds on
-// the MapIter cursor API (`m.iter()` / `it.has_next()` / `it.key()`
-// / `it.value()` / `it.advance()`) so map iteration walks entries
-// in insertion order without per-iteration allocation. The shape
-// after desugaring matches the array foreach as closely as
-// possible — outer Block scopes the iterator slot, the inner For's
-// Step slot calls advance() so `continue` advances before the next
-// has_next() check.
-//
-//	{
-//	  var __foreach_iter_N = expr.iter();
-//	  for (; __foreach_iter_N.has_next(); __foreach_iter_N.advance()) {
-//	    var K = __foreach_iter_N.key();
-//	    var V = __foreach_iter_N.value();
-//	    <body>
-//	  }
-//	}
-//
-// Like the array foreach, K / V are inferred from the iterator's
-// method return types — no annotation needed at the loop site.
-func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, error) {
-	p.advance() // `(`
-	keyTok := p.advance()
-	p.advance() // `,`
-	valTok := p.advance()
-	p.accept(lexer.Punct, ",") // optional trailing comma
-	p.advance()                // `)`
-	p.advance()                // `in`
+// forHeaderPatternAhead reports whether the `(` at the cursor opens a
+// destructuring header rather than a C-style `for` clause: it scans to the
+// MATCHING `)` — tracking nesting, so a nested element in `for ((a, b), c) in
+// m` stays balanced — and asks whether `in` follows. The lexer treats `in` as a
+// plain identifier, so match on text rather than kind.
+func (p *parser) forHeaderPatternAhead() bool {
+	depth := 0
+	for i := p.i; i < len(p.tokens); i++ {
+		t := p.tokens[i]
+		if t.Kind != lexer.Punct {
+			continue
+		}
+		switch t.Text {
+		case "(", "[", "{":
+			depth++
+		case ")", "]", "}":
+			depth--
+			if depth == 0 {
+				return i+1 < len(p.tokens) && p.tokens[i+1].Kind == lexer.Ident && p.tokens[i+1].Text == "in"
+			}
+		}
+	}
+	return false
+}
 
-	// Same reason as parseForEach: don't let the loop-body `{` get
-	// glued onto the source expression as a struct literal.
+// parseForEachPattern parses the destructuring header `for (a, b) in expr body`
+// (#6096). Its binders come from the SAME grammar and the same irrefutability
+// rule as `var (a, b) = e;` — one pattern path, so a nested element, a `_`
+// discard or an arity error behaves identically at both sites.
+//
+// The pattern rides on the ForEach node unlowered, because which loop it
+// becomes depends on the iterand's TYPE and the parser has none: an array binds
+// the pattern against each element, a Map against each entry. The checker owns
+// that choice (checkPatternForEach).
+//
+// The node is wrapped in a Block so a pattern ForEach is always an element of
+// some Block's Stmts — the slot the checker swaps the lowering into — even as a
+// braceless loop or branch body. The wrapper's Sugar keeps `-fmt` printing the
+// loop as written.
+func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, error) {
+	pos := p.peek().Pos
+	pat, err := p.parseMatchPattern()
+	if err != nil {
+		return nil, err
+	}
+	d, err := p.irrefutableDestructure(pos, pat, foreachSite, "")
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != lexer.Ident || p.peek().Text != "in" {
+		return nil, p.errorfCode(p.peek().Pos, "P001", "expected %q after the `for` pattern, got %q", "in", p.peek().Text)
+	}
+	p.advance() // `in`
+
+	// Same reason as parseForEach: don't let the loop-body `{` get glued
+	// onto the iterand as a struct literal.
 	prevNS := p.noStructLit
 	p.noStructLit = true
 	expr, err := p.parseExpr()
@@ -3404,48 +3417,17 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, e
 	}
 
 	id := p.nextForeachID()
-	iterName := fmt.Sprintf("__foreach_iter_%d", id)
-
-	iterIdent := func() *ast.Ident { return &ast.Ident{P: kw.Pos, Name: iterName} }
-	callOnIter := func(method string) *ast.Call {
-		return &ast.Call{
-			P:      kw.Pos,
-			Callee: &ast.FieldAccess{P: kw.Pos, Target: iterIdent(), Field: method},
-		}
+	fe := &ast.ForEach{
+		P:       kw.Pos,
+		ID:      id,
+		Var:     fmt.Sprintf("__foreach_elem_%d", id),
+		VarPos:  pos,
+		Pattern: d,
+		Iter:    expr,
+		Body:    body,
+		Label:   label,
 	}
-
-	// var __foreach_iter_N = expr.iter();
-	declIter := &ast.Var{P: kw.Pos, Name: iterName, Init: &ast.Call{
-		P:      kw.Pos,
-		Callee: &ast.FieldAccess{P: kw.Pos, Target: expr, Field: "iter"},
-	}}
-
-	bindKey := &ast.Var{P: keyTok.Pos, Name: keyTok.Text, Init: callOnIter("key")}
-	bindVal := &ast.Var{P: valTok.Pos, Name: valTok.Text, Init: callOnIter("value")}
-	stepStmt := &ast.ExprStmt{P: kw.Pos, Expr: callOnIter("advance")}
-
-	innerStmts := []ast.Stmt{bindKey, bindVal}
-	if blk, ok := body.(*ast.Block); ok {
-		innerStmts = append(innerStmts, blk.Stmts...)
-	} else {
-		innerStmts = append(innerStmts, body)
-	}
-	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
-
-	forLoop := &ast.For{
-		P:     kw.Pos,
-		Cond:  callOnIter("has_next"),
-		Step:  stepStmt,
-		Body:  innerBlock,
-		Label: label,
-	}
-
-	return &ast.Block{
-		P:     kw.Pos,
-		Stmts: []ast.Stmt{declIter, forLoop},
-		Sugar: &ast.ForEach{P: kw.Pos, ID: id, Var: keyTok.Text, VarPos: keyTok.Pos,
-			Var2: valTok.Text, Iter: expr, Body: body, Label: label},
-	}, nil
+	return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{fe}, Sugar: fe}, nil
 }
 
 // parseMatch parses `match (<expr>) { Pat => { … }, … }`. The
@@ -5440,6 +5422,7 @@ func discardNames(names []string, pos ast.Position, tag string) []string {
 const (
 	paramSite       = "parameter"
 	destructureSite = "destructuring binding"
+	foreachSite     = "for-in binding"
 )
 
 func (p *parser) refutableBindErr(pos ast.Position, what, site string) error {

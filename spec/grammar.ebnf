@@ -160,7 +160,13 @@ ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Expr ] ')' Block
             | 'for' ForBinding 'in' NoStructExpr Block
             ;
 ForInit     = VarNoSemi | Expr ;
-ForBinding  = '(' IDENT { ',' IDENT } [ ',' ] ')' | IDENT ;
+# A parenthesised binder is a TuplePattern, the same production `var (a, b) =
+# e;` takes, and irrefutable for the same reason: a loop body has no else
+# branch. Which loop it lowers to is a typing question, not a grammar one —
+# over an array it binds against each element, over a Map against each entry.
+# A `for` header's '(' also opens the three-part form, decided by whether the
+# token after the matching ')' is `in`.
+ForBinding  = TuplePattern | IDENT ;
 
 MatchStmt   = 'match' NoStructExpr '{' { MatchArm } '}' [ ';' ] ;
 MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;

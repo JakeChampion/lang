@@ -8,11 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// The plain `for x in expr` form parses to an ast.ForEach (parser tests) and is
-// lowered HERE, in the checker, to the `.len()` + index C-style loop — the shape
-// the parser used to build at parse time. These tests pin that the checker
-// desugar reproduces it exactly (Block of iter/len/idx + a For carrying a step so
-// `continue` advances), and mints unique slot names for nested loops.
+// The plain `for x in expr` form parses to an ast.ForEach (parser tests), which
+// `desugarForEachProgram` lowers to the `.len()` + index C-style loop at the end
+// of the parse. These tests pin that the lowering reproduces it exactly (Block of
+// iter/len/idx + a For carrying a step so `continue` advances), and mints unique
+// slot names for nested loops.
 func TestForEachDesugarsToIndexLoop(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
 		var sum: i32 = 0;

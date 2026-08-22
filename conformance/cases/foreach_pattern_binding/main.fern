@@ -1,0 +1,26 @@
+// A `for` header takes the same destructuring pattern a `var` binding does,
+// so a tuple-element array iterates without unpacking the element by hand:
+// arity beyond two, a nested element and a `_` discard all behave as they do
+// in `var (a, b) = e;`. Which loop the pattern lowers to comes from the
+// iterand's type — an array binds it against each element, a Map against each
+// entry — so the Map form is exercised here alongside as the control.
+
+import "core/map";
+
+function main(): i32 {
+    var sum: i32 = 0;
+
+    var xs: (i32, i32)[] = [(1, 2), (3, 4)];
+    for (a, b) in xs { sum = sum + a * b; }                  // 2 + 12 = 14
+
+    var wide: (i32, i32, i32)[] = [(1, 2, 3), (4, 5, 6)];
+    for (p, _, r) in wide { sum = sum + p + r; }             // 4 + 10 = 14
+
+    var deep: ((i32, i32), string)[] = [((2, 3), "xy")];
+    for ((a, b), s) in deep { sum = sum + a * b + s.len(); } // 6 + 2 = 8
+
+    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
+    for (k, v) in m { sum = sum + v + k.len(); }             // 3 + 2 = 5
+
+    return sum;                                              // 41
+}
