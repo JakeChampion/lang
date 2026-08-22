@@ -28591,7 +28591,7 @@ function collect_str_fresh_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
                     && (is_fresh_ret_binding(v.init, "", str_fresh_ret)
                         || str_method_ret_is_fresh(v.init, str_fresh_ret)
                         || tostring_on_fresh_ret(v.init, str_fresh_ret))) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_str_fresh_ret_call_names(f.then_body, str_fresh_ret, reassigned, a); a = collect_str_fresh_ret_call_names(f.else_body, str_fresh_ret, reassigned, a); },

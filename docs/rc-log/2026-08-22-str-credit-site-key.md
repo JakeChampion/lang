@@ -65,7 +65,21 @@ Each of the 11 collectors was checked for external callers before being changed.
 of the call sites are the collector's own recursive arms. Nothing else consumes
 those lists, so nothing else was expecting bare names.
 
-Two details that audit turned up and a blind substitution would have got wrong:
+**The audit was not sufficient, and the gap is worth naming.** Asking "who calls
+this collector?" found eleven answers and missed a TWELFTH producer:
+`collect_str_fresh_ret_call_names` has no gate loop of its own — it appends
+directly into `strs`, one line after `collect_fresh_string_names` fills it. So
+`strs` became a MIX of site keys and bare names, every mixed entry silently lost
+its credit, and four suites went to leak (`TupleStrElemRetain`,
+`StrSourceMethodReceiver` on all three backends). Caught by the broad sweep, not
+by the targeted ones.
+
+The right question was not "who calls each collector" but "what can append to a
+list this credit reads". A key migration has to enumerate WRITERS of the list,
+and a writer need not be a caller of the thing you are changing.
+
+Two further details the audit did turn up, which a blind substitution would have
+got wrong:
 
 - `collect_str_fresh_ret_call_names` and `collect_fresh_str_ret_call_names` are
   DIFFERENT functions with near-identical names. Only the second feeds this
