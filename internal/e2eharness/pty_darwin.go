@@ -1,6 +1,6 @@
 //go:build darwin
 
-package e2e
+package e2eharness
 
 import (
 	"bytes"
@@ -10,10 +10,10 @@ import (
 	"unsafe"
 )
 
-// openPTY is the Darwin half of the helper documented in pty_linux_test.go.
-// XNU spells the same three steps differently: grant, unlock, then ask for
-// the slave's path by name rather than by number.
-func openPTY() (master, slave *os.File, err error) {
+// OpenPTY is the Darwin half of the helper documented in pty_linux.go. XNU
+// spells the same three steps differently: grant, unlock, then ask for the
+// slave's path by name rather than by number.
+func OpenPTY() (master, slave *os.File, err error) {
 	const (
 		tiocptygrant = 0x20007454
 		tiocptyunlk  = 0x20007452
