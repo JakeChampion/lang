@@ -9783,9 +9783,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if t != nil && !ast.Equal(t, ast.BoolType{}) {
 			c.errfCode(n.Cond.Pos(), "E008", "if condition must be boolean, got %s", t)
 		}
-		c.checkStmt(n.Then, s)
+		n.Then = c.checkStmtLoweringForEach(n.Then, s)
 		if n.Else != nil {
-			c.checkStmt(n.Else, s)
+			n.Else = c.checkStmtLoweringForEach(n.Else, s)
 		}
 	case *ast.While:
 		t := c.checkExpr(n.Cond, s)
@@ -9796,7 +9796,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if n.Label != "" {
 			c.loopLabels = append(c.loopLabels, n.Label)
 		}
-		c.checkStmt(n.Body, s)
+		n.Body = c.checkStmtLoweringForEach(n.Body, s)
 		if n.Label != "" {
 			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
 		}
@@ -9806,7 +9806,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if n.Label != "" {
 			c.loopLabels = append(c.loopLabels, n.Label)
 		}
-		c.checkStmt(n.Body, s)
+		n.Body = c.checkStmtLoweringForEach(n.Body, s)
 		if n.Label != "" {
 			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
 		}
@@ -9826,7 +9826,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if n.Label != "" {
 			c.loopLabels = append(c.loopLabels, n.Label)
 		}
-		c.checkStmt(n.Body, inner)
+		n.Body = c.checkStmtLoweringForEach(n.Body, inner)
 		if n.Step != nil {
 			c.checkStmt(n.Step, inner)
 		}

@@ -3381,12 +3381,8 @@ func (p *parser) forHeaderPatternAhead() bool {
 // The pattern rides on the ForEach node unlowered, because which loop it
 // becomes depends on the iterand's TYPE and the parser has none: an array binds
 // the pattern against each element, a Map against each entry. The checker owns
-// that choice (checkPatternForEach).
-//
-// The node is wrapped in a Block so a pattern ForEach is always an element of
-// some Block's Stmts — the slot the checker swaps the lowering into — even as a
-// braceless loop or branch body. The wrapper's Sugar keeps `-fmt` printing the
-// loop as written.
+// that choice (checkPatternForEach), and swaps its lowering into the statement
+// slot this node stands in.
 func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, error) {
 	pos := p.peek().Pos
 	pat, err := p.parseMatchPattern()
@@ -3427,7 +3423,7 @@ func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, er
 		Body:    body,
 		Label:   label,
 	}
-	return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{fe}, Sugar: fe}, nil
+	return fe, nil
 }
 
 // parseMatch parses `match (<expr>) { Pat => { … }, … }`. The
