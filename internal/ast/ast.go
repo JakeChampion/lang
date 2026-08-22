@@ -633,12 +633,17 @@ func SubstSelf(t Type, self Type) Type {
 
 // CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
 // in-place rewrite of the copy (type substitution, dispatch resolution,
-// numeric-literal settling) never leaks into the original. Leaf
-// expressions are still pointer-copied so a caller can swap fields
-// without aliasing the source node. The checker uses CloneBlock to
-// materialise a trait's default method body once per implementing type
-// (see docs/TRAITS.md); monomorph uses all three to instantiate a
-// generic function's body per type-argument set.
+// numeric-literal settling) never leaks into the original. The checker
+// uses CloneBlock to materialise a trait's default method body once per
+// implementing type (see docs/TRAITS.md); monomorph uses all three to
+// instantiate a generic function's body per type-argument set.
+//
+// The depth they owe is set by Walk: everything Walk reaches from a node
+// must be freshly allocated here, since that is what the passes rewriting
+// a clone traverse. Anything Walk does not reach is shared by design.
+// TestCloneCopiesEverythingWalkReaches states both halves, and an
+// unhandled kind panics rather than returning its argument — sharing the
+// node silently is what #7042 and #7149 cost.
 // clonePatternNames copies a match arm's parallel binding slices. A clone that
 // shared them with its source was only safe until something renamed a binding
 // in place: shadowrename rewrites `arm.Bindings[i]` and the matching Idents in
@@ -672,7 +677,19 @@ func CloneStmt(s Stmt) Stmt {
 	case *Destructure:
 		c := *x
 		c.Names = append([]string(nil), x.Names...)
+		c.Fields = append([]string(nil), x.Fields...)
 		c.Init = CloneExpr(x.Init)
+		// A nested level is a Destructure of its own whose Init reads this
+		// level's synthesised binder; sharing it left every clone writing
+		// through the same node.
+		if x.Nested != nil {
+			c.Nested = make([]*Destructure, len(x.Nested))
+			for i, sub := range x.Nested {
+				if sub != nil {
+					c.Nested[i] = CloneStmt(sub).(*Destructure)
+				}
+			}
+		}
 		return &c
 	case *ExprStmt:
 		c := *x
@@ -748,6 +765,29 @@ func CloneStmt(s Stmt) Stmt {
 			c.Body = CloneStmt(x.Body)
 		}
 		return &c
+	case *ForEach:
+		// The un-desugared `for x in xs` form. The parser lowers most of
+		// them, but a stream-typed iterable keeps its ForEach until the
+		// checker knows the element type, so one can still reach a generic
+		// body being cloned here.
+		c := *x
+		c.Iter = CloneExpr(x.Iter)
+		c.RangeHigh = CloneExpr(x.RangeHigh)
+		if x.Pattern != nil {
+			c.Pattern = CloneStmt(x.Pattern).(*Destructure)
+		}
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *Break:
+		c := *x
+		return &c
+	case *Continue:
+		c := *x
+		return &c
 	case *FuncDecl:
 		// A nested function declaration. Falling through to `return s`
 		// shared this node by pointer with the original — and with every
@@ -755,11 +795,12 @@ func CloneStmt(s Stmt) Stmt {
 		// instantiation and then substitutes types in place would have
 		// each instantiation overwrite the last (#7042).
 		c := *x
+		c.TypeParams = append([]string(nil), x.TypeParams...)
 		c.Params = append([]Param(nil), x.Params...)
 		c.Body = CloneBlock(x.Body)
 		return &c
 	}
-	return s
+	panic(fmt.Sprintf("ast: CloneStmt: unhandled statement kind %T (add a case for it)", s))
 }
 
 func CloneExpr(e Expr) Expr {
@@ -920,6 +961,7 @@ func CloneExpr(e Expr) Expr {
 		return &c
 	case *StructLit:
 		c := *x
+		c.Base = CloneExpr(x.Base)
 		c.Fields = make([]FieldInit, len(x.Fields))
 		for i, f := range x.Fields {
 			c.Fields[i] = FieldInit{Name: f.Name, Value: CloneExpr(f.Value)}
@@ -936,7 +978,7 @@ func CloneExpr(e Expr) Expr {
 		c.Value = CloneExpr(x.Value)
 		return &c
 	}
-	return e
+	panic(fmt.Sprintf("ast: CloneExpr: unhandled expression kind %T (add a case for it)", e))
 }
 
 func (f *FuncType) String() string {
