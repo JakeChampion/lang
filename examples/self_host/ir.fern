@@ -541,6 +541,10 @@ pub function op_poll(): Op { return op0("poll"); }
 // `timer_fd` takes one operand [ms] and pushes an i32: a CLOCK_MONOTONIC
 // one-shot timerfd readable after `ms` ms (or -errno). Lowers to __fern_timer_fd.
 pub function op_timer_fd(): Op { return op0("timer_fd"); }
+// `isatty` takes one operand [fd] and pushes 0/1: is the descriptor a terminal?
+// Lowers to __fern_isatty, one terminal-attribute ioctl. std/cli's colour gate
+// is the caller — no terminal means plain text.
+pub function op_isatty(): Op { return op0("isatty"); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
 // is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
@@ -1482,6 +1486,7 @@ function kind_id_1(name: string): i32 {
     if (name == "heap_mark") { return 229; }
     if (name == "heap_release_to") { return 230; }
     if (name == "create_dir_all") { return 231; }
+    if (name == "isatty") { return 232; }
     return 0;
 }
 function kind_id_2(name: string): i32 {
@@ -1651,8 +1656,8 @@ function kind_id_4(name: string): i32 {
     if (name == "write_file_exec") { return 226; }
     if (name == "ascii_run") { return 227; }
     if (name == "syscall5") { return 228; }
-    // NEXT FREE EXTENSION ID: 232 (heap_mark=229, heap_release_to=230 and
-    // create_dir_all=231 are taken below / above).
+    // NEXT FREE EXTENSION ID: 233 (heap_mark=229, heap_release_to=230,
+    // create_dir_all=231 and isatty=232 are taken below / above).
     // ADDING AN EXTENSION TAG: take the next id here AND register it in
     // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
     // for the number you took. Two branches that each claim "the next free
@@ -1923,13 +1928,14 @@ function kind_name_4(id: i32): string {
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
     if (id == 231) { return "create_dir_all"; }
+    if (id == 232) { return "isatty"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … create_dir_all=231)
+// extension tags beyond kind_count() (struct_copy=198 … isatty=232)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2020,7 +2026,7 @@ function pops1_io(t: i32): boolean {
         || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
         || t == 169 || t == 171 || t == 172 || t == 173                  // read_file, read_dir, remove_dir_all, remove_file
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
-        || t == 231                                                      // create_dir_all
+        || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file

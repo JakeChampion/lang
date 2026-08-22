@@ -391,6 +391,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "fork") { return "57"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
+        if (name == "ioctl") { return "16"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -426,6 +427,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "listen") { return "106"; }
         if (name == "connect") { return "98"; }
         if (name == "execve") { return "59"; }
+        if (name == "ioctl") { return "54"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -454,6 +456,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "clone") { return "220"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
+    if (name == "ioctl") { return "29"; }
     return "-1";
 }
 
@@ -743,6 +746,21 @@ pub function rt_src_timer_fd(t: string): string {
         return "function __fern_timer_fd(ms: i32): i32 { return 0 - 1; }";
     }
     return "function __fern_timer_fd(ms: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "timerfd_create") + ", 1, 0, 0); if (fd < 0) { return fd; } var its: i32 = __raw_scratch(32); __raw_store_ptr(its, 0, 0); __raw_store_ptr(its, 1, 0); __raw_store_ptr(its, 2, ms / 1000); __raw_store_ptr(its, 3, (ms % 1000) * 1000000); __syscall4(" + sysno(t, "timerfd_settime") + ", fd, 0, its, 0); return fd; }";
+}
+
+// rt_src_isatty backs `isatty(fd)` (syscall-leaf) -> 1 when fd is a terminal.
+//
+// The question is a terminal-attribute ioctl, which only a tty answers. Its
+// REQUEST number is the platform difference, not the syscall's shape: Linux
+// spells it TCGETS (0x5401 = 21505), XNU TIOCGETA (0x40487413 = 1078490131).
+// `fstat` + `S_ISCHR` would be simpler and answers yes for /dev/null.
+//
+// The 80-byte scratch covers `struct termios` on both (60 on Linux, 72 on
+// XNU); nothing reads it back, since success is the whole answer.
+pub function rt_src_isatty(t: string): string {
+    var req: string = "21505";
+    if (t == "arm64-darwin") { req = "1078490131"; }
+    return "function __fern_isatty(fd: i32): i32 { var buf: i32 = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf) == 0) { return 1; } return 0; }";
 }
 
 // sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
@@ -2810,6 +2828,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // (-1 native); wasm_pollable_drop(p) -> i32 (0 native);
                     // wasm_block(p) -> i32 (0 native; on wasm blocks until ready).
                     if (id.name == "timer_fd") { return ty_i32(); }
+                    // isatty(fd) -> boolean, which the self-host carries in an
+                    // integer slot like every other 0/1 value.
+                    if (id.name == "isatty") { return ty_i32(); }
                     if (id.name == "wasm_timer_pollable") { return ty_i32(); }
                     if (id.name == "wasm_pollable_drop") { return ty_i32(); }
                     if (id.name == "wasm_block") { return ty_i32(); }

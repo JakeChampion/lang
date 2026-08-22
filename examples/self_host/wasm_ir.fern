@@ -3495,6 +3495,16 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // monotonic-clock subscription (emitted caller-side in wasm_ir_run).
             // Standalone, not the reactor's wasi:io/poll path.
             out = out + "    call $__fern_sleep_ms\n";
+        } else if (o.kind_tag == 232) {  // isatty
+            // isatty(fd) -> 0. A component has no fd table to interrogate: its
+            // stdout is a wasi:io output-stream resource, and the exact answer
+            // (wasi:cli/terminal-stdout) returns an option<terminal-output> the
+            // component path does not model. "Not a terminal" is the answer that
+            // costs least — it selects plain text, which is right for every
+            // embedder that captures the output — and FORCE_COLOR still asks for
+            // escapes. Matches what native's preview-2 helper emits. The fd is
+            // on the stack and unused.
+            out = out + "    drop\n    i32.const 0\n";
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // wasm_timer_pollable(dur_ns: i64) -> pollable handle. The wasm
             // reactor's timer primitive: subscribe a monotonic-clock timer and

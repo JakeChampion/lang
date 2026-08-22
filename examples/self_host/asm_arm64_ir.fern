@@ -978,6 +978,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // [ms] -> __fern_timer_fd(x0=ms) -> CLOCK_MONOTONIC timerfd fd in x0.
             s = s.write("    bl __fn___fern_timer_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
             s = s.need("timer_fd");
+        } else if (o.kind_tag == 232) {  // isatty
+            // [fd] -> __fern_isatty(x0=fd) -> 1 when fd is a terminal, else 0.
+            s = s.write("    bl __fn___fern_isatty\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+            s = s.need("isatty");
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_timer_pollable\n    str x0, [sp, #-16]!\n");
@@ -2774,7 +2778,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -5801,6 +5805,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // __fern_scratch. Darwin has no timerfd and answers -1, as its hand-asm did.
     if (s.has_need("timer_fd")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd(tgt), s.struct_decls, s);
+    }
+    // isatty: one terminal-attribute ioctl, whose request number is the only
+    // per-target difference (TCGETS vs TIOCGETA).
+    if (s.has_need("isatty")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s.struct_decls, s);
     }
     // tcp_listen: socket + bind + listen. The sockaddr_in's only per-target
     // difference is its first two bytes (XNU has sin_len), which sockaddr_head

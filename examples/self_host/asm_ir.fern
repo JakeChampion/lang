@@ -4733,6 +4733,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [ms] IS param[0] already; the stack ABI needs no marshalling.
             s = s.write("    call __fn___fern_timer_fd\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("timer_fd");
+        } else if (o.kind_tag == 232) {  // isatty
+            // [fd]; __fern_isatty(%rdi=fd) -> 1 when fd is a terminal, else 0.
+            // [fd] IS param[0] already; the stack ABI needs no marshalling.
+            s = s.write("    call __fn___fern_isatty\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("isatty");
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns]; __fern_wasm_timer_pollable(%rdi=ns) -> -1 on native (no
             // pollable; the deadline comes from poll(2)'s timeout). Portability
@@ -7461,7 +7466,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
@@ -7553,6 +7558,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("timer_fd")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86_64"), all_structs, s);
+    }
+    if (s.has_need("isatty")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86_64"), all_structs, s);
     }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }
     if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }
