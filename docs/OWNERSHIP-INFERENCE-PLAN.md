@@ -94,6 +94,12 @@ enforce it: `vtableDispatchedMethods` for `dyn Trait` slots (#6465) and
 local, a named function passed as a callback (#7307). Over-approximating either
 set only forgoes a reclaim the caller still performs.
 
+The surface either bug can reach is exactly the owned-by-default set — a
+pointer-shaped param whose type is string/array-FREE, so a tuple or struct of
+scalars. Scalars, strings, arrays and string-bearing composites never carry the
+inc/dec pair on either side (`isOwnedByDefaultType` is the ladder's first rung),
+and measure clean on the pre-fix compiler.
+
 Borrow inference reaches the same verdict from the escape facts for the common
 non-escaping case, so both bugs were invisible with it on: the gate that sees
 them is the `*BorrowInferMatchesOwned` differential, and the corpus needs a case
