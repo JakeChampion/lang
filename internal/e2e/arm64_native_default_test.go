@@ -24,16 +24,28 @@ func buildFernCLI(t *testing.T) string {
 // neither applies.
 func arm64QemuOrEmpty(t *testing.T) string {
 	t.Helper()
+	runner, ok := arm64Runner()
+	if !ok {
+		t.Skip("no qemu-aarch64 to run arm64 binaries")
+	}
+	return runner
+}
+
+// arm64Runner is arm64QemuOrEmpty without the skip: ("", true) on a native
+// arm64 Linux host, (qemuPath, true) on a cross host with an emulator, and
+// ("", false) when there is no way to run an arm64 binary at all. Callers that
+// want a missing emulator to be a FAILURE rather than a skip need the third
+// case as a value.
+func arm64Runner() (string, bool) {
 	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
-		return ""
+		return "", true
 	}
 	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
 		if p, err := exec.LookPath(c); err == nil {
-			return p
+			return p, true
 		}
 	}
-	t.Skip("no qemu-aarch64 to run arm64 binaries")
-	return ""
+	return "", false
 }
 
 // The CLI defaults to the in-process pure-Go assembler+linker for

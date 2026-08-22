@@ -112,6 +112,17 @@ ground on the native side, exactly as `-backend ssa` (wasm) is.
   must stay byte-identical-in-behaviour to the flat-IR backends and the
   interpreter across their covered subset. A divergence is a bug in the
   proving ground, not a reason to ship it.
+
+  On **arm64** that is now enforced by a corpus differential rather than by
+  hand-written cases: `internal/e2e/arm64_ssa_differential_test.go` runs every
+  `examples/**` program through both `-target arm64-linux` and
+  `-target arm64-linux -backend ssa` and compares exit status and stdout, with a
+  refusal counted as the documented coverage endpoint rather than as a pass.
+  Its first run found four wrong answers and 56 heap SIGSEGVs
+  (`internal/e2e/testdata/arm64-ssa-diff-known-divergences.txt`). **`x86_64ssa`
+  and `-backend ssa` (wasm) still have no corpus differential** — their only
+  cover is their own hand-written cases, which is what this sentence claimed for
+  arm64 too until it was checked.
 - **Not required to carry new features.** As with `-backend ssa` (wasm), a language
   feature these backends can't yet express is a logged gap, not a blocker.
 
