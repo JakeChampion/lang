@@ -5069,16 +5069,19 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
     // TokIdent (not in the lexer's keyword set), so peek
     // it through peek_ident rather than peek_keyword.
     p = p.advance();  // consume `for`
-    // `for (k, v) in m { body }` — map destructuring iteration. The
-    // two names are encoded as "k,v" in the for-var; the emitter
-    // detects the comma + a map iter and emits an iterator loop.
+    // `for (a, b) in EXPR { body }` — destructuring iteration. The binders
+    // are the comma-joined encoding a `var (a, b) = …` destructure carries,
+    // and lower_stmt_for picks the loop from the iterand's type: a map local
+    // walks its key/value columns, anything else binds the pattern against
+    // each element.
     if (p.peek_punct() == "(") {
         var cfl: i32 = p.peek_line();
         var cfc: i32 = p.peek_col();
+        var kv_open: Par = p;
         p = p.advance();
         // C-style `for (INIT; COND; STEP) { BODY }` — distinguished from the
-        // `for (k, v) in m` map form by a top-level `;` in the header (the map
-        // form has none). Native accepts a `var` init, an expression init, or
+        // destructuring form by a top-level `;` in the header (a pattern has
+        // none). Native accepts a `var` init, an expression init, or
         // an empty init/cond (`parser.go` parseFor); the self-host previously
         // gated only on a `var` init (#2820), so `for (i = 0; …)` / `for (;
         // …)` fell into the map arm and shredded (#4339). The Stmt union has
@@ -5151,20 +5154,16 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
             outer = outer.append(s_while(e_bool(true), wbody));
             return (s_if(e_bool(true), outer, noelse), p);
         }
-        var kvk: string = p.peek_ident();
-        if (kvk.len() > 0) { p = p.advance(); }
-        if (p.peek_punct() == ",") { p = p.advance(); }
-        var kvv: string = p.peek_ident();
-        if (kvv.len() > 0) { p = p.advance(); }
-        // `for (k, v,) in m` — the binder is a comma-separated list like any
-        // other, so it takes a trailing comma. Without this the `)` and the
-        // `in` are each one token further right than the fixed lookahead
-        // expects: neither is consumed, `in` parses as an ordinary identifier
-        // (it is not a lexer keyword), and the module bails. The native parser
-        // learned this in #6358, which shipped the conformance fixture the
-        // self-host then failed on all three legs.
-        if (p.peek_punct() == ",") { p = p.advance(); }
-        if (p.peek_punct() == ")") { p = p.advance(); }
+        // The binder list is the same production a `let` destructure takes, so
+        // arity, a trailing comma (`for (k, v,) in m`) and a nested position
+        // (`for ((a, b), c) in xs`) all behave here as they do there, and the
+        // comma-joined encoding it returns is the one lower_stmt_var already
+        // decodes.
+        var (kvnames, kvcount, kvok, kvnames_p) = parse_destructure_names(kv_open);
+        p = kvnames_p;
+        if (!kvok || kvcount < 2) {
+            return (s_unknown("for pattern needs at least 2 binders"), p);
+        }
         if (p.peek_ident() == "in") { p = p.advance(); }
         // Suppress trailing struct-literal parsing — the `{` that
         // follows the iter opens the loop body, not a struct lit.
@@ -5173,7 +5172,7 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
         p = (kvi_p).with_no_struct(kv_saved);
         var (kvb_body, kvb_p) = parse_block(p);
         p = kvb_p;
-        return (s_for(kvk + "," + kvv, kvi_expr, kvb_body), p);
+        return (s_for(kvnames, kvi_expr, kvb_body), p);
     }
     var fvar: string = p.peek_ident();
     if (fvar.len() == 0) {

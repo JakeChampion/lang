@@ -31,8 +31,20 @@ for i in 0..xs.len() { total = total + xs[i]; }
 for n in 1..=100    { sum = sum + n; }
 ```
 
-Maps destructure their entries in one step. Iteration order is insertion
-order, and it's part of the contract rather than an accident:
+The binder is a pattern — the same irrefutable tuple pattern `var (a, b) =
+e;` takes, nested elements and `_` discards included — so a sequence of
+tuples unpacks in the head rather than on the body's first line:
+
+```fern
+var readings: (string, i32)[] = [("ash", 3), ("elm", 7)];
+for (species, count) in readings {
+    print(f"{species}={count}");
+}
+```
+
+Maps take the same header, binding each entry's key and value. Iteration
+order is insertion order, and it's part of the contract rather than an
+accident:
 
 ```fern
 import "core/map";

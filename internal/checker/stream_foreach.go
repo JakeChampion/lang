@@ -33,6 +33,12 @@ func lowerStreamForEachProgram(prog *ast.Program, streamElem map[string]ast.Type
 // streamForEachElem returns the element type for a ForEach whose iterand is a
 // direct call `f(args)` to a u8 stream import in streamElem, or nil otherwise.
 func streamForEachElem(fe *ast.ForEach, streamElem map[string]ast.Type) ast.Type {
+	// A destructuring header binds a pattern per element, which the lazy
+	// read loop has nowhere to put; those iterate eagerly, like every
+	// non-scalar stream element.
+	if fe.Pattern != nil {
+		return nil
+	}
 	call, ok := fe.Iter.(*ast.Call)
 	if !ok {
 		return nil

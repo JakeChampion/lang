@@ -943,12 +943,8 @@ func (f *formatter) formatJumpLabel(label string) {
 func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 	f.formatLoopLabel(fe.Label)
 	f.b.WriteString("for ")
-	if fe.Var2 != "" {
-		f.b.WriteByte('(')
-		f.b.WriteString(fe.Var)
-		f.b.WriteString(", ")
-		f.b.WriteString(fe.Var2)
-		f.b.WriteByte(')')
+	if fe.Pattern != nil {
+		f.formatDestructurePattern(fe.Pattern)
 	} else {
 		f.b.WriteString(fe.Var)
 	}

@@ -3,6 +3,7 @@ package parser
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -646,53 +647,79 @@ func TestForEachNestedHasUniqueSlots(t *testing.T) {
 	}
 }
 
-// `for (k, v) in m { ... }` desugars to an iterator-cursor loop:
-// outer Block scopes a synthetic `__foreach_iter_N` bound to
-// `expr.iter()`, the inner For drives `has_next()` / `advance()`
-// and the body opens with `var k = it.key(); var v = it.value();`
-// so the user's tuple names are bound before their stmts run.
-func TestForEachOverMapTupleDesugars(t *testing.T) {
+// A destructuring `for` header parses through the SAME pattern grammar as
+// `var (a, b) = e;` and stays un-lowered: which loop it becomes depends on the
+// iterand's type, which only the checker knows (#6096). The node is wrapped in
+// a Block whose Sugar is the loop, so `-fmt` and the checker's swap both find
+// it in a statement slot.
+func TestForEachPatternHeaderParses(t *testing.T) {
+	cases := []struct {
+		name  string
+		src   string
+		names []string
+		// nested indexes the pattern positions that carry their own
+		// sub-pattern.
+		nested []int
+	}{
+		{name: "map pair", src: "for (k, v) in m { sum = sum + k + v; }", names: []string{"k", "v"}},
+		{name: "trailing comma", src: "for (k, v,) in m { sum = sum + k + v; }", names: []string{"k", "v"}},
+		{name: "arity three", src: "for (a, b, c) in xs { sum = sum + a + b + c; }", names: []string{"a", "b", "c"}},
+		{name: "nested element", src: "for ((a, b), c) in xs { sum = sum + a + b + c; }", nested: []int{0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := Parse("function f(): i32 {\n var sum: i32 = 0;\n" + tc.src + "\n return sum;\n}")
+			if err != nil {
+				t.Fatal(err)
+			}
+			blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
+			if !ok {
+				t.Fatalf("pattern for should parse to a Block, got %T", prog.Funcs[0].Body.Stmts[1])
+			}
+			fe, ok := blk.Stmts[0].(*ast.ForEach)
+			if !ok {
+				t.Fatalf("the Block should hold the un-lowered ForEach, got %T", blk.Stmts[0])
+			}
+			if blk.Sugar != fe {
+				t.Errorf("wrapper Block must carry the loop as Sugar so -fmt reprints the source form")
+			}
+			if fe.Pattern == nil {
+				t.Fatalf("a destructuring header must carry its Pattern")
+			}
+			if fe.Pattern.Init != nil {
+				t.Errorf("Pattern.Init is the lowering's to fill, got %#v", fe.Pattern.Init)
+			}
+			for _, i := range tc.nested {
+				if i >= len(fe.Pattern.Nested) || fe.Pattern.Nested[i] == nil {
+					t.Fatalf("element %d should carry a nested pattern, got %#v", i, fe.Pattern.Nested)
+				}
+			}
+			if tc.names != nil && !reflect.DeepEqual(fe.Pattern.Names, tc.names) {
+				t.Errorf("pattern names = %v, want %v", fe.Pattern.Names, tc.names)
+			}
+		})
+	}
+}
+
+// The `(` opening a destructuring header is the same `(` a C-style `for`
+// opens with; the two are told apart by what follows the MATCHING `)`.
+func TestForHeaderParenDisambiguation(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-		var m: Map[i32, i32] = map_new(4);
 		var sum: i32 = 0;
-		for (k, v) in m {
-			sum = sum + k + v;
-		}
+		for (var i: i32 = 0; i < 3; i = i + 1) { sum = sum + i; }
 		return sum;
 	}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := prog.Funcs[0].Body.Stmts
-	blk, ok := body[2].(*ast.Block)
-	if !ok {
-		t.Fatalf("for (k,v) in m should desugar to Block, got %T", body[2])
+	if _, ok := prog.Funcs[0].Body.Stmts[1].(*ast.For); !ok {
+		t.Errorf("C-style for should still parse to *ast.For, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	if len(blk.Stmts) != 2 {
-		t.Fatalf("expected 2 inner stmts (iter / for), got %d", len(blk.Stmts))
-	}
-	declIter, ok := blk.Stmts[0].(*ast.Var)
-	if !ok || !strings.HasPrefix(declIter.Name, "__foreach_iter_") {
-		t.Fatalf("first stmt should declare __foreach_iter_N, got %T %#v", blk.Stmts[0], blk.Stmts[0])
-	}
-	loop, ok := blk.Stmts[1].(*ast.For)
-	if !ok {
-		t.Fatalf("second stmt should be For, got %T", blk.Stmts[1])
-	}
-	if loop.Step == nil {
-		t.Errorf("desugared For must carry a step (advance) so `continue` advances the cursor")
-	}
-	innerBlk, ok := loop.Body.(*ast.Block)
-	if !ok || len(innerBlk.Stmts) < 3 {
-		t.Fatalf("loop body should open with two Var binds (k,v) before user stmts, got %T %d stmts", loop.Body, len(innerBlk.Stmts))
-	}
-	bindK, ok1 := innerBlk.Stmts[0].(*ast.Var)
-	bindV, ok2 := innerBlk.Stmts[1].(*ast.Var)
-	if !ok1 || bindK.Name != "k" {
-		t.Errorf("first inner stmt should be `var k = ...`, got %#v", innerBlk.Stmts[0])
-	}
-	if !ok2 || bindV.Name != "v" {
-		t.Errorf("second inner stmt should be `var v = ...`, got %#v", innerBlk.Stmts[1])
+	// A one-element parenthesised binder is not a tuple pattern, and says so
+	// in the same words `var (x) = e;` does.
+	_, err = Parse(`function f(): i32 { for (x) in xs { } return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "tuple pattern needs at least 2 elements") {
+		t.Errorf("for (x) in xs should report the shared tuple-pattern error, got %v", err)
 	}
 }
 

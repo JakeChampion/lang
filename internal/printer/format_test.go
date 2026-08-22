@@ -256,19 +256,22 @@ func TestFormatForEachFormsKeepTheirSugar(t *testing.T) {
 	}
 }
 
-// The map form binds two names through one iterator, so losing the sugar
-// leaves `__foreach_iter_1.key()` / `.value()` calls in the source.
-func TestFormatMapForEachKeepsItsSugar(t *testing.T) {
-	src := `function f(m: map[string, i32]): i32 {
-  var t: i32 = 0;
-  for (k, v) in m {
-    t = t + v + k.len();
-  }
-  return t;
-}
-`
-	if got := formatSrc(t, src); got != src {
-		t.Errorf("formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", got, src)
+// A destructuring header prints from its pattern, so a nested element or a `_`
+// discard reprints as written rather than as the synthesised binder the
+// lowering reads (`__nest_1`, `__discard_…`).
+func TestFormatPatternForEachKeepsItsSugar(t *testing.T) {
+	for _, tc := range []struct{ name, loop string }{
+		{"map pair", "for (k, v) in m {\n    t = t + v + k.len();\n  }"},
+		{"arity three", "for (a, b, c) in xs {\n    t = t + a + b + c;\n  }"},
+		{"nested element", "for ((a, b), c) in ys {\n    t = t + a + b + c;\n  }"},
+		{"discard", "for (a, _) in xs {\n    t = t + a;\n  }"},
+		{"labelled", "each: for (a, b, c) in xs {\n    break each;\n  }"},
+	} {
+		src := "function f(m: map[string, i32], xs: (i32, i32, i32)[], ys: ((i32, i32), i32)[]): i32 {\n  var t: i32 = 0;\n  " +
+			tc.loop + "\n  return t;\n}\n"
+		if got := formatSrc(t, src); got != src {
+			t.Errorf("%s: formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, src)
+		}
 	}
 }
 
