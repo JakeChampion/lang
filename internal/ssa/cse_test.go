@@ -1,6 +1,9 @@
 package ssa
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // TestCSEDedupsAddInSameBlock — two `add p, p` ops in the
 // same block both produce identical expressions. CSE aliases
@@ -239,4 +242,48 @@ func opKinds(ops []*Op) []OpKind {
 		out[i] = o.Kind
 	}
 	return out
+}
+
+// TestCSEHonorsNaNPayload — two NaN constants with different mantissas are
+// different values, so neither may be merged into the other. Every NaN renders
+// the same in decimal, so a key built from the formatted float collapsed them
+// and a signalling payload came back carrying the quiet bit.
+func TestCSEHonorsNaNPayload(t *testing.T) {
+	const quiet, signalling = 0x7ff8000000000000, 0x7ff0000000000001
+
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	q := f.AddOp(entry, OpConstFloat)
+	entry.Ops[0].F64 = math.Float64frombits(quiet)
+	s := f.AddOp(entry, OpConstFloat)
+	entry.Ops[1].F64 = math.Float64frombits(signalling)
+	sum := f.AddOp(entry, OpFAdd, q, s)
+	f.SetRet(entry, sum)
+
+	CSE(f)
+
+	if entry.Ops[2].Args[0] != q || entry.Ops[2].Args[1] != s {
+		t.Errorf("sum args = %v, want [q s]: the two NaN payloads were merged", entry.Ops[2].Args)
+	}
+}
+
+// TestCSEDedupsIdenticalNaNs — the same bit pattern twice DOES merge, so the
+// payload key did not simply disable NaN dedup.
+func TestCSEDedupsIdenticalNaNs(t *testing.T) {
+	const signalling = 0x7ff0000000000001
+
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	a := f.AddOp(entry, OpConstFloat)
+	entry.Ops[0].F64 = math.Float64frombits(signalling)
+	b := f.AddOp(entry, OpConstFloat)
+	entry.Ops[1].F64 = math.Float64frombits(signalling)
+	sum := f.AddOp(entry, OpFAdd, a, b)
+	f.SetRet(entry, sum)
+
+	CSE(f)
+
+	if entry.Ops[2].Args[0] != a || entry.Ops[2].Args[1] != a {
+		t.Errorf("sum args = %v, want [a a]", entry.Ops[2].Args)
+	}
 }

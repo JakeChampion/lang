@@ -231,9 +231,11 @@ const (
 	OpLoad32U
 	OpStore32
 
-	// Float load / store. The internal SSA float type is f64;
-	// backend codegen decides f32 vs f64 from the type-tagging
-	// story once it lands.
+	// 8-byte float load / store. An SSA float value is an f64 bit
+	// pattern whatever its type, so these move it unchanged. A 4-byte
+	// f32 slot is NOT one of these: the lift pairs OpLoad32U /
+	// OpStore32 with the f32 reinterprets, which convert between the
+	// in-memory f32 pattern and the register's f64 one.
 	OpLoadF
 	OpStoreF
 
@@ -478,10 +480,12 @@ type Op struct {
 
 	// Width selects between i32 and i64 for integer ops where
 	// the kind alone doesn't disambiguate (OpAdd, OpConstInt,
-	// OpEq, etc.). 0 (or 32) means i32; 64 means i64. Float
-	// ops carry width in their kind (OpFAdd vs hypothetical
-	// OpF32Add never materialised — floats are f64 in SSA);
-	// this field is only meaningful for integer kinds.
+	// OpEq, etc.). 0 (or 32) means i32; 64 means i64.
+	//
+	// Float ops share one kind across both precisions, so 32 here
+	// is what makes a float result round to f32 — the value is an
+	// f64 bit pattern either way, and only the width says which
+	// precision the source type has.
 	Width int8
 
 	// CaptureSlots is set on OpMakeClosure / OpMakeEnv to the per-capture

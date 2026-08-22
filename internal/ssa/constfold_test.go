@@ -269,3 +269,42 @@ func TestFoldNilFunc(t *testing.T) {
 	}()
 	Fold(nil)
 }
+
+// TestFoldIntToFloatRoundsAtWidth32 — folding an int -> f32 conversion has to
+// round to f32 precision, the same as folding f32 arithmetic does. 2^24+1 is
+// the smallest integer f32 cannot hold, so a fold that kept f64 precision
+// produced a constant the hardware conversion never yields.
+func TestFoldIntToFloatRoundsAtWidth32(t *testing.T) {
+	cases := []struct {
+		name  string
+		kind  OpKind
+		width int8
+		want  float64
+	}{
+		{"signed f32 rounds", OpIToFS, 32, 16777216},
+		{"unsigned f32 rounds", OpIToFU, 32, 16777216},
+		{"signed f64 is exact", OpIToFS, 64, 16777217},
+		{"unsigned f64 is exact", OpIToFU, 64, 16777217},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := NewFunc("f")
+			entry := f.NewBlock()
+			n := f.AddOp(entry, OpConstInt)
+			entry.Ops[0].Imm = 16777217
+			conv := f.AddOp(entry, c.kind, n)
+			entry.Ops[1].Width = c.width
+			f.SetRet(entry, conv)
+
+			Fold(f)
+
+			got := entry.Ops[1]
+			if got.Kind != OpConstFloat {
+				t.Fatalf("conv.Kind = %v, want OpConstFloat", got.Kind)
+			}
+			if got.F64 != c.want {
+				t.Errorf("conv.F64 = %v, want %v", got.F64, c.want)
+			}
+		})
+	}
+}
