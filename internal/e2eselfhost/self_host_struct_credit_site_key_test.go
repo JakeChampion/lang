@@ -178,19 +178,22 @@ function round(i: i32): i32 {
 			want: 34, allocs: 400, frees: 400,
 		},
 		{
-			// STILL REFUSED, deliberately — the producer that returns a LOCAL.
-			// This is #7343, and it stays leaking here: this PR re-keys the credit
-			// and widens nothing. The row is what proves that. It also becomes the
-			// fails-before case for #7343's own fix, which cannot be written safely
-			// until this key migration has landed — the widening alone SIGSEGVs the
-			// collide_literal shape above.
-			name: "producer_local_still_refused",
+			// #7343, now CREDITED. This row was "producer_local_still_refused"
+			// when the keying landed: it pinned that the re-key widened nothing,
+			// and it was that fix's fails-before case. #7343 then supplied the
+			// ExprIdent arm the return predicate lacked, so the shape balances at
+			// 400/400 and the name would be a lie if it stayed — the same rename
+			// the rc-log records for `string-concat-temps-still-leak`.
+			//
+			// It still earns its place, one direction over: it is now the row that
+			// fails if that credit is ever withdrawn.
+			name: "producer_local_now_credited",
 			src: structKeyP + `function mk(i: i32): P { var p: P = P { xs: [i, i + 1], s: w("p") }; return p; }
 function round(i: i32): i32 {
     var v: P = mk(i);
     return v.xs.len();
 }` + structKeyMain,
-			want: 34, allocs: 400, frees: 0,
+			want: 34, allocs: 400, frees: 400,
 		},
 	}
 }

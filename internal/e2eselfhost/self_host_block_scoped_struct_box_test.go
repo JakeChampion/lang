@@ -216,6 +216,17 @@ function round(r: i32): i32 {
 		},
 		{
 			// Returned out of the block to the caller.
+			//
+			// wantFrees moved 0 -> 200 with #7343: `build` returns a LOCAL, which
+			// the strict-fresh return predicate now admits, so the caller's `var g`
+			// earns its reclaim and releases the returned box. That is the safe
+			// direction and it is checked rather than assumed — the answer still
+			// agrees with interp and native (6), __rc_underflow_count() is 0, and
+			// `-sanitize` reports a leak and no rc over-release. Native frees
+			// 800/800 on this program, so the count moved TOWARDS the oracle.
+			//
+			// The residual 26400 is the loop-local instances from the iterations
+			// that do not return; nothing sweeps those, and that is not this row.
 			name: "returned_from_inside_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function build(r: i32): S {
@@ -232,7 +243,7 @@ function round(r: i32): i32 {
     return g.n + g.xs[1];
 }`,
 			want:      6,
-			wantFrees: 0,
+			wantFrees: 200,
 		},
 		{
 			// Passed to a callee that keeps it.
