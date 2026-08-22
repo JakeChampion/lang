@@ -386,9 +386,11 @@ findings. Ranked by leverage.
 
     **A conversion moves loops INTO a nested named function, which is its own
     compiler surface.** The `for tr in trs` loops in `e060_e062_stmts`'s visitor
-    were the first `for..in` in the tree written inside a local function — no
-    other could have existed, since any would have failed to compile — and
-    neither for-in lowering walked one: a nested named function is
+    were the first ITERAND-form `for..in` in the tree written inside a local
+    function — the range form `for i in 0..n` parses straight to a `StmtFor` and
+    was never affected, which is why `examples/proposals/brackets_pda.fern` has
+    carried such loops in nested functions all along — and neither for-in
+    lowering walked one: a nested named function is
     an `*ast.FuncDecl` STATEMENT whose body is its own block, and both the
     parser's eager desugar and the checker's lazy stream lowering had no arm for
     it, so the `ast.ForEach` reached IR, which has no case for one. Expect the
