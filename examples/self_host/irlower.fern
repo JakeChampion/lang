@@ -59961,6 +59961,21 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     return lift_lambdas_view(raw_mod, []);
 }
 
+// module_sig_view is the whole-program signature view a PER-MODULE lift has to
+// be given: the union of every part's declarations, collected BEFORE any of them
+// is lifted. Collecting pre-lift is sound because lifting only ADDS `$wrap` /
+// `__lam_` / `$clo` functions — it never changes a signature already there.
+pub function module_sig_view(mods: parser.Module[]): parser.FuncDecl[] {
+    var view: parser.FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mods.len()) {
+        var f: i32 = 0;
+        while (f < mods[i].funcs.len()) { view = view.append(mods[i].funcs[f]); f = f + 1; }
+        i = i + 1;
+    }
+    return view;
+}
+
 // lift_lambdas_view is lift_lambdas with an explicit whole-program SIGNATURE
 // view: `view` supplies the function declarations the pass consults to answer
 // "is this callee's parameter fn-typed?" (lift_callee_param_is_fn), "how many

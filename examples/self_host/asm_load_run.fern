@@ -74,9 +74,13 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
     var all_funcs: parser.FuncDecl[] = [];
     var all_structs: parser.StructDecl[] = [];
     var known: string[] = [];
+    var pruned: parser.Module[] = [];
+    var si0: i32 = 0;
+    while (si0 < parts.len()) { pruned = pruned.append(prune_to_reachable(parts[si0].mod, reach)); si0 = si0 + 1; }
+    var lifted: parser.Module[] = asm_ir.lift_lambdas_parts(pruned);
     var pi: i32 = 0;
     while (pi < parts.len()) {
-        var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(prune_to_reachable(parts[pi].mod, reach)));
+        var im: parser.Module = lifted[pi];
         infmods = infmods.append(im);
         var fk: i32 = 0;
         while (fk < im.funcs.len()) {
@@ -267,9 +271,13 @@ function main(): i32 {
         var all_funcs: parser.FuncDecl[] = [];
         var all_structs: parser.StructDecl[] = [];
         var known: string[] = [];
+        var rawmods: parser.Module[] = [];
+        var rpi: i32 = 0;
+        while (rpi < parts.len()) { rawmods = rawmods.append(parts[rpi].mod); rpi = rpi + 1; }
+        var lifted: parser.Module[] = asm_ir.lift_lambdas_parts(rawmods);
         var pi: i32 = 0;
         while (pi < parts.len()) {
-            var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(parts[pi].mod));
+            var im: parser.Module = lifted[pi];
             infmods = infmods.append(im);
             var fk: i32 = 0;
             while (fk < im.funcs.len()) {
