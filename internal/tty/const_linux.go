@@ -1,6 +1,6 @@
 //go:build linux
 
-package interp
+package tty
 
 // TCGETS.
 const tcGetAttr = 0x5401

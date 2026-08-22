@@ -1,6 +1,6 @@
 //go:build darwin
 
-package interp
+package tty
 
 // TIOCGETA.
 const tcGetAttr = 0x40487413

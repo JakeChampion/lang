@@ -78,6 +78,7 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
+	"github.com/jakechampion/lang/internal/tty"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -579,8 +580,7 @@ func shouldColorize(mode string) bool {
 		if os.Getenv("NO_COLOR") != "" {
 			return false
 		}
-		fi, err := os.Stderr.Stat()
-		return err == nil && fi.Mode()&os.ModeCharDevice != 0
+		return tty.IsTerminal(int(os.Stderr.Fd()))
 	}
 }
 
