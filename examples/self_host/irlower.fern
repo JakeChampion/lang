@@ -13942,10 +13942,18 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // an i32[] [funcval, caps…]. The body was hoisted to `<cur_fn>$clo`
             // by lift_lambdas; const_func names it, the captures (free vars that
             // are local slots, in the SAME first-seen order hoist_escaping_closure
-            // read them) follow, and arr_make wraps them. `<cur_fn>$clo` must
-            // exist (const_funcs_only_known bails the module otherwise).
+            // read them) follow, and arr_make wraps them.
+            //
+            // Naming a `$clo` no lift hoisted emits a reference with no definition
+            // behind it, which a whole-program build silently swallows and every
+            // per-unit link fails on, far from the source line (#7215). Refuse
+            // here instead, so the gap is a bail naming this expression.
+            var clo: string = s.cur_fn + "$clo";
+            if (util.index_of_str(s.sigs.fn_names, clo) < 0) {
+                return s.note_fail("lambda: no lifted `" + clo + "` for the escaping closure").fail();
+            }
             var caps: string[] = closure_captures(lam, s);
-            var cs: LowerState = s.emit(ir.op_const_func(0, s.cur_fn + "$clo"));
+            var cs: LowerState = s.emit(ir.op_const_func(0, clo));
             var ci: i32 = 0;
             while (ci < caps.len()) {
                 var slot: i32 = cs.slot_of(caps[ci]);
