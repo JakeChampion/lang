@@ -10,30 +10,10 @@
 # These are bugs in the proving ground, not sanctioned behaviour.
 # docs/SSA-DECISION.md holds the native SSA backends to "byte-identical-in-
 # behaviour to the flat-IR backends ... across their covered subset", and every
-# program below is inside that subset: it compiled clean and then behaved
+# program listed here is inside that subset: it compiled clean and then behaved
 # differently. A program the SSA backend REFUSES does not belong here — that is
 # the documented coverage endpoint and the test counts it separately.
 #
-
-# ---------------------------------------------------------------------------
-# Wrong answers, no crash (4 rows)
-#
-# Exit codes alone would not have found these: three of the four
-# exit 0 or 1 and print the wrong thing.
-#
-# The first three are one defect, reduced 2026-08-22: an f32 stored into a
-# multi-slot aggregate lands only in the LAST slot, and every earlier slot keeps
-# whatever was there (zero, or a denormal from a half-width store).
-#
-#   enum Sh { Tri(f32, f32) }  Tri(4, 2.5) then matched: flat gives b=4 h=2.5,
-#                              arm64ssa gives b=0 h=2.5
-#   var xs: f32[] = [1,2,3]    flat gives 1,2,3; arm64ssa gives 0,0,3
-#   enum Sh { One(f32) }       agrees — a single-slot payload is fine
-#
-# The fourth is unrelated: an f64 NaN payload.
-# ---------------------------------------------------------------------------
-
-examples/tests/float_array_strict_sort_test.fern  f32 array element reads back as a denormal — case 6 sees 0e-44 at index 1 where the flat backend sees 2 (multi-slot f32 store, see header)
-examples/tests/assert_at_wider_test.fern  f32 array element reads back as 0 — assert_at_f32 case 12 sees 0 at index 0 where the flat backend sees 1 (multi-slot f32 store, see header)
-examples/wasm/shape_area.fern  first f32 field of a two-field variant payload reads back as 0 — Triangle(4,2.5) takes the "non-positive triangle dim" guard instead of printing area 5 (multi-slot f32 store, see header)
-examples/proposals/float_bits.fern  f64 signalling-NaN payload is quieted — the sNaN mantissa arrives as 2251799813685248 (the quiet bit) instead of 1, so the two NaN payloads decode identically
+# No rows: the whole corpus either agrees or is refused. Adding one is admitting
+# a wrong answer, so it needs a reason a reader can act on and an issue behind
+# it, not just a path.

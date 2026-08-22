@@ -142,7 +142,7 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		if !ok {
 			return
 		}
-		rewriteFloat(op, float64(v))
+		rewriteFloat(op, roundToWidth(float64(v), op.Width))
 		return
 	case OpIToFU:
 		if len(op.Args) != 1 {
@@ -152,7 +152,7 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		if !ok {
 			return
 		}
-		rewriteFloat(op, float64(uint64(v)))
+		rewriteFloat(op, roundToWidth(float64(uint64(v)), op.Width))
 		return
 	case OpFToIS:
 		if len(op.Args) != 1 {
@@ -330,21 +330,15 @@ func tryFoldFloat(op *Op, defs map[int32]*Op) {
 	if !lok || !rok {
 		return
 	}
-	roundW := func(v float64) float64 {
-		if op.Width == 32 {
-			return float64(float32(v))
-		}
-		return v
-	}
 	switch op.Kind {
 	case OpFAdd:
-		rewriteFloat(op, roundW(lhs+rhs))
+		rewriteFloat(op, roundToWidth(lhs+rhs, op.Width))
 	case OpFSub:
-		rewriteFloat(op, roundW(lhs-rhs))
+		rewriteFloat(op, roundToWidth(lhs-rhs, op.Width))
 	case OpFMul:
-		rewriteFloat(op, roundW(lhs*rhs))
+		rewriteFloat(op, roundToWidth(lhs*rhs, op.Width))
 	case OpFDiv:
-		rewriteFloat(op, roundW(lhs/rhs))
+		rewriteFloat(op, roundToWidth(lhs/rhs, op.Width))
 	case OpFEq:
 		rewriteBool(op, lhs == rhs)
 	case OpFNe:
@@ -358,6 +352,17 @@ func tryFoldFloat(op *Op, defs map[int32]*Op) {
 	case OpFGe:
 		rewriteBool(op, lhs >= rhs)
 	}
+}
+
+// roundToWidth applies f32 rounding to a folded float result whose op carries
+// width 32. An SSA float is an f64 bit pattern whatever its type, so a fold that
+// skipped this produced a value the running backend cannot: `16777217 as f32`
+// folded to 16777217 where the hardware conversion gives 16777216.
+func roundToWidth(v float64, w int8) float64 {
+	if w == 32 {
+		return float64(float32(v))
+	}
+	return v
 }
 
 func rewriteFloat(op *Op, v float64) {

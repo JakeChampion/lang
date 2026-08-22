@@ -261,6 +261,71 @@ function main(): i32 {
 			want: 7,
 		},
 		{
+			// An f32 occupies 4 bytes in memory but an SSA float value is an f64
+			// bit pattern, so every f32 memory access needs the narrow width plus
+			// a reinterpret. The lift dropped the IR's width and emitted the
+			// 8-byte float load/store, so each element store flattened the two
+			// slots after it and only the LAST one survived: `[1,2,3]` read back
+			// 0,0,3, and the first f32 of a two-field variant payload read back
+			// as 0 (#7333). A single-slot payload was unaffected, which is why
+			// this covers an array AND a multi-field payload. Array legs
+			// contribute 1/2/4, the payload leg 10.
+			name: "float32_multi_slot_aggregates",
+			src: `enum Sh { Tri(f32, f32) }
+function main(): i32 {
+  var xs: f32[] = [1.5f32, 2.25f32, 3.125f32];
+  var n: i32 = 0;
+  if (xs[0] == 1.5f32) { n = n + 1; }
+  if (xs[1] == 2.25f32) { n = n + 2; }
+  if (xs[2] == 3.125f32) { n = n + 4; }
+  var s: Sh = Tri(4 as f32, 2.5 as f32);
+  match (s) {
+    Tri(b, h) => { n = n + ((b * h) as i32); }
+  }
+  return n;
+}`,
+			want: 17,
+		},
+		{
+			// Two NaNs with different payloads are different constants. CSE keyed
+			// a float constant on its decimal rendering, where every NaN prints
+			// alike, so the signalling pattern was merged into the quiet one that
+			// dominated it and arrived carrying the quiet bit. Both mantissas
+			// have to survive: quiet contributes 1, signalling 2.
+			name: "float64_nan_payloads_are_distinct_constants",
+			src: `function mant(x: f64): i64 { return f64_bits(x) & 4503599627370495; }
+function main(): i32 {
+  var q: f64 = f64_from_bits(9221120237041090560);
+  var s: f64 = f64_from_bits(9218868437227405313);
+  var n: i32 = 0;
+  if (mant(q) == 2251799813685248) { n = n + 1; }
+  if (mant(s) == 1) { n = n + 2; }
+  return n;
+}`,
+			want: 3,
+		},
+		{
+			// int -> f32 rounds to f32 precision, the same as f32 arithmetic
+			// does. The IR carries the destination float width on the conversion
+			// and the SSA path read it on neither route, so 2^24+1 kept every bit
+			// instead of rounding to 2^24. The folded leg (1) and the two runtime
+			// legs (2 signed, 4 unsigned) fail independently of each other.
+			name: "int_to_float32_rounds",
+			src: `function widen(n: i32): f32 { return n as f32; }
+function widenu(n: u64): f32 { return n as f32; }
+function main(): i32 {
+  var n: i32 = 0;
+  var c: i32 = 16777217;
+  if (((c as f32) as i32) == 16777216) { n = n + 1; }
+  var k: i32 = 16777217;
+  if ((widen(k) as i32) == 16777216) { n = n + 2; }
+  var u: u64 = 16777217;
+  if ((widenu(u) as i32) == 16777216) { n = n + 4; }
+  return n;
+}`,
+			want: 7,
+		},
+		{
 			// Ordered comparisons against NaN are all false; only `!=` is true.
 			// The renderer emitted the UNSIGNED AArch64 condition codes, which
 			// agree with the IEEE ones on ordered operands but read true on

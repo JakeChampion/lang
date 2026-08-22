@@ -6,13 +6,14 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// TestLiftFLoad — OpFLoad → OpLoadF.
+// TestLiftFLoad — an f64-width OpFLoad → OpLoadF. The f32 width takes a
+// different route; TestLiftFloatMemoryWidthPicksTheAccess covers both.
 func TestLiftFLoad(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 0x2000}, // addr
-			{Kind: ir.OpFLoad},
+			{Kind: ir.OpFLoad, Width: 64},
 			{Kind: ir.OpDrop},
 			{Kind: ir.OpReturnVoid},
 		},
@@ -29,14 +30,14 @@ func TestLiftFLoad(t *testing.T) {
 	}
 }
 
-// TestLiftFStore — OpFStore → OpStoreF (no result).
+// TestLiftFStore — an f64-width OpFStore → OpStoreF, with no result.
 func TestLiftFStore(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 0x2000}, // addr
 			{Kind: ir.OpConstF64, F64: 3.14},   // value
-			{Kind: ir.OpFStore},
+			{Kind: ir.OpFStore, Width: 64},
 			{Kind: ir.OpReturnVoid},
 		},
 	}

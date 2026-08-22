@@ -433,14 +433,25 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpReinterpretI64ToF64
 		}
 		v := l.out.AddOp(l.cur, kind, arg)
-		// Propagate a 64-bit destination width to the float→int conversions so the
-		// backend does not narrow the result back to i32 with its maskFix. Without
-		// this, `x as i64` on a value that needs the high 32 bits (e.g. the
-		// `(frac * 10^15) as i64` step in float-to-string) was sign-extended from
-		// bit 31 and silently truncated. i32 destinations keep Width 0 (maskFix
-		// sxtw is correct there).
-		if op.Width == 64 && (kind == OpFToIS || kind == OpFToIU) {
+		// The IR carries the DESTINATION width on both conversion directions,
+		// and each backend reads it for a different reason.
+		//
+		// float→int: 64 keeps the backend from narrowing the result back to
+		// i32 with its maskFix. Without it, `x as i64` on a value that needs
+		// the high 32 bits (e.g. the `(frac * 10^15) as i64` step in
+		// float-to-string) was sign-extended from bit 31 and silently
+		// truncated. i32 destinations keep Width 0 (maskFix sxtw is correct
+		// there).
+		//
+		// int→float: 32 is what makes the backend round the result to f32
+		// precision, the same way it does for f32 arithmetic. An SSA float is
+		// an f64 bit pattern whatever its type, so without the width
+		// `16777217 as f32` kept every bit instead of rounding to 16777216.
+		switch {
+		case op.Width == 64 && (kind == OpFToIS || kind == OpFToIU):
 			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		case op.Width == 32 && (kind == OpIToFS || kind == OpIToFU):
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 32
 		}
 		l.stack = append(l.stack, v)
 	case ir.OpDrop:
@@ -508,7 +519,18 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		addr := l.stack[len(l.stack)-1]
 		l.stack = l.stack[:len(l.stack)-1]
-		v := l.out.AddOp(l.cur, OpLoadF, addr)
+		// An f32 occupies 4 bytes in memory and holds an f32 bit pattern
+		// there, while an SSA float value is an f64 bit pattern whatever
+		// its type. The two conversions are the reinterprets, so the width
+		// the IR carries picks between a wide load and a narrow one plus
+		// the widening step.
+		var v Value
+		if op.Width == 64 {
+			v = l.out.AddOp(l.cur, OpLoadF, addr)
+		} else {
+			bits := l.out.AddOp(l.cur, OpLoad32U, addr)
+			v = l.out.AddOp(l.cur, OpReinterpretI32ToF32, bits)
+		}
 		l.stack = append(l.stack, v)
 	case ir.OpFStore:
 		if len(l.stack) < 2 {
@@ -517,7 +539,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		val := l.stack[len(l.stack)-1]
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
-		l.out.AddOpNoResult(l.cur, OpStoreF, addr, val)
+		if op.Width == 64 {
+			l.out.AddOpNoResult(l.cur, OpStoreF, addr, val)
+		} else {
+			bits := l.out.AddOp(l.cur, OpReinterpretF32ToI32, val)
+			l.out.AddOpNoResult(l.cur, OpStore32, addr, bits)
+		}
 	case ir.OpStrEq, ir.OpStrCmp:
 		if len(l.stack) < 2 {
 			return fmt.Errorf("ssa.LiftFromIR: %s at op[%d] needs 2 operands", op.Kind, i)

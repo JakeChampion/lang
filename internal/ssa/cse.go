@@ -1,6 +1,7 @@
 package ssa
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
@@ -125,7 +126,9 @@ func exprKey(op *Op, args []Value) string {
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatInt(op.Imm, 10))
 	sb.WriteByte('|')
-	sb.WriteString(strconv.FormatFloat(op.F64, 'g', -1, 64))
+	// Keyed on the bit pattern, not a decimal rendering: every NaN formats
+	// alike, so two NaNs with different payloads are distinct constants.
+	sb.WriteString(strconv.FormatUint(math.Float64bits(op.F64), 16))
 	sb.WriteByte('|')
 	sb.WriteString(strconv.Quote(op.Str))
 	sb.WriteByte('|')
