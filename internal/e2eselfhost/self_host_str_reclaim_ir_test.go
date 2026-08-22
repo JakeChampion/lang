@@ -61,15 +61,19 @@ var strReclaimIRCases = []struct {
 	{"str-churn-safe",
 		`function main(): i32 { var tag: string = "abcd"; var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var s: string = tag + "ef"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; }`,
 		0, true, ""},
-	// NEGATIVE: an ALIASED fresh string (`var t = s`) must NOT be reclaimed — t is a
-	// bare-ident alias of s's box, so freeing either would double-free. s is used as
-	// a bare ident (RHS of t's binding) → body_unsafe_for flags it → not in the
-	// reclaim set. The concat operands are PARAMS, which slot_is_reclaimable_str
-	// refuses outright, so a reclaim anywhere in `mk` can only be s or t and the
-	// aliased-RESULT contract is isolated. Value stays correct: 3 + 3 = 6.
-	{"aliased-not-reclaimed",
+	// An ALIASED fresh string (`var t = s`) IS reclaimed, and the alias is what
+	// makes that safe: the bind retains the box, so s and t each hold a counted
+	// reference and each releases it — the refcount frees it exactly once (#7282).
+	// Before that pairing the alias cost s its credit and NOTHING was freed, which
+	// is the leak this row used to pin as correct.
+	//
+	// The concat operands are PARAMS, which slot_is_reclaimable_str refuses at its
+	// first line, so a reclaim anywhere in `mk` can only be s or t and the
+	// aliased-RESULT contract stays isolated. Value stays correct: 3 + 3 = 6, and
+	// an over-release would show as a wrong exit rather than this count.
+	{"aliased-reclaimed-once",
 		`function mk(a: string, b: string): i32 { var s: string = a + b; var t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
-		6, false, "mk"},
+		6, true, "mk"},
 	// NEGATIVE: a RETURNED fresh string escapes its producer → h must not free it.
 	// The box is handed to the caller, and freeing it in h would leave main reading
 	// dead bytes. The operands are PARAMS so nothing else in h is reclaimable, and
