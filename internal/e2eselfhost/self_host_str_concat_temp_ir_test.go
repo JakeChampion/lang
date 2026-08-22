@@ -19,40 +19,49 @@ var strConcatTempIRCases = []struct {
 	expected int
 	// wantReclaims: -1 = at least one __fern_str_free reclaim site must be
 	// emitted; N >= 0 = EXACTLY N sites (the ident-operand case pins 1: the
-	// fresh RESULT temp's release — 3 would mean the aliased operands were
-	// mis-freed too, the over-release this table exists to catch).
+	// fresh RESULT temp's release — more, within its scope, would mean an
+	// operand was mis-freed, the over-release this table exists to catch).
 	wantReclaims int
+	// scope names the ONE user function the count is taken in. "" counts the
+	// whole program; a case that needs a helper function to keep its operands
+	// un-reclaimable names that helper, so main's own literal temps are not
+	// counted against the contract.
+	scope string
 }{
 	// Two literal operands: both freed after the concat. len 3.
 	{"two-literals",
 		`function main(): i32 { var r: string = "hi" + "!"; return r.len(); }`,
-		3, -1},
+		3, -1, ""},
 	// Concat chain: the intermediate (a + b) is a fresh temp freed after the outer
 	// concat consumes it; a/b/c (idents) are aliases, not freed as operands. len 6.
 	{"chain-intermediate",
 		`function main(): i32 { var a: string = "x"; var b: string = "yy"; var c: string = "zzz"; var r: string = a + b + c; return r.len(); }`,
-		6, -1},
+		6, -1, ""},
 	// Memory-safety at scale: a concat-chain temporary in a 5,000,000-iteration loop,
 	// non-escaping — the intermediate, the literal, and the final are all reclaimed,
 	// so the heap stays FLAT (a leak would explode it; a double-free would corrupt the
 	// freelist and crash / return garbage). exit 0.
 	{"chain-churn-safe",
 		`function main(): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var k: i32 = 0; while (k < 5000000) { var r: string = pre + "x" + suf; t = (t + r.len()) % 7; k = k + 1; } return 0; }`,
-		0, -1},
+		0, -1, ""},
 	// Ident operands, result consumed inline by .len(): the fresh RESULT temp
 	// is released (the #4365 value-consuming-receiver reclaim — exactly ONE
 	// __fern_str_free site), while the ALIASED operands a/b are never freed;
 	// the exit code proves the values survive.
 	//
-	// a and b are aliased by ka/kb, which is what makes them un-reclaimable and
-	// what this case is about. Bare literal-init locals would no longer serve:
-	// a concat operand is a borrow, so `var a = "ab"` used only there earns the
-	// ordinary literal-local reclaim and the count stops isolating the alias
-	// contract. Aliased: 1 site here, 5 under a compiler that frees the operands.
+	// a and b are PARAMETERS, which is what makes them un-reclaimable and lets the
+	// count isolate the result temp. Two alternatives do not work. Bare literal-init
+	// locals: a concat operand is a borrow, so `var a = "ab"` used only there earns
+	// the ordinary literal-local reclaim and the count stops isolating anything.
+	// Locals aliased by `var ka = a` — what this case used before #7282 — no longer
+	// suppress the reclaim either: an alias now retains the box and both slots
+	// release it, so the operands were freed and the count went 1 → 9.
+	// A parameter is refused by slot_is_reclaimable_str's first line, which is a
+	// property of the class rather than of an escape scan, so it cannot drift back.
 	// ("ab"+"cde").len() + 2 + 3 = 10.
 	{"ident-operands-result-only",
-		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; var ka: string = a; var kb: string = b; return (a + b).len() + ka.len() + kb.len(); }`,
-		10, 1},
+		`function f(a: string, b: string): i32 { return (a + b).len() + a.len() + b.len(); } function main(): i32 { return f("ab", "cde"); }`,
+		10, 1, "f"},
 	// A scalar `.to_string()` operand (`"n" + w.to_string()`) is the builtin
 	// fresh producer — freed after the concat (#4353 concat-temp finding: it
 	// was the one producer is_fresh_str_temp missed, leaking the temp per
@@ -71,16 +80,16 @@ var strConcatTempIRCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`,
-		0, -1},
+		0, -1, ""},
 	// Value shape: "n" + 47.to_string() = "n47", len 3 (scalar-receiver
 	// admission via the ident-slot arm; the cast arm gets its own case).
 	{"tostring-operand-len",
 		`function main(): i32 { var w: i32 = 47; return ("n" + w.to_string()).len(); }`,
-		3, -1},
+		3, -1, ""},
 	// Cast-receiver form `(k as u32).to_string()` — the as_* scalar arm.
 	{"tostring-cast-operand-len",
 		`function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
-		3, -1},
+		3, -1, ""},
 	// Arithmetic receiver `(i % 8).to_string()` — the scalar proof is inductive
 	// over the operator, so a COMBINATION of scalars admits exactly as a bare
 	// slot does. Before that arm existed the operand leaked one box per
@@ -100,7 +109,7 @@ var strConcatTempIRCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`,
-		0, -1},
+		0, -1, ""},
 	// Unary negation is the same proof. "v" + "-12" = len 4.
 	{"neg-tostring-operand-churn",
 		`function main(): i32 {
@@ -116,7 +125,7 @@ var strConcatTempIRCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`,
-		0, -1},
+		0, -1, ""},
 	// NEGATIVE: a `+` whose operands are STRINGS is not an arithmetic
 	// combination of scalars — `("a" + s).to_string()` is the identity, whose
 	// result aliases the concat's box. Freeing it as an operand would release a
@@ -130,7 +139,7 @@ var strConcatTempIRCases = []struct {
     if (__rc_underflow() != 0) { return 95; }
     return 0;
 }`,
-		0, -1},
+		0, -1, ""},
 	// NEGATIVE: a STRING-receiver `.to_string()` is the identity case — its
 	// result aliases the receiver, so the operand must NOT be freed. Exactly
 	// 2 sites: the inline-consumed result temp + the "x" literal operand (3
@@ -143,7 +152,7 @@ var strConcatTempIRCases = []struct {
     if (s.len() != 4) { return 96; }
     return 0;
 }`,
-		0, 2},
+		0, 2, ""},
 }
 
 // TestSelfHostStrConcatTempIRX86_64 compiles each case through the self-hosted
@@ -169,6 +178,9 @@ func TestSelfHostStrConcatTempIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			reclaims := countUserStrFreeReclaims(asm)
+			if tc.scope != "" {
+				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+			}
 			if tc.wantReclaims < 0 && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-operand reclaim (call __fn___fern_str_free), found none — the temp leaks", tc.name)
 			}

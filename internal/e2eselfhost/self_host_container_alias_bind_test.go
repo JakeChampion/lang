@@ -246,15 +246,15 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 53, allocs: 300, frees: 0,
 		},
 		{
-			// NOT WIRED YET, deliberately. The string class is the fourth
-			// container and takes the same rule, but it is left for its own change
-			// so this one lands on the three that are complete. The row pins that it
-			// does not start OVER-releasing in the meantime, which is the direction a
-			// careless extension would take it.
+			// The string limb. A string box is rc-headered on every backend —
+			// __fern_str_box writes rc=1 and hands back the pointer PAST it, and
+			// __fern_str_free reads that word, decrementing above 1 and freeing only
+			// at 1 — so the same duplication the containers use applies unchanged.
+			// Base: allocs=200 frees=0, 3200 live.
 			//
 			// Native allocates 0 here (SSO, #7351) where the self-host allocates 200;
 			// that divergence is not this change's.
-			name: "string_alias_still_leaks",
+			name: "string_alias",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     var t: string = w("ab");
@@ -262,7 +262,144 @@ function round(i: i32): i32 {
     return v.len() + i;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 200, frees: 200,
+		},
+		{
+			// THE ROW THAT MUST NOT MOVE. A PARAMETER is borrowed, never owned, so
+			// aliasing one may not retain: the retain is gated on
+			// slot_is_reclaimable_str, whose first line refuses a parameter, and the
+			// credit is only ever copied from a source that already held one.
+			//
+			// This is not hypothetical. An unconditional `is_str` in the retain gave
+			// `var sp: string = sep;` inside std/array's join_with_last an inc nothing
+			// gives back, on every program that reaches it. An unbalanced retain
+			// allocates nothing and frees nothing, so it is invisible to this census
+			// on its own — it shows up HERE, as the CALLER's box never reaching 0.
+			// frees=0 is the status quo (t escapes into the call), and the failure
+			// this row guards against is the count staying 0 while live_bytes grows.
+			name: "string_alias_of_a_parameter_refused",
+			src: `function w(a: string): string { return a + "!"; }
+function plen(p: string): i32 { var v: string = p; return v.len(); }
+function round(i: i32): i32 { var t: string = w("ab"); return plen(t) + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 21, allocs: 200, frees: 0,
+		},
+		{
+			// The conditional alias, first-class, and the reason the model is
+			// DUPLICATION rather than transfer: under a transfer model the source is
+			// left un-swept on the branch where no transfer happened, so the leak
+			// becomes branch-dependent. Base: allocs=200 frees=0, 3200 live.
+			name: "string_alias_in_a_conditional",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var t: string = w("ab");
+    if (i % 2 == 0) { var v: string = t; return v.len() + i; }
+    return t.len() + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 200, frees: 200,
+		},
+		{
+			// `<scalar>.to_string()` — the "STR:" class has TEN producer families and
+			// each grants the credit at its own site, so wiring one says nothing about
+			// the others. These rows walk the families that allocate observably.
+			// Base: allocs=200 frees=0, 3200 live.
+			name: "string_alias_to_string_producer",
+			src: `import "std/i32";
+function round(i: i32): i32 { var t: string = i.to_string(); var v: string = t; return v.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 77, allocs: 200, frees: 200,
+		},
+		{
+			// `xs.join(sep)`. Base: allocs=700 frees=500, 3200 live.
+			name: "string_alias_join_producer",
+			src: `import "std/array";
+function round(i: i32): i32 { var xs: string[] = ["ab", "cd"]; var t: string = xs.join(","); var v: string = t; return v.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 55, allocs: 700, frees: 700,
+		},
+		{
+			// `<string>.replace(old, new)`. Base: allocs=400 frees=200, 3200 live.
+			name: "string_alias_replace_producer",
+			src: `import "std/string";
+function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 { var s: string = w("aXb"); var t: string = s.replace("X", "Y"); var v: string = t; return v.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 38, allocs: 400, frees: 400,
+		},
+		{
+			// `<string>.trim()` binds a `str` — a borrowed VIEW, whose box carries a
+			// NEGATIVE rc. Both __fern_rc_inc and __fern_str_free bail on the sign, so
+			// the retain and the alias' release are each no-ops and only the source's
+			// __fern_str_view_free reclaims the box: the alias is safe because of the
+			// box's rc word, not because of the slot's str_view_local flag (which an
+			// alias does not inherit).
+			//
+			// PARTIAL, and pinned as measured rather than as wished for: 200 → 250
+			// frees of 300 allocs, 2400 → 1200 live. The view class keeps a leak this
+			// change does not close, and the row exists so that it cannot silently
+			// become an over-release.
+			name: "string_alias_trim_view_partial",
+			src: `import "std/string";
+function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 { var s: string = w("  ab  "); var t: str = s.trim(); var v: str = t; return v.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 55, allocs: 300, frees: 250,
+		},
+		{
+			// REFUSED, and correctly so: a chain `var v = t; var u = v;` makes v itself
+			// escape as a bare ident, so v is not an eligible alias site and t keeps no
+			// credit either. Conservative — it leaks rather than over-releasing — and
+			// pinned so that widening the alias set later has to face this case
+			// deliberately instead of discovering it as a double free.
+			name: "string_alias_chain_refused",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; var u: string = v; return u.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 200, frees: 0,
+		},
+		{
+			// REFUSED: a REASSIGNED alias does not hold the box the credit describes
+			// at exit, so alias_bind_sites_of excludes it (body_assign_targets).
+			name: "string_alias_reassigned_refused",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; v = w("cd"); return v.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 400, frees: 0,
+		},
+		{
+			// REFUSED, as a property of the class: a string-builder ACCUMULATOR is
+			// reassigned by definition and each rebind frees the box it supersedes, so
+			// an alias bound before a rebind would point at freed memory. Every wired
+			// family carries `index_of_str(reassigned, …) < 0`, so no route grants one.
+			name: "string_accumulator_alias_refused",
+			src: `function round(i: i32): i32 { var s: string = ""; var k: i32 = 0; while (k < 3) { s = s + "x"; k = k + 1; } var v: string = s; return v.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 600, frees: 0,
+		},
+		{
+			// A FOR-IN ELEMENT source. Unchanged by this change — a loop element is
+			// borrowed from the array rather than being a credited string local, so no
+			// family grants it a credit to share. Pinned as an origin the axis names
+			// and this change does not reach.
+			name: "string_alias_of_a_for_in_element",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 { var xs: string[] = [w("ab")]; var n: i32 = 0; for e in xs { var v: string = e; n = n + v.len(); } return n + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 300, frees: 100,
+		},
+		{
+			// A TUPLE-DESTRUCTURE BINDER source (`var (a, b) = mk(); var v = a;`) —
+			// the origin the #7253 axis gained when it was applied to this shape, and
+			// the one no earlier corpus count could have surfaced. Four instances live
+			// in the compiler's own parser.fern. Unchanged here: a destructure binder
+			// is not a credited string local either.
+			name: "string_alias_of_a_destructure_binder",
+			src: `function w(a: string): string { return a + "!"; }
+function mk(): (string, i32) { return (w("ab"), 7); }
+function round(i: i32): i32 { var (a, b) = mk(); var v: string = a; return v.len() + b + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 57, allocs: 300, frees: 0,
 		}}
 }
 
