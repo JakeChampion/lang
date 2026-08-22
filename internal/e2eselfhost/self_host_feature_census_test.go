@@ -359,8 +359,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Two are astwalk's no-op statement visitors; the other three are constfold's assert probe, the first arrow lambdas here that compute rather than return the accumulator untouched.")
 	pinned(t, c, "anonymous function exprs", 4,
 		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the capturing nested named fns are the self-host's only closures.")
-	pinned(t, c, "nested named fns", 21,
-		"Four are astwalk visitors closing over their enclosing function's locals. The other seventeen are wasm_ir's helper-gate predicates: any_op(cache, pred) replaced seventeen copies of the same cache/ops walk, and each gate now spells its tag test as a nested function — two of which (module_calls_direct, module_emits_op_cached) capture a parameter, the rest capture nothing.")
+	pinned(t, c, "nested named fns", 25,
+		"Four are astwalk visitors closing over their enclosing function's locals. Seventeen are wasm_ir's helper-gate predicates behind any_op(cache, pred), two of which capture a parameter and the rest capture nothing. The last four are checker's mc_mentions pair, two visitors each, riding astwalk's node fold — an expression visitor for ExprIdent and a statement visitor for StmtAssign's target, which is a bare string rather than an expression.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
 	pinned(t, c, "Map type spellings", 11,
@@ -370,8 +370,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// to climb, and pinning one would fight the migration it measures. The
 	// feature rows above stay pinned because a move there is news either way;
 	// a module converting more loops is not.
-	atLeast(t, c, "for..in loops", 326,
-		"311 in checker.fern and 15 in visibility.fern. Every other loop in the compiler is still a hand-indexed `while`, so a fall means a module went back to hand-indexing.")
+	atLeast(t, c, "for..in loops", 325,
+		"310 in checker.fern and 15 in visibility.fern. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms, which is how this went 326 -> 325 (checker's mc_mentions pair). Lower the floor for that; investigate it otherwise.")
 	atLeast(t, c, "astwalk call sites", 85,
 		"Hand-written AST walkers collapsing onto the shared fold spine is what this counts. It should only climb; a fall means a consumer went back to spelling its own traversal.")
 
