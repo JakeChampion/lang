@@ -17,9 +17,9 @@
 // N stops at 10^4 because of the interpreter, not the sieve. `a = a.with(i,
 // v)` — the canonical in-place idiom, which the compiled backends turn into
 // an O(1) refcount-1 write — copies the whole array on every call in the
-// interpreter, so an ordinary sieve is quadratic there. Measured: N=10^4
-// takes 3.3 s interpreted and 3 ms compiled, and each doubling of N
-// quadruples the interpreted time.
+// interpreter, so the marking loops are quadratic there and each doubling of
+// N quadruples their time (#7287). Building a sieve is not: `a = a.append(v)`
+// grows its buffer in place. Compiled, N=10^4 is 3 ms.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
