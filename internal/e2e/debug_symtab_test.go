@@ -15,7 +15,9 @@ import (
 // profilers can resolve a code address), and it still runs correctly — the
 // symbol table is inert, non-alloc metadata.
 func TestX86_64DebugSymtab(t *testing.T) {
-	src := `function helper(n: i32): i32 { return n * 3; }
+	// @noinline keeps helper a real function: the subject is which names .symtab
+	// resolves, and ir.Inline would otherwise fold it into its sole call site.
+	src := `@noinline function helper(n: i32): i32 { return n * 3; }
 function main(): i32 { return helper(14); }
 `
 	bin := buildFernCLI(t)
