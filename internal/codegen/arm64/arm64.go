@@ -1196,7 +1196,7 @@ var abortMessages = []struct {
 }{
 	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134, nil},
 	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134, nil},
-	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", ExitArenaExhausted, nil},
+	{"__fern_msg_oom", MsgArenaExhausted, ExitArenaExhausted, nil},
 	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134, nil},
 	{"__fern_msg_str_slice", "fern: string index out of range\n", 134, nil},
 	{sanDoubleFreeMsg, "fern-sanitizer: rc over-release (double free)\n", ExitSanitizer, func() bool { return ast.RcUnderflowTrap }},
@@ -1223,6 +1223,13 @@ const (
 	sanLeakMiddle = " bytes in "
 	sanLeakSuffix = " blocks"
 )
+
+// MsgArenaExhausted is the arena-exhaustion diagnostic. Exported so the arm64
+// SSA backend's heap guard (internal/codegen/arm64ssa) writes the identical
+// text: a program's abort output must not depend on which arm64 emitter built
+// it. Must stay identical to the x86-64 backend's entry, like every other
+// message in the table above.
+const MsgArenaExhausted = "fern: out of memory (heap arena exhausted)\n"
 
 // ExitArenaExhausted mirrors the x86-64 backend's constant — see the comment
 // there for why this is not 137. Duplicated rather than shared because the two

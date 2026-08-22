@@ -14,8 +14,9 @@ import (
 )
 
 // assembleWX assembles a program into a W^X static AArch64 ELF (an R+X code
-// segment and a separate R+W data segment), so the .bss bump heap is writable at
-// runtime. Non-heap programs assemble fine too — their data blob is empty.
+// segment and a separate R+W data segment), so the .bss globals — the bump
+// heap's cursor and limit, the string builder — are writable at runtime.
+// Non-heap programs assemble fine too: their data blob is empty.
 func assembleWX(t *testing.T, asm string) []byte {
 	t.Helper()
 	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
