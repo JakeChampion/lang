@@ -24712,15 +24712,19 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // deep-free the final value's payload then its box by runtime variant dispatch,
     // the same release the loop rebind runs on each SUPERSEDED box. Without this the
     // last value of every such block leaked — 396 of 400 freed on #6608's probe,
-    // the n-1-of-n signature of a retired slot missing its credit. The slot is
-    // zeroed after the drop so a second sweep on another return edge is a no-op,
-    // and slots are entry-zeroed, so an untaken branch routes null.
+    // the n-1-of-n signature of a retired slot missing its credit. The drop zeroes
+    // the slot, so a second sweep on another return edge routes here to the null
+    // guard — which is load-bearing (#7360): op_variant_is DEREFERENCES the box for
+    // its tag, so an entry-zeroed slot whose branch never ran faults without it.
     var rej: i32 = st.n_params;
     while (rej < st.locals.len()) {
         if (!slot_list_has(keeps, rej) && slot_is_reclaimable_rcenum_sweep(st, rej)) {
-            st = emit_enum_variant_drops(st, rej, st.struct_type_of_slot(rej));
+            st = st.emit(ir.op_load_local(rej));
             st = st.emit(ir.op_const_i32(0));
-            st = st.emit(ir.op_store_local(rej));
+            st = st.emit(ir.op_bin("ne", 0, false));
+            st = st.emit(ir.op_if(0));
+            st = emit_enum_variant_drops(st, rej, st.struct_type_of_slot(rej));
+            st = st.emit(ir.op_end());
         }
         rej = rej + 1;
     }
