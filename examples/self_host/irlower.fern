@@ -32391,8 +32391,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // and is otherwise body_unsafe_for, so it subsumes both former checks.
         // The string[] class has worked this way since #4355.
         if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
-            && !arrarr_unsafe_for(body, aan, borrowable, opt_fresh_ret)
-            && !arrarr_row_escapes(body, aan)) {
+            && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
+            && !arrarr_row_escapes(body, reclaim_site_name(aan))) {
             out = out.append("ARRARR:" + aan);
             // STRICT string-kind credit only when every inner element proved
             // fresh (slot_is_reclaimable_arrarr consults this one when the
@@ -37710,10 +37710,10 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: SigReg, acc: stri
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (arrarr_lit_is_fresh(v.init, stmts, i)) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     // strings-fresh marker: lets the crediting loop grant the
                     // STRICT "ARRARRS:" credit a string-kind slot requires.
-                    if (arrarr_lit_strings_fresh(v.init, stmts, i)) { a = push_str_unique(a, "S|" + v.name); }
+                    if (arrarr_lit_strings_fresh(v.init, stmts, i)) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
                 } else if (arrarr_lit_is_empty(v.init) && arrarr_name_is_appended(stmts, v.name, ofr)) {
                     // APPEND-BUILT candidate (#6092): `var g: T[][] = []` grown by
                     // `g = g.append(<row literal>)`. arrarr_lit_is_fresh rejects
@@ -37723,8 +37723,8 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: SigReg, acc: stri
                     // arrarr_self_append_row here and again by the arrarr_unsafe_for
                     // gate at the crediting site; the strict string marker needs
                     // EVERY appended row strings-fresh.
-                    a = push_str_unique(a, v.name);
-                    if (arrarr_appends_strings_fresh(stmts, v.name, ofr)) { a = push_str_unique(a, "S|" + v.name); }
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    if (arrarr_appends_strings_fresh(stmts, v.name, ofr)) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
                 } else {
                     // Call init `var g: T[][] = mk(..)` of an AAC-registered
                     // producer: same credits the literal it returns would earn.
@@ -37736,10 +37736,10 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: SigReg, acc: stri
                             match (c.callee) {
                                 parser.ExprIdent(cid) => {
                                     if (sig_reg_has_exact(ofr, "AAC:" + cid.name + "|s")) {
-                                        a = push_str_unique(a, v.name);
-                                        a = push_str_unique(a, "S|" + v.name);
+                                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                                        a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col));
                                     } else {
-                                        if (sig_reg_has_exact(ofr, "AAC:" + cid.name + "|p")) { a = push_str_unique(a, v.name); }
+                                        if (sig_reg_has_exact(ofr, "AAC:" + cid.name + "|p")) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                                     }
                                 },
                                 _ => {}
@@ -38216,9 +38216,9 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     // can't dangle a live local. Scalar-kind inners value-copy their
     // elements, so the lax rows-are-literals credit suffices.
     if (s.arrarr_elem_of_slot(i) == "string") {
-        return reclaim_has(s.reclaimable_names, "ARRARRS:", reclaim_slot_name(s, i));
+        return reclaim_has(s.reclaimable_names, "ARRARRS:", s.reclaim_site_key(i));
     }
-    return reclaim_has(s.reclaimable_names, "ARRARR:", reclaim_slot_name(s, i));
+    return reclaim_has(s.reclaimable_names, "ARRARR:", s.reclaim_site_key(i));
 }
 
 // arrarr_free_helper_of picks the release helper from the slot's INNER element
@@ -47255,7 +47255,7 @@ function body_has_nonfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!arrarr_lit_is_fresh(r.value, stmts, i)) { return true; } },
+            parser.StmtReturn(r) => { if (!arrarr_lit_is_fresh(arrarr_row_effective(r.value, stmts, i), stmts, i)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_arrarr_return(f.then_body) || body_has_nonfresh_arrarr_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_arrarr_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_arrarr_return(fo.body)) { return true; } },
@@ -47274,7 +47274,7 @@ function body_has_nonstrfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!arrarr_lit_strings_fresh(r.value, stmts, i)) { return true; } },
+            parser.StmtReturn(r) => { if (!arrarr_lit_strings_fresh(arrarr_row_effective(r.value, stmts, i), stmts, i)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonstrfresh_arrarr_return(f.then_body) || body_has_nonstrfresh_arrarr_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonstrfresh_arrarr_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonstrfresh_arrarr_return(fo.body)) { return true; } },
