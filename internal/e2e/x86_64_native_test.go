@@ -269,8 +269,10 @@ function main(): i32 {
 	}
 }
 
-// x87 FPU transcendentals: __sin/__cos/__exp/__log/__pow_f64 lower to
-// fsin/fcos/fyl2x/f2xm1/fscale/frndint and the x87 stack ops.
+// The transcendentals through the in-process assembler: __sin/__cos/__exp/
+// __log/__pow_f64 lower to calls into the SSE fdlibm bundle, so what this
+// pins is that assembler's coverage of it (roundsd, cvttsd2si, the movsd
+// rip-relative constant loads) — the x87 group it was written for is gone.
 func TestX86_64NativeTranscendentals(t *testing.T) {
 	cases := []struct {
 		src  string

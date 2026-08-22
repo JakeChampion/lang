@@ -1075,6 +1075,335 @@ function hev_restore(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// fc_ld loads a `.Lfc_*` double from .rodata into an xmm register.
+function fc_ld(reg: string, lbl: string): string {
+    return "    movsd " + lbl + "(%rip), " + reg + "\n";
+}
+
+// fc_horner is one Horner step: acc = acc*x + coeff.
+function fc_horner(acc: string, x: string, scratch: string, lbl: string): string {
+    return "    mulsd " + x + ", " + acc + "\n" + fc_ld(scratch, lbl) + "    addsd " + scratch + ", " + acc + "\n";
+}
+
+// fc_negate flips %xmm0's sign bit through a mask in `scratch` — x86-64 has no
+// scalar fneg.
+function fc_negate(scratch: string): string {
+    return "    movabsq $0x8000000000000000, %rdx\n    movq %rdx, " + scratch + "\n    xorpd " + scratch + ", %xmm0\n";
+}
+
+// fc_retbits returns the f64 with the given bit pattern. Built from bits, not a
+// `.double`: an assembler has no spelling for infinity.
+function fc_retbits(bits: string): string {
+    return "    movabsq $" + bits + ", %rax\n    movq %rax, %xmm0\n    ret\n";
+}
+
+// fc_trig_guard: NaN returns itself, ±Inf becomes NaN. An infinite argument has
+// no meaningful reduction — x·2/pi is Inf and the quadrant falls out as garbage.
+// NaN is the one value a compare reports UNORDERED, in the parity flag, which ZF
+// alone cannot tell apart from equality.
+function fc_trig_guard(ret: string, nan: string): string {
+    return "    ucomisd %xmm0, %xmm0\n    jp " + ret + "\n"
+        + "    movq %xmm0, %rax\n"
+        + "    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n"
+        + "    movabsq $0x7ff0000000000000, %rcx\n    cmpq %rcx, %rax\n"
+        + "    jae " + nan + "\n";
+}
+
+// fc_pio2_reduce: %xmm0 = x -> %rax = quadrant (k&3), %xmm0 = r with |r| <= pi/4.
+function fc_pio2_reduce(): string {
+    return fc_ld("%xmm1", ".Lfc_2opi")
+        + "    mulsd %xmm0, %xmm1\n"
+        + "    roundsd $0, %xmm1, %xmm1\n"
+        + "    cvttsd2si %xmm1, %rax\n"
+        + "    movsd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2h")
+        + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
+        + "    movsd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2m")
+        + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
+        + fc_ld("%xmm3", ".Lfc_pio2l")
+        + "    mulsd %xmm3, %xmm1\n    subsd %xmm1, %xmm0\n"
+        + "    andq $3, %rax\n";
+}
+
+// emit_rt_float_transcendentals emits the f64 transcendental bundle — sin, cos,
+// exp, log and pow, none of which x86-64 has an instruction for. Gated on the
+// "float_transcendentals" need, which the op_funary / op_fbin lowerings mark;
+// native x86-64 gates the same bundle on usesFloatTranscendentals. Emitted by
+// the ENTRY module only (like the heap runtime), so a per-module sibling's
+// `call` resolves against this one definition.
+//
+// These are fdlibm's kernels, kept in lockstep with internal/codegen/x86_64's
+// emitFloatTranscendentalsRuntime — same constants, same order, same
+// `roundsd $0` (ties-to-EVEN, matching arm64's `frintn`; the reductions pick a
+// different k otherwise). They replace the x87 sequences this backend inlined
+// (`fsin` / `fcos`, `fyl2x` for log, `f2xm1` + `fscale` for exp), which were
+// the last copy of the pre-#6270 math in the tree. x87 reduces against a 66-bit
+// pi, which is not enough near a zero of sine, where the reduced argument IS
+// the answer: that path measured 1.6e11 ulp at sin(pi) and 21 ulp at sin(1e6),
+// and it returned a finite number for exp(+Inf).
+//
+// Register discipline differs from native's deliberately: x86_gas
+// (x86_native.fern, the self-host assembler) encodes addsd / mulsd / ucomisd
+// register-register only, so every coefficient is LOADED into a scratch xmm
+// where native uses a rip-relative memory operand. Same arithmetic, same bits.
+//
+// Arg in %xmm0 (pow also %xmm1), result in %xmm0. %rax/%rcx/%rdx and %xmm0-7
+// are clobbered — all caller-saved under SysV.
+function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .section .rodata\n");
+    s = s.write("    .align 8\n");
+    s = s.write(".Lfc_one: .double 1.0\n");
+    s = s.write(".Lfc_half: .double 0.5\n");
+    s = s.write(".Lfc_two: .double 2.0\n");
+    s = s.write(".Lfc_sqrt2: .double 1.4142135623730951\n");
+    // Cody-Waite splits. ln2_hi / pio2_h carry zeroed low mantissa bits so the
+    // first subtraction is exact.
+    s = s.write(".Lfc_invln2: .double 1.44269504088896338700e+00\n");
+    s = s.write(".Lfc_ln2hi: .double 6.93147180369123816490e-01\n");
+    s = s.write(".Lfc_ln2lo: .double 1.90821492927058770002e-10\n");
+    s = s.write(".Lfc_2opi: .double 6.36619772367581382433e-01\n");
+    // pi/2 as THREE 33-bit chunks (~99 bits). Two chunks leave sin(pi) 285k ulp
+    // out: near a zero of sin the reduced argument IS the answer, so the
+    // reduction's absolute error becomes the result's relative error. A fourth
+    // chunk makes it worse — it perturbs the cancellation the third sets up.
+    s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
+    s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
+    s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");
+    s = s.write(".Lfc_s1: .double -1.66666666666666324348e-01\n");
+    s = s.write(".Lfc_s2: .double 8.33333333332248946124e-03\n");
+    s = s.write(".Lfc_s3: .double -1.98412698298579493134e-04\n");
+    s = s.write(".Lfc_s4: .double 2.75573137070700676789e-06\n");
+    s = s.write(".Lfc_s5: .double -2.50507602534068634195e-08\n");
+    s = s.write(".Lfc_s6: .double 1.58969099521155010221e-10\n");
+    s = s.write(".Lfc_c1: .double 4.16666666666666019037e-02\n");
+    s = s.write(".Lfc_c2: .double -1.38888888888741095749e-03\n");
+    s = s.write(".Lfc_c3: .double 2.48015872894767294178e-05\n");
+    s = s.write(".Lfc_c4: .double -2.75573143513906633035e-07\n");
+    s = s.write(".Lfc_c5: .double 2.08757232129817482790e-09\n");
+    s = s.write(".Lfc_c6: .double -1.13596475577881948265e-11\n");
+    s = s.write(".Lfc_p1: .double 1.66666666666666019037e-01\n");
+    s = s.write(".Lfc_p2: .double -2.77777777770155933842e-03\n");
+    s = s.write(".Lfc_p3: .double 6.61375632143793436117e-05\n");
+    s = s.write(".Lfc_p4: .double -1.65339022054652515390e-06\n");
+    s = s.write(".Lfc_p5: .double 4.13813679705723846039e-08\n");
+    s = s.write(".Lfc_lg1: .double 6.666666666666735130e-01\n");
+    s = s.write(".Lfc_lg2: .double 3.999999999940941908e-01\n");
+    s = s.write(".Lfc_lg3: .double 2.857142874366239149e-01\n");
+    s = s.write(".Lfc_lg4: .double 2.222219843214978396e-01\n");
+    s = s.write(".Lfc_lg5: .double 1.818357216161805012e-01\n");
+    s = s.write(".Lfc_lg6: .double 1.531383769920937332e-01\n");
+    s = s.write(".Lfc_lg7: .double 1.479819860511658591e-01\n");
+    // exp's finite range. Above the first e^x is not representable; below the
+    // second it rounds to zero. Both are needed BEFORE the 2^k reconstruction,
+    // which builds the exponent field as (k+1023)<<52 and otherwise overflows
+    // silently into the SIGN bit — exp(1000) came out as -6.1e-183, not +Inf.
+    s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
+    s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
+    s = s.write("    .section .text\n");
+
+    // __fern_ksin(%xmm0 = r, |r| <= pi/4) -> sin r. Internal, not exported: sin
+    // and cos both reach it after reduction, so the kernel exists once rather
+    // than once per quadrant arm.
+    //   z = r*r; v = z*r; sin = r + v*(S1 + z*(S2+z*(S3+z*(S4+z*(S5+z*S6)))))
+    s = s.write("__fern_ksin:\n");
+    s = s.write("    movsd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");   // z
+    s = s.write("    movsd %xmm1, %xmm2\n    mulsd %xmm0, %xmm2\n");   // v = z*r
+    s = s.write(fc_ld("%xmm3", ".Lfc_s6"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s5"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s4"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s3"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s2"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s1"));
+    s = s.write("    mulsd %xmm2, %xmm3\n    addsd %xmm3, %xmm0\n    ret\n");
+
+    // __fern_kcos(%xmm0 = r, |r| <= pi/4) -> cos r.
+    //   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
+    //   cos = w + (((1-w) - hz) + z*(z*p))
+    // The (1-w)-hz dance recovers the bits 1-hz threw away; computing
+    // 1 - hz + z*z*p directly loses them and costs ~2 ulp.
+    s = s.write("__fern_kcos:\n");
+    s = s.write("    movsd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");   // z
+    s = s.write(fc_ld("%xmm3", ".Lfc_c6"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c5"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c4"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c3"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c2"));
+    s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c1"));
+    s = s.write("    mulsd %xmm1, %xmm3\n    mulsd %xmm1, %xmm3\n");   // z*(z*p)
+    s = s.write("    movsd %xmm1, %xmm4\n" + fc_ld("%xmm2", ".Lfc_half") + "    mulsd %xmm2, %xmm4\n"); // hz
+    s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    subsd %xmm4, %xmm5\n");   // w = 1-hz
+    s = s.write(fc_ld("%xmm6", ".Lfc_one") + "    subsd %xmm5, %xmm6\n");   // 1-w
+    s = s.write("    subsd %xmm4, %xmm6\n");                                // (1-w)-hz
+    s = s.write("    addsd %xmm3, %xmm6\n");                                // + z*z*p
+    s = s.write("    movsd %xmm5, %xmm0\n    addsd %xmm6, %xmm0\n    ret\n");
+
+    // __fern_sin_f64: quadrant 0..3 -> sin r, cos r, -sin r, -cos r. The odd
+    // quadrant picks the cos kernel and quadrant >= 2 flips the sign, so exactly
+    // one kernel runs.
+    s = s.write(".globl __fern_sin_f64\n");
+    s = s.write(".type __fern_sin_f64, @function\n");
+    s = s.write("__fern_sin_f64:\n");
+    s = s.write(fc_trig_guard(".Lfsin_ret", ".Lfsin_nan"));
+    s = s.write(fc_pio2_reduce());
+    s = s.write("    testq $1, %rax\n    jnz .Lfsin_usecos\n");
+    s = s.write("    call __fern_ksin\n    jmp .Lfsin_neg\n");
+    s = s.write(".Lfsin_usecos:\n    call __fern_kcos\n");
+    s = s.write(".Lfsin_neg:\n    cmpq $2, %rax\n    jb .Lfsin_ret\n");
+    s = s.write(fc_negate("%xmm1"));
+    s = s.write(".Lfsin_ret:\n    ret\n");
+    s = s.write(".Lfsin_nan:\n" + fc_retbits("0x7ff8000000000000"));
+    s = s.write(".size __fern_sin_f64, .-__fern_sin_f64\n");
+
+    // __fern_cos_f64: quadrant 0..3 -> cos r, -sin r, -cos r, sin r. The even
+    // quadrant picks the cos kernel; quadrants 1 and 2 flip the sign.
+    s = s.write(".globl __fern_cos_f64\n");
+    s = s.write(".type __fern_cos_f64, @function\n");
+    s = s.write("__fern_cos_f64:\n");
+    s = s.write(fc_trig_guard(".Lfcos_ret", ".Lfcos_nan"));
+    s = s.write(fc_pio2_reduce());
+    s = s.write("    testq $1, %rax\n    jnz .Lfcos_usesin\n");
+    s = s.write("    call __fern_kcos\n    jmp .Lfcos_chk\n");
+    s = s.write(".Lfcos_usesin:\n    call __fern_ksin\n");
+    s = s.write(".Lfcos_chk:\n    cmpq $1, %rax\n    jb .Lfcos_ret\n");   // q0 -> +cos
+    s = s.write("    cmpq $2, %rax\n    ja .Lfcos_ret\n");                // q3 -> +sin
+    s = s.write(fc_negate("%xmm1"));
+    s = s.write(".Lfcos_ret:\n    ret\n");
+    s = s.write(".Lfcos_nan:\n" + fc_retbits("0x7ff8000000000000"));
+    s = s.write(".size __fern_cos_f64, .-__fern_cos_f64\n");
+
+    // __fern_exp_f64(%xmm0 = x) -> e^x.
+    //   k = round(x/ln2); hi = x - k*ln2_hi; lo = k*ln2_lo; r = hi - lo
+    //   c = r - t*(P1+t*(P2+…)), t = r*r
+    //   e^r = 1 - ((lo - (r*c)/(2-c)) - hi);  e^x = e^r * 2^k
+    // +Inf trips the overflow branch and -Inf the underflow one, so only NaN
+    // needs its own test.
+    s = s.write(".globl __fern_exp_f64\n");
+    s = s.write(".type __fern_exp_f64, @function\n");
+    s = s.write("__fern_exp_f64:\n");
+    s = s.write("    ucomisd %xmm0, %xmm0\n    jp .Lfexp_ret\n");
+    s = s.write(fc_ld("%xmm1", ".Lfc_expovf") + "    ucomisd %xmm1, %xmm0\n    ja .Lfexp_inf\n");
+    s = s.write(fc_ld("%xmm1", ".Lfc_expunf") + "    ucomisd %xmm1, %xmm0\n    jb .Lfexp_zero\n");
+    s = s.write(fc_ld("%xmm1", ".Lfc_invln2") + "    mulsd %xmm0, %xmm1\n");
+    s = s.write("    roundsd $0, %xmm1, %xmm1\n    cvttsd2si %xmm1, %rax\n");  // k
+    s = s.write("    movsd %xmm1, %xmm2\n" + fc_ld("%xmm7", ".Lfc_ln2hi") + "    mulsd %xmm7, %xmm2\n");
+    s = s.write("    movsd %xmm0, %xmm3\n    subsd %xmm2, %xmm3\n");           // hi
+    s = s.write(fc_ld("%xmm7", ".Lfc_ln2lo") + "    mulsd %xmm7, %xmm1\n");    // lo
+    s = s.write("    movsd %xmm3, %xmm0\n    subsd %xmm1, %xmm0\n");           // r
+    s = s.write("    movsd %xmm0, %xmm4\n    mulsd %xmm0, %xmm4\n");           // t
+    s = s.write(fc_ld("%xmm5", ".Lfc_p5"));
+    s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p4"));
+    s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p3"));
+    s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p2"));
+    s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p1"));
+    s = s.write("    mulsd %xmm4, %xmm5\n");                                   // t*(…)
+    s = s.write("    movsd %xmm0, %xmm6\n    subsd %xmm5, %xmm6\n");           // c
+    s = s.write("    movsd %xmm0, %xmm7\n    mulsd %xmm6, %xmm7\n");           // r*c
+    s = s.write(fc_ld("%xmm2", ".Lfc_two") + "    subsd %xmm6, %xmm2\n");      // 2-c
+    s = s.write("    divsd %xmm2, %xmm7\n");
+    s = s.write("    movsd %xmm1, %xmm2\n    subsd %xmm7, %xmm2\n");           // lo - …
+    s = s.write("    subsd %xmm3, %xmm2\n");                                   // - hi
+    s = s.write(fc_ld("%xmm0", ".Lfc_one") + "    subsd %xmm2, %xmm0\n");
+    // 2^k by assembling the exponent field directly.
+    s = s.write("    addq $1023, %rax\n    shlq $52, %rax\n    movq %rax, %xmm1\n    mulsd %xmm1, %xmm0\n");
+    s = s.write(".Lfexp_ret:\n    ret\n");
+    s = s.write(".Lfexp_inf:\n" + fc_retbits("0x7ff0000000000000"));
+    s = s.write(".Lfexp_zero:\n    xorpd %xmm0, %xmm0\n    ret\n");
+    s = s.write(".size __fern_exp_f64, .-__fern_exp_f64\n");
+
+    // __fern_log_f64(%xmm0 = x) -> ln x. x = 2^k·m, m normalised to
+    // [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
+    //   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they issue
+    //   in parallel instead of as one 7-deep Horner.
+    //   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
+    // The bit-twiddling below happily extracts an exponent from 0 or +Inf and
+    // carries on, so without the guards log(0) returned -709.09 and log(+Inf)
+    // 709.78 — finite garbage. log(-0) == log(0) == -Inf, which the equality
+    // branch covers.
+    s = s.write(".globl __fern_log_f64\n");
+    s = s.write(".type __fern_log_f64, @function\n");
+    s = s.write("__fern_log_f64:\n");
+    s = s.write("    ucomisd %xmm0, %xmm0\n    jp .Lflog_ret\n");
+    s = s.write("    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n");
+    s = s.write("    jb .Lflog_nan\n");                                        // x < 0
+    s = s.write("    je .Lflog_neginf\n");                                     // x == ±0
+    s = s.write("    movabsq $0x7ff0000000000000, %rax\n    movq %rax, %xmm1\n");
+    s = s.write("    ucomisd %xmm1, %xmm0\n    je .Lflog_ret\n");              // +Inf -> itself
+    s = s.write("    movq %xmm0, %rax\n    movq %rax, %rcx\n");
+    s = s.write("    shrq $52, %rcx\n    andq $0x7ff, %rcx\n    subq $1023, %rcx\n");  // k
+    s = s.write("    movabsq $0xfffffffffffff, %rdx\n    andq %rdx, %rax\n");
+    s = s.write("    movabsq $0x3ff0000000000000, %rdx\n    orq %rdx, %rax\n");
+    s = s.write("    movq %rax, %xmm1\n");                                     // m in [1,2)
+    s = s.write(fc_ld("%xmm2", ".Lfc_sqrt2") + "    ucomisd %xmm2, %xmm1\n    jb .Lflog_noadj\n");
+    s = s.write(fc_ld("%xmm2", ".Lfc_half") + "    mulsd %xmm2, %xmm1\n    addq $1, %rcx\n");
+    s = s.write(".Lflog_noadj:\n");
+    s = s.write(fc_ld("%xmm2", ".Lfc_one") + "    subsd %xmm2, %xmm1\n");      // f
+    s = s.write(fc_ld("%xmm2", ".Lfc_two") + "    addsd %xmm1, %xmm2\n");      // 2+f
+    s = s.write("    movsd %xmm1, %xmm3\n    divsd %xmm2, %xmm3\n");           // s
+    s = s.write("    movsd %xmm3, %xmm4\n    mulsd %xmm3, %xmm4\n");           // z
+    s = s.write("    movsd %xmm4, %xmm5\n    mulsd %xmm4, %xmm5\n");           // w
+    s = s.write(fc_ld("%xmm6", ".Lfc_lg6"));
+    s = s.write(fc_horner("%xmm6", "%xmm5", "%xmm2", ".Lfc_lg4"));
+    s = s.write(fc_horner("%xmm6", "%xmm5", "%xmm2", ".Lfc_lg2"));
+    s = s.write("    mulsd %xmm5, %xmm6\n");                                   // t1
+    s = s.write(fc_ld("%xmm7", ".Lfc_lg7"));
+    s = s.write(fc_horner("%xmm7", "%xmm5", "%xmm2", ".Lfc_lg5"));
+    s = s.write(fc_horner("%xmm7", "%xmm5", "%xmm2", ".Lfc_lg3"));
+    s = s.write(fc_horner("%xmm7", "%xmm5", "%xmm2", ".Lfc_lg1"));
+    s = s.write("    mulsd %xmm4, %xmm7\n");                                   // t2
+    s = s.write("    addsd %xmm7, %xmm6\n");                                   // R
+    s = s.write("    movsd %xmm1, %xmm2\n    mulsd %xmm1, %xmm2\n");
+    s = s.write(fc_ld("%xmm7", ".Lfc_half") + "    mulsd %xmm7, %xmm2\n");     // hfsq
+    s = s.write("    cvtsi2sd %rcx, %xmm0\n");                                 // kf
+    s = s.write("    movsd %xmm0, %xmm5\n" + fc_ld("%xmm7", ".Lfc_ln2lo") + "    mulsd %xmm7, %xmm5\n");
+    s = s.write("    addsd %xmm2, %xmm6\n");                                   // hfsq+R
+    s = s.write("    mulsd %xmm3, %xmm6\n");                                   // s*(hfsq+R)
+    s = s.write("    addsd %xmm5, %xmm6\n");
+    s = s.write("    subsd %xmm6, %xmm2\n    subsd %xmm1, %xmm2\n");           // hfsq - (…) - f
+    s = s.write(fc_ld("%xmm7", ".Lfc_ln2hi") + "    mulsd %xmm7, %xmm0\n");
+    s = s.write("    subsd %xmm2, %xmm0\n");
+    s = s.write(".Lflog_ret:\n    ret\n");
+    s = s.write(".Lflog_nan:\n" + fc_retbits("0x7ff8000000000000"));
+    s = s.write(".Lflog_neginf:\n" + fc_retbits("0xfff0000000000000"));
+    s = s.write(".size __fern_log_f64, .-__fern_log_f64\n");
+
+    // __fern_pow_f64(%xmm0 = x, %xmm1 = y) -> x^y.
+    //
+    // Integer-exponent fast path. exp(y·ln x) CANNOT return exactly 9 for
+    // pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to ~4e-15
+    // on a result of 9, so it lands just under and `as i32` truncates to 8.
+    // Repeated squaring is exact wherever the result is representable, and
+    // cheaper than two transcendental calls for small |n|.
+    //
+    // Integrality is tested by an i64 round-trip rather than a compare against
+    // trunc(y), so a NaN or out-of-range y falls out as a huge |n| and the range
+    // check catches it instead of needing a parity branch.
+    s = s.write(".globl __fern_pow_f64\n");
+    s = s.write(".type __fern_pow_f64, @function\n");
+    s = s.write("__fern_pow_f64:\n");
+    s = s.write("    cvttsd2si %xmm1, %rax\n    cvtsi2sd %rax, %xmm2\n");
+    s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_general\n");
+    // |n|, branch-free: (n ^ (n>>63)) - (n>>63).
+    s = s.write("    movq %rax, %rcx\n    movq %rax, %rdx\n    sarq $63, %rdx\n");
+    s = s.write("    xorq %rdx, %rcx\n    subq %rdx, %rcx\n");
+    s = s.write("    cmpq $64, %rcx\n    ja .Lfpow_general\n");
+    s = s.write(fc_ld("%xmm3", ".Lfc_one") + "    movsd %xmm0, %xmm4\n");
+    s = s.write(".Lfpow_loop:\n    testq $1, %rcx\n    jz .Lfpow_skip\n");
+    s = s.write("    mulsd %xmm4, %xmm3\n");
+    s = s.write(".Lfpow_skip:\n    mulsd %xmm4, %xmm4\n    shrq $1, %rcx\n    jnz .Lfpow_loop\n");
+    s = s.write("    testq %rax, %rax\n    jns .Lfpow_done\n");
+    s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm3, %xmm5\n    movsd %xmm5, %xmm3\n");
+    s = s.write(".Lfpow_done:\n    movsd %xmm3, %xmm0\n    ret\n");
+    // General case: x^y = exp(y·ln x), x > 0. The only non-leaf helper; SysV has
+    // no callee-saved xmm registers, so y is stashed on the stack across the log
+    // call where arm64 can use callee-saved d8.
+    s = s.write(".Lfpow_general:\n    subq $16, %rsp\n    movsd %xmm1, (%rsp)\n");
+    s = s.write("    call __fern_log_f64\n");
+    s = s.write("    movsd (%rsp), %xmm1\n    mulsd %xmm1, %xmm0\n");
+    s = s.write("    call __fern_exp_f64\n");
+    s = s.write("    addq $16, %rsp\n    ret\n");
+    s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
+    return s;
+}
+
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // .bss: heap bump pointer + arena end, the over-release detector, and the
     // size-classed freelist (65536 classes * 8 bytes). The heap arena itself is
@@ -5692,46 +6021,26 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             else { s = s.write("    divsd %xmm1, %xmm0\n"); }
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 66) {  // fpow
-            // pow(x, y) = x^y = 2^(y·log2 x) on the x87 FPU (x > 0): fyl2x gives
-            // t = y·log2(x), then the f2xm1 + fscale reconstruction of 2^t.
-            // Mirrors the retired x86 AST emitter's __pow_f64. fbin pops rhs (y) then lhs (x).
-            s = s.write("    popq %rcx\n    popq %rax\n");        // y, x
-            s = s.write("    subq $16, %rsp\n");
-            s = s.write("    movq %rax, (%rsp)\n");               // x
-            s = s.write("    movq %rcx, 8(%rsp)\n");              // y
-            s = s.write("    fldl 8(%rsp)\n");                    // st0 = y
-            s = s.write("    fldl (%rsp)\n");                     // st0 = x, st1 = y
-            s = s.write("    fyl2x\n");                           // t = y·log2(x)
-            s = s.write("    fld %st(0)\n");
-            s = s.write("    frndint\n");                         // n = round(t)
-            s = s.write("    fsubr %st, %st(1)\n");               // st1 = t - n = f
-            s = s.write("    fxch %st(1)\n");
-            s = s.write("    f2xm1\n");
-            s = s.write("    fld1\n");
-            s = s.write("    faddp\n");
-            s = s.write("    fscale\n");
-            s = s.write("    fstp %st(1)\n");
-            s = s.write("    fstpl (%rsp)\n");
-            s = s.write("    movq (%rsp), %rax\n");
-            s = s.write("    addq $16, %rsp\n    pushq %rax\n");
+            // pow(x, y) via the __fern_pow_f64 helper — %xmm0 = x (lhs),
+            // %xmm1 = y (rhs). fbin pops rhs (y) then lhs (x). __fern_pow_f64
+            // itself calls log/exp, so the one need covers the whole bundle.
+            s = s.need("float_transcendentals");
+            s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
+            s = s.write("    call __fern_pow_f64\n");
+            s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 64 || o.kind_tag == 65 || o.kind_tag == 62 || o.kind_tag == 63) {  // fsin, fcos, fexp, flog
-            // f64 transcendentals on the x87 FPU (the -nostdlib backend can't link
-            // libm; x87 computes these directly). The operand bits ride a scratch
-            // stack slot (x87 loads from memory, not xmm). exp(x) = 2^(x·log2 e)
-            // via f2xm1 + fscale; log(x) = ln2·log2(x) via fyl2x.
-            s = s.write("    popq %rax\n    subq $8, %rsp\n    movq %rax, (%rsp)\n");
-            if (o.kind_tag == 64) { s = s.write("    fldl (%rsp)\n    fsin\n    fstpl (%rsp)\n"); }  // fsin
-            else if (o.kind_tag == 65) { s = s.write("    fldl (%rsp)\n    fcos\n    fstpl (%rsp)\n"); }  // fcos
-            else if (o.kind_tag == 63) { s = s.write("    fldln2\n    fldl (%rsp)\n    fyl2x\n    fstpl (%rsp)\n"); }  // flog
-            else {
-                s = s.write("    fldl2e\n    fmull (%rsp)\n");     // t = x·log2(e)
-                s = s.write("    fld %st(0)\n    frndint\n");      // n = round(t)
-                s = s.write("    fsubr %st, %st(1)\n    fxch %st(1)\n"); // st0=f, st1=n
-                s = s.write("    f2xm1\n    fld1\n    faddp\n");   // 2^f
-                s = s.write("    fscale\n    fstp %st(1)\n");      // 2^f · 2^n
-                s = s.write("    fstpl (%rsp)\n");
-            }
-            s = s.write("    movq (%rsp), %rax\n    addq $8, %rsp\n    pushq %rax\n");
+            // f64 transcendentals (op_funary): x86-64 has no transcendental
+            // instruction, so call the runtime helpers emit_ir_runtime emits for
+            // the "float_transcendentals" need (arg in %xmm0, result in %xmm0).
+            // The entry unit's runtime defines these `.globl`, so a sibling
+            // unit's `call` extern resolves against it.
+            s = s.need("float_transcendentals");
+            s = s.write("    popq %rax\n    movq %rax, %xmm0\n");
+            if (o.kind_tag == 64) { s = s.write("    call __fern_sin_f64\n"); }  // fsin
+            else if (o.kind_tag == 65) { s = s.write("    call __fern_cos_f64\n"); }  // fcos
+            else if (o.kind_tag == 62) { s = s.write("    call __fern_exp_f64\n"); }  // fexp
+            else { s = s.write("    call __fern_log_f64\n"); }
+            s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 57 || o.kind_tag == 59 || o.kind_tag == 58 || o.kind_tag == 60) {  // fsqrt, ffloor, fceil, ftrunc
             // f64 unary math (op_funary): pop the operand bits into xmm0, apply the
             // single SSE instruction, push. roundsd needs SSE4.1 (universal on
@@ -6594,8 +6903,8 @@ pub function all_runtime_need_roots(): string[] {
         "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // wide-int stringifiers + the Option-returning i32 min/max:
         "i64_to_string", "u64_to_string", "arr_i32_min_max_opt",
-        // arm64's f64 transcendental bundle (sin/cos/exp/log/pow). x86-64 needs
-        // no root: it lowers these inline on the x87 FPU with no runtime helper.
+        // the f64 transcendental bundle (sin/cos/exp/log/pow), on both register
+        // backends.
         "float_transcendentals"
     ];
 }
@@ -7207,6 +7516,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
     if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    // The f64 transcendental bundle (sin/cos/exp/log/pow). Deliberately NOT
+    // inside the heap gate above: a program that only does float maths
+    // allocates nothing, and would otherwise `call __fern_sin_f64` with no
+    // definition anywhere in the link.
+    if (s.has_need("float_transcendentals")) {
+        s = emit_rt_float_transcendentals(s);
+    }
     // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
     // calls, plus the leakcheck counters and exit-time report. Deliberately NOT
     // inside the heap gate — a heap-free program still lowers `exit`, which

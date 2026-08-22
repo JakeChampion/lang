@@ -253,12 +253,13 @@ links once all 11 exist.
 **Status.** Done. Cheap subset (abs/sqrt/floor/ceil/round/trunc) is
 inlined as single SSE / FP instructions on both backends (`round` is
 ties-away-from-zero: `frinta` on arm64, `trunc(x + copysign(0.5, x))`
-on x86). Transcendentals (sin/cos/exp/log/pow): x86 uses the x87 FPU
-directly (`fsin`/`fcos`/`fyl2x`/`f2xm1` — hardware-accurate, no libm);
-arm64 has no transcendental instructions, so they're polynomial-
-approximation runtime functions (range-reduced Taylor/series, validated
-<1e-5 vs libm). Tested by `self_host_float_intrinsics_test.go`
-(x86 + CI-gated arm64); fixpoint stays byte-identical.
+on x86). Transcendentals (sin/cos/exp/log/pow): neither ISA has an
+instruction, so both backends call the fdlibm bundle their emitter emits
+(`__fern_<op>_f64`, Cody-Waite reduction + domain guards, <=1 ulp). x86-64
+was on the x87 FPU until #5541's self-host half landed; the accuracy gate
+for both is `internal/e2e/f64_ulp_test.go`, with behaviour in
+`self_host_float_intrinsics_test.go` (x86 + CI-gated arm64); fixpoint stays
+byte-identical.
 
 ---
 

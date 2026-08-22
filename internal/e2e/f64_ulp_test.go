@@ -415,3 +415,86 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 	}
 	t.Logf("compared %d transcendental results bit for bit across both register backends", compared)
 }
+
+// TestF64TranscendentalUlpSelfHostX86_64 holds the SELF-HOSTED x86-64 backend
+// (examples/self_host/asm_ir.fern) to the same bound as the native one, then
+// pins the two to each other bit for bit.
+//
+// It is the gate the self-host half was missing, and its absence is why that
+// half was the last copy of the old math in the tree: asm_ir.fern lowered
+// sin / cos / exp / log / pow straight onto the x87 FPU — `fsin`, `fyl2x`,
+// `f2xm1` + `fscale` — for three PRs after every other backend had moved to
+// the fdlibm kernels, because nothing compared a self-host transcendental
+// RESULT against native's. Measured on this corpus that path was 1.6e11 ulp at
+// sin(pi) (x87 reduces against a 66-bit pi, which is not enough near a zero of
+// sine, where the reduced argument IS the answer), 21 ulp at sin(1e6), and it
+// returned a finite number for exp(+Inf).
+func TestF64TranscendentalUlpSelfHostX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	// asm_load_run, not asm_ir_run: the program imports std/i64 for the i64
+	// printing, and only the loading driver resolves imports.
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	cs := append(f64UlpCases(), f64SpecialCases()...)
+	prog := f64UlpProg(cs)
+	entry := filepath.Join(dir, "f64ulp.fern")
+	if err := os.WriteFile(entry, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, code := runBin(runX86_64Bin(runner, driver, entry, root), "")
+	if code != 0 || len(asm) == 0 {
+		t.Fatalf("self-host driver exited %d, emitted %d bytes", code, len(asm))
+	}
+	// The lowering, not just the numbers: a `call` into the shared runtime
+	// bundle, and no x87 left behind it.
+	if !strings.Contains(asm, "call __fern_sin_f64") {
+		t.Error("self-host emit has no call into __fern_sin_f64 — the transcendental runtime was not reached")
+	}
+	for _, x87 := range []string{"fsin", "fcos", "fyl2x", "f2xm1"} {
+		// Matched as a whole emitted line: `.Lfsin_ret` and friends are
+		// label names, not instructions.
+		if strings.Contains(asm, "\n    "+x87+"\n") {
+			t.Errorf("self-host emit still contains the x87 instruction %q", x87)
+		}
+	}
+
+	bin := buildBin(t, gcc, dir, "f64ulp_selfhost", asm)
+	out, rc := runBin(runX86_64Bin(runner, bin), "")
+	if rc != 0 {
+		t.Fatalf("self-host x86-64 program exited %d\n%s", rc, out)
+	}
+	checkF64Output(t, "self-host x86-64", out, cs, maxULP)
+
+	// Bit-for-bit against the native backend it is a transliteration of. The
+	// ulp bound above says each is close enough to the reference; this says
+	// they have not drifted from each other, which is the property the two
+	// hand-written copies exist to break.
+	nOut, nCode := compileAndRunX86_64(t, prog)
+	if nCode != 0 {
+		t.Fatalf("native x86-64 exited %d\n%s", nCode, nOut)
+	}
+	sl, nl := strings.Fields(strings.TrimSpace(out)), strings.Fields(strings.TrimSpace(nOut))
+	if len(sl) != len(cs) || len(nl) != len(cs) {
+		t.Fatalf("printed %d (self-host) / %d (native) values, want one per case (%d)", len(sl), len(nl), len(cs))
+	}
+	for i, c := range cs {
+		if sl[i] == nl[i] {
+			continue
+		}
+		sv, _ := strconv.ParseInt(sl[i], 10, 64)
+		nv, _ := strconv.ParseInt(nl[i], 10, 64)
+		// A NaN payload is unspecified, so only a non-NaN disagreement is a fault.
+		if math.IsNaN(math.Float64frombits(uint64(sv))) && math.IsNaN(math.Float64frombits(uint64(nv))) {
+			continue
+		}
+		t.Errorf("%s: self-host %v, native %v",
+			c.call, math.Float64frombits(uint64(sv)), math.Float64frombits(uint64(nv)))
+	}
+	t.Logf("compared %d transcendental results bit for bit, self-host x86-64 vs native x86-64", len(cs))
+}
