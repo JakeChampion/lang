@@ -87,21 +87,23 @@ function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => 
         acc = acc + head(b) - i;`,
 		want: 7,
 	},
-	// #6606's string half, PARTLY closed by #6624: the `var` binding now earns
-	// its credit, but the two INLINE suffix(i) calls are anonymous temps on the
-	// is_fresh_str_temp path, which keeps the builtin-allowlist limit the
-	// binding shed. Still a genuine leak, unlike the enum row above — 1000
-	// allocs / 798 frees, 202 boxes stranded and growing with the count.
+	// #6606's string half. PARTLY closed by #6624 — the `var` binding earned its
+	// credit while the two INLINE suffix(i) calls stayed anonymous temps — and
+	// CLOSED by #7292, which keys the "STR:" credit on the binding site so a
+	// block-scoped local is swept at all. This row was `-still-leak` / want 3
+	// (1000 allocs / 798 frees, 202 boxes stranded and growing with the count);
+	// it now reclaims, on both natives.
 	//
-	// Also a DIFFERENT reach: flat on wasm, grows only on the two natives — the
-	// backend split #6582 records for a literal-initialised string local. The
-	// suffix call is what stops the concat const-folding into a static literal.
+	// Renamed a THIRD time, and the churn is still the point — see the enum row
+	// above, which has its own history of the same thing. A name that asserts a
+	// bug persists becomes a lie the moment the bug is fixed, and the test then
+	// fails for the right reason while reading as a regression.
 	{
-		name: "string-concat-temps-still-leak",
+		name: "string-concat-temps-reclaimed",
 		decl: `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }`,
 		body: `        var s: string = "v-" + suffix(i);
         acc = acc + s.len() - 2 - suffix(i).len();`,
-		want: 3,
+		want: 7,
 	},
 }
 
