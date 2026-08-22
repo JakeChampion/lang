@@ -18,7 +18,7 @@ import (
 func TestRcIncInlinesAtSite(t *testing.T) {
 	// `var b = a; return b` retains the borrowed param before transfer,
 	// so g carries an rc inc.
-	asm := compile(t, `function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
+	asm := compile(t, `@noinline function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
 function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`, Options{})
 	body := fnBody(t, asm, "g")
 	if strings.Contains(body, "bl __fern_rc_inc") {
@@ -72,7 +72,7 @@ func TestRcOpsFallBackToCallInLargeFn(t *testing.T) {
 
 	// Same retain shape as TestRcIncInlinesAtSite; with the ceiling at 0, g's
 	// rc inc must lower to the `bl` call form, not the inline RMW.
-	asm := compile(t, `function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
+	asm := compile(t, `@noinline function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
 function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`, Options{})
 	body := fnBody(t, asm, "g")
 	if !strings.Contains(body, "bl __fern_rc_inc") {

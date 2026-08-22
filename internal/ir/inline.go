@@ -71,6 +71,28 @@ const inlineSizeLimit = 80
 // still caps chain depth.
 const inlineLoopSizeLimit = 160
 
+// inlineMaxUnitOps is the whole-program op count above which Inline does
+// nothing at all — the analogue of GCC's `--param large-unit-insns`, and
+// the reason the pass can run on the native backends.
+//
+// The per-callee caps above bound each SITE; nothing bounds the SUM, and
+// on a program with thousands of small helpers the sum is the whole
+// story. Measured on the self-hosted compiler (2.70M ops, 5,285
+// functions) emitting x86-64: unbudgeted inlining grew the assembly 2.70x
+// (106 MB -> 285 MB) and its emit 2.31x, for a 2-3% runtime LOSS
+// (docs/PERFORMANCE-AUDIT-2026-08.md §7 item 6). Capping whole-program
+// growth at 30% still cost 1.74x the assembly and 1.71x the emit, and at
+// 0% growth the pass's own six walks cost 37% of the emit to change the
+// output by half a percent. There is no setting at which it pays on a
+// unit that size, so the policy is to leave such units alone.
+//
+// Below the ceiling it pays and the pass is unchanged: on examples/bench
+// (31-2,202 ops) retired instructions fall 4.95% on average, up to 23.9%
+// on call_overhead. Real programs sit far from the line — the bench
+// corpus tops out at 2.2k ops and the compiler's smallest module is 15k,
+// with nothing measured between 15k and 691k.
+const inlineMaxUnitOps = 20000
+
 // Inline rewrites every OpCallDirect to an eligible callee in prog
 // as the callee's op list with parameters bound to fresh local
 // slots. The pass is conservative — programs without inlineable
@@ -90,6 +112,13 @@ const inlineLoopSizeLimit = 160
 // for Fold to collapse, then DCE drops anything unreachable that
 // surfaces.
 func Inline(prog *Program) {
+	unit := 0
+	for _, fn := range prog.Funcs {
+		unit += len(fn.Ops)
+	}
+	if unit > inlineMaxUnitOps {
+		return
+	}
 	for i := 0; i < inlineMaxPasses; i++ {
 		candidates := findInlineCandidates(prog)
 		if len(candidates) == 0 {

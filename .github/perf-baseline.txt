@@ -27,36 +27,36 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
-x86_64/array_append.text	605
-x86_64/array_append.ir	78652222
+x86_64/array_append.text	597
+x86_64/array_append.ir	78651902
 x86_64/array_index.text	573
-x86_64/array_index.ir	73942988
-x86_64/call_overhead.text	189
-x86_64/call_overhead.ir	50201404
+x86_64/array_index.ir	73869393
+x86_64/call_overhead.text	713
+x86_64/call_overhead.ir	38199546
 x86_64/closure_call.text	468
 x86_64/closure_call.ir	241236051
-x86_64/enum_match.text	735
-x86_64/enum_match.ir	228600067
+x86_64/enum_match.text	721
+x86_64/enum_match.ir	205650067
 x86_64/int_loop.text	114
 x86_64/int_loop.ir	66000032
-x86_64/map_int.text	3471
-x86_64/map_int.ir	114365112
-x86_64/map_string.text	4738
-x86_64/map_string.ir	228119826	2
-x86_64/sort_inplace.text	919
-x86_64/sort_inplace.ir	153911104
-x86_64/sort_ints.text	2771
-x86_64/sort_ints.ir	117787264
-x86_64/string_build.text	1354
-x86_64/string_build.ir	148580839
-x86_64/string_scan.text	1722
-x86_64/string_scan.ir	122146710
-x86_64/string_slice.text	537
-x86_64/string_slice.ir	176220097
-x86_64/struct_drop.text	2141
-x86_64/struct_drop.ir	641060163
-x86_64/tokenize.text	979
-x86_64/tokenize.ir	169070089
+x86_64/map_int.text	3740
+x86_64/map_int.ir	94109018
+x86_64/map_string.text	5071
+x86_64/map_string.ir	208811413	2
+x86_64/sort_inplace.text	910
+x86_64/sort_inplace.ir	153321104
+x86_64/sort_ints.text	3085
+x86_64/sort_ints.ir	113574190
+x86_64/string_build.text	1329
+x86_64/string_build.ir	144610039
+x86_64/string_scan.text	1710
+x86_64/string_scan.ir	124794066
+x86_64/string_slice.text	524
+x86_64/string_slice.ir	175440097
+x86_64/struct_drop.text	3608
+x86_64/struct_drop.ir	619340163
+x86_64/tokenize.text	1058
+x86_64/tokenize.ir	158680089
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -70,33 +70,33 @@ x86_64/tokenize.ir	169070089
 # constant (int_loop 0.71, string_scan 1.01). A new benchmark reports as
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
-aarch64/array_append.text	584
+aarch64/array_append.text	577
 aarch64/array_append.ir	69046974
 aarch64/array_index.text	555
 aarch64/array_index.ir	63698033
-aarch64/call_overhead.text	165
+aarch64/call_overhead.text	532
 aarch64/call_overhead.ir	45601201
 aarch64/closure_call.text	444
 aarch64/closure_call.ir	209928045
-aarch64/enum_match.text	682
+aarch64/enum_match.text	669
 aarch64/enum_match.ir	194175068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
-aarch64/map_int.text	3173
+aarch64/map_int.text	3406
 aarch64/map_int.ir	100592487
-aarch64/map_string.text	4403
+aarch64/map_string.text	4702
 aarch64/map_string.ir	223648093	2
-aarch64/sort_inplace.text	860
+aarch64/sort_inplace.text	852
 aarch64/sort_inplace.ir	132740196
-aarch64/sort_ints.text	2676
+aarch64/sort_ints.text	3133
 aarch64/sort_ints.ir	108054243
-aarch64/string_build.text	1259
+aarch64/string_build.text	1232
 aarch64/string_build.ir	180495540
-aarch64/string_scan.text	1606
+aarch64/string_scan.text	1594
 aarch64/string_scan.ir	142229869
-aarch64/string_slice.text	542
+aarch64/string_slice.text	534
 aarch64/string_slice.ir	164760114
-aarch64/struct_drop.text	1925
+aarch64/struct_drop.text	3429
 aarch64/struct_drop.ir	681300288
-aarch64/tokenize.text	989
+aarch64/tokenize.text	1062
 aarch64/tokenize.ir	176490114

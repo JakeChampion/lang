@@ -17,7 +17,7 @@ import (
 // lifting the effective limit to the ±4 GiB ADRP range. This test fails loudly if
 // that emission regresses to a single `.text`.
 func TestArm64FunctionSectionsELF(t *testing.T) {
-	src := `function helper(n: i32): i32 { return n + 1; }
+	src := `@noinline function helper(n: i32): i32 { return n + 1; }
 function main(): i32 { return helper(41); }`
 	asm := compile(t, src, Options{})
 

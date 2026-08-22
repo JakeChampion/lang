@@ -19,7 +19,7 @@ import (
 // flag-setter and its reader. The e2e + differential suites are the empirical
 // backstop for that invariant.
 func TestConstZeroUsesXor(t *testing.T) {
-	asm := compile(t, `function f(): i32 { return 0; }
+	asm := compile(t, `@noinline function f(): i32 { return 0; }
 function main(): i32 { return f(); }`)
 	body := fnBody(t, asm, "f")
 	if !strings.Contains(body, "xor eax, eax") {
@@ -33,7 +33,7 @@ function main(): i32 { return f(); }`)
 // Non-zero immediates keep `mov` — `xor` only helps for zero, and rewriting
 // a non-zero constant would be wrong.
 func TestConstNonZeroKeepsMov(t *testing.T) {
-	asm := compile(t, `function f(): i32 { return 7; }
+	asm := compile(t, `@noinline function f(): i32 { return 7; }
 function main(): i32 { return f(); }`)
 	body := fnBody(t, asm, "f")
 	if !strings.Contains(body, "mov eax, 7") {
@@ -44,7 +44,7 @@ function main(): i32 { return f(); }`)
 // Negative immediates keep `mov` too (the assembler takes a negative imm32
 // directly, and the value is not zero).
 func TestConstNegativeKeepsMov(t *testing.T) {
-	asm := compile(t, `function f(): i32 { return 0 - 3; }
+	asm := compile(t, `@noinline function f(): i32 { return 0 - 3; }
 function main(): i32 { return f(); }`)
 	body := fnBody(t, asm, "f")
 	if !strings.Contains(body, "mov eax, 3") && !strings.Contains(body, "mov eax, -3") {

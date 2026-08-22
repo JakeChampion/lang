@@ -83,7 +83,7 @@ func hasJumpToNextLabel(asm string) bool {
 // immediately popped (P1), and `return` emits `jmp .Lret` right before the
 // return label (P2).
 const peepProg = `
-function add(a: i32, b: i32): i32 { return a + b; }
+@noinline function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 { return add(40, 2); }`
 
 func TestPeepholeRemovesRedundantStoreReload(t *testing.T) {
