@@ -59,7 +59,7 @@ func hasBranchToNextLabel(asm string) bool {
 // peephole off — exercising P1. (P2 is asserted as "no branch-to-next-label
 // survives", true on both programs.)
 const peepProg = `
-function g(a: i32, b: i32, c: i32): i32 { return a + b + c; }
+@noinline function g(a: i32, b: i32, c: i32): i32 { return a + b + c; }
 function main(): i32 { return g(1, 2, 3); }`
 
 func TestPeepholeCollapsesAdjacentPushPop(t *testing.T) {

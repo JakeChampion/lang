@@ -382,6 +382,13 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// "tail call" doesn't grow the stack. Wired in on all
 	// three backends (x86-64 + arm64 + wasm).
 	ir.TailCallOptimize(ip)
+	// Inline runs twice, around Defunctionalise, the ordering wasm has always
+	// used: the first pass exposes constants for OptimizeCleanup to fold, the
+	// second catches the direct calls defunctionalisation has just created out
+	// of indirect ones (which the first pass could not see). What makes it
+	// landable here is ir.inlineMaxUnitOps, the whole-program size ceiling
+	// above which the pass declines — see that constant for the measurement.
+	ir.Inline(ip)
 	// Defunctionalise + ElideClosurePair turn many indirect
 	// closure calls into direct ones (when the closure flow
 	// is monomorphic enough for the pass to prove the
@@ -404,6 +411,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
+	ir.Inline(ip)
 	// IR pass battery (#4377) — per-function rewrites shared with the wasm
 	// backend. FuseTee fuses store+reload into OpTeeLocal (both natives already
 	// emit it); FlattenBranches drops `if (false) { … }` bodies before they

@@ -202,17 +202,13 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("wasmbin: lower: %w", err)
 	}
-	// The IR optimisation pipeline. Shared with the native backends —
-	// TailCallOptimize, Defunctionalise, ElideClosurePair,
-	// InlineZeroCaptureClosures, FuseTee, FlattenBranches, OptimizeCleanup,
-	// EliminateDeadCode and the dead-function cull below all run there too, so a
-	// change to one of those lights up everywhere.
-	//
-	// `ir.Inline` (twice, around Defunctionalise) is the one exception, and its
-	// absence on the natives is a MEASURED choice rather than a missing
-	// wire-up: unbudgeted, it grows the self-hosted compiler 2.7x and makes it
-	// slower. Numbers and what would change that:
-	// docs/PERFORMANCE-AUDIT-2026-08.md §7 item 6.
+	// The IR optimisation pipeline, and every pass in it also runs on the
+	// native backends — TailCallOptimize, Inline, Defunctionalise,
+	// ElideClosurePair, InlineZeroCaptureClosures, FuseTee, FlattenBranches,
+	// OptimizeCleanup, EliminateDeadCode and the dead-function cull below — so a
+	// change to one of them lights up everywhere. What bounds Inline's growth on
+	// a program the size of a compiler is ir.inlineMaxUnitOps, not the choice of
+	// backend.
 	//
 	// If you add a pass here, either wire it into internal/codegen/{x86_64,arm64}
 	// too or say here why it cannot be. See each pass's doc comment in

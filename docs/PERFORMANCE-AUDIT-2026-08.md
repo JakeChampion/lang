@@ -83,8 +83,9 @@ Measured over the whole-compiler emit (22,420,063 emitted instructions):
   emitted instructions on that driver and −2.8% to −17.7% of retired
   instructions across `examples/bench`.
 
-Neither native backend runs `ir.Inline` or IR dead-function elimination —
-those are wasm-only, blocked on the AST↔IR parallel-index walk. #4377.
+Both native backends now run `ir.Inline` and IR dead-function elimination,
+matching wasm. `ir.Inline` is capped by `ir.inlineMaxUnitOps` — item 6 below
+for why a compiler-sized unit is left alone. #4377.
 
 ## 3. Multiplier 2 — the exit drop sweep — FIXED (#6894)
 
@@ -370,7 +371,7 @@ contradict comments in the tree:
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
 | 5 | ~~Symbol interning (#4394 lever 1)~~ — **do not scope**: §4d.3 | `lexer.fern`, `flatten.fern` | §4d.3 — `strcmp` is still 21.3%, but 18.5% of the run is one linear scan an INDEX removes |
 | 9 | Index `mfuncs` for the closure-lift predicates | `irlower.fern` `lift_callee_*` | §4d.3 — 74/400 samples under `lift_inline_closures_expr` |
-| 6 | ~~`ir.Inline` on the natives~~ — **do not scope without a growth budget**; the dead-funcs half is **done** | `internal/codegen/{x86_64,arm64}` | **the compiler got 2.7× bigger and ~3% SLOWER** — below |
+| 6 | ~~`ir.Inline` on the natives~~ — **done** under a unit-size ceiling; the dead-funcs half landed earlier | `internal/codegen/{x86_64,arm64}` | **−5.0% retired on `examples/bench`, compiler emit byte-identical** — below |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
 | 10 | ~~The reclaim / sig registries: allocation-free decode, stop copying module-wide rows per function, then INDEX the sig registries~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048, and the index in #6888 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the first five and the index took another 7% |
@@ -380,10 +381,12 @@ contradict comments in the tree:
 historical. 8 is where the time is; 5 is the only pre-existing item still
 measuring near its original attribution; 4 is the multi-PR track.
 
-**Item 6's −9% was measured on the wrong subject.** The IR dead-function cull
-is now wired into both natives (with the AST↔IR walk keyed by name), but
-`ir.Inline` is deliberately NOT, because on the self-hosted compiler — the
-workload the roadmap cares about — it loses:
+**Item 6's −9% was measured on the wrong subject**, and the resolution is that
+the subject decides the answer. Both halves are now on the natives: the IR
+dead-function cull (with the AST↔IR walk keyed by name), and `ir.Inline` under
+`ir.inlineMaxUnitOps` — a whole-program op ceiling above which the pass does
+nothing. On the self-hosted compiler, the workload the roadmap cares about, it
+loses at every growth setting measured:
 
 | | `.s` for `fern.fern` | linked driver | emit time | driver runtime |
 |---|---|---|---|---|
@@ -397,6 +400,29 @@ the same shape repeated at a
 24-op size cap (150 MB `.s`, 30.8 MB driver, a wash on the clock) and with a 20%
 whole-program growth budget (31.2 MB driver, +1.8%).
 
+Re-measured at 8961e93 on a 4-core x86-64 box, sweeping a whole-program growth
+budget on the `fern.fern` emit (2,700,933 ops, 5,285 functions):
+
+| growth budget | `.s` for `fern.fern` | emit time |
+|---|---|---|
+| pass off (baseline) | 105.8 MB | 13.8 s |
+| 0% | 105.3 MB | 22.1 s |
+| 5% | 115.6 MB | 23.3 s |
+| 10% | 126.0 MB | 24.1 s |
+| 30% | 184.2 MB | 27.5 s |
+| unbudgeted | 285.2 MB | 37.2 s |
+
+The 2.70× / 2.31× unbudgeted figures reproduce exactly. What the sweep adds is
+that **no budget rescues it**: even at 0% growth — where only the net-neutral
+single-reference moves happen and the output changes by half a percent — the
+pass's own six walks over 2.7M ops cost 37% of the emit. So the ceiling is the
+policy, not a percentage: units above it are left alone (`fern.fern` emits
+byte-identically to a tree without the pass), units below it inline exactly as
+wasm always has. The measured gap is wide — `examples/bench` tops out at 2,202
+ops and the compiler's smallest module is 14,933, with nothing measured between
+15k and 691k — so 20,000 sits in empty space rather than near a cliff any real
+program rides.
+
 The cull alone is byte-identical to baseline over `examples/` and
 `examples/bench` except on Map programs, where the four `_impl` helpers no
 `_keyed` call site reaches go: `map_int.text` −4.67%, `map_string.text` −3.46%,
@@ -407,14 +433,18 @@ the AST tree-shaker had already done the work — so it is not itself the win it
 The −9% is real — but it is the `examples/bench` corpus, not the compiler:
 `call_overhead` −27%, `map_int` −19%, `map_string` and `tokenize` −11%,
 `string_build` −10%, `enum_match` −8%, nothing regressed, average −6.5%. That is
-the shape inlining pays on, and it is why wasm keeps the pass. **Pick the subject
-as carefully as the metric** applies here as much as it did to item 3: a
-15-function benchmark and a 5,261-function compiler rank this pass in opposite
-directions. Turning it on for the natives needs a whole-program growth budget
-first (GCC's `--param inline-unit-growth`), and probably item 4's register
-allocator — on a stack-machine emitter an inlined body still spills every
-operand, so the only saving is the `call`/`ret` pair while the whole instruction
-footprint is paid.
+the shape inlining pays on, and it is the half the natives now get: re-measured
+at 8961e93 under the ceiling, `call_overhead` −23.9%, `map_int` −17.7%,
+`enum_match` −10.0%, `map_string` −8.6%, `tokenize` −6.8%, average −5.0% retired,
+with `string_scan` +2.2% the one regression. Static text grows on the same
+corpus (+24.7% on average, `call_overhead` 189 → 713 instructions), which is the
+trade a stack-machine emitter makes — an inlined body still spills every
+operand, so the saving is the `call`/`ret` pair while the instruction footprint
+is paid. Item 4's register allocator is what would change that side.
+
+**Pick the subject as carefully as the metric** applies here as much as it did
+to item 3: a 15-function benchmark and a 5,261-function compiler rank this pass
+in opposite directions, and the ceiling is how one pipeline serves both.
 
 **8 is done for this workload — and it was worth 16x end to end.** #6911 landed in two
 parts: the x86 in-process assembler got the `own` treatment `arm64_native.fern`

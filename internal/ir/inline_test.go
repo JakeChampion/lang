@@ -1,6 +1,10 @@
 package ir
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 // loweredAndInlined parses, type-checks, lowers, and runs Inline.
 func loweredAndInlined(t *testing.T, src string) *Program {
@@ -496,5 +500,78 @@ func TestInlineSkipsRuntimeMarkedCall(t *testing.T) {
 	}
 	if !survived {
 		t.Errorf("a Runtime-marked call was inlined from a program function:\n%s", p)
+	}
+}
+
+// programOps is the whole-program op count Inline measures against
+// inlineMaxUnitOps.
+func programOps(p *Program) int {
+	n := 0
+	for _, fn := range p.Funcs {
+		n += len(fn.Ops)
+	}
+	return n
+}
+
+// padStmts returns `stmts` statements of straight-line arithmetic — ops to
+// move a program across the unit ceiling without introducing a call.
+func padStmts(stmts int) string {
+	var b strings.Builder
+	b.WriteString("var acc: i32 = 0;\n")
+	for i := 0; i < stmts; i++ {
+		fmt.Fprintf(&b, "acc = acc + %d; acc = acc * 3;\n", i%7)
+	}
+	return b.String()
+}
+
+// Above inlineMaxUnitOps the pass declines entirely: on a unit that size it
+// costs multiples of the code and the emit for a runtime loss, so the call
+// survives where the same program unpadded (TestInlineSubstitutesBody) has it
+// substituted.
+func TestInlineSkipsProgramsOverUnitCeiling(t *testing.T) {
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 {
+		`+padStmts(4000)+`
+			return dbl(7) + acc;
+		}`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling — the case cannot test what it claims", got, inlineMaxUnitOps)
+	}
+	Inline(p)
+	mustContainOp(t, p, "main", OpCallDirect)
+}
+
+// The ceiling is on the WHOLE program, not on the caller: the same padding
+// moved into a second function still denies the call site in main.
+func TestInlineUnitCeilingCountsWholeProgram(t *testing.T) {
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function bulk(): i32 {
+		`+padStmts(4000)+`
+			return acc;
+		}
+		function main(): i32 { return dbl(7) + bulk(); }`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	Inline(p)
+	mustContainOp(t, p, "main", OpCallDirect)
+}
+
+// Under the ceiling the pass still runs — the control for the two cases above,
+// so a ceiling accidentally set to zero fails here rather than passing both.
+func TestInlineRunsUnderUnitCeiling(t *testing.T) {
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 {
+		`+padStmts(400)+`
+			return dbl(7) + acc;
+		}`)
+	if got := programOps(p); got > inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, over the %d ceiling", got, inlineMaxUnitOps)
+	}
+	Inline(p)
+	for _, op := range findFunc(p, "main").Ops {
+		if op.Kind == OpCallDirect && op.Str == "dbl" {
+			t.Fatal("a program under the ceiling did not inline")
+		}
 	}
 }

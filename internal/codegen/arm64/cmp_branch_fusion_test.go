@@ -41,7 +41,7 @@ func fnBody(t *testing.T, asm, name string) string {
 func TestCmpBranchFusionShape(t *testing.T) {
 	// if (a < b) — signed. The branch reaches the else-label when a >= b;
 	// emitted range-safely as the inverse skip `b.lt` over the `b .LifElse`.
-	asm := compile(t, `function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }
+	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`, Options{})
 	body := fnBody(t, asm, "f")
 
@@ -59,7 +59,7 @@ func TestCmpBranchFusionUnsignedMnemonic(t *testing.T) {
 	// Unsigned `<` must fuse to the unsigned condition family (lo/hs), not
 	// the signed lt/ge — the two disagree across the sign boundary and a
 	// wrong pick silently miscompiles u32/u64.
-	asm := compile(t, `function f(a: u32, b: u32): i32 { if (a < b) { return 1; } return 2; }
+	asm := compile(t, `@noinline function f(a: u32, b: u32): i32 { if (a < b) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`, Options{})
 	body := fnBody(t, asm, "f")
 	if !strings.Contains(body, "b.lo") {
@@ -74,7 +74,7 @@ func TestCmpBranchFusionNegation(t *testing.T) {
 	// `if (!(a < b))` folds the OpNot into the branch: the body runs on
 	// a >= b, so the skip-branch that reaches the else-label (when a < b)
 	// is `b.ge` — the opposite parity of the un-negated case.
-	asm := compile(t, `function f(a: i32, b: i32): i32 { if (!(a < b)) { return 1; } return 2; }
+	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { if (!(a < b)) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`, Options{})
 	body := fnBody(t, asm, "f")
 	if !regexp.MustCompile(`(?m)^\s*cmp w1, w0\n\s*b\.ge `).MatchString(body) {
@@ -85,7 +85,7 @@ function main(): i32 { return f(1, 2); }`, Options{})
 func TestCmpBranchFusionWhile(t *testing.T) {
 	// A `while (i < n)` loop guard is an OpBrIf-shaped consumer; it must
 	// fuse too (the hot path the #4378 benchmark measured).
-	asm := compile(t, `function f(n: i32): i32 { var i: i32 = 0; while (i < n) { i = i + 1; } return i; }
+	asm := compile(t, `@noinline function f(n: i32): i32 { var i: i32 = 0; while (i < n) { i = i + 1; } return i; }
 function main(): i32 { return f(3); }`, Options{})
 	body := fnBody(t, asm, "f")
 	if strings.Contains(body, "cset") {

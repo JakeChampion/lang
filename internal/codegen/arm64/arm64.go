@@ -308,6 +308,10 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// pass's first consumer); shape is target-agnostic so
 	// the wire-up is the same one-liner.
 	ir.TailCallOptimize(ip)
+	// Inline runs twice, around Defunctionalise — the x86-64 backend's twin,
+	// and see its comment for why the ordering is wasm's and what bounds the
+	// growth.
+	ir.Inline(ip)
 	// Defunctionalise + ElideClosurePair turn many indirect
 	// closure calls into direct calls (with env_ptr passed
 	// explicitly). Native closure pair: 16 bytes, env_ptr
@@ -320,6 +324,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
+	ir.Inline(ip)
 	// IR pass battery (#4377) — mirrors the x86-64 backend: FuseTee fuses
 	// store+reload into OpTeeLocal, FlattenBranches drops `if (false) { … }`
 	// bodies before they reach asm, EliminateDeadCode trims ops after a

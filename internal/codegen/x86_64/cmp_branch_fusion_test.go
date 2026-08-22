@@ -35,7 +35,7 @@ func fnBody(t *testing.T, asm, name string) string {
 
 func TestCmpBranchFusionShape(t *testing.T) {
 	// if (a < b) — signed: jump to the else-label when a >= b, i.e. jge.
-	asm := compile(t, `function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }
+	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`)
 	body := fnBody(t, asm, "f")
 
@@ -55,7 +55,7 @@ func TestCmpBranchFusionUnsignedMnemonic(t *testing.T) {
 	// Unsigned `<` must fuse to the below/above family (jae as the
 	// jump-to-else), not the signed jge — the two disagree across the
 	// sign boundary and a wrong pick silently miscompiles u32/u64.
-	asm := compile(t, `function f(a: u32, b: u32): i32 { if (a < b) { return 1; } return 2; }
+	asm := compile(t, `@noinline function f(a: u32, b: u32): i32 { if (a < b) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`)
 	body := fnBody(t, asm, "f")
 	if !strings.Contains(body, "jae") {
@@ -70,7 +70,7 @@ func TestCmpBranchFusionNegation(t *testing.T) {
 	// `if (!(a < b))` folds the OpNot into the jump: jump to else when
 	// the *un-negated* condition holds — i.e. when a < b (jl), so the
 	// body runs on a >= b.
-	asm := compile(t, `function f(a: i32, b: i32): i32 { if (!(a < b)) { return 1; } return 2; }
+	asm := compile(t, `@noinline function f(a: i32, b: i32): i32 { if (!(a < b)) { return 1; } return 2; }
 function main(): i32 { return f(1, 2); }`)
 	body := fnBody(t, asm, "f")
 	if !regexp.MustCompile(`(?m)^\s*cmp e?ax, e?cx\n\s*jl \.LifElse`).MatchString(body) {
@@ -81,7 +81,7 @@ function main(): i32 { return f(1, 2); }`)
 func TestCmpBranchFusionWhile(t *testing.T) {
 	// A `while (i < n)` loop guard is an OpBrIf-shaped consumer; it must
 	// fuse too (the hot path the #4378 benchmark measured).
-	asm := compile(t, `function f(n: i32): i32 { var i: i32 = 0; while (i < n) { i = i + 1; } return i; }
+	asm := compile(t, `@noinline function f(n: i32): i32 { var i: i32 = 0; while (i < n) { i = i + 1; } return i; }
 function main(): i32 { return f(3); }`)
 	body := fnBody(t, asm, "f")
 	if strings.Count(body, "setl")+strings.Count(body, "movzx eax, al") > 0 {
