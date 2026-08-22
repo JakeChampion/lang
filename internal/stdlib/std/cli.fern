@@ -281,38 +281,39 @@ pub function (s: CliSpec) usage(): string {
 // ANSI colour helpers (#4385 — "zero hits for ansi|tty").
 //
 // The colourisers wrap text in an SGR escape sequence and reset,
-// but only when colour is enabled: they honour the NO_COLOR
-// convention (no-color.org) so piping a coloured CLI tool into a
-// file or `less` degrades to plain text automatically — no
-// per-call guard at the use site. FORCE_COLOR overrides it and
-// TERM=dumb disables it; see cli_color_enabled below for the
-// precedence. Terminal auto-detection still needs an isatty
-// primitive the runtime does not have.
+// but only when colour is enabled: writing to anything that is not
+// a terminal degrades to plain text automatically, so piping a
+// coloured CLI tool into a file or `less` needs no per-call guard
+// at the use site. FORCE_COLOR overrides that, NO_COLOR
+// (no-color.org) and TERM=dumb force it off; see cli_color_enabled
+// below for the precedence.
 // ============================================================
 
 // `cli_color_enabled()` — the gate every coloriser consults.
 //
-// Three conventions, in precedence order:
+// Four signals, in precedence order:
 //
 //   1. FORCE_COLOR (any value)  -> colour ON, whatever else says.
 //      The escape hatch for CI logs and for piping into a pager that
-//      renders SGR; without it there is no way to ask for colour on a
-//      non-terminal, which is the case terminal auto-detection would
-//      otherwise get wrong in the unhelpful direction.
+//      renders SGR; without it there would be no way to ask for colour
+//      on a non-terminal, which clause 4 otherwise refuses.
 //   2. NO_COLOR (any value)     -> colour OFF (no-color.org).
 //   3. TERM=dumb                -> colour OFF. Emacs shell-mode, `M-x
 //      compile`, and plenty of CI runners set it precisely to say "I
 //      display text, not escapes", and a tool that ignores it prints
 //      `ESC[31m` at the reader.
+//   4. stdout is not a terminal -> colour OFF. The primary signal, and
+//      the only one that needs no cooperation from the user: a redirect
+//      to a file, a pipe into a pager, or a target with no terminal at
+//      all all land here.
 //
 // FORCE_COLOR wins over NO_COLOR because it is the more specific, more
 // deliberate signal: NO_COLOR is usually exported once in a profile,
 // FORCE_COLOR is set for a particular run.
 //
-// Terminal auto-detection is still absent — there is no isatty
-// primitive in the runtime, so a tool piped into a file with none of
-// these variables set still emits colour. That needs a runtime builtin
-// on every backend and is tracked separately.
+// The tty test comes last among the four rather than first because the
+// three environment variables are overrides — a user who exported one
+// has said something more specific than the stream shape has.
 pub function cli_color_enabled(): boolean {
     match (env("FORCE_COLOR")) {
         Some(_) => { return true; },
@@ -325,10 +326,10 @@ pub function cli_color_enabled(): boolean {
     match (env("TERM")) {
         Some(t) => {
             if (t == "dumb") { return false; }
-            return true;
         },
-        None => { return true; }
+        None => { }
     }
+    return isatty(1);
 }
 
 // Wrap `s` in the SGR `code` and a reset, or return it unchanged

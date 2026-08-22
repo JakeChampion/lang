@@ -398,6 +398,15 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_fd_fdstat_get": {
+		// (fd i32, retptr i32) -> errno i32. Writes a 24-byte `fdstat`
+		// at retptr whose first byte is `fs_filetype`. Preview 1's
+		// closest thing to isatty: filetype 2 is `character_device`.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_fdstat_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_environ_sizes_get": {
 		// (envc_ptr i32, env_buf_size_ptr i32) → errno.
 		// Writes the environment-variable count + the total
@@ -1599,6 +1608,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_exit"] {
 		in.add("wasi_proc_exit")
 	}
+	// Preview 2 has no fd table to interrogate, so its `isatty` is a
+	// constant and imports nothing (see buildIsattyBodyP2).
+	if helpers.set["isatty"] && !opts.Preview2WASI {
+		in.add("wasi_fd_fdstat_get")
+	}
 	if helpers.set["__fern_random_i32"] {
 		if opts.Preview2WASI {
 			in.add("wasi_random_get_u64_p2")
@@ -2090,6 +2104,51 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildIsattyBody assembles the wasm bytes for `isatty` on preview 1.
+//
+// Signature: (param $fd i32) (result i32)
+//
+// Preview 1 has no isatty. `fd_fdstat_get` is the nearest question the
+// fd table can answer: it reports the descriptor's `fs_filetype`, and
+// `character_device` (2) is what a host maps a terminal to. So the
+// result is `errno == 0 && fs_filetype == character_device`, which gets
+// the cases a CLI cares about right — a redirect to a file reports
+// `regular_file`, a pipe reports `unknown`, both correctly not a
+// terminal. The known imprecision is a non-terminal character device
+// such as /dev/null, which answers yes; that costs escapes written to a
+// sink nothing reads.
+func buildIsattyBody(idxs map[string]uint32) []byte {
+	const filetypeCharacterDevice = 2
+	fdstatGet := idxs["wasi_fd_fdstat_get"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // $fd
+	body = inst.InstI32Const(body, fdstatBufAddr)
+	body = inst.InstCall(body, fdstatGet)
+	body = numeric.InstI32Eqz(body) // errno == 0
+	body = inst.InstI32Const(body, fdstatBufAddr)
+	body = memory.InstI32Load8U(body, 0, 0) // fs_filetype
+	body = inst.InstI32Const(body, filetypeCharacterDevice)
+	body = numeric.InstI32Eq(body)
+	body = numeric.InstI32And(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildIsattyBodyP2 is the preview-2 variant: a constant false.
+//
+// A component has no fd table, so the preview-1 question above cannot
+// be asked. The exact preview-2 answer is
+// `wasi:cli/terminal-stdout.get-terminal-stdout()`, whose
+// `option<terminal-output>` is a resource the composer does not model
+// yet. Until it does, "not a terminal" is the answer that costs least:
+// it selects plain text, which is right for every embedder that
+// captures the component's output, and `FORCE_COLOR` remains the way to
+// ask for escapes anyway.
+func buildIsattyBodyP2(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildExitBody assembles the wasm bytes for __fern_exit.
 //
 // Signature: (param $code i32) (result)
@@ -2169,6 +2228,7 @@ func buildMapHashSeedBody(idxs map[string]uint32) []byte {
 // body. Each override has the same (params, results) signature as
 // the helper's runtimeHelperSpec — only the bytecode differs.
 var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
+	"isatty":                     buildIsattyBodyP2,
 	"__fern_random_i32":          buildRandomI32BodyP2,
 	"__fern_monotonic_ns":        buildMonotonicNsBodyP2,
 	"__fern_random_bytes":        buildRandomBytesBodyP2,

@@ -91,6 +91,18 @@ func RunX86_64Bin(runner []string, binPath string, args ...string) *exec.Cmd {
 // look symmetric.
 func CompileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int) {
 	t.Helper()
+	binPath, runner := CompileX86_64Bin(t, src)
+	cmd := RunX86_64Bin(runner, binPath)
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode()
+}
+
+// CompileX86_64Bin compiles src with the x86-64 backend and links it,
+// returning the binary path and the runner (empty on native x86-64 hosts).
+// Callers exec it via RunX86_64Bin when they need to wire the child's
+// streams themselves. The arm64 sibling is CompileArm64Bin.
+func CompileX86_64Bin(t *testing.T, src string) (binPath string, runner []string) {
+	t.Helper()
 	gcc, runner := X86_64Tooling(t)
 
 	// Route the source through modload (write to temp file, then
@@ -131,15 +143,12 @@ func CompileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 	}
 
 	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
+	binPath = filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
-
-	cmd := RunX86_64Bin(runner, binPath)
-	out, _ := cmd.CombinedOutput()
-	return string(out), cmd.ProcessState.ExitCode()
+	return binPath, runner
 }

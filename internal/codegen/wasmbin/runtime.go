@@ -719,6 +719,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("cabi_realloc")
 					needs.add("__fern_wasm_poll")
+				case "isatty":
+					needs.add("isatty")
 				case "__alloc", "__alloc_u8":
 					needs.add("__fern_alloc")
 					needs.add(op.Str)
@@ -1487,6 +1489,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildPollWasmBody,
+	},
+	"isatty": {
+		// (fd: i32) → i32 (0 / 1) — is the descriptor a terminal?
+		// Preview 1 asks the fd table via fd_fdstat_get; preview 2 has
+		// no fd table and answers no. See buildIsattyBody / …P2.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildIsattyBody,
 	},
 	"__alloc": {
 		// (size) → i32 — same as __fern_alloc. Lives in the

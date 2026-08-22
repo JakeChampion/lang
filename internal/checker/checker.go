@@ -1748,6 +1748,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["stdin"] = &ast.FuncType{Params: []ast.Type{}, Result: readerType}
 	c.info.FuncSigs["stdout"] = &ast.FuncType{Params: []ast.Type{}, Result: writerType}
 	c.info.FuncSigs["stderr"] = &ast.FuncType{Params: []ast.Type{}, Result: writerType}
+	// isatty(fd): boolean — is the file descriptor a terminal? The
+	// primary signal a CLI needs to decide whether to emit ANSI escapes;
+	// `std/cli`'s colour gate consults it before the NO_COLOR / TERM
+	// conventions. False on a target with no terminal to be attached to
+	// (see docs/FREESTANDING-CORE.md), which is the safe direction: no
+	// terminal means plain text.
+	c.info.FuncSigs["isatty"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.BoolType{},
+	}
 	// Auto-injected methods on Reader / Writer. The names are
 	// the mangled forms the existing method-call rewrite uses
 	// (`r.read_line()` → `__method_Reader_read_line(r)`); we

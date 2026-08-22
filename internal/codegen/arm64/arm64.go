@@ -152,7 +152,12 @@ var linuxDarwinSysno = map[string][2]int{
 	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
 	// mode fixup: openat's mode argument applies only on CREATE, so
 	// writing over a stale output would leave the old mode (#6133).
-	"fchmod":     {52, 124},
+	"fchmod": {52, 124},
+	// ioctl(2) — Linux 29, Darwin BSD 54. Backs `__fern_isatty`. The
+	// dispatch shape is identical (fd, request, arg); only the REQUEST
+	// number differs (TCGETS vs TIOCGETA), and that is an argument the
+	// emitter picks, not part of the call.
+	"ioctl":      {29, 54},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -629,6 +634,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
+	}
+	if g.usesIsatty {
+		g.emitIsattyRuntime()
 	}
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
@@ -7256,6 +7264,51 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".ltorg")
 }
 
+// emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
+// terminal, 0 otherwise.
+//
+// Asked the way every POSIX isatty asks it: fetch the terminal
+// attributes and see whether the kernel objects. Only a tty answers;
+// fstat + S_ISCHR is the cruder alternative and says yes for /dev/null.
+// Linux uses TCGETS, Darwin TIOCGETA — the ioctl numbers themselves are
+// the usual dual-table pair.
+//
+// Off the process entry shape there is no kernel to ask and no terminal
+// to be attached to, so the helper is a constant 0 — the answer that
+// selects plain text (docs/FREESTANDING-CORE.md).
+func (g *generator) emitIsattyRuntime() {
+	const tcgets = 0x5401       // Linux TCGETS
+	const tiocgeta = 0x40487413 // Darwin TIOCGETA
+	g.line("")
+	g.line(".global __fern_isatty")
+	g.typeDirective("__fern_isatty")
+	g.label("__fern_isatty")
+	if g.entry != platforms.EntryProcess {
+		g.emit("mov x0, #0")
+		g.emit("ret")
+		g.sizeDirective("__fern_isatty")
+		return
+	}
+	// `struct termios` is 60 bytes on Linux and 72 on Darwin; 80 keeps
+	// the stack 16-aligned with room for either.
+	g.emit("sub sp, sp, #80")
+	if g.darwin {
+		g.emit("ldr x1, =%d", tiocgeta)
+	} else {
+		g.emit("mov x1, #%d", tcgets)
+	}
+	g.emit("mov x2, sp")
+	g.syscall("ioctl")
+	// x0 == 0 (success) is the terminal answer; syscall() has already
+	// normalised Darwin's carry-flag error into Linux's -errno shape.
+	g.emit("cmp x0, #0")
+	g.emit("cset w0, eq")
+	g.emit("add sp, sp, #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_isatty")
+	g.line(".ltorg")
+}
+
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a
 // single cryptographic-quality i32 by reading 4 CSPRNG bytes
 // into a stack slot and reloading them as a (little-endian) i32.
@@ -9624,6 +9677,9 @@ type generator struct {
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
+	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
+	// ioctl, 1 when it succeeds.
+	usesIsatty bool
 	// usesStrSlice pulls in `__str_slice(base, low, high)` —
 	// a length-prefix-aware substring extractor that
 	// allocates a fresh string. The IR's `s[a:b]` slice
@@ -12942,6 +12998,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "timer_fd":
 			target = "__fern_timer_fd"
 			g.usesTimerFd = true
+		case "isatty":
+			target = "__fern_isatty"
+			g.usesIsatty = true
 		// Map / MapIter — the lang Map runtime lives entirely
 		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled

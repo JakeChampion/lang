@@ -62,7 +62,7 @@ costs a silent failure on the first target that lacks it.
 - **Pure computation** — `f32_bits`, `f32_from_bits`, `f64_bits`, `f64_from_bits`, and
   the whole math / string / array runtime that was never in either table.
 - **Readiness** — `poll`, `wasm_block`, `wasm_poll`, `wasm_pollable_drop`.
-- **`exit`** — see below.
+- **`exit`** and **`isatty`** — see below.
 
 ## The judgement calls
 
@@ -83,6 +83,22 @@ the case for gating it is real. It is core anyway because *every* target can def
 would mean a program that cannot terminate, which is not a useful thing to be able to
 express. This is the one entry in `coreBuiltins` that is a decision rather than an
 observation, which is why it is called out in the table's comment as well as here.
+
+**`isatty` is core.** Same shape as `exit`, and the same argument. It is
+host-shaped — a hosted process asks the kernel, with a terminal-attribute ioctl on
+native and `fd_fdstat_get` on WASI preview 1 — but *every* target can define "is
+this fd a terminal", and a target with no terminal answers no. That is a correct
+answer, not a stub: a component whose output the embedder captured, and a
+freestanding artifact with no fd table at all, genuinely have no terminal.
+
+Gating it would be worse than useless. The whole point of the primitive is that
+"stdout is not a terminal" is the *primary* signal a colouriser needs; refuse the
+question and the only thing a program can do is assume a terminal, which is
+exactly the wrong default the primitive exists to remove (#6387). A capability
+that can only ever be answered "no" is not authority — it is a constant.
+
+Note this is why the `std/` partition table below is unchanged by it: `isatty`
+adds no reach, so `std/cli` stays on `env` alone.
 
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the

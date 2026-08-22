@@ -264,11 +264,12 @@ pub function gated_builtins(): Gate[] {
 // helpers wait on a pollable whose constructor is gated above, so gating the
 // wait too would double-count the same authority.
 //
-// `exit` is the judgement call: every target can define "stop", including a
-// freestanding one, so it is core with a target-specific lowering rather than
-// a capability an artifact could be refused for.
+// `exit` and `isatty` are the judgement calls: every target can define "stop",
+// and every target can define "is this fd a terminal" — a target with no
+// terminal answers no. Both are core with a target-specific lowering rather
+// than a capability an artifact could be refused for.
 pub function core_builtins(): string[] {
-    return ["exit",
+    return ["exit", "isatty",
             "map_new", "cell_new", "string_from_bytes_unchecked",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",

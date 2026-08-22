@@ -84,7 +84,9 @@ var BuiltinCaps = map[string]string{
 }
 
 // Ungated lists every user-callable builtin known to require NO
-// capability: stdio, argv, process exit, pure math / bit casts, the
+// capability: stdio (including `isatty`, which reads one bit about a
+// stream the invoker already handed the process), argv, process exit,
+// pure math / bit casts, the
 // strbuf scratch buffer, in-heap constructors (map_new / cell_new /
 // string_from_bytes_unchecked), the readiness helpers whose authority lives on
 // the pollable constructors instead, and the interp's pure stdlib
@@ -99,6 +101,7 @@ var Ungated = map[string]bool{
 	"stdin":                       true,
 	"stdout":                      true,
 	"stderr":                      true,
+	"isatty":                      true,
 	"args":                        true,
 	"exit":                        true,
 	"strbuf_reset":                true,

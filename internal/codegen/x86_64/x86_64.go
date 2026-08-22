@@ -260,6 +260,9 @@ const (
 	// readiness tests (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c).
 	sysTimerfdCreate  = 283
 	sysTimerfdSettime = 286
+	// ioctl(2): x86-64 syscall 16. Backs `__fern_isatty` via TCGETS,
+	// which succeeds only on a terminal.
+	sysIoctl = 16
 )
 
 // Options tunes the emit.
@@ -751,6 +754,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
+	if g.usesIsatty {
+		g.emitIsattyRuntime()
+	}
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
@@ -982,8 +988,11 @@ type generator struct {
 	usesWasmPoll          bool
 	usesWasmBlock         bool
 	usesTimerFd           bool
-	usesAsBytes           bool
-	usesReadLine          bool
+	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
+	// 1 when it succeeds.
+	usesIsatty   bool
+	usesAsBytes  bool
+	usesReadLine bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -1452,6 +1461,8 @@ func (g *generator) recordUse(target string) {
 	case "timer_fd":
 		// timer_fd(ms) — a timerfd readable after `ms`.
 		g.usesTimerFd = true
+	case "isatty":
+		g.usesIsatty = true
 	case "env":
 		g.usesEnv = true
 		g.usesAlloc = true
@@ -2909,6 +2920,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_poll"
 		case "timer_fd":
 			target = "__fern_timer_fd"
+		case "isatty":
+			target = "__fern_isatty"
 		case "tcp_send":
 			target = "__fern_tcp_send"
 		case "tcp_connect":
@@ -9350,6 +9363,42 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
+}
+
+// emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
+// terminal, 0 otherwise.
+//
+// The question is asked the way every POSIX isatty asks it: fetch the
+// terminal attributes and see whether the kernel objects. Only a tty
+// answers TCGETS; fstat + S_ISCHR is the cruder alternative and says
+// yes for /dev/null.
+//
+// Off the process entry shape there is no kernel to ask and no terminal
+// to be attached to, so the helper is a constant 0 — the answer that
+// selects plain text (docs/FREESTANDING-CORE.md).
+func (g *generator) emitIsattyRuntime() {
+	const tcgets = 0x5401
+	g.line("")
+	g.line(".globl __fern_isatty")
+	g.line(".type __fern_isatty, @function")
+	g.label("__fern_isatty")
+	if g.entry != platforms.EntryProcess {
+		g.emit("xor eax, eax")
+		g.emit("ret")
+		g.line(".size __fern_isatty, .-__fern_isatty")
+		return
+	}
+	// ioctl(fd, TCGETS, buf). `struct termios` is 60 bytes on Linux; the
+	// 128-byte red zone below rsp holds it without a frame.
+	g.emit(fmt.Sprintf("mov esi, %d", tcgets))
+	g.emit("lea rdx, [rsp - 72]")
+	g.emitSyscall(sysIoctl)
+	// rax == 0 (success) is the terminal answer; anything else is -errno.
+	g.emit("test rax, rax")
+	g.emit("sete al")
+	g.emit("movzx eax, al")
+	g.emit("ret")
+	g.line(".size __fern_isatty, .-__fern_isatty")
 }
 
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a

@@ -96,12 +96,14 @@ pub function builtin_caps(): BuiltinCap[] {
 }
 
 // ungated lists the user-callable builtins known to require NO capability:
-// stdio, argv, process exit, pure math / bit casts, the strbuf scratch buffer,
+// stdio (including `isatty`, which reads one bit about a stream the invoker
+// already handed the process), argv, process exit, pure math / bit casts,
+// the strbuf scratch buffer,
 // the in-heap constructors, and the readiness helpers whose authority lives on
 // the pollable constructors instead. Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
     return ["putchar", "print", "write", "eprint", "read_line",
-            "stdin", "stdout", "stderr", "args", "exit",
+            "stdin", "stdout", "stderr", "isatty", "args", "exit",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
