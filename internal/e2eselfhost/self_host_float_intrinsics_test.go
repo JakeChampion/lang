@@ -34,10 +34,13 @@ var floatIntrinsicCases = []struct {
 
 // floatTranscendentalCases exercise the self-hosted compiler's f64
 // transcendentals: __sin_f64 / __cos_f64 / __exp_f64 / __log_f64 /
-// __pow_f64. x86-64 uses the x87 FPU (fsin/fcos/fyl2x/f2xm1); arm64
-// uses polynomial approximations (the ISA has no transcendentals).
+// __pow_f64. Both register backends call the same fdlibm bundle their
+// emitters emit, neither ISA having a transcendental instruction.
 // Results are checked to a tolerance (the i32 cast truncates). Values
-// cross-checked against Go's math package.
+// cross-checked against Go's math package. The accuracy of those results
+// is a separate gate — internal/e2e/f64_ulp_test.go — because a tolerance
+// this loose passes a kernel that is 1e11 ulp out, which is exactly how the
+// x86-64 half stayed on x87 unnoticed.
 var floatTranscendentalCases = []struct {
 	name string
 	src  string
@@ -61,8 +64,8 @@ var floatTranscendentalCases = []struct {
 // TestSelfHostFloatTranscendentalsIRX86_64 proves the transcendentals lower
 // through the IR path (not just the legacy AST emitter): irlower maps
 // __sin_f64/__cos_f64/__exp_f64/__log_f64 to op_funary fsin/fcos/fexp/flog and
-// __pow_f64 to the fpow fbin, which asm_ir emits as the same x87 FPU sequences
-// the AST backend uses. For each case the path prober must report "ir" (the
+// __pow_f64 to the fpow fbin, which asm_ir lowers to a call into the shared
+// `__fern_*_f64` runtime bundle. For each case the path prober must report "ir" (the
 // module is IR-eligible) and the IR-built binary must hit the same exit the AST
 // path does — same fixed oracle values as TestSelfHostFloatTranscendentalsX86_64.
 func TestSelfHostFloatTranscendentalsIRX86_64(t *testing.T) {
@@ -98,7 +101,8 @@ func TestSelfHostFloatTranscendentalsIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFloatTranscendentalsX86_64 — x87 FPU transcendentals.
+// TestSelfHostFloatTranscendentalsX86_64 — the same cases through the asm_run
+// driver.
 func TestSelfHostFloatTranscendentalsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -7304,11 +7304,9 @@ pub function f64_math_builtin_kind(name: string): string {
     if (name == "__trunc_f64") { return "ftrunc"; }
     if (name == "__abs_f64") { return "fabs"; }
     if (name == "__round_f64") { return "fround"; }
-    // The libm transcendentals: x86 computes these on the x87 FPU (fsin / fcos /
-    // fyl2x+f2xm1), arm64 calls its polynomial-approximation runtime helpers
-    // (bl __fern_<op>_f64). wasm has no transcendental instruction or IR runtime
-    // for them, so wasm_eligible subtracts these op kinds and a transcendental
-    // module is not wasm-IR-eligible (#2691 float-math IR widening).
+    // The libm transcendentals. No target has an instruction for these, so every
+    // backend calls the same-named runtime helper its emitter emits —
+    // `__fern_<op>_f64` on the two register backends, `$__fern_<op>_f64` on wasm.
     if (name == "__sin_f64") { return "fsin"; }
     if (name == "__cos_f64") { return "fcos"; }
     if (name == "__exp_f64") { return "fexp"; }
