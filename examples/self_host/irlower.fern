@@ -14086,7 +14086,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // per-unit link fails on, far from the source line (#7215). Refuse
             // here instead, so the gap is a bail naming this expression.
             var clo: string = s.cur_fn + "$clo";
-            if (util.index_of_str(s.sigs.fn_names, clo) < 0) {
+            if (!sig_reg_has_exact(s.sigs.fn_names, clo)) {
                 return s.note_fail("lambda: no lifted `" + clo + "` for the escaping closure").fail();
             }
             var caps: string[] = closure_captures(lam, s);
