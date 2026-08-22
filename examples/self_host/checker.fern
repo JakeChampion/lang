@@ -6581,6 +6581,24 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len" && !s.has_array_method(mfa.field)) {
                 out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
               }
+              // E004 (array builtin arity): the three unconditional array
+              // builtins take a fixed number of arguments — `len()` none,
+              // `append(x)` one, `with(i, v)` two — so an over- or
+              // under-supplied call is a plain mistake the Go checker
+              // reports and this one did not. Without it `a.len(3)` reached
+              // lowering, which refuses the whole module as not IR-eligible:
+              // a message naming neither the call nor the mistake.
+              //
+              // Only these three. Every other array method resolves from an
+              // imported module, and its arity lives in the FuncSig the
+              // E043 arm above looks up — a separate check, not this one.
+              var abw: i32 = 0 - 1;
+              if (mfa.field == "len") { abw = 0; }
+              if (mfa.field == "append") { abw = 1; }
+              if (mfa.field == "with") { abw = 2; }
+              if (abw >= 0 && c.args.len() != abw) {
+                out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(abw) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
+              }
             },
             TypeStruct(sn) => {
               var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
