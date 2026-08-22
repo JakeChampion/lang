@@ -319,6 +319,22 @@ pub function li_set_str_own(li: LocalInfo, v: i32): LocalInfo {
     return LocalInfo { ...li, str_own: v };
 }
 
+// SigReg is a module-wide signature registry: the "<name>" / "<name>|<value>"
+// rows, plus a bucket index over each row's KEY — the text before its first
+// '|'. A probe walks one bucket instead of the whole registry, which matters
+// because these are whole-module lists (the compiler's own largest is ~4,900
+// rows) consulted per call argument and per local slot.
+//
+// head[b] is the first row index in bucket b (-1 when empty) and next[i] chains
+// to the next row in the same bucket, ASCENDING — so a bucket walk visits rows
+// in registration order and a duplicated name still resolves to its first row,
+// as the linear scan did.
+pub struct SigReg {
+    rows: string[],
+    head: i32[],
+    next: i32[],
+}
+
 // FnSigs is the module-wide signature registry lowering and emit consult to
 // resolve what a call RETURNS and how its params are passed. Every field is
 // derived once per module (fn_sigs_of) and threaded read-only.
@@ -333,27 +349,27 @@ pub function li_set_str_own(li: LocalInfo, v: i32): LocalInfo {
 pub struct FnSigs {
     // arr_ret_fns: functions whose return type is an array, so a `var x = f()`
     // is a move (owned, no inc) and x is array-tracked.
-    arr_ret_fns: string[],
+    arr_ret_fns: SigReg,
     // str_ret_fns: functions returning `string`, so `var s = f()` (and
     // `f().len()`) tracks the result as a string for op dispatch. Strings are
     // not RC'd, so this is type tracking only.
-    str_ret_fns: string[],
+    str_ret_fns: SigReg,
     // strarr_ret_fns: functions returning `string[]` — the string-element
     // overlay on arr_ret_fns, which still drives the array's RC.
-    strarr_ret_fns: string[],
+    strarr_ret_fns: SigReg,
     // arr_method_fns: std/array's `__method_Array_<m>` helper free functions
     // (possibly `<mod>__`-mangled), so `arr.<m>(args)` lowers as a free call.
     arr_method_fns: string[],
     // opt_ret_fns: "name|rettype" for functions returning Option[T]/Result[T, E],
     // so a match on `f()` recovers the bound payload's type (T for Some/Ok, E
     // for Err) and binds it correctly.
-    opt_ret_fns: string[],
+    opt_ret_fns: SigReg,
     // i64_ret_fns: functions returning i64, so a call to one is recognised as an
     // i64 value (infer_expr_width / lower_i64).
-    i64_ret_fns: string[],
+    i64_ret_fns: SigReg,
     // tuple_ret_fns: "name|rettype" for functions returning a tuple, so
     // `var x = f()` / `var (a, b) = f()` recovers each element's type tag.
-    tuple_ret_fns: string[],
+    tuple_ret_fns: SigReg,
     // arrtup_ret_fns: "name|(elem tuple)" for functions returning an ARRAY OF
     // tuples (`mk(): (i32, f64)[]`). Distinct from tuple_ret_fns, whose entries
     // are the tuple's own element tags: here the value is the ELEMENT TUPLE's
@@ -366,28 +382,28 @@ pub struct FnSigs {
     // 4-byte pointer) survived, so it read as a width bug rather than a missing
     // tag. Populating the slot fixes all four readers at once, including
     // `for p in ps`, which has no ExprIndex node to fall back on.
-    arrtup_ret_fns: string[],
+    arrtup_ret_fns: SigReg,
     // struct_ret_fns: "name|StructType" for functions returning a (leaf-safe,
     // scalar-field) struct, so `var p = f()` tracks p's type for `p.x`.
-    struct_ret_fns: string[],
-    map_ret_fns: string[],
+    struct_ret_fns: SigReg,
+    map_ret_fns: SigReg,
     // f64_ret_fns: functions returning f64 (expr_is_f64). Without it an
     // unannotated `f(a) * g(b)` of two f64-returning calls would mis-select
     // integer mul on the float bits.
-    f64_ret_fns: string[],
+    f64_ret_fns: SigReg,
     // f64arr_ret_fns: functions returning f64[], so `var x = f()` element-width-
     // tracks x and a later x[i] reads an 8-byte f64 rather than 4.
-    f64arr_ret_fns: string[],
+    f64arr_ret_fns: SigReg,
     // i64arr_ret_fns: functions returning i64[]; like f64arr_ret_fns, but x[i]
     // reads an 8-byte i64 and types as i64.
-    i64arr_ret_fns: string[],
+    i64arr_ret_fns: SigReg,
     // erased_elem_ret_fns: functions returning an array of a bare typevar (`U[]`),
     // whose element width the callee never fixes — see erased_elem_ret_fns_of.
-    erased_elem_ret_fns: string[],
-    // fn_param_sigs[k] = "callee|<flags>", flag i '1' when the callee's param i
+    erased_elem_ret_fns: SigReg,
+    // fn_param_sigs: "callee|<flags>" rows, flag i '1' when the callee's param i
     // is a function type. Drives type-directed function-VALUE detection: a bare
     // function-name ARGUMENT at a "fn" param lowers to const_func, not a call.
-    fn_param_sigs: string[],
+    fn_param_sigs: SigReg,
     // closure_fns: functions whose body returns a closure box (a hoisted
     // escaping lambda). `var f = <call to one>` marks f a closure local.
     closure_fns: string[],
@@ -405,7 +421,7 @@ pub struct FnSigs {
     // fn_names: every free function in the module. A bare-ident call whose name
     // is in here resolves to that user function and must NOT be intercepted as
     // a same-named builtin (`len` / `exit` / `chr` / …).
-    fn_names: string[],
+    fn_names: SigReg,
     // fresh_struct_ret_fns: functions returning a fresh struct box. Looser than
     // return_fresh_struct_ret_fns — inner element buffers may alias live locals.
     fresh_struct_ret_fns: string[],
@@ -425,7 +441,7 @@ pub struct FnSigs {
     // (see str_producer_ownership).
     str_fresh_ret_fns: string[],
     // opt_fresh_ret_fns: functions returning a fresh, sole-owned Option/Result box.
-    opt_fresh_ret_fns: string[],
+    opt_fresh_ret_fns: SigReg,
     // strfld_ok_types: struct types whose `string` fields are reclaim-safe at
     // field-drop (strfld_reclaim_ok_types_of).
     strfld_ok_types: string[],
@@ -822,22 +838,12 @@ function stmt_bail_tag(st: parser.Stmt): string {
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
 pub function (s: LowerState) is_arr_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.arr_ret_fns.len()) {
-        if (s.sigs.arr_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.arr_ret_fns, name);
 }
 
 // is_strarr_ret_fn reports whether `name` is a function returning `string[]`.
 pub function (s: LowerState) is_strarr_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.strarr_ret_fns.len()) {
-        if (s.sigs.strarr_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.strarr_ret_fns, name);
 }
 
 // slot_of returns the local slot for `name`, or -1 if unbound.
@@ -1645,71 +1651,219 @@ function reclaim_has(names: string[], pfx: string, name: string): boolean {
     return false;
 }
 
-// sig_value_of: the <value> of the first "<name>|<value>" entry in a sig
-// registry, or "" when the name is absent. An entry with an empty value ENDS
-// the scan here rather than being passed over — a registry records one entry
-// per function, so a matching name is the answer whether or not it carries a
-// payload.
-function sig_value_of(reg: string[], name: string): string {
+// sig_bucket_count is the bucket count for an `n`-row registry: a prime above
+// n, so a registry averages about one row per bucket and unrelated hash
+// strides do not alias onto one bucket.
+function sig_bucket_count(n: i32): i32 {
+    if (n == 0) { return 1; }
+    if (n <= 8) { return 13; }
+    if (n <= 40) { return 61; }
+    if (n <= 160) { return 251; }
+    if (n <= 640) { return 1021; }
+    if (n <= 2560) { return 4093; }
+    return 16381;
+}
+
+// sig_key_bucket hashes the KEY of `a` followed by `b` — their concatenation
+// truncated at the first '|', which is the registries' key/value separator.
+// The two pieces fold in order so a probe for "<pfx><name>" never builds the
+// joined string. Folded by the modulus at every step, so the accumulator stays
+// small and the hash needs no wrapping arithmetic.
+function sig_key_bucket(a: string, b: string, nb: i32): i32 {
+    var h: i32 = 0;
     var i: i32 = 0;
-    while (i < reg.len()) {
-        var e: string = reg[i];
+    while (i < a.len()) {
+        if (a[i] == b'|') { return h; }
+        h = ((h * 131) + (a[i] as i32)) % nb;
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < b.len()) {
+        if (b[j] == b'|') { return h; }
+        h = ((h * 131) + (b[j] as i32)) % nb;
+        j = j + 1;
+    }
+    return h;
+}
+
+// sig_reg_of indexes `rows`. The chain is built by walking BACKWARD and pushing
+// each row onto the front of its bucket, which leaves every chain in ascending
+// row order without needing a per-bucket tail.
+pub function sig_reg_of(rows: string[]): SigReg {
+    var nb: i32 = sig_bucket_count(rows.len());
+    var head: i32[] = [];
+    var b: i32 = 0;
+    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
+    var next: i32[] = [];
+    var j: i32 = 0;
+    while (j < rows.len()) { next = next.append(0 - 1); j = j + 1; }
+    var k: i32 = rows.len() - 1;
+    while (k >= 0) {
+        var bk: i32 = sig_key_bucket(rows[k], "", nb);
+        next = next.with(k, head[bk]);
+        head = head.with(bk, k);
+        k = k - 1;
+    }
+    return SigReg { rows: rows, head: head, next: next };
+}
+
+pub function sig_reg_empty(): SigReg {
+    var no_rows: string[] = [];
+    return sig_reg_of(no_rows);
+}
+
+// sig_reg_append adds one row, chaining it at the END of its bucket so the
+// chain stays in ascending row order. The bucket count does not grow with it:
+// the callers add a handful of rows to a registry already sized for its
+// module-wide body.
+pub function sig_reg_append(r: SigReg, row: string): SigReg {
+    var rows: string[] = r.rows.append(row);
+    var head: i32[] = r.head;
+    var next: i32[] = r.next.append(0 - 1);
+    var k: i32 = rows.len() - 1;
+    var bk: i32 = sig_key_bucket(row, "", head.len());
+    if (head[bk] < 0) {
+        head = head.with(bk, k);
+    } else {
+        var t: i32 = head[bk];
+        while (next[t] >= 0) { t = next[t]; }
+        next = next.with(t, k);
+    }
+    return SigReg { rows: rows, head: head, next: next };
+}
+
+// sig_reg_value_of: the <value> of the first "<name>|<value>" row in a sig
+// registry, or "" when the name is absent. A row with an empty value ENDS the
+// walk rather than being passed over — a registry records one row per function,
+// so a matching name is the answer whether or not it carries a payload.
+pub function sig_reg_value_of(r: SigReg, name: string): string {
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
         var st: i32 = tagged_value_start(e, "", name);
         if (st >= 0) { return e[st : e.len()] + ""; }
-        i = i + 1;
+        i = r.next[i];
     }
     return "";
 }
 
-// sig_has_name: a "<name>|<value>" row for `name` is present. The registries
-// this asks about are module-wide and keyed by the text before the first '|',
-// so a row tagged with its own prefix ("RCE:" / "AAC:" / "ERRFRESH:") has a
-// head no bare callee name can equal, and answers no by construction.
-function sig_has_name(reg: string[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < reg.len()) {
-        if (tagged_value_start(reg[i], "", name) >= 0) { return true; }
-        i = i + 1;
+// sig_reg_value_last is sig_reg_value_of resolved to the LAST matching row.
+pub function sig_reg_value_last(r: SigReg, name: string): string {
+    var out: string = "";
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
+        var st: i32 = tagged_value_start(e, "", name);
+        if (st >= 0) { out = e[st : e.len()] + ""; }
+        i = r.next[i];
+    }
+    return out;
+}
+
+// sig_reg_has_name: a "<name>|<value>" row for `name` is present. The
+// registries this asks about are keyed by the text before the first '|', so a
+// row tagged with its own prefix ("RCE:" / "AAC:" / "ERRFRESH:") has a head no
+// bare callee name can equal, and answers no by construction.
+pub function sig_reg_has_name(r: SigReg, name: string): boolean {
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        if (tagged_value_start(r.rows[i], "", name) >= 0) { return true; }
+        i = r.next[i];
     }
     return false;
 }
 
-// opt_fresh_payload_fresh: `name`'s row in the opt-fresh registry also carries
-// the "f" flag — every success payload is a static literal or a fresh string
-// producer, which is what licenses freeing a string payload rather than only
-// the box.
-function opt_fresh_payload_fresh(reg: string[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < reg.len()) {
-        var e: string = reg[i];
-        if (tagged_value_start(e, "", name) >= 0 && optfresh_entry_payload_is_fresh(e)) { return true; }
-        i = i + 1;
+// sig_reg_has_exact: the registry holds `name` as a whole row. The bucket key
+// stops at the first '|' on both sides, so a "<name>|<value>" row shares the
+// bucket of the bare name and the exact compare here still rejects it.
+pub function sig_reg_has_exact(r: SigReg, name: string): boolean {
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        if (r.rows[i] == name) { return true; }
+        i = r.next[i];
     }
     return false;
+}
+
+// sig_reg_tagged_value_of: the <value> of the first "<pfx><name>|<value>" row
+// that carries a non-empty one. A row whose value is empty means the same as
+// an absent one to every caller, so the walk passes it by rather than stopping.
+pub function sig_reg_tagged_value_of(r: SigReg, pfx: string, name: string): string {
+    var i: i32 = r.head[sig_key_bucket(pfx, name, r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
+        var st: i32 = tagged_value_start(e, pfx, name);
+        if (st >= 0 && st < e.len()) { return e[st : e.len()] + ""; }
+        i = r.next[i];
+    }
+    return "";
+}
+
+// sig_reg_has_row: the registry holds the exact row "<pfx><name>", compared
+// byte-wise so the key is never built.
+pub function sig_reg_has_row(r: SigReg, pfx: string, name: string): boolean {
+    var want: i32 = pfx.len() + name.len();
+    var i: i32 = r.head[sig_key_bucket(pfx, name, r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
+        if (e.len() == want && bytes_at(e, 0, pfx) && bytes_at(e, pfx.len(), name)) { return true; }
+        i = r.next[i];
+    }
+    return false;
+}
+
+// sig_reg_argref: the argument index an erased-generic fn's return mirrors —
+// the row "<name>|$arg<i>" — or -1. The caller re-types the call by the ACTUAL
+// argument at that position.
+pub function sig_reg_argref(r: SigReg, name: string): i32 {
+    var nl: i32 = name.len();
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
+        if (e.len() > nl + 5 && bytes_at(e, 0, name) && bytes_at(e, nl, "|$arg")) {
+            return util.digits_to_i32(e[nl + 5 : e.len()]);
+        }
+        i = r.next[i];
+    }
+    return 0 - 1;
 }
 
 // opt_err_fresh_producer: the registry carries `name` under its ERR-side tag —
 // every Err payload the producer returns is a fresh string.
-function opt_err_fresh_producer(reg: string[], name: string): boolean {
-    return reclaim_has(reg, "ERRFRESH:", name);
+function opt_err_fresh_producer(r: SigReg, name: string): boolean {
+    return sig_reg_has_row(r, "ERRFRESH:", name);
 }
 
-// sig_flag_at: the flag character recorded for parameter `idx` of `name` in a
-// "<name>|<flags>" registry — one character per parameter position — or 0 when
-// the name is absent, or records no flag that far out.
-function sig_flag_at(reg: string[], name: string, idx: i32): i32 {
-    var i: i32 = 0;
-    while (i < reg.len()) {
-        var e: string = reg[i];
+// sig_reg_flag_at: the flag character recorded for parameter `idx` of `name` in
+// a "<name>|<flags>" registry — one character per parameter position — or 0
+// when the name is absent, or records no flag that far out.
+pub function sig_reg_flag_at(r: SigReg, name: string, idx: i32): i32 {
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
         var st: i32 = tagged_value_start(e, "", name);
         if (st >= 0) {
             var pos: i32 = st + idx;
             if (pos < e.len()) { return e[pos] as i32; }
             return 0;
         }
-        i = i + 1;
+        i = r.next[i];
     }
     return 0;
+}
+
+// sig_reg_opt_payload_fresh: `name`'s row in the opt-fresh registry also
+// carries the "f" flag — every success payload is a static literal or a fresh
+// string producer, which is what licenses freeing a string payload rather than
+// only the box.
+function sig_reg_opt_payload_fresh(r: SigReg, name: string): boolean {
+    var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+    while (i >= 0) {
+        var e: string = r.rows[i];
+        if (tagged_value_start(e, "", name) >= 0 && optfresh_entry_payload_is_fresh(e)) { return true; }
+        i = r.next[i];
+    }
+    return false;
 }
 
 // fn_value_sig returns the funcref signature tag seeded for the fn-value named
@@ -2792,15 +2946,8 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
         },
         _ => {}
     }
-    if (mrkey != "") {
-        var mri: i32 = 0;
-        while (mri < s.sigs.map_ret_fns.len()) {
-            var mre: string = s.sigs.map_ret_fns[mri];
-            var mrb: i32 = 0;
-            while (mrb < mre.len() && mre[mrb] != b'|') { mrb = mrb + 1; }
-            if (mrb < mre.len() && mre[0:mrb] == mrkey) { return mre[mrb + 1 : mre.len()] + ""; }
-            mri = mri + 1;
-        }
+    if (mrkey != "" && sig_reg_has_name(s.sigs.map_ret_fns, mrkey)) {
+        return sig_reg_value_of(s.sigs.map_ret_fns, mrkey);
     }
     var kk: i32 = expr_map_kind(e, s);
     if (kk < 0) { return ""; }
@@ -5152,12 +5299,7 @@ pub function expr_is_nonscalar(e: parser.Expr, s: LowerState): boolean {
 // literal, a string-marked local/param slot, or a `+` whose operands are
 // strings (nested concat). Drives string-op dispatch in ExprBinary / `.len()`.
 pub function (s: LowerState) is_str_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.str_ret_fns.len()) {
-        if (s.sigs.str_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.str_ret_fns, name);
 }
 
 // expr_is_strarr reports whether `e` evaluates to a string[] array — a string-
@@ -14080,7 +14222,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
                     // ownership is unknown) — the registry verdict doesn't
                     // apply, so the free is skipped (sound leak).
                     if (ts.slot_of(tfid.name) < 0
-                        && sig_has_name(ts.sigs.opt_fresh_ret_fns, tfid.name)) { try_box_fresh = true; }
+                        && sig_reg_has_name(ts.sigs.opt_fresh_ret_fns, tfid.name)) { try_box_fresh = true; }
                 },
                 _ => {}
             }
@@ -23861,9 +24003,8 @@ function all_scalar_literal_args(args: parser.Expr[]): boolean {
 // `arr` and admitted here but rejected by the emission-site is_arrarr guard (its
 // buffer holds array pointers needing an element walk), so no nested drop is
 // emitted.
-function call_returns_scalar_array(name: string, arr: string[], strarr: string[]): boolean {
-    return util.index_of_str(arr, name) >= 0
-        && util.index_of_str(strarr, name) < 0;
+function call_returns_scalar_array(name: string, arr: SigReg, strarr: SigReg): boolean {
+    return sig_reg_has_exact(arr, name) && !sig_reg_has_exact(strarr, name);
 }
 
 // struct_lit_precise_ok reports whether `slit` is a FRESH struct literal that a
@@ -23941,7 +24082,7 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[], opt_fresh_reg: string[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
@@ -27274,7 +27415,7 @@ function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: stri
 // aliased out before being overwritten still disqualifies the name — for a
 // DEEP drop that matters more than it did for the scalar box, since the payload
 // is released too.
-function all_assigns_fresh_rcenum(stmts: parser.Stmt[], name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: string[]): boolean {
+function all_assigns_fresh_rcenum(stmts: parser.Stmt[], name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: SigReg): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         if (!stmt_assigns_fresh_rcenum(stmts[i], name, owner, structs, opt_fresh_ret)) { return false; }
@@ -27283,7 +27424,7 @@ function all_assigns_fresh_rcenum(stmts: parser.Stmt[], name: string, owner: str
     return true;
 }
 
-function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: string[]): boolean {
+function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: SigReg): boolean {
     match (st) {
         parser.StmtAssign(asn) => {
             if (asn.target != name) { return true; }
@@ -27356,7 +27497,7 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
     return a;
 }
 
-function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: string[], borrowable: string[], acc: string[]): string[] {
+function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, borrowable: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -27812,20 +27953,11 @@ function lit_arg_callees_stmt(st: parser.Stmt, acc: string[]): string[] {
 // rcenum_call_init_owner: `e` is a direct call `mk(args...)` to a fn the
 // whole-program scan proved a fresh rc-enum ctor ("RCE:<name>|<Enum>" in
 // opt_fresh_ret — see opt_fresh_ret_fns_of). Returns the enum name, else "".
-function rcenum_call_init_owner(e: parser.Expr, opt_fresh_ret: string[]): string {
+function rcenum_call_init_owner(e: parser.Expr, opt_fresh_ret: SigReg): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(cid) => {
-                    var key: string = "RCE:" + cid.name + "|";
-                    var i: i32 = 0;
-                    while (i < opt_fresh_ret.len()) {
-                        var ent: string = opt_fresh_ret[i];
-                        if (ent.len() > key.len() && ent[0:key.len()] == key) { return ent[key.len() : ent.len()] + ""; }
-                        i = i + 1;
-                    }
-                    return "";
-                },
+                parser.ExprIdent(cid) => { return sig_reg_tagged_value_of(opt_fresh_ret, "RCE:", cid.name); },
                 _ => { return ""; }
             }
         },
@@ -30713,13 +30845,13 @@ function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // blanked (shadow — the payloads may differ). `body` is the WHOLE function
 // body, carried unchanged through the recursion so a method callee's receiver
 // type resolves against every declaration in scope.
-function collect_dyn_struct_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: string[], acc: string[]): string[] {
+function collect_dyn_struct_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) { a = collect_dyn_struct_in_stmt(stmts[i], body, structs, fresh_ret, struct_ret_fns, a); i = i + 1; }
     return a;
 }
-function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: string[], acc: string[]): string[] {
+function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
             if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn ") {
@@ -30770,7 +30902,7 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], struct
                                 _ => { ckey = local_recv_method_key(dc.callee, body, structs); },
                             }
                             if (ckey.len() > 0 && util.index_of_str(fresh_ret, ckey) >= 0) {
-                                var rty: string = sig_value_of(struct_ret_fns, ckey);
+                                var rty: string = sig_reg_value_of(struct_ret_fns, ckey);
                                 if (decl_is_struct(structs, rty) && decl_is_leaksafe(structs, rty)
                                     && (struct_is_scalar_only(structs, rty) || nested_field_deep_drop_ok(structs, rty))) {
                                     cty = rty;
@@ -31680,7 +31812,7 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: string[], params: parser.ParamDecl[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -33877,7 +34009,7 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
 //
 // A non-scalar success payload stays refused: its common path would strand a
 // buffer, which needs the runtime variant a deep drop dispatches on (#6360).
-function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh_reg: string[]): boolean {
+function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh_reg: SigReg): boolean {
     var callee: string = "";
     match (v.init) {
         parser.ExprCall(c) => {
@@ -33889,7 +34021,7 @@ function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh_reg: string[
         _ => {}
     }
     if (callee == "") { return false; }
-    if (!sig_has_name(opt_fresh_reg, callee)) { return false; }
+    if (!sig_reg_has_name(opt_fresh_reg, callee)) { return false; }
     // Annotation-only: the payload spelling is what proves scalar-ness, and an
     // un-annotated call init has none to read (the direct sibling can fall back
     // on a bare literal argument; there is no such fallback through a call).
@@ -34188,7 +34320,7 @@ function expr_is_scalarish(e: parser.Expr): boolean {
 // second credit loads 0 and decs null. The boundary is kept because two analyses
 // silently claiming one local is how a real over-release gets built later, and
 // because the redundant credit buys nothing precise-drop has not already done.
-function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: string[], nested_ok: boolean): EnumFrees {
+function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: SigReg, nested_ok: boolean): EnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -34701,7 +34833,7 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
                 // the LAST one, and without it the final value's box + payload leaked
                 // (2 blocks per round) even with the rebind release in place.
                 var cre_rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
-                    || all_assigns_fresh_rcenum(body, v.name, owner, structs, []);
+                    || all_assigns_fresh_rcenum(body, v.name, owner, structs, sig_reg_empty());
                 if (owner != "" && cre_rebind_ok) {
                     var match_idx: i32 = sole_top_level_match_idx(body, v.name);
                     if (match_idx > vi) {
@@ -36132,7 +36264,7 @@ struct OptRcFrees { idxs: i32[], names: string[], pfrees: string[], blockable: b
 //
 // Annotation-only, like fresh_scalar_option_call_init: the payload spelling is
 // what proves the shape, and a call init has no literal to fall back on.
-function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh_reg: string[]): string {
+function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh_reg: SigReg): string {
     var callee: string = "";
     match (v.init) {
         parser.ExprCall(c) => {
@@ -36144,10 +36276,10 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh_reg: string[])
         _ => {}
     }
     if (callee == "") { return ""; }
-    if (!sig_has_name(opt_fresh_reg, callee)) { return ""; }
+    if (!sig_reg_has_name(opt_fresh_reg, callee)) { return ""; }
     var ann: string = v.type_name;
     var n: i32 = ann.len();
-    var str_ok: boolean = opt_fresh_payload_fresh(opt_fresh_reg, callee);
+    var str_ok: boolean = sig_reg_opt_payload_fresh(opt_fresh_reg, callee);
     if (n >= 8 && ann[0:7] == "Option[") {
         // None carries no payload, so the success payload is the only one.
         var pt: string = opt_payload_type(ann, "Ok");
@@ -36172,7 +36304,7 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh_reg: string[])
 
 // call_init_callee_in: `e` is a direct call to a bare-ident callee listed in
 // `names`. The membership test the call-init admissions all share (#6360).
-function call_init_callee_err_fresh(e: parser.Expr, reg: string[]): boolean {
+function call_init_callee_err_fresh(e: parser.Expr, reg: SigReg): boolean {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -36188,7 +36320,7 @@ function call_init_callee_err_fresh(e: parser.Expr, reg: string[]): boolean {
 // `nested_ok` is TRUE only from lower_block, and it is what lets a DIRECT ctor
 // take the nested-match lookup. See the comment at the lookup itself for why that
 // is safe there and unsafe at function scope.
-function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: string[], nested_ok: boolean): OptRcFrees {
+function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var pfrees: string[] = [];
@@ -37497,7 +37629,7 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[]
 // self-host IR path has no return-transfer inc). `ofr` is the opt_fresh_ret
 // registry list the AAC:/AACS-flag entries ride in. Escape gates applied by
 // reclaimable_names_of.
-function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: string[]): string[] {
+function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -37529,11 +37661,11 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: st
                         parser.ExprCall(c) => {
                             match (c.callee) {
                                 parser.ExprIdent(cid) => {
-                                    if (util.index_of_str(ofr, "AAC:" + cid.name + "|s") >= 0) {
+                                    if (sig_reg_has_exact(ofr, "AAC:" + cid.name + "|s")) {
                                         a = push_str_unique(a, v.name);
                                         a = push_str_unique(a, "S|" + v.name);
                                     } else {
-                                        if (util.index_of_str(ofr, "AAC:" + cid.name + "|p") >= 0) { a = push_str_unique(a, v.name); }
+                                        if (sig_reg_has_exact(ofr, "AAC:" + cid.name + "|p")) { a = push_str_unique(a, v.name); }
                                     }
                                 },
                                 _ => {}
@@ -37735,12 +37867,12 @@ function arrarr_row_store_strings_fresh(e: parser.Expr): boolean {
 // checked separately by arrarr_row_escapes, which the credit applies alongside
 // this gate. The sanctioned form never descends into its own receiver, so
 // `g` appearing as the append receiver is not read as an escape.
-function arrarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], ofr: string[]): boolean {
+function arrarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], ofr: SigReg): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) { if (stmt_arrarr_unsafe_for(stmts[i], name, borrowable, ofr)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], ofr: string[]): boolean {
+function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], ofr: SigReg): boolean {
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target == name) {
@@ -37787,7 +37919,7 @@ function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: strin
 // are NOT all proven strings-fresh (lax — enough for a scalar-kind slot), 1 =
 // also strings-fresh (the strict credit a string-kind slot needs). Splitting the
 // two here keeps the caller from re-walking the row.
-function arrarr_self_append_row(e: parser.Expr, name: string, ofr: string[]): i32 {
+function arrarr_self_append_row(e: parser.Expr, name: string, ofr: SigReg): i32 {
     match (e) {
         parser.ExprCall(c) => {
             var is_self_append: boolean = false;
@@ -37828,13 +37960,13 @@ function arrarr_self_append_row(e: parser.Expr, name: string, ofr: string[]): i3
 //
 // Only a BARE call qualifies. A method call, or a call wrapped in any other
 // expression, is not a proof of freshness and stays out.
-function arrarr_row_call_kind(e: parser.Expr, ofr: string[]): i32 {
+function arrarr_row_call_kind(e: parser.Expr, ofr: SigReg): i32 {
     match (e) {
         parser.ExprCall(rc) => {
             match (rc.callee) {
                 parser.ExprIdent(rid) => {
-                    if (util.index_of_str(ofr, "ARC:" + rid.name + "|s") >= 0) { return 1; }
-                    if (util.index_of_str(ofr, "ARC:" + rid.name + "|p") >= 0) { return 0; }
+                    if (sig_reg_has_exact(ofr, "ARC:" + rid.name + "|s")) { return 1; }
+                    if (sig_reg_has_exact(ofr, "ARC:" + rid.name + "|p")) { return 0; }
                     return -1;
                 },
                 _ => { return -1; }
@@ -37850,7 +37982,7 @@ function arrarr_row_call_kind(e: parser.Expr, ofr: string[]): i32 {
 // carried a strings-fresh row. Consulted only for the STRICT "ARRARRS:" credit;
 // a body with no rebinds at all trivially passes (the initializer's own strict
 // marker still governs).
-function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: string[]): boolean {
+function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: SigReg): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -37881,7 +38013,7 @@ function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: s
 // admit an EMPTY-literal init (`var g: i32[][] = []`) as an append-BUILT
 // candidate — arrarr_lit_is_fresh rejects `[]` outright (len == 0), which is
 // correct for a literal-only credit but excludes the shape this fix is about.
-function arrarr_name_is_appended(stmts: parser.Stmt[], name: string, ofr: string[]): boolean {
+function arrarr_name_is_appended(stmts: parser.Stmt[], name: string, ofr: SigReg): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -38519,7 +38651,7 @@ function unmatched_optstr_ann_is(type_name: string): boolean {
     return opt_payload_type(type_name, "Ok") == "string";
 }
 
-function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[]): boolean {
+function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_fresh_reg: SigReg): boolean {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -38534,7 +38666,7 @@ function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[])
                     // `Err(<anything>)` on a Result[string, _]: the Ok-only payload
                     // free cannot reach an Err payload, so the box still qualifies.
                     if (cid.name == "Err") { return c.args.len() == 1; }
-                    return opt_fresh_payload_fresh(opt_fresh_reg, cid.name);
+                    return sig_reg_opt_payload_fresh(opt_fresh_reg, cid.name);
                 },
                 _ => { return false; }
             }
@@ -38558,7 +38690,7 @@ function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[])
 // holds — but only via an argument, which the caller-side escape analysis
 // already reads as an escape, so that buffer carries no second credit to
 // collide with. Measured on `Result[i32[], string]`: 800 allocs / 800 frees.
-function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[]): boolean {
+function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh_reg: SigReg): boolean {
     if (optarr_init_is_fresh(e)) { return true; }
     match (e) {
         parser.ExprCall(c) => {
@@ -38571,7 +38703,7 @@ function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[])
                         }
                     }
                     if (cid.name == "Err" && c.args.len() == 1) { return true; }
-                    return sig_has_name(opt_fresh_reg, cid.name);
+                    return sig_reg_has_name(opt_fresh_reg, cid.name);
                 },
                 _ => { return false; }
             }
@@ -38814,7 +38946,7 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // `Err(<literal / fresh producer>)`, or a call to an ERRFRESH-registered producer
 // (#6360). Per-LOCAL rather than per-slot-class because the OPTARR credit is
 // shared with the reassigned+match class.
-function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_fresh_reg: string[]): boolean {
+function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_fresh_reg: SigReg): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -38855,7 +38987,7 @@ function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_
     return false;
 }
 
-function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: string[], acc: string[]): string[] {
+function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -38883,7 +39015,7 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: str
     return a;
 }
 
-function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: string[], acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -44013,23 +44145,12 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
     return st;
 }
 
-// lower_func lowers a whole function's body. Params take slots 0..n-1.
-// arr_ret_fns is the set of array-returning function names (for move tracking);
-// strarr_ret_fns is the string[]-returning subset (for element typing at calls).
-// fnv_lookup_struct_ret returns the struct type S recorded for `name` in a
-// "name|S" registry (struct_ret_fns), or "" if absent — the function-side
-// sibling of (s).struct_ret_type, used by the binding-time scan below where no
-// LowerState exists yet.
-function fnv_lookup_struct_ret(reg: string[], name: string): string {
-    return sig_value_of(reg, name);
-}
-
 // register_fnvalue_local_struct_rets augments `reg` with a `f|S` entry for each
 // struct-returning fn-value LOCAL `var f = g` (type_name "fn", `g` a struct-
 // returning function already in `reg`) — so a later `f()` resolves its struct
 // result for field / method access (#3640 slice B.1). Recurses nested bodies so
 // a binding inside an if / while / for / match arm counts.
-function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: string[]): string[] {
+function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: SigReg): SigReg {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -44037,8 +44158,8 @@ function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: string[])
                 if (v.type_name == "fn") {
                     match (v.init) {
                         parser.ExprIdent(g) => {
-                            var s_ty: string = fnv_lookup_struct_ret(reg, g.name);
-                            if (s_ty.len() > 0) { reg = reg.append(v.name + "|" + s_ty); }
+                            var s_ty: string = sig_reg_value_of(reg, g.name);
+                            if (s_ty.len() > 0) { reg = sig_reg_append(reg, v.name + "|" + s_ty); }
                         },
                         _ => {}
                     }
@@ -44693,6 +44814,7 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
     return s;
 }
 
+// lower_func lowers a whole function's body. Params take slots 0..n-1.
 pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: FnSigs, for_wasm: boolean): LowerResult {
     // #4380 lever 3: mark in-bounds `arr[i]` reads (a `while (i < arr.len())`
     // guard proves them) so the ExprIndex lowering emits op_arr_get_nc. Runs
@@ -45008,16 +45130,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var nrecv0: i32 = 0;
     if (fn.receiver_name.len() > 0) { nrecv0 = 1; }
     var own_pflags: string = "";
-    if (fn.receiver_type.len() == 0) {
-        var opfi: i32 = 0;
-        while (opfi < sg.fn_param_sigs.len()) {
-            var opfe: string = sg.fn_param_sigs[opfi];
-            var opfb: i32 = 0;
-            while (opfb < opfe.len() && opfe[opfb] != b'|') { opfb = opfb + 1; }
-            if (opfb < opfe.len() && opfe[0:opfb] == fn.name) { own_pflags = opfe[opfb + 1 : opfe.len()] + ""; }
-            opfi = opfi + 1;
-        }
-    }
+    if (fn.receiver_type.len() == 0) { own_pflags = sig_reg_value_last(sg.fn_param_sigs, fn.name); }
     var isclosurearr: boolean[] = [];
     var ci: i32 = 0;
     while (ci < names.len()) {
@@ -45067,7 +45180,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // only in the LowerState built below (a fresh copy per lower_func call), so
     // it never leaks to another function — a param named `f` elsewhere that is
     // NOT array-returning is unaffected.
-    var arr_ret_fns_aug: string[] = sg.arr_ret_fns;
+    var arr_ret_fns_aug: SigReg = sg.arr_ret_fns;
     // Struct-returning fn-value PARAM (`g: () => P`, coarse "fn" with the
     // return-struct name on ParamDecl.fn_ret): a call `g()` yields a `P`, so
     // register a `g|P` entry in THIS function's sg.struct_ret_fns view. The
@@ -45078,10 +45191,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // per-call LowerState, so it never leaks to another function. The self-host
     // compiler's own source uses no fn-typed params, so this never fires there —
     // the byte-identical fixpoint is undisturbed.
-    var struct_ret_fns_aug: string[] = sg.struct_ret_fns;
+    var struct_ret_fns_aug: SigReg = sg.struct_ret_fns;
     var pri: i32 = 0;
     while (pri < fn.params.len()) {
-        if (fn.params[pri].ret_arr) { arr_ret_fns_aug = arr_ret_fns_aug.append(fn.params[pri].name); }
+        if (fn.params[pri].ret_arr) { arr_ret_fns_aug = sig_reg_append(arr_ret_fns_aug, fn.params[pri].name); }
         // A fn-value param whose return names a bare struct registers a
         // sg.struct_ret_fns entry (drives `g().field`, #3640). fn_ret also
         // carries bracketed enum return spellings (#4722), "string", and now
@@ -45091,7 +45204,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // same predicate that decides what fn_ret keeps in the first place, so
         // the two cannot drift.
         if (fn.params[pri].type_name == "fn" && parser.is_struct_ret_name(fn.params[pri].fn_ret)) {
-            struct_ret_fns_aug = struct_ret_fns_aug.append(fn.params[pri].name + "|" + fn.params[pri].fn_ret);
+            struct_ret_fns_aug = sig_reg_append(struct_ret_fns_aug, fn.params[pri].name + "|" + fn.params[pri].fn_ret);
         }
         pri = pri + 1;
     }
@@ -45456,7 +45569,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.f64arr_ret_fns, sg.i64arr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns);
+    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -46223,13 +46336,13 @@ pub function append_dyn_arr_ret_fns(base: string[], trait_reqs: parser.TraitReq[
 // mirrors ("name|$arg<i>" entries from str_ret_fns_of), or -1. The caller
 // re-types the call by the ACTUAL argument at that position.
 pub function str_ret_argref(s: LowerState, name: string): i32 {
-    return argref_in(s.sigs.str_ret_fns, name);
+    return sig_reg_argref(s.sigs.str_ret_fns, name);
 }
 
 // strarr_ret_argref is the string-ARRAY sibling ("name|$arg<i>" entries from
 // strarr_ret_fns_of, for a `T[]` return whose element mirrors argument i).
 pub function strarr_ret_argref(s: LowerState, name: string): i32 {
-    return argref_in(s.sigs.strarr_ret_fns, name);
+    return sig_reg_argref(s.sigs.strarr_ret_fns, name);
 }
 
 // struct_ret_argref is the struct-element twin: for an erased-generic `T[]`
@@ -46237,21 +46350,7 @@ pub function strarr_ret_argref(s: LowerState, name: string): i32 {
 // equals, or -1. Recorded by struct_ret_fns_of; read by expr_struct_type's call
 // arm so an unannotated `var s = idf(xs)` recovers `s[i]`'s struct type.
 pub function struct_ret_argref(s: LowerState, name: string): i32 {
-    return argref_in(s.sigs.struct_ret_fns, name);
-}
-
-// argref_in scans a registry for a "name|$arg<i>" positional-reference entry
-// and returns i, or -1. The '|' keeps these entries invisible to the
-// registries' exact-name membership scans.
-function argref_in(reg: string[], name: string): i32 {
-    var pfx: string = name + "|$arg";
-    var i: i32 = 0;
-    while (i < reg.len()) {
-        var e: string = reg[i];
-        if (e.len() > pfx.len() && e[0 : pfx.len()] == pfx) { return util.digits_to_i32(e[pfx.len() : e.len()]); }
-        i = i + 1;
-    }
-    return 0 - 1;
+    return sig_reg_argref(s.sigs.struct_ret_fns, name);
 }
 
 // irl_is_alnum_byte: an identifier byte — [0-9A-Za-z_]. Used to detect a
@@ -47196,7 +47295,7 @@ function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: par
 // the binding is credited "STR:" and the exit sweep frees it exactly once.
 // The `: string` annotation is required (it is what types the slot is_str at
 // the StmtVar lowering, and slot_is_reclaimable_str's type gate keys on it).
-function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: SigReg, reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -47210,7 +47309,7 @@ function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: stri
                                     parser.ExprCall(c) => {
                                         match (c.callee) {
                                             parser.ExprIdent(cid) => {
-                                                if (util.index_of_str(opt_fresh_ret, cid.name + "|string|f") >= 0) {
+                                                if (sig_reg_has_exact(opt_fresh_ret, cid.name + "|string|f")) {
                                                     a = push_str_unique(a, v.name);
                                                 }
                                             },
@@ -49187,7 +49286,7 @@ function irl_type_has_var(ty: string): boolean {
 // arrtup_ret_type returns the ELEMENT TUPLE spelling of an array-of-tuples
 // returning function `name`, or "" if it isn't one.
 pub function (s: LowerState) arrtup_ret_type(name: string): string {
-    return sig_value_of(s.sigs.arrtup_ret_fns, name);
+    return sig_reg_value_of(s.sigs.arrtup_ret_fns, name);
 }
 
 pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
@@ -49394,7 +49493,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
             // positional "name|$arg<i>" entry instead, meaning "the element type is
             // whatever argument i's element type is", and let expr_struct_type
             // resolve it against the ACTUAL argument at the call site. Same
-            // convention (and same argref_in reader) as the erased string / array
+            // convention (and same sig_reg_argref reader) as the erased string / array
             // returns above; the '|' keeps the entry invisible to the exact-name
             // membership scans. Free functions only — a receiver method is never an
             // erased generic — matching the string-side producer.
@@ -49614,12 +49713,7 @@ pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
 // (a member of the fn_names registry) — i.e. a bare `name(args)` call resolves
 // to it, shadowing any same-named builtin.
 pub function (s: LowerState) is_user_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_names.len()) {
-        if (s.sigs.fn_names[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.fn_names, name);
 }
 
 // body_binds_closure_local reports whether `body` binds local `name` (via a
@@ -51625,7 +51719,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     var e: string[] = [];
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
-        opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e,
+        opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e,
         param_counted: e };
 }
 
@@ -51633,12 +51727,13 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 // inspect op kinds rather than emit and so need no return-type tagging.
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
-    return FnSigs { arr_ret_fns: e, str_ret_fns: e, strarr_ret_fns: e, arr_method_fns: e,
-        opt_ret_fns: e, i64_ret_fns: e, tuple_ret_fns: e, arrtup_ret_fns: e, struct_ret_fns: e, map_ret_fns: e,
-        f64_ret_fns: e, f64arr_ret_fns: e, i64arr_ret_fns: e, erased_elem_ret_fns: e, fn_param_sigs: e, closure_fns: e,
-        closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: e,
+    var r: SigReg = sig_reg_empty();
+    return FnSigs { arr_ret_fns: r, str_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e,
+        opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
+        f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
+        closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
-        recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: e, strfld_ok_types: e,
+        recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
         tuple_fresh_ret_fns: e, move_arr_params: e, param_counted: e, trmc_consume_fns: e };
 }
 
@@ -51680,32 +51775,32 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
     // whole-program — computing it twice would be a second pass over every body.
     var sfok: string[] = strfld_reclaim_ok_types_of(funcs, structs, bparams);
     return FnSigs {
-        arr_ret_fns: arr_ret_fns,
-        str_ret_fns: str_ret_fns_of(funcs),
-        strarr_ret_fns: strarr_ret_fns_of(funcs),
+        arr_ret_fns: sig_reg_of(arr_ret_fns),
+        str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)),
+        strarr_ret_fns: sig_reg_of(strarr_ret_fns_of(funcs)),
         arr_method_fns: arr_method_fns_of(funcs),
-        opt_ret_fns: opt_ret_fns_of(funcs),
-        i64_ret_fns: i64_ret_fns_of(funcs),
-        tuple_ret_fns: tuple_ret_fns_of(funcs),
-        arrtup_ret_fns: arrtup_ret_fns_of(funcs),
-        struct_ret_fns: struct_ret_fns_of(funcs, structs),
-        map_ret_fns: map_ret_fns_of(funcs),
-        f64_ret_fns: f64_ret_fns_of(funcs),
-        f64arr_ret_fns: f64arr_ret_fns_of(funcs),
-        i64arr_ret_fns: i64arr_ret_fns_of(funcs),
-        erased_elem_ret_fns: erased_elem_ret_fns_of(funcs, structs),
-        fn_param_sigs: fn_param_sigs_of(funcs, structs),
+        opt_ret_fns: sig_reg_of(opt_ret_fns_of(funcs)),
+        i64_ret_fns: sig_reg_of(i64_ret_fns_of(funcs)),
+        tuple_ret_fns: sig_reg_of(tuple_ret_fns_of(funcs)),
+        arrtup_ret_fns: sig_reg_of(arrtup_ret_fns_of(funcs)),
+        struct_ret_fns: sig_reg_of(struct_ret_fns_of(funcs, structs)),
+        map_ret_fns: sig_reg_of(map_ret_fns_of(funcs)),
+        f64_ret_fns: sig_reg_of(f64_ret_fns_of(funcs)),
+        f64arr_ret_fns: sig_reg_of(f64arr_ret_fns_of(funcs)),
+        i64arr_ret_fns: sig_reg_of(i64arr_ret_fns_of(funcs)),
+        erased_elem_ret_fns: sig_reg_of(erased_elem_ret_fns_of(funcs, structs)),
+        fn_param_sigs: sig_reg_of(fn_param_sigs_of(funcs, structs)),
         closure_fns: closure_and_fnptr_fns_of(funcs, structs),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
         const_fns: const_fns_of(funcs),
         borrowable_params: bparams,
-        fn_names: fn_names_of(funcs),
+        fn_names: sig_reg_of(fn_names_of(funcs)),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs, sfok),
         recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
-        opt_fresh_ret_fns: opt_fresh_ret_fns_of(funcs, structs),
+        opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)),
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         move_arr_params: move_arr_params_of(funcs),
@@ -51833,11 +51928,11 @@ function tv_stmt(st: parser.Stmt, name: string): boolean {
 // lowerings (which never see a trait object) do not.
 pub function fn_sigs_with_dyn(sg: FnSigs, trait_reqs: parser.TraitReq[]): FnSigs {
     return FnSigs { ...sg,
-        str_ret_fns: append_dyn_str_ret_fns(sg.str_ret_fns, trait_reqs),
-        strarr_ret_fns: append_dyn_arr_ret_fns(sg.strarr_ret_fns, trait_reqs, "string[]"),
-        i64_ret_fns: append_dyn_i64_ret_fns(sg.i64_ret_fns, trait_reqs),
-        f64_ret_fns: append_dyn_f64_ret_fns(sg.f64_ret_fns, trait_reqs),
-        f64arr_ret_fns: append_dyn_arr_ret_fns(sg.f64arr_ret_fns, trait_reqs, "f64[]"),
+        str_ret_fns: sig_reg_of(append_dyn_str_ret_fns(sg.str_ret_fns.rows, trait_reqs)),
+        strarr_ret_fns: sig_reg_of(append_dyn_arr_ret_fns(sg.strarr_ret_fns.rows, trait_reqs, "string[]")),
+        i64_ret_fns: sig_reg_of(append_dyn_i64_ret_fns(sg.i64_ret_fns.rows, trait_reqs)),
+        f64_ret_fns: sig_reg_of(append_dyn_f64_ret_fns(sg.f64_ret_fns.rows, trait_reqs)),
+        f64arr_ret_fns: sig_reg_of(append_dyn_arr_ret_fns(sg.f64arr_ret_fns.rows, trait_reqs, "f64[]")),
     };
 }
 
@@ -54008,7 +54103,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         head = head + "\n";
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs), opt_fresh_ret_fns_of(funcs, structs));
+    var pd: PreciseDrops = precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)));
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -54122,7 +54217,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -54176,7 +54271,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
 // function has no i64 signature entry.
 pub function (s: LowerState) i64_sig_of(name: string): string {
-    return sig_value_of(s.sigs.i64_ret_fns, name);
+    return sig_reg_value_of(s.sigs.i64_ret_fns, name);
 }
 // is_i64_ret_fn reports whether `name` returns a 64-bit integer (i64 OR u64) —
 // the ret flag of its sig is '1' (i64) or '2' (u64). Both are i64-wide, so this
@@ -54227,43 +54322,23 @@ pub function (s: LowerState) is_u8_ret_fn(name: string): boolean {
 // is_f64_ret_fn reports whether free function `name` returns f64 (so a call to
 // it is recognised as an f64 value).
 pub function (s: LowerState) is_f64_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.f64_ret_fns.len()) {
-        if (s.sigs.f64_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.f64_ret_fns, name);
 }
 // is_f64arr_ret_fn reports whether `name` returns f64[] (so a `var x = f()`
 // binding element-width-tracks x as f64[]). `name` is the bare callee for a free
 // function or the qualified "<Type>.<method>" for a method call.
 pub function (s: LowerState) is_f64arr_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.f64arr_ret_fns.len()) {
-        if (s.sigs.f64arr_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.f64arr_ret_fns, name);
 }
 // is_i64arr_ret_fn reports whether `name` returns i64[] (bare name or
 // "<Type>.<method>", same convention as is_f64arr_ret_fn).
 pub function (s: LowerState) is_i64arr_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.i64arr_ret_fns.len()) {
-        if (s.sigs.i64arr_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.i64arr_ret_fns, name);
 }
 // is_erased_elem_ret_fn reports whether a call to `name` yields an array whose
 // ELEMENT width the callee never fixed (`map` / `flat_map` returning `U[]`).
 pub function (s: LowerState) is_erased_elem_ret_fn(name: string): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.erased_elem_ret_fns.len()) {
-        if (s.sigs.erased_elem_ret_fns[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return sig_reg_has_exact(s.sigs.erased_elem_ret_fns, name);
 }
 // param_is_i64 reports whether arg index `idx` of a call to `name` targets an
 // i64 param (so the argument must be lowered as an i64 value).
@@ -54288,7 +54363,7 @@ pub function (s: LowerState) param_is_f64(name: string, idx: i32): boolean {
 // (const_func), not a call. Mirrors asmcore.callee_param_is_fn, reading the
 // fn_param_sigs registry ("callee|<flags>").
 pub function (s: LowerState) callee_param_is_fn(name: string, idx: i32): boolean {
-    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 49;   // 49 = '1'
+    return sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx) == 49;   // 49 = '1'
 }
 
 // erased_wide_stmts / erased_wide_expr: the post-lowering scan behind
@@ -54513,7 +54588,7 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
 // takes the full 8-byte value on the register backends). Accepting both keeps
 // the register i64-arg path identical regardless of the pass-through split.
 pub function (s: LowerState) callee_param_is_typevar(name: string, idx: i32): boolean {
-    var f: i32 = sig_flag_at(s.sigs.fn_param_sigs, name, idx);
+    var f: i32 = sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx);
     return f == 53 || f == 54;   // 53 = '5', 54 = '6'
 }
 
@@ -54521,7 +54596,7 @@ pub function (s: LowerState) callee_param_is_typevar(name: string, idx: i32): bo
 // erased typevar ARRAY param — flag '7'. Drives the wasm erased-wide refusal for
 // a wide-ELEMENT array argument.
 pub function (s: LowerState) callee_param_is_erased_array(name: string, idx: i32): boolean {
-    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 55;   // 55 = '7'
+    return sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx) == 55;   // 55 = '7'
 }
 
 // callee_param_is_erased_widened reports whether callee `name`'s param `idx` is
@@ -54531,7 +54606,7 @@ pub function (s: LowerState) callee_param_is_erased_array(name: string, idx: i32
 // a container return — flag '5') is NOT widened and its module defers on a wide
 // instantiation instead of miscompiling.
 pub function (s: LowerState) callee_param_is_erased_widened(name: string, idx: i32): boolean {
-    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 54;   // 54 = '6'
+    return sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx) == 54;   // 54 = '6'
 }
 
 // callee_param_is_dyn reports whether callee `name`'s param `idx` is a
@@ -54539,7 +54614,7 @@ pub function (s: LowerState) callee_param_is_erased_widened(name: string, idx: i
 // there must be heap-boxed into a `dyn` cell (op_dyn_box) before the call
 // (docs/DYN-TRAITS.md §4.2.3). Same registry/format as callee_param_is_fn.
 pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolean {
-    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 50;   // 50 = '2'
+    return sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx) == 50;   // 50 = '2'
 }
 
 // callee_param_is_dyn_arr reports whether callee `name`'s param `idx` is a
@@ -54547,13 +54622,13 @@ pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolea
 // argument there must have each element coerced to `dyn` before the buffer is
 // built (docs/DYN-TRAITS.md §4.3, #6906).
 pub function (s: LowerState) callee_param_is_dyn_arr(name: string, idx: i32): boolean {
-    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 56;   // 56 = '8'
+    return sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx) == 56;   // 56 = '8'
 }
 
 // opt_ret_type returns the recorded ret_type for a function name in opt_ret_fns
 // ("Option[T]"/"Result[T, E]"), or "" if not an Option/Result-returning fn.
 pub function (s: LowerState) opt_ret_type(name: string): string {
-    var v: string = sig_value_of(s.sigs.opt_ret_fns, name);
+    var v: string = sig_reg_value_of(s.sigs.opt_ret_fns, name);
     if (v.len() > 0) { return v; }
     // Built-in I/O functions return a fixed Option/Result the lowering must
     // recognise so a `match (read_file(p)) { Ok => .., Err => .. }` scrutinee or a
@@ -54581,13 +54656,13 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
 // free function `name` (e.g. "i32,string,i32"), ready to drop into a slot's
 // local_tuple_elems, or "" if `name` isn't a (lowered) tuple-returning function.
 pub function (s: LowerState) tuple_ret_type(name: string): string {
-    return sig_value_of(s.sigs.tuple_ret_fns, name);
+    return sig_reg_value_of(s.sigs.tuple_ret_fns, name);
 }
 
 // struct_ret_type returns the struct type name returned by free function `name`,
 // or "" if `name` isn't a (lowered) struct-returning function.
 pub function (s: LowerState) struct_ret_type(name: string): string {
-    var v: string = sig_value_of(s.sigs.struct_ret_fns, name);
+    var v: string = sig_reg_value_of(s.sigs.struct_ret_fns, name);
     // Skip a POSITIONAL "$arg<i>" entry (the erased-generic `T[]` return, read by
     // struct_ret_argref): it is an argument INDEX, not a struct name. Unlike the
     // string-side registries — where the '|' makes an argref invisible to a bare
@@ -54602,7 +54677,7 @@ pub function (s: LowerState) struct_ret_type(name: string): string {
 // recovers the map type for method dispatch without an annotation. Mirrors
 // struct_ret_type. #3317.
 pub function (s: LowerState) map_ret_type(name: string): string {
-    return sig_value_of(s.sigs.map_ret_fns, name);
+    return sig_reg_value_of(s.sigs.map_ret_fns, name);
 }
 
 // opt_payload_type parses a "Option[T]" / "Result[T, E]" ret_type and the bound
@@ -60946,7 +61021,7 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
 // callee_param_may_grow reads flag '4' — the may-grow array param positions
 // merged into fn_param_sigs by fn_param_sigs_of.
 pub function (s: LowerState) callee_param_may_grow(name: string, idx: i32): boolean {
-    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 52;   // '4'
+    return sig_reg_flag_at(s.sigs.fn_param_sigs, name, idx) == 52;   // '4'
 }
 
 // grow_exempt_names_of_stmt returns the ident args exempt from the grow

@@ -373,7 +373,7 @@ contradict comments in the tree:
 | 6 | ~~`ir.Inline` on the natives~~ — **do not scope without a growth budget**; the dead-funcs half is **done** | `internal/codegen/{x86_64,arm64}` | **the compiler got 2.7× bigger and ~3% SLOWER** — below |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
-| 10 | ~~The reclaim / sig registries: allocation-free decode, then stop copying module-wide rows per function~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the five; what is left is an index over the ~4,600-row SIG registries |
+| 10 | ~~The reclaim / sig registries: allocation-free decode, stop copying module-wide rows per function, then INDEX the sig registries~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048, and the index in #6888 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the first five and the index took another 7% |
 | 11 | **The method-receiver accumulator ratchet** — `arr_push_grow_ptr` is now the top cost and half of it is copies nothing needed | `internal/ir` (native rc) | §4d.5 — 71/400 samples, 52% of copies at `RC >= 2`, concentrated in `LowerState.emit` and `Scope.bind` |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
@@ -870,8 +870,39 @@ the seeding, points the five consumers at the originals, and takes **49.5 s →
 ~83,000 string concatenations per module.
 
 So the index is no longer the next step for THIS registry: with ~0.5 rows per
-function the walk is free. The sig registries (§ above, ~4,600 rows) are where
-an index still has something to buy.
+function the walk is free. The sig registries (§ above) are where an index still
+had something to buy — that is the next entry.
+
+**And the sig-registry index, which closes item 10.** `SigReg` wraps sixteen
+`FnSigs` registries as `rows` + a bucket index over each row's key (the text
+before its first `|`), built once per module where the registry is; the chains
+run in ascending row order, so a duplicated name still resolves to its first row
+and every probe's exact compare is unchanged. Sizes over a whole self-compile,
+instrumented at `fn_sigs_for_borrow` (13 calls, so the build cost is noise):
+`fn_names` 4,865, `struct_ret_fns` 1,478, `arr_ret_fns` 996, `str_ret_fns` 936,
+`fn_param_sigs` 380 — and the walks were reaching them from `str_ret_argref` /
+`struct_ret_argref` (a full scan to failure on every call, since `|$arg` rows are
+rare), `sig_flag_at`, `is_user_fn` and the `is_*_ret_fn` family.
+
+| | before | after |
+|---|---|---|
+| self-compile user, 8 interleaved pairs | 34.27 s | **31.84 s** (−7.1%) |
+| self-compile wall, same pairs | 38.65 s | **35.41 s** (−8.4%) |
+
+Byte-identical: the same compiler binary before and after emits the same
+`fern.fern` bytes, and `scripts/selfhost-emit-hashes` agrees on all 1,479
+(fixture, target) pairs.
+
+**Sizing this one needed a THIRD kind of A/B, and the first two disagreed.**
+A 400-sample profile put the whole scan family at 23/400 = 5.75% inclusive.
+Wrapping each scanner so it runs twice measured +9.3% of user time — but that
+wrapper adds a call and its rc traffic per probe, which for short registries is
+most of what it measures. Doubling only the per-candidate COMPARE, inside the
+existing loop, measured +3.5% and is the honest floor: it leaves out the loop's
+own bounds-check and index traffic, which the index also removes. The delivered
+7.1% sits above all three, because the index additionally deletes `argref_in`'s
+per-call key concatenation. **When a probe is cheap and numerous, put the
+doubling INSIDE the loop** — a wrapper measures the call, not the scan.
 
 **One thing that did NOT work, and why.** `lower_block` calls
 `optfresh_names_of(s.reclaimable_names)` twice with the same argument, so

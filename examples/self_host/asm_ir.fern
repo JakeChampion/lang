@@ -3709,7 +3709,7 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_for_borrow(all_funcs, all_structs, arf, bparams)),
         // These two stay scoped to THIS module rather than the whole program.
-        fn_names: irlower.fn_names_of(mod.funcs),
+        fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
     };
     var i: i32 = 0;
@@ -6724,7 +6724,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
         ...irlower.fn_sigs_for_borrow(fns, all_structs, array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
-        opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
+        opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls)),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     // String literals the helper body interns (e.g. "\n" in str_lines's
@@ -6795,7 +6795,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_with_dyn(base, mod.trait_reqs),
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
-        fn_names: irlower.fn_names_of(mod.funcs),
+        fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
     // The IR verify gate's callee-arity index, derived ONCE over the
     // whole-program all_funcs for the reason the registries above are: a
