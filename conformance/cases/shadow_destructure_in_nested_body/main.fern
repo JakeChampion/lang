@@ -1,0 +1,44 @@
+// A destructuring binder inside a NESTED body — a lambda, or a nested named
+// function — whose names shadow the enclosing function's locals. The binders
+// are renamed to keep the slot map's names unique, and the checker registers
+// each one as a synthetic local against the body that declares it, so the two
+// have to be renamed together; renaming only one is a refusal to compile
+// ("destructure name has no slot"), not a wrong answer.
+//
+// The inner bindings must read the destructured value and the outer ones must
+// survive unchanged, so this asserts both values rather than merely exiting 0.
+struct Point { x: i32, y: i32 }
+
+function main(): i32 {
+    var x: i32 = 1;
+    var y: i32 = 2;
+
+    // Destructuring lambda parameter shadowing both outer names.
+    var lam = function (Point { x, y }: Point): i32 { return x * 10 + y; };
+    if (lam(Point { x: 3, y: 4 }) != 34) { return 1; }
+
+    // The same, one lambda deeper.
+    var outer = function (): i32 {
+        var inner = function ((x, y): (i32, i32)): i32 { return x * 100 + y; };
+        return inner((5, 6));
+    };
+    if (outer() != 506) { return 2; }
+
+    // A destructuring `var` inside a nested named function.
+    function f(a: i32, b: i32): i32 { var (x, y) = (a, b); return x * 10 + y; }
+    if (f(7, 8) != 78) { return 3; }
+
+    // A destructuring `for` header binding the same names, in the enclosing
+    // body rather than a nested one — the control for the case above.
+    var total: i32 = 0;
+    for (x, y) in [(1, 2), (3, 4)] { total = total + x * 10 + y; }
+    if (total != 46) { return 4; }
+
+    // A nested body whose binders shadow nothing still works.
+    var free = function ((p, q): (i32, i32)): i32 { return p - q; };
+    if (free((9, 5)) != 4) { return 5; }
+
+    if (x != 1) { return 6; }
+    if (y != 2) { return 7; }
+    return 0;
+}
