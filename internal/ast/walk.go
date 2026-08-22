@@ -1,5 +1,7 @@
 package ast
 
+import "fmt"
+
 // Node is any AST entity that carries a source position. Every Expr,
 // Stmt, and top-level declaration implements it. Type interface
 // values don't (types are positionless in this AST), so Walk skips
@@ -17,9 +19,15 @@ type Node interface {
 //
 // Walk is the building block for LSP features that need to locate a
 // node by source position (hover, go-to-definition) or enumerate
-// references (find-references, rename). It deliberately does not visit
-// the Type-shaped fields on expressions and declarations — those are
+// references (find-references, rename), and for the compiler passes that
+// rewrite a subtree (monomorph). It deliberately does not visit the
+// Type-shaped fields on expressions and declarations — those are
 // positionless and not directly addressable from an editor cursor.
+//
+// The traversal is exhaustive by construction: a Node kind with no case
+// panics, and walk_exhaustive_test.go pins both the kind list and the
+// child slots each kind must descend into, so a new Expr / Stmt cannot
+// be silently skipped here or in a private copy of the tree shape.
 func Walk(root Node, fn func(Node) bool) {
 	if root == nil {
 		return
@@ -96,7 +104,7 @@ func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
 // its rewritten form. Mirrors walkChildren's expression coverage.
 func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 	switch x := n.(type) {
-	case *NumberLit, *BoolLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
+	case *NumberLit, *BoolLit, *UnitLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
 		// leaves
 	case *CastExpr:
 		x.Inner = rewriteExpr(x.Inner, fn)
@@ -214,6 +222,8 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 	// Statements — traverse, don't replace.
 	case Stmt:
 		rewriteStmtChildren(x, fn)
+	default:
+		panic(unhandledKind("rewriteExprChildren", n))
 	}
 }
 
@@ -272,9 +282,6 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 		}
 	case *ExprStmt:
 		x.Expr = rewriteExpr(x.Expr, fn)
-	case *Assign:
-		x.Target = rewriteExpr(x.Target, fn)
-		x.Value = rewriteExpr(x.Value, fn)
 	case *Match:
 		x.Tag = rewriteExpr(x.Tag, fn)
 		for ai := range x.Arms {
@@ -303,6 +310,8 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 		}
 	case *Break, *Continue:
 		// leaves
+	default:
+		panic(unhandledKind("rewriteStmtChildren", n))
 	}
 }
 
@@ -310,7 +319,7 @@ func walkChildren(n Node, fn func(Node) bool) {
 	switch x := n.(type) {
 
 	// ---------- Expressions with no Expr children ----------
-	case *NumberLit, *BoolLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
+	case *NumberLit, *BoolLit, *UnitLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
 		// leaves
 
 	// ---------- Expressions ----------
@@ -476,9 +485,25 @@ func walkChildren(n Node, fn func(Node) bool) {
 	case *StructDecl, *EnumDecl, *UnionDecl, *Import:
 		// leaves at the AST level (their child types are
 		// positionless type references, not Nodes)
+	case *TraitDecl, *ImplDecl, *PubUse:
+		// Leaves too: the checker consumes conformance + coherence
+		// and re-exports, no later pass traverses them, and
+		// WalkProgram does not reach them.
 	case *ConstDecl:
 		if x.Value != nil {
 			Walk(x.Value, fn)
 		}
+	default:
+		panic(unhandledKind("walkChildren", n))
 	}
+}
+
+// unhandledKind builds the panic message the three traversals raise for
+// a Node kind none of their cases name. Reaching it means a new Expr /
+// Stmt / declaration was added without extending the traversal, which is
+// the failure #7042 and #7149 both shipped as a silent no-op; the panic
+// and the exhaustiveness tests in walk_exhaustive_test.go turn it into a
+// loud one.
+func unhandledKind(where string, n Node) string {
+	return fmt.Sprintf("ast: %s: unhandled node kind %T (add a case for it)", where, n)
 }
