@@ -323,6 +323,27 @@ findings. Ranked by leverage.
     expression-only fold never sees; it needs `fold_expr_nodes` /
     `fold_stmt_nodes` with a statement visitor as well. Check what each
     collector reads before assuming `fold_expr` covers it.
+
+    **Check the boundary in both directions.** `mc_mentions_*` needs the fold
+    to DESCEND into lambda bodies; `e049_expr_lambdas` hands each body to
+    `e049_check_assigns` and needs it PRUNED there (`fold_expr_pruned` with a
+    descent predicate), or every nested lambda is reported once per enclosing
+    one. Same spine, opposite requirement at the same node.
+
+    **The remaining collectors are DIAGNOSTIC collectors, and nothing gates
+    what a wrong answer there looks like.** Every check over self-host checker
+    output compares a sorted, de-duplicated SET — so reordering diagnostics or
+    reporting one twice is green everywhere (`docs/TEST-GATES.md`, "What
+    nothing gates"). The boolean and counting collectors converted so far
+    (`mc_mentions_*`, `ow_count_ident`) are immune to this by construction;
+    `vref_expr`, `slit_diags`, `e044_expr`, `e032_expr` and the rest are not.
+    Verify order and multiplicity by hand for each, or add an order-sensitive
+    check first — do not batch them.
+
+    Not every remaining one is convertible at all: `vref_stmts` threads a
+    `cur: Scope` that CHANGES as it walks (each `StmtVar` extends it), which is
+    what this row means by "scope-threading passes". A fold whose accumulator
+    is just the diagnostic list cannot carry that.
   - `ssa` / `ssa_wasm` re-open-code the 3-level funcs→blocks→insts loop.
 
   _Fix:_ one traversal taking a per-node callback; removes well over 1,000 lines
