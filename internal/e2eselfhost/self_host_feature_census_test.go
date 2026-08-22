@@ -359,8 +359,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Two are astwalk's no-op statement visitors; the other three are constfold's assert probe, the first arrow lambdas here that compute rather than return the accumulator untouched.")
 	pinned(t, c, "anonymous function exprs", 4,
 		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the capturing nested named fns are the self-host's only closures.")
-	pinned(t, c, "nested named fns", 30,
-		"Four are astwalk visitors closing over their enclosing function's locals. Seventeen are wasm_ir's helper-gate predicates behind any_op(cache, pred), two of which capture a parameter and the rest capture nothing. The last seven are checker collectors riding astwalk: mc_mentions_expr and mc_mentions_stmts take two visitors each (an expression visitor for ExprIdent, a statement visitor for StmtAssign's target, which is a bare string rather than an expression), ow_count_ident takes a tally, and e049_expr_lambdas and e049_stmt_own_lambdas take a visitor plus a descent predicate that prunes at ExprLambda.")
+	pinned(t, c, "nested named fns", 32,
+		"Four are astwalk visitors closing over their enclosing function's locals. Seventeen are wasm_ir's helper-gate predicates behind any_op(cache, pred), two of which capture a parameter and the rest capture nothing. The last seven are checker collectors riding astwalk: mc_mentions_expr and mc_mentions_stmts take two visitors each (an expression visitor for ExprIdent, a statement visitor for StmtAssign's target, which is a bare string rather than an expression), ow_count_ident takes a tally, and e049_expr_lambdas, e049_stmt_own_lambdas and vref_expr each take a visitor plus a descent predicate that prunes at ExprLambda.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
 	pinned(t, c, "Map type spellings", 11,
@@ -370,8 +370,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// to climb, and pinning one would fight the migration it measures. The
 	// feature rows above stay pinned because a move there is news either way;
 	// a module converting more loops is not.
-	atLeast(t, c, "for..in loops", 321,
-		"306 in checker.fern and 15 in visibility.fern. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms. That has now lowered this floor twice in a row (326 -> 325 for mc_mentions, 325 -> 321 for e049_expr_lambdas), which is worth noticing: while the SH-022 walker migration runs, this row and `astwalk call sites` move in OPPOSITE directions, so a floor here has to be lowered on every conversion and protects nothing in between. The astwalk floor is the one carrying the signal for that work. Lower this one for a conversion; investigate it otherwise.")
+	atLeast(t, c, "for..in loops", 317,
+		"302 in checker.fern and 15 in visibility.fern. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms. That has now lowered this floor three times running (326 -> 325 for mc_mentions, 325 -> 321 for e049_expr_lambdas, 321 -> 317 for vref_expr), which is worth noticing: while the SH-022 walker migration runs, this row and `astwalk call sites` move in OPPOSITE directions, so a floor here has to be lowered on every conversion and protects nothing in between. The astwalk floor is the one carrying the signal for that work. Lower this one for a conversion; investigate it otherwise.")
 	atLeast(t, c, "astwalk call sites", 85,
 		"Hand-written AST walkers collapsing onto the shared fold spine is what this counts. It should only climb; a fall means a consumer went back to spelling its own traversal.")
 

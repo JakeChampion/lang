@@ -47,8 +47,8 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **34** — 4 anonymous `function(…)` exprs and 30 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 9 in `checker`'s collectors); 15 of the 34 capture, the gate predicates mostly do not — plus **5** arrow lambdas (2 no-op visitors, 3 in `constfold`'s assert probe) | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **321** in 2 modules — 306 in `checker.fern`, 15 in `visibility.fern`; falling as SH-022 folds collectors onto `astwalk` | floor |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **36** — 4 anonymous `function(…)` exprs and 32 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 11 in `checker`'s collectors); 17 of the 36 capture, the gate predicates mostly do not — plus **5** arrow lambdas (2 no-op visitors, 3 in `constfold`'s assert probe) | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **317** in 2 modules — 302 in `checker.fern`, 15 in `visibility.fern`; falling as SH-022 folds collectors onto `astwalk` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
 | `astwalk` call sites (walkers on the shared spine) | — | **85** across 11 modules | floor |

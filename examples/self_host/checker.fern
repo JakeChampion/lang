@@ -7644,59 +7644,38 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
 // qualified). A name bound as a local (parameter / var) is skipped, and a
 // QUALIFIED reference `Enum.Variant` is an ExprFieldAccess whose field
 // isn't visited as a bare ident, so it's fine.
+// vref_expr collects the E036 diagnostics an expression contributes: a variant
+// name declared in more than one enum, referenced unqualified and not resolved
+// by anything in scope.
+//
+// It PRUNES at ExprLambda and hands the body to vref_stmts, the scope-THREADED
+// statement walk. That is the whole point of the arm: vref_stmts extends the
+// scope as it goes, so a variant name shadowed by a local `var` inside the
+// lambda is not flagged. Letting astwalk descend into the body instead would
+// check it against the enclosing scope and report the shadowed name.
 function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): util.Diag[] {
-  var out: util.Diag[] = [];
-  match (e) {
-    parser.ExprIdent(id) => {
-      if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name))) {
-        out = out.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
-      }
-    },
-    parser.ExprBinary(b) => {
-      out = util.append_diags(vref_expr(b.left, s, ambig), vref_expr(b.right, s, ambig));
-    },
-    parser.ExprUnary(u) => {
-      out = vref_expr(u.operand, s, ambig);
-    },
-    parser.ExprCall(c) => {
-      out = vref_expr(c.callee, s, ambig);
-      for arg in c.args {
-        out = util.append_diags(out, vref_expr(arg, s, ambig));
-      }
-    },
-    parser.ExprArray(a) => {
-      for element in a.elements {
-        out = util.append_diags(out, vref_expr(element, s, ambig));
-      }
-    },
-    parser.ExprTuple(t) => {
-      for element in t.elements {
-        out = util.append_diags(out, vref_expr(element, s, ambig));
-      }
-    },
-    parser.ExprIndex(ix) => {
-      out = util.append_diags(vref_expr(ix.array, s, ambig), vref_expr(ix.index, s, ambig));
-    },
-    parser.ExprSlice(s2) => {
-      out = util.append_diags(vref_expr(s2.array, s, ambig), util.append_diags(vref_expr(s2.start, s, ambig), vref_expr(s2.end, s, ambig)));
-    },
-    parser.ExprFieldAccess(fa) => {
-      out = vref_expr(fa.obj, s, ambig);
-    },
-    parser.ExprStructLit(sl) => {
-      for field_value in sl.field_values {
-        out = util.append_diags(out, vref_expr(field_value, s, ambig));
-      }
-      if (sl.has_base) {
-        out = util.append_diags(out, vref_expr(sl.base, s, ambig));
-      }
-    },
-    parser.ExprLambda(lm) => {
-      out = vref_stmts(lm.body, s, ambig);
-    },
-    _ => {}
+  function at(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprIdent(id) => {
+        if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name))) {
+          return acc.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
+        }
+        return acc;
+      },
+      parser.ExprLambda(lm) => {
+        return util.append_diags(acc, vref_stmts(lm.body, s, ambig));
+      },
+      _ => { return acc; }
+    }
   }
-  return out;
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_expr_pruned(e, none, at, not_into_lambda);
 }
 
 // vref_stmts is the scope-threaded statement walk behind vref_expr (so a
