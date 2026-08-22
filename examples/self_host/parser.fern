@@ -6135,7 +6135,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
     // search cannot answer alone: two traits providing one method for
     // one type, where the second provider is emitted as
     // `<Type>.<Trait>.<m>` and only the trait picks it out
-    // (irlower.dyn_arm_matches). Recurse per trait so `dyn Shape[]` /
+    // (dyn_arm_matches). Recurse per trait so `dyn Shape[]` /
     // `dyn mod.Shape` / `dyn A + B[]` reuse the generic-arg +
     // trailing-`[]` handling; the `[]` falls on the last trait and so on
     // the whole `"dyn …"` spelling, which is what is_array_type_name +
@@ -15421,6 +15421,87 @@ function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: 
     if (util.index_of_str(keys, rkey) >= 0) { return MethodClaim { fn: fd, keys: keys, traits: traits }; }
     var renamed_fd: FuncDecl = FuncDecl { ...fd, name: renamed };
     return MethodClaim { fn: renamed_fd, keys: keys.append(rkey), traits: traits.append(tname) };
+}
+
+// ---- reading claim_method_name's namespace back ----
+//
+// These three are the INVERSE of claim_method_name: given the traits a `dyn`
+// spans and the method a call names, they say which of the flat symbols the
+// claim table produced is the one that call means. Every dispatcher needs the
+// same answer — the compiled backends through irlower.dyn_arm_matches, the AST
+// interpreter through dyn_provider_name — so the rule lives beside the renaming
+// it undoes rather than once per engine.
+
+// dyn_trait_set splits a `dyn Trait` type spelling into its trait names:
+// "dyn B" -> ["B"], "dyn A + B" -> ["A", "B"]. Non-dyn spellings yield none.
+pub function dyn_trait_set(ty: string): string[] {
+    var out: string[] = [];
+    if (ty.len() <= 4 || ty[0:4] != "dyn ") { return out; }
+    var start: i32 = 4;
+    var i: i32 = 4;
+    while (i <= ty.len()) {
+        if (i == ty.len() || ty[i] == b'+') {
+            var part: string = util.trim(ty[start:i] + "");
+            if (part.len() > 0) { out = out.append(part); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// dyn_arm_matches reports whether `fd` is the definition a `dyn` dispatch on
+// `method`, over a trait object spanning `traits`, must call for fd's OWN
+// receiver type. The search is keyed on the method name, and two traits
+// providing one method for one type produce two definitions: the first claimant
+// keeps the bare `<m>` and the later one is emitted as `<Trait>.<m>`. So a
+// receiver whose provider for one of the dyn's traits was interposed must match
+// THAT definition, and its bare namesake — a different trait's method — must
+// not answer for it.
+pub function dyn_arm_matches(fd: FuncDecl, traits: string[], method: string, funcs: FuncDecl[]): boolean {
+    var ti: i32 = 0;
+    while (ti < traits.len()) {
+        if (fd.name == traits[ti] + "." + method) { return true; }
+        ti = ti + 1;
+    }
+    if (fd.name != method) { return false; }
+    var bn: string = util.base_type_name(fd.receiver_type);
+    var tj: i32 = 0;
+    while (tj < traits.len()) {
+        if (method_decl_index(funcs, bn, traits[tj] + "." + method) >= 0) { return false; }
+        tj = tj + 1;
+    }
+    return true;
+}
+
+// dyn_provider_name names the flat symbol a `recv_type` receiver answers `method`
+// with when it is reached through a trait object spanning `traits` — the
+// interposed `<Trait>.<m>` where that trait's provider lost the bare name, and
+// `method` itself otherwise (including for every non-colliding receiver).
+pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: string[], method: string): string {
+    if (recv_type.len() == 0) { return method; }
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var fd: FuncDecl = funcs[i];
+        if (fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == recv_type
+                && dyn_arm_matches(fd, traits, method, funcs)) {
+            return fd.name;
+        }
+        i = i + 1;
+    }
+    return method;
+}
+
+// method_decl_index returns the index of the method named `name` on receiver
+// base type `bn`, or -1.
+function method_decl_index(funcs: FuncDecl[], bn: string, name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() > 0 && funcs[i].name == name
+                && util.base_type_name(funcs[i].receiver_type) == bn) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 // str_list_contains reports whether `xs` holds `want`.

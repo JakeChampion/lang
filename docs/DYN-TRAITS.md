@@ -547,12 +547,20 @@ the dyn type's trait set alongside the method name (`str` is `m|B` /
 traits was interposed matches THAT definition, and its bare namesake — a
 different trait's method — does not answer for it. Receivers with no
 collision keep matching the bare name, so `dyn A + B` where A provides `m`
-and B provides `n` is unaffected. The self-host's AST **interpreter**
-(`interp.fern`) is NOT covered: `call_method` dispatches on the runtime
-receiver type and the method name, and the interpreter does no type
-checking, so the receiver's declared `dyn B` never reaches the call — it
-still answers with the first provider. Closing that needs the interpreter
-to acquire static receiver types, which is #6984.
+and B provides `n` is unaffected. The reading of the claim table itself is
+`parser.dyn_arm_matches` / `parser.dyn_provider_name`, beside the renaming
+it undoes, so both dispatch models share one rule.
+
+The self-host's AST **interpreter** (`interp.fern`) makes the same
+resolution without a type checker (#6984). Its `Env` carries each binding's
+DECLARED type spelling parallel to the value — the slot the checker's Scope
+holds a `Type` in — and a method call resolves its written name through
+`parser.dyn_provider_name` against that. The shapes a declaration is in
+reach of are covered: a `var` binding, a parameter, a closure capture, and
+an element of an annotated array (indexed or iterated). A receiver whose
+static type has no declaration in reach — a struct field, a call result, an
+inferred binding — answers on the runtime value alone, i.e. the first
+provider, since the interpreter has no type inference to ask.
 
 Primitive / `string` receivers behind `dyn` now work in the self-host
 too, via the same **uniform boxing** as native (§4.2.3) adapted to the
