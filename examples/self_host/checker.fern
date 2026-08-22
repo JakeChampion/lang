@@ -6524,7 +6524,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               }
             }
           }
-          if (is_unknown(s.lookup(id.name))) {
+          if (!s.defines(id.name)) {
             var sig: FuncSig = s.lookup_sig(id.name);
             // E040: a GENERIC function called with explicit
             // call-site type arguments whose count doesn't match
@@ -7951,7 +7951,7 @@ pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boole
 // is how one gets finished. The corpora and per-code counts behind the list are
 // in docs/SELFHOST-CHECKER-PORT.md; re-measure before adding or removing one.
 function is_partial_checker_gap_code(code: string): boolean {
-  return code == "E001" || code == "E004" || code == "E009" || code == "E013"
+  return code == "E001" || code == "E009" || code == "E013"
       || code == "E018" || code == "E019" || code == "E021" || code == "E024"
       || code == "E031" || code == "E034" || code == "E036" || code == "E038"
       || code == "E040" || code == "E041" || code == "E042" || code == "E043"
