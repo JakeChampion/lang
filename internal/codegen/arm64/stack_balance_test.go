@@ -107,8 +107,11 @@ func walkFuncBalance(t *testing.T, name string, body []string) balanceReport {
 
 	for _, raw := range body {
 		insn := strings.TrimSpace(raw)
-		if insn == "" || strings.HasPrefix(insn, ".") && strings.HasSuffix(insn, ":") == false && !strings.HasPrefix(insn, ".L") {
-			continue // directive
+		if insn == "" {
+			continue
+		}
+		if strings.HasPrefix(insn, ".") && !strings.HasSuffix(insn, ":") {
+			continue // assembler directive
 		}
 		if strings.HasSuffix(insn, ":") {
 			label := strings.TrimSuffix(insn, ":")
@@ -129,7 +132,7 @@ func walkFuncBalance(t *testing.T, name string, body []string) balanceReport {
 		// Prologue: fp/lr save, frame pointer, locals allocation. The
 		// locals frame is the base the operand stack grows from, so it
 		// is not part of the depth.
-		case inPrologue && insn == "stp x29 x30 [sp #-16]!", inPrologue && insn == "stp x29, x30, [sp, #-16]!":
+		case inPrologue && insn == "stp x29, x30, [sp, #-16]!":
 		case inPrologue && insn == "mov x29, sp":
 		case inPrologue && f[0] == "sub" && f[1] == "sp" && f[2] == "sp":
 			inPrologue = false
@@ -150,7 +153,11 @@ func walkFuncBalance(t *testing.T, name string, body []string) balanceReport {
 			depth -= spImm(t, insn, f[3])
 			inPrologue = false
 		case f[0] == "sub" && f[1] == "sp" && f[2] == "sp":
+			// Post-prologue: emitCallArgsLoad's overflow area for a
+			// call with more than eight arguments, released again by
+			// emitCallArgsCleanup's `add`.
 			depth += spImm(t, insn, f[3])
+			inPrologue = false
 		case f[0] == "b" || strings.HasPrefix(f[0], "b."):
 			deliver(f[len(f)-1])
 			if f[0] == "b" {
