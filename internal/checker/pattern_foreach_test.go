@@ -58,14 +58,15 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	}
 
 	mapBlk := checkedForEachBlock(t, mapProg)
-	// iterand / cursor / for — the entry cursor keeps the Map walk
-	// allocation-free, so it must NOT lower to the index loop.
-	if len(mapBlk.Stmts) != 3 {
-		t.Fatalf("map lowering: expected 3 stmts (iterand/cursor/for), got %d", len(mapBlk.Stmts))
+	// cursor / for — the entry cursor keeps the Map walk allocation-free, so
+	// it must NOT lower to the index loop, and it binds nothing besides the
+	// cursor itself.
+	if len(mapBlk.Stmts) != 2 {
+		t.Fatalf("map lowering: expected 2 stmts (cursor/for), got %d", len(mapBlk.Stmts))
 	}
-	cursor, ok := mapBlk.Stmts[1].(*ast.Var)
+	cursor, ok := mapBlk.Stmts[0].(*ast.Var)
 	if !ok {
-		t.Fatalf("map lowering: second stmt should bind the cursor, got %T", mapBlk.Stmts[1])
+		t.Fatalf("map lowering: first stmt should bind the cursor, got %T", mapBlk.Stmts[0])
 	}
 	// Checked, so the method call is already rewritten to its mangled name.
 	call, ok := cursor.Init.(*ast.Call)
@@ -76,9 +77,9 @@ func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	if !ok || callee.Name != "__method_Map_iter" {
 		t.Fatalf("map lowering: the cursor is `m.iter()`, got %#v", call.Callee)
 	}
-	mapLoop, ok := mapBlk.Stmts[2].(*ast.For)
+	mapLoop, ok := mapBlk.Stmts[1].(*ast.For)
 	if !ok {
-		t.Fatalf("map lowering: last stmt should be the For, got %T", mapBlk.Stmts[2])
+		t.Fatalf("map lowering: last stmt should be the For, got %T", mapBlk.Stmts[1])
 	}
 	if mapLoop.Step == nil {
 		t.Errorf("map lowering: the For needs a step (advance) so `continue` advances the cursor")
@@ -96,13 +97,9 @@ func checkedForEachBlock(t *testing.T, src string) *ast.Block {
 	if _, err := Check(prog); err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	wrapper, ok := prog.Funcs[0].Body.Stmts[2].(*ast.Block)
+	blk, ok := prog.Funcs[0].Body.Stmts[2].(*ast.Block)
 	if !ok {
-		t.Fatalf("expected the parser's wrapper Block, got %T", prog.Funcs[0].Body.Stmts[2])
-	}
-	blk, ok := wrapper.Stmts[0].(*ast.Block)
-	if !ok {
-		t.Fatalf("the ForEach should have been replaced by its lowering, got %T", wrapper.Stmts[0])
+		t.Fatalf("the ForEach should have been replaced by its lowering, got %T", prog.Funcs[0].Body.Stmts[2])
 	}
 	return blk
 }

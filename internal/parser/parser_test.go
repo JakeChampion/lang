@@ -672,16 +672,9 @@ func TestForEachPatternHeaderParses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
+			fe, ok := prog.Funcs[0].Body.Stmts[1].(*ast.ForEach)
 			if !ok {
-				t.Fatalf("pattern for should parse to a Block, got %T", prog.Funcs[0].Body.Stmts[1])
-			}
-			fe, ok := blk.Stmts[0].(*ast.ForEach)
-			if !ok {
-				t.Fatalf("the Block should hold the un-lowered ForEach, got %T", blk.Stmts[0])
-			}
-			if blk.Sugar != fe {
-				t.Errorf("wrapper Block must carry the loop as Sugar so -fmt reprints the source form")
+				t.Fatalf("a pattern header should stay an un-lowered ForEach for the checker, got %T", prog.Funcs[0].Body.Stmts[1])
 			}
 			if fe.Pattern == nil {
 				t.Fatalf("a destructuring header must carry its Pattern")
