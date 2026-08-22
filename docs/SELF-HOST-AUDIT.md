@@ -407,32 +407,44 @@ findings. Ranked by leverage.
   returns `out + suffix` rather than `out` — the accumulator is read, so the
   shape does not apply.
 
+  The SSA backends' `emit_program` is **done** too (204 / 200 / 15 sites).
   Remaining `out = out +` sites:
 
-  | file | sites | in the per-op path? |
+  | file | sites | where |
   |---|---|---|
-  | `ssa_arm64.fern` | 278 | 72 (`emit_inst` 62, `emit_term` 8, `emit_const` 2) |
-  | `ssa_x86.fern` | 259 | 57 (`emit_inst` 53, `emit_term` 4) |
-  | `printer.fern` | 214 | — (see below) |
-  | `ssa_wasm.fern` | 18 | 2 |
-  | `irlower.fern` | 25 | — |
-  | `ferndoc.fern` | 30 | — |
+  | `ssa_arm64.fern` | 74 | the per-instruction chain — leave it, see below |
+  | `ssa_x86.fern` | 59 | same |
+  | `printer.fern` | 214 | does not take this rewrite, see below |
+  | `ferndoc.fern` | 30 | unexamined |
+  | `irlower.fern` | 25 | unexamined |
+  | `ssa_wasm.fern` | 3 | the per-instruction chain |
   | `asm_ir.fern` | 2 | — |
   | `asm_arm64_ir.fern` | 1 | — |
-  | `wasm_ir.fern` | 1 | — |
+  | `wasm_ir.fern` | 1 | `fn_type_decl`, above |
 
   (`printer.fern` was missing from this table entirely; the `*_run.fern` test
   drivers also fold, and are not worth converting.)
 
-  **The raw site counts overstate the SSA backends.** Their `emit_program`
-  (204 / 200 / 15 of the counts above) folds a **fixed** ~140-line runtime
-  prologue — constant work per program, not quadratic in program size — and it
-  already chunk-joins the function bodies, which is the part that scales. The
-  cost that matters is the per-op column, and there the accumulator is threaded
-  as a **parameter** (`emit_inst(…, out: string): string`, likewise `load_op`,
-  `emit_const`, `store_reg`, `store_res`, `emit_phi_moves`, `emit_term`), so
-  converting it means changing that chain's signatures to `string[]` together,
-  not rewriting statements in place.
+  **Where the SSA cost was, and was not.** `emit_program` folds the whole
+  program body into `out` and *then* appends the ~140-line runtime on top of
+  it — **198 of `ssa_arm64`'s 204 folds, and 194 of `ssa_x86`'s 200, come after
+  the body is already in the accumulator**. The appended strings are fixed; the
+  string they are appended TO is the entire program, so embedding the runtime
+  cost ~200 copies of a program-sized value. That is the real find here and it
+  is what got converted.
+
+  **The per-instruction chain is the opposite and should be left alone.** It
+  looks worse — the accumulator is threaded as a parameter through `emit_inst`,
+  `emit_term`, `load_op`, `store_res`, `emit_const`, `emit_binary`, `store_reg`
+  and `emit_phi_moves` — but `emit_func` seeds `emit_inst(…, "")` **fresh for
+  every instruction** (3 `""` seeds against 55 `out` threads in `ssa_arm64`),
+  so the accumulator never spans more than one instruction's output. Converting
+  it would mean changing that whole chain's signatures for a fold bounded by a
+  few hundred bytes.
+
+  A count of fold sites does not order this work; where the accumulator's
+  *contents* come from does. Both halves of that were recorded here backwards
+  until measured.
 
   **A default `selfhost-emit-hashes` run does not gate the SSA backends** — the
   SSA pipeline is opt-in behind `-ssa` (`fern.fern:1873`), so the sweep never
@@ -709,9 +721,10 @@ appendix §6.)
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **SH-054, then SH-027's SSA half** — SH-058 is done (`emit_function_ir`
-   1254 → 83) and SH-027 is done for `wasm_ir.fern`. What is left of SH-027 is
-   the SSA backends, which need their own `-ssa` byte-identity sweep first.
+2. **SH-054** — SH-058 is done (`emit_function_ir` 1254 → 84), and SH-027 is
+   done everywhere it pays: `wasm_ir.fern` and the SSA backends' `emit_program`.
+   What is left of SH-027 is `printer.fern` (a different shape) and the SSA
+   per-instruction chain (deliberately not worth it) — see the row.
 3. **SH-023** — mechanical, high payoff, low risk (SH-045 and SH-055 landed
    from this tier).
 4. **T3 visitor** (SH-022, starting with `wasm_ir`'s 28 walkers) then the giant
