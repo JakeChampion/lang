@@ -264,14 +264,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // lowers ONLY the modules that actually changed — the payoff the rest of
         // #5331 was building toward. Link itself consults no ir_cache at all: the
         // needs, fn_sigs and RC type lists all come from the objects.
-        var nss: string[] = [];
-        var texts: string[] = [];
-        var all_strs: string[] = [];
-        var str_counts: i32[] = [];
-        var all_caggs: string[] = [];
-        var cagg_counts: i32[] = [];
-        var all_fns: string[] = [];
-        var fn_counts: i32[] = [];
+        var units: wasm_ir.WasmUnit[] = [];
         var needs: string[] = [];
         var fn_sigs: string[] = [];
         var frt: string[] = [];
@@ -307,17 +300,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 continue;
             }
             var obj: wasm_objfile.UnitObj = lk.obj;
-            nss = nss.append(unit_ns(pidx, plo));
-            texts = texts.append(obj.text);
-            var si: i32 = 0;
-            while (si < obj.strs.len()) { all_strs = all_strs.append(obj.strs[si]); si = si + 1; }
-            str_counts = str_counts.append(obj.strs.len());
-            var ki: i32 = 0;
-            while (ki < obj.caggs.len()) { all_caggs = all_caggs.append(obj.caggs[ki]); ki = ki + 1; }
-            cagg_counts = cagg_counts.append(obj.caggs.len());
-            var fi2: i32 = 0;
-            while (fi2 < obj.fns.len()) { all_fns = all_fns.append(obj.fns[fi2]); fi2 = fi2 + 1; }
-            fn_counts = fn_counts.append(obj.fns.len());
+            units = units.append(wasm_ir.WasmUnit { ns: unit_ns(pidx, plo), text: obj.text,
+                strs: obj.strs, caggs: obj.caggs, fns: obj.fns });
             needs = wasm_ir.union_strs(needs, obj.needs);
             frt = wasm_ir.union_strs(frt, obj.frt);
             sdt = wasm_ir.union_strs(sdt, obj.sdt);
@@ -335,8 +319,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // quantity: it sits past every unit's literals.
         var merged: parser.Module = flatten.bundle(entry, loaded);
         merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(modloader.merge_builtins(dir, merged)));
-        var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs, all_caggs));
-        write(wasm_ir.emit_ir_module_units(nss, texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, merged, needs, fn_sigs, rc));
+        var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
+        write(wasm_ir.emit_ir_module_units(units, merged, needs, fn_sigs, rc, 0));
         return 0;
     }
 

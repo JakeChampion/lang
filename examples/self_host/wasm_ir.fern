@@ -1755,7 +1755,7 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
 // stubbed. It existed because the canonical-ABI bridge was AST-only — "an
 // extern-declaring module routed through the IR would emit a body for the import
 // and no import for the call" — and the bridge now lives in this module, emitted
-// for every mode by emit_ir_module_units_mode. A gate with nothing left to
+// for every mode by emit_ir_module_units. A gate with nothing left to
 // protect is deleted rather than left returning true.
 //
 // The same gap had a quieter mode-0 half: there the gate was never consulted, so
@@ -1802,7 +1802,7 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // env / args / arg_at read a preview2 LIST, so their cores must also
         // export cabi_realloc (the guest allocator the canonical ABI
         // materialises the list into) — see the mode-2 gate in
-        // emit_ir_module_units_mode. arg_at shares args's get-arguments import
+        // emit_ir_module_units. arg_at shares args's get-arguments import
         // and copies one entry out of the list (arg_at_func_p2).
         if (io && (n == "env" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
         // The filesystem pair. Their bodies box a real IoError variant
@@ -2326,14 +2326,14 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
 
 // emit_ir_module_mode is emit_ir_module for a chosen wasm emit mode (0 preview1
 // command, 1 component run, 2 component run + stdout — see
-// emit_ir_module_units_mode). Mode 0 delegates unchanged, so the
+// emit_ir_module_units). Mode 0 emits the historical bytes unchanged, so the
 // byte-identity invariant for #5331 step 4b is untouched.
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32): string {
     var sv: string[] = str_values(ir_cache);
     var cv: string[] = const_agg_values(ir_cache);
     var ft: string[] = fn_value_table(ir_cache);
     var unit: string = emit_functions_ns("", mod, ir_cache);
-    return emit_ir_module_units_mode([""], [unit], sv, [sv.len()], cv, [cv.len()], ft, [ft.len()], mod,
+    return emit_ir_module_units([WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], mod,
         needs_of(ir_cache), indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
 }
 
@@ -8223,6 +8223,82 @@ function preview1_imports(needs: string[]): string {
     return util.str_join_chunks(parts);
 }
 
+// WasmUnit is one per-module compilation unit of a linked wasm core: its
+// namespace prefix, its emitted function bodies, and the string literals,
+// aggregate constants and address-taken functions it contributes.
+//
+// These were eight flat parallel arrays — (nss, unit_texts) plus
+// (all_strs, str_counts) / (all_caggs, cagg_counts) / (all_fns, fn_counts),
+// each concatenation paired with its per-unit lengths — which every caller had
+// to keep in step by hand. The link format is still flat, and unit i still owns
+// [sum(counts[0..i]), +counts[i]) in each concatenation; what changed is that
+// only unit_strs / unit_caggs / unit_fns below build that layout, from one
+// ordered list, rather than each call site rebuilding it.
+pub struct WasmUnit {
+    ns: string,
+    text: string,
+    strs: string[],
+    caggs: string[],
+    fns: string[],
+}
+
+// unit_strs / unit_caggs / unit_fns concatenate a field across units in unit
+// order — the layout every base global and relative offset is emitted against.
+pub function unit_strs(units: WasmUnit[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < units.len()) {
+        var j: i32 = 0;
+        while (j < units[i].strs.len()) { out = out.append(units[i].strs[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function unit_caggs(units: WasmUnit[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < units.len()) {
+        var j: i32 = 0;
+        while (j < units[i].caggs.len()) { out = out.append(units[i].caggs[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function unit_fns(units: WasmUnit[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < units.len()) {
+        var j: i32 = 0;
+        while (j < units[i].fns.len()) { out = out.append(units[i].fns[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// unit_ns_list and unit_fn_counts are the two flat views the funcref-table
+// helper still takes positionally.
+pub function unit_ns_list(units: WasmUnit[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < units.len()) { out = out.append(units[i].ns); i = i + 1; }
+    return out;
+}
+
+pub function unit_fn_counts(units: WasmUnit[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < units.len()) { out = out.append(units[i].fns.len()); i = i + 1; }
+    return out;
+}
+
+// heap_base_for_units is heap_base_for_strs over a unit list — the whole-link
+// heap base, past every unit's literals.
+pub function heap_base_for_units(units: WasmUnit[]): i32 {
+    return heap_base_for_strs(unit_strs(units), unit_caggs(units));
+}
+
 // emit_ir_module_units links N per-module units into one core module (#5331
 // step 4b). It owns everything a unit does NOT: the imports, the memory, the
 // base/type-id globals, the data section, the runtime helper bodies, the funcref
@@ -8231,12 +8307,10 @@ function preview1_imports(needs: string[]): string {
 // function defines, and which is what makes a unit cacheable independently of
 // its siblings.
 //
-// The per-unit inputs are flat parallel arrays rather than nested ones: `nss`
-// holds each unit's namespace, `unit_texts` its emitted bodies, and
-// (all_strs, str_counts) / (all_fns, fn_counts) the concatenation of the
-// per-unit literal and address-taken-function tables with their lengths. Unit i
-// therefore owns [sum(counts[0..i]), +counts[i]) in each, which is exactly the
-// relative numbering its bodies were emitted against.
+// The per-unit inputs arrive as one ordered `WasmUnit[]`; the flat
+// concatenations the format needs are derived here (unit_strs / unit_caggs /
+// unit_fns). Unit i owns [sum(lengths[0..i]), +its own length) in each, which is
+// exactly the relative numbering its bodies were emitted against.
 //
 // Laying the literals out contiguously in that flat order means str_offset over
 // the flat list already yields every literal's absolute address, so the data section
@@ -8261,14 +8335,10 @@ function preview1_imports(needs: string[]): string {
 // driver copy had. A module using any of them emitted a `call $__fern_env`
 // (etc.) with no matching definition or import, and wasmtime rejected it with
 // `unknown func: failed to find name $__fern_env` (#4801). Every caller now
-// shares this one body — including the component modes, via the _mode sibling
-// below — so the drift cannot recur.
-pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string): string {
-    return emit_ir_module_units_mode(nss, unit_texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, mod, needs, fn_sigs, rc_bodies, 0);
-}
-
-// emit_ir_module_units_mode is emit_ir_module_units parameterised by the wasm
-// EMIT MODE, the one axis on which the three cores differ:
+// shares this one body — the component modes included, via `mode` — so the
+// drift cannot recur.
+//
+// `mode` is the one axis on which the three cores differ:
 //
 //   0 — preview1 command core: the wasi_snapshot_preview1 imports and a
 //       `_start` that proc_exits main()'s result.
@@ -8283,7 +8353,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
 // mode-independent, which is why the component leg is a fork at two points
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
-pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
+pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
     var parts: string[] = [];
     parts = parts.append("(module\n");
     if (mode == 0) { parts = parts.append(preview1_imports(needs)); }
@@ -8297,7 +8367,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
     // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
     // distinct values + their offsets so the data + const_str ptrs agree.
-    var sv: string[] = all_strs;
+    var sv: string[] = unit_strs(units);
     // $__str_base: the base of this unit's string-literal region. const_str
     // emits `global.get $__str_base` + a RELATIVE offset rather than baking the
     // absolute one, so a unit's emitted code no longer depends on where its
@@ -8321,10 +8391,10 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
         // historical unnamespaced name, so its output is unchanged.
         var sbi: i32 = 0;
         var sbstart: i32 = 0;
-        while (sbi < nss.len()) {
-            parts = parts.append("  (global " + str_base_global(nss[sbi]) + " i32 (i32.const "
+        while (sbi < units.len()) {
+            parts = parts.append("  (global " + str_base_global(units[sbi].ns) + " i32 (i32.const "
                 + util.i32_to_string(str_offset(sv, sbstart)) + "))\n");
-            sbstart = sbstart + str_counts[sbi];
+            sbstart = sbstart + units[sbi].strs.len();
             sbi = sbi + 1;
         }
     }
@@ -8343,14 +8413,14 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // Static aggregate constants (#6149), the region above the string literals.
     // $__cagg_base<ns> is the sibling of $__str_base<ns>: one base per unit at
     // that unit's first block, with the unit's code emitting relative offsets.
-    var cv: string[] = all_caggs;
+    var cv: string[] = unit_caggs(units);
     if (cv.len() > 0) {
         var kbi: i32 = 0;
         var kbstart: i32 = 0;
-        while (kbi < nss.len()) {
-            parts = parts.append("  (global " + cagg_base_global(nss[kbi]) + " i32 (i32.const "
+        while (kbi < units.len()) {
+            parts = parts.append("  (global " + cagg_base_global(units[kbi].ns) + " i32 (i32.const "
                 + util.i32_to_string(const_agg_offset(sv, cv, kbstart)) + "))\n");
-            kbstart = kbstart + cagg_counts[kbi];
+            kbstart = kbstart + units[kbi].caggs.len();
             kbi = kbi + 1;
         }
     }
@@ -8645,10 +8715,10 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     if (need(needs, "str_from_bytes")) { parts = parts.append(string_from_bytes_helper()); }
     // Function-value support: the $fn<N> call_indirect signature types, the
     // funcref table, and its elem segment (empty for non-closure modules).
-    parts = parts.append(fn_support_section_units(nss, all_fns, fn_counts, fn_sigs));
+    parts = parts.append(fn_support_section_units(unit_ns_list(units), unit_fns(units), unit_fn_counts(units), fn_sigs));
     var ui: i32 = 0;
-    while (ui < unit_texts.len()) {
-        parts = parts.append(unit_texts[ui]);
+    while (ui < units.len()) {
+        parts = parts.append(units[ui].text);
         ui = ui + 1;
     }
     // WIT `@export` bindings. Without these the IR path emitted a core whose only

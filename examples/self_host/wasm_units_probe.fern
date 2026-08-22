@@ -65,17 +65,6 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
     };
 }
 
-
-function concat_strs(a: string[], b: string[]): string[] {
-    var out: string[] = a;
-    var i: i32 = 0;
-    while (i < b.len()) {
-        out = out.append(b[i]);
-        i = i + 1;
-    }
-    return out;
-}
-
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
@@ -139,16 +128,12 @@ function main(): i32 {
     // heap_base is a whole-LINK quantity (it sits past every unit's literals
     // and aggregate constants), so it is computed from the concatenated lists,
     // exactly as the link step computes it.
-    var all_strs: string[] = concat_strs(strs_a, strs_b);
-    var all_caggs: string[] = concat_strs(caggs_a, caggs_b);
-    var rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs, all_caggs));
+    var units: wasm_ir.WasmUnit[] = [
+        wasm_ir.WasmUnit { ns: "", text: unit_a, strs: strs_a, caggs: caggs_a, fns: fns_a },
+        wasm_ir.WasmUnit { ns: "$u1", text: unit_b, strs: strs_b, caggs: caggs_b, fns: fns_b },
+    ];
+    var rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
 
-    write(wasm_ir.emit_ir_module_units(
-        ["", "$u1"],
-        [unit_a, unit_b],
-        all_strs, [strs_a.len(), strs_b.len()],
-        all_caggs, [caggs_a.len(), caggs_b.len()],
-        concat_strs(fns_a, fns_b), [fns_a.len(), fns_b.len()],
-        im, needs, fn_sigs, rc_bodies));
+    write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, rc_bodies, 0));
     return 0;
 }
