@@ -1,0 +1,55 @@
+// Struct-pattern parameters — `P { x, y }: P` in every binding form: named
+// function, second-position param, a field renamed on binding, a partial
+// bind, the `w @` whole-value binder, a verbose lambda and an arrow lambda.
+// Desugars at parse time into a holder param plus a leading
+// `let P { x, y } = <holder>;`, so this exercises the same Destructure path
+// as the tuple spelling in param_destructure.
+//
+// One destructure site per function, on purpose: two in one function abort
+// the wasm owned model (#7307).
+struct Point { x: i32, y: i32 }
+
+struct Rect { w: i32, h: i32 }
+
+function add(Point { x, y }: Point): i32 {
+    return x + y;
+}
+
+function ren(Point { x: a, y: b }: Point): i32 {
+    return a * 10 + b;
+}
+
+function wide(Rect { w, .. }: Rect): i32 {
+    return w;
+}
+
+function scale(k: i32, Point { x, y }: Point): i32 {
+    return k * (x + y);
+}
+
+// The `@` binder names the whole value, so the body reads BOTH the argument
+// and the fields it bound.
+function whole(p @ Point { x, y }: Point): i32 {
+    return p.x + x + y;
+}
+
+function lam(): i32 {
+    var f = function (Point { x, y }: Point): i32 { return x * 10 + y; };
+    return f(Point { x: 1, y: 2 });
+}
+
+function arrow(): i32 {
+    var g = (Point { x, y }: Point) => x - y;
+    return g(Point { x: 9, y: 4 });
+}
+
+function main(): i32 {
+    // 3 + 34 + 5 + 4 + 7 + 12 + 5 = 70
+    return add(Point { x: 1, y: 2 })
+        + ren(Point { x: 3, y: 4 })
+        + wide(Rect { w: 5, h: 9 })
+        + scale(2, Point { x: 1, y: 1 })
+        + whole(Point { x: 2, y: 3 })
+        + lam()
+        + arrow();
+}

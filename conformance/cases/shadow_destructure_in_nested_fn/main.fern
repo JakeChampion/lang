@@ -9,8 +9,8 @@
 // so both are asserted.
 //
 // One destructure site per case, on purpose — see the note in
-// shadow_destructure_in_lambda: #7307 (wasm owned model) and #7306 (self-host
-// struct-pattern parameters) are why the shapes are not combined.
+// shadow_destructure_in_lambda: #7307 (wasm owned model) is why the shapes are
+// not combined.
 function main(): i32 {
     var x: i32 = 1;
     var y: i32 = 2;

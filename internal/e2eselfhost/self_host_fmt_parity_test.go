@@ -127,6 +127,36 @@ return plain(P { x: 1, y: 2 }) + lit(P { x: 0, y: 3 }) + rename(Q { a: 1, b: 2, 
 + nested(W { e: E.A(In.Ok2(4)), n: 5 }) + guarded(P { x: 9, y: 1 }) + at_bound(P { x: 1, y: 1 });
 }
 `},
+	// A destructuring PARAMETER is desugared away at parse time too — the
+	// pattern becomes a holder param plus a leading `let` in the body prelude
+	// — so both formatters have only the desugar to reprint, and they have to
+	// reprint the same one. The struct spelling reached the self-host parser
+	// only in #7306; the corpus under examples/ + internal/stdlib spells no
+	// destructuring parameter at all, so this fixture is its only cover. The
+	// ARROW form is deliberately absent: native fills in a return type the
+	// self-host printer cannot know, which is the known divergence named above.
+	{"param-pattern-struct", `struct P { x: i32, y: i32 }
+struct R { w: i32, h: i32 }
+function add(P { x, y }: P): i32 {
+return x + y;
+}
+function ren(P { x: a, y: b }: P): i32 {
+return a * 10 + b;
+}
+function part(R { w, .. }: R): i32 {
+return w;
+}
+function whole(v @ P { x, y }: P): i32 {
+return v.x + x + y;
+}
+function tup((a, b): (i32, i32)): i32 {
+return a - b;
+}
+function main(): i32 {
+var f = function (P { x, y }: P): i32 { return x * 10 + y; };
+return add(P { x: 1, y: 2 }) + ren(P { x: 3, y: 4 }) + part(R { w: 1, h: 2 }) + whole(P { x: 1, y: 1 }) + tup((9, 4)) + f(P { x: 1, y: 1 });
+}
+`},
 	{"pattern-tuple-scrutinee", `enum In { Ok2(i32), Er2(i32) }
 enum E { A(In), B }
 function plain(t: (i32, i32)): i32 {
