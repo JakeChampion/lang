@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/codegen/arm64"
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
@@ -138,14 +139,8 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\tadd x11, x11, #:lo12:%s", envpSym)
 		w("\tstr x10, [x11]")
 	}
-	// Initialise the bump-allocator cursor to the base of the .bss heap. x9/x10
-	// are scratch here (before the entry args are loaded into x0..x7).
 	if heap {
-		w("\tadrp x9, %s", heapSym)
-		w("\tadd x9, x9, #:lo12:%s", heapSym)
-		w("\tadrp x10, %s", heapPtrSym)
-		w("\tadd x10, x10, #:lo12:%s", heapPtrSym)
-		w("\tstr x9, [x10]")
+		emitHeapReserve(w)
 	}
 	// Load the entry arguments into the argument registers before the call.
 	for i := range progs[entry].ParamLocs {
@@ -171,6 +166,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	// x0), emitted only when the module calls them.
 	for _, h := range helpers {
 		runtimeHelperEmitters[h](w)
+	}
+	if heap {
+		emitHeapGuard(w)
 	}
 	if usesTranscendentals(helpers) {
 		// Shared .rodata coefficient table for the exp/log/pow polynomials, emitted
@@ -261,15 +259,15 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	if heap {
-		// A fixed .bss buffer backs the bump allocator (mirrors the x86-64 SSA
-		// path). Under the W^X ELF layout this lands in the R+W data segment, so
-		// stores to it succeed. The cursor sits just before the buffer.
+		// The bump allocator's cursor and its limit. Both are seeded by the
+		// mmap reservation _start makes (emitHeapReserve); zero here means the
+		// reservation has not run, which cannot happen on a path that allocates.
 		w(".section .bss")
 		w(".align 8")
 		w("%s:", heapPtrSym)
 		w("\t.quad 0")
-		w("%s:", heapSym)
-		w("\t.space %d", heapBytes)
+		w("%s:", heapEndSym)
+		w("\t.quad 0")
 	}
 	if withArgs {
 		// argc / argv snapshot + the memoised args() container pointer.
@@ -321,12 +319,41 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	return b.String(), nil
 }
 
-// Heap symbols + size backing the arm64 SSA bump allocator, mirroring the x86-64
-// path's fixed .bss buffer (a lazy mmap/brk allocator is future work).
+// Heap symbols + size backing the arm64 SSA bump allocator: a lazy mmap
+// reservation seeded in _start, mirroring the stack-machine backend's
+// __fern_alloc arena (internal/codegen/arm64) — same MAP_NORESERVE window at
+// hint 0x10000000, same diagnostic and exit status when a bump runs past it.
+// Pages commit only as they are touched, so the window costs nothing until a
+// program grows into it.
+//
+// The window is 1.75 GiB rather than the native backend's 16 GiB because this
+// backend's address arithmetic is not 64-bit clean: an i32-width add of a base
+// and an offset is sign-extended back through maskFix, so an object above
+// 0x7fffffff is addressed through a truncated (negative) pointer. Ending the
+// reservation exactly at 0x80000000 keeps every address it hands out inside
+// that range; a program that outgrows it gets the exhaustion abort rather than
+// a wild store. Widening the window means widening the addressing first.
 const (
-	heapPtrSym = "__ssa_heap_ptr"
-	heapSym    = "__ssa_heap"
-	heapBytes  = 1 << 16 // 64 KiB
+	heapPtrSym   = "__ssa_heap_ptr"
+	heapEndSym   = "__ssa_heap_end"
+	heapGuardSym = "__ssa_heap_guard"
+	heapOOMLabel = ".Lssa_heap_oom"
+	heapOOMMsg   = "__ssa_msg_oom"
+
+	// The reservation as movz + lsl operands: heapUnits << heapShift bytes at
+	// 1 << heapBaseShift, so _start needs no literal pool to materialise either.
+	heapBaseShift = 28 // 0x1000_0000
+	heapShift     = 28
+	heapUnits     = 7 // 7 << 28 = 1.75 GiB
+	heapBytes     = heapUnits << heapShift
+
+	// The reservation's last page is not handed out: a bump site writes the
+	// object's rc header at the new block's base BEFORE it publishes the cursor
+	// and reaches the guard, so the bytes just past heapEndSym must still be
+	// mapped for the guard to report exhaustion instead of faulting on that
+	// header. Only headers (at most a few words above the base) are written
+	// ahead of the guard; the payload fill always follows it.
+	heapSlackBytes = 4096
 
 	// argc / argv captured from the process stack by _start, and the memoised
 	// string[] the args() helper builds from them.
@@ -355,6 +382,125 @@ const (
 	readlineBufSym = "__ssa_readline_buf"
 	readlineBytes  = 4096
 )
+
+// Where _start resumes once the reservation succeeded (heapOKLabel) and once
+// its address range checks out (heapFitLabel). Both branch to the abort
+// unconditionally (±128 MiB) rather than testing straight to it: the abort sits
+// past every emitted function, far outside a conditional branch's ±1 MiB reach
+// in any non-trivial program.
+const (
+	heapOKLabel  = ".Lssa_heap_ok"
+	heapFitLabel = ".Lssa_heap_fits"
+)
+
+// emitHeapReserve emits _start's heap reservation: one lazy anonymous mmap
+// backing the bump allocator, seeding both the cursor and the limit the guard
+// checks. Mirrors the stack-machine backend's __fern_alloc arena
+// (internal/codegen/arm64) — same 0x1000_0000 hint, same size, MAP_NORESERVE so
+// the window is not charged against the host's commit limit, and the same
+// out-of-memory report when the kernel refuses it. x0..x11 are scratch here:
+// the entry arguments are loaded after this.
+func emitHeapReserve(w func(string, ...any)) {
+	// mmap(1<<heapBaseShift, heapBytes, PROT_READ|PROT_WRITE,
+	//      MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0).
+	w("\tmov x0, #1")
+	w("\tlsl x0, x0, #%d", heapBaseShift)
+	w("\tmov x1, #%d", heapUnits)
+	w("\tlsl x1, x1, #%d", heapShift)
+	w("\tmov x2, #3")      // PROT_READ|PROT_WRITE
+	w("\tmov x3, #0x4022") // MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE
+	w("\tmov x4, #-1")     // fd
+	w("\tmov x5, #0")      // offset
+	w("\tmov x8, #222")    // mmap
+	w("\tsvc #0")
+	w("\ttbz x0, #63, %s", heapOKLabel)
+	w("\tb %s", heapOOMLabel)
+	w("%s:", heapOKLabel)
+	w("\tmov x1, #%d", heapUnits)
+	w("\tlsl x1, x1, #%d", heapShift)
+	w("\tadd x10, x0, x1")
+	w("\tsub x10, x10, #%d", heapSlackBytes) // limit = base + heapBytes - slack
+	// The hint is only a hint: a region the kernel placed elsewhere can sit
+	// above the 0x7fffffff line this backend's address arithmetic is limited to
+	// (see the heapBytes comment), and handing out addresses from it would
+	// truncate every pointer. Report that as out of memory rather than
+	// miscompiling around it.
+	w("\tlsr x12, x10, #31")
+	w("\tcbz x12, %s", heapFitLabel)
+	w("\tb %s", heapOOMLabel)
+	w("%s:", heapFitLabel)
+	w("\tadrp x9, %s", heapPtrSym)
+	w("\tadd x9, x9, #:lo12:%s", heapPtrSym)
+	w("\tstr x0, [x9]") // cursor = region base
+	w("\tadrp x11, %s", heapEndSym)
+	w("\tadd x11, x11, #:lo12:%s", heapEndSym)
+	w("\tstr x10, [x11]")
+}
+
+// emitHeapGuard emits __ssa_heap_guard and the out-of-memory abort it branches
+// to. Every bump site calls the guard right after it publishes its new cursor:
+// the arena is a fixed reservation, so a bump past its end has to abort with a
+// diagnostic instead of handing back a pointer into unmapped memory.
+//
+// The guard preserves every register — x0/x1 on its own stack frame, x30 by the
+// caller — and the condition flags with it: it compares by subtracting and
+// testing the sign bit rather than with `cmp`, because the sites it is spliced
+// into are hand-written helpers that may keep flags live across an allocation.
+func emitHeapGuard(w func(string, ...any)) {
+	w("")
+	w("%s:", heapGuardSym)
+	w("\tstp x0, x1, [sp, #-16]!")
+	w("\tadrp x0, %s", heapPtrSym)
+	w("\tadd x0, x0, #:lo12:%s", heapPtrSym)
+	w("\tldr x1, [x0]")
+	w("\tadrp x0, %s", heapEndSym)
+	w("\tadd x0, x0, #:lo12:%s", heapEndSym)
+	w("\tldr x0, [x0]")
+	w("\tsub x0, x0, x1") // limit - cursor: negative once the arena is spent
+	w("\ttbnz x0, #63, %s", heapOOMLabel)
+	w("\tldp x0, x1, [sp], #16")
+	w("\tret")
+	// Exhausted: write the diagnostic to stderr and exit with the status the
+	// native backends use for it (pinned across emitters by
+	// internal/e2e/arena_exit_code_test.go).
+	w("%s:", heapOOMLabel)
+	w("\tmov x0, #2") // stderr
+	w("\tadrp x1, %s", heapOOMMsg)
+	w("\tadd x1, x1, #:lo12:%s", heapOOMMsg)
+	w("\tmov x2, #%d", len(arm64.MsgArenaExhausted))
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	w("\tmov x0, #%d", arm64.ExitArenaExhausted)
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
+	w(".section .rodata")
+	w("%s:", heapOOMMsg)
+	bytes := make([]string, len(arm64.MsgArenaExhausted))
+	for i := 0; i < len(arm64.MsgArenaExhausted); i++ {
+		bytes[i] = strconv.Itoa(int(arm64.MsgArenaExhausted[i]))
+	}
+	w("\t.byte %s", strings.Join(bytes, ", "))
+	w(".text")
+}
+
+// heapGuardCallLines are the instructions a bump site emits immediately after
+// publishing its new cursor: a call to __ssa_heap_guard, which aborts when the
+// bump ran past the arena. x30 is stacked around the call because most sites
+// sit in leaf helpers that keep their return address in it.
+func heapGuardCallLines() []string {
+	return []string{
+		"stp x29, x30, [sp, #-16]!",
+		"bl " + heapGuardSym,
+		"ldp x29, x30, [sp], #16",
+	}
+}
+
+// emitHeapGuardCall writes heapGuardCallLines through a line writer.
+func emitHeapGuardCall(w func(string, ...any)) {
+	for _, l := range heapGuardCallLines() {
+		w("\t%s", l)
+	}
+}
 
 // usesReadLine reports whether the module references Reader.read_line, so the
 // .bss line buffer is emitted only when needed.
@@ -411,8 +557,8 @@ func usesArgs(helpers []string) bool {
 	return false
 }
 
-// usesHeap reports whether any program contains a heap op (so the .bss heap
-// section + cursor are emitted and initialised only when needed).
+// usesHeap reports whether any program contains a heap op (so the arena's
+// reservation, cursor and guard are emitted only when needed).
 func usesHeap(progs map[string]*x86.Program) bool {
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
@@ -1099,6 +1245,7 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("\tadd x5, x9, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")     // rc = 1
 	w("\tstr w9, [x4, #4]") // len = n
@@ -1198,6 +1345,7 @@ func emitTcpRecvHelper(w func(string, ...any)) {
 	w("\tadd x5, x10, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")    // rc = 1
 	w("\tadd x11, x4, #8") // data ptr
@@ -1307,6 +1455,7 @@ func emitWriterHandleAlloc(w func(string, ...any), dst, fdReg string) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tlsl w6, w6, #31")          // 0x80000000 immortal-rc sentinel
 	w("\tstr w6, [x4]")             // rc @ base (= ptr-8)
@@ -1336,6 +1485,7 @@ func emitResultUnitBox(w func(string, ...any), ok bool, payloadReg string) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -1361,6 +1511,7 @@ func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
 		w("\tadd x5, x4, #24") // Some: rc + tag + payload
 	}
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -1384,6 +1535,7 @@ func emitEmptyString(w func(string, ...any), dst string) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x6, x4, #9")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr wzr, [x4, #4]") // len = 0
@@ -1414,6 +1566,7 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tadd x5, x2, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
 	w(".Lssa_%s_cp:", lbl)
 	w("\tcmp w7, w2")
@@ -1445,6 +1598,7 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -1464,6 +1618,7 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -1597,6 +1752,7 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\tadd x5, x10, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")    // rc = 1
 	w("\tadd x11, x4, #8") // data ptr
@@ -1666,6 +1822,7 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tadd x5, x20, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w20, [x4, #4]") // len = bytes read
@@ -1748,6 +1905,7 @@ func emitPollHelper(w func(string, ...any)) {
 	w("\tlsl x5, x19, #3")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov x21, x4") // pollfd buf
 	// Marshal: pollfd[i] = { fd = fds[i], events = POLLIN, revents = 0 }.
 	w("\tmov x22, #0")
@@ -1906,8 +2064,8 @@ var helperReturns64 = map[string]bool{
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
-// .bss heap section + cursor must exist whenever one is referenced even if no
-// program body has a direct heap op.
+// arena must be reserved whenever one is referenced even if no program body has
+// a direct heap op.
 var heapUsingHelpers = map[string]bool{
 	"__str_concat":                  true,
 	"__fern_arr_push_grow":          true,
@@ -2170,6 +2328,7 @@ func emitAllocHelper(w func(string, ...any)) {
 	w("\tand x9, x9, #-8")       // base, 8-aligned
 	w("\tadd x10, x9, w0, uxtw") // cursor += n (size is a non-negative i32)
 	w("\tstr x10, [x8]")
+	emitHeapGuardCall(w)
 	w("\tmov x0, x9")
 	w("\tret")
 }
@@ -2344,6 +2503,7 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tadd x7, x6, #8")
 	w("\tadd x7, x7, x4") // new cursor = base + 8 + total
 	w("\tstr x7, [x5]")
+	emitHeapGuardCall(w)
 	w("\tadd x9, x6, #8") // x9 = data
 	// Copy a's la bytes: [data + i] = [a + i].
 	w("\tmov x10, #0")
@@ -2548,7 +2708,8 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tlsl x6, x2, #3")  // argc*8
 	w("\tadd x7, x6, #16") // allocSize = argc*8 + 16-byte header
 	w("\tadd x8, x5, x7")
-	w("\tstr x8, [x4]")        // bump
+	w("\tstr x8, [x4]") // bump
+	emitHeapGuardCall(w)
 	w("\tadd x9, x5, #16")     // x9 = container data (entries past the header)
 	w("\tstur w2, [x9, #-12]") // cap = argc
 	w("\tmov w6, #1")
@@ -2574,6 +2735,7 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tadd x6, x12, #9") // header(8) + len + NUL(1)
 	w("\tadd x7, x5, x6")
 	w("\tstr x7, [x4]") // bump
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x5]")      // rc = 1
 	w("\tstr w12, [x5, #4]") // len
@@ -2653,6 +2815,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tadd x14, x10, #9")  // header(8) + len + NUL(1)
 	w("\tadd x15, x13, x14")
 	w("\tstr x15, [x12]") // bump
+	emitHeapGuardCall(w)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -2673,6 +2836,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tand x13, x13, #-8")
 	w("\tadd x15, x13, #24") // 8 header + 16 box (tag + pad + ptr)
 	w("\tstr x15, [x12]")    // bump
+	emitHeapGuardCall(w)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")    // rc = 1
 	w("\tadd x0, x13, #8")   // x0 = box data ptr (return)
@@ -2691,6 +2855,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tand x13, x13, #-8")
 	w("\tadd x15, x13, #24")
 	w("\tstr x15, [x12]")
+	emitHeapGuardCall(w)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")  // rc = 1
 	w("\tadd x0, x13, #8") // box data ptr
@@ -2726,6 +2891,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tand x3, x3, #-8") // base_msg
 	w("\tadd x4, x3, #9")  // 8 header + 0 len + 1 NUL
 	w("\tstr x4, [x2]")
+	emitHeapGuardCall(w)
 	w("\tmov w5, #1")
 	w("\tstr w5, [x3]")      // rc = 1
 	w("\tstr wzr, [x3, #4]") // len = 0
@@ -2736,6 +2902,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tand x3, x3, #-8")
 	w("\tadd x4, x3, #32") // 8 header + 24 box (tag + path + msg)
 	w("\tstr x4, [x2]")
+	emitHeapGuardCall(w)
 	w("\tmov w5, #1")
 	w("\tstr w5, [x3]")   // rc = 1
 	w("\tadd x0, x3, #8") // box data ptr (return)
@@ -2752,6 +2919,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tand x3, x3, #-8")
 	w("\tadd x4, x3, #16") // 8 header + 8 (tag only)
 	w("\tstr x4, [x2]")
+	emitHeapGuardCall(w)
 	w("\tmov w5, #1")
 	w("\tstr w5, [x3]")
 	w("\tadd x0, x3, #8")
@@ -2774,6 +2942,7 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tand x3, x3, #-8")
 	w("\tadd x4, x3, #24") // 8 header + 16 (tag + path)
 	w("\tstr x4, [x2]")
+	emitHeapGuardCall(w)
 	w("\tmov w5, #1")
 	w("\tstr w5, [x3]")
 	w("\tadd x0, x3, #8")
@@ -2809,6 +2978,7 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tadd x5, x2, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]") // bump
+	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
 	w(".Lssa_wf_cp:")
 	w("\tcmp w7, w2")
@@ -2848,6 +3018,7 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")      // rc = 1
 	w("\tadd x0, x4, #8")    // box data
@@ -2867,6 +3038,7 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -2906,6 +3078,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tadd x5, x2, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
 	w(".Lssa_rf_cp:")
 	w("\tcmp w7, w2")
@@ -2943,6 +3116,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tadd x5, x22, #9") // 8 header + size + 1 NUL
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w22, [x4, #4]") // len = size
@@ -2974,6 +3148,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3001,6 +3176,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3040,6 +3216,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tadd x5, x2, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]") // bump
+	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
 	w(".Lssa_rmf_cp:")
 	w("\tcmp w7, w2")
@@ -3067,6 +3244,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")      // rc = 1
 	w("\tadd x0, x4, #8")    // box data
@@ -3086,6 +3264,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3124,6 +3303,7 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 	w("\tadd x5, x21, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]") // bump
+	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
 	w(".Lssa_cda_cp:")
 	w("\tcmp w7, w21")
@@ -3181,6 +3361,7 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")      // rc = 1
 	w("\tadd x0, x4, #8")    // box data
@@ -3200,6 +3381,7 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3223,11 +3405,10 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 // (not propagated), mirroring the self-host. Non-leaf + self-recursive; callee-
 // saved x19=pathz / x20=fd / x21=buf / x22=total / x23=offset / x24=name-or-errno.
 //
-// NOTE: each recursion level bump-allocates a 1 KiB getdents buffer that the
-// arm64-ssa heap (64 KiB, never freed) does not reclaim, so remove_dir_all is
-// bounded to small trees (a few dozen directories) and to directories whose
-// entries fit in 1 KiB per level — sufficient for the CLI use case. The native
-// backend uses a 64 KiB buffer and mmap-backed alloc without this cap.
+// NOTE: each recursion level bump-allocates a 1 KiB getdents buffer the heap
+// never reclaims, so remove_dir_all is bounded to directories whose entries fit
+// in 1 KiB per level — sufficient for the CLI use case. The native backend uses
+// a 64 KiB buffer.
 func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("remove_dir_all"))
@@ -3247,6 +3428,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tadd x5, x21, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov x19, x4")
 	w("\tmov x9, #0")
 	w(".Lssa_rda_cp:")
@@ -3290,6 +3472,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x6, x4, #1024")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov x21, x4")
 	w("\tmov x22, #0") // total
 	w(".Lssa_rda_g:")
@@ -3349,6 +3532,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tadd x5, x14, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w14, [x4, #4]") // len = childlen
@@ -3447,6 +3631,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tadd x5, x2, #15")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov x20, x4") // pathbuf
 	// path_len = prefix_len + 14; hex_start = pathbuf + 6 + prefix_len.
 	w("\tadd x21, x2, #14")
@@ -3531,6 +3716,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3548,6 +3734,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tadd x5, x21, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w21, [x4, #4]") // len = path_len
@@ -3571,6 +3758,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3589,13 +3777,13 @@ func emitTempDirHelper(w func(string, ...any)) {
 // excluded), matching os.ReadDir. It NUL-terminates the path, opens it with
 // O_DIRECTORY (16384 — the arm64 Linux arch-specific value, NOT the asm-generic
 // 65536), then makes two getdents64 passes over a small 4 KiB scratch buffer
-// (the arm64-ssa bump heap is only 64 KiB, so the native 1 MiB-buffer approach
-// won't fit): pass 1 counts the kept entries to size the array, an lseek rewinds
+// (the buffer is never reclaimed, so it stays far smaller than the native
+// backend's 1 MiB one): pass 1 counts the kept entries to size the array, an lseek rewinds
 // the directory, and pass 2 allocates a single-word rc string per base name and
 // stores it into the string[] container (16-byte header: cap@[data-12],
 // rc@[data-8], len@[data-4]; element pointers at [data + i*8]). Each pass loops
 // getdents until it returns 0, so directories of any size are listed (bounded
-// only by the total 64 KiB heap the strings must fit in). The container is
+// only by the arena the strings must fit in). The container is
 // wrapped in the Result Ok box (tag 0, arr@8). Any openat/getdents failure maps
 // -errno through __fern_io_error and returns Err(IoError). Non-leaf; 96-byte
 // frame with callee-saved x19=offset / x20=fd / x21=buffer / x22=chunk-len /
@@ -3621,6 +3809,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tadd x5, x2, #1")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
 	w(".Lssa_rd_cp:")
 	w("\tcmp w7, w2")
@@ -3650,6 +3839,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x6, x4, #4096")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov x21, x4") // buffer
 	// Pass 1: getdents loop counting kept entries (excluding "." / "..") into x23.
 	w("\tmov x23, #0")
@@ -3701,6 +3891,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tadd x6, x5, #16")
 	w("\tadd x7, x4, x6")
 	w("\tstr x7, [x3]")
+	emitHeapGuardCall(w)
 	w("\tadd x27, x4, #16")      // container data
 	w("\tstur w23, [x27, #-12]") // cap = count
 	w("\tmov w9, #1")
@@ -3751,6 +3942,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tadd x5, x12, #9")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w12, [x4, #4]") // len
@@ -3785,6 +3977,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -3812,6 +4005,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tand x4, x4, #-8")
 	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
@@ -4127,6 +4321,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tand x9, x9, #-8")       // x9 = base (8-aligned)
 	w("\tadd x10, x9, w7, uxtw") // new cursor = base + allocSize
 	w("\tstr x10, [x8]")
+	emitHeapGuardCall(w)
 	w("\tadd x11, x9, w6, uxtw") // x11 = new_data = base + headerBytes
 	w("\tsub x12, x11, #12")
 	w("\tstr w5, [x12]") // cap = newCap
@@ -4185,6 +4380,7 @@ func emitAllocU8Helper(w func(string, ...any)) {
 	w("\tand x9, x9, #-8")       // x9 = base (8-aligned)
 	w("\tadd x10, x9, w2, uxtw") // new cursor = base + allocSize
 	w("\tstr x10, [x8]")
+	emitHeapGuardCall(w)
 	w("\tadd x0, x9, #16")     // x0 = data ptr (past 16-byte header)
 	w("\tstur w1, [x0, #-12]") // cap = n
 	w("\tmov w11, #1")
@@ -4359,6 +4555,7 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 	w("\tadd x5, x2, #8")  // allocSize = len + 8
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]") // bump
+	emitHeapGuardCall(w)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")     // rc = 1
 	w("\tstr w2, [x4, #4]") // len
@@ -4413,6 +4610,7 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tadd x8, x6, #8")       // x8 = data
 	w("\tadd x9, x8, w4, uxtw") // new cursor = data + new_len
 	w("\tstr x9, [x5]")
+	emitHeapGuardCall(w)
 	// Copy new_len bytes from base+low (x0+x1) to data (x8).
 	w("\tadd x10, x0, x1") // src = base + low
 	w("\tmov w11, #0")     // i
@@ -4455,6 +4653,7 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("\tadd x5, x3, #8")
 	w("\tadd x5, x5, x1") // new cursor = base + 8 + len
 	w("\tstr x5, [x2]")
+	emitHeapGuardCall(w)
 	w("\tadd x6, x3, #8") // x6 = data
 	// Copy len bytes from bs (x0) to data (x6).
 	w("\tmov x7, #0")
@@ -4510,6 +4709,7 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("\tand x9, x9, #-8")       // x9 = base (8-aligned)
 	w("\tadd x10, x9, w7, uxtw") // new cursor = base + allocSize
 	w("\tstr x10, [x8]")
+	emitHeapGuardCall(w)
 	w("\tadd x11, x9, w6, uxtw") // x11 = new_data = base + headerBytes
 	w("\tsub x12, x11, #12")
 	w("\tstr w4, [x12]") // cap
@@ -4884,6 +5084,7 @@ func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, 
 			fmt.Sprintf("str %s, [%s]", tmp, addr), // cursor = base + bytes + 8
 			fmt.Sprintf("add %s, %s, #8", d, d),    // data = base + 8
 		)
+		out = append(out, heapGuardCallLines()...)
 	}
 	offs, sizes, envBytes := captureEnvLayout(in)
 	storeCaps := func(base int) {
@@ -5015,6 +5216,7 @@ func boxDynLines(in x86.Inst, numAlloc int) []string {
 		fmt.Sprintf("str %s, [%s]", xreg(s1), xreg(s0)),   // cursor = base + 16 + 8
 		fmt.Sprintf("add %s, %s, #8", xreg(s2), xreg(s2)), // payload = base + 8
 	}
+	out = append(out, heapGuardCallLines()...)
 	// Store data @+0 and vtable @+8. The allocatable-file / slot homes the
 	// operands live in are untouched by the inline alloc above (only s0..s2),
 	// so staging them now through s0 is safe.
@@ -5378,7 +5580,7 @@ func memAllocSeq(in x86.Inst, scratch int) []string {
 	addr := xreg(tmps[0])
 	tmp := xreg(tmps[1])
 	wtmp := wreg(tmps[1])
-	return []string{
+	seq := []string{
 		fmt.Sprintf("adrp %s, %s", addr, heapPtrSym),
 		fmt.Sprintf("add %s, %s, #:lo12:%s", addr, addr, heapPtrSym),
 		fmt.Sprintf("ldr %s, [%s]", d, addr), // d = cursor
@@ -5391,6 +5593,7 @@ func memAllocSeq(in x86.Inst, scratch int) []string {
 		fmt.Sprintf("str %s, [%s]", tmp, addr),  // cursor = base + size + 8
 		fmt.Sprintf("add %s, %s, #8", d, d),     // return data = base + 8
 	}
+	return append(seq, heapGuardCallLines()...)
 }
 
 // memLoadSeq renders a load of in.Bytes bytes from [Src + Imm] into Dst. It
