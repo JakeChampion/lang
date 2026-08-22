@@ -5618,22 +5618,11 @@ func needsImplicitReturn(ops []Op) bool {
 	return last != OpReturn && last != OpReturnVoid
 }
 
-// scrutineeEnumName is the enum a match's scrutinee statically has, or ""
-// when it is not an enum type. Arms are resolved against it: a variant name
-// two enums share resolves to a different ordinal in each, and the arm means
-// the scrutinee's. "" preserves the global-scan behaviour for the shapes that
-// have no static enum type.
-func (b *builder) scrutineeEnumName(scrut ast.Expr) string {
-	if et, isEnum := b.exprStaticType(scrut).(ast.EnumType); isEnum {
-		return et.Name
-	}
-	return ""
-}
-
 // lookupVariantOn resolves a variant by name, restricted to a specific
 // enum when one is known. Every caller must supply the qualifier it has:
 // `Ident.EnumName` for a constructor reference (the checker stamps it
-// with the enum it resolved to) and scrutineeEnumName for a match arm.
+// with the enum it resolved to) and the scrutinee's static enum type
+// for a match arm.
 // Two enums in different modules may both declare a name (#6951), so an
 // unrestricted lookup falls back to scanning a Go map and its winner
 // varies per process.
