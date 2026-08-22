@@ -290,8 +290,16 @@ findings. Ranked by leverage.
   **asmcore's `collect_idents_*` is gone**, leaving only the delegating comments
   at `asmcore.fern:37,39` and the call at `:47`.
   Still hand-enumerating every Expr/Stmt variant:
-  - **`wasm_ir.fern` — 28 `collect_*` / `module_uses_*` walkers.** The largest
-    remaining cluster and the place to go next.
+  - ~~`wasm_ir.fern` — 28 `collect_*` / `module_uses_*` walkers~~ — **this row
+    was wrong about them, and they are done.** They are not AST walkers: they
+    scan the flat `LowerResult[] -> ops[]` IR list by `kind_tag`, so
+    `astwalk`'s expression fold does not apply to a single one of them. What
+    they shared was a nested `cache`/`ops` loop, open-coded 17 times, and they
+    now go through one `any_op(cache, pred)` spine with a predicate each. The
+    other 17 already delegated to `module_emits_op_cached`. Six `string[]`
+    collectors (`str_values`, `const_agg_values`, `field_reclaim_types`,
+    `struct_drop_types`, `fn_value_table`, `indirect_fn_sigs`) keep their loops:
+    they accumulate rather than short-circuit, so a boolean spine does not fit.
   - **`parser.fern` — 12** rewrite passes (`expr_mentions:4876`,
     `mono_infer:8411`, `mono_expr:8586`, `mono_call_expected:8816`,
     `mono_stmt:8850`, `mono_stmts:8911`, `ms_expr:9935`, `ms_stmt:10111`,
@@ -725,10 +733,9 @@ appendix §6.)
    done everywhere it pays: `wasm_ir.fern` and the SSA backends' `emit_program`.
    What is left of SH-027 is `printer.fern` (a different shape) and the SSA
    per-instruction chain (deliberately not worth it) — see the row.
-3. **SH-023** — mechanical, high payoff, low risk (SH-045 and SH-055 landed
-   from this tier).
-4. **T3 visitor** (SH-022, starting with `wasm_ir`'s 28 walkers) then the giant
-   function splits (SH-044/SH-050) it unlocks.
+3. **T3 visitor** (SH-022) — `parser`'s 12 rewrite passes and `checker`'s 15
+   scope-threading passes are what is left; `wasm_ir`'s cluster was never an AST
+   walk and is done. Then the giant function splits (SH-044/SH-050) it unlocks.
 5. **T2 structured types** (SH-021 endgame — parser stores `TypeRef`).
 6. **T5 backend interfaces** (SH-024/SH-025) — largest effort, do last with CI as
    backstop. Resolve the 7-key `has_need` drift before lifting anything.

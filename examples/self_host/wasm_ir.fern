@@ -555,110 +555,78 @@ pub function cagg_base_global(ns: string): string { return "$__cagg_base" + ns; 
 
 // module_uses_strings reports whether any function uses a string op (literal,
 // len, concat, eq) — gates the data section + strcat/streq helper emission.
-pub function module_uses_strings(cache: irlower.LowerResult[]): boolean {
+// any_op reports whether any op anywhere in the lowering satisfies `pred`. It is
+// the shared spine of the helper gates below: each gate differs only in which
+// ops it looks for, so the cache/ops walk exists once and a gate is a predicate.
+// Seventeen of them open-coded this same nested loop, which is seventeen places
+// to forget a tag.
+pub function any_op(cache: irlower.LowerResult[], pred: (ir.Op) => boolean): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            var kt: i32 = r.ops[i].kind_tag;
-            if (kt == 5 || kt == 97 || kt == 98 || kt == 99 || kt == 100) { return true; }  // const_str, str_len, str_concat, str_eq, str_cmp
-            if (kt == 101 || kt == 102) { return true; }  // str_index, str_slice
-            // The string[] index_of / contains helper compares with
-            // $__fern_streq, which lives in the strcat_streq bundle this gate
-            // emits. A module can reach the helper with no string op of its own
-            // (`function f(xs: string[], t: string): i32 { return xs.index_of(t); }`
-            // has no const_str), so the CALL counts as a string use.
-            if (kt == 149 && r.ops[i].str == "__fern_arr_str_index_of") { return true; }  // call_direct
+            if (pred(r.ops[i])) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
     }
     return false;
+}
+
+pub function module_uses_strings(cache: irlower.LowerResult[]): boolean {
+    // The string[] index_of / contains helper compares with $__fern_streq, which
+    // lives in the strcat_streq bundle this gate emits. A module can reach the
+    // helper with no string op of its own (`function f(xs: string[], t: string):
+    // i32 { return xs.index_of(t); }` has no const_str), so the CALL counts as a
+    // string use.
+    function is_string_use(o: ir.Op): boolean {
+        return o.kind_tag == 5 || o.kind_tag == 97 || o.kind_tag == 98          // const_str, str_len, str_concat
+            || o.kind_tag == 99 || o.kind_tag == 100                            // str_eq, str_cmp
+            || o.kind_tag == 101 || o.kind_tag == 102                           // str_index, str_slice
+            || (o.kind_tag == 149 && o.str == "__fern_arr_str_index_of");       // call_direct
+    }
+    return any_op(cache, is_string_use);
 }
 
 // module_uses_str_cmp reports whether any function emits a str_cmp op (string
 // ordering < <= > >=). Such modules need the FULL string-helper bundle, which
 // includes $__fern_strcmp (the narrow strcat_streq bundle omits it).
 pub function module_uses_str_cmp(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 100) { return true; }  // str_cmp
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_str_cmp(o: ir.Op): boolean { return o.kind_tag == 100; }  // str_cmp
+    return any_op(cache, is_str_cmp);
 }
 
 // module_uses_str_slice reports whether any function uses `s[start:end]` (the
 // str_slice op), gating emission of the $__fern_substr copy helper.
 pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 124 || r.ops[i].kind_tag == 125 || r.ops[i].kind_tag == 126) { return true; }  // map_new, map_set, map_len
-            // map_keys / map_values call $__fern_map_keys / $__fern_map_values
-            // (the wasm snapshot helpers), so they need the map runtime even in
-            // a module that never constructs a map (e.g. a keys() read on a
-            // map param). #4353.
-            if (r.ops[i].kind_tag == 131 || r.ops[i].kind_tag == 132) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
+    // map_keys / map_values call $__fern_map_keys / $__fern_map_values (the wasm
+    // snapshot helpers), so they need the map runtime even in a module that
+    // never constructs a map (e.g. a keys() read on a map param). #4353.
+    function is_map_op(o: ir.Op): boolean {
+        return o.kind_tag == 124 || o.kind_tag == 125 || o.kind_tag == 126   // map_new, map_set, map_len
+            || o.kind_tag == 131 || o.kind_tag == 132;                        // map_keys, map_values
     }
-    return false;
+    return any_op(cache, is_map_op);
 }
 
 // module_uses_memchr gates $__fern_memchr, the byte-search kernel of
 // ATLAS-PLATFORM-PLAN §3. Same shape as module_uses_str_slice below.
 pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 225) { return true; }  // memchr
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_memchr(o: ir.Op): boolean { return o.kind_tag == 225; }  // memchr
+    return any_op(cache, is_memchr);
 }
 
 // module_uses_ascii_run gates $__fern_ascii_run, the high-bit scan of
 // ATLAS-PLATFORM-PLAN §3. Same shape as module_uses_memchr above.
 pub function module_uses_ascii_run(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 227) { return true; }  // ascii_run
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_ascii_run(o: ir.Op): boolean { return o.kind_tag == 227; }  // ascii_run
+    return any_op(cache, is_ascii_run);
 }
 
 pub function module_uses_str_slice(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 102) { return true; }  // str_slice
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_str_slice(o: ir.Op): boolean { return o.kind_tag == 102; }  // str_slice
+    return any_op(cache, is_str_slice);
 }
 
 // unsupported_op_refuse ends compilation for an IR op with no instruction
@@ -877,26 +845,19 @@ function wasm_helper_symbol(name: string): string {
 // module_allocates reports whether any function uses an array/alloc op (so the
 // heap + RC runtime needs emitting).
 pub function module_allocates(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            // Any allocating op needs the heap + RC runtime. ir.op_allocates is
-            // the shared list (see ir.fern), identical to asm_ir's heap gate.
-            if (ir.op_allocates(r.ops[i].kind_tag)) { return true; }
-            // The RC probes live in rc_runtime_helpers, which rides this same
-            // gate, so a program that only READS the counters still needs it:
-            // a scalar-capture closure allocates nothing an op reports, and its
-            // `__fern_rc_underflow_count()` then called a function the module
-            // never emitted ("unknown func $__fern_rc_underflow_count").
-            if (r.ops[i].kind_tag == 149 && (r.ops[i].str == "__fern_rc_underflow_get"
-                || r.ops[i].str == "__fern_rc_is_unique" || r.ops[i].str == "__fern_rc_inc"
-                || r.ops[i].str == "__fern_rc_dec")) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
+    // ir.op_allocates is the shared list (see ir.fern), identical to asm_ir's
+    // heap gate. The RC probes live in rc_runtime_helpers, which rides this same
+    // gate, so a program that only READS the counters still needs it: a
+    // scalar-capture closure allocates nothing an op reports, and its
+    // `__fern_rc_underflow_count()` then called a function the module never
+    // emitted ("unknown func $__fern_rc_underflow_count").
+    function needs_heap(o: ir.Op): boolean {
+        return ir.op_allocates(o.kind_tag)
+            || (o.kind_tag == 149 && (o.str == "__fern_rc_underflow_get"        // call_direct
+                || o.str == "__fern_rc_is_unique" || o.str == "__fern_rc_inc"
+                || o.str == "__fern_rc_dec"));
     }
+    if (any_op(cache, needs_heap)) { return true; }
     // String programs need the heap too: $__fern_strcat allocates via
     // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
     // program, so $__fern_str_box (in heap_alloc_helpers) must be present. This
@@ -1191,17 +1152,8 @@ function arr_i32_extremum_helper(which: string, cmp: string): string {
 // helpers — a callee-NAME scan rather than an op-kind one, so it cannot ride
 // module_emits_op_cached. Drives the @uses_arr_i32_helpers need.
 pub function module_calls_arr_i32_helper(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && arr_i32_fern_helper(r.ops[i].str)) { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_arr_i32_call(o: ir.Op): boolean { return o.kind_tag == 149 && arr_i32_fern_helper(o.str); }  // call_direct
+    return any_op(cache, is_arr_i32_call);
 }
 
 // module_emits_op_cached reports whether any lowered function emits an op of
@@ -1214,17 +1166,8 @@ pub function module_calls_arr_i32_helper(cache: irlower.LowerResult[]): boolean 
 
 pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string): boolean {
     var ktag: i32 = ir.kind_id(kind);
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == ktag) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_kind(o: ir.Op): boolean { return o.kind_tag == ktag; }
+    return any_op(cache, is_kind);
 }
 
 // module_uses_map_w64 reports whether any function emits an 8-byte-VALUED map op
@@ -1232,18 +1175,8 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
 // map_values 132, map_get 127, or map_iter 133 with widekind 1 = i64/u64 or 2 =
 // f64), so emit_ir_module_units emits map_w64_helpers. #5253.
 pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            var o: ir.Op = r.ops[i];
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm != 0) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_map_w64(o: ir.Op): boolean { return (o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm != 0; }
+    return any_op(cache, is_map_w64);
 }
 
 // module_uses_str_predicate reports whether any function emits a scalar string
@@ -1296,17 +1229,8 @@ pub function module_uses_str_lines(cache: irlower.LowerResult[]): boolean {
 // named runtime helper — the shared scan behind every helper gate keyed on a
 // symbol rather than an op kind (module_emits_op keys on op.kind).
 pub function module_calls_direct(cache: irlower.LowerResult[], name: string): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == name) { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_call_to(o: ir.Op): boolean { return o.kind_tag == 149 && o.str == name; }  // call_direct
+    return any_op(cache, is_call_to);
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -1384,31 +1308,13 @@ pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
 // call (#4365 Option[<arr>][] reclaim) — gates the $__fern_optarrarr_free WAT
 // body emission, same pattern as module_calls_strarrarr_free below.
 pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_optarrarr_free") { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_optarrarr_free(o: ir.Op): boolean { return o.kind_tag == 149 && o.str == "__fern_optarrarr_free"; }  // call_direct
+    return any_op(cache, is_optarrarr_free);
 }
 
 pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_strarrarr_free") { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_strarrarr_free(o: ir.Op): boolean { return o.kind_tag == 149 && o.str == "__fern_strarrarr_free"; }  // call_direct
+    return any_op(cache, is_strarrarr_free);
 }
 
 // module_uses_random reports whether the module calls random_bytes or random_i32
@@ -1421,17 +1327,8 @@ pub function module_uses_random(cache: irlower.LowerResult[]): boolean {
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
 // non-trapping $__fern_idiv / $__fern_irem helpers need emitting).
 pub function module_uses_divrem(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 24 || r.ops[i].kind_tag == 26) { return true; }  // div_s, rem_s
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_divrem(o: ir.Op): boolean { return o.kind_tag == 24 || o.kind_tag == 26; }  // div_s, rem_s
+    return any_op(cache, is_divrem);
 }
 
 // module_uses_i64_divrem reports whether any div/rem op runs at 64-bit width, so
@@ -1439,48 +1336,21 @@ pub function module_uses_divrem(cache: irlower.LowerResult[]): boolean {
 // module_uses_arr_slice reports whether any function emits a 4-byte-element
 // arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
 pub function module_uses_arr_slice(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 96 && r.ops[i].width != 64) { return true; }  // arr_slice
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_arr_slice(o: ir.Op): boolean { return o.kind_tag == 96 && o.width != 64; }  // arr_slice
+    return any_op(cache, is_arr_slice);
 }
 // module_uses_arr_slice8 reports whether any function emits an 8-byte-element
 // arr_slice op (width 64, f64[]), so the $__fern_arr_slice8 helper needs
 // emitting. Distinct from module_uses_arr_slice so a program slicing only one
 // element width pulls in only the helper it calls.
 pub function module_uses_arr_slice8(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 96 && r.ops[i].width == 64) { return true; }  // arr_slice
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_arr_slice8(o: ir.Op): boolean { return o.kind_tag == 96 && o.width == 64; }  // arr_slice
+    return any_op(cache, is_arr_slice8);
 }
 
 pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if ((r.ops[i].kind_tag == 24 || r.ops[i].kind_tag == 26) && r.ops[i].width == 64) { return true; }  // div_s, rem_s
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    function is_i64_divrem(o: ir.Op): boolean { return (o.kind_tag == 24 || o.kind_tag == 26) && o.width == 64; }  // div_s, rem_s
+    return any_op(cache, is_i64_divrem);
 }
 
 // wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
