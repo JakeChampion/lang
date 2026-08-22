@@ -10,30 +10,6 @@ import (
 	"testing"
 )
 
-// nodeKinds lists one zero instance of every concrete type implementing
-// Node. TestNodeKindsRegistryMatchesPackage keeps it in step with the
-// package by deriving the same set from the source, so a new Expr / Stmt /
-// declaration cannot reach the traversals below without being listed here
-// first — which is what turns "someone added a node kind" from a silent
-// no-op in a hand-written switch (#7042, #7149) into a red test.
-var nodeKinds = []Node{
-	// Expressions.
-	&NumberLit{}, &FloatLit{}, &BoolLit{}, &UnitLit{}, &StringLit{}, &CharLit{},
-	&FString{}, &Ident{}, &CaptureRef{}, &ArrayLit{}, &TupleLit{}, &MapLit{},
-	&StructLit{}, &EnumLit{}, &Index{}, &SliceExpr{}, &Call{}, &Binary{},
-	&Unary{}, &Assign{}, &IfExpr{}, &MatchExpr{}, &BlockExpr{}, &TryOp{},
-	&FieldAccess{}, &CastExpr{}, &DowncastExpr{}, &Lambda{}, &MakeClosure{},
-
-	// Statements.
-	&Block{}, &If{}, &While{}, &Loop{}, &For{}, &ForEach{}, &Break{},
-	&Continue{}, &Return{}, &Defer{}, &Var{}, &Destructure{}, &ExprStmt{},
-	&Match{}, &FuncDecl{},
-
-	// Declarations.
-	&StructDecl{}, &EnumDecl{}, &UnionDecl{}, &ConstDecl{}, &Import{},
-	&TraitDecl{}, &ImplDecl{}, &PubUse{},
-}
-
 // walkSkips names the Expr-, Stmt- and *Block-typed fields Walk deliberately
 // does not descend into, with the reason. TestWalkVisitsEveryChildSlot
 // requires every other such field to be reached, and fails on an entry that
@@ -51,7 +27,7 @@ func nodeName(n Node) string { return reflect.TypeOf(n).Elem().Name() }
 
 // TestNodeKindsRegistryMatchesPackage derives every Node implementor from
 // the package source (each has a `func (*X) Pos() Position`) and requires
-// nodeKinds to hold exactly that set.
+// NodeKinds to return exactly that set.
 func TestNodeKindsRegistryMatchesPackage(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -85,23 +61,23 @@ func TestNodeKindsRegistryMatchesPackage(t *testing.T) {
 		t.Fatal("found no Pos methods in the package source: the derivation is broken, not the registry")
 	}
 	registered := map[string]bool{}
-	for _, n := range nodeKinds {
+	for _, n := range NodeKinds() {
 		name := nodeName(n)
 		if registered[name] {
-			t.Errorf("nodeKinds lists %s twice", name)
+			t.Errorf("NodeKinds lists %s twice", name)
 		}
 		registered[name] = true
 	}
 	for name := range fromSource {
 		if !registered[name] {
-			t.Errorf("ast.%s implements Node but is missing from nodeKinds — add it there, then give "+
+			t.Errorf("ast.%s implements Node but is missing from ast.NodeKinds — add it there, then give "+
 				"it a case in walkChildren, rewriteExprChildren / rewriteStmtChildren and CloneStmt / CloneExpr",
 				name)
 		}
 	}
 	for name := range registered {
 		if !fromSource[name] {
-			t.Errorf("nodeKinds lists ast.%s, which no longer implements Node — drop it", name)
+			t.Errorf("NodeKinds lists ast.%s, which no longer implements Node — drop it", name)
 		}
 	}
 }
@@ -110,7 +86,7 @@ func TestNodeKindsRegistryMatchesPackage(t *testing.T) {
 // walkChildren: the default arm panics, so a missing one fails here rather
 // than silently skipping the subtree at some caller.
 func TestWalkHandlesEveryNodeKind(t *testing.T) {
-	for _, kind := range nodeKinds {
+	for _, kind := range NodeKinds() {
 		t.Run(nodeName(kind), func(t *testing.T) {
 			Walk(populate(t, kind, true), func(Node) bool { return true })
 		})
@@ -121,7 +97,7 @@ func TestWalkHandlesEveryNodeKind(t *testing.T) {
 // for the RewriteProgramExprs traversal, whose two switches enumerate the
 // same union a second time.
 func TestRewriteChildrenHandlesEveryNodeKind(t *testing.T) {
-	for _, kind := range nodeKinds {
+	for _, kind := range NodeKinds() {
 		t.Run(nodeName(kind), func(t *testing.T) {
 			n := populate(t, kind, true)
 			switch x := n.(type) {
@@ -139,7 +115,7 @@ func TestRewriteChildrenHandlesEveryNodeKind(t *testing.T) {
 // A case that exists but forgot one of its node's slots fails here — the
 // half of the bug a "is there a case for this type" check cannot see.
 func TestWalkVisitsEveryChildSlot(t *testing.T) {
-	for _, kind := range nodeKinds {
+	for _, kind := range NodeKinds() {
 		t.Run(nodeName(kind), func(t *testing.T) {
 			n, slots := populateSlots(t, kind, false)
 			seen := map[Node]bool{}
@@ -165,7 +141,7 @@ func TestWalkSkipsNameRealFields(t *testing.T) {
 	for key := range walkSkips {
 		typeName, field, _ := strings.Cut(key, ".")
 		found := false
-		for _, kind := range nodeKinds {
+		for _, kind := range NodeKinds() {
 			if nodeName(kind) != typeName {
 				continue
 			}
@@ -187,7 +163,7 @@ func TestWalkSkipsNameRealFields(t *testing.T) {
 // one instantiation wrote through every other. Anything Walk does not reach
 // is shared by design, and no pass that traverses via Walk can observe it.
 func TestCloneCopiesEverythingWalkReaches(t *testing.T) {
-	for _, kind := range nodeKinds {
+	for _, kind := range NodeKinds() {
 		name := nodeName(kind)
 		t.Run(name, func(t *testing.T) {
 			n := populate(t, kind, true)

@@ -19,6 +19,7 @@
 package shadowrename
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -146,6 +147,9 @@ func (r *renamer) walkBlock(b *ast.Block) {
 }
 
 func (r *renamer) walkStmt(s ast.Stmt) {
+	if s == nil {
+		return
+	}
 	switch n := s.(type) {
 	case *ast.Block:
 		r.walkBlock(n)
@@ -237,6 +241,25 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		}
 		r.walkBlock(n.Body)
 		r.popFrame()
+	case *ast.ForEach:
+		// A for-in binds its element name for the body, and is walked
+		// here for completeness only: the parser lowers the plain form
+		// and the checker lowers the destructuring and lazy-stream ones,
+		// all before this pass runs.
+		r.pushFrame()
+		r.walkExpr(n.Iter)
+		r.walkExpr(n.RangeHigh)
+		if n.Pattern != nil {
+			r.walkStmt(n.Pattern)
+		} else {
+			n.Var = r.bindShadow(n.Var)
+		}
+		r.walkStmt(n.Body)
+		r.popFrame()
+	case *ast.Break, *ast.Continue:
+		// leaves — a label is not a value binding
+	default:
+		panic(unhandled("walkStmt", s))
 	}
 }
 
@@ -258,7 +281,13 @@ func (r *renamer) walkMatchArm(arm *ast.MatchArm) {
 }
 
 func (r *renamer) walkExpr(e ast.Expr) {
+	if e == nil {
+		return
+	}
 	switch n := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.UnitLit,
+		*ast.StringLit, *ast.CharLit, *ast.CaptureRef:
+		// leaves — no name to resolve
 	case *ast.Ident:
 		if resolved, ok := r.lookup(n.Name); ok {
 			n.Name = resolved
@@ -358,5 +387,45 @@ func (r *renamer) walkExpr(e ast.Expr) {
 		if n.Desugared != nil {
 			r.walkExpr(n.Desugared)
 		}
+	case *ast.EnumLit:
+		for _, a := range n.Args {
+			r.walkExpr(a)
+		}
+	case *ast.MakeClosure:
+		for _, c := range n.Captures {
+			r.walkExpr(c)
+		}
+	case *ast.Lambda:
+		// Same treatment as the nested *ast.FuncDecl case in walkStmt,
+		// for the anonymous spelling: the body reads the enclosing
+		// scope, so a reference to a shadowed local has to resolve to
+		// the renamed form, and the checker built n.Captures from the
+		// pre-rename names. Without this the body's Ident kept the bare
+		// name and the IR's flat locals map bound it to the OUTER
+		// declaration's slot — the compiled backends returned the outer
+		// value where the interpreter, which scopes independently,
+		// returned the inner one.
+		for i, cap := range n.Captures {
+			if resolved, ok := r.lookup(cap.Name); ok {
+				n.Captures[i].Name = resolved
+			}
+		}
+		r.pushFrame()
+		for _, p := range n.Params {
+			r.bindFresh(p.Name)
+		}
+		r.walkBlock(n.Body)
+		r.popFrame()
+	default:
+		panic(unhandled("walkExpr", e))
 	}
+}
+
+// unhandled reports a node kind neither switch names. The pass renames every
+// reference to a shadowed declaration, so a kind that falls through does not
+// fail loudly: the reference keeps the outer name and binds to the outer slot
+// at IR build. ast.NodeKinds drives both switches in the tests so a new kind
+// arrives here instead.
+func unhandled(where string, n ast.Node) string {
+	return fmt.Sprintf("shadowrename: %s: unhandled node kind %T (add a case for it)", where, n)
 }

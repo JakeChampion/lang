@@ -315,6 +315,34 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 	}
 }
 
+// NodeKinds returns one zero instance of every concrete type implementing
+// Node. It is the enumeration a pass carrying its own hand-written switch
+// over the AST tests itself against: drive every kind through the switch,
+// and a missing case surfaces as an unhandled-kind panic rather than as a
+// construct the pass silently ignores. TestNodeKindsRegistryMatchesPackage
+// checks this list against the set derived from the package source, so a new
+// Expr / Stmt / declaration cannot be added without appearing here.
+func NodeKinds() []Node {
+	return []Node{
+
+		// Expressions.
+		&NumberLit{}, &FloatLit{}, &BoolLit{}, &UnitLit{}, &StringLit{}, &CharLit{},
+		&FString{}, &Ident{}, &CaptureRef{}, &ArrayLit{}, &TupleLit{}, &MapLit{},
+		&StructLit{}, &EnumLit{}, &Index{}, &SliceExpr{}, &Call{}, &Binary{},
+		&Unary{}, &Assign{}, &IfExpr{}, &MatchExpr{}, &BlockExpr{}, &TryOp{},
+		&FieldAccess{}, &CastExpr{}, &DowncastExpr{}, &Lambda{}, &MakeClosure{},
+
+		// Statements.
+		&Block{}, &If{}, &While{}, &Loop{}, &For{}, &ForEach{}, &Break{},
+		&Continue{}, &Return{}, &Defer{}, &Var{}, &Destructure{}, &ExprStmt{},
+		&Match{}, &FuncDecl{},
+
+		// Declarations.
+		&StructDecl{}, &EnumDecl{}, &UnionDecl{}, &ConstDecl{}, &Import{},
+		&TraitDecl{}, &ImplDecl{}, &PubUse{},
+	}
+}
+
 func walkChildren(n Node, fn func(Node) bool) {
 	switch x := n.(type) {
 

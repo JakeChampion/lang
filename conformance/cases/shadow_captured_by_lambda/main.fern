@@ -1,0 +1,19 @@
+// A lambda body reads the INNER declaration of a shadowed name — the one in
+// scope where the lambda is written, not the outer one it shadows. Reading
+// the outer slot compiles and runs, it just answers with the wrong value, so
+// this case asserts the values rather than merely exiting 0.
+function main(): i32 {
+    var v: i32 = 1;
+    {
+        var v: i32 = 5;
+        var f: () => i32 = function (): i32 { return v; };
+        if (f() != 5) { return 1; }
+    }
+    {
+        var v: i32 = 7;
+        var g: (i32) => i32 = function (n: i32): i32 { return v + n; };
+        if (g(1) != 8) { return 2; }
+    }
+    if (v != 1) { return 3; }
+    return 0;
+}
