@@ -75,28 +75,28 @@ aarch64/array_append.ir	69046974
 aarch64/array_index.text	555
 aarch64/array_index.ir	63698033
 aarch64/call_overhead.text	532
-aarch64/call_overhead.ir	45601201
+aarch64/call_overhead.ir	33599627
 aarch64/closure_call.text	444
 aarch64/closure_call.ir	209928045
 aarch64/enum_match.text	669
-aarch64/enum_match.ir	194175068
+aarch64/enum_match.ir	176175068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
 aarch64/map_int.text	3406
-aarch64/map_int.ir	100592487
+aarch64/map_int.ir	81515603
 aarch64/map_string.text	4702
-aarch64/map_string.ir	223648093	2
+aarch64/map_string.ir	204436258	2
 aarch64/sort_inplace.text	852
 aarch64/sort_inplace.ir	132740196
 aarch64/sort_ints.text	3133
-aarch64/sort_ints.ir	108054243
+aarch64/sort_ints.ir	117581521
 aarch64/string_build.text	1232
-aarch64/string_build.ir	180495540
+aarch64/string_build.ir	175985640
 aarch64/string_scan.text	1594
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	534
 aarch64/string_slice.ir	164760114
 aarch64/struct_drop.text	3429
-aarch64/struct_drop.ir	681300288
+aarch64/struct_drop.ir	655620288
 aarch64/tokenize.text	1062
-aarch64/tokenize.ir	176490114
+aarch64/tokenize.ir	165150114
