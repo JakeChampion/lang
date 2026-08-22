@@ -71,6 +71,35 @@ function main(): i32 {
 }`,
 		},
 		{
+			name: "match arm guard",
+			src: `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var n: i32 = 3;
+    match (n) {
+        1 when id(n) > 2 => { return 1; },
+        _ => { return 0; },
+    }
+}`,
+		},
+		{
+			name: "enum variant payload",
+			src: `enum Wrap { One(i32), None }
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    var w: Wrap = One(id(5));
+    match (w) { One(v) => { return v; }, None => { return 0; }, }
+}`,
+		},
+		{
+			name: "for-in iterable",
+			src: `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var total: i32 = 0;
+    for x in id([1, 2, 3]) { total = total + x; }
+    return total;
+}`,
+		},
+		{
 			name: "Lambda body",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -109,6 +138,66 @@ function main(): i32 {
 			}
 			if !sawClone {
 				t.Errorf("no `id__*` clone found after monomorph")
+			}
+		})
+	}
+}
+
+// TestRunRewritesGenericStructLitsInEveryPosition pins the positions a
+// generic struct literal can occupy inside a generic body. Each has to be
+// rewritten to its mangled instantiation per clone; one left behind reaches
+// the post-monomorph re-check as `unknown struct type` — an internal error
+// naming no construct (#7149).
+func TestRunRewritesGenericStructLitsInEveryPosition(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "struct-update base",
+			src: `struct Box[T] { v: T }
+function rewrap[T](x: T): Box[T] { return Box { ...Box { v: x }, v: x }; }
+function main(): i32 {
+    var a: Box[i32] = rewrap(1);
+    var b: Box[boolean] = rewrap(true);
+    if (b.v) { return a.v; }
+    return 0;
+}`,
+		},
+		{
+			name: "f-string interpolant",
+			src: `import "std/i32";
+struct Box[T] { v: T }
+function show[T](x: T): string { return f"{Box { v: 42 }.v}"; }
+function main(): i32 {
+    var s: string = show(1);
+    var t: string = show(true);
+    return s.len() - t.len();
+}`,
+		},
+		{
+			name: "defer body",
+			src: `struct Box[T] { v: T }
+function run[T](x: T): i32 {
+    var r: i32 = 0;
+    defer { var h: Box[i32] = Box { v: 5 }; r = h.v; }
+    return 7;
+}
+function main(): i32 { return run(1) + run(true); }`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, _, err := modload.LoadSource(c.src)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
 			}
 		})
 	}

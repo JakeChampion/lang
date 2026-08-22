@@ -113,7 +113,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 				sub[name] = c.TypeArgs[i]
 			}
 			for _, arg := range c.Args {
-				substituteExpr(arg, sub)
+				substituteNode(arg, sub)
 			}
 			c.TypeArgs = nil
 		})
@@ -1045,81 +1045,114 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 	return t
 }
 
-// substituteBlock walks the body of a cloned generic function
-// and rewrites any Var declarations whose type uses the type
-// parameters. Other expression types either don't carry types
-// directly (the checker re-derives them) or carry types that
-// don't reference the parameters (e.g. integer literals are
-// fine — they don't depend on T).
+// substituteBlock rewrites every type slot in the body of a cloned generic
+// function, replacing the enclosing generic's type parameters with the
+// instantiation's concrete arguments. Expressions that carry no type of
+// their own are traversed but untouched — the post-monomorph re-check
+// re-derives those.
 func substituteBlock(b *ast.Block, sub map[string]ast.Type) {
 	if b == nil {
 		return
 	}
-	for _, s := range b.Stmts {
-		substituteStmt(s, sub)
+	substituteNode(b, sub)
+}
+
+// substituteNode is substituteBlock over an arbitrary subtree — a single
+// argument expression at a call site, or a whole body. ast.Walk supplies the
+// traversal, so a new Expr / Stmt kind reaches this substitution the moment
+// ast.Walk learns about it rather than falling silently through a private
+// copy of the tree shape (#7042, #7149).
+func substituteNode(n ast.Node, sub map[string]ast.Type) {
+	if n == nil {
+		return
+	}
+	ast.Walk(n, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			x.Type = substituteType(x.Type, sub)
+		case *ast.StructLit:
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
+			}
+		case *ast.Call:
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
+			}
+			substituteAssocReceiver(x, sub)
+		case *ast.MapLit:
+			x.KeyType = substituteType(x.KeyType, sub)
+			x.ValueType = substituteType(x.ValueType, sub)
+		case *ast.ArrayLit:
+			// The literal's element-type annotation drives the per-element
+			// store width at codegen: a ParamType left here built a
+			// `string[]` / pointer-element array with single-word stores
+			// into two-word slots (the len word stayed uninitialised →
+			// corruption on drop).
+			x.ElemType = substituteType(x.ElemType, sub)
+		case *ast.CastExpr:
+			x.Target = substituteType(x.Target, sub)
+		case *ast.DowncastExpr:
+			x.Target = substituteType(x.Target, sub)
+		case *ast.TryOp:
+			x.Type = substituteType(x.Type, sub)
+		case *ast.Lambda:
+			// A lambda's params + return type can name the enclosing
+			// generic's type parameters. Left abstract, the monomorphised
+			// body returns a `(T) => T` where the re-check wants
+			// `(i32) => i32`. The slices are rewritten in place so the
+			// checker-stamped FuncType read back off the node agrees.
+			for i := range x.Params {
+				x.Params[i].Type = substituteType(x.Params[i].Type, sub)
+			}
+			x.ReturnType = substituteType(x.ReturnType, sub)
+			for i := range x.Captures {
+				x.Captures[i].Type = substituteType(x.Captures[i].Type, sub)
+			}
+		case *ast.FuncDecl:
+			// A nested named function names the enclosing generic's type
+			// parameters exactly as a lambda can — `function skip(n: i32,
+			// a: T): T` inside `outer[T]`.
+			for i := range x.Params {
+				x.Params[i].Type = substituteType(x.Params[i].Type, sub)
+			}
+			x.ReturnType = substituteType(x.ReturnType, sub)
+		}
+		return true
+	})
+}
+
+// substituteAssocReceiver rewrites the receiver of a generic associated
+// dispatch `T.f(args)`. The checker stamps such a call with
+// Method.Receiver = ParamType(T) and leaves the callee a FieldAccess whose
+// target Ident *is* the type-param name (that is what distinguishes it from
+// a value-receiver `x.m()`, whose target is a value). Pointing it at the
+// concrete type lets the re-check resolve `Concrete.f()` →
+// `__assoc_<Concrete>_f`.
+func substituteAssocReceiver(c *ast.Call, sub map[string]ast.Type) {
+	if c.Method == nil {
+		return
+	}
+	pt, ok := c.Method.Receiver.(ast.ParamType)
+	if !ok {
+		return
+	}
+	fa, ok := c.Callee.(*ast.FieldAccess)
+	if !ok {
+		return
+	}
+	tid, ok := fa.Target.(*ast.Ident)
+	if !ok || tid.Name != pt.Name {
+		return
+	}
+	ct, ok := sub[pt.Name]
+	if !ok {
+		return
+	}
+	if name, ok := concreteTypeNameOf(ct); ok {
+		fa.Target = &ast.Ident{P: tid.P, Name: name}
 	}
 }
 
-func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
-	switch x := s.(type) {
-	case *ast.Var:
-		x.Type = substituteType(x.Type, sub)
-		substituteExpr(x.Init, sub)
-	case *ast.Destructure:
-		substituteExpr(x.Init, sub)
-	case *ast.Block:
-		substituteBlock(x, sub)
-	case *ast.If:
-		substituteExpr(x.Cond, sub)
-		substituteStmt(x.Then, sub)
-		if x.Else != nil {
-			substituteStmt(x.Else, sub)
-		}
-	case *ast.While:
-		substituteExpr(x.Cond, sub)
-		substituteStmt(x.Body, sub)
-	case *ast.Loop:
-		substituteStmt(x.Body, sub)
-	case *ast.For:
-		if x.Init != nil {
-			substituteStmt(x.Init, sub)
-		}
-		substituteExpr(x.Cond, sub)
-		if x.Step != nil {
-			substituteStmt(x.Step, sub)
-		}
-		substituteStmt(x.Body, sub)
-	case *ast.ExprStmt:
-		substituteExpr(x.Expr, sub)
-	case *ast.Return:
-		substituteExpr(x.Value, sub)
-	case *ast.Defer:
-		substituteExpr(x.Expr, sub)
-	case *ast.Match:
-		substituteExpr(x.Tag, sub)
-		for _, arm := range x.Arms {
-			substituteExpr(arm.Guard, sub)
-			substituteBlock(arm.Body, sub)
-		}
-	case *ast.FuncDecl:
-		// A nested named function, whose params and return type may name
-		// the enclosing generic's type parameters exactly as a lambda's
-		// can — `function skip(n: i32, a: T): T` inside `outer[T]`. Left
-		// unsubstituted it reached the re-check still typed `(i32, T) => T`
-		// against an `(i32, i32) => i32` parameter (#7042). Same treatment
-		// as the *ast.Lambda case in substituteExpr.
-		for i := range x.Params {
-			x.Params[i].Type = substituteType(x.Params[i].Type, sub)
-		}
-		x.ReturnType = substituteType(x.ReturnType, sub)
-		substituteBlock(x.Body, sub)
-	}
-}
-
-// substituteExpr walks an expression tree applying sub to every
-// type-bearing node (StructLit.TypeArgs, CastExpr.Target,
-// Call.TypeArgs). Doesn't touch type-free shapes — the checker
-// re-derives those during the post-monomorph re-check.
 // hasParamType reports whether any type in `types` is a ParamType
 // (or recursively contains one). Used by the monomorpher to defer
 // rewriting StructLit TypeArgs that still hold a ParamType — those
@@ -1245,151 +1278,6 @@ func containsParamType(t ast.Type) bool {
 // for a type that can't carry one (a still-parametric arg, a tuple, …).
 func concreteTypeNameOf(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) }
 
-func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
-	if e == nil {
-		return
-	}
-	switch x := e.(type) {
-	case *ast.StructLit:
-		if len(x.TypeArgs) > 0 {
-			for i := range x.TypeArgs {
-				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
-			}
-		}
-		for _, f := range x.Fields {
-			substituteExpr(f.Value, sub)
-		}
-	case *ast.Call:
-		if len(x.TypeArgs) > 0 {
-			for i := range x.TypeArgs {
-				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
-			}
-		}
-		// Generic associated dispatch `T.f(args)`: the checker stamps the
-		// call with Method.Receiver = ParamType(T) and leaves the callee a
-		// FieldAccess whose target Ident *is* the type-param name (that's
-		// what distinguishes it from a value-receiver `x.m()`, whose target
-		// is a value). Rewrite the target to the concrete type so the
-		// re-check resolves `Concrete.f()` → `__assoc_<Concrete>_f`.
-		if x.Method != nil {
-			if pt, ok := x.Method.Receiver.(ast.ParamType); ok {
-				if fa, ok := x.Callee.(*ast.FieldAccess); ok {
-					if tid, ok := fa.Target.(*ast.Ident); ok && tid.Name == pt.Name {
-						if ct, ok := sub[pt.Name]; ok {
-							if name, ok2 := concreteTypeNameOf(ct); ok2 {
-								fa.Target = &ast.Ident{P: tid.P, Name: name}
-							}
-						}
-					}
-				}
-			}
-		}
-		substituteExpr(x.Callee, sub)
-		for _, a := range x.Args {
-			substituteExpr(a, sub)
-		}
-	case *ast.Assign:
-		// `out = out.push(x)` — the RHS (and a FieldAccess /
-		// Index LHS) can hold a method-call whose stamped
-		// TypeArgs reference the enclosing generic's params. Without
-		// walking it, the cloned body keeps `push`'s TypeArgs as
-		// `[T]`, the post-monomorph re-check substitutes the method
-		// signature by `T→T` (a no-op), and the abstract `T[]`
-		// expected type mismatches the concrete element type.
-		substituteExpr(x.Target, sub)
-		substituteExpr(x.Value, sub)
-	case *ast.FString:
-		for i := range x.Parts {
-			substituteExpr(x.Parts[i].Expr, sub)
-		}
-		substituteExpr(x.Desugared, sub)
-	case *ast.MapLit:
-		x.KeyType = substituteType(x.KeyType, sub)
-		x.ValueType = substituteType(x.ValueType, sub)
-		for i := range x.Entries {
-			substituteExpr(x.Entries[i].Key, sub)
-			substituteExpr(x.Entries[i].Value, sub)
-		}
-	case *ast.EnumLit:
-		for _, a := range x.Args {
-			substituteExpr(a, sub)
-		}
-	case *ast.CastExpr:
-		x.Target = substituteType(x.Target, sub)
-		substituteExpr(x.Inner, sub)
-	case *ast.DowncastExpr:
-		x.Target = substituteType(x.Target, sub)
-		substituteExpr(x.Inner, sub)
-	case *ast.Binary:
-		substituteExpr(x.Left, sub)
-		substituteExpr(x.Right, sub)
-	case *ast.Unary:
-		substituteExpr(x.Operand, sub)
-	case *ast.Index:
-		substituteExpr(x.Array, sub)
-		substituteExpr(x.Idx, sub)
-	case *ast.SliceExpr:
-		substituteExpr(x.Source, sub)
-		substituteExpr(x.Low, sub)
-		substituteExpr(x.High, sub)
-	case *ast.FieldAccess:
-		substituteExpr(x.Target, sub)
-	case *ast.TryOp:
-		x.Type = substituteType(x.Type, sub)
-		substituteExpr(x.Inner, sub)
-	case *ast.IfExpr:
-		substituteExpr(x.Cond, sub)
-		substituteExpr(x.Then, sub)
-		substituteExpr(x.Else, sub)
-	case *ast.MatchExpr:
-		substituteExpr(x.Tag, sub)
-		for _, arm := range x.Arms {
-			if arm.Guard != nil {
-				substituteExpr(arm.Guard, sub)
-			}
-			substituteExpr(arm.Body, sub)
-		}
-	case *ast.BlockExpr:
-		for _, st := range x.Stmts {
-			substituteStmt(st, sub)
-		}
-		if x.Tail != nil {
-			substituteExpr(x.Tail, sub)
-		}
-	case *ast.ArrayLit:
-		// Substitute the literal's element-type annotation too — it
-		// drives the per-element store width at codegen, so leaving a
-		// ParamType here built a `string[]` / pointer-element array
-		// with single-word stores into two-word slots (the len word
-		// stayed uninitialised → corruption on drop).
-		x.ElemType = substituteType(x.ElemType, sub)
-		for _, e := range x.Elems {
-			substituteExpr(e, sub)
-		}
-	case *ast.TupleLit:
-		for _, e := range x.Elems {
-			substituteExpr(e, sub)
-		}
-	case *ast.Lambda:
-		// Lambda's params + return type may reference the enclosing
-		// generic's type parameters. Without substitution the
-		// monomorphised body sees `i32`-typed exprs returning a
-		// `(T) => T` lambda — re-check mismatches and errors with
-		// `return type mismatch`. Walk the params slice in place
-		// so the lambda's checker-stamped FuncType (which it
-		// reads back via b.exprType later) reflects the
-		// monomorphised types.
-		for i := range x.Params {
-			x.Params[i].Type = substituteType(x.Params[i].Type, sub)
-		}
-		x.ReturnType = substituteType(x.ReturnType, sub)
-		for i := range x.Captures {
-			x.Captures[i].Type = substituteType(x.Captures[i].Type, sub)
-		}
-		substituteBlock(x.Body, sub)
-	}
-}
-
 // cloneFuncDecl produces a deep copy of fn suitable for
 // post-substitution mutation. Body is structure-cloned so
 // substituteBlock's in-place mutation doesn't leak into the
@@ -1404,146 +1292,19 @@ func cloneFuncDecl(fn *ast.FuncDecl) *ast.FuncDecl {
 	return &c
 }
 
-// walkBlockStructLits is the StructLit analogue of walkBlock —
-// invokes fn on every StructLit reachable from the body so the
-// monomorpher can rewrite generic instantiations regardless of
-// where they nest (struct literal inside a tuple inside a
-// variable initialiser, etc).
+// walkBlockStructLits invokes fn on every StructLit reachable from the body,
+// so the monomorpher rewrites a generic instantiation regardless of where it
+// nests (struct literal inside a tuple inside a variable initialiser, etc).
 func walkBlockStructLits(b *ast.Block, fn func(*ast.StructLit)) {
 	if b == nil {
 		return
 	}
-	for _, s := range b.Stmts {
-		walkStmtStructLits(s, fn)
-	}
-}
-
-func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
-	switch x := s.(type) {
-	case *ast.Var:
-		walkExprStructLits(x.Init, fn)
-	case *ast.Destructure:
-		walkExprStructLits(x.Init, fn)
-	case *ast.ExprStmt:
-		walkExprStructLits(x.Expr, fn)
-	case *ast.Return:
-		walkExprStructLits(x.Value, fn)
-	case *ast.If:
-		walkExprStructLits(x.Cond, fn)
-		walkStmtStructLits(x.Then, fn)
-		if x.Else != nil {
-			walkStmtStructLits(x.Else, fn)
+	ast.Walk(b, func(n ast.Node) bool {
+		if sl, ok := n.(*ast.StructLit); ok {
+			fn(sl)
 		}
-	case *ast.While:
-		walkExprStructLits(x.Cond, fn)
-		walkStmtStructLits(x.Body, fn)
-	case *ast.Loop:
-		walkStmtStructLits(x.Body, fn)
-	case *ast.For:
-		if x.Init != nil {
-			walkStmtStructLits(x.Init, fn)
-		}
-		if x.Cond != nil {
-			walkExprStructLits(x.Cond, fn)
-		}
-		if x.Step != nil {
-			walkStmtStructLits(x.Step, fn)
-		}
-		walkStmtStructLits(x.Body, fn)
-	case *ast.Block:
-		walkBlockStructLits(x, fn)
-	case *ast.Match:
-		walkExprStructLits(x.Tag, fn)
-		for _, arm := range x.Arms {
-			if arm.Guard != nil {
-				walkExprStructLits(arm.Guard, fn)
-			}
-			walkBlockStructLits(arm.Body, fn)
-		}
-	case *ast.Defer:
-		// Same shape as the FuncDecl arm below, and the second time this
-		// walk has been short by one: a `defer { … Box { v: 5 } … }` was
-		// never rewritten to its instantiation, so the re-check rejected
-		// the program as a compiler bug ("unknown struct type"). The two
-		// sibling statement walks, substituteStmt and walkStmt, both had
-		// this arm already.
-		walkExprStructLits(x.Expr, fn)
-	case *ast.FuncDecl:
-		// A nested named function's body holds struct literals like any
-		// other; without this a `Box { v: k }` inside one was never
-		// rewritten to its instantiation and the re-check reported an
-		// unknown struct type (#7042).
-		walkBlockStructLits(x.Body, fn)
-	}
-}
-
-func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
-	if e == nil {
-		return
-	}
-	switch x := e.(type) {
-	case *ast.StructLit:
-		fn(x)
-		for _, f := range x.Fields {
-			walkExprStructLits(f.Value, fn)
-		}
-	case *ast.Call:
-		walkExprStructLits(x.Callee, fn)
-		for _, a := range x.Args {
-			walkExprStructLits(a, fn)
-		}
-	case *ast.Binary:
-		walkExprStructLits(x.Left, fn)
-		walkExprStructLits(x.Right, fn)
-	case *ast.Unary:
-		walkExprStructLits(x.Operand, fn)
-	case *ast.Index:
-		walkExprStructLits(x.Array, fn)
-		walkExprStructLits(x.Idx, fn)
-	case *ast.SliceExpr:
-		walkExprStructLits(x.Source, fn)
-		walkExprStructLits(x.Low, fn)
-		walkExprStructLits(x.High, fn)
-	case *ast.FieldAccess:
-		walkExprStructLits(x.Target, fn)
-	case *ast.TryOp:
-		walkExprStructLits(x.Inner, fn)
-	case *ast.IfExpr:
-		walkExprStructLits(x.Cond, fn)
-		walkExprStructLits(x.Then, fn)
-		walkExprStructLits(x.Else, fn)
-	case *ast.MatchExpr:
-		walkExprStructLits(x.Tag, fn)
-		for _, arm := range x.Arms {
-			if arm.Guard != nil {
-				walkExprStructLits(arm.Guard, fn)
-			}
-			walkExprStructLits(arm.Body, fn)
-		}
-	case *ast.BlockExpr:
-		for _, st := range x.Stmts {
-			walkStmtStructLits(st, fn)
-		}
-		if x.Tail != nil {
-			walkExprStructLits(x.Tail, fn)
-		}
-	case *ast.ArrayLit:
-		for _, e := range x.Elems {
-			walkExprStructLits(e, fn)
-		}
-	case *ast.TupleLit:
-		for _, e := range x.Elems {
-			walkExprStructLits(e, fn)
-		}
-	case *ast.CastExpr:
-		walkExprStructLits(x.Inner, fn)
-	case *ast.DowncastExpr:
-		walkExprStructLits(x.Inner, fn)
-	case *ast.Lambda:
-		// So the lambda spelling of a nested function is not a safe
-		// harbour from the FuncDecl gap above.
-		walkBlockStructLits(x.Body, fn)
-	}
+		return true
+	})
 }
 
 // rewriteGenericStructTypes walks every Type slot in the program
@@ -1718,164 +1479,16 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 	})
 }
 
-// walkBlock invokes fn on every Call expression reachable from
-// the block. Generic function call sites — the only thing the
-// monomorph pass cares about — are necessarily Call nodes, so we
-// don't need to recurse into other expression shapes that don't
-// hold Call children.
+// walkBlock invokes fn on every Call expression reachable from the block —
+// generic call sites, the only thing the monomorph pass rewrites.
 func walkBlock(b *ast.Block, fn func(*ast.Call)) {
 	if b == nil {
 		return
 	}
-	for _, s := range b.Stmts {
-		walkStmt(s, fn)
-	}
-}
-
-func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
-	switch x := s.(type) {
-	case *ast.Var:
-		walkExpr(x.Init, fn)
-	case *ast.Destructure:
-		walkExpr(x.Init, fn)
-	case *ast.ExprStmt:
-		walkExpr(x.Expr, fn)
-	case *ast.Return:
-		walkExpr(x.Value, fn)
-	case *ast.If:
-		walkExpr(x.Cond, fn)
-		walkStmt(x.Then, fn)
-		if x.Else != nil {
-			walkStmt(x.Else, fn)
+	ast.Walk(b, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			fn(c)
 		}
-	case *ast.While:
-		walkExpr(x.Cond, fn)
-		walkStmt(x.Body, fn)
-	case *ast.Loop:
-		walkStmt(x.Body, fn)
-	case *ast.For:
-		if x.Init != nil {
-			walkStmt(x.Init, fn)
-		}
-		if x.Cond != nil {
-			walkExpr(x.Cond, fn)
-		}
-		if x.Step != nil {
-			walkStmt(x.Step, fn)
-		}
-		walkStmt(x.Body, fn)
-	case *ast.Block:
-		walkBlock(x, fn)
-	case *ast.Match:
-		walkExpr(x.Tag, fn)
-		for _, arm := range x.Arms {
-			walkStmt(arm.Body, fn)
-		}
-	case *ast.FuncDecl:
-		// Nested function declarations (`function f() { ... }`
-		// as a stmt — IsLocal=true). The body can contain
-		// generic calls that need rewriting just like a
-		// top-level decl's body. Without this case, an
-		// `id(x)` / `pick(...)` inside a local fn survives
-		// past the rewrite step and the monomorph re-check
-		// fails with "undefined identifier".
-		walkBlock(x.Body, fn)
-	case *ast.Defer:
-		walkExpr(x.Expr, fn)
-	}
-}
-
-func walkExpr(e ast.Expr, fn func(*ast.Call)) {
-	if e == nil {
-		return
-	}
-	switch x := e.(type) {
-	case *ast.Call:
-		fn(x)
-		walkExpr(x.Callee, fn)
-		for _, a := range x.Args {
-			walkExpr(a, fn)
-		}
-	case *ast.Binary:
-		walkExpr(x.Left, fn)
-		walkExpr(x.Right, fn)
-	case *ast.Unary:
-		walkExpr(x.Operand, fn)
-	case *ast.Index:
-		walkExpr(x.Array, fn)
-		walkExpr(x.Idx, fn)
-	case *ast.SliceExpr:
-		walkExpr(x.Source, fn)
-		walkExpr(x.Low, fn)
-		walkExpr(x.High, fn)
-	case *ast.FieldAccess:
-		walkExpr(x.Target, fn)
-	case *ast.TryOp:
-		walkExpr(x.Inner, fn)
-	case *ast.IfExpr:
-		walkExpr(x.Cond, fn)
-		walkExpr(x.Then, fn)
-		walkExpr(x.Else, fn)
-	case *ast.MatchExpr:
-		walkExpr(x.Tag, fn)
-		for _, arm := range x.Arms {
-			if arm.Guard != nil {
-				walkExpr(arm.Guard, fn)
-			}
-			walkExpr(arm.Body, fn)
-		}
-	case *ast.BlockExpr:
-		for _, st := range x.Stmts {
-			walkStmt(st, fn)
-		}
-		if x.Tail != nil {
-			walkExpr(x.Tail, fn)
-		}
-	case *ast.ArrayLit:
-		for _, e := range x.Elems {
-			walkExpr(e, fn)
-		}
-	case *ast.TupleLit:
-		for _, e := range x.Elems {
-			walkExpr(e, fn)
-		}
-	case *ast.StructLit:
-		for _, f := range x.Fields {
-			walkExpr(f.Value, fn)
-		}
-	case *ast.MapLit:
-		// Map literals carry arbitrary expressions for both
-		// keys and values; either slot can host a generic
-		// call (`Map { id(k): v, k2: pick(c, a, b) }`). Without
-		// this case the rewriter leaves the inner call's
-		// callee Ident pointing at the (about-to-be-dropped)
-		// generic decl, and the post-monomorph re-check fails
-		// with "undefined identifier".
-		for _, ent := range x.Entries {
-			walkExpr(ent.Key, fn)
-			walkExpr(ent.Value, fn)
-		}
-	case *ast.FString:
-		// F-string interpolants — `f"...{id(x)}..."`. Each
-		// FStringPart with a non-nil Expr is a sub-expression
-		// that can itself contain generic calls.
-		for _, p := range x.Parts {
-			if p.Expr != nil {
-				walkExpr(p.Expr, fn)
-			}
-		}
-	case *ast.Assign:
-		walkExpr(x.Target, fn)
-		walkExpr(x.Value, fn)
-	case *ast.Lambda:
-		// Lambda expression — `function (...) { ... }` in
-		// expression position. The body is a Block that can
-		// host generic calls just like a top-level decl's
-		// body.
-		walkBlock(x.Body, fn)
-	case *ast.CastExpr:
-		walkExpr(x.Inner, fn)
-	case *ast.DowncastExpr:
-		walkExpr(x.Inner, fn)
-	}
+		return true
+	})
 }
