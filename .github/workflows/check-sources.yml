@@ -1,0 +1,35 @@
+name: Check sources
+
+# `make check-sources` — native `fern -check` over the self-host sources and
+# every stdlib module as a standalone import — on every push to main.
+#
+# The lint job runs the same gate on PRs, but no workflow ran anything on main,
+# so a merge race between two individually-green PRs landed an unbuildable main
+# with no red run to name it: c9df312 (#6888) changed the signature registries
+# out from under 8448708 (#7215), each fine against its own tree, and the type
+# error only existed in the combination (#7317). This lane reports that against
+# the merge that caused it, with the compiler's own diagnostic (file, line,
+# type) as the whole failure output — instead of leaving it to surface as a
+# driver-build failure at the top of ~20 self-host jobs on the next unrelated
+# PR.
+#
+# No concurrency group, deliberately: back-to-back merges each keep their own
+# run, so a failure is attributed to one merge rather than to the newest of
+# several. The job is ~a minute; holding a slot per merge is the cost of that
+# attribution.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: fern -check self-host + stdlib
+        run: make check-sources

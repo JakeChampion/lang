@@ -8,7 +8,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode actionlint testnames freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
+.PHONY: all build test vet deadcode actionlint testnames freeze check-sources selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
 
 all: build test
 
@@ -55,6 +55,16 @@ testnames:
 # REGRESSION (ground lost). See tools/freeze_gate.sh.
 freeze:
 	./tools/freeze_gate.sh
+
+# Type-check the self-host sources and every stdlib module with the native
+# `fern -check` — the direct form of the question every self-host lane
+# otherwise asks only implicitly by building a driver, where a type error
+# surfaces as a build-step failure in a job named for something else (#7317).
+# Depends on bin/fern because the stdlib is embedded: a stale binary checks
+# the previously embedded std/*.fern, not the tree.
+check-sources: bin/fern
+	./bin/fern -check examples/self_host/fern.fern
+	./tools/stdlib_check.sh
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host
 # behaviour can be checked locally in seconds instead of only in CI.
@@ -140,12 +150,13 @@ gofmt-check:
 # One target so a local run and CI cannot drift into checking different things,
 # and so `scripts/signoff lint` and the workflow share one definition.
 #
-# Keeps going after a failure and reports the set at the end: eight gates run
+# Keeps going after a failure and reports the set at the end: nine gates run
 # as one job must not hide the seventh failure behind the second.
 lint-all:
 	@status=0; \
 	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \
-	            "$(MAKE) deadcode" "$(MAKE) actionlint" "$(MAKE) testnames" "$(MAKE) freeze"; do \
+	            "$(MAKE) check-sources" "$(MAKE) deadcode" "$(MAKE) actionlint" \
+	            "$(MAKE) testnames" "$(MAKE) freeze"; do \
 		echo "==> $$gate"; \
 		if ! sh -c "$$gate"; then echo "FAILED: $$gate"; status=1; fi; \
 	done; \
