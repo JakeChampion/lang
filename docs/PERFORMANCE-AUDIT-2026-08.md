@@ -433,14 +433,29 @@ the AST tree-shaker had already done the work — so it is not itself the win it
 The −9% is real — but it is the `examples/bench` corpus, not the compiler:
 `call_overhead` −27%, `map_int` −19%, `map_string` and `tokenize` −11%,
 `string_build` −10%, `enum_match` −8%, nothing regressed, average −6.5%. That is
-the shape inlining pays on, and it is the half the natives now get: re-measured
-at 8961e93 under the ceiling, `call_overhead` −23.9%, `map_int` −17.7%,
-`enum_match` −10.0%, `map_string` −8.6%, `tokenize` −6.8%, average −5.0% retired,
-with `string_scan` +2.2% the one regression. Static text grows on the same
-corpus (+24.7% on average, `call_overhead` 189 → 713 instructions), which is the
-trade a stack-machine emitter makes — an inlined body still spills every
-operand, so the saving is the `call`/`ret` pair while the instruction footprint
-is paid. Item 4's register allocator is what would change that side.
+the shape inlining pays on, and it is the half the natives now get. Re-measured
+at 8961e93 under the ceiling, retired instructions on `examples/bench`:
+
+| | x86-64 | aarch64 |
+|---|---|---|
+| `call_overhead` | −23.9% | −26.3% |
+| `map_int` | −17.7% | −19.0% |
+| `enum_match` | −10.0% | −9.3% |
+| `map_string` | −8.6% | −8.6% |
+| `tokenize` | −6.8% | −6.4% |
+| `struct_drop` | −3.4% | −3.8% |
+| `sort_ints` | −3.6% | **+8.8%** |
+| `string_scan` | **+2.2%** | −0.5% |
+| mean | −5.0% | −4.4% |
+
+The two backends agree on the wins and disagree on both regressions, in opposite
+directions — a retired-instruction count is per-ISA, and the two emitters make
+different spill choices out of the same IR. Static text grows on both (+24.7%
+mean on x86-64, `call_overhead` 189 -> 713 instructions; 165 -> 532 on aarch64),
+which is the trade a stack-machine emitter makes: an inlined body still spills
+every operand, so the saving is the `call`/`ret` pair while the whole
+instruction footprint is paid. Item 4's register allocator is what would change
+that side.
 
 **Pick the subject as carefully as the metric** applies here as much as it did
 to item 3: a 15-function benchmark and a 5,261-function compiler rank this pass
