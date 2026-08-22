@@ -17633,11 +17633,17 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // Per-element rc kinds for a tuple built from bare idents (#7226). The
     // construction retain in lower_expr's ExprTuple arm incs an element naming an
     // rc-container local, so the tuple is a second owner; recording which
-    // positions took one lets the scope-exit sweep give exactly those back.
-    // Only the ARRAY/tuple-box limb is recorded: a string element's source local
-    // is escape-flagged by expr_unsafe_for and so earns no "STR:" credit, which
-    // means releasing it here would balance the tuple's ref while the local's own
-    // box still never reaches 0 — a credit-side gap, not a release-side one.
+    // positions took one lets every site that frees the box give exactly those
+    // back. The predicate here is the SAME slot_is_rc_container the retain uses,
+    // on the same slots, so a position the construction declined is never in the
+    // list and the two cannot drift.
+    //
+    // A `.trim()`-style VIEW slot is recorded "." — no release — even though the
+    // construction retained it. Its own sweep frees it with __fern_str_view_free,
+    // which frees the view BOX rather than decrementing a shared buffer, so a
+    // second claim here would free a box the local still owns. The tuple's
+    // reference to a view leaks; that is the safe direction and it is the only
+    // string shape this does not close.
     if (sb.tuple_elem_tag(slot, 0).len() > 0
         && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", v.name)) {
         match (v.init) {
@@ -17650,7 +17656,9 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                     match (tinit.elements[tki]) {
                         parser.ExprIdent(kid) => {
                             var kslot: i32 = sb.slot_of(kid.name);
-                            if (sb.slot_is_rc_container(kslot) && !sb.is_str_slot(kslot)) {
+                            if (sb.is_str_slot(kslot)) {
+                                if (!sb.is_str_view_local_slot(kslot)) { kc = "s"; tkany = true; }
+                            } else if (sb.slot_is_rc_container(kslot)) {
                                 kc = "a";
                                 tkany = true;
                             }
@@ -21886,13 +21894,22 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32): LowerState {
     return st.emit(ir.op_store_local(slot));
 }
 
-// emit_tup_elem_releases emits a null-guarded rc-dec of each element position
+// emit_tup_elem_releases emits a null-guarded release of each element position
 // `kinds` marks (#7226) — the give-back for the construction retain in
 // lower_expr's ExprTuple arm. A zeroed slot (untaken branch, or the first pass of
-// a loop rebind) must skip the walk entirely: __fern_rc_dec null-guards, but the
-// op_tuple_get that reaches the element dereferences the box. Emits nothing at
-// all when the tuple retained no element, so a tuple of pure scalars is
+// a loop rebind) must skip the walk entirely: the release helpers null-guard, but
+// the op_tuple_get that reaches the element dereferences the box. Emits nothing
+// at all when the tuple retained no element, so a tuple of pure scalars is
 // byte-identical to before.
+//
+// The kind picks the helper and the two are NOT interchangeable. `a` (an array /
+// tuple-box element) takes __fern_rc_dec, which frees at data-16 — the arr-box
+// layout. `s` (a string element) takes __fern_str_free: a string box is
+// {rc@base, data@base+8, len@base+16} with the VALUE at base+8, so rc is at
+// value-8 for both layouts (which is why one __fern_rc_inc retains either) but
+// the block starts at value-8, not value-16. An rc_dec of a string element frees
+// eight bytes below the block — heap corruption, not a leak. `.` is a position
+// the construction did not retain.
 function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): LowerState {
     if (kinds.len() == 0) { return se; }
     var st: LowerState = se;
@@ -21903,8 +21920,10 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
     var ki: i32 = 0;
     while (ki < kinds.len()) {
         if (kinds[ki] != b'.') {
+            var helper: string = "__fern_rc_dec";
+            if (kinds[ki] == b's') { helper = "__fern_str_free"; }
             st = emit_load_tuple_path(st, slot, [ki]);
-            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_call_direct(helper, 1));
             st = st.emit(ir.op_drop());
         }
         ki = ki + 1;
@@ -22699,6 +22718,33 @@ function tuple_union_payload_sole_use(init: parser.Expr, name: string): boolean 
     return false;
 }
 
+// tuple_bare_ident_sole_use: `init` is a tuple literal in which `name` appears
+// ONLY as a bare-ident ELEMENT. The bare-ident twin of
+// tuple_union_payload_sole_use, and refusing on any other mention is the same
+// interlock: a tuple that also reads `name` elsewhere (`(s, s.len())`) answers
+// false, so a second, genuinely escaping use is never hidden by this.
+function tuple_bare_ident_sole_use(init: parser.Expr, name: string): boolean {
+    match (init) {
+        parser.ExprTuple(tl) => {
+            var found: boolean = false;
+            var k: i32 = 0;
+            while (k < tl.elements.len()) {
+                var bare: boolean = false;
+                match (tl.elements[k]) {
+                    parser.ExprIdent(eid) => { if (eid.name == name) { bare = true; } },
+                    _ => {}
+                }
+                if (bare) { found = true; }
+                else if (expr_mentions_name(tl.elements[k], name)) { return false; }
+                k = k + 1;
+            }
+            return found;
+        },
+        _ => {}
+    }
+    return false;
+}
+
 // tuple_union_arg_freefn is the payload half: the release for a construction
 // argument, or "" for one this site cannot prove sole-owned.
 function tuple_union_arg_freefn(arg: parser.Expr, s: LowerState): string {
@@ -23384,6 +23430,22 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
                     parser.ExprTuple(_) => {
                         if (util.index_of_str(clo_ok, "TUP:" + v.name) >= 0
                             && tuple_union_payload_sole_use(v.init, name)) { skip = true; }
+                        // The BARE-IDENT element twin (#7226's string limb), same
+                        // arithmetic one construction shape over: the tuple literal
+                        // retains the element (rc 2), this sweep's string loop decs
+                        // the local's ref, and the element release decs the box's.
+                        // "TUPE:" is credited only for a tuple that earned
+                        // "TUPELEMOK:" — so it is non-escaping, annotated, and past
+                        // the owned-pointer-extraction gate, which means the element
+                        // release IS emitted and the pair balances.
+                        //
+                        // Ordering makes a classifier mismatch a sound leak rather
+                        // than a double free, exactly as it does for the closure
+                        // interlock: the exit sweep's tuple loop runs BEFORE its
+                        // string loop, so the tuple's dec always precedes the
+                        // local's free.
+                        if (util.index_of_str(clo_ok, "TUPE:" + v.name) >= 0
+                            && tuple_bare_ident_sole_use(v.init, name)) { skip = true; }
                     },
                     _ => {}
                 }
@@ -31802,6 +31864,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (tprc < out.len()) {
         if (out[tprc].len() > 6 && out[tprc][0:6] == "TUPRC:") {
             clo_ok = clo_ok.append("TUP:" + out[tprc][6:out[tprc].len()]);
+        }
+        // #7226 string limb: a string local at a BARE-IDENT element of a tuple
+        // this pass credited "TUPELEMOK:" is likewise no longer an escape — the
+        // element release gives the construction retain back, so the local's own
+        // box reaches 0. Without this the string never earned "STR:" and its box
+        // was never swept: inc 1, dec 0, 32 B/round unbounded. See the ExprTuple
+        // arm of body_unsafe_for_clo.
+        if (out[tprc].len() > 10 && out[tprc][0:10] == "TUPELEMOK:") {
+            clo_ok = clo_ok.append("TUPE:" + out[tprc][10:out[tprc].len()]);
         }
         tprc = tprc + 1;
     }
