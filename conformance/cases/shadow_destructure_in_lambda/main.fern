@@ -10,9 +10,10 @@
 // must survive untouched, so this asserts both rather than merely exiting 0.
 //
 // One destructure site per case, on purpose: two in one function abort the
-// wasm owned model (#7307). No struct-pattern parameter either — the
-// self-host parser does not implement that spelling yet (#7306). The
-// combined case this was split out of belongs back here once both close.
+// wasm owned model (#7307). The combined case this was split out of belongs
+// back here once that closes. Its struct-pattern parameter no longer needs
+// waiting for — every implementation takes that spelling since #7306, and
+// shadow_destructure_struct_param_in_lambda states this same property over it.
 function main(): i32 {
     var x: i32 = 1;
     var y: i32 = 2;
