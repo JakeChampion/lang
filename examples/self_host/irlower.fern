@@ -16967,9 +16967,10 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                         // nested box, so deep-drop exactly like the loop-rebind
                         // sibling (emit_tuple_child_drops: free array buffers +
                         // nested boxes depth-first, then the box). A bare-ident
-                        // pointer element aliases a live local and is skipped
-                        // (leak-safe), same admission as the TUPRC: class. The
-                        // scratch is never mark_arr'd, so the exit sweep skips it.
+                        // pointer element gives back the retain the construction
+                        // took (tuple_union_arg_freefn), same admission as the
+                        // TUPRC: class. The scratch is never mark_arr'd, so the
+                        // exit sweep skips it.
                         var dtt: string = "$tldrop" + util.i32_to_string(se.locals.len());
                         se = se.add_local(dtt);
                         var dtslot: i32 = se.slot_of(dtt);
@@ -22685,12 +22686,16 @@ function emit_load_tuple_path(st: LowerState, slot: i32, path: i32[]): LowerStat
 // `tup` reached from `slot` by `path` (a chain of op_tuple_get indices): a
 // direct ExprArray child's buffer is arr_dec'd, and a NESTED tuple-literal child
 // has its own children freed CHILDREN-FIRST then its box arr_dec'd (a fresh
-// nested tuple box is sole-owned, so freeing it is balanced). Scalar / bare-ident
-// children are skipped — a scalar carries no pointer, and a bare-ident pointer
-// aliases a live local the site never inc'd, so freeing it would double-release;
-// the box's dangling pointer to it is harmless (we never follow it). The
-// depth-first order means an inner array is freed before its enclosing box, so
-// no read chases through an already-freed box.
+// nested tuple box is sole-owned, so freeing it is balanced). A scalar child is
+// skipped — it carries no pointer. A BARE-IDENT child is released through
+// tuple_union_arg_freefn, the same resolver the union-payload site uses and for
+// the same reason: lower_expr's ExprTuple arm rc_inc's an element naming an
+// rc-container local, so this dec spends the BOX's reference and the local's own
+// sweep still finds a valid buffer. The resolver answers "" for the ident shapes
+// whose release needs more than the slot's array-ness (a string[] element, a
+// string local with no "STR:" credit), which keeps those on the leak side rather
+// than the over-release side. The depth-first order means an inner array is freed
+// before its enclosing box, so no read chases through an already-freed box.
 function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: parser.ExprTuple): LowerState {
     var s: LowerState = st;
     var k: i32 = 0;
@@ -22734,6 +22739,14 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
                     // is [tag, payload], allocated by this construction and
                     // aliased nowhere, so the shallow dec is balanced.
                     s = emit_tuple_union_elem_drop(s, slot, path_child(path, k), tup.elements[k]);
+                }
+            },
+            parser.ExprIdent(_) => {
+                var ifree: string = tuple_union_arg_freefn(tup.elements[k], s);
+                if (ifree != "") {
+                    s = emit_load_tuple_path(s, slot, path_child(path, k));
+                    s = s.emit(ir.op_call_direct(ifree, 1));
+                    s = s.emit(ir.op_drop());
                 }
             },
             parser.ExprTuple(inner) => {
@@ -23005,11 +23018,12 @@ function tuple_union_arg_freefn(arg: parser.Expr, s: LowerState): string {
 // reclaim works from the type annotation, not the `Some((..))` args), the array /
 // nested-tuple positions are read from the tuple TYPE `ttype` instead. A leak-safe
 // scalar-array position is arr_dec'd; a nested tuple-type position is recursed then
-// its box arr_dec'd; scalar positions are skipped. SOUND only when the payload was a
-// FRESH tuple literal whose every array position is a direct array literal
-// (tuple_arg_payload_fresh, checked at admission) — then every array-typed position
-// sole-owns its buffer, so dec'ing all of them is balanced (unlike the literal-driven
-// helper, this can't skip a bare-ident alias, so admission forbids one).
+// its box arr_dec'd; scalar positions are skipped. SOUND only when the tuple holds a
+// counted reference to every position it dec's, which is what admission proves: a
+// direct array literal the tuple sole-owns, or — where the drop frees the tuple's own
+// box in the same breath (tuple_arg_payload_retained) — a bare ident the construction
+// retained. It cannot skip a position the way the literal-driven helper does, so a
+// position holding an UNRETAINED alias must never reach it.
 function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], ttype: string): LowerState {
     var s: LowerState = st;
     var k: i32 = 0;
@@ -23108,10 +23122,30 @@ function tuple_field_deep_droppable(t: string, structs: parser.StructDecl[]): bo
 // tuple_arg_payload_fresh: the construction's tuple payload `arg` is a FRESH tuple
 // literal whose every ARRAY-typed position (per the field TYPE `ttype`) is a DIRECT
 // array literal and every nested-tuple position a nested tuple literal (recursively
-// fresh). The freshness gate the type-driven drop needs: it dec's every array
-// position blind, so an ident alias at an array position must be forbidden. Scalar
-// positions accept any expression (value-copied, never rc-tracked).
+// fresh). The SOLE-OWNER gate: every rc position's box belongs to this tuple alone,
+// so a site that frees the payload without also freeing the tuple's own box is
+// balanced. Scalar positions accept any expression (value-copied, never rc-tracked).
 function tuple_arg_payload_fresh(ttype: string, arg: parser.Expr, structs: parser.StructDecl[]): boolean {
+    return tuple_arg_payload_droppable(ttype, arg, structs, false);
+}
+
+// tuple_arg_payload_retained is the same admission widened by one position form: a
+// leak-safe ARRAY position may also be a BARE IDENT. Where the strict predicate
+// above asks "does the tuple SOLE-OWN this position", this asks the weaker question
+// the type-driven drop actually needs — "does the tuple hold a counted reference to
+// it" — and a bare ident does, because lower_expr's ExprTuple arm rc_inc's an
+// element naming an rc-container local, making the tuple a second owner. The drop's
+// dec gives that retain back; the local's own sweep spends its own reference.
+//
+// Use it only where the drop frees the tuple's OWN box in the same breath (the
+// scope-exit sweep). The strict form stays the gate everywhere the payload outlives
+// the box or is reached without one — an Option's Some payload, an array-of-tuples
+// element — since there a mere counted reference is not enough to free by.
+function tuple_arg_payload_retained(ttype: string, arg: parser.Expr, structs: parser.StructDecl[]): boolean {
+    return tuple_arg_payload_droppable(ttype, arg, structs, true);
+}
+
+function tuple_arg_payload_droppable(ttype: string, arg: parser.Expr, structs: parser.StructDecl[], ident_arr_ok: boolean): boolean {
     match (arg) {
         parser.ExprTuple(tl) => {
             var k: i32 = 0;
@@ -23120,7 +23154,14 @@ function tuple_arg_payload_fresh(ttype: string, arg: parser.Expr, structs: parse
                 if (tag == "") { return false; }
                 if (is_leaksafe_array_field(tag)) {
                     var isarr: boolean = false;
-                    match (tl.elements[k]) { parser.ExprArray(_) => { isarr = true; }, _ => {} }
+                    match (tl.elements[k]) {
+                        parser.ExprArray(_) => { isarr = true; },
+                        // A bare ident is admitted only for the retained flavour: the
+                        // construction retain is what the drop's dec gives back, and
+                        // nothing else at this position takes one.
+                        parser.ExprIdent(_) => { isarr = ident_arr_ok; },
+                        _ => {}
+                    }
                     if (!isarr) { return false; }
                 } else if (tag == "string[]") {
                     // A string-ARRAY position must be an array literal of fresh
@@ -23139,7 +23180,7 @@ function tuple_arg_payload_fresh(ttype: string, arg: parser.Expr, structs: parse
                     }
                     if (!isfs) { return false; }
                 } else if (tag.len() >= 2 && tag[0:1] == "(") {
-                    if (!tuple_arg_payload_fresh(tag, tl.elements[k], structs)) { return false; }
+                    if (!tuple_arg_payload_droppable(tag, tl.elements[k], structs, ident_arr_ok)) { return false; }
                 } else if (decl_is_struct(structs, tag)) {
                     // A reclaim-STRUCT position must be a FRESH struct literal so the
                     // type-driven drop dec's a sole-owned box (an ident alias would
@@ -26233,10 +26274,11 @@ function aliased_array_names_of(body: parser.Stmt[]): string[] {
 // position, so both map-reclaim gates refuse it: alias_idents_in_value credits
 // the alias and expr_unsafe_for calls the element an escape. Nothing on the
 // TUPLE side takes over — tuple construction emits no rc_inc for a map slot, and
-// emit_tuple_child_drops / emit_tuple_type_child_drops both skip a bare-ident
-// element (the latter can never even see one: tuple_arg_payload_fresh refuses a
-// Map-typed position outright). So the map box ends up with no owner at all and
-// leaks every round, where native is flat.
+// emit_tuple_child_drops skips a bare-ident element, and emit_tuple_type_child_drops
+// never sees a Map-typed one — both payload predicates refuse that position outright,
+// which is what keeps the ident widening for ARRAY positions (#7281) clear of this
+// case. So the map box ends up with no owner at all and leaks every round, where
+// native is flat.
 //
 // Exactly ONE release is owed, and the local is the one that owes it: with no
 // retain at construction the tuple holds a BARE pointer, so `m` and `t.1` are one
@@ -27058,12 +27100,18 @@ function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructD
 //
 // The sweep has no init literal to consult, so it must free by TYPE
 // (emit_tuple_type_child_drops), and that helper dec's every rc-typed position
-// blind. tuple_arg_payload_fresh is the gate that makes blind sound — the same one
-// OPTTUP already uses for the same helper — and it is why this is a separate,
-// stricter credit rather than a reuse of "TUPRC:". tuple_lit_rc_reclaimable admits a
-// bare-ident element, so `var t: (i32[], i32[]) = (xs, [i, i+2])` is "TUPRC:" while
-// position 0 holds a LIVE LOCAL's buffer; sweeping that by type would free `xs`
-// underneath its owner — #6148's use-after-free class exactly.
+// blind. tuple_arg_payload_retained is the gate that makes blind sound, and it is
+// why this is a separate, stricter credit rather than a reuse of "TUPRC:".
+//
+// The question that gate asks is whether the tuple holds a COUNTED REFERENCE to
+// every rc position, not whether it sole-owns one. A bare-ident element qualifies:
+// lower_expr's ExprTuple arm rc_inc's an element naming an rc-container local, so
+// `var t: (i32[], i32[]) = (xs, [i, i+2])` has the tuple as a second owner of `xs`'s
+// buffer and the type-driven dec gives exactly that retain back — `xs`'s own sweep
+// still spends the local's reference. Refusing the mixed form left it in neither
+// class and so released NOTHING, box included: 120 B/round unbounded (#7281).
+// OPTTUP and the array-of-tuples element keep the strict tuple_arg_payload_fresh,
+// where the payload is freed without its own box in the same breath.
 //
 // Requires the declaration's tuple ANNOTATION: the type is what the sweep frees by,
 // and an un-annotated binding gives it nothing to judge positions with.
@@ -27098,7 +27146,7 @@ function stmt_assigns_fresh_rc_tuple(st: parser.Stmt, name: string, ttype: strin
         parser.StmtAssign(a) => {
             if (a.target != name) { return true; }
             return tuple_lit_rc_reclaimable(a.value, ttype, structs)
-                && tuple_arg_payload_fresh(ttype, a.value, structs);
+                && tuple_arg_payload_retained(ttype, a.value, structs);
         },
         parser.StmtIf(f) => {
             return all_assigns_fresh_rc_tuple(f.then_body, name, ttype, structs)
@@ -27130,7 +27178,7 @@ function collect_sweepable_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.Str
         parser.StmtVar(v) => {
             if (v.type_name.len() < 2 || v.type_name[0:1] != "(") { return acc; }
             if (!tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return acc; }
-            if (!tuple_arg_payload_fresh(v.type_name, v.init, structs)) { return acc; }
+            if (!tuple_arg_payload_retained(v.type_name, v.init, structs)) { return acc; }
             return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
         },
         parser.StmtIf(iff) => {
@@ -32019,9 +32067,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
                 // "TUPRC:", each load-bearing:
                 //   - a tuple ANNOTATION, since the sweep frees by TYPE (it has no
                 //     init literal at exit);
-                //   - tuple_arg_payload_fresh, so every rc-typed position is a fresh
-                //     literal the blind type-driven drop sole-owns — without it
-                //     `(xs, [i, i+2])` would free a live local's buffer;
+                //   - tuple_arg_payload_retained, so the tuple holds a counted
+                //     reference to every rc-typed position the blind type-driven drop
+                //     dec's: a fresh literal it sole-owns, or a bare ident the
+                //     construction retained (#7281);
                 //   - not reassigned, because the assign path emits no release for
                 //     this class, so the final value's shape cannot be judged from
                 //     the declaration alone.
@@ -36812,8 +36861,9 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
 
 // slot_is_reclaimable_rctuple_sweep: a "TUPRC:" slot whose FINAL value the scope-exit
 // sweep may deep-free too — credited "TUPRCS:" (#6127), which additionally requires a
-// tuple annotation, tuple_arg_payload_fresh (every rc position a fresh literal, so the
-// type-driven drop sole-owns it), and no reassignment. Strictly narrower than
+// tuple annotation, tuple_arg_payload_retained (every rc position either a fresh
+// literal the tuple sole-owns or a bare ident the construction retained, so the
+// type-driven drop's dec is balanced either way), and no reassignment. Narrower than
 // slot_is_reclaimable_rctuple, so the rebind path's set is unchanged.
 function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
