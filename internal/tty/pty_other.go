@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package e2eharness
+package tty
 
 import (
 	"errors"

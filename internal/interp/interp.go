@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/tty"
 )
 
 // tcpListenerHandle / tcpConnHandle abstract the host TCP
@@ -2482,10 +2483,7 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("isatty: expected number arg, got %T", args[0])
 	}
-	if fd < 0 {
-		return Bool(false), nil
-	}
-	return Bool(isattyFd(int(fd))), nil
+	return Bool(tty.IsTerminal(int(fd))), nil
 }
 
 // builtinStrbufReset zeroes the global string-builder buffer.

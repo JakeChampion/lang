@@ -1,6 +1,6 @@
 //go:build darwin
 
-package e2eharness
+package tty
 
 import (
 	"bytes"

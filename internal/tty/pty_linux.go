@@ -1,6 +1,6 @@
 //go:build linux
 
-package e2eharness
+package tty
 
 import (
 	"fmt"
