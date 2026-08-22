@@ -10097,57 +10097,28 @@ function e032_call_check(c: parser.ExprCall, lastfn: string[], cur: Scope): util
   return out;
 }
 
+// e032_expr collects the E032 diagnostics an expression contributes — a `use`
+// binding whose callee has no signature, or whose source is not an identifier.
+//
+// It PRUNES at ExprLambda and hands the body to e032_stmts, the statement walk,
+// rather than letting astwalk descend: a lambda body's `use` bindings are
+// statements, and e032_stmts is what knows how to read them.
 function e032_expr(e: parser.Expr, lastfn: string[], cur: Scope): util.Diag[] {
-  var out: util.Diag[] = [];
-  match (e) {
-    parser.ExprCall(c) => {
-      out = util.append_diags(out, e032_call_check(c, lastfn, cur));
-      out = util.append_diags(out, e032_expr(c.callee, lastfn, cur));
-      for arg in c.args {
-        out = util.append_diags(out, e032_expr(arg, lastfn, cur));
-      }
-    },
-    parser.ExprBinary(b) => {
-      out = util.append_diags(out, e032_expr(b.left, lastfn, cur));
-      out = util.append_diags(out, e032_expr(b.right, lastfn, cur));
-    },
-    parser.ExprUnary(u) => {
-      out = util.append_diags(out, e032_expr(u.operand, lastfn, cur));
-    },
-    parser.ExprLambda(lm) => {
-      out = util.append_diags(out, e032_stmts(lm.body, lastfn, cur));
-    },
-    parser.ExprArray(a) => {
-      for element in a.elements {
-        out = util.append_diags(out, e032_expr(element, lastfn, cur));
-      }
-    },
-    parser.ExprTuple(t) => {
-      for element in t.elements {
-        out = util.append_diags(out, e032_expr(element, lastfn, cur));
-      }
-    },
-    parser.ExprIndex(ix) => {
-      out = util.append_diags(out, e032_expr(ix.array, lastfn, cur));
-      out = util.append_diags(out, e032_expr(ix.index, lastfn, cur));
-    },
-    parser.ExprSlice(sl) => {
-      out = util.append_diags(out, e032_expr(sl.array, lastfn, cur));
-    },
-    parser.ExprFieldAccess(fa) => {
-      out = util.append_diags(out, e032_expr(fa.obj, lastfn, cur));
-    },
-    parser.ExprStructLit(sx) => {
-      if (sx.has_base) {
-        out = util.append_diags(out, e032_expr(sx.base, lastfn, cur));
-      }
-      for field_value in sx.field_values {
-        out = util.append_diags(out, e032_expr(field_value, lastfn, cur));
-      }
-    },
-    _ => {}
+  function at(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprCall(c) => { return util.append_diags(acc, e032_call_check(c, lastfn, cur)); },
+      parser.ExprLambda(lm) => { return util.append_diags(acc, e032_stmts(lm.body, lastfn, cur)); },
+      _ => { return acc; }
+    }
   }
-  return out;
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_expr_pruned(e, none, at, not_into_lambda);
 }
 
 function e032_stmts(stmts: parser.Stmt[], lastfn: string[], s: Scope): util.Diag[] {
