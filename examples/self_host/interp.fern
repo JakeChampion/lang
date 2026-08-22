@@ -72,7 +72,7 @@ pub struct VTuple { elements: Value[] }
 // point of construction so free identifiers in the body resolve
 // against the enclosing function's bindings rather than the
 // caller's.
-pub struct VFunc { params: parser.ParamDecl[], ret_type: string, body: parser.Stmt[], captured_names: string[], captured_values: Value[] }
+pub struct VFunc { params: parser.ParamDecl[], ret_type: string, body: parser.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[] }
 // VMap models the runtime hash-map. Parallel arrays for keys
 // and values keep the implementation trivial — lookup is a
 // linear scan via value_eq. Realistic-size programs would
@@ -441,7 +441,13 @@ function v_variant(name: string, args: Value[]): Value {
 // with `enum_owner` set, and `module_variant_decls` adds the front-end's
 // injected enums on top. It is what tells a call to `Circle(7)` apart from
 // a call to a function nobody declared.
-pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[] }
+//
+// `types` runs parallel to names/values and holds each binding's DECLARED type
+// spelling, empty where the source wrote no annotation. The value plane is
+// untyped, so a static type — which `dyn Trait` dispatch needs and no runtime
+// value carries — can only enter through the annotation a binding was made
+// under; this is the slot the checker's Scope holds a Type in.
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[] }
 
 // new_env seeds a declaration-free scope: the bare-statement driver
 // (eval_program) has no module around it, so the only variants in reach are
@@ -449,22 +455,60 @@ pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[], ali
 function new_env(): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
+    var ts: string[] = [];
     var fs: parser.FuncDecl[] = [];
     var al: parser.TypeAlias[] = [];
     var no_structs: parser.StructDecl[] = [];
-    return Env { names: ns, values: vs, funcs: fs, aliases: al, variants: module_variant_decls(no_structs) };
+    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, variants: module_variant_decls(no_structs) };
 }
 
 function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
-    return Env { names: ns, values: vs, funcs: fs, aliases: al, variants: vd };
+    var ts: string[] = [];
+    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, variants: vd };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
+    return e.bind_decl(name, v, "");
+}
+
+// bind_decl binds a name under its DECLARED type: the annotation coerces the
+// value's integer width / float precision / empty-array element, and is kept in
+// the scope for the static questions the value cannot answer (see Env.types).
+function (e: Env) bind_decl(name: string, v: Value, decl_ty: string): Env {
     var ns: string[] = e.names.append(name);
-    var vs: Value[] = e.values.append(v);
-    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
+    var vs: Value[] = e.values.append(coerce_int_width(v, decl_ty));
+    var ts: string[] = e.types.append(decl_ty);
+    return Env { ...e, names: ns, values: vs, types: ts };
+}
+
+// decl_type reads back the declared type of a binding, "" when it has none or
+// the name is unbound. Newest binding wins, as lookup does.
+function (e: Env) decl_type(name: string): string {
+    var i: i32 = e.names.len() - 1;
+    while (i >= 0) {
+        if (e.names[i] == name) { return e.types[i]; }
+        i = i - 1;
+    }
+    return "";
+}
+
+// static_type_of names the declared type of an EXPRESSION. Only the shapes a
+// declaration reaches are answerable: an identifier's own annotation, and an
+// element of an array whose annotation names one. Everything else — a struct
+// field, a call result, an unannotated binding — has no declared type in reach
+// and answers "", which leaves dispatch on the runtime value alone.
+function (e: Env) static_type_of(x: parser.Expr): string {
+    match (x) {
+        parser.ExprIdent(id) => { return e.decl_type(id.name); },
+        parser.ExprIndex(ix) => {
+            var at: string = e.static_type_of(ix.array);
+            if (name_ends_with(at, "[]")) { return at[0 : at.len() - 2] + ""; }
+            return "";
+        },
+        _ => { return ""; }
+    }
 }
 
 function (e: Env) lookup(name: string): Value {
@@ -824,7 +868,7 @@ function (e: Env) update(name: string, v: Value): Env {
         }
         j = j + 1;
     }
-    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
+    return Env { ...e, names: ns, values: vs };
 }
 
 // =================== EVAL ====================
@@ -1403,12 +1447,14 @@ function resolve_ident_value(name: string, env: Env): Value {
             if (vfd.name == name && vfd.receiver_name.len() == 0) {
                 var no_names: string[] = [];
                 var no_values: Value[] = [];
+                var no_types: string[] = [];
                 return VFunc {
                     params: vfd.params,
                     ret_type: vfd.ret_type,
                     body: vfd.body,
                     captured_names: no_names,
-                    captured_values: no_values
+                    captured_values: no_values,
+                    captured_types: no_types
                 };
             }
             vfi = vfi + 1;
@@ -1561,6 +1607,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             } else {
                                 recv = eval_expr(fa.obj, env);
                                 if (is_err(recv)) { return recv; }
+                                name = dyn_method_name(name, env.static_type_of(fa.obj), recv, env.funcs);
                             }
                         }
                     }
@@ -1802,7 +1849,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 ret_type: lm.ret_type,
                 body: lm.body,
                 captured_names: env.names,
-                captured_values: env.values
+                captured_values: env.values,
+                captured_types: env.types
             };
         },
         parser.ExprMapLit(_) => { return v_err("Map literal: formatter-only node"); },
@@ -1907,7 +1955,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
 function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
-    var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [] };
+    var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
     match (cv) {
         VFunc(v) => { fv = v; },
         _ => { return v_err("call_closure: not a VFunc"); }
@@ -1915,10 +1963,10 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != fv.params.len()) {
         return v_err("arity mismatch calling closure");
     }
-    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, funcs: funcs, aliases: aliases, variants: variants };
+    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, variants: variants };
     var j: i32 = 0;
     while (j < fv.params.len()) {
-        env = env.bind(fv.params[j].name, coerce_int_width(args[j], fv.params[j].type_name));
+        env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
         j = j + 1;
     }
     var step: StepResult = eval_block(fv.body, env);
@@ -1956,7 +2004,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
     var env: Env = new_module_env(funcs, aliases, variants);
     var j: i32 = 0;
     while (j < fd.params.len()) {
-        env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
+        env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j = j + 1;
     }
     var step: StepResult = eval_block(fd.body, env);
@@ -2024,6 +2072,38 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
         t = t + 1;
     }
     return e;
+}
+
+// value_type_name derives the receiver-type name a runtime value dispatches
+// under: a struct's declared type_name, and the language's primitive
+// type-keyword for a scalar so `function (s: string) len(): i32 { … }`
+// dispatches. Arrays share the single "Array" namespace the checker registers
+// `(xs: T[])` methods under. "" for a value with no name to dispatch on.
+function value_type_name(v: Value): string {
+    match (v) {
+        VStruct(sv) => { return sv.type_name; },
+        VString(_) => { return "string"; },
+        VInt(_) => { return "i32"; },
+        VInt64(iv64) => { if (iv64.unsigned) { return "u64"; } return "i64"; },
+        VUint(_) => { return "u32"; },
+        VBool(_) => { return "boolean"; },
+        VFloat(_) => { return "f64"; },
+        VFloat32(_) => { return "f32"; },
+        VArr(_) => { return "Array"; },
+        _ => { return ""; }
+    }
+}
+
+// dyn_method_name resolves the method a call NAMES to the definition the
+// receiver's declared type MEANS. Two traits providing one method for one type
+// leave only the first claimant holding the bare name, so a `dyn` receiver whose
+// trait lost that race dispatches by the interposed `<Trait>.<m>` spelling
+// instead (parser.claim_method_name). Receivers with no declared dyn type, and
+// dyn receivers with no collision, keep the written name.
+function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: parser.FuncDecl[]): string {
+    var traits: string[] = parser.dyn_trait_set(decl_ty);
+    if (traits.len() == 0) { return name; }
+    return parser.dyn_provider_name(funcs, value_type_name(recv), traits, name);
 }
 
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
@@ -2173,10 +2253,6 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         },
         _ => { }
     }
-    // Derive the receiver-type name from the runtime Value
-    // variant. VStruct uses its declared type_name; primitive
-    // variants map to the language's primitive type-keywords
-    // so `function (s: string) len(): i32 { … }` dispatches.
     // A fn-valued TUPLE element: `(t.0)(5)` parses as a call whose callee is a
     // field access, so it arrives here as method dispatch (#6611). Checked
     // ahead of the recv_type derivation below, which has no name for a tuple
@@ -2194,18 +2270,9 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         },
         _ => {}
     }
-    var recv_type: string = "";
-    match (recv) {
-        VStruct(sv) => { recv_type = sv.type_name; },
-        VString(_) => { recv_type = "string"; },
-        VInt(_) => { recv_type = "i32"; },
-        VInt64(iv64) => { recv_type = "i64"; if (iv64.unsigned) { recv_type = "u64"; } },
-        VUint(_) => { recv_type = "u32"; },
-        VBool(_) => { recv_type = "boolean"; },
-        VFloat(_) => { recv_type = "f64"; },
-        VFloat32(_) => { recv_type = "f32"; },
-        VArr(_) => { recv_type = "Array"; },
-        _ => { return v_err("method `" + name + "`: receiver has no type name to dispatch on"); }
+    var recv_type: string = value_type_name(recv);
+    if (recv_type.len() == 0) {
+        return v_err("method `" + name + "`: receiver has no type name to dispatch on");
     }
     var i: i32 = 0;
     while (i < funcs.len()) {
@@ -2229,10 +2296,13 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             }
             var env: Env = new_module_env(funcs, aliases, variants);
             env = bind_tyargs(env, fd, true, recv, args);
+            // No declared type on the receiver: an array receiver is always the
+            // abstract `T[]`, whose element spelling would self-pin an empty
+            // VArr. `self` is never a trait object, so nothing asks for it.
             env = env.bind(fd.receiver_name, recv);
             var j: i32 = 0;
             while (j < fd.params.len()) {
-                env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
+                env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
@@ -2429,7 +2499,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             env = bind_tyargs(env, fd, false, no_recv, args);
             var j: i32 = 0;
             while (j < fd.params.len()) {
-                env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
+                env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
                 j = j + 1;
             }
             var step: StepResult = eval_block(fd.body, env);
@@ -2626,7 +2696,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     _ => { return step_stop(env, v_err("destructuring `" + v.name + "`: initialiser is not a tuple")); }
                 }
             }
-            var env2: Env = env.bind(v.name, coerce_int_width(val, v.type_name));
+            var env2: Env = env.bind_decl(v.name, val, v.type_name);
             return step_none(env2);
         },
         parser.StmtReturn(r) => {
@@ -2882,12 +2952,17 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // Each iteration binds f.var_name to the current
             // element, walks the body, then trims back to the
             // pre-loop env length. An in-body return short-
-            // circuits the rest of the iterations.
+            // circuits the rest of the iterations. The loop var is declared by
+            // the ELEMENT type of the iterable's annotation — `dyn Shape[]`
+            // makes each `x` a `dyn Shape`.
+            var elem_ty: string = "";
+            var iter_ty: string = env.static_type_of(f.iter);
+            if (name_ends_with(iter_ty, "[]")) { elem_ty = iter_ty[0 : iter_ty.len() - 2] + ""; }
             var base: i32 = env.names.len();
             var cur: Env = env;
             var i: i32 = 0;
             while (i < elems.len()) {
-                var iter_env: Env = cur.bind(f.var_name, elems[i]);
+                var iter_env: Env = cur.bind_decl(f.var_name, elems[i], elem_ty);
                 var step: StepResult = eval_block(f.body, iter_env);
                 if (step.sig == 2) {
                     return step_none(trim_env(step.env, base));
@@ -2921,13 +2996,15 @@ function trim_env(e: Env, base: i32): Env {
     if (e.names.len() <= base) { return e; }
     var ns: string[] = [];
     var vs: Value[] = [];
+    var ts: string[] = [];
     var i: i32 = 0;
     while (i < base) {
         ns = ns.append(e.names[i]);
         vs = vs.append(e.values[i]);
+        ts = ts.append(e.types[i]);
         i = i + 1;
     }
-    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
+    return Env { ...e, names: ns, values: vs, types: ts };
 }
 
 // eval_block walks a body, threading env forward through every
