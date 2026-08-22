@@ -213,8 +213,11 @@ func TestCodeSizeMarginalPerFunction(t *testing.T) {
 	ssaPer := float64(ssaHi-ssaLo) / float64(hi-lo)
 	smPer := float64(smHi-smLo) / float64(hi-lo)
 
-	// Measured after #6956: SSA 250 B/fn, stack machine 171 B/fn on this shape.
-	const wantSSAPer = 250.0
+	// Measured with the shipping pipeline — EmitProgram runs ssa.Optimize +
+	// ssa.Verify since #6979: SSA 246 B/fn, stack machine 178 B/fn on this
+	// shape. Optimize is worth 4 B/fn here, so the ceiling tightens with it;
+	// left at #6956's 250 it would have gone slack by exactly that much.
+	const wantSSAPer = 246.0
 	if ssaPer > wantSSAPer+1 {
 		t.Errorf("SSA marginal cost %.0f B/fn is above the pinned %.0f — a per-function emit regression",
 			ssaPer, wantSSAPer)

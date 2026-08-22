@@ -57,7 +57,7 @@ func textSizes(t *testing.T, src string) (ssaBytes, smBytes int) {
 // call-clobber-aware caller-save. See docs/SSA-REGALLOC-PLAN.md.
 //
 // On straight-line arithmetic and a counted loop the SSA backend emits
-// materially less code than the stack machine: measured arith 64.2%, loop 61.5%.
+// materially less code than the stack machine: measured arith 79.0%, loop 44.5%.
 // Those legs stay a cross-backend comparison.
 //
 // They are also both ONE-FUNCTION programs, which is the whole reason the large
@@ -86,7 +86,15 @@ func TestCodeSizeSmallerThanStackMachine(t *testing.T) {
 	}
 
 	// A large program of many varied functions — the shape a real codebase has.
-	const ssaLargeText = 17761 // measured after #6956; deterministic per commit
+	//
+	// This number went UP when EmitProgram started running ssa.Optimize +
+	// ssa.Verify, the pipeline the shipping SSA backends run (#6979). That is
+	// not an emit regression: 17761 was what this path produced with no
+	// optimiser, which is a configuration no user can invoke. Optimize costs
+	// 2.4% on this program — LICM hoisting lengthening live ranges into more
+	// spills is the obvious suspect and is not yet verified — and the honest
+	// figure for the shipping pipeline is the larger one.
+	const ssaLargeText = 18179 // measured with Optimize+Verify (#6979); deterministic per commit
 	ssaB, smB := textSizes(t, genMixedProgram(100))
 	if grew := float64(ssaB)/float64(ssaLargeText) - 1; grew > 0.02 {
 		t.Errorf("large program: SSA .text=%d is %.1f%% above the pinned %d — emit-quality regression?",

@@ -33,6 +33,23 @@ func EmitProgram(prog *ast.Program, info *checker.Info, numAlloc int) (string, e
 		if err != nil {
 			return "", fmt.Errorf("x86_64ssa: lift %q: %w", fn.Name, err)
 		}
+		// Same three steps, in the same order, as the shipping SSA backends
+		// (buildArm64SSA / buildWasmSSA in cmd/fern): lift, optimise, then
+		// verify. This path used to stop after the lift, which made every
+		// SSA-vs-stack-machine figure measured through it — including the ones
+		// docs/SSA-DECISION.md rests on — a measurement of a pipeline no user
+		// can invoke (#6979).
+		//
+		// Verify runs AFTER Optimize for the reason buildArm64SSA gives at
+		// length: the lifter deliberately leaves unreachable blocks for
+		// PruneUnreachable to drop, and Verify's use-before-def rule wants a
+		// def in an ancestor block, which nothing in an unreachable block has.
+		// It is what keeps this path's "unsupported constructs error rather
+		// than miscompile" promise from being only a comment.
+		ssa.Optimize(f)
+		if err := ssa.Verify(f); err != nil {
+			return "", fmt.Errorf("x86_64ssa: verify %q: %w", fn.Name, err)
+		}
 		funcs[fn.Name] = f
 		if fn.Name == "main" {
 			hasMain = true
