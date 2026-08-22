@@ -598,21 +598,22 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
 }
 
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
-    var out: string = "    .globl _start\n";
+    var parts: string[] = [];
+    parts = parts.append("    .globl _start\n");
     // Heap: a 1 GiB zero-initialised arena and an 8-byte bump pointer.
     // Leak-everything (no reclamation yet — Perceus RC is a separate track),
     // so it is sized generously (1 GiB) to leave room for a
     // self-hosted SSA compiler to process a real source bundle. It is .bss
     // (demand-zero): the large reservation costs nothing on disk and no
     // resident memory until touched.
-    out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 1073741824\n";
-    out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
+    parts = parts.append("    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 1073741824\n");
+    parts = parts.append("    .data\n__fern_ssa_hp:\n    .quad 0\n");
     // String literals as static [len, bytes…] .data constants.
-    out = out + emit_str_consts(funcs);
+    parts = parts.append(emit_str_consts(funcs));
     // f64 literals as .rodata .double constants (the assembler computes bits).
     var fconsts: string = emit_float_consts(funcs);
-    if (fconsts.len() > 0) { out = out + "    .section .rodata\n" + fconsts; }
-    out = out + "    .text\n";
+    if (fconsts.len() > 0) { parts = parts.append("    .section .rodata\n" + fconsts); }
+    parts = parts.append("    .text\n");
     // Collect each function body, then join once — a left fold here is
     // O(total²) and OOMs on a whole compiler's worth of asm.
     var chunks: string[] = [];
@@ -625,102 +626,102 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         chunks = chunks.append(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
-    out = out + util.str_join_chunks(chunks);
+    parts = parts.append(util.str_join_chunks(chunks));
     // __fern_ssa_print(x0 = string handle): write each byte to stdout, then a
     // trailing newline — Fern's print / eprint append a '\n' (the native
     // backend, the interpreter, and the AST emitters all do). The string is
     // [len, b0, …] as 8-byte words; each byte's low octet is at its word
     // address (little-endian), so write 1 byte per word.
-    out = out + "__fern_ssa_print:\n";
-    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-    out = out + "    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n";
-    out = out + "    mov x19, x0\n";              // handle
-    out = out + "    mov w22, w1\n";               // fd
-    out = out + "    ldr w20, [x19]\n";            // len = word[0]
-    out = out + "    mov w21, #0\n";               // i = 0
-    out = out + ".Lfsp_loop:\n";
-    out = out + "    cmp w21, w20\n    b.ge .Lfsp_done\n";
-    out = out + "    add w0, w21, #1\n";           // i+1
-    out = out + "    sbfiz x1, x0, #3, #32\n";      // (i+1)*8
-    out = out + "    add x1, x19, x1\n";            // &word[i+1] = byte address
-    out = out + "    mov x0, x22\n    mov x2, #1\n    mov x8, #64\n    svc #0\n";
-    out = out + "    add w21, w21, #1\n    b .Lfsp_loop\n";
-    out = out + ".Lfsp_done:\n";
+    parts = parts.append("__fern_ssa_print:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n");              // handle
+    parts = parts.append("    mov w22, w1\n");               // fd
+    parts = parts.append("    ldr w20, [x19]\n");            // len = word[0]
+    parts = parts.append("    mov w21, #0\n");               // i = 0
+    parts = parts.append(".Lfsp_loop:\n");
+    parts = parts.append("    cmp w21, w20\n    b.ge .Lfsp_done\n");
+    parts = parts.append("    add w0, w21, #1\n");           // i+1
+    parts = parts.append("    sbfiz x1, x0, #3, #32\n");      // (i+1)*8
+    parts = parts.append("    add x1, x19, x1\n");            // &word[i+1] = byte address
+    parts = parts.append("    mov x0, x22\n    mov x2, #1\n    mov x8, #64\n    svc #0\n");
+    parts = parts.append("    add w21, w21, #1\n    b .Lfsp_loop\n");
+    parts = parts.append(".Lfsp_done:\n");
     // Trailing newline: write one '\n' byte from a scratch stack slot.
-    out = out + "    sub sp, sp, #16\n    mov w0, #10\n    strb w0, [sp]\n";
-    out = out + "    mov x1, sp\n    mov x0, x22\n    mov x2, #1\n    mov x8, #64\n    svc #0\n";
-    out = out + "    add sp, sp, #16\n";
-    out = out + "    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
+    parts = parts.append("    sub sp, sp, #16\n    mov w0, #10\n    strb w0, [sp]\n");
+    parts = parts.append("    mov x1, sp\n    mov x0, x22\n    mov x2, #1\n    mov x8, #64\n    svc #0\n");
+    parts = parts.append("    add sp, sp, #16\n");
+    parts = parts.append("    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
     // __fern_ssa_concat(x0 = a, x1 = b) → x0: new length-prefixed string.
     // Leaf (no bl), so it uses caller-saved x9..x15 freely — no frame.
-    out = out + "__fern_ssa_concat:\n";
-    out = out + "    ldr w9, [x0]\n";              // lenA
-    out = out + "    ldr w10, [x1]\n";             // lenB
-    out = out + "    add w11, w9, w10\n";          // total
-    out = out + "    adrp x12, __fern_ssa_hp\n    add x12, x12, :lo12:__fern_ssa_hp\n";
-    out = out + "    ldr x13, [x12]\n";            // result = hp
-    out = out + "    add w14, w11, #1\n    sbfiz x14, x14, #3, #32\n    add x14, x13, x14\n    str x14, [x12]\n";   // hp += (total+1)*8
-    out = out + "    str w11, [x13]\n";            // result[0] = total
-    out = out + "    mov w11, #0\n";               // i = 0
-    out = out + ".Lcat_a:\n    cmp w11, w9\n    b.ge .Lcat_a_done\n";
-    out = out + "    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n";
-    out = out + "    ldr w14, [x0, x12]\n    str w14, [x13, x12]\n";
-    out = out + "    add w11, w11, #1\n    b .Lcat_a\n.Lcat_a_done:\n";
-    out = out + "    mov w11, #0\n";               // j = 0
-    out = out + ".Lcat_b:\n    cmp w11, w10\n    b.ge .Lcat_b_done\n";
-    out = out + "    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n    ldr w15, [x1, x12]\n";    // b[j+1]
-    out = out + "    add w12, w9, #1\n    add w12, w12, w11\n    sbfiz x12, x12, #3, #32\n";       // dst word = lenA+1+j
-    out = out + "    str w15, [x13, x12]\n";
-    out = out + "    add w11, w11, #1\n    b .Lcat_b\n.Lcat_b_done:\n";
-    out = out + "    mov x0, x13\n    ret\n";
+    parts = parts.append("__fern_ssa_concat:\n");
+    parts = parts.append("    ldr w9, [x0]\n");              // lenA
+    parts = parts.append("    ldr w10, [x1]\n");             // lenB
+    parts = parts.append("    add w11, w9, w10\n");          // total
+    parts = parts.append("    adrp x12, __fern_ssa_hp\n    add x12, x12, :lo12:__fern_ssa_hp\n");
+    parts = parts.append("    ldr x13, [x12]\n");            // result = hp
+    parts = parts.append("    add w14, w11, #1\n    sbfiz x14, x14, #3, #32\n    add x14, x13, x14\n    str x14, [x12]\n");   // hp += (total+1)*8
+    parts = parts.append("    str w11, [x13]\n");            // result[0] = total
+    parts = parts.append("    mov w11, #0\n");               // i = 0
+    parts = parts.append(".Lcat_a:\n    cmp w11, w9\n    b.ge .Lcat_a_done\n");
+    parts = parts.append("    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n");
+    parts = parts.append("    ldr w14, [x0, x12]\n    str w14, [x13, x12]\n");
+    parts = parts.append("    add w11, w11, #1\n    b .Lcat_a\n.Lcat_a_done:\n");
+    parts = parts.append("    mov w11, #0\n");               // j = 0
+    parts = parts.append(".Lcat_b:\n    cmp w11, w10\n    b.ge .Lcat_b_done\n");
+    parts = parts.append("    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n    ldr w15, [x1, x12]\n");    // b[j+1]
+    parts = parts.append("    add w12, w9, #1\n    add w12, w12, w11\n    sbfiz x12, x12, #3, #32\n");       // dst word = lenA+1+j
+    parts = parts.append("    str w15, [x13, x12]\n");
+    parts = parts.append("    add w11, w11, #1\n    b .Lcat_b\n.Lcat_b_done:\n");
+    parts = parts.append("    mov x0, x13\n    ret\n");
     // __fern_ssa_streq(x0 = a, x1 = b) → w0 (1 if equal content else 0).
-    out = out + "__fern_ssa_streq:\n";
-    out = out + "    ldr w9, [x0]\n";              // lenA
-    out = out + "    ldr w10, [x1]\n";             // lenB
-    out = out + "    cmp w9, w10\n    b.ne .Lsne_no\n";
-    out = out + "    mov w11, #0\n";               // i = 0
-    out = out + ".Lsne_loop:\n    cmp w11, w9\n    b.ge .Lsne_yes\n";
-    out = out + "    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n";
-    out = out + "    ldr w13, [x0, x12]\n    ldr w14, [x1, x12]\n";
-    out = out + "    cmp w13, w14\n    b.ne .Lsne_no\n";
-    out = out + "    add w11, w11, #1\n    b .Lsne_loop\n";
-    out = out + ".Lsne_yes:\n    mov w0, #1\n    ret\n";
-    out = out + ".Lsne_no:\n    mov w0, #0\n    ret\n";
+    parts = parts.append("__fern_ssa_streq:\n");
+    parts = parts.append("    ldr w9, [x0]\n");              // lenA
+    parts = parts.append("    ldr w10, [x1]\n");             // lenB
+    parts = parts.append("    cmp w9, w10\n    b.ne .Lsne_no\n");
+    parts = parts.append("    mov w11, #0\n");               // i = 0
+    parts = parts.append(".Lsne_loop:\n    cmp w11, w9\n    b.ge .Lsne_yes\n");
+    parts = parts.append("    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n");
+    parts = parts.append("    ldr w13, [x0, x12]\n    ldr w14, [x1, x12]\n");
+    parts = parts.append("    cmp w13, w14\n    b.ne .Lsne_no\n");
+    parts = parts.append("    add w11, w11, #1\n    b .Lsne_loop\n");
+    parts = parts.append(".Lsne_yes:\n    mov w0, #1\n    ret\n");
+    parts = parts.append(".Lsne_no:\n    mov w0, #0\n    ret\n");
     // strbuf — the global amortised-O(1) string builder. Byte buffer in .bss
     // (256 MiB, demand-zero) + a length. append copies a source string's
     // bytes (read from the [len, byte-per-word] layout); take materialises a
     // fresh [len, bytes…] string and clears the buffer. Leaf helpers (x9..x15).
-    out = out + "    .bss\n    .align 8\n__fern_ssa_strbuf_data:\n    .zero 268435456\n";
-    out = out + "    .data\n    .align 8\n__fern_ssa_strbuf_len:\n    .quad 0\n";
-    out = out + "    .text\n";
-    out = out + "__fern_ssa_strbuf_reset:\n";
-    out = out + "    adrp x9, __fern_ssa_strbuf_len\n    add x9, x9, :lo12:__fern_ssa_strbuf_len\n    str xzr, [x9]\n    ret\n";
-    out = out + "__fern_ssa_strbuf_append:\n";              // x0 = source string
-    out = out + "    ldr w9, [x0]\n    cbz w9, .Lsba_done\n";
-    out = out + "    adrp x10, __fern_ssa_strbuf_data\n    add x10, x10, :lo12:__fern_ssa_strbuf_data\n";
-    out = out + "    adrp x11, __fern_ssa_strbuf_len\n    add x11, x11, :lo12:__fern_ssa_strbuf_len\n";
-    out = out + "    ldr x12, [x11]\n    add x10, x10, x12\n";   // dst = data + curlen
-    out = out + "    mov w13, #0\n";                       // i = 0
-    out = out + ".Lsba_loop:\n    cmp w13, w9\n    b.ge .Lsba_fin\n";
-    out = out + "    add w14, w13, #1\n    sbfiz x14, x14, #3, #32\n";   // (i+1)*8
-    out = out + "    ldrb w15, [x0, x14]\n    strb w15, [x10]\n    add x10, x10, #1\n";
-    out = out + "    add w13, w13, #1\n    b .Lsba_loop\n";
-    out = out + ".Lsba_fin:\n    ldr x12, [x11]\n    add x12, x12, w9, uxtw\n    str x12, [x11]\n";
-    out = out + ".Lsba_done:\n    ret\n";
-    out = out + "__fern_ssa_strbuf_take:\n";               // → x0
-    out = out + "    adrp x11, __fern_ssa_strbuf_len\n    add x11, x11, :lo12:__fern_ssa_strbuf_len\n";
-    out = out + "    ldr x9, [x11]\n";                     // total
-    out = out + "    adrp x12, __fern_ssa_hp\n    add x12, x12, :lo12:__fern_ssa_hp\n";
-    out = out + "    ldr x13, [x12]\n";                    // result = hp
-    out = out + "    add x14, x9, #1\n    lsl x14, x14, #3\n    add x14, x13, x14\n    str x14, [x12]\n";   // hp += (total+1)*8
-    out = out + "    str w9, [x13]\n";                     // result[0] = total
-    out = out + "    adrp x10, __fern_ssa_strbuf_data\n    add x10, x10, :lo12:__fern_ssa_strbuf_data\n";
-    out = out + "    mov x15, #0\n";                       // i = 0
-    out = out + ".Lsbt_loop:\n    cmp x15, x9\n    b.ge .Lsbt_fin\n";
-    out = out + "    ldrb w14, [x10, x15]\n";               // byte i
-    out = out + "    add x12, x15, #1\n    lsl x12, x12, #3\n    str w14, [x13, x12]\n";   // result[i+1] = byte
-    out = out + "    add x15, x15, #1\n    b .Lsbt_loop\n";
-    out = out + ".Lsbt_fin:\n    str xzr, [x11]\n    mov x0, x13\n    ret\n";
+    parts = parts.append("    .bss\n    .align 8\n__fern_ssa_strbuf_data:\n    .zero 268435456\n");
+    parts = parts.append("    .data\n    .align 8\n__fern_ssa_strbuf_len:\n    .quad 0\n");
+    parts = parts.append("    .text\n");
+    parts = parts.append("__fern_ssa_strbuf_reset:\n");
+    parts = parts.append("    adrp x9, __fern_ssa_strbuf_len\n    add x9, x9, :lo12:__fern_ssa_strbuf_len\n    str xzr, [x9]\n    ret\n");
+    parts = parts.append("__fern_ssa_strbuf_append:\n");              // x0 = source string
+    parts = parts.append("    ldr w9, [x0]\n    cbz w9, .Lsba_done\n");
+    parts = parts.append("    adrp x10, __fern_ssa_strbuf_data\n    add x10, x10, :lo12:__fern_ssa_strbuf_data\n");
+    parts = parts.append("    adrp x11, __fern_ssa_strbuf_len\n    add x11, x11, :lo12:__fern_ssa_strbuf_len\n");
+    parts = parts.append("    ldr x12, [x11]\n    add x10, x10, x12\n");   // dst = data + curlen
+    parts = parts.append("    mov w13, #0\n");                       // i = 0
+    parts = parts.append(".Lsba_loop:\n    cmp w13, w9\n    b.ge .Lsba_fin\n");
+    parts = parts.append("    add w14, w13, #1\n    sbfiz x14, x14, #3, #32\n");   // (i+1)*8
+    parts = parts.append("    ldrb w15, [x0, x14]\n    strb w15, [x10]\n    add x10, x10, #1\n");
+    parts = parts.append("    add w13, w13, #1\n    b .Lsba_loop\n");
+    parts = parts.append(".Lsba_fin:\n    ldr x12, [x11]\n    add x12, x12, w9, uxtw\n    str x12, [x11]\n");
+    parts = parts.append(".Lsba_done:\n    ret\n");
+    parts = parts.append("__fern_ssa_strbuf_take:\n");               // → x0
+    parts = parts.append("    adrp x11, __fern_ssa_strbuf_len\n    add x11, x11, :lo12:__fern_ssa_strbuf_len\n");
+    parts = parts.append("    ldr x9, [x11]\n");                     // total
+    parts = parts.append("    adrp x12, __fern_ssa_hp\n    add x12, x12, :lo12:__fern_ssa_hp\n");
+    parts = parts.append("    ldr x13, [x12]\n");                    // result = hp
+    parts = parts.append("    add x14, x9, #1\n    lsl x14, x14, #3\n    add x14, x13, x14\n    str x14, [x12]\n");   // hp += (total+1)*8
+    parts = parts.append("    str w9, [x13]\n");                     // result[0] = total
+    parts = parts.append("    adrp x10, __fern_ssa_strbuf_data\n    add x10, x10, :lo12:__fern_ssa_strbuf_data\n");
+    parts = parts.append("    mov x15, #0\n");                       // i = 0
+    parts = parts.append(".Lsbt_loop:\n    cmp x15, x9\n    b.ge .Lsbt_fin\n");
+    parts = parts.append("    ldrb w14, [x10, x15]\n");               // byte i
+    parts = parts.append("    add x12, x15, #1\n    lsl x12, x12, #3\n    str w14, [x13, x12]\n");   // result[i+1] = byte
+    parts = parts.append("    add x15, x15, #1\n    b .Lsbt_loop\n");
+    parts = parts.append(".Lsbt_fin:\n    str xzr, [x11]\n    mov x0, x13\n    ret\n");
     // File I/O — read_file / write_file lowered to the Linux aarch64 syscall
     // runtime (openat=56, read=63, write=64, close=57, lseek=62; AT_FDCWD
     // -100). Strings here use the SSA [len, byte-per-8-byte-word] layout, so
@@ -729,139 +730,139 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     // Both allocate via __fern_ssa_alloc; the result is a fixed 2-word
     // [tag@0, payload@8] box matching the SSA Option/Result lowering.
     // __fern_ssa_alloc(x0 = bytes) → x0 = base (8-aligned bump off __fern_ssa_hp).
-    out = out + "__fern_ssa_alloc:\n";
-    out = out + "    add x0, x0, #7\n    lsr x0, x0, #3\n    lsl x1, x0, #3\n";   // round up to 8
-    out = out + "    adrp x2, __fern_ssa_hp\n    add x2, x2, :lo12:__fern_ssa_hp\n";
-    out = out + "    ldr x0, [x2]\n    add x3, x0, x1\n    str x3, [x2]\n    ret\n";
+    parts = parts.append("__fern_ssa_alloc:\n");
+    parts = parts.append("    add x0, x0, #7\n    lsr x0, x0, #3\n    lsl x1, x0, #3\n");   // round up to 8
+    parts = parts.append("    adrp x2, __fern_ssa_hp\n    add x2, x2, :lo12:__fern_ssa_hp\n");
+    parts = parts.append("    ldr x0, [x2]\n    add x3, x0, x1\n    str x3, [x2]\n    ret\n");
     // __fern_ssa_read_file(x0 = path string box) → x0 = Result box:
     // [tag=0@0, payload=string@8] Ok on success, [tag=1@0, payload=0@8] Err on
     // any I/O error. Packs the path to a NUL-terminated C string, opens
     // O_RDONLY, sizes via lseek(SEEK_END), reads to a packed byte buffer, then
     // expands those bytes into a fresh SSA [len, byte-per-word] string.
-    out = out + "__fern_ssa_read_file:\n";
-    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-    out = out + "    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n    stp x23, x24, [sp, #-16]!\n";
-    out = out + "    mov x19, x0\n";                  // path box
-    out = out + "    ldr w21, [x19]\n";               // path len (word0)
-    out = out + "    add x0, x21, #1\n    bl __fern_ssa_alloc\n    mov x22, x0\n";   // pathz buffer
-    out = out + "    mov x9, #0\n";
-    out = out + ".Lssa_rdf_copy:\n    cmp x9, x21\n    b.ge .Lssa_rdf_copydone\n";
-    out = out + "    add x10, x9, #1\n    lsl x10, x10, #3\n    ldr w11, [x19, x10]\n";   // path word[i+1] low byte
-    out = out + "    strb w11, [x22, x9]\n    add x9, x9, #1\n    b .Lssa_rdf_copy\n";
-    out = out + ".Lssa_rdf_copydone:\n    mov w11, #0\n    strb w11, [x22, x21]\n";   // NUL
-    out = out + "    mov x0, #-100\n    mov x1, x22\n    mov x2, #0\n    mov x3, #0\n    mov x8, #56\n    svc #0\n";   // openat O_RDONLY
-    out = out + "    cmp x0, #0\n    b.lt .Lssa_rdf_err\n    mov x23, x0\n";   // fd
-    out = out + "    mov x0, x23\n    mov x1, #0\n    mov x2, #2\n    mov x8, #62\n    svc #0\n    mov x24, x0\n";   // lseek SEEK_END → size
-    out = out + "    mov x0, x23\n    mov x1, #0\n    mov x2, #0\n    mov x8, #62\n    svc #0\n";   // lseek SEEK_SET 0
-    out = out + "    mov x0, x24\n    bl __fern_ssa_alloc\n    mov x24, x0\n    mov x20, x0\n    mov x21, #0\n";   // packed buf base / write ptr / total
-    out = out + ".Lssa_rdf_rdloop:\n    mov x0, x23\n    mov x1, x20\n    ldr x2, =1048576\n    mov x8, #63\n    svc #0\n";   // read up to 1 MiB
-    out = out + "    cmp x0, #0\n    b.le .Lssa_rdf_rddone\n    add x21, x21, x0\n    add x20, x20, x0\n    b .Lssa_rdf_rdloop\n";
-    out = out + ".Lssa_rdf_rddone:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n";   // close
+    parts = parts.append("__fern_ssa_read_file:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n    stp x23, x24, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n");                  // path box
+    parts = parts.append("    ldr w21, [x19]\n");               // path len (word0)
+    parts = parts.append("    add x0, x21, #1\n    bl __fern_ssa_alloc\n    mov x22, x0\n");   // pathz buffer
+    parts = parts.append("    mov x9, #0\n");
+    parts = parts.append(".Lssa_rdf_copy:\n    cmp x9, x21\n    b.ge .Lssa_rdf_copydone\n");
+    parts = parts.append("    add x10, x9, #1\n    lsl x10, x10, #3\n    ldr w11, [x19, x10]\n");   // path word[i+1] low byte
+    parts = parts.append("    strb w11, [x22, x9]\n    add x9, x9, #1\n    b .Lssa_rdf_copy\n");
+    parts = parts.append(".Lssa_rdf_copydone:\n    mov w11, #0\n    strb w11, [x22, x21]\n");   // NUL
+    parts = parts.append("    mov x0, #-100\n    mov x1, x22\n    mov x2, #0\n    mov x3, #0\n    mov x8, #56\n    svc #0\n");   // openat O_RDONLY
+    parts = parts.append("    cmp x0, #0\n    b.lt .Lssa_rdf_err\n    mov x23, x0\n");   // fd
+    parts = parts.append("    mov x0, x23\n    mov x1, #0\n    mov x2, #2\n    mov x8, #62\n    svc #0\n    mov x24, x0\n");   // lseek SEEK_END → size
+    parts = parts.append("    mov x0, x23\n    mov x1, #0\n    mov x2, #0\n    mov x8, #62\n    svc #0\n");   // lseek SEEK_SET 0
+    parts = parts.append("    mov x0, x24\n    bl __fern_ssa_alloc\n    mov x24, x0\n    mov x20, x0\n    mov x21, #0\n");   // packed buf base / write ptr / total
+    parts = parts.append(".Lssa_rdf_rdloop:\n    mov x0, x23\n    mov x1, x20\n    ldr x2, =1048576\n    mov x8, #63\n    svc #0\n");   // read up to 1 MiB
+    parts = parts.append("    cmp x0, #0\n    b.le .Lssa_rdf_rddone\n    add x21, x21, x0\n    add x20, x20, x0\n    b .Lssa_rdf_rdloop\n");
+    parts = parts.append(".Lssa_rdf_rddone:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n");   // close
     // Build SSA string [total, byte-per-word] from the packed buffer (x24).
-    out = out + "    add x0, x21, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x9, x0\n";   // strbox
-    out = out + "    str w21, [x9]\n";                // len = word0
-    out = out + "    mov x10, #0\n";
-    out = out + ".Lssa_rdf_expand:\n    cmp x10, x21\n    b.ge .Lssa_rdf_expanddone\n";
-    out = out + "    ldrb w11, [x24, x10]\n    add x12, x10, #1\n    lsl x12, x12, #3\n    str w11, [x9, x12]\n";   // strbox[i+1] = byte
-    out = out + "    add x10, x10, #1\n    b .Lssa_rdf_expand\n";
-    out = out + ".Lssa_rdf_expanddone:\n    mov x24, x9\n";   // strbox
-    out = out + "    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x24, [x0, #8]\n";   // Ok box
-    out = out + "    b .Lssa_rdf_ret\n";
-    out = out + ".Lssa_rdf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n";   // Err box
-    out = out + ".Lssa_rdf_ret:\n";
-    out = out + "    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
+    parts = parts.append("    add x0, x21, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x9, x0\n");   // strbox
+    parts = parts.append("    str w21, [x9]\n");                // len = word0
+    parts = parts.append("    mov x10, #0\n");
+    parts = parts.append(".Lssa_rdf_expand:\n    cmp x10, x21\n    b.ge .Lssa_rdf_expanddone\n");
+    parts = parts.append("    ldrb w11, [x24, x10]\n    add x12, x10, #1\n    lsl x12, x12, #3\n    str w11, [x9, x12]\n");   // strbox[i+1] = byte
+    parts = parts.append("    add x10, x10, #1\n    b .Lssa_rdf_expand\n");
+    parts = parts.append(".Lssa_rdf_expanddone:\n    mov x24, x9\n");   // strbox
+    parts = parts.append("    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x24, [x0, #8]\n");   // Ok box
+    parts = parts.append("    b .Lssa_rdf_ret\n");
+    parts = parts.append(".Lssa_rdf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n");   // Err box
+    parts = parts.append(".Lssa_rdf_ret:\n");
+    parts = parts.append("    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
     // __fern_ssa_write_file(x0 = path box, x1 = content box) → x0 = Result box:
     // [tag=0@0, 0@8] Ok(()) on success, [tag=1@0, 0@8] Err on any I/O error.
     // Packs the content (SSA word-per-byte → raw bytes) and the NUL-terminated
     // path, opens O_WRONLY|O_CREAT|O_TRUNC=577 mode 0644, writes, closes.
-    out = out + "__fern_ssa_write_file:\n";
-    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-    out = out + "    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n    stp x23, x24, [sp, #-16]!\n";
-    out = out + "    mov x19, x0\n";                  // path box
-    out = out + "    mov x20, x1\n";                  // content box
-    out = out + "    ldr w21, [x20]\n";               // content len
-    out = out + "    add x0, x21, #1\n    bl __fern_ssa_alloc\n    mov x22, x0\n";   // packed content buffer
-    out = out + "    mov x9, #0\n";
-    out = out + ".Lssa_wf_pack:\n    cmp x9, x21\n    b.ge .Lssa_wf_packdone\n";
-    out = out + "    add x10, x9, #1\n    lsl x10, x10, #3\n    ldr w11, [x20, x10]\n    strb w11, [x22, x9]\n";   // content word[i+1] → byte
-    out = out + "    add x9, x9, #1\n    b .Lssa_wf_pack\n";
-    out = out + ".Lssa_wf_packdone:\n";
-    out = out + "    ldr w23, [x19]\n";               // path len
-    out = out + "    add x0, x23, #1\n    bl __fern_ssa_alloc\n    mov x24, x0\n";   // pathz
-    out = out + "    mov x9, #0\n";
-    out = out + ".Lssa_wf_pcopy:\n    cmp x9, x23\n    b.ge .Lssa_wf_pcopydone\n";
-    out = out + "    add x10, x9, #1\n    lsl x10, x10, #3\n    ldr w11, [x19, x10]\n    strb w11, [x24, x9]\n";
-    out = out + "    add x9, x9, #1\n    b .Lssa_wf_pcopy\n";
-    out = out + ".Lssa_wf_pcopydone:\n    mov w11, #0\n    strb w11, [x24, x23]\n";   // NUL
-    out = out + "    mov x0, #-100\n    mov x1, x24\n    mov x2, #577\n    mov x3, #420\n    mov x8, #56\n    svc #0\n";   // openat O_WRONLY|O_CREAT|O_TRUNC, 0644
-    out = out + "    cmp x0, #0\n    b.lt .Lssa_wf_err\n    mov x23, x0\n    mov x24, #0\n";   // fd / written
-    out = out + ".Lssa_wf_loop:\n    cmp x24, x21\n    b.ge .Lssa_wf_done\n";
-    out = out + "    mov x0, x23\n    add x1, x22, x24\n    sub x2, x21, x24\n    mov x8, #64\n    svc #0\n";   // write remaining
-    out = out + "    cmp x0, #0\n    b.lt .Lssa_wf_errclose\n    add x24, x24, x0\n    b .Lssa_wf_loop\n";
-    out = out + ".Lssa_wf_done:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n";   // close
-    out = out + "    mov x0, #16\n    bl __fern_ssa_alloc\n    str xzr, [x0]\n    str xzr, [x0, #8]\n";   // Ok(()) box
-    out = out + "    b .Lssa_wf_ret\n";
-    out = out + ".Lssa_wf_errclose:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n";   // close, ignore result
-    out = out + ".Lssa_wf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n";   // Err box
-    out = out + ".Lssa_wf_ret:\n";
-    out = out + "    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
+    parts = parts.append("__fern_ssa_write_file:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n    stp x23, x24, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n");                  // path box
+    parts = parts.append("    mov x20, x1\n");                  // content box
+    parts = parts.append("    ldr w21, [x20]\n");               // content len
+    parts = parts.append("    add x0, x21, #1\n    bl __fern_ssa_alloc\n    mov x22, x0\n");   // packed content buffer
+    parts = parts.append("    mov x9, #0\n");
+    parts = parts.append(".Lssa_wf_pack:\n    cmp x9, x21\n    b.ge .Lssa_wf_packdone\n");
+    parts = parts.append("    add x10, x9, #1\n    lsl x10, x10, #3\n    ldr w11, [x20, x10]\n    strb w11, [x22, x9]\n");   // content word[i+1] → byte
+    parts = parts.append("    add x9, x9, #1\n    b .Lssa_wf_pack\n");
+    parts = parts.append(".Lssa_wf_packdone:\n");
+    parts = parts.append("    ldr w23, [x19]\n");               // path len
+    parts = parts.append("    add x0, x23, #1\n    bl __fern_ssa_alloc\n    mov x24, x0\n");   // pathz
+    parts = parts.append("    mov x9, #0\n");
+    parts = parts.append(".Lssa_wf_pcopy:\n    cmp x9, x23\n    b.ge .Lssa_wf_pcopydone\n");
+    parts = parts.append("    add x10, x9, #1\n    lsl x10, x10, #3\n    ldr w11, [x19, x10]\n    strb w11, [x24, x9]\n");
+    parts = parts.append("    add x9, x9, #1\n    b .Lssa_wf_pcopy\n");
+    parts = parts.append(".Lssa_wf_pcopydone:\n    mov w11, #0\n    strb w11, [x24, x23]\n");   // NUL
+    parts = parts.append("    mov x0, #-100\n    mov x1, x24\n    mov x2, #577\n    mov x3, #420\n    mov x8, #56\n    svc #0\n");   // openat O_WRONLY|O_CREAT|O_TRUNC, 0644
+    parts = parts.append("    cmp x0, #0\n    b.lt .Lssa_wf_err\n    mov x23, x0\n    mov x24, #0\n");   // fd / written
+    parts = parts.append(".Lssa_wf_loop:\n    cmp x24, x21\n    b.ge .Lssa_wf_done\n");
+    parts = parts.append("    mov x0, x23\n    add x1, x22, x24\n    sub x2, x21, x24\n    mov x8, #64\n    svc #0\n");   // write remaining
+    parts = parts.append("    cmp x0, #0\n    b.lt .Lssa_wf_errclose\n    add x24, x24, x0\n    b .Lssa_wf_loop\n");
+    parts = parts.append(".Lssa_wf_done:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n");   // close
+    parts = parts.append("    mov x0, #16\n    bl __fern_ssa_alloc\n    str xzr, [x0]\n    str xzr, [x0, #8]\n");   // Ok(()) box
+    parts = parts.append("    b .Lssa_wf_ret\n");
+    parts = parts.append(".Lssa_wf_errclose:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n");   // close, ignore result
+    parts = parts.append(".Lssa_wf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");   // Err box
+    parts = parts.append(".Lssa_wf_ret:\n");
+    parts = parts.append("    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
     // __fern_ssa_write(x0 = string handle): like __fern_ssa_print but with NO
     // trailing newline (the driver's raw-output primitive). One write syscall
     // per byte over the [len, byte-per-word] layout.
-    out = out + "__fern_ssa_write:\n";
-    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-    out = out + "    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n";
-    out = out + "    mov x19, x0\n";              // handle
-    out = out + "    ldr w20, [x19]\n";            // len = word[0]
-    out = out + "    mov w21, #0\n";               // i = 0
-    out = out + ".Lfsw_loop:\n";
-    out = out + "    cmp w21, w20\n    b.ge .Lfsw_done\n";
-    out = out + "    add w0, w21, #1\n";           // i+1
-    out = out + "    sbfiz x1, x0, #3, #32\n";      // (i+1)*8
-    out = out + "    add x1, x19, x1\n";            // &word[i+1] = byte address
-    out = out + "    mov x0, #1\n    mov x2, #1\n    mov x8, #64\n    svc #0\n";   // write(1, &byte, 1)
-    out = out + "    add w21, w21, #1\n    b .Lfsw_loop\n";
-    out = out + ".Lfsw_done:\n";
-    out = out + "    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
+    parts = parts.append("__fern_ssa_write:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n");              // handle
+    parts = parts.append("    ldr w20, [x19]\n");            // len = word[0]
+    parts = parts.append("    mov w21, #0\n");               // i = 0
+    parts = parts.append(".Lfsw_loop:\n");
+    parts = parts.append("    cmp w21, w20\n    b.ge .Lfsw_done\n");
+    parts = parts.append("    add w0, w21, #1\n");           // i+1
+    parts = parts.append("    sbfiz x1, x0, #3, #32\n");      // (i+1)*8
+    parts = parts.append("    add x1, x19, x1\n");            // &word[i+1] = byte address
+    parts = parts.append("    mov x0, #1\n    mov x2, #1\n    mov x8, #64\n    svc #0\n");   // write(1, &byte, 1)
+    parts = parts.append("    add w21, w21, #1\n    b .Lfsw_loop\n");
+    parts = parts.append(".Lfsw_done:\n");
+    parts = parts.append("    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
     // argv vector saved by _start (argc + &argv[0]) for __fern_ssa_args.
-    out = out + "    .bss\n    .align 8\n__fern_ssa_argc:\n    .zero 8\n__fern_ssa_argv:\n    .zero 8\n    .text\n";
+    parts = parts.append("    .bss\n    .align 8\n__fern_ssa_argc:\n    .zero 8\n__fern_ssa_argv:\n    .zero 8\n    .text\n");
     // __fern_ssa_args() → x0 = SSA string[] [argc, strptr0, …], each strptr a
     // fresh SSA [len, byte-per-word] string copied from the C argv[i]. Mirrors
     // read_file's C-string → SSA-string packing; x19-x24 survive __fern_ssa_alloc.
-    out = out + "__fern_ssa_args:\n";
-    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
-    out = out + "    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n    stp x23, x24, [sp, #-16]!\n";
-    out = out + "    adrp x9, __fern_ssa_argc\n    add x9, x9, :lo12:__fern_ssa_argc\n    ldr x19, [x9]\n";   // x19 = argc
-    out = out + "    add x0, x19, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x20, x0\n";   // arr base, (argc+1) words
-    out = out + "    str w19, [x20]\n";            // arr[0] = argc
-    out = out + "    adrp x9, __fern_ssa_argv\n    add x9, x9, :lo12:__fern_ssa_argv\n    ldr x21, [x9]\n";   // x21 = &argv[0]
-    out = out + "    mov x22, #0\n";               // i = 0
-    out = out + ".Lssa_args_loop:\n    cmp x22, x19\n    b.ge .Lssa_args_done\n";
-    out = out + "    ldr x23, [x21, x22, lsl #3]\n";   // x23 = argv[i] (C string)
-    out = out + "    mov x24, #0\n";               // strlen
-    out = out + ".Lssa_args_strlen:\n    ldrb w9, [x23, x24]\n    cbz w9, .Lssa_args_strdone\n    add x24, x24, #1\n    b .Lssa_args_strlen\n";
-    out = out + ".Lssa_args_strdone:\n";
-    out = out + "    add x0, x24, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x9, x0\n";   // SSA string box (x9 survives: no bl until next loop)
-    out = out + "    str w24, [x9]\n";             // box[0] = len
-    out = out + "    mov x10, #0\n";               // j = 0
-    out = out + ".Lssa_args_copy:\n    cmp x10, x24\n    b.ge .Lssa_args_copydone\n";
-    out = out + "    ldrb w11, [x23, x10]\n    add x12, x10, #1\n    lsl x12, x12, #3\n    str w11, [x9, x12]\n";   // box[j+1] = byte
-    out = out + "    add x10, x10, #1\n    b .Lssa_args_copy\n";
-    out = out + ".Lssa_args_copydone:\n    add x12, x22, #1\n    lsl x12, x12, #3\n    str x9, [x20, x12]\n";   // arr[i+1] = box
-    out = out + "    add x22, x22, #1\n    b .Lssa_args_loop\n";
-    out = out + ".Lssa_args_done:\n    mov x0, x20\n";
-    out = out + "    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
-    out = out + "_start:\n";
+    parts = parts.append("__fern_ssa_args:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n    stp x23, x24, [sp, #-16]!\n");
+    parts = parts.append("    adrp x9, __fern_ssa_argc\n    add x9, x9, :lo12:__fern_ssa_argc\n    ldr x19, [x9]\n");   // x19 = argc
+    parts = parts.append("    add x0, x19, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x20, x0\n");   // arr base, (argc+1) words
+    parts = parts.append("    str w19, [x20]\n");            // arr[0] = argc
+    parts = parts.append("    adrp x9, __fern_ssa_argv\n    add x9, x9, :lo12:__fern_ssa_argv\n    ldr x21, [x9]\n");   // x21 = &argv[0]
+    parts = parts.append("    mov x22, #0\n");               // i = 0
+    parts = parts.append(".Lssa_args_loop:\n    cmp x22, x19\n    b.ge .Lssa_args_done\n");
+    parts = parts.append("    ldr x23, [x21, x22, lsl #3]\n");   // x23 = argv[i] (C string)
+    parts = parts.append("    mov x24, #0\n");               // strlen
+    parts = parts.append(".Lssa_args_strlen:\n    ldrb w9, [x23, x24]\n    cbz w9, .Lssa_args_strdone\n    add x24, x24, #1\n    b .Lssa_args_strlen\n");
+    parts = parts.append(".Lssa_args_strdone:\n");
+    parts = parts.append("    add x0, x24, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x9, x0\n");   // SSA string box (x9 survives: no bl until next loop)
+    parts = parts.append("    str w24, [x9]\n");             // box[0] = len
+    parts = parts.append("    mov x10, #0\n");               // j = 0
+    parts = parts.append(".Lssa_args_copy:\n    cmp x10, x24\n    b.ge .Lssa_args_copydone\n");
+    parts = parts.append("    ldrb w11, [x23, x10]\n    add x12, x10, #1\n    lsl x12, x12, #3\n    str w11, [x9, x12]\n");   // box[j+1] = byte
+    parts = parts.append("    add x10, x10, #1\n    b .Lssa_args_copy\n");
+    parts = parts.append(".Lssa_args_copydone:\n    add x12, x22, #1\n    lsl x12, x12, #3\n    str x9, [x20, x12]\n");   // arr[i+1] = box
+    parts = parts.append("    add x22, x22, #1\n    b .Lssa_args_loop\n");
+    parts = parts.append(".Lssa_args_done:\n    mov x0, x20\n");
+    parts = parts.append("    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
+    parts = parts.append("_start:\n");
     // Save argc + &argv[0] before any stack use (sp points at argc at entry).
-    out = out + "    ldr x9, [sp]\n    adrp x10, __fern_ssa_argc\n    add x10, x10, :lo12:__fern_ssa_argc\n    str x9, [x10]\n";
-    out = out + "    add x9, sp, #8\n    adrp x10, __fern_ssa_argv\n    add x10, x10, :lo12:__fern_ssa_argv\n    str x9, [x10]\n";
-    out = out + "    adrp x9, __fern_ssa_heap\n";
-    out = out + "    add x9, x9, :lo12:__fern_ssa_heap\n";
-    out = out + "    adrp x10, __fern_ssa_hp\n";
-    out = out + "    add x10, x10, :lo12:__fern_ssa_hp\n";
-    out = out + "    str x9, [x10]\n";
-    out = out + "    bl __fn_main\n";
-    out = out + "    mov x8, #93\n";
-    out = out + "    svc #0\n";
-    return out;
+    parts = parts.append("    ldr x9, [sp]\n    adrp x10, __fern_ssa_argc\n    add x10, x10, :lo12:__fern_ssa_argc\n    str x9, [x10]\n");
+    parts = parts.append("    add x9, sp, #8\n    adrp x10, __fern_ssa_argv\n    add x10, x10, :lo12:__fern_ssa_argv\n    str x9, [x10]\n");
+    parts = parts.append("    adrp x9, __fern_ssa_heap\n");
+    parts = parts.append("    add x9, x9, :lo12:__fern_ssa_heap\n");
+    parts = parts.append("    adrp x10, __fern_ssa_hp\n");
+    parts = parts.append("    add x10, x10, :lo12:__fern_ssa_hp\n");
+    parts = parts.append("    str x9, [x10]\n");
+    parts = parts.append("    bl __fn_main\n");
+    parts = parts.append("    mov x8, #93\n");
+    parts = parts.append("    svc #0\n");
+    return util.str_join_chunks(parts);
 }
