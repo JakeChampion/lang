@@ -11450,6 +11450,42 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	fn.Params[0].Type = bindType
 }
 
+// calleeIsGenericFunc reports whether `id` in callee position names a
+// module-level generic function rather than a value.
+//
+// The shadowing case is why this is not just a GenericFuncs lookup:
+// `function apply(v: i32, id: (i32) => i32)` calling `id(v)` must reach the
+// parameter, not a module-level `id[T]` (#6302). identValueBinding is the
+// existing answer to exactly that question.
+func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
+	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen {
+		return false
+	}
+	_, bound := c.identValueBinding(id.Name, s)
+	return !bound
+}
+
+// errE040GenericFuncAsValue reports a generic function named where a value
+// is expected. The eta-expansion in the hint is spelled from the decl's own
+// parameters, so it is the shape the user needs rather than a generic
+// gesture — inside a generic caller binding the same type parameter it is
+// literally the fix, and elsewhere it shows which types have to be pinned.
+func (c *checker) errE040GenericFuncAsValue(p ast.Position, name string, fn *ast.FuncDecl) {
+	tps := strings.Join(fn.TypeParams, ", ")
+	plural := ""
+	if len(fn.TypeParams) > 1 {
+		plural = "s"
+	}
+	params := make([]string, 0, len(fn.Params))
+	args := make([]string, 0, len(fn.Params))
+	for _, pa := range fn.Params {
+		params = append(params, fmt.Sprintf("%s: %s", pa.Name, pa.Type))
+		args = append(args, pa.Name)
+	}
+	c.errfCode(p, "E040", "generic function %s cannot be used as a value — nothing here determines its type parameter%s %s. Wrap it in a lambda, which does: (%s) => %s(%s)",
+		name, plural, tps, strings.Join(params, ", "), name, strings.Join(args, ", "))
+}
+
 // typeParamsInScope is the set of type-parameter names the enclosing
 // generic declaration binds at the point being checked. Nil inside a
 // non-generic function, where no ParamType can be a real type.
@@ -12022,6 +12058,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					return t
 				}
 			}
+		}
+		// A GENERIC function named in value position. FuncSigs holds a
+		// signature for generic decls too, and it still contains
+		// ast.ParamType — so returning it hands an uninstantiated type to
+		// whatever consumes the value. From a non-generic caller that
+		// failed argAssignable and produced an E038 naming a type the user
+		// never wrote (`got (i32, T) => T`); from inside a generic binding
+		// the same parameter name it unified vacuously, was accepted, and
+		// surfaced from monomorph as `re-check failed (compiler bug)` —
+		// an internal error for an unsupported construct (#7040).
+		//
+		// Instantiating from an expected function type is the feature, and
+		// it is not implemented anywhere: ast.Ident carries no TypeArgs and
+		// monomorph's collectCalls only walks *ast.Call, so a generic named
+		// outside callee position is never queued. Until it exists this is
+		// a refusal with a code, not a miscompile with an apology.
+		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen {
+			c.errE040GenericFuncAsValue(n.P, n.Name, gf)
+			return nil
 		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
@@ -12725,6 +12780,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		var callee ast.Type
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok && fa == recvFA {
 			callee = c.fieldAccessType(fa, s, recvType)
+		} else if id, ok := n.Callee.(*ast.Ident); ok && c.calleeIsGenericFunc(id, s) {
+			// CALLEE position is where a generic name belongs: this IS the
+			// instantiation site, and the argument-driven inference below is
+			// what determines its type parameters. checkExpr's Ident case
+			// refuses a generic in VALUE position (#7040) and cannot tell the
+			// two apart from where it sits, so the distinction is drawn here,
+			// by the node that knows. Same type it would have returned.
+			callee = c.info.FuncSigs[id.Name]
 		} else {
 			callee = c.checkExpr(n.Callee, s)
 		}
