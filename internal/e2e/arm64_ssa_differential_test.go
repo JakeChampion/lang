@@ -91,11 +91,13 @@ const (
 
 	// arm64SSADiffRunTimeout bounds one execution. The heaviest corpus
 	// program (examples/bench/struct_drop.fern) takes ~0.9 s under
-	// qemu-aarch64 on a 4-core container, so this is ~30x headroom; it is
-	// sized for the programs that never terminate at all (the listening
-	// servers under examples/wasm, examples/cli/yes.fern), which reach it by
-	// design under both backends.
-	arm64SSADiffRunTimeout = 30 * time.Second
+	// qemu-aarch64 on a 4-core container, so this is ~16x headroom.
+	//
+	// It is really sized against the programs that never terminate at all —
+	// the listening servers under examples/wasm and examples/cli/yes.fern,
+	// which reach it by design under both backends and so pay it twice. Those
+	// dominate the lane: at 30 s they were two thirds of the whole run.
+	arm64SSADiffRunTimeout = 15 * time.Second
 
 	// arm64SSADiffMaxCapture caps per-stream capture. examples/cli/yes.fern
 	// writes until it is killed, so an unbounded buffer would grow for the
