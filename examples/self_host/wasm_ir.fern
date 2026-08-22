@@ -4533,6 +4533,19 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 // (wasm.emit_module, or the differential driver). Keeping the runtime on the
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
+
+// lower_failed_refuse ends compilation for a function whose lowering REFUSED.
+// The whole-program route gates on all_lowered_ok before it emits; the PER-UNIT
+// route has no such gate, and emitting a failed LowerResult writes its partial op
+// stream — which reached wasm-tools as an elem entry naming a `$<fd>$clo` with no
+// definition rather than as a diagnostic (#7215).
+function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
+    if (r.ok) { return 0; }
+    eprint("error: " + name + " did not lower on the wasm backend: " + r.why + "\n");
+    exit(3);
+    return 0;
+}
+
 // emit_functions emits a unit's function bodies. `ns` namespaces the base
 // globals the bodies reference (see str_base_global); "" is whole-program emit.
 // emit_functions_view emits ONE unit's function bodies against a WHOLE-PROGRAM
@@ -4582,6 +4595,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         // Skipping it is the other half of bringing the extern bridge onto the IR
         // path: the bridge supplies the definition, so the lowering must not.
         if (mod.funcs[fi].import_iface.len() == 0) {
+            lower_failed_refuse(mod.funcs[fi].name, cache[fi]);
             out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs);
         }
         fi = fi + 1;
