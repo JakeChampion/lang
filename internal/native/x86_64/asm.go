@@ -439,6 +439,15 @@ func (a *Assembler) insn(line string) error {
 	case "ud2":
 		a.emit(0x0F, 0x0B)
 		return nil
+	// pushfq / popfq — save and restore RFLAGS. The x86-64 SSA backend's heap
+	// guard needs them: every way to compare its cursor against the limit writes
+	// flags, and it is called from bump sites that may keep flags live.
+	case "pushfq":
+		a.emit(0x9C)
+		return nil
+	case "popfq":
+		a.emit(0x9D)
+		return nil
 	case "cdq":
 		a.emit(0x99)
 		return nil

@@ -173,13 +173,18 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         live across multiple calls in one block, and a six-arg callee filling
         every arg register — all over spill-forcing counts.
       - [x] 3b (memory) — `OpAlloc`/`OpLoad`/`OpStore` (incl. the sub-word
-        variants) on the real-asm path. A fixed 64 KiB `.bss` heap with a bump
-        cursor (`__ssa_heap_ptr`) initialised at `_start`; `MemAlloc` is
-        `result = align8(cursor); cursor = result + size`; loads/stores use
-        `[base + disp]` with `movzx`/`movsx` + `byte/word ptr` for sub-word and
-        the value sub-register for narrow stores. The heap section + init are
-        emitted only when a program uses memory ops (a lazy mmap/brk allocator
-        like the stack machine's is a follow-up if programs outgrow 64 KiB).
+        variants) on the real-asm path. A lazy anonymous `mmap` arena reserved
+        in `_start`, with a bump cursor (`__ssa_heap_ptr`) and a limit
+        (`__ssa_heap_end`); `MemAlloc` is
+        `result = align8(cursor); cursor = result + size`, then a call to
+        `__ssa_heap_guard`, which reports `fern: out of memory (heap arena
+        exhausted)` and exits 125 once the cursor passes the limit. Loads/stores
+        use `[base + disp]` with `movzx`/`movsx` + `byte/word ptr` for sub-word
+        and the value sub-register for narrow stores. The heap section + init
+        are emitted only when a program uses memory ops. The arena ends at
+        `0x8000_0000`: `maskFix` sign-extends an i32-width address, so a wider
+        one would hand out truncated pointers before the guard could fire
+        (#7329).
         Validated natively: full-word round-trip, sub-word zero/sign-extension,
         a byte array, and a heap **shared across a call** (callee allocs, caller
         reads the pointer back) — over spill-forcing counts.
