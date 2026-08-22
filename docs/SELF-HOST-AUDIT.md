@@ -300,13 +300,29 @@ findings. Ranked by leverage.
     collectors (`str_values`, `const_agg_values`, `field_reclaim_types`,
     `struct_drop_types`, `fn_value_table`, `indirect_fn_sigs`) keep their loops:
     they accumulate rather than short-circuit, so a boolean spine does not fit.
-  - **`parser.fern` — 12** rewrite passes (`expr_mentions:4876`,
-    `mono_infer:8411`, `mono_expr:8586`, `mono_call_expected:8816`,
-    `mono_stmt:8850`, `mono_stmts:8911`, `ms_expr:9935`, `ms_stmt:10111`,
-    `ms_stmts:10180`, `ms_func:10197`, `rw_call_expr:12350`,
-    `rw_call_stmts:12405`).
-  - **`checker.fern` — 15** scope-threading passes (`ret_diags`, `lret_*`,
-    `mx_*`, `slit_diags`, `call_diags`, …).
+  - **`parser.fern` — 12** rewrite passes (`expr_mentions`, `mono_infer`,
+    `mono_expr`, `mono_call_expected`, `mono_stmt`, `mono_stmts`, `ms_expr`,
+    `ms_stmt`, `ms_stmts`, `ms_func`, `rw_call_expr`, `rw_call_stmts`) — all
+    genuine hand-enumerated walks, and **none of them can use `astwalk`**.
+    `astwalk` imports `parser`, so parser importing `astwalk` is a cycle; the
+    fix this row prescribes does not compile there. Converting them needs the
+    AST types lifted into a base module both can import, or a second traversal
+    spine living inside `parser.fern` — a decision, not a mechanical change.
+    (Same shape as SH-025's proposed `ssabackend.fern`, which also cycles.)
+  - **`checker.fern` — 51** functions matching on 4+ Expr/Stmt variants,
+    ~4,957 lines, not the 15 this row claimed. `checker` DOES import `astwalk`,
+    so this half is convertible. Most of the 51 are not: `check_expr` (17
+    variants) and `check_stmt` (14) dispatch differently per node, which is the
+    checker's job rather than boilerplate. The convertible ones are the
+    collectors that look for one fact and otherwise just recurse — the
+    `mc_mentions_*` pair is done, `vref_*`, `ow_count_ident` and
+    `e049_expr_lambdas` are the same shape.
+
+    **A collector may read fields that are not expressions.** `mc_mentions_*`
+    tests `StmtAssign.target`, a bare string on the statement, which an
+    expression-only fold never sees; it needs `fold_expr_nodes` /
+    `fold_stmt_nodes` with a statement visitor as well. Check what each
+    collector reads before assuming `fold_expr` covers it.
   - `ssa` / `ssa_wasm` re-open-code the 3-level funcs→blocks→insts loop.
 
   _Fix:_ one traversal taking a per-node callback; removes well over 1,000 lines

@@ -4144,127 +4144,48 @@ function mc_mentions_list(list: parser.Expr[], name: string): boolean {
   return false;
 }
 
+// mc_mentions_expr / mc_mentions_stmts report whether `name` appears anywhere
+// in an expression / statement list — as an identifier, or as an assignment's
+// target, which is a bare string on the statement rather than an expression and
+// so needs the statement visitor rather than the expression one.
+//
+// Both ride astwalk's node fold, so a new parser node is covered here the moment
+// astwalk covers it. The hand-written pair each ended in a `_ => false` arm,
+// which silently did not search whatever it did not name.
 function mc_mentions_expr(e: parser.Expr, name: string): boolean {
-  match (e) {
-    parser.ExprIdent(id) => {
-      return id.name == name;
-    },
-    parser.ExprBinary(b) => {
-      return mc_mentions_expr(b.left, name) || mc_mentions_expr(b.right, name);
-    },
-    parser.ExprUnary(u) => {
-      return mc_mentions_expr(u.operand, name);
-    },
-    parser.ExprCall(c) => {
-      return mc_mentions_expr(c.callee, name) || mc_mentions_list(c.args, name);
-    },
-    parser.ExprArray(ar) => {
-      return mc_mentions_list(ar.elements, name);
-    },
-    parser.ExprTuple(tp) => {
-      return mc_mentions_list(tp.elements, name);
-    },
-    parser.ExprIndex(ix) => {
-      return mc_mentions_expr(ix.array, name) || mc_mentions_expr(ix.index, name);
-    },
-    parser.ExprSlice(sl) => {
-      return mc_mentions_expr(sl.array, name) || mc_mentions_expr(sl.start, name) || mc_mentions_expr(sl.end, name);
-    },
-    parser.ExprStructLit(st) => {
-      if (st.has_base && mc_mentions_expr(st.base, name)) {
-        return true;
-      }
-      return mc_mentions_list(st.field_values, name);
-    },
-    parser.ExprFieldAccess(fa) => {
-      return mc_mentions_expr(fa.obj, name);
-    },
-    parser.ExprLambda(lm) => {
-      return mc_mentions_stmts(lm.body, name);
-    },
-    _ => {
-      return false;
+  function see_expr(n: parser.Expr, acc: boolean): boolean {
+    match (n) {
+      parser.ExprIdent(id) => { return acc || id.name == name; },
+      _ => { return acc; }
     }
   }
-  return false;
+  function see_stmt(st: parser.Stmt, acc: boolean): boolean {
+    match (st) {
+      parser.StmtAssign(a) => { return acc || a.target == name; },
+      _ => { return acc; }
+    }
+  }
+  return astwalk.fold_expr_nodes(e, false, see_stmt, see_expr, astwalk.descend_all);
 }
 
 function mc_mentions_stmts(stmts: parser.Stmt[], name: string): boolean {
-  for stmt in stmts {
-    match (stmt) {
-      parser.StmtVar(v) => {
-        if (mc_mentions_expr(v.init, name)) {
-          return true;
-        }
-      },
-      parser.StmtReturn(r) => {
-        if (mc_mentions_expr(r.value, name)) {
-          return true;
-        }
-      },
-      parser.StmtExpr(es) => {
-        if (mc_mentions_expr(es.value, name)) {
-          return true;
-        }
-      },
-      parser.StmtAssign(a) => {
-        if (a.target == name) {
-          return true;
-        }
-        if (mc_mentions_expr(a.value, name)) {
-          return true;
-        }
-      },
-      parser.StmtIf(f) => {
-        if (mc_mentions_expr(f.cond, name)) {
-          return true;
-        }
-        if (mc_mentions_stmts(f.then_body, name)) {
-          return true;
-        }
-        if (mc_mentions_stmts(f.else_body, name)) {
-          return true;
-        }
-      },
-      parser.StmtWhile(w) => {
-        if (mc_mentions_expr(w.cond, name)) {
-          return true;
-        }
-        if (mc_mentions_stmts(w.body, name)) {
-          return true;
-        }
-      },
-      parser.StmtFor(fr) => {
-        if (mc_mentions_expr(fr.iter, name)) {
-          return true;
-        }
-        if (mc_mentions_stmts(fr.body, name)) {
-          return true;
-        }
-      },
-      parser.StmtMatch(m) => {
-        if (mc_mentions_expr(m.scrutinee, name)) {
-          return true;
-        }
-        for arm in m.arms {
-          if (arm.has_guard && mc_mentions_expr(arm.guard, name)) {
-            return true;
-          }
-          if (mc_mentions_stmts(arm.body, name)) {
-            return true;
-          }
-        }
-      },
-      parser.StmtDefer(d) => {
-        var one: parser.Stmt[] = [d.action];
-        if (mc_mentions_stmts(one, name)) {
-          return true;
-        }
-      },
-      _ => {}
+  function see_expr(n: parser.Expr, acc: boolean): boolean {
+    match (n) {
+      parser.ExprIdent(id) => { return acc || id.name == name; },
+      _ => { return acc; }
     }
   }
-  return false;
+  function see_stmt(st: parser.Stmt, acc: boolean): boolean {
+    match (st) {
+      parser.StmtAssign(a) => { return acc || a.target == name; },
+      _ => { return acc; }
+    }
+  }
+  var found: boolean = false;
+  for stmt in stmts {
+    found = astwalk.fold_stmt_nodes(stmt, found, see_stmt, see_expr, astwalk.descend_all);
+  }
+  return found;
 }
 
 // mc_list_consumes scans an expression list for a consuming use (recursing —
