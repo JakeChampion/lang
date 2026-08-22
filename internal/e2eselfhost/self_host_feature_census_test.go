@@ -361,8 +361,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the nested named fns are the self-host's only closures.")
 	pinned(t, c, "nested named fns", 4,
 		"All four are visitors closing over their enclosing function's locals — the capturing-closure spelling astwalk's consumers use.")
-	pinned(t, c, "for..in loops", 15,
-		"All fifteen are in visibility.fern, the one module written in the modern dialect. Every other loop in the compiler is a hand-indexed `while`.")
+	pinned(t, c, "for..in loops", 326,
+		"311 in checker.fern and 15 in visibility.fern. Every other loop in the compiler is still a hand-indexed `while`, so these two modules are the whole of the fixpoint's for..in coverage.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
 	pinned(t, c, "Map type spellings", 11,
@@ -379,9 +379,9 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// ~10% headroom over the measurement — enough for a normal PR's worth of new
 	// arms or loops without a red build, tight enough that a new pass written
 	// wholesale in the old dialect trips it.
-	atMost(t, c, "wildcard match arms", 2800, 2557,
+	atMost(t, c, "wildcard match arms", 2800, 2563,
 		"A `_ =>` arm is a match that does not enumerate its cases, so a new parser node added later is silently swallowed instead of caught. The fold spine exists to remove them.")
-	atMost(t, c, "increment by one", 5500, 5037,
+	atMost(t, c, "increment by one", 5200, 4728,
 		"Every `x = x + 1` is one hand-written index loop that `for x in xs` would carry. This is the dialect the compiler is written in, and the count is the size of the migration left.")
 }
 
