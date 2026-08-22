@@ -9,8 +9,8 @@ import (
 //
 // A fresh non-escaping tuple local carrying an rc element — an array literal, a
 // string, a nested tuple, a reclaim-struct — is credited "TUPRC:". That credit was
-// consumed in only two places: emit_tuple_deep_reinit_store on the StmtVar path,
-// and the entry-zeroing list in arr_slots_of. Nothing freed the local's FINAL
+// consumed in only one place that runs: emit_tuple_deep_reinit_store on the
+// StmtVar path. Nothing freed the local's FINAL
 // value, so a SINGLE BIND with no reassignment anywhere leaked both the rc child
 // and the tuple box, every round:
 //

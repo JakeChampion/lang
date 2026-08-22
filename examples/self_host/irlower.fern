@@ -1152,9 +1152,9 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
 //
 // Sound because the slot index space is MONOTONIC: retire_locals renames, never
 // truncates or reuses, so a retired slot still holds its block's final value at
-// function exit and is the sole reference to it. Entry-zeroing follows
-// automatically — arr_slots_of consumes the same predicates, so an untaken
-// branch's slot routes a guarded null rather than stack garbage.
+// function exit and is the sole reference to it. Entry-zeroing is universal —
+// the prologue zeroes every body slot — so an untaken branch's slot routes a
+// guarded null rather than stack garbage.
 //
 // Each class is admitted on its own probe rather than by a blanket flip —
 // switching one on turns on an exit-sweep release that has never run for these
@@ -24560,8 +24560,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // (slot_is_reclaimable_struct), so the box is the sole reference and freeing
     // it cannot dangle a caller's / container's reference: a RETURNED struct is
     // escaping → never reclaimable → never swept (no move-on-return keep needed
-    // for structs). Slots are zeroed at entry (arr_slots_of), so an untaken-branch
-    // slot decs a null (guarded no-op).
+    // for structs). Slots are zeroed at entry, so an untaken-branch slot decs a
+    // null (guarded no-op).
     var j: i32 = st.n_params;
     while (j < st.locals.len()) {
         var live_credit: boolean = slot_is_reclaimable_struct(st, j);
@@ -24618,9 +24618,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // so release it exactly like the struct loop above: deep-drop the
     // concrete's rc fields via __struct_drop_<Concrete> (auto-materialized by
     // each backend on seeing the call; only emitted when the concrete carries a
-    // reclaimable field), then shallow-dec the box. Slots are zeroed at entry
-    // (arr_slots_of includes reclaimable dyn slots), so an untaken-branch slot
-    // routes a null through the null-guarded helpers.
+    // reclaimable field), then shallow-dec the box. Slots are zeroed at entry, so
+    // an untaken-branch slot routes a null through the null-guarded helpers.
     var dj: i32 = st.n_params;
     while (dj < st.locals.len()) {
         if (!slot_list_has(keeps, dj) && slot_is_reclaimable_dyn(st, dj)) {
@@ -24700,7 +24699,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // last value of every such block leaked — 396 of 400 freed on #6608's probe,
     // the n-1-of-n signature of a retired slot missing its credit. The slot is
     // zeroed after the drop so a second sweep on another return edge is a no-op,
-    // and slots are entry-zeroed (arr_slots_of) so an untaken branch routes null.
+    // and slots are entry-zeroed, so an untaken branch routes null.
     var rej: i32 = st.n_params;
     while (rej < st.locals.len()) {
         if (!slot_list_has(keeps, rej) && slot_is_reclaimable_rcenum_sweep(st, rej)) {
@@ -24723,8 +24722,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Reclaimable Option[<tuple-with-array>] locals (#4365): deep-free the final
     // live box (Some payload tuple + option box) via the same inline path the
     // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes a dedicated
-    // loop here like the scalar-tuple sweep above. Slots are entry-zeroed
-    // (arr_slots_of), so an untaken-branch slot routes a null through the guard.
+    // loop here like the scalar-tuple sweep above. Slots are entry-zeroed, so an
+    // untaken-branch slot routes a null through the guard.
     var otj: i32 = st.n_params;
     while (otj < st.locals.len()) {
         if (!slot_list_has(keeps, otj) && slot_is_reclaimable_opttup(st, otj)) {
@@ -24737,8 +24736,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Reclaimable Option[<struct-with-array>] locals (#4365): deep-free the final live box
     // (Some payload struct via __struct_drop_<P> + option box) via the same inline path the
     // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes this dedicated loop.
-    // Entry-zeroed via arr_slots_of (slot_is_reclaimable_optstruct), so an untaken-branch
-    // slot routes a null through the guard.
+    // Entry-zeroed, so an untaken-branch slot routes a null through the guard.
     var osj: i32 = st.n_params;
     while (osj < st.locals.len()) {
         if (!slot_list_has(keeps, osj) && slot_is_reclaimable_optstruct(st, osj)) {
@@ -24750,10 +24748,10 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     }
     // Reclaimable Option[<scalar-arr-of-arr>] locals (#4365): deep-free the final live box
     // (Some payload via __fern_arrarr_free + option box) via the same inline path the
-    // loop-rebind uses. Entry-zeroed via arr_slots_of (slot_is_reclaimable_optarrarr).
+    // loop-rebind uses. Entry-zeroed, so an untaken-branch slot routes a guarded null.
     // Reclaimable REBOUND Option[<flat scalar array>] locals (#6127): free the final
     // live value's payload buffer + option box, the same inline path the rebind uses.
-    // Entry-zeroed via arr_slots_of, so an untaken-branch slot routes a guarded null.
+    // Entry-zeroed, so an untaken-branch slot routes a guarded null.
     var ofj: i32 = st.n_params;
     while (ofj < st.locals.len()) {
         if (!slot_list_has(keeps, ofj) && slot_is_reclaimable_optarr(st, ofj)) {
@@ -24787,8 +24785,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // structure (per-element tuple deep-drop + tuple box, then the outer buffer) via
     // the same inline element-walk the loop-rebind uses. An arrtup slot is is_arr but
     // EXCLUDED from the plain is_arr sweep above, so it takes this dedicated loop.
-    // Slots are entry-zeroed (arr_slots_of), so an untaken-branch slot routes a null
-    // through the guard.
+    // Slots are entry-zeroed, so an untaken-branch slot routes a null through the
+    // guard.
     var atj: i32 = st.n_params;
     while (atj < st.locals.len()) {
         if (!slot_list_has(keeps, atj) && slot_is_reclaimable_arrtup(st, atj)) {
@@ -24801,7 +24799,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Reclaimable (<struct-with-array>)[] locals (#4365): deep-free the final live
     // structure (per-element struct deep-drop + struct box, then the outer buffer) via
     // the same inline element-walk the loop-rebind uses. Excluded from the plain is_arr
-    // sweep above; entry-zeroed via arr_slots_of (is_arr).
+    // sweep above; entry-zeroed like every body slot.
     var asj: i32 = st.n_params;
     while (asj < st.locals.len()) {
         if (!slot_list_has(keeps, asj) && slot_is_reclaimable_arrstruct(st, asj)) {
@@ -24814,7 +24812,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Reclaimable `MyEnum[]` locals (#5474): deep-free the final live structure (per
     // element the runtime variant dispatch, which drops the payload AND frees the box,
     // then the outer buffer). Excluded from the plain is_arr sweep above; entry-zeroed
-    // via arr_slots_of (is_arr).
+    // like every body slot.
     var aej: i32 = st.n_params;
     while (aej < st.locals.len()) {
         if (!slot_list_has(keeps, aej) && slot_is_reclaimable_arrenum(st, aej)) {
@@ -25558,9 +25556,9 @@ pub struct LowerResult {
     // the module (an f64 through an erased param previously emitted
     // type-INVALID WAT the wasmtime loader rejects).
     erased_wide: boolean,
-    // arr_slots: the local slots holding arrays — the backend zeroes these at
-    // entry so the exit dec-sweep never decs an uninitialised (untaken-branch)
-    // slot.
+    // arr_slots: the local slots holding arrays and other rc containers. Read
+    // only by irlower_run's `-slots` dump — entry-zeroing covers the whole body
+    // range regardless (see arr_slots_of).
     arr_slots: i32[],
     // i64_slots: the local slots holding i64 values — the wasm backend declares
     // these (local i64); the register backends ignore it (i64 shares the 64-bit
@@ -25599,23 +25597,20 @@ function fail_why_or_unknown(s: LowerState): string {
     return s.fail_why;
 }
 
-// arr_slots_of collects the OWNED array slots (>= n_params) — the ones the
-// backend zeroes at entry. Array params hold the passed pointer and must NOT
-// be zeroed (and are borrowed, so never swept).
+// arr_slots_of collects the OWNED array / rc-container slots (>= n_params).
+// Params hold a passed pointer and are borrowed, so they are never swept.
+//
+// This list does NOT drive entry-zeroing. Every backend zeroes the whole body
+// range [n_params, n_locals) in the prologue (asm_ir.fern `rep stosq`,
+// asm_arm64_ir.fern's store loop, wasm locals by spec), so a slot of ANY class
+// already holds null in a function whose block never ran. Adding a class here
+// changes nothing that runs: the only consumer is irlower_run's `-slots` dump,
+// where `arr` and `str` are disjoint value kinds.
 function arr_slots_of(s: LowerState): i32[] {
     var out: i32[] = [];
     var i: i32 = s.n_params;
     while (i < s.locals.len()) {
-        // Array locals AND reclaimable struct/tuple locals are zeroed at entry, so
-        // the exit dec-sweep / loop-rebind release never decs an uninitialised
-        // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
-        // must hold null not stack garbage.
-        // A string local is entry-zeroed too, now that a BLOCK-SCOPED one is
-        // sweepable (#7292): the sweep would otherwise hand __fern_str_free
-        // whatever the stack held in a function whose block never ran. str_slots_of
-        // looks like this set but is diagnostic only — "Nothing on the emit path
-        // reads it" — so the zeroing had to be added here, not assumed.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_str(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_scenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_scenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -36765,9 +36760,9 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
 //
 // So this variant is used at exactly TWO sites, which have to agree with each
 // other and with nothing else:
-//   - the function-exit sweep's struct loop, which frees the box; and
-//   - arr_slots_of, which zeroes the slot at entry — without which the sweep would
-//     dec stack garbage in a function whose block never ran.
+//   - the function-exit sweep's struct loop, which frees the box. The slot needs
+//     no per-class zeroing: the prologue zeroes the whole body range, so the
+//     sweep cannot dec stack garbage in a function whose block never ran.
 // The two move-on-return keeps sets deliberately keep the exact-match lookup: they
 // resolve a slot from a live AST name reference (`return r` / `return r.f`), and
 // slot_of matches exactly, so a retired slot can never appear in them — a returned
@@ -36830,8 +36825,8 @@ function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
 // emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
 // (array buffers, string boxes, nested tuple boxes, reclaim-struct boxes — all
 // type-driven via emit_tuple_type_child_drops) and then its own box, leaving the
-// slot zeroed. Null-guarded: slots of this class are entry-zeroed by arr_slots_of,
-// and emit_tuple_type_child_drops DEREFERENCES the box to reach each position, so an
+// slot zeroed. Null-guarded: body slots are entry-zeroed by the prologue, and
+// emit_tuple_type_child_drops DEREFERENCES the box to reach each position, so an
 // untaken-branch slot must skip the whole body rather than rely on __fern_rc_dec's
 // own null guard. The rc-tuple sibling of emit_opttup_deep_free's inner Some arm.
 function emit_rctuple_deep_free(se: LowerState, slot: i32): LowerState {
@@ -39006,8 +39001,8 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // leaks 35200 over 100 rounds at frees=0, while the byte-identical shape WITH a
 // match is flat at 0 — the match was the entire reclaim.
 //
-// Credited under the SAME "OPTARR:" tag, so the exit sweep, the entry-zeroing
-// in arr_slots_of and slot_is_reclaimable_optarr all pick it up unchanged. The
+// Credited under the SAME "OPTARR:" tag, so the exit sweep and
+// slot_is_reclaimable_optarr both pick it up unchanged. The
 // loop-rebind consumer cannot fire for these names because they are never
 // reassigned, which is exactly what makes sharing the tag safe.
 //

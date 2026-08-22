@@ -295,9 +295,8 @@ function main(): i32 {
 		},
 		{
 			// The declaring branch is never taken, so the slot is never written. It
-			// must route a guarded null rather than stack garbage — entry-zeroing
-			// comes from arr_slots_of, which consumes the same predicates, so this
-			// pins that the two stayed in step.
+			// must route a guarded null rather than stack garbage — the prologue
+			// zeroes the whole body slot range, and this pins that it still does.
 			name: "declaring_branch_never_taken",
 			src: `function round(r: i32): i32 {
     var acc: i32 = 0;
