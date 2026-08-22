@@ -67,6 +67,65 @@ function main(): i32 { return wrap(7); }`,
 	}
 }
 
+// A generic function named where a VALUE is expected is refused with E040
+// (#7040). Instantiating one from an expected function type is not implemented
+// anywhere — ast.Ident has no TypeArgs, and monomorph's collectCalls only walks
+// *ast.Call, so a generic named outside callee position is never queued — and
+// what the two callers saw before this was neither a refusal nor a compile:
+//
+//	from a non-generic caller: E038 naming `(i32, T) => T`, a type the source
+//	never wrote;
+//	from inside a generic binding the same parameter name: unified vacuously,
+//	accepted, then `monomorph: re-check failed (compiler bug): undefined
+//	identifier "skip"` — an internal error for an unsupported construct.
+func TestGenericFuncAsValueIsE040(t *testing.T) {
+	const decls = "function skip[T](s: i32, a: T): T { return a; }\n"
+	bad := []string{
+		// Non-generic caller: argument position.
+		`function apply(a: i32, f: (i32, i32) => i32): i32 { return f(1, a); }
+function main(): i32 { return apply(7, skip); }`,
+		// Generic caller binding the same type-parameter name — the shape
+		// that reached monomorph.
+		`function inner[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
+function outer[T](acc: T): T { return inner(acc, skip); }
+function main(): i32 { return outer(7); }`,
+		// Value positions other than an argument.
+		`function main(): i32 { var f = skip; return 0; }`,
+	}
+	for _, body := range bad {
+		err := checkSource(t, decls+body)
+		if err == nil {
+			t.Errorf("expected E040 for:\n%s", body)
+			continue
+		}
+		if !strings.Contains(err.Error(), "cannot be used as a value") {
+			t.Errorf("error %q is not the E040 generic-as-value message\nsrc: %s", err.Error(), body)
+		}
+		// The internal error this replaces must never come back.
+		if strings.Contains(err.Error(), "compiler bug") {
+			t.Errorf("error %q is still an internal error\nsrc: %s", err.Error(), body)
+		}
+	}
+
+	// CALLEE position is where a generic name belongs, and the eta-expansion
+	// the diagnostic recommends has to actually work. A parameter shadowing a
+	// module-level generic (#6302) must still reach the parameter rather than
+	// drawing E040 for a type parameter the call site never mentions.
+	ok := []string{
+		`function main(): i32 { return skip(1, 7); }`,
+		`function inner[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
+function outer[T](acc: T): T { return inner(acc, (n: i32, a: T) => skip(n, a)); }
+function main(): i32 { return outer(7); }`,
+		`function apply(v: i32, skip: (i32) => i32): i32 { return skip(v); }
+function main(): i32 { return apply(7, (x: i32) => x + 1); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
 // E040 at a call site must name a spelling the user can write (#6796). A
 // method call reaches the check rewritten onto `__method_<Type>_<method>`,
 // and the diagnostic used to advise `__method_Holder_make[i32](...)` — a
