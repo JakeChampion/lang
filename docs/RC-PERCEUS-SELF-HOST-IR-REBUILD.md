@@ -249,7 +249,8 @@ Same nets as the existing self-host work, plus IR-specific ones:
 - 2026-06-10: **Slice 11 — exit dec-sweep + underflow detector — DONE
   (#2600).** `emit_dec_sweep` decs every array local at `return`
   (`__fern_rc_dec`); over-release detector + `__rc_underflow()`;
-  `LowerResult.arr_slots` drives backend entry-zeroing. Completes Perceus
+  `LowerResult.arr_slots` records which slots hold arrays (entry-zeroing
+  covers the whole body range and never read it). Completes Perceus
   Phase 1 (counting, no free).
 - 2026-06-10: **Slice 12 — free path + block reuse (freelist) — DONE
   (#2601).** `__fern_rc_dec` frees to a size-class freelist at rc==0;

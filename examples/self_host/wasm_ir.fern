@@ -784,7 +784,7 @@ function wasm_binop_w(tag: i32, width: i32): string {
 }
 
 // slot_in_list reports membership of slot x in an i32 list (the LowerResult's
-// i64_slots / arr_slots are sorted-but-membership is all we need).
+// i64_slots / f64_slots are sorted, but membership is all we need).
 function slot_in_list(list: i32[], x: i32): boolean {
     var i: i32 = 0;
     while (i < list.len()) {

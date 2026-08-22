@@ -25556,9 +25556,8 @@ pub struct LowerResult {
     // the module (an f64 through an erased param previously emitted
     // type-INVALID WAT the wasmtime loader rejects).
     erased_wide: boolean,
-    // arr_slots: the local slots holding arrays and other rc containers. Read
-    // only by irlower_run's `-slots` dump — entry-zeroing covers the whole body
-    // range regardless (see arr_slots_of).
+    // arr_slots: the local slots holding arrays. Read only by irlower_run's
+    // `-slots` dump; entry-zeroing covers the whole body range regardless.
     arr_slots: i32[],
     // i64_slots: the local slots holding i64 values — the wasm backend declares
     // these (local i64); the register backends ignore it (i64 shares the 64-bit
@@ -25597,20 +25596,16 @@ function fail_why_or_unknown(s: LowerState): string {
     return s.fail_why;
 }
 
-// arr_slots_of collects the OWNED array / rc-container slots (>= n_params).
-// Params hold a passed pointer and are borrowed, so they are never swept.
-//
-// This list does NOT drive entry-zeroing. Every backend zeroes the whole body
-// range [n_params, n_locals) in the prologue (asm_ir.fern `rep stosq`,
-// asm_arm64_ir.fern's store loop, wasm locals by spec), so a slot of ANY class
-// already holds null in a function whose block never ran. Adding a class here
-// changes nothing that runs: the only consumer is irlower_run's `-slots` dump,
-// where `arr` and `str` are disjoint value kinds.
+// arr_slots_of lists the local slots holding ARRAY values — params included,
+// like the other three classifiers. A slot's class answers what the slot
+// HOLDS, so borrowedness (a param) and reclaimability (whether the exit sweep
+// owns it) are not part of it: both are properties of the binding, and the
+// sweep derives them itself from the slot_is_reclaimable_* predicates.
 function arr_slots_of(s: LowerState): i32[] {
     var out: i32[] = [];
-    var i: i32 = s.n_params;
+    var i: i32 = 0;
     while (i < s.locals.len()) {
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_scenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;

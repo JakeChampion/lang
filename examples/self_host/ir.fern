@@ -3349,9 +3349,13 @@ pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
 // self-host has no such split — wasm_ir.fern carries a string as a single
 // block pointer, so every value is one slot on every target and
 // irverifystack.fern reads none of these lists (#6639 slice 2). What does
-// need them is any pass asking what a value IS: the fip / fbip
-// allocation-budget check (slice 3), and the wasm signature emit, which
-// already reads i64_slots / f64_slots to type its params and locals.
+// need them is any pass asking what a value IS: the wasm signature emit reads
+// i64_slots / f64_slots to type its params and locals, and irlower_run's
+// `-slots` dump prints all four.
+//
+// Each list is one VALUE kind, params included — what the slot holds, not
+// whether the exit sweep owns it. The sweep answers that itself, from
+// irlower.fern's slot_is_reclaimable_* predicates (#7322).
 pub struct LoweredFn {
     name: string,
     ok: boolean,
