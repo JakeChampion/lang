@@ -98,3 +98,42 @@ func isCallTo(e ast.Expr, name string) bool {
 	id, ok := call.Callee.(*ast.Ident)
 	return ok && id.Name == name
 }
+
+// The lazy lowering walks statements, and a nested named function is an
+// *ast.FuncDecl STATEMENT whose body is its own block. With no arm for one, the
+// ForEach survived Check and reached IR, which has no case for it — the same
+// hole the parser's eager desugar had for the same node.
+func TestStreamForEachInsideNestedFuncLowers(t *testing.T) {
+	prog, err := parser.Parse(`@import("test:dep/d", "prod") async function body(): stream[u8];
+async function run(): i32 {
+	function inner(): i32 {
+		var sum: i32 = 0;
+		for x in body() { sum = sum + (x as i32); }
+		return sum;
+	}
+	return inner();
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	run := funcNamed(t, prog, "run")
+	fd, ok := run.Body.Stmts[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("stmt 0 should be the nested function, got %T", run.Body.Stmts[0])
+	}
+	if _, still := fd.Body.Stmts[1].(*ast.ForEach); still {
+		t.Fatal("stream ForEach survived Check inside the nested function; IR cannot lower one")
+	}
+	blk, ok := fd.Body.Stmts[1].(*ast.Block)
+	if !ok {
+		t.Fatalf("stream for-in should lower to a Block, got %T", fd.Body.Stmts[1])
+	}
+	declC, ok := blk.Stmts[0].(*ast.Var)
+	if !ok || !isCallTo(declC.Init, "body$open") {
+		t.Fatalf("stmt 0 should be `var c = body$open()`, got %#v", blk.Stmts[0])
+	}
+}

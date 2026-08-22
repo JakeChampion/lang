@@ -3325,6 +3325,11 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		desugarForEachExpr(x.Value, streamFns)
 	case *ast.Destructure:
 		desugarForEachExpr(x.Init, streamFns)
+	case *ast.FuncDecl:
+		// A nested named function is a STATEMENT here, and its body is a
+		// separate block this walk has to enter: nothing else lowers it, and a
+		// ForEach left standing reaches IR, which has no case for one.
+		x.Body = desugarForEachStmt(x.Body, streamFns).(*ast.Block)
 	}
 	return s
 }
