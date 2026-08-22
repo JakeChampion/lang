@@ -3180,6 +3180,192 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 
 
 
+
+// is_host_op_kind is true for an IR op that reaches the HOST rather than
+// computing a value: stdout/stderr writes, the three clocks, stdin and file
+// and directory I/O, env, args, and exit.
+//
+// Local to this backend rather than shared in ir.fern like is_str_op_kind:
+// the register backends model these as syscalls with their own ABI, so there
+// is no cross-backend tag set to agree on -- only wasm turns all of them into
+// a call to an imported WASI function.
+function is_host_op_kind(tag: i32): boolean {
+    return tag == 161 || tag == 162 || tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
+        tag == 183 || tag == 209 || tag == 168 || tag == 167 || tag == 169 || tag == 170 ||
+        tag == 203 || tag == 202 || tag == 176 || tag == 175 || tag == 173 || tag == 231 ||
+        tag == 171 || tag == 172 || tag == 180 || tag == 210 || tag == 166;
+}
+
+// emit_host_op_wat renders one host op as WAT. Every arm is a fixed call to
+// an imported helper, so like emit_str_op_wat this is a plain Op -> string:
+// no namespace, no string or aggregate table, no scratch local.
+//
+// `putchar` is NOT here even though it is host-facing -- it needs the eltmp
+// scratch local to stage its byte, so it stays in the main dispatch until the
+// context struct lands. `temp_dir` likewise reads `ns`.
+//
+// Tail refuses rather than falling through, for the reason asm_ir records at
+// its own emit_str_op (#6917): a tag added to the predicate with no arm here
+// would otherwise emit whatever the last arm emits.
+function emit_host_op_wat(o: ir.Op): string {
+    if (o.kind_tag == 161) {  // print_int
+        // stack: n -> write n's decimal text to stdout (no newline). The helper
+        // returns void, so push a dummy i32 for the statement-level drop.
+        return "    call $__fern_print_int\n    i32.const 0\n";
+    }
+    if (o.kind_tag == 162) {  // print_i64
+        // stack: n(i64) -> write n's decimal text to stdout (no newline) via the
+        // i64 helper. Void return, so push a dummy i32 for the statement drop.
+        return "    call $__fern_print_int64\n    i32.const 0\n";
+    }
+    if (o.kind_tag == 163) {  // print_str
+        // stack: strblock ptr -> write its bytes to stdout (no newline). The
+        // helper returns void, so push a dummy i32 for the statement-level drop.
+        return "    call $__fern_print_str\n    i32.const 0\n";
+    }
+    if (o.kind_tag == 164) {  // eprint_str
+        // stack: strblock ptr -> write its bytes to stderr (no newline). The
+        // helper returns void, so push a dummy i32 for the statement-level drop.
+        return "    call $__fern_eprint_str\n    i32.const 0\n";
+    }
+    if (o.kind_tag == 182) {  // monotonic_ns
+        // 0-arg i64 clock reading -> push the raw monotonic nanosecond
+        // count. The helper ($__fern_monotonic_ns, result i64) wraps the
+        // wasi clock_time_get import; emitted caller-side in wasm_ir_run
+        // when the module uses any clock builtin (module_uses_clocks).
+        return "    call $__fern_monotonic_ns\n";
+    }
+    if (o.kind_tag == 184) {  // now_unix_ms
+        // 0-arg i64 clock reading -> realtime nanoseconds / 1_000_000.
+        return "    call $__fern_now_unix_ms\n";
+    }
+    if (o.kind_tag == 183) {  // now_ns
+        // 0-arg i64 clock reading -> raw realtime nanoseconds.
+        return "    call $__fern_now_ns\n";
+    }
+    if (o.kind_tag == 209) {  // read_all_stdin
+        // 0-arg -> read fd 0 to EOF, push ONE fresh string block holding the
+        // whole input. The helper ($__fern_read_all_stdin, result i32) is
+        // emitted caller-side in wasm_ir_run with the fd_read import + the
+        // heap runtime, exactly like $__fern_read_line.
+        return "    call $__fern_read_all_stdin\n";
+    }
+    if (o.kind_tag == 168) {  // read_line
+        // 0-arg -> read one line of stdin (fd 0), push a fresh string block
+        // (the line without its trailing newline). The helper
+        // ($__fern_read_line, result i32) is emitted caller-side in
+        // wasm_ir_run with the fd_read import + the heap runtime.
+        return "    call $__fern_read_line\n";
+    }
+    if (o.kind_tag == 167) {  // read_int
+        // 0-arg -> parse a leading integer from stdin (fd 0), push it (i32).
+        // The helper ($__fern_read_int) reads into scratch and allocates
+        // nothing; emitted caller-side with the fd_read import.
+        return "    call $__fern_read_int\n";
+    }
+    if (o.kind_tag == 169) {  // read_file
+        // stack: path strblock ptr -> read the whole named file, push a
+        // Result[string, IoError] box ptr. The helper ($__fern_read_file,
+        // result i32) opens the path under preopen fd 3 (path_open) and
+        // reads via fd_read; emitted caller-side in wasm_ir_run (with the
+        // path_open / fd_read / fd_close imports) when the module reads files.
+        return "    call $__fern_read_file\n";
+    }
+    if (o.kind_tag == 170) {  // write_file
+        // stack: path ptr, content ptr -> write content to the named file,
+        // push a Result[(), IoError] box ptr. The helper ($__fern_write_file)
+        // opens the path for write (path_open) and writes via fd_write (the
+        // import print already pulls in; wasm_ir_run extends its gate).
+        return "    call $__fern_write_file\n";
+    }
+    if (o.kind_tag == 203) {  // open_file (#4372)
+        // stack: path box -> push the openat flags (i32_imm) -> $__fern_open_file
+        // (path_open under preopen fd 3) -> fd (>= 0, a bare Reader/Writer) or
+        // -errno. wasm_ir_run gates in file_imports (path_open) on the open_file need.
+        return "    i32.const " + util.i32_to_string(o.i32_imm) + "\n    call $__fern_open_file\n";
+    }
+    if (o.kind_tag == 202) {  // writer_write (#4372)
+        // stack: fd, str box -> $__fern_writer_write (fd_write of the box's
+        // bytes) -> bytes written (>= 0) or -errno.
+        return "    call $__fern_writer_write\n";
+    }
+    if (o.kind_tag == 176) {  // env
+        // stack: name strblock ptr -> look up the env var, push a fresh
+        // Option[string] box (Some(value) / None). $__fern_env (param i32 name,
+        // result i32) wraps the preview1 environ_sizes_get/environ_get scan and
+        // allocates the value + box; emitted caller-side in wasm_ir_run (with the
+        // environ imports + heap) when the module reads an env var.
+        return "    call $__fern_env\n";
+    }
+    if (o.kind_tag == 175) {  // stat
+        // stack: path strblock ptr -> stat the file, push a Result[FileStat,
+        // IoError] box. $__fern_stat (param i32 path, param i32 fstype) does the
+        // preview1 path_filestat_get + builds the FileStat struct box; it needs
+        // FileStat's module-specific type-id, which only the backend knows, so
+        // push it as the second arg before the call (emitted caller-side in
+        // wasm_ir_run with the path_filestat_get import + heap).
+        return tid_get("FileStat") + "    call $__fern_stat\n";
+    }
+    if (o.kind_tag == 173) {  // remove_file
+        // stack: path strblock ptr -> unlink the file, push a Result[(), IoError]
+        // box (Ok(()) on success / Err(IoError) on failure). $__fern_remove_file
+        // (param i32 path, result i32) wraps the preview1 path_unlink_file and
+        // allocates the box; emitted caller-side in wasm_ir_run (with the
+        // path_unlink_file import + heap) when the module removes a file. No
+        // struct payload, so unlike stat it needs no type-id.
+        return "    call $__fern_remove_file\n";
+    }
+    if (o.kind_tag == 231) {  // create_dir_all
+        // stack: path strblock ptr -> create the directory and every missing
+        // parent, push a Result[(), IoError] box. $__fern_create_dir_all
+        // (param i32 path, result i32) walks the path over the preview1
+        // path_create_directory import; emitted caller-side in wasm_ir_run
+        // (with that import + heap). No struct payload, so no type-id.
+        return "    call $__fern_create_dir_all\n";
+    }
+    if (o.kind_tag == 171) {  // read_dir
+        // stack: path strblock ptr -> list the directory's base-name children,
+        // push a Result[string[], IoError] box. $__fern_read_dir (param i32
+        // path, result i32) wraps preview1 path_open + fd_readdir (cookie loop,
+        // skipping . / ..) and builds the string[] via $__fern_arr_push;
+        // emitted caller-side in wasm_ir_run (with the path_open/fd_readdir/
+        // fd_close imports + heap + arr_push) when the module reads a directory.
+        return "    call $__fern_read_dir\n";
+    }
+    if (o.kind_tag == 172) {  // remove_dir_all
+        // stack: path strblock ptr -> recursively rm -rf the path, push a
+        // Result[(), IoError] box. $__fern_remove_dir_all (param i32 path, result
+        // i32) wraps preview1 path_open + fd_readdir + path_unlink_file +
+        // path_remove_directory and recurses; emitted caller-side in
+        // wasm_ir_run (with those imports + heap + arr_push) when the module
+        // removes a directory tree.
+        return "    call $__fern_remove_dir_all\n";
+    }
+    if (o.kind_tag == 180) {  // args
+        // 0-arg -> build a fresh string[] of the command-line arguments and
+        // push its block ptr. The helper ($__fern_args, result i32) reads the
+        // wasi args_sizes_get / args_get imports and allocates via the heap
+        // runtime; emitted caller-side in wasm_ir_run when the module reads
+        // args (module_emits_op "args"). argv[0] is the program name,
+        // matching the register backends.
+        return "    call $__fern_args\n";
+    }
+    if (o.kind_tag == 210) {  // arg_at
+        // stack: i -> push a fresh string block holding argv[i]. The helper
+        // ($__fern_arg_at, param i32 / result i32) shares the args imports and
+        // the heap runtime with $__fern_args but copies only the one entry;
+        // emitted caller-side in wasm_ir_run when the module reads an argument
+        // (module_emits_op "arg_at"). An out-of-range index gives "".
+        return "    call $__fern_arg_at\n";
+    }
+    if (o.kind_tag == 166) {  // exit
+        // stack: n -> proc_exit(n) (already imported for _start). Never returns;
+        // push a dummy i32 for the statement-level drop.
+        return "    call $proc_exit\n    i32.const 0\n";
+    }
+    return unsupported_op_refuse(o.kind_tag);
+}
+
 // emit_dyn_dispatch_wat renders the dyn_dispatch op: the vtable search that
 // turns a boxed dyn value plus a method name into a call_indirect through the
 // function table.
@@ -4017,138 +4203,8 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
                 out = out + "    call $__fern_map_new_struct\n";
             } else if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
             else { out = out + "    call $__fern_map_new_str\n"; }
-        } else if (o.kind_tag == 161) {  // print_int
-            // stack: n -> write n's decimal text to stdout (no newline). The helper
-            // returns void, so push a dummy i32 for the statement-level drop.
-            out = out + "    call $__fern_print_int\n    i32.const 0\n";
-        } else if (o.kind_tag == 162) {  // print_i64
-            // stack: n(i64) -> write n's decimal text to stdout (no newline) via the
-            // i64 helper. Void return, so push a dummy i32 for the statement drop.
-            out = out + "    call $__fern_print_int64\n    i32.const 0\n";
-        } else if (o.kind_tag == 163) {  // print_str
-            // stack: strblock ptr -> write its bytes to stdout (no newline). The
-            // helper returns void, so push a dummy i32 for the statement-level drop.
-            out = out + "    call $__fern_print_str\n    i32.const 0\n";
-        } else if (o.kind_tag == 164) {  // eprint_str
-            // stack: strblock ptr -> write its bytes to stderr (no newline). The
-            // helper returns void, so push a dummy i32 for the statement-level drop.
-            out = out + "    call $__fern_eprint_str\n    i32.const 0\n";
-        } else if (o.kind_tag == 182) {  // monotonic_ns
-            // 0-arg i64 clock reading -> push the raw monotonic nanosecond
-            // count. The helper ($__fern_monotonic_ns, result i64) wraps the
-            // wasi clock_time_get import; emitted caller-side in wasm_ir_run
-            // when the module uses any clock builtin (module_uses_clocks).
-            out = out + "    call $__fern_monotonic_ns\n";
-        } else if (o.kind_tag == 184) {  // now_unix_ms
-            // 0-arg i64 clock reading -> realtime nanoseconds / 1_000_000.
-            out = out + "    call $__fern_now_unix_ms\n";
-        } else if (o.kind_tag == 183) {  // now_ns
-            // 0-arg i64 clock reading -> raw realtime nanoseconds.
-            out = out + "    call $__fern_now_ns\n";
-        } else if (o.kind_tag == 209) {  // read_all_stdin
-            // 0-arg -> read fd 0 to EOF, push ONE fresh string block holding the
-            // whole input. The helper ($__fern_read_all_stdin, result i32) is
-            // emitted caller-side in wasm_ir_run with the fd_read import + the
-            // heap runtime, exactly like $__fern_read_line.
-            out = out + "    call $__fern_read_all_stdin\n";
-        } else if (o.kind_tag == 168) {  // read_line
-            // 0-arg -> read one line of stdin (fd 0), push a fresh string block
-            // (the line without its trailing newline). The helper
-            // ($__fern_read_line, result i32) is emitted caller-side in
-            // wasm_ir_run with the fd_read import + the heap runtime.
-            out = out + "    call $__fern_read_line\n";
-        } else if (o.kind_tag == 167) {  // read_int
-            // 0-arg -> parse a leading integer from stdin (fd 0), push it (i32).
-            // The helper ($__fern_read_int) reads into scratch and allocates
-            // nothing; emitted caller-side with the fd_read import.
-            out = out + "    call $__fern_read_int\n";
-        } else if (o.kind_tag == 169) {  // read_file
-            // stack: path strblock ptr -> read the whole named file, push a
-            // Result[string, IoError] box ptr. The helper ($__fern_read_file,
-            // result i32) opens the path under preopen fd 3 (path_open) and
-            // reads via fd_read; emitted caller-side in wasm_ir_run (with the
-            // path_open / fd_read / fd_close imports) when the module reads files.
-            out = out + "    call $__fern_read_file\n";
-        } else if (o.kind_tag == 170) {  // write_file
-            // stack: path ptr, content ptr -> write content to the named file,
-            // push a Result[(), IoError] box ptr. The helper ($__fern_write_file)
-            // opens the path for write (path_open) and writes via fd_write (the
-            // import print already pulls in; wasm_ir_run extends its gate).
-            out = out + "    call $__fern_write_file\n";
-        } else if (o.kind_tag == 203) {  // open_file (#4372)
-            // stack: path box -> push the openat flags (i32_imm) -> $__fern_open_file
-            // (path_open under preopen fd 3) -> fd (>= 0, a bare Reader/Writer) or
-            // -errno. wasm_ir_run gates in file_imports (path_open) on the open_file need.
-            out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n    call $__fern_open_file\n";
-        } else if (o.kind_tag == 202) {  // writer_write (#4372)
-            // stack: fd, str box -> $__fern_writer_write (fd_write of the box's
-            // bytes) -> bytes written (>= 0) or -errno.
-            out = out + "    call $__fern_writer_write\n";
-        } else if (o.kind_tag == 176) {  // env
-            // stack: name strblock ptr -> look up the env var, push a fresh
-            // Option[string] box (Some(value) / None). $__fern_env (param i32 name,
-            // result i32) wraps the preview1 environ_sizes_get/environ_get scan and
-            // allocates the value + box; emitted caller-side in wasm_ir_run (with the
-            // environ imports + heap) when the module reads an env var.
-            out = out + "    call $__fern_env\n";
-        } else if (o.kind_tag == 175) {  // stat
-            // stack: path strblock ptr -> stat the file, push a Result[FileStat,
-            // IoError] box. $__fern_stat (param i32 path, param i32 fstype) does the
-            // preview1 path_filestat_get + builds the FileStat struct box; it needs
-            // FileStat's module-specific type-id, which only the backend knows, so
-            // push it as the second arg before the call (emitted caller-side in
-            // wasm_ir_run with the path_filestat_get import + heap).
-            out = out + tid_get("FileStat") + "    call $__fern_stat\n";
-        } else if (o.kind_tag == 173) {  // remove_file
-            // stack: path strblock ptr -> unlink the file, push a Result[(), IoError]
-            // box (Ok(()) on success / Err(IoError) on failure). $__fern_remove_file
-            // (param i32 path, result i32) wraps the preview1 path_unlink_file and
-            // allocates the box; emitted caller-side in wasm_ir_run (with the
-            // path_unlink_file import + heap) when the module removes a file. No
-            // struct payload, so unlike stat it needs no type-id.
-            out = out + "    call $__fern_remove_file\n";
-        } else if (o.kind_tag == 231) {  // create_dir_all
-            // stack: path strblock ptr -> create the directory and every missing
-            // parent, push a Result[(), IoError] box. $__fern_create_dir_all
-            // (param i32 path, result i32) walks the path over the preview1
-            // path_create_directory import; emitted caller-side in wasm_ir_run
-            // (with that import + heap). No struct payload, so no type-id.
-            out = out + "    call $__fern_create_dir_all\n";
-        } else if (o.kind_tag == 171) {  // read_dir
-            // stack: path strblock ptr -> list the directory's base-name children,
-            // push a Result[string[], IoError] box. $__fern_read_dir (param i32
-            // path, result i32) wraps preview1 path_open + fd_readdir (cookie loop,
-            // skipping . / ..) and builds the string[] via $__fern_arr_push;
-            // emitted caller-side in wasm_ir_run (with the path_open/fd_readdir/
-            // fd_close imports + heap + arr_push) when the module reads a directory.
-            out = out + "    call $__fern_read_dir\n";
-        } else if (o.kind_tag == 172) {  // remove_dir_all
-            // stack: path strblock ptr -> recursively rm -rf the path, push a
-            // Result[(), IoError] box. $__fern_remove_dir_all (param i32 path, result
-            // i32) wraps preview1 path_open + fd_readdir + path_unlink_file +
-            // path_remove_directory and recurses; emitted caller-side in
-            // wasm_ir_run (with those imports + heap + arr_push) when the module
-            // removes a directory tree.
-            out = out + "    call $__fern_remove_dir_all\n";
-        } else if (o.kind_tag == 180) {  // args
-            // 0-arg -> build a fresh string[] of the command-line arguments and
-            // push its block ptr. The helper ($__fern_args, result i32) reads the
-            // wasi args_sizes_get / args_get imports and allocates via the heap
-            // runtime; emitted caller-side in wasm_ir_run when the module reads
-            // args (module_emits_op "args"). argv[0] is the program name,
-            // matching the register backends.
-            out = out + "    call $__fern_args\n";
-        } else if (o.kind_tag == 210) {  // arg_at
-            // stack: i -> push a fresh string block holding argv[i]. The helper
-            // ($__fern_arg_at, param i32 / result i32) shares the args imports and
-            // the heap runtime with $__fern_args but copies only the one entry;
-            // emitted caller-side in wasm_ir_run when the module reads an argument
-            // (module_emits_op "arg_at"). An out-of-range index gives "".
-            out = out + "    call $__fern_arg_at\n";
-        } else if (o.kind_tag == 166) {  // exit
-            // stack: n -> proc_exit(n) (already imported for _start). Never returns;
-            // push a dummy i32 for the statement-level drop.
-            out = out + "    call $proc_exit\n    i32.const 0\n";
+        } else if (is_host_op_kind(o.kind_tag)) {
+            out = out + emit_host_op_wat(o);
         } else if (o.kind_tag == 165) {  // putchar
             // stack: byte -> write its low byte to stdout. Inlines the same scratch
             // iovec + $fd_write path the AST backend uses (wasm.fern's putchar): the
