@@ -329,6 +329,17 @@ findings. Ranked by leverage.
     lines), `check_expr` (424), `stmts_call_diags` (297). Those are SH-044/050
     territory, not this row.
 
+    **A collector may match a STRUCTURE spanning several levels**, which a fold
+    visits one node at a time. `mx_expr` recognises the desugared value-match —
+    a zero-arg `ExprCall` whose callee is a zero-param `ExprLambda` whose
+    `body[0]` is a `StmtMatch`/`StmtIf` — and treats it differently from a plain
+    lambda, which it also handles by building a scope and delegating to
+    `mx_stmts`. A visitor CAN recognise the shape (it receives the whole node),
+    but the descent predicate must recognise it too and prune there; otherwise
+    the fold walks into the inner lambda and processes it AGAIN as a plain one.
+    Encode such a pattern in a shared predicate used by both halves, never
+    twice by hand.
+
     **A collector may treat its ROOT node differently from nested ones**, which
     a fold cannot express directly. `lret_expr` takes a `self_name` and passes
     `""` in every non-lambda arm, so that binding applies only to a lambda at
