@@ -42,7 +42,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	const want = "kind_count=196\n" +
 		"bijection_ok=196\n" +
 		"bijection_failures=0\n" +
-		"ext_ok=34\n" +
+		"ext_ok=35\n" +
 		"ext_failures=0\n" +
 		"unknown_id=0\n" +
 		"id0=invalid\n" +
@@ -55,7 +55,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=32 bad=0\n"
+		"tag_consistency ok=33 bad=0\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

@@ -177,6 +177,13 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 			// native, when qemu == "").
 			asm, err := exec.Command(mmc, tc.src, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {
+				// Same reason the x86-64 sibling above prints stderr: without
+				// it the failure is a bare "exit status 1" and the next reader
+				// has to rebuild the driver by hand to learn anything.
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					t.Fatalf("self-host compile failed: %v\n%s", err, ee.Stderr)
+				}
 				t.Fatalf("self-host compile failed: %v", err)
 			}
 			if len(asm) == 0 {

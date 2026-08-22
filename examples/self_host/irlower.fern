@@ -9299,6 +9299,13 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!tf.ok) { return tf; }
         return tf.emit(ir.op_timer_fd());
     }
+    // isatty(fd): lower fd, then a dedicated op the backends emit as a
+    // call into __fern_isatty (one terminal-attribute ioctl) → 0/1.
+    if (cid.name == "isatty" && c.args.len() == 1) {
+        var it: LowerState = lower_expr(c.args[0], s);
+        if (!it.ok) { return it; }
+        return it.emit(ir.op_isatty());
+    }
     // wasm_timer_pollable(ns) / wasm_pollable_drop(p): portability
     // shims (native: -1 / 0). Lower the arg, then emit the op.
     if (cid.name == "wasm_timer_pollable" && c.args.len() == 1) {
