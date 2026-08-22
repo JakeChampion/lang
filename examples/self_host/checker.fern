@@ -10648,55 +10648,47 @@ function e060_trait_declares(mod: parser.Module, trait_name: string, m: string):
 }
 
 // e060_collect_dyn_locals records `name|set` for each param / var whose
-// annotation is a dyn type, recursing nested blocks; a name bound MORE than
-// once anywhere in the function (dyn or not) is blanked to "name|" so
-// shadowing never mislabels a value. Assignment (`d = other`) keeps the
-// declared annotation, matching the type system.
+// annotation is a dyn type; a name bound MORE than once anywhere in the
+// function (dyn or not) is blanked to "name|" so shadowing never mislabels a
+// value. Assignment (`d = other`) keeps the declared annotation, matching the
+// type system.
+//
+// The set is FLAT across the whole function — nested blocks and lambda bodies
+// alike — which is why a rebind blanks rather than scopes. Statement-shaped, so
+// it needs fold_stmt_nodes rather than a plain expression fold: a `var`'s name
+// and annotation are fields on the statement.
 function e060_collect_dyn_locals(stmts: parser.Stmt[], acc: string[]): string[] {
-  var a: string[] = acc;
-  for stmt in stmts {
-    match (stmt) {
+  function at_stmt(st: parser.Stmt, a: string[]): string[] {
+    match (st) {
       parser.StmtVar(v) => {
+        var out: string[] = a;
         var seen: i32 = 0;
         var k: i32 = 0;
-        while (k < a.len()) {
-          var e: string = a[k];
+        while (k < out.len()) {
+          var e: string = out[k];
           var bar: i32 = 0;
           while (bar < e.len() && e[bar] != b'|') {
             bar = bar + 1;
           }
           if (e[0:bar] == v.name) {
-            a = a.with(k, v.name + "|");
+            out = out.with(k, v.name + "|");
             seen = 1;
           }
           k = k + 1;
         }
         if (seen == 0) {
-          a = a.append(v.name + "|" + e060_dyn_set_of(v.type_name));
+          out = out.append(v.name + "|" + e060_dyn_set_of(v.type_name));
         }
+        return out;
       },
-      parser.StmtIf(f) => {
-        a = e060_collect_dyn_locals(f.then_body, a);
-        a = e060_collect_dyn_locals(f.else_body, a);
-      },
-      parser.StmtWhile(w) => {
-        a = e060_collect_dyn_locals(w.body, a);
-      },
-      parser.StmtFor(fo) => {
-        a = e060_collect_dyn_locals(fo.body, a);
-      },
-      parser.StmtMatch(m) => {
-        for arm in m.arms {
-          a = e060_collect_dyn_locals(arm.body, a);
-        }
-      },
-      parser.StmtDefer(d) => {
-        a = e060_collect_dyn_locals([d.action], a);
-      },
-      _ => {}
+      _ => { return a; }
     }
   }
-  return a;
+  var res: string[] = acc;
+  for stmt in stmts {
+    res = astwalk.fold_stmt_nodes(stmt, res, at_stmt, (e: parser.Expr, a: string[]) => a, astwalk.descend_all);
+  }
+  return res;
 }
 
 // e060_set_of_name looks `name` up in the collected `name|set` entries.
@@ -10721,170 +10713,105 @@ function e060_is_primitive_name(t: string): boolean {
   return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "usize" || t == "char";
 }
 
-// e060_e062_expr walks one expression, flagging:
+// e060_e062_stmts walks every statement in `stmts`, flagging at each
+// expression node:
 //   E060 — `d as? T` where d is a dyn-annotated ident: T a primitive → the
 //   target-shape arm; T a declared plain struct / enum missing an `impl` for
 //   any trait in d's set (every trait known) → the not-implementing arm, with
 //   the missing traits joined " + " exactly like native's missingDynTraits.
 //   E062 — `d.m(args)` where d's set has 2+ traits and 2+ of them declare m.
-function e060_e062_expr(e: parser.Expr, dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
-  var out: util.Diag[] = acc;
-  match (e) {
-    parser.ExprUnary(u) => {
-      if (u.op.len() > 4 && u.op[0:4] == "as?_") {
-        match (u.operand) {
-          parser.ExprIdent(id) => {
-            var set: string = e060_set_of_name(dyns, id.name);
-            if (set.len() > 0) {
-              var tgt: str = u.op[4:u.op.len()];
-              if (e060_is_primitive_name(tgt)) {
-                out = out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
-              } else if (e060_decl_is_plain_struct(mod, tgt) || e060_decl_is_enum(mod, tgt)) {
-                var trs: string[] = e060_split_traits(set);
-                var all_known: boolean = true;
-                var missing: string = "";
-                for tr in trs {
-                  if (!e060_trait_known(mod, tr)) {
-                    all_known = false;
-                  } else if (!e021_has_impl(mod, tr, tgt)) {
-                    if (missing.len() > 0) {
-                      missing = missing + " + ";
-                    }
-                    missing = missing + tr;
-                  }
+//
+// The recursion is astwalk's, so the checks reach every expression kind the
+// shared spine knows. The hand-written walk this replaced listed nine kinds and
+// dropped the rest on a `_ => {}` arm, which silently excused a downcast inside
+// a lambda body or a slice bound — native reports both, since it checks these
+// on its ordinary type-check traversal.
+//
+// ExprMapLit and ExprFString were dropped too and cost nothing: both reach only
+// the printer, every other parse having desugared them (parser.fern:150-162).
+// A dropped variant is a hole only if it REACHES this pass.
+function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
+  function at_node(n: parser.Expr, out: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprUnary(u) => {
+        if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+          match (u.operand) {
+            parser.ExprIdent(id) => {
+              var set: string = e060_set_of_name(dyns, id.name);
+              if (set.len() > 0) {
+                var tgt: str = u.op[4:u.op.len()];
+                if (e060_is_primitive_name(tgt)) {
+                  return out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
                 }
-                if (all_known && missing.len() > 0) {
-                  out = out.append(dg_at("E060", tgt + " does not implement " + missing + ", so a 'dyn " + set + "' cannot downcast to it", u.line, u.col));
-                }
-              }
-            }
-          },
-          _ => {}
-        }
-      }
-      return e060_e062_expr(u.operand, dyns, mod, out);
-    },
-    parser.ExprCall(c) => {
-      match (c.callee) {
-        parser.ExprFieldAccess(fa) => {
-          match (fa.obj) {
-            parser.ExprIdent(rid) => {
-              var rset: string = e060_set_of_name(dyns, rid.name);
-              if (rset.len() > 0) {
-                var rtrs: string[] = e060_split_traits(rset);
-                if (rtrs.len() >= 2) {
-                  var declaring: string = "";
-                  var n_decl: i32 = 0;
-                  for rtr in rtrs {
-                    if (e060_trait_declares(mod, rtr, fa.field)) {
-                      if (n_decl > 0) {
-                        declaring = declaring + ", ";
+                if (e060_decl_is_plain_struct(mod, tgt) || e060_decl_is_enum(mod, tgt)) {
+                  var trs: string[] = e060_split_traits(set);
+                  var all_known: boolean = true;
+                  var missing: string = "";
+                  for tr in trs {
+                    if (!e060_trait_known(mod, tr)) {
+                      all_known = false;
+                    } else if (!e021_has_impl(mod, tr, tgt)) {
+                      if (missing.len() > 0) {
+                        missing = missing + " + ";
                       }
-                      declaring = declaring + rtr;
-                      n_decl = n_decl + 1;
+                      missing = missing + tr;
                     }
                   }
-                  if (n_decl >= 2) {
-                    out = out.append(dg_at("E062", "ambiguous method \"" + fa.field + "\" on `dyn " + rset + "`: declared by traits " + declaring, fa.line, fa.col));
+                  if (all_known && missing.len() > 0) {
+                    return out.append(dg_at("E060", tgt + " does not implement " + missing + ", so a 'dyn " + set + "' cannot downcast to it", u.line, u.col));
                   }
                 }
               }
             },
             _ => {}
           }
-        },
-        _ => {}
-      }
-      out = e060_e062_expr(c.callee, dyns, mod, out);
-      for arg in c.args {
-        out = e060_e062_expr(arg, dyns, mod, out);
-      }
-      return out;
-    },
-    parser.ExprBinary(b) => {
-      out = e060_e062_expr(b.left, dyns, mod, out);
-      return e060_e062_expr(b.right, dyns, mod, out);
-    },
-    parser.ExprIndex(ix) => {
-      out = e060_e062_expr(ix.array, dyns, mod, out);
-      return e060_e062_expr(ix.index, dyns, mod, out);
-    },
-    parser.ExprFieldAccess(fa2) => {
-      return e060_e062_expr(fa2.obj, dyns, mod, out);
-    },
-    parser.ExprArray(ar) => {
-      for element in ar.elements {
-        out = e060_e062_expr(element, dyns, mod, out);
-      }
-      return out;
-    },
-    parser.ExprTuple(tu) => {
-      for element in tu.elements {
-        out = e060_e062_expr(element, dyns, mod, out);
-      }
-      return out;
-    },
-    parser.ExprStructLit(sl) => {
-      for field_value in sl.field_values {
-        out = e060_e062_expr(field_value, dyns, mod, out);
-      }
-      if (sl.has_base) {
-        out = e060_e062_expr(sl.base, dyns, mod, out);
-      }
-      return out;
-    },
-    _ => {
-      return out;
-    }
-  }
-  return out;
-}
-
-function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
-  var out: util.Diag[] = acc;
-  for stmt in stmts {
-    match (stmt) {
-      parser.StmtVar(v) => {
-        out = e060_e062_expr(v.init, dyns, mod, out);
-      },
-      parser.StmtAssign(a) => {
-        out = e060_e062_expr(a.value, dyns, mod, out);
-      },
-      parser.StmtReturn(r) => {
-        out = e060_e062_expr(r.value, dyns, mod, out);
-      },
-      parser.StmtExpr(ex) => {
-        out = e060_e062_expr(ex.value, dyns, mod, out);
-      },
-      parser.StmtIf(f) => {
-        out = e060_e062_expr(f.cond, dyns, mod, out);
-        out = e060_e062_stmts(f.then_body, dyns, mod, out);
-        out = e060_e062_stmts(f.else_body, dyns, mod, out);
-      },
-      parser.StmtWhile(w) => {
-        out = e060_e062_expr(w.cond, dyns, mod, out);
-        out = e060_e062_stmts(w.body, dyns, mod, out);
-      },
-      parser.StmtFor(fo) => {
-        out = e060_e062_expr(fo.iter, dyns, mod, out);
-        out = e060_e062_stmts(fo.body, dyns, mod, out);
-      },
-      parser.StmtMatch(m) => {
-        out = e060_e062_expr(m.scrutinee, dyns, mod, out);
-        for arm in m.arms {
-          if (arm.has_guard) {
-            out = e060_e062_expr(arm.guard, dyns, mod, out);
-          }
-          out = e060_e062_stmts(arm.body, dyns, mod, out);
         }
+        return out;
       },
-      parser.StmtDefer(d) => {
-        out = e060_e062_stmts([d.action], dyns, mod, out);
+      parser.ExprCall(c) => {
+        match (c.callee) {
+          parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+              parser.ExprIdent(rid) => {
+                var rset: string = e060_set_of_name(dyns, rid.name);
+                if (rset.len() > 0) {
+                  var rtrs: string[] = e060_split_traits(rset);
+                  if (rtrs.len() >= 2) {
+                    var declaring: string = "";
+                    var n_decl: i32 = 0;
+                    for rtr in rtrs {
+                      if (e060_trait_declares(mod, rtr, fa.field)) {
+                        if (n_decl > 0) {
+                          declaring = declaring + ", ";
+                        }
+                        declaring = declaring + rtr;
+                        n_decl = n_decl + 1;
+                      }
+                    }
+                    if (n_decl >= 2) {
+                      return out.append(dg_at("E062", "ambiguous method \"" + fa.field + "\" on `dyn " + rset + "`: declared by traits " + declaring, fa.line, fa.col));
+                    }
+                  }
+                }
+              },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+        return out;
       },
-      _ => {}
+      _ => {
+        return out;
+      }
     }
+    return out;
   }
-  return out;
+  var res: util.Diag[] = acc;
+  for stmt in stmts {
+    res = astwalk.fold_stmt(stmt, res, at_node);
+  }
+  return res;
 }
 
 // e060_decl_is_plain_struct: `name` is a declared plain struct (a decl by that
