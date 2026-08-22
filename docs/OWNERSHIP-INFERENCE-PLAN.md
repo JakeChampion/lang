@@ -100,6 +100,30 @@ scalars. Scalars, strings, arrays and string-bearing composites never carry the
 inc/dec pair on either side (`isOwnedByDefaultType` is the ladder's first rung),
 and measure clean on the pre-fix compiler.
 
+**This reaches the SHIPPING configuration, not only the owned model.** Borrow
+inference demotes a param only when the escape analysis proves it non-escaping,
+so an ESCAPING param of an indirect-dispatch target reached `paramVerdictOwned`
+with `BorrowInferEnabled` at its default — and no call site retained it. On
+`origin/main`, a named function that returns one of its params and is passed as
+a callback bumps the rc-underflow counter on **all three backends** in the
+default configuration.
+
+The escape has to be an identity or projection return. A construction that
+carries the param out (`Holder { t: p }`) inc's what it stores, and that inc
+balances the stray dec — which is why the first shapes tried looked clean and
+why the bound above is about the param's TYPE, not about escaping as such.
+
+The `*BorrowInferMatchesOwned` differentials are structurally blind to the
+default-configuration half: both configurations are wrong in the same way, so
+comparing them agrees. Only a case asserting that the shipping compiler is
+RIGHT can see it — `TestX86_64RcIndirectDispatchDefault` and its two siblings
+are that, and they run with the flags untouched.
+
+The blast radius grew twice under investigation: filed as wasm-only, then found
+on all three backends under the owned model, then found in the shipping default.
+Each step was a corpus gap rather than a new defect, which is the argument for
+adding cases at each layer rather than only at the one that happened to fire.
+
 Borrow inference reaches the same verdict from the escape facts for the common
 non-escaping case, so both bugs were invisible with it on: the gate that sees
 them is the `*BorrowInferMatchesOwned` differential, and the corpus needs a case

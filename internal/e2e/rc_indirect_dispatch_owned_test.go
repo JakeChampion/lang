@@ -176,3 +176,101 @@ func TestArm64RcIndirectDispatchOwned(t *testing.T) {
 func TestWASMRcIndirectDispatchOwned(t *testing.T) {
 	runRcIndirectDispatchCorpus(t, runWasm)
 }
+
+// The shipping DEFAULT configuration is affected too, and this is the half that
+// matters most: borrow inference only demotes a param the escape analysis
+// proves non-escaping, so an ESCAPING param of an address-taken function
+// reached paramVerdictOwned with ast.BorrowInferEnabled left at its default.
+// No indirect call site retained it, and the callee's exit dec then released a
+// reference nobody had counted.
+//
+// The `*BorrowInferMatchesOwned` differentials are structurally blind to this:
+// both configurations are wrong in the same way, so comparing them agrees. That
+// is why these cases run with the flags UNTOUCHED — asserting the shipping
+// compiler is right, not that two configurations match.
+//
+// The escape has to be an identity / projection return. A construction that
+// carries the param out (`Holder { t: p }`) inc's what it stores, which
+// balances the stray dec — `lambda_param_escapes_into_result` above is that
+// shape and is clean on both sides of the fix.
+var rcIndirectDispatchDefaultCorpus = []struct {
+	name string
+	src  string
+}{
+	{
+		// A lambda that returns its parameter. The caller's local and the
+		// result alias one tuple; the callee's exit dec freed it while both
+		// were still live, and the two later tuples reuse the block.
+		name: "identity_return_lambda",
+		src: `
+function main(): i32 {
+    var id = function (p: (i32, i32)): (i32, i32) { return p; };
+    var t = (3, 4);
+    var u = id(t);
+    var j1 = (91, 92);
+    var j2 = (93, 94);
+    if (j1.0 + j2.0 != 184) { return 200; }
+    if (u.0 * 10 + u.1 != 34) { return 100 + u.0; }
+    if (t.0 * 10 + t.1 != 34) { return 150 + t.0; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
+		// The same escape through a NAMED function passed as a callback:
+		// `pick` returns one of its two params. Both are owned-type and both
+		// escape, so both were classified Owned with no retain at the site.
+		name: "named_pick_as_callback",
+		src: `
+function pick(p: (i32, i32), q: (i32, i32), c: boolean): (i32, i32) { if (c) { return p; } return q; }
+function apply(f: ((i32,i32), (i32,i32), boolean) => (i32,i32)): i32 {
+    var a = (3, 4);
+    var b = (5, 6);
+    var r = f(a, b, true);
+    var j1 = (91, 92);
+    if (j1.0 != 91) { return 200; }
+    return r.0 * 10 + r.1;
+}
+function main(): i32 {
+    if (apply(pick) != 34) { return 1; }
+    return __rc_underflow_count();
+}`,
+	},
+}
+
+func runRcIndirectDispatchDefaultCorpus(t *testing.T, run func(t *testing.T, src string) int) {
+	t.Helper()
+	// RcFreeEnabled is the only flag set: reclamation has to actually happen
+	// for an over-release to be reachable. BorrowInferEnabled is deliberately
+	// left at its shipping default.
+	prevFree := ast.RcFreeEnabled
+	defer func() { ast.RcFreeEnabled = prevFree }()
+	ast.RcFreeEnabled = true
+	if !ast.BorrowInferEnabled {
+		t.Fatal("this corpus asserts the SHIPPING configuration; ast.BorrowInferEnabled must be at its default")
+	}
+	for _, c := range rcIndirectDispatchDefaultCorpus {
+		t.Run(c.name, func(t *testing.T) {
+			if code := run(t, c.src); code != 0 {
+				t.Errorf("%s: got exit %d, want 0 (wrong value or rc over-release in the DEFAULT configuration)", c.name, code)
+			}
+		})
+	}
+}
+
+func TestX86_64RcIndirectDispatchDefault(t *testing.T) {
+	runRcIndirectDispatchDefaultCorpus(t, func(t *testing.T, src string) int {
+		_, code := compileAndRunX86_64FreeOn(t, src)
+		return code
+	})
+}
+
+func TestArm64RcIndirectDispatchDefault(t *testing.T) {
+	runRcIndirectDispatchDefaultCorpus(t, func(t *testing.T, src string) int {
+		_, code := compileAndRunArm64FreeOn(t, src)
+		return code
+	})
+}
+
+func TestWASMRcIndirectDispatchDefault(t *testing.T) {
+	runRcIndirectDispatchDefaultCorpus(t, runWasm)
+}
