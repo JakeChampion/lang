@@ -6,14 +6,6 @@
 # entry needs a reason. New unreachable functions that aren't listed
 # here fail CI.
 
-# Interface methods dispatched only dynamically. Each makes its Error
-# type satisfy the diag setFile interface; deadcode can't see the
-# dynamic dispatch, but removing them would drop the interface
-# conformance.
-internal/lexer:Error.setFile
-internal/parser:Error.setFile
-internal/checker:Error.setFile
-
 # Part of the interp Value sum-type interface (String() string). The
 # Builtin variant is dispatched through the Value interface; deleting it
 # removes Builtin from the interface's method set.
