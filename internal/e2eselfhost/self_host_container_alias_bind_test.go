@@ -90,11 +90,20 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 40, allocs: 100, frees: 100,
 		},
 		{
-			// THE OTHER DEEP-RELEASE CASE, and the one that generalised the
-			// rule: a struct release is a field WALK plus a box dec, so sharing the
-			// credit walked the fields twice — exit 99 again. The alias is marked
-			// `"NODEEP:"` so its sweep is box-only. Base 200/0, 8000.
-			name: "struct_alias",
+			// STRUCT IS NOT IN THIS CHANGE, and this row pins that it is left
+			// leaking rather than half-fixed. The bind-side retain fires only for
+			// slot_is_rc_container (array / string / tuple); the clause that tried
+			// to add structs keyed on `struct_type_of_slot`, which is ALSO set for
+			// enum names and dyn tags, so it retained values that are not rc box
+			// pointers — six integer fixtures and both differential shards
+			// segfaulted, none of them touching a container alias.
+			//
+			// The two halves are coupled and must leave together: crediting the
+			// alias without the retain double-frees at rc 1 (measured, exit 99),
+			// which is a strictly worse state than the leak. So the row asserts
+			// the ORIGINAL leak and, more importantly, that it does not become an
+			// over-release while it waits.
+			name: "struct_alias_still_leaks",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
     var t: P = P { xs: [i, i + 1] };
@@ -102,7 +111,7 @@ function round(i: i32): i32 {
     return v.xs[0] + v.xs[1];
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 200, frees: 200,
+			want: 40, allocs: 200, frees: 0,
 		},
 		{
 			// The source read AFTER the alias, so both are live across the

@@ -2012,6 +2012,17 @@ pub function (s: LowerState) clo_rc_approved(name: string): boolean {
 // still pointed at it — the same degradation of the constructor-reuse guard the
 // array case was fixed for (#4350), two slot kinds over. Keeping the three sites on
 // ONE predicate is what stops them drifting apart again.
+// slot_is_tuple_box reports whether slot i holds a TUPLE box. Bounds-guarded
+// like its sibling below, which matters: slot_of returns -1 for an ident that is
+// not a local at all — a module function name, an enum variant, `None` — and an
+// unguarded `s.locals[i]` on that crashes the COMPILER rather than miscompiling
+// the program. Thirteen fixtures died at "array index out of range" before this
+// guard, none of them containing a tuple.
+pub function (s: LowerState) slot_is_tuple_box(i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return s.locals[i].tuple_elems.len() > 0;
+}
+
 pub function (s: LowerState) slot_is_rc_container(i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     return s.is_arr_slot(i) || s.is_str_slot(i) || s.locals[i].tuple_elems.len() > 0;
@@ -19000,7 +19011,38 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // deep field drop rather than a box dec, so it carries its own
             // clause rather than widening that predicate under three other
             // callers who mean "box".
-            else if (se.slot_is_rc_container(aid_slot) || se.struct_type_of_slot(aid_slot).len() > 0) { alias_inc = true; }
+            // TUPLE only, deliberately — NOT slot_is_rc_container, which also
+            // covers strings. The retain and the credit have to land together:
+            // a retain whose class has no alias credit is an unbalanced inc, and
+            // the string class is not wired here. Measured: with `is_str` in,
+            // `var sp: string = sep;` inside std/array's join_with_last gained a
+            // retain nothing gives back, on every program that reaches it.
+            //
+            // The struct clause that was here keyed on struct_type_of_slot, which
+            // is ALSO set for enum names and dyn tags, so it retained values that
+            // are not box pointers at all — six integer fixtures and both
+            // differential shards segfaulted. Adding structs needs a predicate
+            // that identifies a struct BOX slot; struct_type_of_slot is not one.
+            // THE RETAIN AND THE CREDIT MUST BE CO-EXTENSIVE. The credit is only
+            // ever granted when the SOURCE is a credited tuple local, so retaining
+            // a source that is not one produces an inc nothing gives back. That is
+            // not hypothetical: `w @ (A(x), y) => …` desugars to a bare-ident bind
+            // of the match scrutinee, and when the scrutinee is a PARAMETER the
+            // retain fired while the credit could not — +1 rc_inc and 0 extra
+            // releases in two conformance fixtures, with a byte-identical leak
+            // census either side, because an unbalanced retain allocates nothing
+            // and frees nothing.
+            //
+            // Asking slot_is_reclaimable_tuple here is what keeps the two halves
+            // exactly the same set: no credited source, no retain, status quo.
+            // BOTH tuple classes, because both grant the alias a credit: a scalar
+            // tuple is "TUP:" and an rc tuple "TUPRC:"/"TUPRCS:". Gating on only
+            // the first desynced the pair the other way — the rc-tuple alias kept
+            // its credit while the retain stopped firing, and swept a box that was
+            // never retained: exit 99 on `var t: (i32, i32[]) = (i, [i, i+1]);
+            // var v = t;`, with allocs == frees at live_bytes 0 as always.
+            else if (se.slot_is_tuple_box(aid_slot)
+                     && (slot_is_reclaimable_tuple(se, aid_slot) || slot_is_reclaimable_rctuple(se, aid_slot))) { alias_inc = true; }
         },
         parser.ExprFieldAccess(sfa) => {
             // An ARRAY-OF-ARRAY field read (`var rows = a.xs`, xs: i32[][]): the
@@ -32064,12 +32106,19 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // `fresh` holds BINDING-SITE keys; every gate below asks about the
         // VARIABLE, so each takes the bare name back out of the key.
         var fnm: string = reclaim_site_name(fresh[i]);
-        var fal: string[] = [];
-        fal = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, fal);
-        if (!body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, fal) && !reassigned_from_alias(body, fnm)
+        // STRUCTS ARE NOT IN THIS CHANGE. The bind-side retain only fires for
+        // slot_is_rc_container (array / string / tuple); a struct slot is not in
+        // that predicate, and the clause that tried to add one keyed on
+        // `struct_type_of_slot`, which is ALSO set for enum names and dyn tags —
+        // so it retained values that are not rc box pointers and segfaulted six
+        // integer fixtures and both differential shards. The two halves are
+        // coupled: crediting the alias without the retain double-frees at rc 1
+        // (measured, exit 99), so the struct half leaves together.
+        if (!body_unsafe_for(body, fnm, borrowable, recv_borrow) && !reassigned_from_alias(body, fnm)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
             && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
             out = out.append(fresh[i]);
+            // (struct alias credits removed with the struct retain — see above)
             // The alias shares the box, so it shares the credit — but a struct's
             // release is a DEEP FIELD DROP plus a box dec, and only the box was
             // retained at the bind. Two deep drops would free every field buffer
@@ -32085,8 +32134,6 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // This is the per-type difference the array, tuple and string classes
             // do not have: their release IS the box dec, so sharing the credit
             // shares the whole release.
-            out = credit_alias_sites(out, "", fal);
-            out = credit_alias_sites(out, "NODEEP:", fal);
         }
         i = i + 1;
     }

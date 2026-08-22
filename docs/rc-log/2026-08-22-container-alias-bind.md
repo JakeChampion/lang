@@ -12,7 +12,7 @@ this one had no recorded fact to key on, because no binding took a retain.
 | tuple, bare-ident element | `200/200` 0 | `200/0` **8000** | `200/200` **0** |
 | tuple, fresh-literal element | `200/200` 0 | `200/0` **8000** | `200/200` **0** |
 | scalar tuple | `100/100` 0 | `100/0` **4000** | `100/100` **0** |
-| struct | `200/200` 0 | `200/0` **8000** | `200/200` **0** |
+| struct | `200/200` 0 | `200/0` **8000** | unchanged — see below |
 | string | `0/0` 0 | `200/0` **3200** | unchanged — its own change |
 
 `frees=0`, not a partial release: **four** releases lost, because three things
@@ -88,6 +88,134 @@ Retain first, verified leak-neutral on all five probes including the
 conditional; then the credits. Retain-without-sweep is a leak; sweep-without-
 retain is a double free. Built in one pass, the two over-releases above would
 have been indistinguishable from the leaks being fixed.
+
+## The retain lands on TUPLE slots only, and the gate is an asm diff
+
+The retain is `tuple_elems.len() > 0`, not `slot_is_rc_container` — because the
+retain and the credit have to land together, and only the tuple credit is wired
+here. With `is_str` in the predicate, `var sp: string = sep;` inside
+`std/array`'s `join_with_last` gained a retain nothing gives back, on every
+program that reaches it.
+
+**The verification is not a byte count.** A retain that lands on a non-pointer
+allocates nothing and frees nothing, so the census reads clean either way — see
+the section below. The gate is the emitted-asm diff, in both directions:
+
+| direction | check | result |
+| --- | --- | --- |
+| negative | a program with no tuple alias emits BYTE-IDENTICAL asm | 6/6 fixtures identical, `rc_inc` 28/28 |
+| positive | a program with one emits exactly the expected retain, in the expected function | +1 `rc_inc`, in `__fn_round` only — no stdlib function touched |
+
+## The retain and the credit must be CO-EXTENSIVE, and the emit-hash gate is what proved it
+
+The first version retained any tuple-box source. The credit is only ever granted
+when the SOURCE is a credited tuple local — so a source that is not one got an
+inc nothing gives back. Two conformance fixtures caught it:
+
+```
+tuple_elem_variant_pattern    rc_inc 28 -> 29,  releases 327 -> 327
+tuple_nested_tuple_pattern    rc_inc 28 -> 29,  releases 327 -> 327
+```
+
+`w @ (A(x), y) => …` desugars to a bare-ident bind of the match scrutinee, and
+when the scrutinee is a PARAMETER the retain fires while the credit cannot. **The
+leak census is byte-identical either side** — an unbalanced retain allocates
+nothing and frees nothing — so only the emitted-asm diff sees it, and only
+because the corpus contained the shape.
+
+Gating the retain on `slot_is_reclaimable_tuple` fixed those two and immediately
+broke the rc-tuple probe the other way: an rc tuple is credited `"TUPRC:"`, not
+`"TUP:"`, so the alias kept its credit while the retain stopped firing and swept
+a box that was never retained — **exit 99**, `allocs == frees` at `live_bytes 0`.
+
+Both classes, and the invariant stated once: **retain exactly when the alias will
+be credited.** No credited source, no retain.
+
+## And the narrowing itself introduced a compiler crash
+
+Narrowing the retain from `slot_is_rc_container` to "tuple only" replaced a
+BOUNDS-GUARDED predicate call with a raw `se.locals[aid_slot].tuple_elems`.
+`slot_of` returns **-1** for an ident that is not a local at all — a module
+function name, an enum variant, `None` — so the compiler indexed its own slot
+array with -1 and aborted:
+
+```
+fern: array index out of range        (exit 134, SIGABRT)
+13 fixtures + 3 std/test programs, none of them containing a tuple
+```
+
+Exit 134 is also what `__fern_rc_dec`'s underflow path and arena exhaustion
+produce, so the first reading of the CI log was "the retain is still unbalanced".
+It was not: the message names the cause, and the fix is the guard every sibling
+predicate already had. `slot_is_tuple_box` now carries it, next to
+`slot_is_rc_container`, which had `if (i < 0 || i >= s.locals.len())` all along.
+
+**The lesson is narrow and worth having: a predicate call was doing bounds work
+that inlining it silently dropped.** The original line was
+`se.is_arr_slot(se.slot_of(id.name))` — `is_arr_slot` guards. Reaching past the
+accessor to the column it reads is what removed the guard.
+
+## The struct half broke six integer fixtures, and why it left
+
+The bind-side retain fires on `slot_is_rc_container` — array, string, tuple. A
+struct slot is not in that predicate, so the first version added
+`|| struct_type_of_slot(slot).len() > 0`. **`struct_type` is also set for enum
+names and dyn tags**, so the retain landed on values that are not rc box
+pointers:
+
+```
+--- FAIL: TestFernFixturesSelfHostX86_64/int_wrap             SIGSEGV in ~50ms
+--- FAIL: TestFernFixturesSelfHostX86_64/smallest_int_literal SIGSEGV
+--- FAIL: TestFernFixturesSelfHostX86_64/tco_sum, factorial_print,
+          int_min_arithmetic, alloc_flat_consumed_append
+plus both diff-selfhost shards
+```
+
+`int_wrap` is ten lines of integer arithmetic with no alias bind anywhere. The
+retain reached it through the STDLIB: on that one program it changed nine
+stdlib functions — `u32__pow`, `u32__log2_floor`, `u32__reverse_bits`,
+`array__fold`, `array__scan`, `__fern_i32_to_string`, `string____cmp_big` — and
+added nine `__fern_rc_inc` calls. The first is `var L: bigint.BigInt = Ldig;`
+aliasing a struct PARAMETER, a shape no hand-written probe here used.
+
+**The two halves are coupled and had to leave together.** Removing the struct
+retain while keeping the struct credit takes `al_struct` from a leak to **exit
+99** — the alias sweeps a box that was never retained, a double free at rc 1.
+Strictly worse than the leak, and exactly the failure the retain-first ordering
+exists to prevent.
+
+## What the instruments did not see — and why "leak-neutral" was the wrong gate
+
+The retain-only half was measured **leak-neutral on five probes including the
+conditional**, and certified on that basis. It is what broke six fixtures that
+have existed for months, in ~50 ms, on programs with no container alias in them.
+The suite here was 42 subtests green on three backends, the census clean, the
+underflow counter zero.
+
+The reason the census said nothing is that it had nothing to say. **A retain
+applied to something that was never an allocation changes no alloc and no free**
+— it is not a leak and not an over-release, and every byte-count instrument
+reads clean while memory is corrupted. That is a third census blindness beside
+the over-release-into-a-freelist one, recorded on #7253 with the correct
+replacement gate.
+
+A targeted suite is also silent on the shapes it did not think of — the
+counterpart to this entry's own note that the array reference implementation is
+silent on the failure modes it bypasses. And the shape gap here was not a type
+but a BINDING ORIGIN: every probe aliased a LOCAL; the code that broke aliased a
+PARAMETER.
+
+The retain-only half was measured **leak-neutral on five probes including the
+conditional**, and certified on that basis. It is what broke six fixtures that
+have existed for months, in ~50 ms, on programs with no container alias in them.
+The suite here was 42 subtests green on three backends, the census clean, the
+underflow counter zero.
+
+A targeted suite is silent on the shapes it did not think of — the counterpart
+to this entry's own note that the array reference implementation is silent on
+the failure modes it bypasses. The fixtures corpus and the generated
+differential are what thought of them, and neither is reachable from a
+hand-written probe set.
 
 ## Non-vacuity
 
