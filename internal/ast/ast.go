@@ -631,19 +631,6 @@ func SubstSelf(t Type, self Type) Type {
 	}
 }
 
-// CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
-// in-place rewrite of the copy (type substitution, dispatch resolution,
-// numeric-literal settling) never leaks into the original. The checker
-// uses CloneBlock to materialise a trait's default method body once per
-// implementing type (see docs/TRAITS.md); monomorph uses all three to
-// instantiate a generic function's body per type-argument set.
-//
-// The depth they owe is set by Walk: everything Walk reaches from a node
-// must be freshly allocated here, since that is what the passes rewriting
-// a clone traverse. Anything Walk does not reach is shared by design.
-// TestCloneCopiesEverythingWalkReaches states both halves, and an
-// unhandled kind panics rather than returning its argument — sharing the
-// node silently is what #7042 and #7149 cost.
 // clonePatternNames copies a match arm's parallel binding slices. A clone that
 // shared them with its source was only safe until something renamed a binding
 // in place: shadowrename rewrites `arm.Bindings[i]` and the matching Idents in
@@ -657,6 +644,19 @@ func clonePatternNames(bindings []string, types []Type, fields []string) ([]stri
 		append([]string(nil), fields...)
 }
 
+// CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
+// in-place rewrite of the copy (type substitution, dispatch resolution,
+// numeric-literal settling) never leaks into the original. The checker
+// uses CloneBlock to materialise a trait's default method body once per
+// implementing type (see docs/TRAITS.md); monomorph uses all three to
+// instantiate a generic function's body per type-argument set.
+//
+// The depth they owe is set by Walk: everything Walk reaches from a node
+// must be freshly allocated here, since that is what the passes rewriting
+// a clone traverse. Anything Walk does not reach is shared by design.
+// TestCloneCopiesEverythingWalkReaches states both halves, and an
+// unhandled kind panics rather than returning its argument — sharing the
+// node silently is what #7042 and #7149 cost.
 func CloneBlock(b *Block) *Block {
 	if b == nil {
 		return nil
@@ -766,10 +766,10 @@ func CloneStmt(s Stmt) Stmt {
 		}
 		return &c
 	case *ForEach:
-		// The un-desugared `for x in xs` form. The parser lowers most of
-		// them, but a stream-typed iterable keeps its ForEach until the
-		// checker knows the element type, so one can still reach a generic
-		// body being cloned here.
+		// The un-desugared `for x in xs` form. A destructuring header
+		// (`for (a, b) in xs`) keeps its ForEach until the checker swaps it
+		// during checkStmt, so a trait default method body — cloned per
+		// implementing type before that — can still hold one.
 		c := *x
 		c.Iter = CloneExpr(x.Iter)
 		c.RangeHigh = CloneExpr(x.RangeHigh)
