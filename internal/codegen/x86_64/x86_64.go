@@ -375,6 +375,10 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if err != nil {
 		return "", nil, err
 	}
+	// A `-shared` export is reached from outside the program, so the size
+	// policy in ir.Inline must not treat its sole in-program caller as its
+	// last reference (the cull below roots it and its definition survives).
+	ir.MarkExternallyReachable(ip, opts.Exports...)
 	// Tail-call optimisation. The pass rewrites
 	// `OpCallDirect <self> ; OpReturn` into a parameter
 	// rebind plus `OpBr` back to the function entry — turns

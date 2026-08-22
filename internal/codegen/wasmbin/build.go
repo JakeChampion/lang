@@ -202,6 +202,11 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("wasmbin: lower: %w", err)
 	}
+	// An `@export` world export is reached by the composer, not by any Fern
+	// call, so ir.Inline's size policy must not count its sole in-program
+	// caller as its last reference — exportRoots already roots it in both
+	// the tree-shake and the cull below.
+	ir.MarkExternallyReachable(ip, exportRoots...)
 	// The IR optimisation pipeline, and every pass in it also runs on the
 	// native backends — TailCallOptimize, Inline, Defunctionalise,
 	// ElideClosurePair, InlineZeroCaptureClosures, FuseTee, FlattenBranches,

@@ -301,6 +301,10 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err != nil {
 		return "", err
 	}
+	// A `-shared` export is reached from outside the program, so the size
+	// policy in ir.Inline must not treat its sole in-program caller as its
+	// last reference (the cull below roots it and its definition survives).
+	ir.MarkExternallyReachable(ip, opts.Exports...)
 	// Tail-call optimisation. Rewrites self-tail calls into
 	// a parameter rebind + backward branch to a wrapped
 	// outer loop — self-recursive functions run in O(1)
