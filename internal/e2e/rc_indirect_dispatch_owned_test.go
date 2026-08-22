@@ -20,6 +20,13 @@ import (
 // optimisation OF. Each program folds __rc_underflow_count() into a value
 // check, so a non-zero exit is either a wrong answer or an over-release; on
 // wasm the over-release also corrupts the freelist and aborts outright.
+//
+// The exposed surface is exactly the owned-by-default set: a pointer-shaped
+// param whose type is string/array-FREE, i.e. a tuple or struct of scalars.
+// Measured on the pre-fix compiler, an indirect call taking a scalar, a
+// string, an array or a string-bearing struct reported no underflow on any
+// backend — paramVerdict's first rung is isOwnedByDefaultType, so those never
+// carry the inc/dec pair on either side.
 var rcIndirectDispatchCorpus = []struct {
 	name string
 	src  string
@@ -81,6 +88,21 @@ function main(): i32 {
     if (sum_pair(t) != 9) { return 1; }
     if (apply(sum_pair, t) != 9) { return 2; }
     if (sum_pair((1, 2)) != 3) { return 3; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
+		// The other half of the owned-by-default set: a struct of scalars
+		// rather than a tuple. Same ladder, so the pattern kind was never
+		// what decided it.
+		name: "two_struct_param_lambdas",
+		src: `
+struct P { x: i32, y: i32 }
+function main(): i32 {
+    var f = function (p: P): i32 { return p.x * 10 + p.y; };
+    if (f(P { x: 3, y: 4 }) != 34) { return 1; }
+    var g = function (q: P): i32 { return q.x - q.y; };
+    if (g(P { x: 9, y: 5 }) != 4) { return 2; }
     return __rc_underflow_count();
 }`,
 	},
