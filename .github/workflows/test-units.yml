@@ -16,14 +16,23 @@ name: Test units
 
 on:
   pull_request:
+  # The unit half of #7319's main smoke (check-sources.yml is the type half):
+  # rebase-merge replays commits onto a main their PR's CI never saw, so a
+  # semantic coupling between two individually-green PRs only exists in the
+  # combination — and only a run against the merge itself can report it.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the
 # branch / PR (or a new dispatch) cancels the older run instead of
 # letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other.
+# distinct PRs and the main branch never cancel each other. Main runs
+# key on the SHA instead: back-to-back merges each keep their own run,
+# so a failure names the merge that caused it rather than the newest
+# of several — the same attribution choice check-sources.yml makes.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
