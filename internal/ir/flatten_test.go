@@ -1,6 +1,10 @@
 package ir
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // `if (c) { return X; } return Y;` flattens to a single typed if
 // followed by one return. The original two OpReturns collapse to
@@ -225,4 +229,64 @@ func TestFlattenIsIdempotent(t *testing.T) {
 	if before != after {
 		t.Errorf("FlattenBranches not idempotent:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
+}
+
+// The block type the rewrite stamps on the `if` has to match how many
+// operand slots each arm actually leaves. A string-returning function
+// leaves two under the two-word ABI, which `ast.TwoWordOverride` turns
+// on for arm64 (ptrW 8) as well as wasm32 — so the block type cannot be
+// chosen by pointer width. Verified through the stack checker, which is
+// what a wrong count would break (and what `ir.Inline` reuses for the
+// wrapper block it puts around an inlined callee).
+func TestFlattenStringReturnBlockTypeFollowsTheStringABI(t *testing.T) {
+	const src = `function pick(c: boolean): string {
+		if (c) { return "yes"; }
+		return "no";
+	}
+	function main(): i32 { print(pick(true)); return 0; }`
+
+	prev := ast.TwoWordOverride
+	defer func() { ast.TwoWordOverride = prev }()
+
+	for _, tc := range []struct {
+		name     string
+		ptrW     int
+		override bool
+		want     int32
+	}{
+		{"wasm32", 4, false, BlockTypeStringPair},
+		{"arm64_two_word", 8, true, BlockTypeStringPair},
+		{"native_one_word", 8, false, BlockTypeI32},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ast.TwoWordOverride = tc.override
+			p := lowerSourceWith(t, src, tc.ptrW)
+			FlattenBranches(p)
+			fn := findFunc(p, "pick")
+			got := int32(-1)
+			for _, op := range fn.Ops {
+				if op.Kind == OpIf {
+					got = op.I32
+					break
+				}
+			}
+			if got != tc.want {
+				t.Errorf("flattened `if` block type = %d, want %d:\n%s", got, tc.want, p)
+			}
+			for _, prob := range mustVerifyStack(t, p) {
+				t.Errorf("%s op %d %v: %s", prob.Func, prob.Op, prob.Kind, prob.Msg)
+			}
+		})
+	}
+}
+
+// mustVerifyStack returns the stack-discipline problems Verify found in
+// the functions it could model, failing the test if it modelled none.
+func mustVerifyStack(t *testing.T, p *Program) []Problem {
+	t.Helper()
+	probs, cov := Verify(p)
+	if cov.Modelled == 0 {
+		t.Fatalf("the stack checker modelled no function — the assertion below would be vacuous (skips: %v)", cov.Skipped)
+	}
+	return probs
 }

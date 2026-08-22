@@ -166,7 +166,7 @@ func buildFuncSigs(prog *Program) map[string]funcSig {
 		if fn.ReturnType != nil {
 			if _, isVoid := fn.ReturnType.(ast.VoidType); !isVoid {
 				sig.resultCount = 1
-				if _, isStr := fn.ReturnType.(ast.StringType); isStr && prog.PtrW == 4 {
+				if _, isStr := fn.ReturnType.(ast.StringType); isStr && ast.UseTwoWordStrings(prog.PtrW) {
 					sig.stringResult = true
 				}
 			}
@@ -432,12 +432,11 @@ func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type, ptrW int) ([]Op, int, b
 	return out, contRetIdx - ifIdx + 1, true
 }
 
-// returnBlockTypeFor is the ptrW-aware variant. On wasm32
-// (ptrW=4) string-typed returns surface as `BlockTypeStringPair`
-// so the inliner's wrapper block / function-result clause matches
-// the two-word ABI's `(result i32 i32)` shape. Natives stay on
-// `BlockTypeI32` (one pointer slot under their existing LSB-
-// tagged SSO).
+// returnBlockTypeFor is the ptrW-aware variant. Under the two-word
+// string ABI a string-typed return surfaces as `BlockTypeStringPair`
+// so the inliner's wrapper block / function-result clause matches its
+// `(result i32 i32)` shape. Targets with one-word strings stay on
+// `BlockTypeI32` (one pointer slot under their LSB-tagged SSO).
 func returnBlockTypeFor(t ast.Type, ptrW int) int32 {
 	if t == nil {
 		return BlockTypeVoid
@@ -454,7 +453,7 @@ func returnBlockTypeFor(t ast.Type, ptrW int) int32 {
 		}
 		return BlockTypeF32
 	}
-	if _, ok := t.(ast.StringType); ok && ptrW == 4 {
+	if TypeIsTwoWord(t, ptrW) {
 		return BlockTypeStringPair
 	}
 	return BlockTypeI32
