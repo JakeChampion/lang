@@ -2406,7 +2406,7 @@ pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, i
             return emit_ir_module_mode(lm, ir_cache, mode);
         }
     }
-    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+    asm_ir.eprint_ir_ineligible();
     exit(1);
     return "";
 }

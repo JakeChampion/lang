@@ -268,11 +268,9 @@ pub function fold_module(mod: parser.Module): parser.Module {
 // so the pass filters exactly those out of every statement list.
 //
 // The elision removes the condition's evaluation along with the check, which
-// is why asserts must be side-effect-free — so the driver runs it after the
-// checker and the capability gates. On this compiler that keeps parity with
-// the GATES only: the checker's own verdict on an ill-typed assert does not
-// reach the build, because every code one raises is on the checker's measured
-// partial-gap list (#7170).
+// is why asserts must be side-effect-free — and why the driver runs it after
+// every gate, the IR-eligibility one included: deleting a statement can only
+// widen what compiles (#7170).
 pub function elide_asserts(mod: parser.Module): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
@@ -281,6 +279,41 @@ pub function elide_asserts(mod: parser.Module): parser.Module {
         i = i + 1;
     }
     return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts(mod.top_stmts, drop_assert) };
+}
+
+// has_asserts reports whether elide_asserts would remove anything — the same
+// statement set drop_assert matches, over the same traversal. The driver asks
+// before paying for the `-O` eligibility pre-gate, so a release build of a
+// program with no assert in it costs one AST walk instead of one lowering.
+pub function has_asserts(mod: parser.Module): boolean {
+    var found: boolean = stmts_have_assert(mod.top_stmts);
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (stmts_have_assert(mod.funcs[i].body)) { found = true; }
+        i = i + 1;
+    }
+    return found;
+}
+
+function stmts_have_assert(stmts: parser.Stmt[]): boolean {
+    var found: boolean = false;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        found = astwalk.fold_stmt_nodes(stmts[i], found,
+            (st: parser.Stmt, acc: boolean) => acc || is_assert_stmt(st),
+            (e: parser.Expr, acc: boolean) => acc,
+            (e: parser.Expr) => true);
+        i = i + 1;
+    }
+    return found;
+}
+
+function is_assert_stmt(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtIf(f) => { return f.origin == parser.ORIGIN_ASSERT; },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // drop_assert keeps every statement but the assert desugar. The splicing fold
@@ -575,6 +608,16 @@ function main(): i32 {
         },
         _ => { return 195; }
     }
+
+    // has_asserts must answer for exactly the statements elide_asserts removes,
+    // so it is asked over the same shapes: the plain one, the hand-written `if`
+    // that is not an assert, and each nesting the top-level filter misses.
+    if (!has_asserts(fold_source("function main(): i32 { assert(1 > 2); return 0; }"))) { return 196; }
+    if (has_asserts(fold_source("function main(): i32 { if (1 > 2) { return 3; } return 0; }"))) { return 197; }
+    if (!has_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }"))) { return 198; }
+    if (!has_asserts(fold_source("function main(): i32 { var f = function(): i32 { assert(1 > 2); return 1; }; return 0; }"))) { return 199; }
+    if (!has_asserts(fold_source("enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"))) { return 202; }
+    if (has_asserts(elide_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }")))) { return 203; }
 
     // fold_module rebuilds every FuncDecl, so it has to carry every field
     // across. It used to spell them out and reset bound_traits to empty in the
