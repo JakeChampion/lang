@@ -82,3 +82,46 @@ func TestForEachNestedDesugarUniqueSlots(t *testing.T) {
 		t.Errorf("expected 6 synthetic slot names (3 per nested loop), got %d: %v", len(seen), seen)
 	}
 }
+
+// A nested named function is an *ast.FuncDecl STATEMENT, whose body is a block
+// the desugar walk has to enter on its own — nothing downstream lowers one, and
+// a surviving ForEach reaches IR, which has no case for it ("ir: unsupported
+// statement *ast.ForEach"). The switch in desugarForEachStmt used to have no
+// FuncDecl arm, so every `for..in` inside a local function failed to compile.
+func TestForEachInsideNestedFuncDesugars(t *testing.T) {
+	prog, err := parser.Parse(`function total(xs: i32[]): i32 {
+		function sum(acc: i32): i32 {
+			var n: i32 = acc;
+			for x in xs { n = n + x; }
+			return n;
+		}
+		return sum(0);
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	var found func(s ast.Stmt) bool
+	found = func(s ast.Stmt) bool {
+		switch x := s.(type) {
+		case *ast.ForEach:
+			return true
+		case *ast.Block:
+			for _, in := range x.Stmts {
+				if found(in) {
+					return true
+				}
+			}
+		case *ast.FuncDecl:
+			return found(x.Body)
+		case *ast.For:
+			return found(x.Body)
+		}
+		return false
+	}
+	if found(prog.Funcs[0].Body) {
+		t.Error("a ForEach survived inside the nested function's body; IR cannot lower one")
+	}
+}

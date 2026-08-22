@@ -102,6 +102,11 @@ func lowerStreamForEachStmt(s ast.Stmt, streamElem map[string]ast.Type) ast.Stmt
 		lowerStreamForEachExpr(x.Value, streamElem)
 	case *ast.Destructure:
 		lowerStreamForEachExpr(x.Init, streamElem)
+	case *ast.FuncDecl:
+		// A nested named function is a STATEMENT here, and its body is a
+		// separate block this walk has to enter: nothing else lowers it, and a
+		// ForEach left standing reaches IR, which has no case for one.
+		x.Body = lowerStreamForEachStmt(x.Body, streamElem).(*ast.Block)
 	}
 	return s
 }
