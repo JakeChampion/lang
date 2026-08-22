@@ -70,6 +70,16 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// not this one — which is what separates "order changed" from
 		// "descent changed".
 		{"sibling-lambdas-capture-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"a\"; return 0; }; var g = function(): i32 { s = \"b\"; return 0; }; return f() + g(); }\n", "E049,E049"},
+		// E036 (a variant declared in two enums, referenced unqualified). These
+		// three guard vref_expr, whose ExprLambda arm calls the SCOPE-THREADED
+		// vref_stmts rather than itself — precisely so a variant name shadowed
+		// by a local `var` is not flagged. Converting it to a plain fold_expr
+		// would walk the lambda body with the OUTER scope and report the
+		// shadowed case: the middle row goes from clean to E036, and nothing
+		// else here would notice.
+		{"two-ambiguous-variant-refs", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var x = Red; var y = Red; return 0; }\n", "E036,E036"},
+		{"lambda-shadows-variant-name", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var Red: i32 = 1; return Red; }; return 0; }\n", ""},
+		{"lambda-does-not-shadow", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var z = Red; return 0; }; return 0; }\n", "E036"},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049"},
