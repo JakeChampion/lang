@@ -149,6 +149,47 @@ func (m *Map) clone() *Map {
 func retain(v Value)  { adjustRC(v, +1) }
 func release(v Value) { adjustRC(v, -1) }
 
+// retainReplacing applies the count effect of a slot dropping old and
+// taking v. Both walks are O(size of the value), so a slot reassigned
+// in a loop pays for the whole value on every iteration — quadratic for
+// `a = a.append(x)` however cheap the append itself is. When v is old
+// with elements appended (the same backing buffer and prefix, which is
+// what the in-place growth path returns) the two walks cancel over
+// everything but the appended tail, so only the tail is counted.
+func retainReplacing(v, old Value) {
+	if tail, ok := appendedTail(old, v); ok {
+		for _, e := range tail {
+			retain(e)
+		}
+		return
+	}
+	retain(v)
+	release(old)
+}
+
+// appendedTail reports whether next is old plus zero or more elements
+// over old's own backing buffer, and returns those elements. A shared
+// base pointer is what makes the prefix identical: an array's covered
+// slots are never rewritten, so growth is the only way one array can
+// extend another.
+func appendedTail(old, next Value) (Array, bool) {
+	na, ok := next.(Array)
+	if !ok {
+		return nil, false
+	}
+	oa, ok := old.(Array)
+	if !ok {
+		return nil, false
+	}
+	if len(na) < len(oa) {
+		return nil, false
+	}
+	if len(oa) > 0 && &oa[0] != &na[0] {
+		return nil, false
+	}
+	return na[len(oa):], true
+}
+
 func adjustRC(v Value, delta int) {
 	switch x := v.(type) {
 	case *Map:
@@ -426,6 +467,12 @@ type Interp struct {
 	// name offered by two traits for one type resolves to the trait the
 	// call site named.
 	traitMethods map[string]string
+	// arrayGrowCopies counts the elements copied by the array append
+	// growth path. Appending n elements must stay O(n) copies in
+	// total; TestArrayAppendIsAmortised asserts on this counter rather
+	// than on wall-clock time, so the quadratic-append regression
+	// (#6395) is caught deterministically instead of flakily.
+	arrayGrowCopies int
 }
 
 func New() *Interp {
@@ -1183,14 +1230,54 @@ func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	return String(out), nil
 }
 
-// `(arr: T[]) push(v: T): T[]` — functional append. The codegen
-// path implements push as "alloc a fresh T[] of len+1, memcpy
-// the old elements, store the new one at the tail, return the
-// new array"; the interpreter mirrors that with a fresh Go
-// slice so the source array stays untouched. Matches the
-// receiver-as-first-arg convention the checker uses for every
-// `__method_*` mangled name.
-func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
+// unclaimed marks a slot of an array's backing buffer that no array
+// value covers. It is the interpreter's uniqueness signal for growth:
+// only a marked slot may be written in place, and writing it claims it.
+//
+// The invariant every array producer here maintains is "no array value
+// covers a marked slot" — `make` hands out buffers with no spare,
+// growArray marks exactly the spare it allocates, a subslice stays
+// inside its parent's range, and a claim extends by the one slot it
+// overwrites. So a marked slot is unreachable from every live value,
+// and appending into it cannot be observed through any of them.
+//
+// The check fails safe in both directions: no Fern value has this Go
+// type, and a buffer that never went through growArray (a fresh `make`,
+// a nil-zeroed tail) simply fails it and takes the copy path.
+type unclaimed struct{}
+
+func (unclaimed) String() string { return "<unclaimed>" }
+
+var unclaimedSlot Value = unclaimed{}
+
+// growArray copies arr into a fresh buffer one element longer, with
+// spare room beyond it, and returns the view the extra element still
+// has to be written into. Doubling is what makes a chain of appends
+// O(n) rather than O(n²); the spare slots carry the unclaimed mark, so
+// exactly one later append can take each of them.
+func growArray(arr Array) Array {
+	want := len(arr) + 1
+	capacity := 2 * want
+	if capacity < 8 {
+		capacity = 8
+	}
+	buf := make(Array, capacity)
+	n := copy(buf, arr)
+	for i := n; i < capacity; i++ {
+		buf[i] = unclaimedSlot
+	}
+	return buf[:want]
+}
+
+// `(arr: T[]) push(v: T): T[]` — functional append. The codegen path
+// implements push as "return a T[] of len+1 holding the old elements
+// plus the new one", growing the receiver's buffer in place when it
+// holds the only live reference (rc == 1) and copying otherwise; the
+// interpreter mirrors that, using the unclaimed mark instead of a
+// refcount to decide when growing in place is unobservable. The source
+// array is never mutated either way. Matches the receiver-as-first-arg
+// convention the checker uses for every `__method_*` mangled name.
+func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__method_Array_push: expected 2 args (arr, v), got %d", len(args))
 	}
@@ -1198,9 +1285,16 @@ func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
 	}
-	out := make(Array, len(arr)+1)
-	copy(out, arr)
-	out[len(arr)] = args[1]
+	n := len(arr)
+	if n < cap(arr) {
+		if grown := arr[:n+1]; grown[n] == unclaimedSlot {
+			grown[n] = args[1]
+			return grown, nil
+		}
+	}
+	out := growArray(arr)
+	out[n] = args[1]
+	ip.arrayGrowCopies += n
 	return out, nil
 }
 
@@ -4626,8 +4720,7 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		// returning the same in-place map) nets zero without dipping to
 		// rc 0.
 		old, _ := env.get(t.Name)
-		retain(v)
-		release(old)
+		retainReplacing(v, old)
 		env.set(t.Name, v)
 		return v, nil
 	case *ast.Index:
@@ -4650,8 +4743,7 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		if idx < 0 || int(idx) >= len(arr) {
 			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
 		}
-		retain(v)
-		release(arr[idx])
+		retainReplacing(v, arr[idx])
 		arr[idx] = v
 		return v, nil
 	case *ast.FieldAccess:
@@ -4663,8 +4755,7 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("field assignment on non-struct %T", tv)
 		}
-		retain(v)
-		release(s.Fields[t.Field])
+		retainReplacing(v, s.Fields[t.Field])
 		s.Fields[t.Field] = v
 		return v, nil
 	}
