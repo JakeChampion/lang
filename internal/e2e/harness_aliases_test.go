@@ -39,6 +39,7 @@ var interpExit = e2eharness.InterpExit
 var langSrcAbs = e2eharness.LangSrcAbs
 var loadCheckMono = e2eharness.LoadCheckMono
 var mustWrite = e2eharness.MustWrite
+var openPTY = e2eharness.OpenPTY
 var runArm64Bin = e2eharness.RunArm64Bin
 var runBin = e2eharness.RunBin
 var runCapture = e2eharness.RunCapture
