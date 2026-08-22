@@ -841,10 +841,8 @@ function main(): i32 {
 	// code unexamined. `-O` must narrow the emitted program, never widen the
 	// set that compiles.
 	//
-	// The target-capability gate (E066) is the shape this can be pinned with.
-	// The checker's own diagnostics cannot: every code an ill-typed assert
-	// raises — E001, E004, E009, E043 — is on is_partial_checker_gap_code's
-	// measured list, so none of them gates a build here yet. See #7170.
+	// The target-capability gate (E066) is one of the two shapes this is
+	// pinned with; the IR-eligibility gate is the other, below.
 	t.Run("opt-elides-after-the-gates", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "capassert.fern")
 		src := "function main(): i32 {\n    assert(proc_fork() >= 0);\n    return 0;\n}\n"
@@ -858,6 +856,80 @@ function main(): i32 {
 			out, code := runDriver(t, leg...)
 			if code == 0 {
 				t.Errorf("%v: a capability-violating assert compiled; the elision is running before the gates:\n%s", leg, out)
+			}
+		}
+	})
+
+	// The IR-eligibility half of the same ordering (#7170). An ill-typed assert
+	// condition is what the elision would otherwise delete unexamined: `-O`
+	// took the undefined name away with the assert, the module became
+	// IR-eligible, and a release build emitted a working binary for a program
+	// the default build — and native, on both settings — refuses.
+	//
+	// The two legs have to AGREE; which exit code they agree on is the second
+	// assertion. Note what this does NOT buy: the rejection is still the
+	// ineligibility refusal rather than the checker's own diagnostic. Both
+	// checkers see the name and say E001, but E001 (with E004 / E009 / E043,
+	// the other codes an ill-typed assert raises) is on
+	// is_partial_checker_gap_code's measured list, so its verdict does not
+	// reach the build here — #4346 is what changes the message.
+	t.Run("opt-does-not-widen-what-compiles", func(t *testing.T) {
+		for _, tc := range []struct{ name, src string }{
+			{"undefined-name", "function main(): i32 {\n    assert(nosuchname > 1);\n    return 0;\n}\n"},
+			{"unknown-field", "struct P { x: i32 }\nfunction main(): i32 {\n    var p: P = P { x: 1 };\n    assert(p.nofield > 0);\n    return 0;\n}\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "illassert_"+tc.name+".fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				outDef, codeDef := runDriver(t, "-no-ssa", srcPath)
+				outOpt, codeOpt := runDriver(t, "-no-ssa", "-O", srcPath)
+				if codeDef != codeOpt {
+					t.Errorf("default exited %d but -O exited %d; the elision is running before the IR-eligibility gate\ndefault:\n%s\n-O:\n%s",
+						codeDef, codeOpt, outDef, outOpt)
+				}
+				if codeDef == 0 {
+					t.Errorf("an ill-typed assert compiled on the default build (exit 0); native rejects it")
+				}
+			})
+		}
+	})
+
+	// The negative control the case above needs: a WELL-TYPED assert must still
+	// compile on both builds, and must still be gone under `-O`. A gate that
+	// rejected every `-O` build would satisfy the agreement assertion alone.
+	t.Run("opt-still-elides-a-well-typed-assert", func(t *testing.T) {
+		assertCase(t, "elidecontrol", "function main(): i32 {\n"+
+			"    var n: i32 = 3;\n"+
+			"    assert(n > 100, \"control\");\n"+
+			"    return 5;\n"+
+			"}\n", 1, 5)
+	})
+
+	// The gate normalises with the lambda lift and the script-to-`main` desugar
+	// before asking eligible_core, and wasm applies that pair in the opposite
+	// order to the register backends. A script carrying both a lambda and an
+	// assert is where a divergence between the two orders would show up as an
+	// `-O` build refusing a program the default build compiles.
+	t.Run("opt-gate-normalises-a-script-with-a-lambda", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "optscript.fern")
+		src := "var f = function(x: i32): i32 { return x * 2; };\n" +
+			"var n: i32 = f(3);\n" +
+			"assert(n > 1, \"script\");\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+			for _, opt := range []bool{false, true} {
+				args := []string{"-target", target, "-emit", "asm", srcPath}
+				if opt {
+					args = append([]string{"-O"}, args...)
+				}
+				out, code := runDriver(t, args...)
+				if code != 0 {
+					t.Errorf("%s -O=%v exited %d, want 0:\n%s", target, opt, code, out)
+				}
 			}
 		}
 	})

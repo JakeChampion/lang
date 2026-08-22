@@ -7010,9 +7010,27 @@ pub function emit_module_or_error(mod: parser.Module): string {
     var lm: parser.Module = lift_lambdas(mod);
     var g: string = emit_module_ir_gated(lm, []);
     if (g != "") { return g; }
-    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+    eprint_ir_ineligible();
     exit(1);
     return "";
+}
+
+// eprint_ir_ineligible writes the refusal every IR route shares — the three
+// backends' `*_or_error` entries and the driver's `-O` pre-gate.
+pub function eprint_ir_ineligible(): void {
+    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+}
+
+// module_ir_eligible answers the question each backend's `*_or_error` entry
+// asks before it emits: does this module lower on the IR path? It is
+// eligible_core over the same normalisation all three apply first — the lambda
+// lift and the script-to-`main` desugar — so they agree with it on whether the
+// module is in the subset.
+//
+// The driver asks it under `-O`, on the module as written, because the assert
+// elision that follows can only make a module more eligible (#7170).
+pub function module_ir_eligible(mod: parser.Module): boolean {
+    return all_eligible(script_normalized(lift_lambdas(mod)));
 }
 
 // "" is an unambiguous "ineligible" sentinel: an eligible module always emits at

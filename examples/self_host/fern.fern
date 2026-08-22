@@ -2193,25 +2193,40 @@ function run(): i32 {
     // code, which is why it needs no flag.
     merged = constfold.fold_module(merged);
 
-    // -O: drop every assert() check, the one thing native spends the flag on
-    // (constfold.ElideAsserts). The condition goes with the check, which is
-    // why asserts must be side-effect-free.
-    //
-    // Placed after the checker and both capability gates so a release build
-    // rejects what a default build rejects. That holds for the gates; it does
-    // NOT yet hold for the checker's own verdict, because every code an
-    // ill-typed assert raises is on is_partial_checker_gap_code's measured
-    // list and so never reaches the build — #7170.
-    if (optimize) {
-        merged = constfold.elide_asserts(merged);
-    }
-
     // typed-IR (#5531): stamp each call expression with its checker-inferred
     // result type so the IR lowering READS the type instead of re-deriving it
     // structurally (docs/TYPED-IR-REWRITE.md). Runs after check + constfold and
     // before every emit path, so the emit_module_ir routing sees c.ty. Deterministic,
     // so the byte-identical self-compile fixpoint is preserved.
+    //
+    // Ahead of the elision so the `-O` gate below sees the module the emit path
+    // would have been handed. Annotation is per-call, so a deleted assert takes
+    // only its own stamps with it and the surviving ones are the same either way.
     merged = checker.annotate_module(merged);
+
+    // -O: drop every assert() check, the one thing native spends the flag on
+    // (constfold.ElideAsserts). The condition goes with the check, which is
+    // why asserts must be side-effect-free.
+    //
+    // `-O` must narrow the emitted program and never widen the set that
+    // compiles, so the elision runs after EVERY gate: the checker and the two
+    // capability gates above, and IR-eligibility, which the emit path decides
+    // BELOW and so is asked for here, on the module as written. Deleting a
+    // statement can only make a module more eligible, and on an ill-typed
+    // assert that is the whole difference: `assert(nosuchname > 1)` takes the
+    // undefined name away with it and the module lowers (#7170).
+    //
+    // Ineligibility, not the checker, is what rejects that program on either
+    // build. Both checkers report E001 for it, but E001 — with every other code
+    // an ill-typed assert raises — is on is_partial_checker_gap_code's measured
+    // list, so its verdict does not reach the build here (#4346).
+    if (optimize) {
+        if (constfold.has_asserts(merged) && !asm_ir.module_ir_eligible(parser.module_with_builtins(merged))) {
+            asm_ir.eprint_ir_ineligible();
+            return 1;
+        }
+        merged = constfold.elide_asserts(merged);
+    }
 
     // Production default: the IR path. All three targets route IR-or-error
     // (asm_ir / asm_arm64_ir / wasm_ir `.emit_module*_or_error`, #3457), so this
