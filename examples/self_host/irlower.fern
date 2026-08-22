@@ -11452,26 +11452,21 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         var sl: LowerState = lnst.state;
         if (!sl.ok) { return sl; }
         if (str_recv) { return free_parked_view_after(sl.emit(ir.op_str_len()), lnst.slot); }
-        // A FRESH-ARRAY-returning call receiver (`mk(i).len()`,
-        // mk in the strict-fresh "ARR:" registry — every return
-        // a direct scalar-element array literal): the returned
-        // rc=1 buffer is dead after the length read. Stash,
-        // read, then release with the rc-guarded __fern_rc_dec
-        // — the discarded-statement "ARR:" reclaim's shape, in
-        // receiver position (native #5141 twin). Element-blind
-        // is sound: the ARR: contract is scalar elements only.
-        var alfresh: boolean = false;
-        match (fa.obj) {
-            parser.ExprCall(alc) => {
-                match (alc.callee) {
-                    parser.ExprIdent(alcid) => {
-                        if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + alcid.name) >= 0) { alfresh = true; }
-                    },
-                    _ => {}
-                }
-            },
-            _ => {}
-        }
+        // A FRESH-ARRAY-returning call receiver (`mk(i).len()` /
+        // `h.mk().len()`, the callee in the strict-fresh "ARR:"
+        // registry — every return a direct scalar-element array
+        // literal): the returned rc=1 buffer is dead after the
+        // length read. Stash, read, then release with the
+        // rc-guarded __fern_rc_dec — the discarded-statement
+        // "ARR:" reclaim's shape, in receiver position (native
+        // #5141 twin). Element-blind is sound: the ARR: contract
+        // is scalar elements only.
+        // owned_fresh_call_callee resolves BOTH registry key forms — a bare name
+        // for a free function and "<Base>.<method>" for a method — so this site
+        // reads the same admission the #6491 read reclaim does instead of
+        // re-deriving it. It open-coded the free-function half until #7259, which
+        // is why a method returning a fresh array was reclaimed here by nobody.
+        var alfresh: boolean = owned_fresh_call_callee(fa.obj, "ARR:", s) != "";
         if (alfresh) {
             var ascr: string = "$lenra" + util.i32_to_string(sl.locals.len());
             sl = sl.add_local(ascr);
@@ -16986,6 +16981,32 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                     se = se.emit(ir.op_load_local(tcslot));                      // box again
                                     se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));         // free the box
                                 }
+                            }
+                        },
+                        // A discarded call to an ARRAY-fresh-ret METHOD (`h.mk();`).
+                        // The free-function arm above reads "ARR:<name>"; a method
+                        // keys "ARR:<Base>.<method>", which is what
+                        // owned_fresh_call_callee already resolves for the READ
+                        // reclaim one expression position over (#6491). Same shallow
+                        // rc-guarded __fern_rc_dec, same element-blind argument: the
+                        // registry admits only scalar-element arrays, so the elements
+                        // ride the freed buffer and nothing can dangle.
+                        //
+                        // The receiver must be a bare LOCAL naming a struct, for
+                        // owned_fresh_call_callee's reason: expr_struct_type reports a
+                        // struct-ARRAY-returning call's ELEMENT type, so a call
+                        // receiver could name a method of a type the value is only an
+                        // array OF. A struct FIELD of the method's name is a fn-typed
+                        // field call and names no method at all.
+                        parser.ExprFieldAccess(dcfa) => {
+                            var drty: string = "";
+                            match (dcfa.obj) {
+                                parser.ExprIdent(_) => { drty = expr_struct_type(dcfa.obj, s); },
+                                _ => {}
+                            }
+                            if (drty != "" && decl_field_type(s.structs, drty, dcfa.field) == ""
+                                && util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0) {
+                                se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
                             }
                         },
                         _ => {}
@@ -33280,25 +33301,46 @@ function decl_has_string_field(structs: parser.StructDecl[], sty: string): boole
     return false;
 }
 
-// arr_fresh_ret_fns_of: bare NAMES of FREE functions whose every return hands
-// back a SCALAR-element array box THIS frame allocated — a direct array literal,
-// or a local built from a literal and only ever self-appended to
+// arr_fresh_ret_fns_of: NAMES of functions whose every return hands back a
+// SCALAR-element array box THIS frame allocated — a direct array literal, or a
+// local built from a literal and only ever self-appended to
 // (body_returns_local_built_arr). That is the "ARR:" registry's own admission
 // rule, lifted out so the strict-fresh struct walk can ask the same question
 // about a field value's producer instead of re-deriving it.
+//
+// A METHOD is admitted under the "<Base>.<method>" key the struct entries of
+// this registry already use, and a free function under its bare name. The two
+// key spaces cannot collide (a method key contains a '.', an identifier cannot),
+// which is what lets the struct walk keep asking bare-name questions of the same
+// list and get its prior answers exactly.
+//
+// Methods were excluded until #7259, and the whole reclaim went with them: a
+// method returning a fresh array had its result released by nobody, in every
+// consumption form, at 40 B/round UNBOUNDED (4000 / 8000 / 16000 at 100 / 200 /
+// 400 rounds, frees=0) where the identical free function is flat. The consumers
+// were already method-aware — owned_fresh_call_callee resolves "<Base>.<method>"
+// — so they were looking up a key this producer never wrote.
 pub function arr_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() == 0 && is_leaksafe_array_field(funcs[k].ret_type)
+        if (is_leaksafe_array_field(funcs[k].ret_type)
                 && body_has_return(funcs[k].body)
                 && (!body_has_nonfresh_arrlit_return(funcs[k].body)
                     || body_returns_local_built_arr(funcs[k].body))) {
-            out = out.append(funcs[k].name);
+            out = out.append(arr_fresh_ret_key(funcs[k]));
         }
         k = k + 1;
     }
     return out;
+}
+
+// arr_fresh_ret_key: the registry key for `fn` — "<Base>.<method>" for a method,
+// the bare name for a free function. The one place the two forms are spelled, so
+// producer and consumer cannot drift.
+pub function arr_fresh_ret_key(fn: parser.FuncDecl): string {
+    if (fn.receiver_type.len() > 0) { return util.base_type_name(fn.receiver_type) + "." + fn.name; }
+    return fn.name;
 }
 
 // fresh_struct_fwd_fixpoint: the bare NAMES of free functions whose every return
@@ -33410,8 +33452,9 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         //
         // Which functions qualify is arr_fresh_ret_fns_of's question, asked once
         // above so the strict-fresh struct walk can ask the same one.
-        if (util.index_of_str(arr_fresh, funcs[k].name) >= 0) {
-            out = out.append("ARR:" + funcs[k].name);
+        var arrkey: string = arr_fresh_ret_key(funcs[k]);
+        if (util.index_of_str(arr_fresh, arrkey) >= 0) {
+            out = out.append("ARR:" + arrkey);
         }
         // "STRARR:<name>" — the POINTER-element sibling of "ARR:" (#6491): a FREE
         // function returning a `string[]` every element of which this frame
