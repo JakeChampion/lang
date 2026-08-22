@@ -8472,50 +8472,21 @@ function ow_count_ident_list(list: parser.Expr[], name: string): i32 {
   return n;
 }
 
+// ow_count_ident tallies how many times `name` appears as an identifier in an
+// expression. It rides astwalk's fold, so a new parser node is counted here the
+// moment astwalk reaches it; the hand-written version ended in a `_ => 0` arm
+// that silently did not look inside whatever it did not name.
 function ow_count_ident(e: parser.Expr, name: string): i32 {
-  match (e) {
-    parser.ExprIdent(id) => {
-      if (id.name == name) {
-        return 1;
-      }
-      return 0;
-    },
-    parser.ExprBinary(b) => {
-      return ow_count_ident(b.left, name) + ow_count_ident(b.right, name);
-    },
-    parser.ExprUnary(u) => {
-      return ow_count_ident(u.operand, name);
-    },
-    parser.ExprCall(c) => {
-      return ow_count_ident(c.callee, name) + ow_count_ident_list(c.args, name);
-    },
-    parser.ExprArray(ar) => {
-      return ow_count_ident_list(ar.elements, name);
-    },
-    parser.ExprTuple(tp) => {
-      return ow_count_ident_list(tp.elements, name);
-    },
-    parser.ExprIndex(ix) => {
-      return ow_count_ident(ix.array, name) + ow_count_ident(ix.index, name);
-    },
-    parser.ExprSlice(sl) => {
-      return ow_count_ident(sl.array, name) + ow_count_ident(sl.start, name) + ow_count_ident(sl.end, name);
-    },
-    parser.ExprStructLit(st) => {
-      var n: i32 = 0;
-      if (st.has_base) {
-        n = ow_count_ident(st.base, name);
-      }
-      return n + ow_count_ident_list(st.field_values, name);
-    },
-    parser.ExprFieldAccess(fa) => {
-      return ow_count_ident(fa.obj, name);
-    },
-    _ => {
-      return 0;
+  function tally(n: parser.Expr, acc: i32): i32 {
+    match (n) {
+      parser.ExprIdent(id) => {
+        if (id.name == name) { return acc + 1; }
+        return acc;
+      },
+      _ => { return acc; }
     }
   }
-  return 0;
+  return astwalk.fold_expr(e, 0, tally);
 }
 
 // ow_self_move_admits recognizes the #4873 step-0 shape for
@@ -9065,56 +9036,27 @@ function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: s
 
 // e049_expr_lambdas finds lambdas in an expression and checks each one's
 // body for captured-reference assignments.
+// e049_expr_lambdas collects the E049 diagnostics of every lambda reachable from
+// an expression. It PRUNES at ExprLambda: the body goes to e049_check_assigns
+// with that lambda's own locals, so letting astwalk descend into it as well
+// would report each nested lambda once per enclosing one.
 function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): util.Diag[] {
-  match (e) {
-    parser.ExprLambda(lm) => {
-      return e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm));
-    },
-    parser.ExprCall(c) => {
-      var out: util.Diag[] = e049_expr_lambdas(c.callee, enclosing);
-      for arg in c.args {
-        out = util.append_diags(out, e049_expr_lambdas(arg, enclosing));
-      }
-      return out;
-    },
-    parser.ExprBinary(b) => {
-      return util.append_diags(e049_expr_lambdas(b.left, enclosing), e049_expr_lambdas(b.right, enclosing));
-    },
-    parser.ExprUnary(u) => {
-      return e049_expr_lambdas(u.operand, enclosing);
-    },
-    parser.ExprArray(a) => {
-      var out: util.Diag[] = [];
-      for element in a.elements {
-        out = util.append_diags(out, e049_expr_lambdas(element, enclosing));
-      }
-      return out;
-    },
-    parser.ExprTuple(t) => {
-      var out: util.Diag[] = [];
-      for element in t.elements {
-        out = util.append_diags(out, e049_expr_lambdas(element, enclosing));
-      }
-      return out;
-    },
-    parser.ExprIndex(ix) => {
-      return util.append_diags(e049_expr_lambdas(ix.array, enclosing), e049_expr_lambdas(ix.index, enclosing));
-    },
-    parser.ExprFieldAccess(fa) => {
-      return e049_expr_lambdas(fa.obj, enclosing);
-    },
-    parser.ExprStructLit(s) => {
-      var out: util.Diag[] = [];
-      for field_value in s.field_values {
-        out = util.append_diags(out, e049_expr_lambdas(field_value, enclosing));
-      }
-      return out;
-    },
-    _ => {
-      var none: util.Diag[] = [];
-      return none;
+  function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprLambda(lm) => {
+        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm)));
+      },
+      _ => { return acc; }
     }
   }
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_expr_pruned(e, none, at_lambda, not_into_lambda);
 }
 
 // e049_find walks a statement list for lambda-bearing expressions (var
