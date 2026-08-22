@@ -163,11 +163,19 @@ type inlineCandidate struct {
 	// functions open a typed wrapper so the br carries the
 	// returned value through.
 	returnBlockType int32
-	// refs is the total number of references to this callee across the
-	// whole program (direct calls, closure-direct calls, and OpConstFunc
-	// address-of). When it is 1, inlining moves the sole reference's body
-	// to that call site and the original function becomes dead — a
-	// net-neutral code-size move that siteAllows admits over the flat cap.
+	// refs is the total number of references to this callee (direct calls,
+	// closure-direct calls, and OpConstFunc address-of), counted across the
+	// whole program PLUS one for an externally-reachable function.
+	//
+	// siteAllows admits a refs == 1 callee over the flat size cap because
+	// inlining then moves the sole reference's body to that call site and
+	// the original becomes dead — net-neutral on code size. That rationale
+	// depends on the original dying, which is exactly what an export does
+	// not do: its definition is rooted by the dead-function cull because a
+	// caller outside the program reaches it. Counting that invisible caller
+	// keeps such a function off the net-neutral path, so it is admitted only
+	// on the flat cap's own terms. Inlining an export into an internal
+	// caller is still fine — the standalone copy simply survives alongside.
 	refs int
 }
 
@@ -231,6 +239,12 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 func programRefCounts(prog *Program) map[string]int {
 	refs := map[string]int{}
 	for _, fn := range prog.Funcs {
+		// The caller an export has outside the program appears in no op
+		// stream; count it so the "sole reference, original dies" size
+		// shortcut cannot fire on a function whose definition must stay.
+		if fn.ExternallyReachable {
+			refs[fn.Name]++
+		}
 		for _, op := range fn.Ops {
 			switch op.Kind {
 			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect,

@@ -753,6 +753,34 @@ type Func struct {
 	// InlineHint carries the source-level `@inline` / `@noinline`
 	// attribute through to the Inline pass (#4412 Rec §14).
 	InlineHint ast.InlineHint
+	// ExternallyReachable marks a function callable from outside this
+	// program: a `-shared -export` symbol on the natives, or an `@export`
+	// world export on wasm. Such a function has a caller no op stream
+	// mentions, so its standalone definition must survive the dead-function
+	// cull and it must never be treated as having no live reference left.
+	// Set by the backends from their export list before the pass battery;
+	// see MarkExternallyReachable.
+	ExternallyReachable bool
+}
+
+// MarkExternallyReachable flags every function in prog whose name appears in
+// names, so passes that reason about a function's reference count (Inline's
+// size policy) account for the caller that lives outside the program. Unknown
+// names are ignored — an export list may name a function the tree-shake
+// already removed.
+func MarkExternallyReachable(prog *Program, names ...string) {
+	if len(names) == 0 {
+		return
+	}
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	for _, fn := range prog.Funcs {
+		if want[fn.Name] {
+			fn.ExternallyReachable = true
+		}
+	}
 }
 
 // ExternFunc is a body-less function bound to a WASM-component import via an
