@@ -25135,7 +25135,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 parser.StmtVar(rv) => {
                     match (rv.init) {
                         parser.ExprTuple(tup) => {
-                            if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.init, xtuple.donors[xti], true, st); }
+                            if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, rv.init, xtuple.donors[xti], true, st); }
                             else { st = lower_stmt(stmts[i], st); }
                         },
                         _ => { st = lower_stmt(stmts[i], st); },
@@ -25180,7 +25180,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                         match (rv.init) {
                             parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd_name, xbd_type, true, st); },
                             parser.ExprTuple(tup) => {
-                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.init, xbd_name, true, st); }
+                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.type_name, rv.init, xbd_name, true, st); }
                                 else { st = lower_stmt(stmts[i], st); }
                             },
                             _ => { st = lower_stmt(stmts[i], st); },
@@ -42204,11 +42204,18 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
 // slot is freshly zeroed and this is not emitted — it would be a harmless null dec;
 // it is emitted ONLY on the loop-body path (release_prior). Mirrors emit_arr_store's
 // prior-value release (the mechanism a normal loop-rebind binding already uses).
+//
+// A shallow box dec is the whole release only when the box owns nothing, which is
+// the fifth site on the #7275 enumeration: a loop-carried recipient tuple carrying
+// a fresh array literal strands one buffer AND one box per iteration. Whatever the
+// prior box owns therefore goes back first (emit_tup_box_child_releases — nothing
+// at all for a struct recipient, the other caller).
 function emit_reuse_recip_prior_release(s: LowerState, cslot: i32, dslot: i32): LowerState {
     var st: LowerState = s.emit(ir.op_load_local(cslot));   // OLD box the recipient holds
     st = st.emit(ir.op_load_local(dslot));                  // the donor box about to be stored
     st = st.emit(ir.op_bin("ne", 0, false));                // old != donor (cow guard)
     st = st.emit(ir.op_if(0));
+    st = emit_tup_box_child_releases(st, cslot);
     st = st.emit(ir.op_load_local(cslot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     st = st.emit(ir.op_drop());
@@ -42639,27 +42646,68 @@ function tuple_lit_ctor_eligible(tup: parser.ExprTuple, s: LowerState): boolean 
     return true;
 }
 
+// emit_tup_box_child_releases gives back everything the tuple box in `slot` owns,
+// leaving the box itself alone — for a site that FREES or RECYCLES that box and
+// so owes its children (#7275). Two disjoint classes, and reclaimable_names_of
+// puts a tuple local in at most one:
+//
+//   "TUP:"    the per-position retains a bare-ident element took at construction
+//             (#7226), replayed from the slot's recorded kinds — the same list
+//             the exit sweep, the rebind store and the precise drop replay.
+//   "TUPRCS:" the fresh rc literals the scope-exit deep free would have released
+//             (emit_rctuple_deep_free), minus its box dec.
+//
+// Emits nothing for a slot in neither, so a struct recipient (the other caller
+// of emit_reuse_recip_prior_release) is byte-identical to before. Null-guarded
+// on both limbs: __fern_rc_dec tolerates a zeroed slot but the op_tuple_get and
+// the type-driven drop that reach the children DEREFERENCE the box, and a
+// loop-carried slot holds its entry zero on the first pass.
+function emit_tup_box_child_releases(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = emit_tup_elem_releases(se, slot, se.tup_elem_kinds_of(slot));
+    if (slot_is_reclaimable_rctuple_sweep(st, slot)) {
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_bin("ne", 0, false));     // slot != 0 (null guard)
+        st = st.emit(ir.op_if(0));
+        var rtp: i32[] = [];
+        st = emit_tuple_type_child_drops(st, slot, rtp, "(" + st.locals[slot].tuple_elems + ")");
+        st = st.emit(ir.op_end());
+    }
+    return st;
+}
+
 // emit_cross_tuple_reuse lowers `var c = (…)` as a RUNTIME-GUARDED in-place
 // reuse of dead donor d's tuple box (#4350 slice 3; the token shape shared
 // with the struct families): reused = __fern_rc_is_unique(d); box =
 // __fern_alloc_reuse(reused ? d : 0, arity); each element slot of the result
 // box is overwritten at its element WIDTH, c binds to the box (tagged via
-// mark_tuple_elems), and d's slot is zeroed so the exit sweep frees the box
-// once (via c). A shared donor degrades to a fresh box + a dec of d's
-// reference instead of corrupting.
-function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
+// mark_tuple_elems from c_type, the recipient's declared tuple type, or from the
+// element expressions when it has none), and d's slot is zeroed so the exit
+// sweep frees the box once (via c). A shared donor degrades to a fresh box + a
+// dec of d's reference instead of corrupting.
+function emit_cross_tuple_reuse(c_name: string, c_type: string, init: parser.Expr, donor_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprTuple(tup) => {
             var st: LowerState = s;
             var n: i32 = tup.elements.len();
-            // Element kind tags (the mark_tuple_elems encoding), computed up
-            // front — the write loop below and c's slot tag both consume them.
+            // c's slot tags (the mark_tuple_elems encoding), computed up front.
+            // Prefer the DECLARED tuple type, exactly as bind_var_slot's ExprTuple
+            // arm does — elem_type_tag coarsens a scalar-array element to the bare
+            // "i32", so an inferred tag left `(i32, i32[])` recorded as "i32,i32"
+            // and the scope-exit deep free (emit_rctuple_deep_free, type-driven via
+            // emit_tuple_type_child_drops) then found no array child to release:
+            // the recipient's own fresh array literal stranded, at its buffer's
+            // size (#7275). The write loop below recomputes its WIDTH tag from the
+            // element expression and is deliberately unaffected.
             var enc: string = "";
             var pe: i32 = 0;
+            var c_annot: boolean = c_type.len() >= 2 && c_type[0:1] == "(";
             while (pe < n) {
-                var ptek: string = elem_type_tag(iife_leaf_value(tup.elements[pe]), st);
+                var ptek: string = "";
+                if (c_annot) { ptek = tuple_type_elem_tag(c_type, pe); }
+                if (ptek.len() == 0) { ptek = elem_type_tag(iife_leaf_value(tup.elements[pe]), st); }
                 if (pe > 0) { enc = enc + ","; }
                 enc = enc + ptek;
                 pe = pe + 1;
@@ -42672,16 +42720,25 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
             // only when the recipient is a RECLAIMABLE (non-escaping) tuple local
             // (an escaping recipient's box is owned by its container; a prior-
             // release would be a UAF).
-            if (release_prior && slot_is_reclaimable_tuple(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // A "TUPRCS:" recipient is loop-carried just as a "TUP:" one is, and its
+            // prior box is equally dead — the narrower gate left the box itself
+            // unreleased as well as its children (#7275).
+            if (release_prior && (slot_is_reclaimable_tuple(st, cslot) || slot_is_reclaimable_rctuple_sweep(st, cslot))) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
             // Runtime uniqueness guard (#4350 slice 3, the token shape shared with
             // the struct families): reused = __fern_rc_is_unique(d); box =
             // __fern_alloc_reuse(reused ? d : 0, arity) — a tuple box has NO shape
             // word (elements at i*8, arr_box cap = arity = its slots), so the
-            // fresh arm needs no slot-0 copy and no old-element release exists on
-            // the reuse arm (the pre-guard emitter released nothing either: the
-            // cross_tuple_reuse_sites gate admits only non-rc element kinds).
-            // The fresh arm only releases d's reference (rc >= 2 there — the dec
-            // never frees; the aliases own the old box).
+            // fresh arm needs no slot-0 copy.
+            //
+            // What the donor's box OWNS is given back on the REUSE arm only, and
+            // that asymmetry is the whole difficulty of the site (#7275). On the
+            // reuse arm the box is recycled and its references die with it, so the
+            // release is owed there. On the fresh arm the box survives under its
+            // other owners — rc >= 2, so the dec of d's own reference never frees
+            // it — and releasing its children would free what those owners still
+            // read. The release therefore sits INSIDE the uniqueness test, not
+            // before it, which is what separates this site from the sweep /
+            // rebind-store / precise-drop three (emit_tup_box_child_releases).
             var uname: string = "$sxt_uniq" + util.i32_to_string(dslot);
             st = st.add_local(uname);
             var uslot: i32 = st.slot_of(uname);
@@ -42695,6 +42752,9 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
             st = st.emit(ir.op_if(0));
             st = st.emit(ir.op_load_local(dslot));
             st = st.emit(ir.op_store_local(kslot));
+            // Reuse arm: the recycled box's children are dead. Released before
+            // __fern_alloc_reuse repurposes the slots, while the reads are valid.
+            st = emit_tup_box_child_releases(st, dslot);
             st = st.emit(ir.op_else());
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_store_local(kslot));
@@ -45495,7 +45555,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 parser.StmtVar(rv) => {
                     match (rv.init) {
                         parser.ExprTuple(tup) => {
-                            if (tuple_lit_ctor_eligible(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.init, xtuple.donors[xtuple_i], false, s); }
+                            if (tuple_lit_ctor_eligible(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.type_name, rv.init, xtuple.donors[xtuple_i], false, s); }
                             else { s = lower_stmt(fn.body[j], s); }
                         },
                         _ => { s = lower_stmt(fn.body[j], s); },
