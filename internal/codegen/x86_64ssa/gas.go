@@ -82,7 +82,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 
 	var b strings.Builder
 	w := func(format string, args ...any) {
-		fmt.Fprintf(&b, format, args...)
+		line := fmt.Sprintf(format, args...)
+		if isDeadSelfMove(line) {
+			return
+		}
+		b.WriteString(line)
 		b.WriteByte('\n')
 	}
 
@@ -576,6 +580,36 @@ func selectLines(in Inst, label string) []string {
 
 // gpRegs is the allocatable+scratch register pool (rsp/rbp reserved for the
 // frame). reg8 is the parallel 8-bit subregister used by setcc.
+// isDeadSelfMove reports whether `line` is a 64-bit register-to-itself move,
+// which the CPU does nothing for. Register allocation leaves a few behind
+// (a result already in its home register still gets a placement mov), and they
+// reach the emitted text, where they cost a byte count and make the assembly
+// harder to read past while reviewing anything else (#6979).
+//
+// WIDTH IS THE WHOLE CONDITION, NOT A DETAIL. A 32-bit self-move is NOT a
+// no-op: `mov eax, eax` zero-extends into the upper 32 bits, and truncOrExt
+// emits exactly that, deliberately, as the u32 conversion. Dropping a
+// self-move by operand equality alone would delete it and silently miscompile
+// every u32 narrowing. So only the 64-bit names qualify; every other width is
+// doing work.
+func isDeadSelfMove(line string) bool {
+	t := strings.TrimSpace(line)
+	rest, ok := strings.CutPrefix(t, "mov ")
+	if !ok {
+		return false
+	}
+	dst, src, ok := strings.Cut(rest, ", ")
+	if !ok || dst != src {
+		return false
+	}
+	for _, r := range gpRegs {
+		if dst == r {
+			return true
+		}
+	}
+	return false
+}
+
 var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"}
 var reg8 = []string{"al", "bl", "cl", "dl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"}
 var reg32 = []string{"eax", "ebx", "ecx", "edx", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"}
