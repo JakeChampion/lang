@@ -102,6 +102,36 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		{"struct-lit-unknown-and-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, zz: 2 }; return 0; }\n", "E043,E005"},
 		{"struct-lit-nested-bad-fields", "struct In { a: i32 }\nstruct Out { x: In }\nfunction main(): i32 { var o: Out = Out { bad2: In { bad1: 1 } }; return 0; }\n", "E043,E005,E043,E005"},
 		{"struct-lit-two-siblings-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var a: P = P { x: 1 }; var b: P = P { x: 2 }; return 0; }\n", "E005,E005"},
+		// E044 (a lambda capturing a variable of unsupported type). e044_expr
+		// prunes at ExprLambda for the same reason e049_expr_lambdas does — its
+		// own comment says "stmts_mention already recursed into any nested
+		// lambda, so descending again would double-report". The nested row is
+		// that guard: the outer lambda captures x transitively through the
+		// inner one, so BOTH are reported and the count is exactly two. Lose
+		// the prune and the inner one is counted again.
+		{"two-sibling-lambdas-bad-capture", "function f[T](x: T): i32 {\n  var g = () => x;\n  var h = () => x;\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044,E044"},
+		// UNDER-REPORT, pinned so it cannot drift: the Go checker reports E044
+		// twice here — the inner lambda captures x directly, the outer captures
+		// it transitively — and the self-host reports once. Same code SET
+		// {E044} either way, so the codes and hint-text differentials cannot
+		// see it, and nothing currently fails.
+		//
+		// Root cause is the same family as the nested-lambda E049 gap (#7363):
+		// e044_stmts walks only the enclosing function's statements, and
+		// e044_expr prunes at the outer lambda, so the inner one is never
+		// reached. The outer IS reported, because e044_lambda_check asks
+		// stmts_mention whether the body mentions the suspect and a nested
+		// lambda's mention counts. The prune's own comment worries about
+		// double-reporting, but that is about the SAME lambda twice; reaching
+		// the inner one yields two DIFFERENT lambdas, which is what Go does.
+		//
+		// Not fixed here because the fix is not the mechanical sweep E049's
+		// was: e044_lambda_check reports at the STATEMENT's position against a
+		// suspects/labels list e044_stmts computed for the enclosing scope, so
+		// reaching a nested lambda needs a decision about whether it reuses
+		// those suspects minus accumulated param shadowing, or recomputes them
+		// for the inner scope. That choice changes which diagnostics appear.
+		{"nested-lambda-bad-capture", "function f[T](x: T): i32 {\n  var g = function(): i32 { var h = () => x; return 0; };\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044"},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049"},
