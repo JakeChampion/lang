@@ -329,8 +329,19 @@ findings. Ranked by leverage.
     lines), `check_expr` (424), `stmts_call_diags` (297). Those are SH-044/050
     territory, not this row.
 
+    **A collector may treat its ROOT node differently from nested ones**, which
+    a fold cannot express directly. `lret_expr` takes a `self_name` and passes
+    `""` in every non-lambda arm, so that binding applies only to a lambda at
+    the root — it names the lambda itself, for a self-recursive local function.
+    A visitor closure sees every lambda alike and would bind the root's name to
+    nested ones. Converting it means extracting the lambda arm into a helper and
+    calling it with `self_name` at the root and `""` from the visitor; the arm
+    also builds a fresh `Scope` from the lambda's params and return type, so it
+    is a restructure rather than a transcription. Check for a root-only
+    parameter before assuming a collector folds.
+
     Done so far: `mc_mentions_expr` / `mc_mentions_stmts`, `ow_count_ident`,
-    `e049_expr_lambdas`, `vref_expr`. A converted collector stops matching the
+    `e049_expr_lambdas`, `vref_expr`, `e032_expr`. A converted collector stops matching the
     "hand-enumerated walk" heuristic entirely — it becomes a short visitor
     naming one or two variants — which is how to tell the count is falling for
     the right reason.
