@@ -148,6 +148,81 @@ func TestForEachPatternNestingWasm(t *testing.T) {
 	}
 }
 
+// The iterand is type-checked once to choose the loop and again as part of the
+// lowering that binds it, so a non-trivial iterand must settle identically both
+// times: a generic call, a call whose argument is a capturing lambda, and a
+// Map-returning call (the cursor's receiver is an expression, not a name).
+const foreachPatternIterandProg = `
+import "core/map";
+
+function twice[T](x: T): (T, T) {
+    return (x, x);
+}
+
+function pairsOf(n: i32, f: (i32) => i32): (i32, i32)[] {
+    var out: (i32, i32)[] = [];
+    var i = 0;
+    while (i < n) {
+        out = out.append((i, f(i)));
+        i = i + 1;
+    }
+    return out;
+}
+
+function makeMap(n: i32): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(8);
+    var i = 0;
+    while (i < n) {
+        m = m.insert(i, i * 3);
+        i = i + 1;
+    }
+    return m;
+}
+
+function main(): i32 {
+    var bump = 5;
+    var total = 0;
+
+    var (l, r) = twice(7);
+    total = total + l + r;
+
+    for (a, b) in pairsOf(3, (x: i32) => x + bump) {
+        total = total + a + b;
+    }
+
+    for (k, v) in makeMap(3) {
+        total = total + k + v;
+    }
+
+    if (total != 47) { return total; }
+    return 42;
+}
+`
+
+func TestForEachPatternIterandInterp(t *testing.T) {
+	if got := runInterpExit(t, foreachPatternIterandProg); got != 42 {
+		t.Fatalf("interp got %d, want 42 (any other value is the running total)", got)
+	}
+}
+
+func TestForEachPatternIterandX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, foreachPatternIterandProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42 (any other value is the running total)", got)
+	}
+}
+
+func TestForEachPatternIterandArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, foreachPatternIterandProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (any other value is the running total)", got)
+	}
+}
+
+func TestForEachPatternIterandWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, foreachPatternIterandProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (any other value is the running total)", got)
+	}
+}
+
 func TestForEachPatternInterp(t *testing.T) {
 	if got := runInterpExit(t, foreachPatternProg); got != 42 {
 		t.Fatalf("interp got %d, want 42 (a negative code names the failing check)", got)
