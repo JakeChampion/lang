@@ -3179,6 +3179,113 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 }
 
 
+
+// emit_dyn_dispatch_wat renders the dyn_dispatch op: the vtable search that
+// turns a boxed dyn value plus a method name into a call_indirect through the
+// function table.
+//
+// It is the emitter's only reader of `funcs`, which is why it takes the two
+// decl tables as ordinary parameters rather than through a context: pulling it
+// out leaves nothing else in the op loop needing the function list at all.
+// None of the five scratch locals are touched here.
+function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string {
+    var out: string = "";
+        // `dyn Trait` method call. Receiver (arg0) + args are in argc
+        // consecutive locals from base_slot. Read the receiver's type id
+        // (i32.load @0) and dispatch via a nested if/else chain over every
+        // module method named o.str with a struct receiver, each arm
+        // reloading the argc locals and calling. Mirrors the register
+        // backends' compare-branch chain; the result flows as the if result.
+        var dbase: i32 = o.i32_imm;
+        var dargc: i32 = o.width;
+        var drt: string = "i32";
+        var nimpl: i32 = 0;
+        var df0: i32 = 0;
+        while (df0 < funcs.len()) {
+            var dbn0: string = util.base_type_name(funcs[df0].receiver_type);
+            // Count struct receivers, primitive/string receivers (heap-boxed
+            // at coercion — docs/DYN-TRAITS.md §4.2.3), AND enum receivers
+            // (#4785 — matched per-variant below): each is an `if` arm
+            // needing a matching `end`.
+            if (irlower.dyn_arm_matches(funcs[df0], o.str, funcs) && funcs[df0].receiver_type.len() > 0
+                    && (irlower.decl_is_struct(structs, dbn0) || irlower.decl_is_prim_recv(structs, dbn0)
+                        || (!asmcore.recv_is_array(funcs[df0].receiver_type) && irlower.decl_is_enum(structs, dbn0)))) {
+                if (nimpl == 0) {
+                    if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") { drt = "i64"; }
+                    else if (irlower.is_f64_scalar_type_name(funcs[df0].ret_type)) { drt = "f64"; }
+                }
+                nimpl = nimpl + 1;
+            }
+            df0 = df0 + 1;
+        }
+        var dfi: i32 = 0;
+        while (dfi < funcs.len()) {
+            var dbn: string = util.base_type_name(funcs[dfi].receiver_type);
+            var dprim: boolean = funcs[dfi].receiver_type.len() > 0 && irlower.decl_is_prim_recv(structs, dbn);
+            if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
+                    && (irlower.decl_is_struct(structs, dbn) || dprim)) {
+                // Shape compare: a struct value carries its type id @0; a
+                // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
+                out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n" + tid_get(dbn) + "    i32.eq\n";
+                out = out + "    if (result " + drt + ")\n";
+                var dk: i32 = 0;
+                while (dk < dargc) {
+                    if (dk == 0 && dprim) {
+                        // arg0 is the receiver: UNBOX the value from box+8.
+                        out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    i32.load\n";
+                    } else {
+                        out = out + "    local.get " + util.i32_to_string(dbase + dk) + "\n";
+                    }
+                    dk = dk + 1;
+                }
+                out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
+                out = out + "    else\n";
+            }
+            // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
+            // value's type id @0 is its VARIANT's struct_type_id (the same
+            // identity op_variant_is / op_enum_new use), never an id for
+            // the enum name itself, so the struct-arm compare above can
+            // never identify it. Match the receiver id against EVERY
+            // variant of the enum (OR-chain); on a hit call
+            // `<Enum>.<method>` with the variant box as the receiver (its
+            // body's `match (self)` re-reads the variant). Keyed
+            // per-variant so two enums implementing the same trait
+            // dispatch to their own impls. recv_is_array excludes an
+            // array method's `T[]` receiver (base_type_name strips the
+            // `[]`, which would otherwise mis-read as an enum — #2766).
+            if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
+                    && !asmcore.recv_is_array(funcs[dfi].receiver_type)
+                    && irlower.decl_is_enum(structs, dbn)
+                    && !(irlower.decl_is_struct(structs, dbn) || dprim)) {
+                var denvn: i32 = 0;
+                var dvi: i32 = 0;
+                while (dvi < structs.len()) {
+                    if (structs[dvi].enum_owner == dbn) {
+                        out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n";
+                        if (denvn > 0) { out = out + "    i32.or\n"; }
+                        denvn = denvn + 1;
+                    }
+                    dvi = dvi + 1;
+                }
+                out = out + "    if (result " + drt + ")\n";
+                var dek: i32 = 0;
+                while (dek < dargc) {
+                    out = out + "    local.get " + util.i32_to_string(dbase + dek) + "\n";
+                    dek = dek + 1;
+                }
+                out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
+                out = out + "    else\n";
+            }
+            dfi = dfi + 1;
+        }
+        if (drt == "i64") { out = out + "    i64.const 0\n"; }
+        else if (drt == "f64") { out = out + "    f64.const 0\n"; }
+        else { out = out + "    i32.const 0\n"; }
+        var de: i32 = 0;
+        while (de < nimpl) { out = out + "    end\n"; de = de + 1; }
+    return out;
+}
+
 // emit_str_op_wat renders one string IR op as WAT. Every arm is a fixed
 // instruction sequence or a runtime call: none of them reads the emitter's
 // ambient state (the module namespace, the string/aggregate tables, the
@@ -4314,99 +4421,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 149) {  // call_direct
             out = out + "    call $" + o.str + "\n";
         } else if (o.kind_tag == 147) {  // dyn_dispatch
-            // `dyn Trait` method call. Receiver (arg0) + args are in argc
-            // consecutive locals from base_slot. Read the receiver's type id
-            // (i32.load @0) and dispatch via a nested if/else chain over every
-            // module method named o.str with a struct receiver, each arm
-            // reloading the argc locals and calling. Mirrors the register
-            // backends' compare-branch chain; the result flows as the if result.
-            var dbase: i32 = o.i32_imm;
-            var dargc: i32 = o.width;
-            var drt: string = "i32";
-            var nimpl: i32 = 0;
-            var df0: i32 = 0;
-            while (df0 < funcs.len()) {
-                var dbn0: string = util.base_type_name(funcs[df0].receiver_type);
-                // Count struct receivers, primitive/string receivers (heap-boxed
-                // at coercion — docs/DYN-TRAITS.md §4.2.3), AND enum receivers
-                // (#4785 — matched per-variant below): each is an `if` arm
-                // needing a matching `end`.
-                if (irlower.dyn_arm_matches(funcs[df0], o.str, funcs) && funcs[df0].receiver_type.len() > 0
-                        && (irlower.decl_is_struct(structs, dbn0) || irlower.decl_is_prim_recv(structs, dbn0)
-                            || (!asmcore.recv_is_array(funcs[df0].receiver_type) && irlower.decl_is_enum(structs, dbn0)))) {
-                    if (nimpl == 0) {
-                        if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") { drt = "i64"; }
-                        else if (irlower.is_f64_scalar_type_name(funcs[df0].ret_type)) { drt = "f64"; }
-                    }
-                    nimpl = nimpl + 1;
-                }
-                df0 = df0 + 1;
-            }
-            var dfi: i32 = 0;
-            while (dfi < funcs.len()) {
-                var dbn: string = util.base_type_name(funcs[dfi].receiver_type);
-                var dprim: boolean = funcs[dfi].receiver_type.len() > 0 && irlower.decl_is_prim_recv(structs, dbn);
-                if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
-                        && (irlower.decl_is_struct(structs, dbn) || dprim)) {
-                    // Shape compare: a struct value carries its type id @0; a
-                    // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
-                    out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n" + tid_get(dbn) + "    i32.eq\n";
-                    out = out + "    if (result " + drt + ")\n";
-                    var dk: i32 = 0;
-                    while (dk < dargc) {
-                        if (dk == 0 && dprim) {
-                            // arg0 is the receiver: UNBOX the value from box+8.
-                            out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    i32.load\n";
-                        } else {
-                            out = out + "    local.get " + util.i32_to_string(dbase + dk) + "\n";
-                        }
-                        dk = dk + 1;
-                    }
-                    out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
-                    out = out + "    else\n";
-                }
-                // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
-                // value's type id @0 is its VARIANT's struct_type_id (the same
-                // identity op_variant_is / op_enum_new use), never an id for
-                // the enum name itself, so the struct-arm compare above can
-                // never identify it. Match the receiver id against EVERY
-                // variant of the enum (OR-chain); on a hit call
-                // `<Enum>.<method>` with the variant box as the receiver (its
-                // body's `match (self)` re-reads the variant). Keyed
-                // per-variant so two enums implementing the same trait
-                // dispatch to their own impls. recv_is_array excludes an
-                // array method's `T[]` receiver (base_type_name strips the
-                // `[]`, which would otherwise mis-read as an enum — #2766).
-                if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
-                        && !asmcore.recv_is_array(funcs[dfi].receiver_type)
-                        && irlower.decl_is_enum(structs, dbn)
-                        && !(irlower.decl_is_struct(structs, dbn) || dprim)) {
-                    var denvn: i32 = 0;
-                    var dvi: i32 = 0;
-                    while (dvi < structs.len()) {
-                        if (structs[dvi].enum_owner == dbn) {
-                            out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n";
-                            if (denvn > 0) { out = out + "    i32.or\n"; }
-                            denvn = denvn + 1;
-                        }
-                        dvi = dvi + 1;
-                    }
-                    out = out + "    if (result " + drt + ")\n";
-                    var dek: i32 = 0;
-                    while (dek < dargc) {
-                        out = out + "    local.get " + util.i32_to_string(dbase + dek) + "\n";
-                        dek = dek + 1;
-                    }
-                    out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
-                    out = out + "    else\n";
-                }
-                dfi = dfi + 1;
-            }
-            if (drt == "i64") { out = out + "    i64.const 0\n"; }
-            else if (drt == "f64") { out = out + "    f64.const 0\n"; }
-            else { out = out + "    i32.const 0\n"; }
-            var de: i32 = 0;
-            while (de < nimpl) { out = out + "    end\n"; de = de + 1; }
+            out = out + emit_dyn_dispatch_wat(o, structs, funcs);
         } else if (o.kind_tag == 146) {  // dyn_box
             // Heap-box a primitive/string value coerced into a `dyn Trait` slot
             // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8] via
