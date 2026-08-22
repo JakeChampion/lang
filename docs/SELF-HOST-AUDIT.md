@@ -35,13 +35,15 @@ The quality problems are almost entirely **structural / maintainability**, not
 correctness — with a small number of genuine latent bugs (§2). The dominant
 themes:
 
-1. **Giant functions.** `wasm_ir.fern:3189 emit_function_ir` is **1,257 lines**;
-   `ssa.fern:524 build_expr` is **790**; `asmcore.fern:2704 infer_expr_type` is
-   **497**; `parser.fern:6033 parse_type_name` is **341**. Every one of these has
-   grown since it was first recorded here.
-2. **Left-fold string accumulation.** `out = out + …` at **701 sites in
-   `wasm_ir.fern`** alone (plus 278 in `ssa_arm64`, 259 in `ssa_x86`), the
-   O(n²) shape whose cost the tree's own comments document.
+1. **Giant functions.** `ssa.fern:524 build_expr` is **790 lines**;
+   `asmcore.fern:2704 infer_expr_type` is **497**; `parser.fern:6033
+   parse_type_name` is **341**. `wasm_ir.fern`'s `emit_function_ir` led this
+   list at 1,257 and is now **84** (SH-058).
+2. **Left-fold string accumulation.** `out = out + …`, the O(n²) shape whose
+   cost the tree's own comments document. `wasm_ir.fern` led at **701 sites**
+   and is now down to **1** (SH-027); **278 in `ssa_arm64` and 259 in
+   `ssa_x86`** remain, though most of those are a fixed prologue rather than a
+   per-op path — see SH-027 for the breakdown.
 3. **Parallel-maintained twins and god-structs.** `asm_ir.fern` ↔
    `asm_arm64_ir.fern` keep two `emit_runtime` surfaces whose `has_need` key
    sets have **drifted apart by 7 keys**; `irlower.fern:409 LowerState` carries
@@ -67,7 +69,7 @@ resolved**: see SH-020 for what is left and what is deliberately kept.
 | Tree-walker | `interp` | C+ | Ambitious + tested; five parallel arrays as an environment, scoping by length-trim. |
 | IR lowering | `irlower` | C | 59k lines; a 31-field `LowerState` and a 1,704-line `lower_call_method`. |
 | Native IR emitters | `asm_ir`, `asm_arm64_ir` | C | Two `emit_runtime` surfaces hand-maintained in parallel, key sets already drifted. |
-| WASM path | `wasm_ir`, `watbin` | C | The 1,257-line `emit_function_ir`, 701 left-folds, 13-param unbundled entry point. |
+| WASM path | `wasm_ir`, `watbin` | C | 13-param unbundled entry point; `emit_function_ir` (1,257 lines) and the 701 left-folds are resolved. |
 | Driver / glue | `*_run`, `fern` | C− | 56 `main()`s / 45 `*_run.fern`; import resolver duplicated and already drifted. |
 
 ---
@@ -399,25 +401,59 @@ findings. Ranked by leverage.
 
 ### T7 — O(n²) string accumulation in emitters
 - [ ] **SH-027 — Use a `strbuf`/chunk-join accumulator in the string emitters.**
-  `out = out + …` left-folds, by file:
+  `wasm_ir.fern` is **done**: `emit_ir_op` (#7320) and the other 19 accumulating
+  functions (420 sites) now collect into a `string[]` and
+  `util.str_join_chunks` once. One fold remains there, in `fn_type_decl`, which
+  returns `out + suffix` rather than `out` — the accumulator is read, so the
+  shape does not apply.
 
-  | file | `out = out +` sites |
-  |---|---|
-  | `wasm_ir.fern` | **701** |
-  | `ssa_arm64.fern` | 278 |
-  | `ssa_x86.fern` | 259 |
-  | `ssa_wasm.fern` | 18 |
-  | `asm_ir.fern` | 2 |
-  | `asm_arm64_ir.fern` | 1 |
+  Remaining `out = out +` sites:
 
-  `wasm_ir.fern` is now by far the worst in the tree; the native IR emitters
-  have essentially finished migrating to `strbuf`, which is what the target
-  shape looks like. The SSA backends embed their ~140-line runtime via the very
-  left-fold their own comments warn against (`ssa_x86.fern:629 emit_program`
-  chunk-joins the function bodies but still folds the prologue). _Fix:_ collect
-  pieces in a `string[]` and `str_join_chunks` once, or route through the
-  global `strbuf` as `darwinize` now does; move inline runtime asm into data
-  constants (`runtime_x86(): string`).
+  | file | sites | in the per-op path? |
+  |---|---|---|
+  | `ssa_arm64.fern` | 278 | 72 (`emit_inst` 62, `emit_term` 8, `emit_const` 2) |
+  | `ssa_x86.fern` | 259 | 57 (`emit_inst` 53, `emit_term` 4) |
+  | `printer.fern` | 214 | — (see below) |
+  | `ssa_wasm.fern` | 18 | 2 |
+  | `irlower.fern` | 25 | — |
+  | `ferndoc.fern` | 30 | — |
+  | `asm_ir.fern` | 2 | — |
+  | `asm_arm64_ir.fern` | 1 | — |
+  | `wasm_ir.fern` | 1 | — |
+
+  (`printer.fern` was missing from this table entirely; the `*_run.fern` test
+  drivers also fold, and are not worth converting.)
+
+  **The raw site counts overstate the SSA backends.** Their `emit_program`
+  (204 / 200 / 15 of the counts above) folds a **fixed** ~140-line runtime
+  prologue — constant work per program, not quadratic in program size — and it
+  already chunk-joins the function bodies, which is the part that scales. The
+  cost that matters is the per-op column, and there the accumulator is threaded
+  as a **parameter** (`emit_inst(…, out: string): string`, likewise `load_op`,
+  `emit_const`, `store_reg`, `store_res`, `emit_phi_moves`, `emit_term`), so
+  converting it means changing that chain's signatures to `string[]` together,
+  not rewriting statements in place.
+
+  **`selfhost-emit-hashes` does not gate the SSA backends.** The SSA pipeline is
+  opt-in behind `-ssa` (`fern.fern:1873`), so a default-flag emit sweep never
+  reaches `ssa_arm64` / `ssa_x86` / `ssa_wasm`. Anything done there needs its
+  own byte-identity sweep — the same corpus emitted with `-ssa`, where the
+  programs outside the SSA subset record as FAILED and still compare.
+
+  **`printer.fern` does not take the same rewrite.** Almost every one of its
+  accumulators ends `return out + ")"` / `return (out + pad + "}", g)` rather
+  than `return out`, so the partial string is read and the write-only
+  precondition fails. They are convertible — append the suffix as a final chunk
+  — but one at a time, by hand, and most are small per-node strings rather than
+  a whole-file accumulator. Only `escape_fstring_lit` and `indent_str` match the
+  mechanical shape.
+
+  _Method that worked on `wasm_ir.fern`:_ convert only where the accumulator is
+  provably **write-only** — every mention of `out` in the function is its
+  declaration, an `out = out + …` fold, or `return out;`. That is the
+  precondition: no arm inspects the partial string, so the concatenation can be
+  defer to the join. Then assert every appended expression survives **verbatim**
+  and the site count is unchanged, and gate on emitted bytes.
 
 ### T8 — Hand-rolled options/containers that generics would replace
 - [ ] **SH-028 — Replace the hand-rolled option/result families with generics.**
@@ -620,35 +656,30 @@ appendix §6.)
   already supersedes as the unified driver: give them one shared
   `run_stdin(emit_fn)` and make each a one-line wrapper, keeping only those a Go
   test pins.
-- [~] **SH-058 — `wasm_ir.fern` `emit_function_ir`**, the largest function named
-  anywhere in this audit. **1254 → 867 lines (−31%)** over four slices, each
-  lifting one op family to a plain `Op -> string` helper behind a predicate:
-  string ops via the shared `ir.is_str_op_kind` (#7280), `dyn_dispatch` (#7284),
-  the host family and the map family (#7297).
+- [x] **SH-058 — `wasm_ir.fern` `emit_function_ir`**, the largest function named
+  anywhere in this audit. **1254 → 84 lines (−93%)**: four slices each lifting
+  one op family to a plain `Op -> string` helper behind a predicate — string ops
+  via the shared `ir.is_str_op_kind` (#7280), `dyn_dispatch` (#7284), the host
+  family and the map family (#7297) — then the op loop itself moved out to
+  `emit_ir_op(o, cx)` behind a `WasmOpCtx` (#7313).
 
   **The row's proposed shape was wrong in two ways**, both found by measuring
-  rather than reading:
+  rather than reading. `WasmOpCtx` carries **6 fields plus `funcs`**, not the
+  row's proposed 9: `{ns, str_vals, cagg_vals, structs, fn_table, funcs,
+  base: i32}`, where
+  `base = r.n_locals` reconstructs all five scratch temps (`arrtmp`=base,
+  `eltmp`=+1, `f64tmp`=+2, `i64tmp`=+3, `bctmp`=+4) — none of the five is
+  reassigned anywhere in the function, so that collapse is sound. `funcs` stays
+  because the loop still forwards it to `emit_dyn_dispatch_wat`, even though no
+  arm reads it directly. `fd`, `r` and `vsigs` are gone: every apparent use was
+  inside a comment (`fd 0`/`fd 3` is the WASI file descriptor, `r.read_chunk` is
+  a Reader method).
 
-  1. **`fd`, `r` and `vsigs` are never read in the op loop** — every apparent
-     hit is inside a comment (`fd 0`/`fd 3` is the WASI file descriptor;
-     `r.read_chunk` is a Reader method). Bundling all nine params carries three
-     dead fields, one of them a heavyweight `LowerResult`.
-  2. **98 of 124 arms (519 lines) touch no ambient state at all.** Introducing
-     the context struct first would have produced a 1,100-line `emit_ir_op` —
-     the same function one indent shallower — and made a byte-purity diff
-     maximally hard to bisect. Context-free families come out first; each one
-     shrinks what the struct must carry (`funcs` left with #7284).
-
-  _Remaining:_ the context struct, minimum shape
-  `{ns, str_vals, cagg_vals, structs, fn_table, base: i32}` — **6 fields, not
-  9** — where `base = r.n_locals` reconstructs all five scratch temps
-  (`arrtmp`=base, `eltmp`=+1, `f64tmp`=+2, `i64tmp`=+3, `bctmp`=+4). None of
-  the five is reassigned anywhere in the function, so that collapse is sound.
-  The 26 context-needing arms want the temps (`arrtmp` 14, `eltmp` 13,
-  `f64tmp` 8, `i64tmp` 7) far more than the tables (`ns` 5, `structs` 3, the
-  rest 2 each). **SH-027's chunk accumulation stays a separate change** —
-  landing extraction and an accumulation rewrite together makes a purity diff
-  unbisectable.
+  The op-family extractions came first for a reason: 98 of 124 arms (519 lines)
+  touch no ambient state at all, so introducing the context struct first would
+  have produced a 1,100-line `emit_ir_op` — the same function one indent
+  shallower — with a byte-purity diff that is maximally hard to bisect. Each
+  family lifted out shrank what the struct had to carry.
 
   **Three traps, each of which cost something.** Encode them if you automate a
   further slice:
@@ -673,9 +704,9 @@ appendix §6.)
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **SH-058 (in progress, 1254 → 867) then SH-054/SH-027** — the wasm path is
-   the worst area by every metric, and decomposing `emit_function_ir` unblocks
-   the rest of it.
+2. **SH-054, then SH-027's SSA half** — SH-058 is done (`emit_function_ir`
+   1254 → 83) and SH-027 is done for `wasm_ir.fern`. What is left of SH-027 is
+   the SSA backends, which need their own `-ssa` byte-identity sweep first.
 3. **SH-023** — mechanical, high payoff, low risk (SH-045 and SH-055 landed
    from this tier).
 4. **T3 visitor** (SH-022, starting with `wasm_ir`'s 28 walkers) then the giant
