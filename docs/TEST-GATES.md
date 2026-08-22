@@ -141,6 +141,27 @@ fall-through.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **The ORDER of the self-host checker's diagnostics, and how many times it
+  reports the same code.** Every gate over checker output reduces to a set
+  before comparing: the codes differential
+  (`self_host_checker_codes_test.go`) takes "the sorted, de-duplicated set of
+  diagnostic codes", the hint-text differential groups into "code → sorted
+  unique messages", and the driver test asserts only that a `wantDiag`
+  substring APPEARS on stderr. So a change that reorders diagnostics, or
+  reports one twice, is invisible to all three while being plainly visible to
+  a user.
+
+  This bites the SH-022 walker migration specifically. Folding a diagnostic
+  collector onto `astwalk` replaces its traversal with the shared one, and the
+  two need not visit siblings in the same order; pruning it wrongly duplicates
+  a report rather than losing one. `e049_expr_lambdas` (#7359) hands each
+  lambda body to `e049_check_assigns` and must therefore PRUNE at
+  `ExprLambda` — with the plain fold it would report every nested lambda once
+  per enclosing one, and every gate above would still be green. That one was
+  settled by reading the code, which is the only instrument currently
+  available: **verify a diagnostic collector's order and multiplicity by hand,
+  or add an order-sensitive check first.**
+
 - **Operand-stack balance in the EMITTED native asm — now gated on arm64, by
   `TestOperandStackBalancedAcrossTwoWordDiscard`**
   (`internal/codegen/arm64/stack_balance_test.go`). Two separate things hide a
