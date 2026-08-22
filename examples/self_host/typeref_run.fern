@@ -47,7 +47,10 @@ function main(): i32 {
         "Option[i32]", "Map[string, i32]", "Result[string, Err]",
         "Map[string, Option[i32]]", "Map[i32, Vec[string]][]", "Vec[T]",
         "(i32, string)", "(string, (i32, bool))", "Option[(string, string)]",
-        "(i32, string)[]", "dyn Shape", "dyn Shape[]"
+        "(i32, string)[]", "dyn Shape", "dyn Shape[]",
+        "() => P", "(i32) => i32", "(T, T) => i32", "(T) => U[]",
+        "(parser.Expr, T) => T", "(() => T) => U", "(i32) => (string, i32)",
+        "Vec[(T) => boolean]"
     ];
     var out: string = "";
     var bad: i32 = 0;
@@ -81,6 +84,30 @@ function main(): i32 {
     out = out + "struct arr3 base=" + ar.base
         + " args=" + util.i32_to_string(ar.args.len())
         + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
+
+    // A function type round-trips even when it is NOT decoded — an unrecognised
+    // spelling survives whole as `base` and renders back byte-identical. So the
+    // structure is what proves it is understood: `(A, B) => C` must decode to
+    // three args (the result last) rather than one opaque name.
+    var f2: parser.TypeRef = parser.parse_type_ref("(T, T) => i32");
+    out = out + "struct fn2 base=" + f2.base
+        + " args=" + util.i32_to_string(f2.args.len())
+        + " depth=" + util.i32_to_string(f2.array_depth)
+        + " tuple=" + b2s(f2.is_tuple)
+        + " fn=" + b2s(f2.is_fn)
+        + " ret=" + parser.render_type_ref(f2.args[f2.args.len() - 1]) + "\n";
+
+    var f0: parser.TypeRef = parser.parse_type_ref("() => P");
+    out = out + "struct fn0 args=" + util.i32_to_string(f0.args.len())
+        + " fn=" + b2s(f0.is_fn)
+        + " ret=" + parser.render_type_ref(f0.args[0]) + "\n";
+
+    // The parameter's own arrow must not split the outer one.
+    var fh: parser.TypeRef = parser.parse_type_ref("(() => T) => U");
+    out = out + "struct fnho args=" + util.i32_to_string(fh.args.len())
+        + " fn=" + b2s(fh.is_fn)
+        + " p0fn=" + b2s(fh.args[0].is_fn)
+        + " ret=" + parser.render_type_ref(fh.args[1]) + "\n";
 
     out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
     write(out);

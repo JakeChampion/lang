@@ -7977,7 +7977,35 @@ function split_top_commas(s: string): string[] {
 // coarsed to opaque spellings ("fn", "dyn Shape", "own R") by parse_type_name, so
 // TypeRef treats them as opaque named bases (a trailing "[]" still peels off,
 // e.g. "dyn Shape[]"); it is not a source-syntax type parser.
-pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean }
+// TypeRef is a decoded type spelling. `is_tuple` and `is_fn` are mutually
+// exclusive shapes over the same `args` list: a tuple's args are its elements,
+// a function's are its parameters followed by its RESULT as the last entry (so
+// `() => P` carries one arg and `(A, B) => C` carries three).
+pub struct TypeRef { base: string, args: TypeRef[], array_depth: i32, is_tuple: boolean, is_fn: boolean }
+
+// elem_type_ref peels one array level off `t` — the element type of `T[]`.
+// Every consumer that recurses through an array suffix needs it, and each one
+// used to re-spell the whole struct literal, so a new field meant editing eight
+// copies of the same line.
+pub function elem_type_ref(t: TypeRef): TypeRef {
+    return TypeRef { ...t, array_depth: t.array_depth - 1 };
+}
+
+// top_arrow_at returns the index of the FIRST top-level `=>` in `s`, or -1.
+// Depth-tracked like split_top_commas, so the arrow inside a parameter's own
+// function type (`(() => T) => U`) does not split the outer one.
+function top_arrow_at(s: string): i32 {
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: str = s[i : i + 1];
+        if (c == "[" || c == "(") { depth = depth + 1; }
+        if (c == "]" || c == ")") { depth = depth - 1; }
+        if (depth == 0 && i + 1 < s.len() && s[i : i + 2] == "=>") { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
 
 // parse_type_ref decodes a canonical type spelling into a TypeRef tree. It is the
 // single place the "[]" / "(…)" / "Name[…]" / ", " grammar is scanned; every
@@ -7992,13 +8020,36 @@ pub function parse_type_ref(sin: string): TypeRef {
         depth = depth + 1;
         s = s[0 : s.len() - 2] + "";
     }
+    // Function "(P, Q) => R": base "", args are the parameters with the RESULT
+    // last. Checked before the tuple branch because the parameter list opens
+    // with "(" too — `(i32) => i32` would otherwise be read as a malformed
+    // tuple, and `(A) => (B)` as a well-formed but wrong one.
+    var arrow: i32 = top_arrow_at(s);
+    if (arrow > 0) {
+        var lhs: string = s[0 : arrow] + "";
+        while (lhs.len() > 0 && lhs[lhs.len() - 1] == b' ') { lhs = lhs[0 : lhs.len() - 1] + ""; }
+        var rhs: string = s[arrow + 2 : s.len()] + "";
+        while (rhs.len() > 0 && rhs[0] == b' ') { rhs = rhs[1 : rhs.len()] + ""; }
+        if (lhs.len() >= 2 && lhs[0] == b'(' && lhs[lhs.len() - 1] == b')') {
+            var pinner: string = lhs[1 : lhs.len() - 1] + "";
+            var fargs: TypeRef[] = [];
+            // `()` is zero parameters; split_top_commas would report one empty.
+            if (pinner.len() > 0) {
+                var psegs: string[] = split_top_commas(pinner);
+                var pi: i32 = 0;
+                while (pi < psegs.len()) { fargs = fargs.append(parse_type_ref(psegs[pi])); pi = pi + 1; }
+            }
+            fargs = fargs.append(parse_type_ref(rhs));
+            return TypeRef { base: "", args: fargs, array_depth: depth, is_tuple: false, is_fn: true };
+        }
+    }
     // Tuple "(…)": base "", args are the (recursively parsed) elements.
     if (s.len() >= 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
         var tsegs: string[] = split_top_commas(s[1 : s.len() - 1]);
         var targs: TypeRef[] = [];
         var ti: i32 = 0;
         while (ti < tsegs.len()) { targs = targs.append(parse_type_ref(tsegs[ti])); ti = ti + 1; }
-        return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true };
+        return TypeRef { base: "", args: targs, array_depth: depth, is_tuple: true, is_fn: false };
     }
     // Generic "Name[…]": base is the head before the first top-level "[", args
     // are the bracketed, comma-split arguments. (After the array peel above the
@@ -8013,17 +8064,28 @@ pub function parse_type_ref(sin: string): TypeRef {
         var gargs: TypeRef[] = [];
         var gi: i32 = 0;
         while (gi < gsegs.len()) { gargs = gargs.append(parse_type_ref(gsegs[gi])); gi = gi + 1; }
-        return TypeRef { base: s[0 : lb] + "", args: gargs, array_depth: depth, is_tuple: false };
+        return TypeRef { base: s[0 : lb] + "", args: gargs, array_depth: depth, is_tuple: false, is_fn: false };
     }
     // Plain scalar / named type (incl. opaque "dyn …" / "own …" spellings).
-    return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false };
+    return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false };
 }
 
 // render_type_ref is the inverse of parse_type_ref: it reproduces the canonical
 // spelling, so render_type_ref(parse_type_ref(s)) == s for every canonical s.
 pub function render_type_ref(t: TypeRef): string {
     var inner: string = "";
-    if (t.is_tuple) {
+    if (t.is_fn) {
+        // args are the parameters plus the result last, so the parameter list
+        // is everything but the final entry.
+        inner = "(";
+        var f: i32 = 0;
+        while (f + 1 < t.args.len()) {
+            if (f > 0) { inner = inner + ", "; }
+            inner = inner + render_type_ref(t.args[f]);
+            f = f + 1;
+        }
+        inner = inner + ") => " + render_type_ref(t.args[t.args.len() - 1]);
+    } else if (t.is_tuple) {
         inner = "(";
         var i: i32 = 0;
         while (i < t.args.len()) {
@@ -17258,7 +17320,7 @@ function settle_float_value_branches(e: Expr): Expr {
 // any expression that is not the matching literal form — is returned untouched.
 function settle_to_type(e: Expr, t: TypeRef): Expr {
     if (t.array_depth > 0) {
-        var inner: TypeRef = TypeRef { base: t.base, args: t.args, array_depth: t.array_depth - 1, is_tuple: t.is_tuple };
+        var inner: TypeRef = elem_type_ref(t);
         match (e) {
             ExprArray(a) => {
                 var els: Expr[] = [];

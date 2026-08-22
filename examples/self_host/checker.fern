@@ -3178,7 +3178,7 @@ pub function type_from_name_with_structs(name: string, structs: StructSig[]): Ty
   // by its full spelling exactly as before).
   var r: parser.TypeRef = parser.parse_type_ref(name);
   if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+    var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_name_with_structs(parser.render_type_ref(elem), structs));
   }
   if (name == "i32") {
@@ -3229,7 +3229,7 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
   // rather than the magic-byte `[`/`]` scan. Byte-identical.
   var r: parser.TypeRef = parser.parse_type_ref(name);
   if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+    var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_name_with_struct_names(parser.render_type_ref(elem), struct_names));
   }
   if (name == "i32") {
@@ -3318,7 +3318,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   // `Map[…][]` / `(A, B)[]` array wraps its element rather than being read as a
   // generic / tuple).
   if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+    var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_ref_su(elem, structs, unions));
   }
   // array_depth == 0 below. `name` is this node's canonical spelling — the
@@ -3488,7 +3488,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
 // bare name.
 function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: Type[], structs: StructSig[], unions: UnionSig[]): Type {
   if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+    var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_ref_subst(elem, tparams, targs, structs, unions));
   }
   if (!r.is_tuple && r.args.len() == 0) {
@@ -3538,7 +3538,7 @@ function gc_bind_param(r: parser.TypeRef, at: Type, structs: StructSig[], unions
   if (r.array_depth > 0) {
     match (at) {
       TypeArray(a) => {
-        var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+        var elem: parser.TypeRef = parser.elem_type_ref(r);
         return gc_bind_param(elem, a.elem, structs, unions, ns, ts);
       },
       _ => {
@@ -3575,7 +3575,7 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
   // (SH-021), replacing the magic-byte `[`/`]` scan. Byte-identical.
   var r: parser.TypeRef = parser.parse_type_ref(name);
   if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+    var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_name_with_names_and_unions(parser.render_type_ref(elem), struct_names, union_names));
   }
   if (name == "i32") {
@@ -9336,7 +9336,7 @@ function e064_unknown_name(type_name: string, struct_names: string[], union_name
 function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], union_names: string[], extra_known: string[]): string {
   // Array `E[]` → element E (peel one level, keeping the base/args).
   if (tr.array_depth > 0) {
-    var elem: parser.TypeRef = parser.TypeRef { base: tr.base, args: tr.args, array_depth: tr.array_depth - 1, is_tuple: tr.is_tuple };
+    var elem: parser.TypeRef = parser.elem_type_ref(tr);
     return e064_unknown_name_tref(elem, struct_names, union_names, extra_known);
   }
   // Tuple: out of scope for the array/generic-arg widening.
