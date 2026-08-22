@@ -853,8 +853,8 @@ the decode allocation-free while KEEPING the linear scan takes it to **68.8 s**
 (#7020). So two thirds of the prize was never the scan: it was `e[0:4] ==
 "DYN:"` and `e[0 : pfx.len()] + "" == pfx` allocating a slice, copying into it
 and strcmp-ing it once per entry per probe — with the probes running per local
-slot (`arr_slots_of` consults twelve of these predicates per local), so the
-allocation was quadratic in the function's size. `slot_enum_reassign_reclaim`
+slot (`emit_dec_sweep_except_list` consults twelve of these predicates per
+local), so the allocation was quadratic in the function's size. `slot_enum_reassign_reclaim`
 sliced once per CHARACTER (`r[k:k+1] != ":"`).
 
 Byte-identical on `fern.fern` and `checker.fern`. The remaining ~5 s is the walk
