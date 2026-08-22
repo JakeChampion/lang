@@ -134,9 +134,8 @@ function go(k: i32): i32 { var t: i32 = 0; if (k > 0) { var d: dyn Shape = Squar
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(2000); var b1: i64 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } var per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// The UNTAKEN branch of the same shape: the slot is entry-zeroed (it is a
-	// reclaimable dyn slot now, so arr_slots_of includes it) and the sweep decs
-	// a null rather than stack garbage.
+	// The UNTAKEN branch of the same shape: the slot is entry-zeroed by the
+	// prologue and the sweep decs a null rather than stack garbage.
 	{"block-scoped-untaken-branch", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
