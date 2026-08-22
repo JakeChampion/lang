@@ -56,14 +56,6 @@ func parseOperand(s string) (operand, error) {
 			return operand{kind: opReg, reg: n, size: 128}, nil
 		}
 	}
-	if low == "st" {
-		return operand{kind: opSt, reg: 0}, nil
-	}
-	if strings.HasPrefix(low, "st(") && strings.HasSuffix(low, ")") {
-		if n, err := strconv.Atoi(low[3 : len(low)-1]); err == nil && n >= 0 && n < 8 {
-			return operand{kind: opSt, reg: n}, nil
-		}
-	}
 	if strings.Contains(s, "[") {
 		// All memory operands carry brackets; a size prefix ("qword ptr")
 		// only ever precedes them. (Checking for the bare substring "ptr"

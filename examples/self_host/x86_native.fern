@@ -751,40 +751,6 @@ function x86_byte_alu_rr(buf: i32[], opcode: i32, dst8: i32, src8: i32): i32[] {
     return buf.append(x86_modrm(3, src8, dst8));
 }
 
-// ---- x87 ----
-//
-// The transcendentals (exp / log / sin / cos / pow) lower here because SSE
-// has none. The surface reduces to three operand shapes, so it is three
-// helpers rather than one function per mnemonic.
-
-// x86_x87_op: a fixed two-byte x87 instruction with no operand
-// (fld1 D9 E8, fyl2x D9 F1, f2xm1 D9 F0, fscale D9 FD, frndint D9 FC,
-// fsin D9 FE, fcos D9 FF, fldl2e D9 EA, fldln2 D9 ED).
-function x86_x87_op(buf: i32[], b0: i32, b1: i32): i32[] {
-    buf = buf.append(b0);
-    return buf.append(b1);
-}
-
-// x86_x87_sti: an x87 instruction taking a stack register, encoded as a
-// base second byte plus the register index (fld %st(i) D9 C0+i, fxch
-// %st(i) D9 C8+i, fstp %st(i) DD D8+i, faddp DE C0+i, fsubr DC E8+i).
-function x86_x87_sti(buf: i32[], b0: i32, base: i32, i: i32): i32[] {
-    buf = buf.append(b0);
-    return buf.append(base + i);
-}
-
-// x86_x87_mem: an x87 instruction addressing a 64-bit memory operand,
-// `<b0> /slash` over base+disp (fldl DD /0, fstpl DD /3, fmull DC /1).
-// REX.B only when the base is r8..r15; the emitter only ever spills these
-// through %rsp, but encoding it correctly costs one branch.
-function x86_x87_mem(buf: i32[], b0: i32, slash: i32, base: i32, disp: i32): i32[] {
-    if (base >= 8) {
-        buf = buf.append(x86_rex(0, 0, 0, base));
-    }
-    buf = buf.append(b0);
-    return x86_emit_mem(buf, slash, base, disp);
-}
-
 // x86_cvttsd2si: `cvttsd2si <gpr>, <xmm>` (F2 REX.W 0F 2C /r) — truncate a
 // double to a signed 64-bit integer.
 function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
@@ -1835,10 +1801,9 @@ function x86_str_split(s: string, sep: string): string[] {
 // Coverage is the whole surface the IR emitter produces: integer/pointer, byte and 32-bit ALU, jmp/jCC,
 // setCC/cmovCC, the SSE scalar-double set plus the f32 conversions, the
 // bit-count group (lzcnt/tzcnt/popcnt — Haswell baseline, see
-// docs/BACKEND-PARITY.md), and the x87 stack unit the transcendentals
-// lower to. Operand forms: `%reg`, `$imm`, `disp(%base)`,
-// `disp(%base,%index,scale)`, `sym(%rip)`, `%st(N)`, and bare
-// branch-target labels. AT&T operand order is `op src, dst` (the reverse
+// docs/BACKEND-PARITY.md). Operand forms: `%reg`, `$imm`, `disp(%base)`,
+// `disp(%base,%index,scale)`, `sym(%rip)`, and bare branch-target
+// labels. AT&T operand order is `op src, dst` (the reverse
 // of the encoder's dst,src).
 //
 // Anything not recognised — mnemonic, operand shape, or directive — is
@@ -1951,18 +1916,6 @@ function x86_gas_reg8(tok: string): i32 {
     if (s == "r14b") { return 14; }
     if (s == "r15b") { return 15; }
     return 0 - 1;
-}
-
-// x86_gas_st maps an x87 stack-register token to its index: `%st(N)` to N,
-// and a bare `%st` to 0 (the AT&T spelling of the stack top). Anything else
-// yields 0, which is the top of stack — the operand the emitter uses when it
-// writes the bare form.
-function x86_gas_st(tok: string): i32 {
-    var open: i32 = x86_str_indexof(tok, "(");
-    if (open < 0) { return 0; }
-    var close: i32 = x86_str_indexof(tok, ")");
-    if (close <= open + 1) { return 0; }
-    return x86_gas_atoi(x86_gas_trim(tok[open + 1:close]));
 }
 
 // x86_gas_reg32 maps a 32-bit register token (`%eax`, `%r8d`, …) to its
@@ -2765,46 +2718,6 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "negq") { a = X86Asm { ...a, code: x86_neg_r64(a.code, x86_gas_reg(rest)) }; return a; }
     if (mnem == "divq") { a = X86Asm { ...a, code: x86_div_r64(a.code, x86_gas_reg(rest)) }; return a; }
     if (mnem == "idivq") { a = X86Asm { ...a, code: x86_idiv_r64(a.code, x86_gas_reg(rest)) }; return a; }
-    // x87, handled as one block parsing its own operands (like imulq /
-    // roundsd above) so the stack-register and memory forms stay next to
-    // the no-operand ones they interleave with.
-    if (mnem == "f2xm1") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 240) }; return a; }
-    if (mnem == "fyl2x") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 241) }; return a; }
-    if (mnem == "fld1") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 232) }; return a; }
-    if (mnem == "fldl2e") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 234) }; return a; }
-    if (mnem == "fldln2") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 237) }; return a; }
-    if (mnem == "frndint") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 252) }; return a; }
-    if (mnem == "fscale") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 253) }; return a; }
-    if (mnem == "fsin") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 254) }; return a; }
-    if (mnem == "fcos") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 255) }; return a; }
-    // `faddp` with no operand is `faddp %st, %st(1)` — DE C0+1.
-    if (mnem == "faddp") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 222, 192, 1) }; return a; }
-    if (mnem == "fld") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 217, 192, x86_gas_st(rest)) }; return a; }
-    if (mnem == "fxch") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 217, 200, x86_gas_st(rest)) }; return a; }
-    if (mnem == "fstp") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 221, 216, x86_gas_st(rest)) }; return a; }
-    // `fsubr %st, %st(i)` — DC E8+i. AT&T reverses the x87 non-pop subtract
-    // mnemonics, so this is taken from GNU as, not from the name.
-    if (mnem == "fsubr") {
-        var fci: i32 = x86_gas_top_comma(rest);
-        if (fci < 0) { return X86Asm { ...a, unknown: a.unknown.append("fsubr " + rest) }; }
-        var fdst: string = x86_gas_trim(rest[fci + 1:rest.len()]);
-        a = X86Asm { ...a, code: x86_x87_sti(a.code, 220, 232, x86_gas_st(fdst)) };
-        return a;
-    }
-    // 64-bit memory forms: `fldl` DD /0, `fstpl` DD /3, `fmull` DC /1.
-    if (mnem == "fldl" || mnem == "fstpl" || mnem == "fmull") {
-        var fm: GasMem = x86_gas_parse_mem(rest);
-        if (fm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
-        if (fm.is_rip || fm.has_index) {
-            return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + rest) };
-        }
-        var fb: i32 = 221; // 0xDD
-        var fslash: i32 = 0;
-        if (mnem == "fstpl") { fslash = 3; }
-        if (mnem == "fmull") { fb = 220; fslash = 1; } // 0xDC
-        a = X86Asm { ...a, code: x86_x87_mem(a.code, fb, fslash, fm.base, fm.disp) };
-        return a;
-    }
     // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
     var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {

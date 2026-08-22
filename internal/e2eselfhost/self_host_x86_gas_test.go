@@ -200,10 +200,9 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 // GAS source uses \n / \t escapes (interpreted by the Fern lexer). 184 =
 // 0xB8 (mov eax,imm), 185 = 0xB9 (mov ecx,imm).
 // TestSelfHostX86GasGroundTruth pins every encoding the in-process x86-64
-// assembler gained when `-target x86-64-linux` stopped emitting `.s` for gcc: the
-// x87 group the transcendentals lower to, lzcnt/tzcnt/popcnt, the f32
-// conversions, movd, the byte ALU, sarq %cl and setp/setnp. Each is
-// asserted byte-for-byte against `as` + objdump.
+// assembler gained when `-target x86-64-linux` stopped emitting `.s` for gcc:
+// lzcnt/tzcnt/popcnt, the f32 conversions, movd, the byte ALU, sarq %cl and
+// setp/setnp. Each is asserted byte-for-byte against `as` + objdump.
 //
 // This is the gate the corpus sweep could not be: an assembler that DROPS an
 // instruction still produces a plausible binary, and `rep stosq` — the
@@ -220,9 +219,7 @@ func TestSelfHostX86GasGroundTruth(t *testing.T) {
 // "-target x86-64-linux" stopped emitting .s for gcc, and asserts the bytes
 // against as + objdump ground truth.
 //
-// Taken FROM that ground truth, not from a manual reading of the manual:
-// AT&T reverses the x87 non-pop subtract mnemonics, so "fsubr %st,%st(1)"
-// is DC E9 and a hand derivation gets it wrong.
+// Taken FROM that ground truth rather than from a reading of the manual.
 //
 // One deliberate divergence from as, not covered here: "testq $imm, %rax"
 // uses the uniform F7 /0 form rather than as's shorter A9 accumulator
@@ -235,10 +232,10 @@ func TestSelfHostX86GasGroundTruth(t *testing.T) {
 // and both REX extension bits.
 const x86GasGroundTruthMain = `
 function main(): i32 {
-    var src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    f2xm1\n    faddp\n    fcos\n    fld %st(0)\n    fld1\n    fldl (%rsp)\n    fldl 16(%rsp)\n    fldl2e\n    fldln2\n    fmull (%rsp)\n    frndint\n    fscale\n    fsin\n    fstp %st(1)\n    fstpl (%rsp)\n    fsubr %st, %st(1)\n    fxch %st(1)\n    fyl2x\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n";
+    var src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 90; }
-    var exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 217, 240, 222, 193, 217, 255, 217, 192, 217, 232, 221, 4, 36, 221, 68, 36, 16, 217, 234, 217, 237, 220, 12, 36, 217, 252, 217, 253, 217, 254, 221, 217, 221, 28, 36, 220, 233, 217, 201, 217, 241, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194];
+    var exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194];
     if (a.code.len() != exp.len()) { return 91; }
     var i: i32 = 0;
     while (i < exp.len()) {

@@ -1331,7 +1331,7 @@ the wasm self-test harness like the LEB128 / wat_encode slices:
    `internal/native/elf/elf.go`. x86-64 + arm64 Linux, `R+X` and
    `R+W+X` single-PT_LOAD images.
 2. **x86-64 assembler** — Intel-syntax text → machine code (mirror
-   `internal/native/x86_64/`, incl. the SSE / x87 float paths).
+   `internal/native/x86_64/`, incl. the SSE float paths).
 3. **arm64 assembler** — GAS text → AArch64 bytes (mirror
    `internal/native/arm64/asm.go` / `gas.go`).
 4. **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`

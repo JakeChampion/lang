@@ -1343,7 +1343,7 @@ smallest → largest:
     ELF + Darwin Mach-O) now emit runnable binaries with no external toolchain.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
-  + `x87.go` + `rodata.go`). The largest piece; built up in slices.
+  + `rodata.go`). The largest piece; built up in slices.
   - ✅ **slice 2a — encoding primitives + integer/syscall subset**:
     `examples/self_host/x86_encode.fern` (`i32[]` byte-buffer convention;
     REX.W prefix, ModR/M direct form, imm32/disp32 LE) with the
@@ -1666,10 +1666,11 @@ smallest → largest:
     There is no O(n²)-label or fixup defect at scale. **Lesson (recurring):**
     verify the test program is valid Fern and account for exit-code masking
     before declaring an assembler/wasm bug.
-  - ⬜ remaining: the x87 transcendentals (`fldl`/`fstpl` + `fsin`/`fcos`/…)
-    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; assembling
+  - ⬜ remaining: the f64-method `asm.fern` gap above; assembling
     `asm.fern`'s own output → a native self-host fixpoint; and the CLI
-    wiring (blocked above).
+    wiring (blocked above). (The x87 transcendentals that stood here were
+    never needed: sin/cos/exp/log/pow lower to the SSE fdlibm bundle now,
+    and both assemblers' x87 groups are deleted.)
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
