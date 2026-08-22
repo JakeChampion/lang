@@ -132,6 +132,23 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// those suspects minus accumulated param shadowing, or recomputes them
 		// for the inner scope. That choice changes which diagnostics appear.
 		{"nested-lambda-bad-capture", "function f[T](x: T): i32 {\n  var g = function(): i32 { var h = () => x; return 0; };\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044"},
+		// E032 from e032_expr, which prunes at ExprLambda and hands the body to
+		// e032_stmts — the same prune-and-delegate shape as vref_expr. The
+		// lambda row exercises that path. These also pin how two SEPARATE
+		// passes interleave: the Go checker emits both E032s before either
+		// E038, so the sequence records pass grouping, not just per-pass order.
+		// PASS-ORDER divergence, pinned: the self-host runs the E038 pass before
+		// the E032 pass and the Go checker runs them the other way round. Same
+		// multiset both ways, so every set-based gate is blind to it, and it is
+		// user-visible — it decides which error you are shown first.
+		//
+		// This is NOT an SH-022 concern: it is the order check_module sequences
+		// its passes in, not the order any one walk visits nodes, so folding a
+		// collector cannot change it. Recorded here because this gate is where
+		// it became visible, and pinned so it cannot drift while someone
+		// decides whether the self-host should match the oracle's order.
+		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E038,E038,E032,E032"},
+		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    var f = function(): i32 { use n <- add(1); return n; };\n    return f();\n}\n", "E038,E032"},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049"},
