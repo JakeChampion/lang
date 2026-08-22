@@ -340,10 +340,27 @@ findings. Ranked by leverage.
     Verify order and multiplicity by hand for each, or add an order-sensitive
     check first — do not batch them.
 
-    Not every remaining one is convertible at all: `vref_stmts` threads a
+    Not every remaining one is convertible at all. `vref_stmts` threads a
     `cur: Scope` that CHANGES as it walks (each `StmtVar` extends it), which is
-    what this row means by "scope-threading passes". A fold whose accumulator
-    is just the diagnostic list cannot carry that.
+    what this row means by "scope-threading passes" — a fold whose accumulator
+    is just the diagnostic list cannot carry that. And `slit_diags` is
+    **POST-order**: it recurses into a struct literal's `field_values` before
+    emitting that literal's own E043/E005, where every `astwalk` fold visits a
+    node BEFORE its children. Converting it either reverses nested-vs-outer
+    diagnostic order or needs a post-order fold added to `astwalk` — a design
+    decision, not a mechanical change. Its order is pinned in the sequence gate
+    either way.
+
+    Probing `slit_diags` for that gate turned up a **live divergence nothing
+    else can see**: for `Out { bad2: In { bad1: 1 } }` the self-host reports
+    four diagnostics (the inner literal's unknown and missing fields as well as
+    the outer's) where the Go checker reports two, having stopped descending
+    once the outer field name was unknown. Both sides give the code SET
+    {E043, E005}, so the codes and hint-text differentials are blind to it.
+    Which side is right is open — the inner literal does have an unknown field
+    and does miss one, and `slit_diags` reaches both from the literal's own
+    `type_name` without needing an expected type, so the extra reports may be
+    the better answer. Pinned as-is so it cannot drift further.
   - `ssa` / `ssa_wasm` re-open-code the 3-level funcs→blocks→insts loop.
 
   _Fix:_ one traversal taking a per-node callback; removes well over 1,000 lines
