@@ -447,10 +447,10 @@ func TestX86_64FloatIntrinsics(t *testing.T) {
 	}
 }
 
-// f64 transcendentals via the x87 FPU (sin/cos/exp/log/pow) — no
-// libm. Tolerance comparisons, matching the self-hosted compiler's
-// contract (these are approximations, not bit-exact with the
-// interpreter's Go math, but well within a few ulp).
+// f64 transcendentals (sin/cos/exp/log/pow) through the emitted fdlibm
+// bundle — no libm. Tolerance comparisons: the accuracy contract itself is
+// f64_ulp_test.go's, against a correctly-rounded reference rather than
+// against the interpreter's Go math, which is the looser of the two.
 func TestX86_64Transcendentals(t *testing.T) {
 	for _, c := range []struct {
 		name string

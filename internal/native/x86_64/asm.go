@@ -13,10 +13,8 @@
 // GPR<->xmm transfers, add/sub/mul/div/sqrt sd/ss, ucomis/comis,
 // cvtsi2s*/cvtts*2si conversions, movap*, roundsd) — enough to assemble
 // and run the whole fixture corpus (recursion, strings, maps,
-// closures/higher-order functions, json, enums, floating-point math),
-// and the x87 FPU transcendentals (fsin/fcos/fyl2x/f2xm1/fscale/frndint
-// + the x87 stack/arith ops) that sin/cos/exp/log/pow lower to. This
-// covers the full instruction surface the code generator emits; an
+// closures/higher-order functions, json, enums, floating-point math).
+// This covers the full instruction surface the code generator emits; an
 // unsupported instruction surfaces as a clear error rather than a
 // miscompile.
 package x86_64
@@ -33,7 +31,6 @@ const (
 	opImm
 	opMem
 	opLabel
-	opSt // x87 stack register st(i)
 )
 
 type operand struct {
@@ -603,9 +600,6 @@ func (a *Assembler) insn(line string) error {
 	}
 	if cc, ok := setccCode(mnem); ok {
 		return a.setcc(ops, cc)
-	}
-	if handled, err := a.x87(mnem, ops); handled {
-		return err
 	}
 	return fmt.Errorf("unsupported instruction %q", mnem)
 }

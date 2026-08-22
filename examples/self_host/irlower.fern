@@ -9263,9 +9263,8 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         return fu.emit(ir.op_funary(fuk));
     }
     // __pow_f64(x, y) — the one two-argument transcendental. Lower
-    // both f64 operands (x then y), then emit the fpow fbin: x86
-    // reconstructs 2^(y·log2 x) on the x87 FPU, arm64 calls its
-    // __fern_pow_f64 helper. wasm subtracts "fpow" in wasm_eligible.
+    // both f64 operands (x then y), then emit the fpow fbin, which every
+    // backend lowers to a call into its `__fern_pow_f64` helper.
     if (cid.name == "__pow_f64" && c.args.len() == 2) {
         var fp: LowerState = lower_expr(c.args[0], s);
         if (!fp.ok) { return fp; }
