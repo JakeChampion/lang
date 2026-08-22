@@ -88,6 +88,26 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
+			// #7311: an array builtin called with the wrong argument count.
+			// `len` / `append` / `with` are the three unconditional array
+			// builtins and their arity is fixed by the language, so this is a
+			// plain mistake — but it used to reach lowering, which refuses the
+			// whole module as "not IR-eligible", naming neither the call nor
+			// the mistake.
+			name:     "array-builtin-arity-E004",
+			src:      "function main(): i32 { var a: i32[] = [1, 2]; return a.len(3); }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			// The negative control for the row above: the same three builtins
+			// called correctly must still compile. A wrong arity constant here
+			// would reject real programs rather than merely mis-report them,
+			// because E004 gates the build (#7273).
+			name:     "array-builtins-at-correct-arity-compile",
+			src:      "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(3); var c: i32[] = b.with(0, 9); return c.len(); }\n",
+			wantDiag: "",
+		},
+		{
 			// A valid i64 program compiles. This drew a spurious E043 when the
 			// checker ignored integer width, which is why E043 was excluded;
 			// #7011 closed that, and both checkers are now silent here. The
