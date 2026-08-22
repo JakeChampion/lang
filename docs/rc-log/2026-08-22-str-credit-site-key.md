@@ -89,17 +89,31 @@ got wrong:
   for it: two same-named bindings no longer collapse into one another. Only the
   comparisons against `reassigned`, and the escape gates, take bare names.
 
-## Entry-zeroing was not already there
+## `arr_slots_of` does not do what fourteen comments said it did
 
-`slot_is_reclaimable_struct_scoped`'s header states the rule: a newly-sweepable
+`slot_is_reclaimable_struct_scoped`'s header states a rule: a newly-sweepable
 class must also be zeroed at entry by `arr_slots_of`, "without which the sweep
-would dec stack garbage in a function whose block never ran".
+would dec stack garbage in a function whose block never ran". Thirteen other
+comments repeat it. Following it, this change added `slot_is_reclaimable_str` to
+`arr_slots_of` — and broke `TestSelfHostLoweredSlotKinds`, which pins `arr` and
+`str` as **disjoint value kinds** in `irlower_run`'s `-slots` dump.
 
-Strings had none. `str_slots_of` collects every `is_str` slot and looks exactly
-like that set; its own comment says *"Nothing on the emit path reads it"* — it is
-diagnostic, consumed only by `irlower_run.fern`'s dump. Assuming it was the
-zeroing set would have shipped a crash rather than a leak. `untaken_branch` in
-the suite is that case.
+The rule is false. Entry-zeroing is universal: every backend zeroes the whole
+body range `[n_params, n_locals)` in the prologue — `asm_ir.fern`'s `rep stosq`,
+`asm_arm64_ir.fern`'s store loop, wasm locals by spec — and none of the three
+reads `arr_slots` at all. Its only consumer is the dump.
+
+Measured, not reasoned: with `arr_slots_of` stubbed to return an empty list,
+**224 reclaim test functions still pass** and the only failure is the test that
+reads the list itself (`want exactly one array slot, got []`). A grep would have
+supported the same conclusion, but a grep is what produced the false rule in the
+first place.
+
+The reusable part: **a rule stated in a comment is not a gate.** The check that
+a newly-swept class is safe in a never-written slot is real — `untaken_branch`
+pins it — but the thing that makes it safe was never this list. Fourteen
+comments now say what the prologue does; the header of the one that stated the
+rule is among them.
 
 ## A pinned leak closed on the way
 
