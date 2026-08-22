@@ -18968,9 +18968,39 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     match (v.init) {
         parser.ExprArray(_) => { is_arr = true; },
         parser.ExprIdent(id) => {
-            // Binding a new name to an EXISTING array local creates a
-            // second reference → retain (alias_inc).
-            if (se.is_arr_slot(se.slot_of(id.name))) { is_arr = true; alias_inc = true; }
+            // Binding a new name to an EXISTING rc container creates a second
+            // reference → retain (alias_inc). Both slots then own a counted
+            // reference and both release it; the refcount arbitrates.
+            //
+            // DUPLICATION, not transfer, and the conditional alias is why: under
+            // a transfer model `if (c) { var v: T = t; }` leaves the source
+            // un-swept on the path where no transfer happened, so a leak becomes
+            // branch-dependent. The inc and the dec here are emitted on the same
+            // path by construction.
+            //
+            // This is the FOURTH site asking slot_is_rc_container's question. The
+            // predicate exists (#4350) precisely so the three container
+            // CONSTRUCTORS could not drift apart; the alias bind has been asking
+            // it in hand-rolled form as `is_arr_slot` ever since, which is why an
+            // aliased tuple, struct or string bound nothing while an aliased
+            // array was correct (#7282).
+            // THE INVARIANT FOR THIS WHOLE PAIRING, and the one to read before
+            // touching either side: ONLY THE BOX IS RETAINED HERE, SO ONLY THE
+            // BOX MAY BE RELEASED TWICE. The alias therefore takes the BOX-ONLY
+            // release and the source keeps the deep one — "NODEEP:" for a struct
+            // (whose release is a field walk plus a box dec) and the shallow
+            // "TUP:" for an rc-tuple (whose "TUPRCS:" release is a type-driven
+            // deep free). Giving the alias the source's deep credit frees every
+            // field or element twice; both were measured as exit 99 with
+            // allocs == frees at live_bytes 0, so only __rc_underflow_count()
+            // dissented. See credit_alias_sites' callers in reclaimable_names_of.
+            var aid_slot: i32 = se.slot_of(id.name);
+            if (se.is_arr_slot(aid_slot)) { is_arr = true; alias_inc = true; }
+            // A struct slot is not in slot_is_rc_container — its release is a
+            // deep field drop rather than a box dec, so it carries its own
+            // clause rather than widening that predicate under three other
+            // callers who mean "box".
+            else if (se.slot_is_rc_container(aid_slot) || se.struct_type_of_slot(aid_slot).len() > 0) { alias_inc = true; }
         },
         parser.ExprFieldAccess(sfa) => {
             // An ARRAY-OF-ARRAY field read (`var rows = a.xs`, xs: i32[][]): the
@@ -23701,24 +23731,117 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
     return false;
 }
 
-function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
+// alias_bind_sites_of returns the BINDING-SITE keys of every plain
+// `var v: T = src` in `body` that may share `src`'s reclaim credit (#7282).
+//
+// Three conditions, and each rules out a way the shared box could outlive the
+// pair. The bind must be a BARE IDENT of `src` — a field read or an index is a
+// different value. The alias must not be REASSIGNED, or its final value is not
+// the box the credit describes. And the alias must not itself ESCAPE, because
+// nothing downstream would account for a third reference.
+//
+// The result is used two ways at once and they must agree: it forgives `src`'s
+// escape (body_unsafe_for_alias) and it copies `src`'s class credit onto each
+// alias site. Granting one without the other is the double free — forgiving
+// alone leaves two slots sweeping one box at rc 1; copying alone leaves the
+// source uncredited and the box unreleased.
+function alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprIdent(aid) => {
+                        if (aid.name == src
+                            && util.index_of_str(body_assign_targets(body), v.name) < 0
+                            && !body_unsafe_for(body, v.name, borrowable, recv_borrow)) {
+                            a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => {
+                a = alias_bind_sites_of(f.then_body, src, borrowable, recv_borrow, body, a);
+                a = alias_bind_sites_of(f.else_body, src, borrowable, recv_borrow, body, a);
+            },
+            parser.StmtWhile(w) => { a = alias_bind_sites_of(w.body, src, borrowable, recv_borrow, body, a); },
+            parser.StmtFor(fo) => { a = alias_bind_sites_of(fo.body, src, borrowable, recv_borrow, body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = alias_bind_sites_of(m.arms[mi].body, src, borrowable, recv_borrow, body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// credit_alias_sites appends `pfx` for every alias site in `sites`, so a shared
+// box is released by whichever slot's sweep runs — both hold a counted
+// reference and the refcount arbitrates.
+function credit_alias_sites(out: string[], pfx: string, sites: string[]): string[] {
+    var o: string[] = out;
+    var i: i32 = 0;
+    while (i < sites.len()) { o = o.append(pfx + sites[i]); i = i + 1; }
+    return o;
+}
+
+function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
+    var no_alias: string[] = [];
+    return body_unsafe_for_alias(stmts, name, borrowable, recv_borrow, no_alias);
+}
+
+// body_unsafe_for_alias is body_unsafe_for with one forgiveness: a plain
+// `var v: T = name` bind whose own site key is listed in `alias_ok` does NOT
+// flag `name` (#7282).
+//
+// The arithmetic that licenses it is DUPLICATION, not transfer. lower_stmt_var's
+// ExprIdent arm retains an rc-container source at the bind, so both slots hold a
+// counted reference; the alias is credited the source's own class, so both
+// sweep, and the box reaches zero exactly once. Forgiving the escape without
+// both halves would leave two slots sweeping one box at rc 1 — which is why the
+// retain lands first and this gate is keyed on the alias's site rather than on
+// its name.
+//
+// Only a BARE-IDENT init is forgiven, and only at a `var`. Every other mention
+// of `name` — a container element, a call argument, a return, a lambda capture,
+// a reassignment — still flags, because none of those takes the bind's retain.
+function body_unsafe_for_alias(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_unsafe_for_alias(stmts[i], name, borrowable, recv_borrow, alias_ok)) { return true; } i = i + 1; }
     return false;
 }
 function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
+    var no_alias: string[] = [];
+    return stmt_unsafe_for_alias(st, name, borrowable, recv_borrow, no_alias);
+}
+function stmt_unsafe_for_alias(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
+        parser.StmtVar(v) => {
+            if (alias_ok.len() > 0) {
+                match (v.init) {
+                    parser.ExprIdent(aid) => {
+                        if (aid.name == name
+                            && util.index_of_str(alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0) { return false; }
+                    },
+                    _ => {}
+                }
+            }
+            return expr_unsafe_for(v.init, name, borrowable, recv_borrow);
+        },
         parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable, recv_borrow); },
         parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
         parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable, recv_borrow); },
         parser.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
-            return body_unsafe_for(f.then_body, name, borrowable, recv_borrow) || body_unsafe_for(f.else_body, name, borrowable, recv_borrow);
+            return body_unsafe_for_alias(f.then_body, name, borrowable, recv_borrow, alias_ok) || body_unsafe_for_alias(f.else_body, name, borrowable, recv_borrow, alias_ok);
         },
         parser.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
-            return body_unsafe_for(w.body, name, borrowable, recv_borrow);
+            return body_unsafe_for_alias(w.body, name, borrowable, recv_borrow, alias_ok);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -23727,14 +23850,14 @@ function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], re
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for(fo.body, name, borrowable, recv_borrow);
+            return body_unsafe_for_alias(fo.body, name, borrowable, recv_borrow, alias_ok);
         },
         parser.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable, recv_borrow)) { return true; }
-                if (body_unsafe_for(m.arms[ai].body, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for_alias(m.arms[ai].body, name, borrowable, recv_borrow, alias_ok)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -27373,29 +27496,52 @@ function rctuple_scrutinee_is_elem_read(e: parser.Expr, name: string): boolean {
 }
 
 function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    var no_alias: string[] = [];
+    return rctuple_esc_stmt_alias(st, name, ttype, structs, no_alias);
+}
+
+// rctuple_esc_stmt_alias carries the #7282 alias forgiveness THROUGH the
+// recursion, which is the whole point: a first version checked the forgiven
+// bind only at the top level of the statement list and fell into the plain
+// walker for anything nested, so a block-scoped `{ var v = t; }` still denied
+// the credit. The function-scope sibling measured clean while the block-scoped
+// one sat at exactly its unfixed number — two dec sites missing from the emitted
+// asm, and nothing else to see.
+function rctuple_esc_stmt_alias(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return rctuple_esc_expr(v.init, name, ttype, structs); },
+        parser.StmtVar(v) => {
+            if (alias_ok.len() > 0) {
+                match (v.init) {
+                    parser.ExprIdent(aid) => {
+                        if (aid.name == name
+                            && util.index_of_str(alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0) { return false; }
+                    },
+                    _ => {}
+                }
+            }
+            return rctuple_esc_expr(v.init, name, ttype, structs);
+        },
         parser.StmtReturn(r) => { return rctuple_esc_expr(r.value, name, ttype, structs); },
         parser.StmtExpr(e) => { return rctuple_esc_expr(e.value, name, ttype, structs); },
         parser.StmtAssign(a) => { return rctuple_esc_expr(a.value, name, ttype, structs); },
         parser.StmtIf(f) => {
             if (rctuple_esc_expr(f.cond, name, ttype, structs)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (rctuple_esc_stmt(f.then_body[ti], name, ttype, structs)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, alias_ok)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (rctuple_esc_stmt(f.else_body[ei], name, ttype, structs)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, alias_ok)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
             if (rctuple_esc_expr(w.cond, name, ttype, structs)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (rctuple_esc_stmt(w.body[i], name, ttype, structs)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, alias_ok)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
             if (rctuple_esc_expr(fo.iter, name, ttype, structs)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (rctuple_esc_stmt(fo.body[i], name, ttype, structs)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, alias_ok)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
@@ -27415,12 +27561,12 @@ function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs:
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && rctuple_esc_expr(m.arms[ai].guard, name, ttype, structs)) { return true; }
                 var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { if (rctuple_esc_stmt(m.arms[ai].body[bi], name, ttype, structs)) { return true; } bi = bi + 1; }
+                while (bi < m.arms[ai].body.len()) { if (rctuple_esc_stmt_alias(m.arms[ai].body[bi], name, ttype, structs, alias_ok)) { return true; } bi = bi + 1; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return rctuple_esc_stmt(d.action, name, ttype, structs); },
+        parser.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, alias_ok); },
         _ => { return false; }
     }
     return false;
@@ -27430,9 +27576,24 @@ function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs:
 // tuple type annotation in hand; the credit site skips it when the type is unknown
 // (un-annotated bindings keep their prior behaviour).
 function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    var no_alias: string[] = [];
+    return rctuple_payload_escapes_alias(stmts, name, ttype, structs, no_alias);
+}
+
+// rctuple_payload_escapes_alias is the same scan with the #7282 forgiveness: a
+// plain `var v = name` bind listed in `alias_ok` is not a payload escape,
+// because the bind retained the box and the alias carries the source's own
+// credit, so both slots release it.
+//
+// A CLASS CONSULTS MORE THAN ONE ESCAPE SCAN, and every one of them has to be
+// told. body_unsafe_for is the shared gate; this is the rc-tuple class's second,
+// and forgiving only the first left "TUPRC:" denied and the shape measuring
+// exactly its unfixed 8000 while the scalar-tuple sibling went to 0. Enumerate
+// the scans a class consults, not just the shared one.
+function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (rctuple_esc_stmt(stmts[i], name, ttype, structs)) { return true; }
+        if (rctuple_esc_stmt_alias(stmts[i], name, ttype, structs, alias_ok)) { return true; }
         i = i + 1;
     }
     return false;
@@ -31903,9 +32064,30 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // `fresh` holds BINDING-SITE keys; every gate below asks about the
         // VARIABLE, so each takes the bare name back out of the key.
         var fnm: string = reclaim_site_name(fresh[i]);
-        if (!body_unsafe_for(body, fnm, borrowable, recv_borrow) && !reassigned_from_alias(body, fnm)
+        var fal: string[] = [];
+        fal = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, fal);
+        if (!body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, fal) && !reassigned_from_alias(body, fnm)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
-            && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) { out = out.append(fresh[i]); }
+            && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
+            out = out.append(fresh[i]);
+            // The alias shares the box, so it shares the credit — but a struct's
+            // release is a DEEP FIELD DROP plus a box dec, and only the box was
+            // retained at the bind. Two deep drops would free every field buffer
+            // twice: measured as exit 99 on `var t: P = P { xs: [..] }; var v: P
+            // = t;`, with allocs == frees at live_bytes 0, so only the underflow
+            // counter dissented.
+            //
+            // "NODEEP:" is exactly the marker for "keep this slot's free BOX-ONLY"
+            // (#3425), so the alias takes the box dec and the source keeps the one
+            // field walk. The box is freed once at rc 0 whichever sweep runs last,
+            // and the fields are dropped exactly once.
+            //
+            // This is the per-type difference the array, tuple and string classes
+            // do not have: their release IS the box dec, so sharing the credit
+            // shares the whole release.
+            out = credit_alias_sites(out, "", fal);
+            out = credit_alias_sites(out, "NODEEP:", fal);
+        }
         i = i + 1;
     }
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
@@ -31991,8 +32173,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // tups holds BINDING-SITE keys (#7272); every gate below asks about the
         // variable, so each takes the bare name back out of the key.
         var tnm: string = reclaim_site_name(tups[ti]);
-        if (!body_unsafe_for(body, tnm, borrowable, recv_borrow)) {
+        // #7282: a plain `var v = t` alias shares the box, so it shares the
+        // credit. The bind retained it (lower_stmt_var's ExprIdent arm), both
+        // slots sweep, and the refcount arbitrates.
+        var tal: string[] = [];
+        tal = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
+        if (!body_unsafe_for_alias(body, tnm, borrowable, recv_borrow, tal)) {
             out = out.append("TUP:" + tups[ti]);
+            out = credit_alias_sites(out, "TUP:", tal);
             // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
             // assignment builds a fresh tuple (#6127), which lets lower_stmt_assign
             // release the box the rebind orphans. "TUP:" alone only frees the FINAL
@@ -32017,7 +32205,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // extraction, and the wrong guess here is an over-release. An un-annotated
             // tuple keeps "TUP:" and simply does not earn the element release.
             var tupelemty: string = rctuple_type_of_decl(body, tnm);
-            if (tupelemty != "" && !rctuple_payload_escapes(body, tnm, tupelemty, structs)) {
+            if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, tal)) {
                 out = out.append("TUPELEMOK:" + tups[ti]);
             }
         }
@@ -32040,10 +32228,28 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (rti < rctups.len()) {
         // Binding-SITE keys here too (#7272); the gates take the bare name.
         var rnm: string = reclaim_site_name(rctups[rti]);
-        if (!body_unsafe_for(body, rnm, borrowable, recv_borrow)) {
+        var ral: string[] = [];
+        ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
+        if (!body_unsafe_for_alias(body, rnm, borrowable, recv_borrow, ral)) {
             var rctty: string = rctuple_type_of_decl(body, rnm);
-            if (rctty == "" || !rctuple_payload_escapes(body, rnm, rctty, structs)) {
+            if (rctty == "" || !rctuple_payload_escapes_alias(body, rnm, rctty, structs, ral)) {
                 out = out.append("TUPRC:" + rctups[rti]);
+                // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
+                // this is the general rule the struct case taught: only the BOX
+                // was retained at the bind, so only the box may be released
+                // twice. "TUPRC:" / "TUPRCS:" drive a type-driven DEEP free
+                // (emit_rctuple_deep_free — every rc position, then the box), so
+                // duplicating them frees each element twice: measured as exit 99
+                // on `var t: (i32, i32[]) = (i, [i, i+1]); var v = t;` with
+                // allocs == frees at live_bytes 0, the census silent as always.
+                //
+                // "TUP:" is the shallow box dec, and the alias has no recorded
+                // element kinds (its init is an ident, not a literal), so
+                // emit_tup_elem_releases emits nothing for it. The source keeps
+                // the one deep free; the alias spends the one extra box
+                // reference. The two classes are documented as disjoint per SLOT,
+                // and these are different slots.
+                out = credit_alias_sites(out, "TUP:", ral);
                 // "TUPRCS:" additionally lets the scope-exit sweep deep-free the FINAL
                 // value (#6127). "TUPRC:" alone is consumed only by the StmtVar rebind
                 // path, so a SINGLE-BIND rc-tuple was credited, entry-zeroed, and then
