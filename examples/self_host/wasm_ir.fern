@@ -3178,6 +3178,112 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
     return s;
 }
 
+
+// emit_str_op_wat renders one string IR op as WAT. Every arm is a fixed
+// instruction sequence or a runtime call: none of them reads the emitter's
+// ambient state (the module namespace, the string/aggregate tables, the
+// scratch locals), which is what lets this be a plain Op -> string.
+//
+// Gated by ir.is_str_op_kind, the predicate asm_ir and asm_arm64_ir already
+// dispatch their own emit_str_op through -- wasm was the one backend still
+// inlining these arms, so a string op added to the shared predicate reached
+// two backends and silently missed this one.
+//
+// The tail REFUSES rather than falling through (#6917): a tag added to
+// is_str_op_kind without an arm here would otherwise emit whatever the last
+// arm emits -- wrong code that looks plausible. asm_ir carries the same guard
+// for the same reason.
+function emit_str_op_wat(o: ir.Op): string {
+    if (o.kind_tag == 97) {  // str_len
+        // stack: block ptr -> i32.load(ptr)  (len @ +0)
+        return "    i32.load\n";
+    }
+    if (o.kind_tag == 101) {  // str_index
+        // stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx)  (bytes @ +4)
+        return "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
+    }
+    if (o.kind_tag == 102) {  // str_slice
+        // stack: src, start, end -> $__fern_substr(src, start, end) copies the
+        // bytes into a fresh block (wasm strings are inline, so no view).
+        return "    call $__fern_substr\n";
+    }
+    if (o.kind_tag == 225) {  // memchr
+        // stack: s, byte, from -> i32 index or -1. A call, not inline: the
+        // body needs a loop over its own locals, and the operand stack here
+        // is the wasm value stack.
+        return "    call $__fern_memchr\n";
+    }
+    if (o.kind_tag == 227) {  // ascii_run
+        // stack: s, from -> the first high-bit index, or the length. A
+        // call for memchr's reason: the body loops over its own locals.
+        return "    call $__fern_ascii_run\n";
+    }
+    if (o.kind_tag == 104) {  // str_bytes
+        // stack: s -> $__fern_str_bytes(s) -> fresh u8[] block.
+        return "    call $__fern_str_bytes\n";
+    }
+    if (o.kind_tag == 105) {  // str_split
+        // stack: haystack, sep -> $__fern_str_split(haystack, sep) -> fresh
+        // string[] block. The helper (str_split_helper below, emitted
+        // when module_uses_str_split) builds the result via $__fern_arr_push +
+        // $__fern_substr.
+        return "    call $__fern_str_split\n";
+    }
+    if (o.kind_tag == 106) {  // str_to_upper
+        // stack: s -> $__fern_str_upper(s) -> fresh upper-cased block
+        // (str_case_helpers, gated on module_uses_str_case).
+        return "    call $__fern_str_upper\n";
+    }
+    if (o.kind_tag == 107) {  // str_to_lower
+        return "    call $__fern_str_lower\n";
+    }
+    if (o.kind_tag == 108) {  // str_repeat
+        // stack: s, n -> $__fern_str_repeat(s, n) -> fresh block (n copies of s).
+        return "    call $__fern_str_repeat\n";
+    }
+    if (o.kind_tag == 109) {  // str_trim
+        // stack: s -> $__fern_str_trim(s) -> fresh block (whitespace stripped).
+        return "    call $__fern_str_trim\n";
+    }
+    if (o.kind_tag == 110) {  // str_reverse
+        // stack: s -> $__fern_str_reverse(s) -> fresh block (bytes reversed).
+        return "    call $__fern_str_reverse\n";
+    }
+    if (o.kind_tag == 111) {  // str_replace
+        // stack: h, old, new -> $__fern_str_replace(...) -> fresh block.
+        return "    call $__fern_str_replace\n";
+    }
+    if (o.kind_tag == 113) {  // str_lines
+        // stack: s -> $__fern_str_lines(s) -> fresh string[] (split \n, trimmed).
+        return "    call $__fern_str_lines\n";
+    }
+    if (o.kind_tag == 114) {  // str_starts_with
+        // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
+        // predicate emitted by str_predicate_helpers (module_emits_op gate).
+        return "    call $__fern_str_startswith\n";
+    }
+    if (o.kind_tag == 115) {  // str_ends_with
+        return "    call $__fern_str_endswith\n";
+    }
+    if (o.kind_tag == 116) {  // str_index_of
+        // -> first index, or -1.
+        return "    call $__fern_str_indexof\n";
+    }
+    if (o.kind_tag == 98) {  // str_concat
+        // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
+        return "    call $__fern_strcat\n";
+    }
+    if (o.kind_tag == 99) {  // str_eq
+        // stack: a, b -> $__fern_streq(a, b) -> 0/1.
+        return "    call $__fern_streq\n";
+    }
+    if (o.kind_tag == 100) {  // str_cmp
+        // stack: a, b -> $__fern_strcmp(a, b) -> signed -/0/+.
+        return "    call $__fern_strcmp\n";
+    }
+    return unsupported_op_refuse(o.kind_tag);
+}
+
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
@@ -3722,25 +3828,8 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // does not depend on where its literals land program-wide (#5331).
             out = out + "    global.get " + str_base_global(ns) + "\n    i32.const "
                 + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n";
-        } else if (o.kind_tag == 97) {  // str_len
-            // stack: block ptr -> i32.load(ptr)  (len @ +0)
-            out = out + "    i32.load\n";
-        } else if (o.kind_tag == 101) {  // str_index
-            // stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx)  (bytes @ +4)
-            out = out + "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
-        } else if (o.kind_tag == 102) {  // str_slice
-            // stack: src, start, end -> $__fern_substr(src, start, end) copies the
-            // bytes into a fresh block (wasm strings are inline, so no view).
-            out = out + "    call $__fern_substr\n";
-        } else if (o.kind_tag == 225) {  // memchr
-            // stack: s, byte, from -> i32 index or -1. A call, not inline: the
-            // body needs a loop over its own locals, and the operand stack here
-            // is the wasm value stack.
-            out = out + "    call $__fern_memchr\n";
-        } else if (o.kind_tag == 227) {  // ascii_run
-            // stack: s, from -> the first high-bit index, or the length. A
-            // call for memchr's reason: the body loops over its own locals.
-            out = out + "    call $__fern_ascii_run\n";
+        } else if (ir.is_str_op_kind(o.kind_tag)) {
+            out = out + emit_str_op_wat(o);
         } else if (o.kind_tag == 214) {  // arr_reverse
             // stack: arr -> fresh reversed array block ($__fern_arr_reverse, the
             // WAT twin of the register backends' helper; gated @uses_arr_reverse).
@@ -3762,54 +3851,6 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 186) {  // random_i32
             // -> $__fern_random_i32() -> i32.
             out = out + "    call $__fern_random_i32\n";
-        } else if (o.kind_tag == 104) {  // str_bytes
-            // stack: s -> $__fern_str_bytes(s) -> fresh u8[] block.
-            out = out + "    call $__fern_str_bytes\n";
-        } else if (o.kind_tag == 105) {  // str_split
-            // stack: haystack, sep -> $__fern_str_split(haystack, sep) -> fresh
-            // string[] block. The helper (str_split_helper below, emitted
-            // when module_uses_str_split) builds the result via $__fern_arr_push +
-            // $__fern_substr.
-            out = out + "    call $__fern_str_split\n";
-        } else if (o.kind_tag == 106) {  // str_to_upper
-            // stack: s -> $__fern_str_upper(s) -> fresh upper-cased block
-            // (str_case_helpers, gated on module_uses_str_case).
-            out = out + "    call $__fern_str_upper\n";
-        } else if (o.kind_tag == 107) {  // str_to_lower
-            out = out + "    call $__fern_str_lower\n";
-        } else if (o.kind_tag == 108) {  // str_repeat
-            // stack: s, n -> $__fern_str_repeat(s, n) -> fresh block (n copies of s).
-            out = out + "    call $__fern_str_repeat\n";
-        } else if (o.kind_tag == 109) {  // str_trim
-            // stack: s -> $__fern_str_trim(s) -> fresh block (whitespace stripped).
-            out = out + "    call $__fern_str_trim\n";
-        } else if (o.kind_tag == 110) {  // str_reverse
-            // stack: s -> $__fern_str_reverse(s) -> fresh block (bytes reversed).
-            out = out + "    call $__fern_str_reverse\n";
-        } else if (o.kind_tag == 111) {  // str_replace
-            // stack: h, old, new -> $__fern_str_replace(...) -> fresh block.
-            out = out + "    call $__fern_str_replace\n";
-        } else if (o.kind_tag == 113) {  // str_lines
-            // stack: s -> $__fern_str_lines(s) -> fresh string[] (split \n, trimmed).
-            out = out + "    call $__fern_str_lines\n";
-        } else if (o.kind_tag == 114) {  // str_starts_with
-            // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
-            // predicate emitted by str_predicate_helpers (module_emits_op gate).
-            out = out + "    call $__fern_str_startswith\n";
-        } else if (o.kind_tag == 115) {  // str_ends_with
-            out = out + "    call $__fern_str_endswith\n";
-        } else if (o.kind_tag == 116) {  // str_index_of
-            // -> first index, or -1.
-            out = out + "    call $__fern_str_indexof\n";
-        } else if (o.kind_tag == 98) {  // str_concat
-            // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
-            out = out + "    call $__fern_strcat\n";
-        } else if (o.kind_tag == 99) {  // str_eq
-            // stack: a, b -> $__fern_streq(a, b) -> 0/1.
-            out = out + "    call $__fern_streq\n";
-        } else if (o.kind_tag == 100) {  // str_cmp
-            // stack: a, b -> $__fern_strcmp(a, b) -> signed -/0/+.
-            out = out + "    call $__fern_strcmp\n";
         } else if (o.kind_tag == 120 && o.width == 64) {  // opt_make
             // 8-byte-payload Option/Result box [tag@0, payload@8], 16 bytes — so an
             // i64/f64 payload fits. Distinct from the i32 box below (and from the
