@@ -30430,7 +30430,7 @@ function collect_builtin_strarr_in_stmt(st: parser.Stmt, acc: string[]): string[
                 parser.ExprCall(c) => {
                     match (c.callee) {
                         parser.ExprFieldAccess(fa) => {
-                            if (fa.field == "split" || fa.field == "lines") { return push_str_unique(acc, v.name); }
+                            if (fa.field == "split" || fa.field == "lines") { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
                         },
                         _ => {}
                     }
@@ -30473,14 +30473,14 @@ function collect_fresh_strarr_in_stmt(st: parser.Stmt, body: parser.Stmt[], fres
                         if (!strarr_value_is_fresh(al.elements[i], str_fresh)) { return acc; }
                         i = i + 1;
                     }
-                    return push_str_unique(acc, v.name);
+                    return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
                 },
                 parser.ExprCall(c) => {
                     match (c.callee) {
                         parser.ExprIdent(cid) => {
                             if (util.index_of_str(fresh_ret, "STRARR:" + cid.name) >= 0
                                     && !body_declares_name(body, cid.name)) {
-                                return push_str_unique(acc, v.name);
+                                return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
                             }
                         },
                         _ => {}
@@ -32354,7 +32354,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var sarrs: string[] = collect_fresh_strarr_names(body, body, fresh_ret, str_fresh_ret, []);
     var sri: i32 = 0;
     while (sri < sarrs.len()) {
-        if (!strarr_unsafe_for(body, sarrs[sri], borrowable, str_fresh_ret)) { out = out.append("SARR:" + sarrs[sri]); }
+        if (!strarr_unsafe_for(body, reclaim_site_name(sarrs[sri]), borrowable, str_fresh_ret)) { out = out.append("SARR:" + sarrs[sri]); }
         sri = sri + 1;
     }
     // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
@@ -32364,7 +32364,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var bsarrs: string[] = collect_builtin_strarr_names(body, []);
     var bri: i32 = 0;
     while (bri < bsarrs.len()) {
-        if (!strarr_unsafe_for(body, bsarrs[bri], borrowable, str_fresh_ret)) { out = out.append("SARRB:" + bsarrs[bri]); }
+        if (!strarr_unsafe_for(body, reclaim_site_name(bsarrs[bri]), borrowable, str_fresh_ret)) { out = out.append("SARRB:" + bsarrs[bri]); }
         bri = bri + 1;
     }
     // Fresh arr-of-arr locals (#4355 slice 9): `var g = [[..], [..]]` where
@@ -41068,12 +41068,12 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
-    if (reclaim_has(s.reclaimable_names, "SARR:", reclaim_slot_name(s, i))) { return true; }
+    if (reclaim_has(s.reclaimable_names, "SARR:", s.reclaim_site_key(i))) { return true; }
     // The builtin-producer class needs BOTH halves: the "SARRB:" credit carries
     // the non-escape proof, the slot flag carries the type confirmation the
     // name-level collector could not make.
     return s.is_strarr_builtin_slot(i)
-        && reclaim_has(s.reclaimable_names, "SARRB:", reclaim_slot_name(s, i));
+        && reclaim_has(s.reclaimable_names, "SARRB:", s.reclaim_site_key(i));
 }
 
 // dyn_reclaim_concrete_of (#4351): the payload tag registered for dyn local
