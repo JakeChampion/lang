@@ -75,6 +75,79 @@ function main(): i32 {
 }
 `
 
+// The lowering is swapped in where a block's statements are checked, so every
+// position a statement can sit in has to reach it: a lambda body, a
+// block-expression, a braceless branch body (the parser wraps the loop in a
+// Block so this one is a statement of something), a match arm, and one pattern
+// loop inside another.
+const foreachPatternNestingProg = `
+function apply(f: () => i32): i32 {
+    return f();
+}
+
+function main(): i32 {
+    var xs: (i32, i32)[] = [(1, 2), (3, 4)];
+
+    var viaLambda = apply((): i32 => {
+        var s = 0;
+        for (a, b) in xs { s = s + a * b; }
+        return s;
+    });
+    if (viaLambda != 14) { return 1; }
+
+    var viaBlock: i32 = {
+        var s = 0;
+        for (a, b) in xs { s = s + a + b; }
+        s
+    };
+    if (viaBlock != 10) { return 2; }
+
+    var s2 = 0;
+    if (xs.len() == 2) for (a, b) in xs { s2 = s2 + a; }
+    if (s2 != 4) { return 3; }
+
+    var opt: i32 = 1;
+    var s3 = 0;
+    match (opt) {
+        1 => { for (a, b) in xs { s3 = s3 + b; } },
+        _ => {},
+    }
+    if (s3 != 6) { return 4; }
+
+    var s4 = 0;
+    for (a, b) in xs {
+        for (c, d) in xs { s4 = s4 + a * c + b * d; }
+    }
+    if (s4 != 52) { return 5; }
+
+    return 42;
+}
+`
+
+func TestForEachPatternNestingInterp(t *testing.T) {
+	if got := runInterpExit(t, foreachPatternNestingProg); got != 42 {
+		t.Fatalf("interp got %d, want 42 (the code names the position that did not lower)", got)
+	}
+}
+
+func TestForEachPatternNestingX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, foreachPatternNestingProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42 (the code names the position that did not lower)", got)
+	}
+}
+
+func TestForEachPatternNestingArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, foreachPatternNestingProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (the code names the position that did not lower)", got)
+	}
+}
+
+func TestForEachPatternNestingWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, foreachPatternNestingProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (the code names the position that did not lower)", got)
+	}
+}
+
 func TestForEachPatternInterp(t *testing.T) {
 	if got := runInterpExit(t, foreachPatternProg); got != 42 {
 		t.Fatalf("interp got %d, want 42 (a negative code names the failing check)", got)
