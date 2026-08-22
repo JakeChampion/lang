@@ -118,6 +118,17 @@ cleanly and surfaces only as a miscompile. The fixpoint will not catch it
 bytes over 1491 (fixture, target) pairs will. **~28 minutes per side**
 (measured 2026-08-22; this said ~8, from a smaller corpus).
 
+**Any change to `examples/self_host/*.fern` must run
+`TestSelfHostFeatureCensus`, whatever the change is about.** Every other gate
+here is chosen by what the code TOUCHES; the census triggers on what the code is
+WRITTEN IN. It pins how much of Fern the self-host uses — nested named
+functions, arrow lambdas, `for..in` loops, `as` casts — so introducing a
+construct moves a count UP and removing one moves it DOWN, and a refactor does
+both at once. The SH-022 walker migration moved it three times in one session:
++4 nested fns and −1 `for..in` from one slice, +3 and −4 from the next, +2 from
+a bug fix. Each looked unrelated to the census right up to the moment CI failed
+on it. It runs in under a second — there is no reason to select around it.
+
 **Delete `bin/fern` before building the after side.** `make selfhost-cli` is
 timestamp-driven and will happily reuse a `bin/fern` built from an older commit,
 while a fresh baseline worktree always builds a current one — so once `main` has

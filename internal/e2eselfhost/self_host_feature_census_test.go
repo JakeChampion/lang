@@ -359,8 +359,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Two are astwalk's no-op statement visitors; the other three are constfold's assert probe, the first arrow lambdas here that compute rather than return the accumulator untouched.")
 	pinned(t, c, "anonymous function exprs", 4,
 		"`function(x: T): R { … }` in expression position — astwalk's splice, checker's diag fold, and two parser rewriters. All capture, so these plus the capturing nested named fns are the self-host's only closures.")
-	pinned(t, c, "nested named fns", 28,
-		"Four are astwalk visitors closing over their enclosing function's locals. Seventeen are wasm_ir's helper-gate predicates behind any_op(cache, pred), two of which capture a parameter and the rest capture nothing. The last seven are checker collectors riding astwalk: mc_mentions_expr and mc_mentions_stmts take two visitors each (an expression visitor for ExprIdent, a statement visitor for StmtAssign's target, which is a bare string rather than an expression), ow_count_ident takes a tally, and e049_expr_lambdas takes a visitor plus a descent predicate that prunes at ExprLambda.")
+	pinned(t, c, "nested named fns", 30,
+		"Four are astwalk visitors closing over their enclosing function's locals. Seventeen are wasm_ir's helper-gate predicates behind any_op(cache, pred), two of which capture a parameter and the rest capture nothing. The last seven are checker collectors riding astwalk: mc_mentions_expr and mc_mentions_stmts take two visitors each (an expression visitor for ExprIdent, a statement visitor for StmtAssign's target, which is a bare string rather than an expression), ow_count_ident takes a tally, and e049_expr_lambdas and e049_stmt_own_lambdas take a visitor plus a descent predicate that prunes at ExprLambda.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
 	pinned(t, c, "Map type spellings", 11,
