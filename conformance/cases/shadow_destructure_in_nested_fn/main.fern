@@ -1,0 +1,24 @@
+// The same property one binding form over: a destructuring `var` inside a
+// NESTED NAMED FUNCTION whose names shadow the enclosing function's locals.
+// A nested function's locals are registered against its own decl, so a walk
+// that only ever looked at the outer function's list left the synthetic local
+// under the old name and the build died with `destructure name has no slot`.
+// That spelling was broken before lambdas were ever walked.
+//
+// The nested bindings must read the arguments and the outer ones must survive,
+// so both are asserted.
+//
+// One destructure site per case, on purpose — see the note in
+// shadow_destructure_in_lambda: #7307 (wasm owned model) and #7306 (self-host
+// struct-pattern parameters) are why the shapes are not combined.
+function main(): i32 {
+    var x: i32 = 1;
+    var y: i32 = 2;
+
+    function f(a: i32, b: i32): i32 { var (x, y) = (a, b); return x * 10 + y; }
+    if (f(7, 8) != 78) { return 1; }
+
+    if (x != 1) { return 2; }
+    if (y != 2) { return 3; }
+    return 0;
+}
