@@ -1169,6 +1169,23 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
 // "TUPRCS:" (#6251) the exit sweep, and flipping only the first left the shape
 // measuring exactly its unfixed 8000.
 //
+// MOST OF THE CLASSES NAMED ABOVE NO LONGER READ THIS FUNCTION. The tuple,
+// string, string[] and arr-of-arr families (#7272 / #7292 / #7253 / #7335), the
+// bare-name struct credit (#7349) and the whole Option family are keyed on the
+// BINDING SITE now, which survives retire_locals' rename by itself — the site
+// lives on the slot, not in the name. What this function still serves is the
+// classes that have not been converted: ARRTUP, ARRSTRUCT(A), ARRENUM,
+// STRUCTARR(A), RCENUMS, SCENUMS. The history above is kept because it records
+// which releases each flip turned on, which is what a converter needs to know.
+//
+// The reason to finish the migration is not tidiness. A name key hands a
+// credited local's verdict to any same-named sibling, and the severity of that
+// depends on whether the aliased source has another owner: where the class also
+// leaks, the stray release lands on a box nothing else claimed and looks
+// harmless, and it becomes a double free the moment someone fixes the leak.
+// Three of the Option classes faulted outright before the conversion; the other
+// three were the latent form.
+//
 // Three classes are deliberately NOT here, each for a different measured reason.
 //
 // "OPTARR:" is already flat at 0 — its consuming-match analysis is per-block
@@ -25776,10 +25793,13 @@ function push_str_unique(xs: string[], s: string): string[] {
 // than the name, and the two blocks stop colliding. bind_var_slot records it on
 // the slot, so every consumer resolves the credit its own binding earned.
 //
-// Only the tuple family moves here. The other ~70 namespaces multiplexed into
-// reclaimable_names are still name-keyed, and #7253 is the issue for the rest —
-// so `reclaim_slot_name` keeps its meaning and this is a parallel accessor
-// rather than a change to it.
+// The families converted so far: tuple (#7272), "STR:" (#7292), "SARR:" /
+// "SARRB:" and "ARRARR:" / "ARRARRS:" (#7253, #7335), the bare-name struct
+// credit and its "NODEEP:" / "FLDCHECKED:" markers (#7349), and the whole
+// Option family. The rest of the ~70 namespaces multiplexed into
+// reclaimable_names are still name-keyed and #7253 tracks them, so
+// `reclaim_slot_name` keeps its meaning and this stays a parallel accessor
+// rather than a replacement for it.
 function reclaim_site_key_of(name: string, line: i32, col: i32): string {
     return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
@@ -32472,10 +32492,13 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var oaas: string[] = collect_fresh_optaarr_names(body, []);
     var oai: i32 = 0;
     while (oai < oaas.len()) {
-        if (!body_unsafe_for(body, oaas[oai], borrowable, recv_borrow)
-            && util.index_of_str(reassigned, oaas[oai]) < 0
-            && !arrarr_row_escapes(body, oaas[oai])
-            && !optaarr_elem_payload_escapes(body, oaas[oai])) {
+        // `oaas` holds BINDING-SITE keys (#7253); all four gates ask about the
+        // VARIABLE, so each takes the bare name back out of the key.
+        var oanm: string = reclaim_site_name(oaas[oai]);
+        if (!body_unsafe_for(body, oanm, borrowable, recv_borrow)
+            && util.index_of_str(reassigned, oanm) < 0
+            && !arrarr_row_escapes(body, oanm)
+            && !optaarr_elem_payload_escapes(body, oanm)) {
             out = out.append("OPTAARR:" + oaas[oai]);
         }
         oai = oai + 1;
@@ -32548,7 +32571,11 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // string, so the sweep can fill the tag guard's else-branch for it alone.
         // OPTARR: is shared with the reassigned+match class, whose slots earned no
         // such proof — an unconditional Err release there would dangle.
-        if (unmatched_optarr_err_str_fresh(body, ufa[ufai], opt_fresh_ret)) {
+        // Same key, one gate: the Err-payload proof asks about the variable.
+        // "OPTARRERR:" is a SUB-TAG of the "OPTARR:" entry appended just above —
+        // same slot, same key — so the two are granted and resolved together and
+        // cannot end up keyed differently.
+        if (unmatched_optarr_err_str_fresh(body, reclaim_site_name(ufa[ufai]), opt_fresh_ret)) {
             out = out.append("OPTARRERR:" + ufa[ufai]);
         }
         ufai = ufai + 1;
@@ -36823,6 +36850,22 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
 // missed producer lands on: it denies the credit (a leak) rather than matching
 // an empty entry, which is the safe direction and the one the emit-hash gate
 // makes loud.
+// opt_credit_at: the Option-family credit lookup, keyed on the BINDING SITE
+// (#7253 step 1) rather than the variable name. One helper for all seven tags so
+// they cannot drift apart, and so the "no recorded site" refusal is written once.
+//
+// A slot with no site resolves NOTHING, deliberately. Every producer of these
+// credits walks `StmtVar`, and every `StmtVar` binding records its site — so a
+// siteless Option slot is one bound by a for-in element, a match payload or a
+// destructure key, which no collector ever credited and which only ever matched
+// by NAME COLLISION with a credited local. Refusing it is the point of the
+// change, not a side effect of it.
+function opt_credit_at(s: LowerState, i: i32, pfx: string): boolean {
+    var site: string = s.reclaim_site_key(i);
+    if (site.len() == 0) { return false; }
+    return reclaim_has(s.reclaimable_names, pfx, site);
+}
+
 function slot_struct_credit_at(s: LowerState, i: i32): boolean {
     var site: string = s.reclaim_site_key(i);
     if (site.len() == 0) { return false; }
@@ -37536,7 +37579,7 @@ function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.Struct
                         && !opttup_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
-                        a = push_str_unique(a, v.name);
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
             },
@@ -37565,7 +37608,7 @@ function collect_fresh_optaarr_names(stmts: parser.Stmt[], acc: string[]): strin
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (optaarr_ann_is(v.type_name) && optaarr_lit_is_fresh(v.init)) { a = push_str_unique(a, v.name); }
+                if (optaarr_ann_is(v.type_name) && optaarr_lit_is_fresh(v.init)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
             },
             parser.StmtIf(f) => { a = collect_fresh_optaarr_names(f.then_body, a); a = collect_fresh_optaarr_names(f.else_body, a); },
             parser.StmtWhile(w) => { a = collect_fresh_optaarr_names(w.body, a); },
@@ -38332,7 +38375,7 @@ function slot_is_reclaimable_optaarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arr) { return false; }
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
-    return reclaim_has(s.reclaimable_names, "OPTAARR:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTAARR:");
 }
 
 // emit_optaarr_reclaim_store: the option-element twin of
@@ -38365,7 +38408,7 @@ function slot_is_reclaimable_opttup(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "OPTTUP:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTTUP:");
 }
 
 // emit_opttup_deep_free frees the option box in `slot`: null-guarded, if the box
@@ -38661,7 +38704,7 @@ function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.Str
                         && !optstruct_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
-                        a = push_str_unique(a, v.name);
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
             },
@@ -38690,7 +38733,7 @@ function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
     var inner: string = opttup_inner_type(s.locals[i].opt_type);
     if (!decl_is_struct(s.structs, inner)) { return false; }
     if (!optstruct_payload_reclaimable(s.structs, inner)) { return false; }
-    return reclaim_has(s.reclaimable_names, "OPTSTRUCT:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTSTRUCT:");
 }
 
 // emit_optstruct_deep_free frees the option box in `slot`: null-guarded, if Some
@@ -39163,7 +39206,7 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
                     && !body_unsafe_for(stmts, v.name, [], [])) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, a); },
@@ -39191,7 +39234,7 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
                     && !body_unsafe_for(stmts, v.name, [], [])) {
-                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh_reg, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh_reg, a); },
@@ -39225,7 +39268,7 @@ function collect_fresh_optarr_names(stmts: parser.Stmt[], acc: string[]): string
                         && !optarr_payload_escapes(stmts, v.name)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
-                        a = push_str_unique(a, v.name);
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
             },
@@ -39551,7 +39594,7 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
                         && !optarrarr_payload_escapes(stmts, v.name)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
-                        a = push_str_unique(a, v.name);
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
             },
@@ -39577,11 +39620,11 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
 // "OPTARRERR:" — its Err payload is a proven-fresh string, so the deep free may
 // release it instead of stranding it (#6360).
 function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
-    return reclaim_has(s.reclaimable_names, "OPTARRERR:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTARRERR:");
 }
 
 function slot_is_reclaimable_optstr(s: LowerState, i: i32): boolean {
-    return reclaim_has(s.reclaimable_names, "OPTSTR:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTSTR:");
 }
 
 // slot_is_reclaimable_optarr: slot i holds a REBOUND, fresh, non-escaping
@@ -39592,7 +39635,7 @@ function slot_is_reclaimable_optarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "OPTARR:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTARR:");
 }
 
 // slot_is_reclaimable_optarrarr: slot i holds a fresh, non-escaping
@@ -39605,7 +39648,7 @@ function slot_is_reclaimable_optarrarr(s: LowerState, i: i32): boolean {
     // collect_fresh_optarrarr_names on the authoritative Option[<scalar-arr-of-arr>]
     // annotation, so it uniquely identifies genuine arr-of-arr option slots.
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "OPTARRARR:", reclaim_slot_name(s, i));
+    return opt_credit_at(s, i, "OPTARRARR:");
 }
 
 // emit_optarrarr_deep_free frees the option box in `slot`: null-guarded, if Some
