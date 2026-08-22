@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/ir"
@@ -29,20 +30,40 @@ import (
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
-// Both widths: wasm32 resolves WidthPtr to 4, the register backends to
-// 8, and the lowering differs enough that one can be well-formed while
-// the other is not.
-var verifyWidths = []int{4, 8}
+// verifyConfig is one lowering configuration the corpus is verified
+// under.
+//
+// A pointer width alone does not name one. x86-64 and arm64 are both
+// ptrW 8 and differ by the two-word `(data, len)` string ABI, which is
+// carried by the package-level `ast.TwoWordOverride` rather than by a
+// lowering parameter — so a `[]int` of widths could not express arm64 at
+// all, and never lowered it. That is the shape #7303 leaked through: the
+// verifier models the defect correctly and was simply never handed the
+// program arm64 emits.
+type verifyConfig struct {
+	name string
+	ptrW int
+	// twoWord sets `ast.TwoWordOverride` for the lowering AND the
+	// verification. It is meaningless at ptrW 4, where
+	// `ast.UseTwoWordStrings` short-circuits to true regardless.
+	twoWord bool
+}
+
+var verifyConfigs = []verifyConfig{
+	{name: "wasm32", ptrW: 4},
+	{name: "x86-64", ptrW: 8},
+	{name: "arm64", ptrW: 8, twoWord: true},
+}
 
 // skippedLowering records the cases corpusPrograms could not lower, keyed
-// "<case>@<ptrW>". A skip here removes a program from every gate built on
-// the helper, so it is recorded rather than discarded — see
+// "<case>@<config>". A skip here removes a program from every gate built
+// on the helper, so it is recorded rather than discarded — see
 // TestCorpusLowersForVerification.
 var skippedLowering = map[string]string{}
 
-// corpusPrograms lowers every runnable case at both pointer widths and
+// corpusPrograms lowers every runnable case under every verifyConfig and
 // hands each resulting program to fn.
-func corpusPrograms(t *testing.T, fn func(name string, ptrW int, ip *ir.Program)) {
+func corpusPrograms(t *testing.T, fn func(name string, cfg verifyConfig, ip *ir.Program)) {
 	t.Helper()
 	entries, err := os.ReadDir(conformanceCases)
 	if err != nil {
@@ -65,7 +86,7 @@ func corpusPrograms(t *testing.T, fn func(name string, ptrW int, ip *ir.Program)
 			continue // the case IS a lowering rejection; failing to lower is the point
 		}
 		main := filepath.Join(dir, "main.fern")
-		for _, w := range verifyWidths {
+		for _, cfg := range verifyConfigs {
 			// Re-load per width so a pass that rewrites the AST cannot
 			// leak across the two.
 			p, _, err := modload.Load(main)
@@ -89,24 +110,49 @@ func corpusPrograms(t *testing.T, fn func(name string, ptrW int, ip *ir.Program)
 			// without DynSupported a `dyn Trait` case is refused outright
 			// at ptrW 8.
 			if err := monomorph.Run(p, info); err != nil {
-				skippedLowering[name+"@"+strconv.Itoa(w)] = "monomorph: " + err.Error()
+				skippedLowering[name+"@"+cfg.name] = "monomorph: " + err.Error()
 				continue
 			}
 			roots := append(treeshake.DynCoercionImplMethods(info),
 				treeshake.DowncastImplMethods(p, info)...)
 			treeshake.Run(p, info, roots...)
 			var opts []ir.LowerOption
-			if w == 8 {
+			if cfg.ptrW == 8 {
 				opts = append(opts, ir.DynSupported(), ir.DynRcSupported())
 			}
-			ip, err := ir.LowerWith(p, info, w, opts...)
-			if err != nil {
-				skippedLowering[name+"@"+strconv.Itoa(w)] = err.Error()
-				continue // not every case lowers on every width
-			}
-			fn(name, w, ip)
+			lowerAndVerify(t, name, cfg, p, info, opts, fn)
 		}
 	}
+}
+
+// lowerAndVerify holds `ast.TwoWordOverride` across BOTH the lowering and
+// fn, because the verifier reads the same flag: `ir.Verify`'s stack half
+// asks `ast.UseTwoWordStrings` to decide how many slots a string occupies,
+// so restoring the flag before fn ran would verify arm64's op stream under
+// x86-64's ABI. `ast.CodegenMu` guards the flag, and the restore is
+// deferred so a t.Fatalf inside fn cannot leave it set for the next case.
+func lowerAndVerify(
+	t *testing.T,
+	name string,
+	cfg verifyConfig,
+	p *ast.Program,
+	info *checker.Info,
+	opts []ir.LowerOption,
+	fn func(name string, cfg verifyConfig, ip *ir.Program),
+) {
+	t.Helper()
+	ast.CodegenMu.Lock()
+	defer ast.CodegenMu.Unlock()
+	prev := ast.TwoWordOverride
+	ast.TwoWordOverride = cfg.twoWord
+	defer func() { ast.TwoWordOverride = prev }()
+
+	ip, err := ir.LowerWith(p, info, cfg.ptrW, opts...)
+	if err != nil {
+		skippedLowering[name+"@"+cfg.name] = err.Error()
+		return // not every case lowers under every config
+	}
+	fn(name, cfg, ip)
 }
 
 // The share of functions the stack half must be able to model. It is a
@@ -122,7 +168,7 @@ func TestIRVerifierAcceptsEveryLoweredCase(t *testing.T) {
 	var lowered, funcs, modelled int
 	skipped := map[string]int{}
 
-	corpusPrograms(t, func(name string, w int, ip *ir.Program) {
+	corpusPrograms(t, func(name string, cfg verifyConfig, ip *ir.Program) {
 		lowered++
 		problems, cov := ir.Verify(ip)
 		funcs += cov.Funcs
@@ -131,8 +177,8 @@ func TestIRVerifierAcceptsEveryLoweredCase(t *testing.T) {
 			skipped[reason] += n
 		}
 		if len(problems) > 0 {
-			t.Errorf("%s (ptr width %d): IR is not well-formed:%s",
-				name, w, ir.FormatProblems(problems, 10))
+			t.Errorf("%s (%s): IR is not well-formed:%s",
+				name, cfg.name, ir.FormatProblems(problems, 10))
 		}
 	})
 
@@ -186,7 +232,7 @@ func TestIRVerifierCatchesLoweringDamage(t *testing.T) {
 	var mutated, caught int
 	missed := map[string]int{}
 
-	corpusPrograms(t, func(name string, w int, ip *ir.Program) {
+	corpusPrograms(t, func(name string, cfg verifyConfig, ip *ir.Program) {
 		_, base := ir.Verify(ip)
 		perProgram := 0
 		for fi, f := range ip.Funcs {
@@ -285,7 +331,7 @@ func reachableLimit(ops []ir.Op) int {
 }
 
 // A case corpusPrograms cannot lower is absent from every gate built on
-// it, silently — which is how 280 of 758 case/width pairs went
+// it, silently — which is how 280 of 758 case/config pairs went
 // unverified. The helper ran `checker.Check` then `ir.LowerWith` with no
 // options, where a backend first monomorphises, then tree-shakes, and at
 // ptrW 8 opts into `dyn`. Every omission failed to LOWER rather than
@@ -296,7 +342,7 @@ func reachableLimit(ops []ir.Op) int {
 // that, so the next omission is a failure rather than a quiet subtraction.
 func TestCorpusLowersForVerification(t *testing.T) {
 	var lowered int
-	corpusPrograms(t, func(string, int, *ir.Program) { lowered++ })
+	corpusPrograms(t, func(string, verifyConfig, *ir.Program) { lowered++ })
 	if lowered == 0 {
 		t.Fatal("nothing lowered — the helper is not measuring anything")
 	}
@@ -310,5 +356,5 @@ func TestCorpusLowersForVerification(t *testing.T) {
 			t.Errorf("%s did not lower, so it is in no IR gate: %s", k, skippedLowering[k])
 		}
 	}
-	t.Logf("%d case/width pairs lowered, %d skipped", lowered, len(skippedLowering))
+	t.Logf("%d case/config pairs lowered, %d skipped", lowered, len(skippedLowering))
 }

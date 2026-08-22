@@ -72,7 +72,7 @@ func TestCoreOpsAreReachedByTheCorpus(t *testing.T) {
 	all, unreached := readCoreOps(t)
 
 	emitted := map[string]int{}
-	corpusPrograms(t, func(_ string, _ int, ip *ir.Program) {
+	corpusPrograms(t, func(_ string, _ verifyConfig, ip *ir.Program) {
 		for _, f := range ip.Funcs {
 			for _, op := range f.Ops {
 				emitted[op.Kind.String()]++
