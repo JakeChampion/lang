@@ -275,7 +275,13 @@ function main(): i32 { return fib10(); }`, 55},
 			case "recursion":
 				export = "fib10"
 			}
-			asm := compileToX86Asm(t, c.src)
+			// The export has to reach CODEGEN, not just the assembler: it is
+			// what roots the function in the tree-shake and the IR
+			// dead-function cull, exactly as `fern -shared -export` does. The
+			// other 13 sites in this file already pass it; this one relied on
+			// main calling the function instead, which stops being true the
+			// moment the call is inlined.
+			asm := compileToX86AsmExports(t, c.src, []string{export})
 			so := sharedLibX86(t, asm, export)
 
 			dir := t.TempDir()
