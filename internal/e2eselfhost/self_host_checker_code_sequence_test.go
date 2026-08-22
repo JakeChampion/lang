@@ -80,6 +80,28 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		{"two-ambiguous-variant-refs", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var x = Red; var y = Red; return 0; }\n", "E036,E036"},
 		{"lambda-shadows-variant-name", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var Red: i32 = 1; return Red; }; return 0; }\n", ""},
 		{"lambda-does-not-shadow", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var z = Red; return 0; }; return 0; }\n", "E036"},
+		// E043 / E005 from slit_diags, which is POST-order: it recurses into a
+		// literal's field_values BEFORE emitting its own diagnostics, where
+		// astwalk's fold is pre-order. These rows pin the relative order, which
+		// a straight fold conversion would reverse.
+		//
+		// The nested row also records a live DIVERGENCE that no other gate can
+		// see. For `Out { bad2: In { bad1: 1 } }` the self-host reports all four
+		// diagnostics — the inner literal's unknown and missing fields as well
+		// as the outer's — while the Go checker reports only the outer two,
+		// having stopped descending once the outer field name was unknown. Both
+		// sides yield the code SET {E043, E005}, so the codes differential and
+		// the hint-text differential are blind to it by construction.
+		//
+		// Which side is right is genuinely unclear and is NOT settled here: the
+		// inner literal does have an unknown field and does miss one, and
+		// slit_diags reaches both from the literal's own type_name without
+		// needing an expected type, so the extra reports may be the better
+		// answer. This pins today's behaviour so the difference is visible and
+		// cannot drift further while someone decides.
+		{"struct-lit-unknown-and-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, zz: 2 }; return 0; }\n", "E043,E005"},
+		{"struct-lit-nested-bad-fields", "struct In { a: i32 }\nstruct Out { x: In }\nfunction main(): i32 { var o: Out = Out { bad2: In { bad1: 1 } }; return 0; }\n", "E043,E005,E043,E005"},
+		{"struct-lit-two-siblings-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var a: P = P { x: 1 }; var b: P = P { x: 2 }; return 0; }\n", "E005,E005"},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049"},
