@@ -3181,6 +3181,161 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 
 
 
+
+// is_map_op_kind is true for a map IR op whose WAT depends only on the op.
+//
+// TWO map ops are deliberately absent. `map_new` (124) reads the module
+// namespace and the function table to name its comparator. And `map_set`
+// (125) has TWO arms in the dispatch -- an `i64_imm != 0` 8-byte-value form
+// checked before the plain one -- so routing 125 through a single predicate
+// arm would collapse that pair and emit one width for both.
+function is_map_op_kind(tag: i32): boolean {
+    return tag == 133 || tag == 134 || tag == 135 || tag == 136 || tag == 137 || tag == 222 ||
+        tag == 126 || tag == 127 || tag == 128 || tag == 129 || tag == 130 || tag == 131 ||
+        tag == 132;
+}
+
+// emit_map_op_wat renders one map op as WAT.
+//
+// Unlike emit_str_op_wat and emit_host_op_wat, whose arms are each a single
+// chunk, several map arms append MORE THAN ONCE (map_values and map_hash_seed
+// build their output in four pieces). So this accumulates into `out` and
+// returns once per arm rather than returning the first chunk -- doing the
+// latter type-checks cleanly and silently drops the rest of the instructions,
+// which surfaces only as a wasm validation error far from the cause.
+function emit_map_op_wat(o: ir.Op): string {
+    var out: string = "";
+    if (o.kind_tag == 133) {  // map_iter
+        // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
+        // $__fern_map_iter materializes the live keys/values (map snapshots)
+        // and boxes them. An 8-byte VALUE column (i64_imm != 0, #5253) snapshots
+        // the raw 8-byte values via $__fern_map_iter_w64 (serving i64/u64 AND
+        // f64 — mapiter_value reinterprets f64). Otherwise the narrow snapshot.
+        if (o.i64_imm != 0) {
+            out = out + "    call $__fern_map_iter_w64\n";
+        } else {
+            out = out + "    call $__fern_map_iter\n";
+        }
+        return out;
+    }
+    if (o.kind_tag == 134) {  // mapiter_has_next
+        out = out + "    call $__fern_mapiter_has_next\n";
+        return out;
+    }
+    if (o.kind_tag == 135) {  // mapiter_key
+        out = out + "    call $__fern_mapiter_key\n";
+        return out;
+    }
+    if (o.kind_tag == 136) {  // mapiter_value
+        // An 8-byte VALUE column (i64_imm != 0, #5253) reads the 8-byte element
+        // from the value snapshot via $__fern_mapiter_value_w64 (i64 result).
+        // i64/u64 (i64_imm 1) use it directly; f64 (i64_imm 2) reinterprets the
+        // i64 bits back to f64.
+        if (o.i64_imm == 2) {
+            out = out + "    call $__fern_mapiter_value_w64\n    f64.reinterpret_i64\n";
+        } else if (o.i64_imm == 1) {
+            out = out + "    call $__fern_mapiter_value_w64\n";
+        } else {
+            out = out + "    call $__fern_mapiter_value\n";
+        }
+        return out;
+    }
+    if (o.kind_tag == 137) {  // mapiter_advance
+        // bumps the box's cursor in place; pushes a dummy the statement drops.
+        out = out + "    call $__fern_mapiter_advance\n";
+        return out;
+    }
+    if (o.kind_tag == 222) {  // map_hash_seed
+        // core/map's per-process string-hash seed: draw once via
+        // $__fern_random_i32, force it nonzero, cache it at the fixed low
+        // slot. Inline rather than a helper — wasm's structured `if` needs
+        // no label. The self-host's own Map lowers to the $__fern_map_*
+        // runtime and does not consult this; the op exists so core/map's
+        // bodies compile and link.
+        var seed_at: string = util.i32_to_string(map_hash_seed_addr());
+        out = out + "    i32.const " + seed_at + "\n    i32.load\n    i32.eqz\n    if\n";
+        out = out + "    i32.const " + seed_at + "\n    call $__fern_random_i32\n";
+        out = out + "    i32.const 1\n    i32.or\n    i32.store\n    end\n";
+        out = out + "    i32.const " + seed_at + "\n    i32.load\n";
+        return out;
+    }
+    if (o.kind_tag == 126) {  // map_len
+        // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
+        out = out + "    i32.load\n";
+        return out;
+    }
+    if (o.kind_tag == 127) {  // map_get
+        // stack: map, key -> Option box. An 8-byte VALUE (i64_imm != 0, #5253)
+        // dereferences the boxed cell into a 16-byte Option box [tag@0][payload@8]
+        // via $__fern_map_get_w64 — the raw 8 payload bytes serve i64/u64 AND f64
+        // (opt_payload reads them i64.load / f64.load per the Option's V type).
+        // Otherwise the narrow i32-payload path.
+        if (o.i64_imm != 0) {
+            out = out + "    call $__fern_map_get_w64\n";
+        } else {
+            out = out + "    call $__fern_map_get\n";
+        }
+        return out;
+    }
+    if (o.kind_tag == 128) {  // map_has
+        out = out + "    call $__fern_map_has\n";
+        return out;
+    }
+    if (o.kind_tag == 130) {  // map_delete
+        // stack: map, k -> $__fern_map_delete -> [map, existed] tuple box
+        // (the wasm helper reads the keykind from the box, so the op's
+        // keykind imm — used by the register backends — is unneeded here).
+        // The tuple-destructure that consumes `.without`'s result reads
+        // element i at offset i*4, matching $__fern_map_delete's box. #2933.
+        out = out + "    call $__fern_map_delete\n";
+        return out;
+    }
+    if (o.kind_tag == 129) {  // map_get_or
+        // stack: map, k, default -> value. An 8-byte VALUE dereferences the boxed
+        // cell via $__fern_map_get_or_w64 (i64 result). i64/u64 (i64_imm 1) push
+        // an i64 default (lower_i64); f64 (i64_imm 2) has an f64 default,
+        // reinterpreted to i64 in and the i64 result reinterpreted back to f64. #5253.
+        if (o.i64_imm == 2) {
+            out = out + "    i64.reinterpret_f64\n    call $__fern_map_get_or_w64\n    f64.reinterpret_i64\n";
+        } else if (o.i64_imm == 1) {
+            out = out + "    call $__fern_map_get_or_w64\n";
+        } else {
+            out = out + "    call $__fern_map_get_or\n";
+        }
+        return out;
+    }
+    if (o.kind_tag == 131) {  // map_keys
+        // hash map: snapshot the live keys into a fresh array (probe
+        // order). A STRING column (i32_imm 2, #4353 slice 3) uses the
+        // RETAINING snapshot — each element rc-inc'd on copy — so the
+        // shared post-loop deep release ($__fern_arr_dec_ptr) balances
+        // and the per-loop string-column snapshot no longer leaks.
+        if (o.i32_imm == 2) {
+            out = out + "    call $__fern_map_keys_inc\n";
+        } else {
+            out = out + "    call $__fern_map_keys\n";
+        }
+        return out;
+    }
+    if (o.kind_tag == 132) {  // map_values
+        // hash map: snapshot the live values into a fresh array (probe order).
+        // An 8-byte VALUE column (i64_imm != 0, #5253) dereferences the boxed
+        // cells into a fresh array via $__fern_map_values_w64 — the raw 8-byte
+        // elements serve i64/u64 (i64[]) AND f64 (f64[]); the consuming arr_get
+        // reads them per the array's element type. Otherwise the narrow path,
+        // with the same string-column retaining split as map_keys.
+        if (o.i64_imm != 0) {
+            out = out + "    call $__fern_map_values_w64\n";
+        } else if (o.i32_imm == 2) {
+            out = out + "    call $__fern_map_values_inc\n";
+        } else {
+            out = out + "    call $__fern_map_values\n";
+        }
+        return out;
+    }
+    return unsupported_op_refuse(o.kind_tag);
+}
+
 // is_host_op_kind is true for an IR op that reaches the HOST rather than
 // computing a value: stdout/stderr writes, the three clocks, stdin and file
 // and directory I/O, env, args, and exit.
@@ -3751,36 +3906,8 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // $__fern_reader_close calls preview1 fd_close and boxes None. Emitted
             // caller-side in wasm_ir_run. Mirrors asm_ir's reader_close op.
             out = out + "    call $__fern_reader_close\n";
-        } else if (o.kind_tag == 133) {  // map_iter
-            // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
-            // $__fern_map_iter materializes the live keys/values (map snapshots)
-            // and boxes them. An 8-byte VALUE column (i64_imm != 0, #5253) snapshots
-            // the raw 8-byte values via $__fern_map_iter_w64 (serving i64/u64 AND
-            // f64 — mapiter_value reinterprets f64). Otherwise the narrow snapshot.
-            if (o.i64_imm != 0) {
-                out = out + "    call $__fern_map_iter_w64\n";
-            } else {
-                out = out + "    call $__fern_map_iter\n";
-            }
-        } else if (o.kind_tag == 134) {  // mapiter_has_next
-            out = out + "    call $__fern_mapiter_has_next\n";
-        } else if (o.kind_tag == 135) {  // mapiter_key
-            out = out + "    call $__fern_mapiter_key\n";
-        } else if (o.kind_tag == 136) {  // mapiter_value
-            // An 8-byte VALUE column (i64_imm != 0, #5253) reads the 8-byte element
-            // from the value snapshot via $__fern_mapiter_value_w64 (i64 result).
-            // i64/u64 (i64_imm 1) use it directly; f64 (i64_imm 2) reinterprets the
-            // i64 bits back to f64.
-            if (o.i64_imm == 2) {
-                out = out + "    call $__fern_mapiter_value_w64\n    f64.reinterpret_i64\n";
-            } else if (o.i64_imm == 1) {
-                out = out + "    call $__fern_mapiter_value_w64\n";
-            } else {
-                out = out + "    call $__fern_mapiter_value\n";
-            }
-        } else if (o.kind_tag == 137) {  // mapiter_advance
-            // bumps the box's cursor in place; pushes a dummy the statement drops.
-            out = out + "    call $__fern_mapiter_advance\n";
+        } else if (is_map_op_kind(o.kind_tag)) {
+            out = out + emit_map_op_wat(o);
         } else if (o.kind_tag == 181) {  // sleep_ms
             // sleep_ms(ms): block for ms milliseconds, then push a dummy i32 the
             // statement drops (sleep_ms is void). wasm has no sleep syscall, so the
@@ -3928,18 +4055,6 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // $__fern_arr_push accumulates on its un-share path. i64, not i32:
             // it counts bytes, not appends.
             out = out + "    i32.const " + util.i32_to_string(arr_push_copied_addr()) + "\n    i64.load\n";
-        } else if (o.kind_tag == 222) {  // map_hash_seed
-            // core/map's per-process string-hash seed: draw once via
-            // $__fern_random_i32, force it nonzero, cache it at the fixed low
-            // slot. Inline rather than a helper — wasm's structured `if` needs
-            // no label. The self-host's own Map lowers to the $__fern_map_*
-            // runtime and does not consult this; the op exists so core/map's
-            // bodies compile and link.
-            var seed_at: string = util.i32_to_string(map_hash_seed_addr());
-            out = out + "    i32.const " + seed_at + "\n    i32.load\n    i32.eqz\n    if\n";
-            out = out + "    i32.const " + seed_at + "\n    call $__fern_random_i32\n";
-            out = out + "    i32.const 1\n    i32.or\n    i32.store\n    end\n";
-            out = out + "    i32.const " + seed_at + "\n    i32.load\n";
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter — a plain i32 load from the fixed
             // low-memory slot $__fern_arr_push bumps on its un-share path. i32,
@@ -4255,66 +4370,6 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             var kcons: string = "0";
             if ((o.width / 2) % 2 == 1) { kcons = "1"; }
             out = out + "    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    call $__fern_map_set\n";
-        } else if (o.kind_tag == 126) {  // map_len
-            // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
-            out = out + "    i32.load\n";
-        } else if (o.kind_tag == 127) {  // map_get
-            // stack: map, key -> Option box. An 8-byte VALUE (i64_imm != 0, #5253)
-            // dereferences the boxed cell into a 16-byte Option box [tag@0][payload@8]
-            // via $__fern_map_get_w64 — the raw 8 payload bytes serve i64/u64 AND f64
-            // (opt_payload reads them i64.load / f64.load per the Option's V type).
-            // Otherwise the narrow i32-payload path.
-            if (o.i64_imm != 0) {
-                out = out + "    call $__fern_map_get_w64\n";
-            } else {
-                out = out + "    call $__fern_map_get\n";
-            }
-        } else if (o.kind_tag == 128) {  // map_has
-            out = out + "    call $__fern_map_has\n";
-        } else if (o.kind_tag == 130) {  // map_delete
-            // stack: map, k -> $__fern_map_delete -> [map, existed] tuple box
-            // (the wasm helper reads the keykind from the box, so the op's
-            // keykind imm — used by the register backends — is unneeded here).
-            // The tuple-destructure that consumes `.without`'s result reads
-            // element i at offset i*4, matching $__fern_map_delete's box. #2933.
-            out = out + "    call $__fern_map_delete\n";
-        } else if (o.kind_tag == 129) {  // map_get_or
-            // stack: map, k, default -> value. An 8-byte VALUE dereferences the boxed
-            // cell via $__fern_map_get_or_w64 (i64 result). i64/u64 (i64_imm 1) push
-            // an i64 default (lower_i64); f64 (i64_imm 2) has an f64 default,
-            // reinterpreted to i64 in and the i64 result reinterpreted back to f64. #5253.
-            if (o.i64_imm == 2) {
-                out = out + "    i64.reinterpret_f64\n    call $__fern_map_get_or_w64\n    f64.reinterpret_i64\n";
-            } else if (o.i64_imm == 1) {
-                out = out + "    call $__fern_map_get_or_w64\n";
-            } else {
-                out = out + "    call $__fern_map_get_or\n";
-            }
-        } else if (o.kind_tag == 131) {  // map_keys
-            // hash map: snapshot the live keys into a fresh array (probe
-            // order). A STRING column (i32_imm 2, #4353 slice 3) uses the
-            // RETAINING snapshot — each element rc-inc'd on copy — so the
-            // shared post-loop deep release ($__fern_arr_dec_ptr) balances
-            // and the per-loop string-column snapshot no longer leaks.
-            if (o.i32_imm == 2) {
-                out = out + "    call $__fern_map_keys_inc\n";
-            } else {
-                out = out + "    call $__fern_map_keys\n";
-            }
-        } else if (o.kind_tag == 132) {  // map_values
-            // hash map: snapshot the live values into a fresh array (probe order).
-            // An 8-byte VALUE column (i64_imm != 0, #5253) dereferences the boxed
-            // cells into a fresh array via $__fern_map_values_w64 — the raw 8-byte
-            // elements serve i64/u64 (i64[]) AND f64 (f64[]); the consuming arr_get
-            // reads them per the array's element type. Otherwise the narrow path,
-            // with the same string-column retaining split as map_keys.
-            if (o.i64_imm != 0) {
-                out = out + "    call $__fern_map_values_w64\n";
-            } else if (o.i32_imm == 2) {
-                out = out + "    call $__fern_map_values_inc\n";
-            } else {
-                out = out + "    call $__fern_map_values\n";
-            }
         } else if (o.kind_tag == 138) {  // struct_make
             // nf field values on the stack (field nf-1 on top, decl order). Box =
             // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
