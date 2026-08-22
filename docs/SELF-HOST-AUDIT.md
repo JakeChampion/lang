@@ -351,8 +351,26 @@ findings. Ranked by leverage.
     decision, not a mechanical change. Its order is pinned in the sequence gate
     either way.
 
-    Probing `slit_diags` for that gate turned up a **live divergence nothing
-    else can see**: for `Out { bad2: In { bad1: 1 } }` the self-host reports
+    Probing collectors for that gate has turned up **three divergences nothing
+    else can see**, all of them same-code-set differences in COUNT. The
+    nested-lambda E049 gap was a real bug and is fixed (#7363). The other two
+    are pinned and open:
+
+    - `e044_expr` **under-reports**. For a lambda nested in a lambda where the
+      inner one captures an unsupported-typed variable, the Go checker reports
+      E044 twice (inner directly, outer transitively) and the self-host reports
+      once. Same root cause family as the E049 gap: `e044_stmts` walks only the
+      enclosing function's statements and `e044_expr` prunes at the outer
+      lambda, so the inner is never reached. The prune's comment worries about
+      double-reporting the SAME lambda; reaching the inner one yields two
+      DIFFERENT lambdas, which is what Go does. NOT a mechanical fix, which is
+      why it is recorded rather than done: `e044_lambda_check` reports at the
+      STATEMENT position against a suspects/labels list computed by
+      `e044_stmts` for the enclosing scope, so reaching a nested lambda needs a
+      decision about reusing those suspects minus accumulated param shadowing
+      versus recomputing them for the inner scope, and that choice changes
+      which diagnostics appear.
+    - `slit_diags` **over-reports**: for `Out { bad2: In { bad1: 1 } }` the self-host reports
     four diagnostics (the inner literal's unknown and missing fields as well as
     the outer's) where the Go checker reports two, having stopped descending
     once the outer field name was unknown. Both sides give the code SET
