@@ -52,14 +52,23 @@ Bounds      = Bound { '+' Bound } ;
 Bound       = QualName [ TypeArgs ] ;
 
 ParamList   = Param { ',' Param } [ ',' ] ;
-Param       = TupleParam | NamedParam ;
+Param       = PatternParam | NamedParam ;
 NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
             | IDENT [ ':' Type ] [ '=' Expr ]
             ;
-# A tuple parameter binds by position, and every position is a name, a `_`
-# discard, or a nested list — the same shape the `let` destructure takes,
-# because both are irrefutable binding sites the one parser serves.
-TupleParam  = DestructureList ':' Type ;
+# A pattern parameter binds by shape instead of by name: a tuple, whose every
+# position is a name, a `_` discard, or a nested list — the same shape the
+# `let` destructure takes, because both are irrefutable binding sites the one
+# parser serves — or a struct pattern, with the same field spellings a match
+# arm uses. `w @ <pattern>` names the whole value alongside the fields.
+#
+# A parameter has no miss branch, so only the two always-matching shapes are
+# derivable here. The parser still READS the full pattern grammar at this site
+# and then rejects a refutable one by name ("an enum variant pattern can fail
+# to match"), which is a better answer than the stuck-parse a narrower parser
+# would give.
+PatternParam
+            = [ IDENT '@' ] ( DestructureList | StructPattern ) ':' Type ;
 DestructureList
             = '(' DestructurePos { ',' DestructurePos } [ ',' ] ')' ;
 DestructurePos
@@ -330,7 +339,7 @@ LambdaParams
 # reached — see `looksLikeArrowLambda` / `firstParamLooksTyped`. So
 # `(x) => x + 1` and `(x, y) => x` are both P001, and an empty parameter
 # list needs no annotation because `()` is already unambiguous.
-LambdaParam = TupleParam | IDENT ':' Type ;
+LambdaParam = PatternParam | IDENT ':' Type ;
 
 ParenOrTuple
             = '(' Expr { ',' Expr } [ ',' ] ')' ;
