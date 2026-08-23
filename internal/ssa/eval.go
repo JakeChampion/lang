@@ -157,6 +157,23 @@ func evalWith(funcs map[string]*Func, table []string, h *heap, f *Func, args ...
 	strLen := map[int32]int{}
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
+			// ResolveWidths stamps Width 64 on every Addr-marked op, and mask()
+			// below narrows anything that is not 64 to its low 32 bits. So an
+			// address-carrying op at another width means ResolveWidths never ran
+			// on this function, and evaluating it would truncate every address
+			// the function computes.
+			//
+			// Nothing else can catch that. The model heap starts at address 8
+			// and grows by bumping, so no address it hands out has a bit above
+			// 31 set and its bounds check never fires — while the real arenas
+			// are based at 0x4_0000_0000, where the mask would destroy every
+			// pointer (#7406). A silent wrong answer, in the one place whose
+			// job is to be the oracle.
+			if op.Addr && op.Width != 64 {
+				return 0, 0, fmt.Errorf("Eval: %s in %q carries an address at width %d, "+
+					"not 64 — ResolveWidths has not run on this function, and evaluating "+
+					"it would truncate every address to 32 bits", op.Kind, f.Name, op.Width)
+			}
 			if op.Kind == OpConstString && op.Result.IsValid() {
 				strLen[op.Result.ID] = len(op.Str)
 			}
