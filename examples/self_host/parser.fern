@@ -15581,7 +15581,13 @@ pub function dyn_trait_set(ty: string): string[] {
 // receiver whose provider for one of the dyn's traits was interposed must match
 // THAT definition, and its bare namesake — a different trait's method — must
 // not answer for it.
+//
+// An ASSOCIATED function is never an arm: finalize_impl_method gives it the
+// impl type as its receiver_type but leaves receiver_name empty, so matching on
+// the name alone called it with the dyn value prepended as an argument it does
+// not have (#7398).
 pub function dyn_arm_matches(fd: FuncDecl, traits: string[], method: string, funcs: FuncDecl[]): boolean {
+    if (fd.receiver_name.len() == 0) { return false; }
     var ti: i32 = 0;
     while (ti < traits.len()) {
         if (fd.name == traits[ti] + "." + method) { return true; }
@@ -15606,7 +15612,7 @@ pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: str
     var i: i32 = 0;
     while (i < funcs.len()) {
         var fd: FuncDecl = funcs[i];
-        if (fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == recv_type
+        if (util.base_type_name(fd.receiver_type) == recv_type
                 && dyn_arm_matches(fd, traits, method, funcs)) {
             return fd.name;
         }

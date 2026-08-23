@@ -450,6 +450,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// cleanly.
 		{"dyn-ambiguous-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m();\n}\n", []string{"E062"}},
 		{"dyn-multi-trait-dispatch-ok", "trait A { function m(self: Self): i32; }\ntrait B { function n(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function n(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m() + d.n();\n}\n", nil},
+		// E021 (#7398): an ASSOCIATED function — a trait requirement with no
+		// `self` receiver — reached through a `dyn` value. Nothing can
+		// dispatch it, so both checkers must reject the CALL. Native accepted
+		// it and left the backends to fail with a positionless internal `ir:`
+		// message; the self-host emitted a dispatch that answered with the
+		// wrong number. The `self`-taking twin must stay clean, so the rule
+		// cannot widen into ordinary dyn dispatch.
+		{"dyn-assoc-fn-call", "struct Box { v: i32 }\ntrait Mk { function make(own b: Box): i32; }\nstruct P { v: i32 }\nimpl Mk for P { function make(own b: Box): i32 { return b.v; } }\nfunction main(): i32 {\n    var d: dyn Mk = P { v: 0 };\n    return d.make(Box { v: 3 });\n}\n", []string{"E021"}},
+		{"dyn-self-method-call-ok", "struct Box { v: i32 }\ntrait Mk { function make(self: Self, b: Box): i32; }\nstruct P { v: i32 }\nimpl Mk for P { function make(self: Self, b: Box): i32 { return b.v; } }\nfunction main(): i32 {\n    var d: dyn Mk = P { v: 0 };\n    return d.make(Box { v: 3 });\n}\n", nil},
 		// The other side of that relaxation: the SAME trait implemented twice
 		// for one type is still a redeclaration, not a second provider, so
 		// E006 must keep firing. (Two inherent declarations are covered by

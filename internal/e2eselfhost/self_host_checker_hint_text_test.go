@@ -223,6 +223,20 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 		spelling: "call it as T.show(...)",
 	},
 	{
+		// The dyn twin of the row above: a receiver-less requirement reached
+		// through a value that has erased its concrete type. The advice is
+		// the only thing that gets the reader out, so the two compilers
+		// must give the same one.
+		name: "E021 associated function called through dyn",
+		src: `struct Box { v: i32 }
+trait Mk { function make(own b: Box): i32; }
+struct P { v: i32 }
+impl Mk for P { function make(own b: Box): i32 { return b.v; } }
+function main(): i32 { var d: dyn Mk = P { v: 0 }; return d.make(Box { v: 3 }); }`,
+		code:     "E021",
+		spelling: "call it on a concrete type",
+	},
+	{
 		name: "E021 receiver type not a valid receiver",
 		src: `function (x: bool) foo(): i32 { return 0; }
 function main(): i32 { return 0; }`,

@@ -1,0 +1,20 @@
+// A trait ASSOCIATED function — one with no `self` receiver — cannot be
+// called through a `dyn` value: there is no receiver to dispatch on, it gets
+// no vtable slot, and the concrete type such a call would have to name is
+// exactly what the `dyn` erased. The front end must say so.
+//
+// Accepting it produced no code and no answer anyone could trust: the
+// backends failed with a positionless internal `ir:` message, and the
+// self-hosted compiler emitted a dispatch that called `make` with the dyn
+// value prepended as an argument it does not take, silently returning the
+// wrong number.
+struct Box { v: i32 }
+trait Mk { function make(own b: Box): i32; }
+struct P { v: i32 }
+impl Mk for P { function make(own b: Box): i32 { return b.v; } }
+
+function twice(own m: dyn Mk, b1: Box, b2: Box): i32 { return m.make(b1) + m.make(b2); }
+
+function main(): i32 {
+    return twice(P { v: 0 }, Box { v: 3 }, Box { v: 4 });
+}

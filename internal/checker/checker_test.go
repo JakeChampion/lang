@@ -5303,34 +5303,48 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 	}
 }
 
-// TestDynAssocFnOwnArgIsNotAnOwnReceiver pins that an `own` on a trait
-// ASSOCIATED function's first ARGUMENT is not mistaken for an `own` receiver.
-// methodConsumesReceiver / dynMethodConsumes answered "does this call consume
-// the receiver?" with Params[0].Own, which for an associated function reads a
-// real argument's flag — so a second call on the same `own` dyn value was
-// rejected as a use-after-move that never happened.
-func TestDynAssocFnOwnArgIsNotAnOwnReceiver(t *testing.T) {
-	// The associated function's `own` is on `b`, not on a receiver, so `m`
-	// survives the first call and the second is legal.
-	ok := `struct Box { v: i32 }
+// TestDynAssocFnCallIsRejected pins that calling a trait ASSOCIATED function
+// (no `self` receiver) through a `dyn` value is an E021 at the call site.
+// Nothing can dispatch it — an associated function gets no vtable slot, and
+// every lowering consumer skips it, so the checker accepting the call left
+// native emitting an internal `ir:` error and the self-host silently
+// answering 0 (#7398).
+//
+// It also pins what must NOT be reported instead: an `own` on the associated
+// function's first ARGUMENT is not an `own` receiver, so the second call is
+// not a use-after-move (traitSelfIsOwn's `!m.Assoc`).
+func TestDynAssocFnCallIsRejected(t *testing.T) {
+	assoc := `struct Box { v: i32 }
 trait Mk { function make(own b: Box): i32; }
 struct P { v: i32 }
 impl Mk for P { function make(own b: Box): i32 { return b.v; } }
 function twice(own m: dyn Mk, b1: Box, b2: Box): i32 { return m.make(b1) + m.make(b2); }
 function main(): i32 { return 0; }`
-	if err := checkSource(t, ok); err != nil {
-		t.Errorf("own dyn receiver + assoc fn with an own argument: want no error, got %v", err)
+	err := checkSource(t, assoc)
+	if err == nil {
+		t.Fatalf("assoc fn called through dyn: want an error, got none")
+	}
+	if !hasCode(err, "E021") {
+		t.Errorf("assoc fn called through dyn: want E021, got %v", err)
+	}
+	for _, want := range []string{`"make" is an associated function of trait Mk`, "dyn Mk"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("assoc fn called through dyn: want the message to contain %q, got %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "after it was consumed") {
+		t.Errorf("assoc fn's `own` argument read as an `own` receiver: got a use-after-move, %v", err)
 	}
 
 	// Control: a genuine `own self` method IS consuming, so using the
-	// receiver twice must still be E050. This is what stops the fix above
-	// from being "never report a consumed dyn receiver".
+	// receiver twice is still E050 — the rejection above must not become
+	// "never report a consumed dyn receiver".
 	consuming := `trait Mk { function take(own self: Self): i32; }
 struct P { v: i32 }
 impl Mk for P { function take(own self: Self): i32 { return 1; } }
 function twice(own m: dyn Mk): i32 { return m.take() + m.take(); }
 function main(): i32 { return 0; }`
-	err := checkSource(t, consuming)
+	err = checkSource(t, consuming)
 	if err == nil || !strings.Contains(err.Error(), "after it was consumed") {
 		t.Errorf("own self method used twice: want the E050 use-after-move, got %v", err)
 	}
@@ -5411,35 +5425,41 @@ function main(): i32 { return 42; }`,
 	}
 }
 
-// TestDynMethodCallNoSelfParamNoPanic guards against a checker crash on a
-// `dyn Trait` method call where the trait method signature has no leading
-// `self` param. checkDynMethodCall unconditionally sliced `tm.Params[1:]` to
-// "drop the self receiver", which panicked (`slice bounds out of range [1:0]`)
-// on the common `function area(): i32;` form and silently dropped the first
-// real argument of a method that had params but no explicit self. The call must
-// now type-check (resolving the no-arg method) rather than panic.
-func TestDynMethodCallNoSelfParamNoPanic(t *testing.T) {
-	// No explicit self in the trait method; calling it through `dyn` must not
-	// panic. (Whether the bare receiver method conforms is a separate, cleanly
-	// reported concern; here we only require the checker to survive.)
-	src := `trait Sh { function area(): i32; }
+// TestDynMethodCallNoSelfParamIsRejected covers a `dyn Trait` call whose trait
+// signature has no leading `self` param — `function area(): i32;`. That is an
+// ASSOCIATED function, so the call is the E021 of TestDynAssocFnCallIsRejected
+// whether or not it takes arguments, and both spellings are rejected with a
+// source position instead of reaching a lowering that has no slot for them.
+func TestDynMethodCallNoSelfParamIsRejected(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{
+			name: "no-arg",
+			src: `trait Sh { function area(): i32; }
 struct Sq { s: i32 }
 function (x: Sq) area(): i32 { return x.s * x.s; }
 function via(sh: dyn Sh): i32 { return sh.area(); }
-function main(): i32 { return 0; }`
-	// Must return normally (nil or a diagnostic) — the bug made Check panic.
-	_ = checkSource(t, src)
-
-	// A trait method WITH a param but no explicit self: the call must see the
-	// real argument count (the old `[1:]` dropped it, reporting "0 arguments").
-	srcParam := `trait Sh { function scaled(f: i32): i32; }
+function main(): i32 { return 0; }`,
+			want: `"area" is an associated function of trait Sh`,
+		},
+		{
+			name: "with-arg",
+			src: `trait Sh { function scaled(f: i32): i32; }
 struct Sq { s: i32 }
 function (x: Sq) scaled(f: i32): i32 { return x.s * f; }
-function via(sh: dyn Sh): i32 { return sh.scaled(); }
-function main(): i32 { return 0; }`
-	err := checkSource(t, srcParam)
-	if err == nil || !strings.Contains(err.Error(), "expects 1 argument") {
-		t.Errorf("no-self dyn method with a param: want a 1-argument arity error, got %v", err)
+function via(sh: dyn Sh): i32 { return sh.scaled(1); }
+function main(): i32 { return 0; }`,
+			want: `"scaled" is an associated function of trait Sh`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, tc.src)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want an error containing %q, got %v", tc.want, err)
+			}
+			if !hasCode(err, "E021") {
+				t.Errorf("want E021, got %v", err)
+			}
+		})
 	}
 }
 

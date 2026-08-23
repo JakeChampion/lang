@@ -3690,6 +3690,15 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 		c.errfCode(fa.FieldPos, "E021", "no method %q on `%s`", fa.Field, dt.String())
 		return nil
 	}
+	// An associated function has no receiver to dispatch on, so it gets no
+	// vtable slot (traitVtableSlots skips it) and the concrete type a call
+	// would name is exactly what the `dyn` erased.
+	if tm.Assoc {
+		c.errfCode(fa.FieldPos, "E021",
+			"%q is an associated function of trait %s, not a method; it has no `self` receiver, so it cannot be called through a `%s` value — call it on a concrete type",
+			fa.Field, demangle(ownerTrait), dt.String())
+		return nil
+	}
 	// Pin the owner trait's generic type parameters to the dyn object's
 	// arguments before reading the signature: `dyn Container[i32]` makes
 	// `get(): T` read as `get(): i32`. Self is still substituted to the
@@ -8978,11 +8987,8 @@ func (c *checker) dynMethodConsumes(trait, field string) bool {
 }
 
 // traitSelfIsOwn reports whether trait signature `m` takes its RECEIVER by
-// `own`. An associated function has no receiver, so its first parameter is a
-// real argument: reading Params[0].Own there answered a different question and
-// made `own b: Box` on `trait Mk { function make(own b: Box): i32; }` look like
-// a consuming receiver, so a second call on the same `own` dyn value was
-// rejected as E050 use-after-move.
+// `own`. An associated function has no receiver, so its Params[0].Own is a
+// real argument's flag and answers a different question.
 func traitSelfIsOwn(m ast.TraitMethod) bool {
 	return !m.Assoc && len(m.Params) > 0 && m.Params[0].Own
 }

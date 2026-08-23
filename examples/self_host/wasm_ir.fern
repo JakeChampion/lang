@@ -3505,9 +3505,10 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: pa
             }
             dfi = dfi + 1;
         }
-        if (drt == "i64") { parts = parts.append("    i64.const 0\n"); }
-        else if (drt == "f64") { parts = parts.append("    f64.const 0\n"); }
-        else { parts = parts.append("    i32.const 0\n"); }
+        // No arm matched. Unreachable for a well-typed dyn value, so trap
+        // (wasmtime surfaces it as exit 134) rather than answer 0. `unreachable`
+        // is stack-polymorphic, so it satisfies the arms' `(result drt)`.
+        parts = parts.append("    unreachable\n");
         var de: i32 = 0;
         while (de < nimpl) { parts = parts.append("    end\n"); de = de + 1; }
     return util.str_join_chunks(parts);
