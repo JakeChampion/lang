@@ -412,6 +412,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"derive-u8-field-broken", "trait Debug { function to_debug(self: Self): string; }\n@derive(Debug)\nstruct Foo { b: u8 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"derive-char-field-broken", "trait Debug { function to_debug(self: Self): string; }\n@derive(Debug)\nstruct Foo { c: char }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A type PARAMETER is a type variable inside its own function, whatever
+		// declared type shares its name. Every module is merged into one program
+		// before checking, so a user `struct T` — or an enum variant `T`, which
+		// registers as one — otherwise captured the `T` of every stdlib generic:
+		// `a` bound to that struct and `b.cmp(a)` read as a field of it, plus an
+		// E038 per argument. Native scopes the lookup (#6118). This is why the
+		// build gate could not enforce E043 (#7380), so the row is the shape the
+		// gate rests on, not a spelling of the rule.
+		{"type-param-shadowed-by-struct-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct T { z: i32 }\nstruct Q { n: i32 }\nimpl Ord for Q { function cmp(self: Q, other: Q): i32 { return self.n - other.n; } }\nfunction smaller[T: Ord](a: T, b: T): T { if (b.cmp(a) < 0) { return b; } return a; }\nfunction main(): i32 { var x: Q = Q { n: 1 }; var y: Q = Q { n: 2 }; var t: T = T { z: 0 }; return smaller(x, y).n + t.z; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 (#7221): a trait requirement with no leading `self` is an
 		// ASSOCIATED function — `T.show()` — and calling it through a VALUE
@@ -606,6 +615,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// so any `x.m(...)` on one is a field access on a non-struct. Valid
 		// string / array / struct method calls stay clean (no false positive).
 		{"method-on-i32", "function main(): i32 { var x: i32 = 3; x.foo(); return 0; }\n", []string{"E043"}},
+		// A LITERAL receiver, which reaches the arm through check_expr rather
+		// than through a binding's declared type. `to_string` is std/i32's and
+		// the program does not import it (#7380).
+		{"method-on-i32-literal-unimported", "function main(): i32 { var t: string = 7.to_string(); return t.len(); }\n", []string{"E043"}},
 		{"method-on-f64", "function main(): i32 { var f: f64 = 1.0; f.foo(); return 0; }\n", []string{"E043"}},
 		{"method-on-string-ok", "function main(): i32 { var s: string = \"a\"; return s.len(); }\n", nil},
 		{"method-on-i32-user-method-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { var x: i32 = 21; return x.twice(); }\n", nil},
