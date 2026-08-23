@@ -6094,6 +6094,40 @@ func TestWASMReadFileBytesNotFound(t *testing.T) {
 	}
 }
 
+// read_file validates UTF-8 at the boundary (D9, #5714) — the wasm
+// mirror of TestX86_64ReadFileInvalidUtf8 (which carries the full
+// strict-scan matrix).
+func TestWASMReadFileInvalidUtf8(t *testing.T) {
+	src := `function main(): i32 {
+		match (read_file("valid.txt")) {
+			Ok(s) => { if (s.len() != 15) { write("FAIL valid-len"); return 10; } },
+			Err(_) => { write("FAIL valid-err"); return 11; }
+		}
+		match (read_file("bad.bin")) {
+			Ok(_) => { write("FAIL accepted"); return 1; },
+			Err(e) => {
+				match (e) {
+					InvalidUtf8(p) => { if (p != "bad.bin") { write("FAIL path"); return 2; } },
+					_ => { write("FAIL variant"); return 3; }
+				}
+			}
+		}
+		match (read_file_bytes("bad.bin")) {
+			Ok(b) => { if (b.len() != 2) { write("FAIL bytes-len"); return 4; } },
+			Err(_) => { write("FAIL bytes-err"); return 5; }
+		}
+		write("invalid-utf8-ok");
+		return 0;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, map[string]string{
+		"valid.txt": "h\xc3\xa9llo \xe2\x82\xac \xf0\x9f\x99\x82",
+		"bad.bin":   "\xff\xfe",
+	})
+	if !strings.Contains(stdout, "invalid-utf8-ok") {
+		t.Errorf("expected invalid-utf8-ok; got %q", stdout)
+	}
+}
+
 // `write_file` truncates the target and writes `content`. We
 // verify by reading the file back from the host side after
 // the program returns.

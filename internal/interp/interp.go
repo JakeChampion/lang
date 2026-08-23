@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/tty"
@@ -1748,6 +1749,15 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 	data, err := os.ReadFile(string(path))
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	// D9 (#5714): a `string` is well-formed UTF-8, so the text read
+	// validates at the boundary. Go's utf8.Valid is exactly the
+	// strict scan std/utf8.is_valid_utf8 performs (overlongs,
+	// surrogates, >U+10FFFF and truncation all rejected). Raw reads
+	// go through read_file_bytes.
+	if !utf8.Valid(data) {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
+			Payloads: []Value{path}}), nil
 	}
 	return resultOk(String(string(data))), nil
 }

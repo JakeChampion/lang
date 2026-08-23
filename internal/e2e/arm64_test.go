@@ -11061,6 +11061,40 @@ func TestArm64ReadFileBytesNotFound(t *testing.T) {
 	}
 }
 
+// read_file validates UTF-8 at the boundary (D9, #5714) — the arm64
+// mirror of TestX86_64ReadFileInvalidUtf8 (which carries the full
+// strict-scan matrix; this leg pins the reject + valid-multibyte
+// accept + raw-sibling paths).
+func TestArm64ReadFileInvalidUtf8(t *testing.T) {
+	src := `function main(): i32 {
+    match (read_file("valid.txt")) {
+        Ok(s) => { if (s.len() != 15) { return 10; } },
+        Err(_) => { return 11; }
+    }
+    match (read_file("bad.bin")) {
+        Ok(_) => { return 1; },
+        Err(e) => {
+            match (e) {
+                InvalidUtf8(p) => { if (p != "bad.bin") { return 2; } },
+                _ => { return 3; }
+            }
+        }
+    }
+    match (read_file_bytes("bad.bin")) {
+        Ok(b) => { if (b.len() != 2) { return 4; } },
+        Err(_) => { return 5; }
+    }
+    return 0;
+}`
+	_, code, _ := compileArm64InDir(t, src, map[string]string{
+		"valid.txt": "h\xc3\xa9llo \xe2\x82\xac \xf0\x9f\x99\x82",
+		"bad.bin":   "\xff\xfe",
+	})
+	if code != 0 {
+		t.Errorf("got %d, want 0 (1x=valid-file, 1-3=reject path, 4-5=bytes sibling)", code)
+	}
+}
+
 // write_file truncates the target and writes `content`. Verify
 // by reading the file back from the host side after the program
 // returns.

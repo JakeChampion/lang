@@ -1952,6 +1952,55 @@ func TestX86_64ReadFileBytesNotFound(t *testing.T) {
 	}
 }
 
+// read_file validates UTF-8 at the boundary (D9, #5714): malformed
+// content surfaces as Err(InvalidUtf8(path)) with the caller's path
+// in the payload, while read_file_bytes still hands the same bytes
+// back raw. The strict-scan matrix mirrors std/utf8.is_valid_utf8:
+// stray continuation, overlong, surrogate, >U+10FFFF, truncation.
+func TestX86_64ReadFileInvalidUtf8(t *testing.T) {
+	src := `function bad(path: string): i32 {
+    match (read_file(path)) {
+        Ok(_) => { return 1; },
+        Err(e) => {
+            match (e) {
+                InvalidUtf8(p) => { if (p != path) { return 2; } return 0; },
+                _ => { return 3; }
+            }
+        }
+    }
+    return 4;
+}
+function main(): i32 {
+    match (read_file("valid.txt")) {
+        Ok(s) => { if (s.len() != 15) { return 10; } },
+        Err(_) => { return 11; }
+    }
+    if (bad("bad.bin") != 0) { return 20 + bad("bad.bin"); }
+    if (bad("overlong.bin") != 0) { return 30 + bad("overlong.bin"); }
+    if (bad("surrogate.bin") != 0) { return 40 + bad("surrogate.bin"); }
+    if (bad("toobig.bin") != 0) { return 50 + bad("toobig.bin"); }
+    if (bad("truncated.bin") != 0) { return 60 + bad("truncated.bin"); }
+    if (bad("stray.bin") != 0) { return 70 + bad("stray.bin"); }
+    match (read_file_bytes("bad.bin")) {
+        Ok(b) => { if (b.len() != 2) { return 80; } },
+        Err(_) => { return 81; }
+    }
+    return 0;
+}`
+	_, code, _ := compileX86_64InDir(t, src, map[string]string{
+		"valid.txt":     "h\xc3\xa9llo \xe2\x82\xac \xf0\x9f\x99\x82", // 15 bytes of valid multibyte UTF-8
+		"bad.bin":       "\xff\xfe",
+		"overlong.bin":  "\xc0\x80",
+		"surrogate.bin": "\xed\xa0\x80",
+		"toobig.bin":    "\xf4\x90\x80\x80",
+		"truncated.bin": "\xe2\x82",
+		"stray.bin":     "a\x80b",
+	})
+	if code != 0 {
+		t.Errorf("got %d, want 0 (1x=valid-file, 2x-7x=vector accepted or misclassified, 8x=bytes sibling)", code)
+	}
+}
+
 // write_file truncates the target and writes `content`. Verify
 // by reading the file back from the host side after the program
 // returns.
