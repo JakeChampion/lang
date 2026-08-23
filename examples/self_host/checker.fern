@@ -7798,6 +7798,49 @@ function vref_stmts(stmts: parser.Stmt[], s: Scope, ambig: string[]): util.Diag[
 // condition isn't boolean. It reuses the same predicates check_stmt uses,
 // so it fires exactly where the checker already flags the problem (no new
 // false positives); unknown types are skipped.
+// assign_stmt_own_lambdas checks the statements inside any lambda sitting in
+// `st`'s own expressions. stmts_assign_diags walks STATEMENTS and never entered
+// an expression, so nothing it reports was reported inside a lambda body —
+// E001, E003, E008 and E024, which is the largest instance of that class the
+// corpus sweep found (docs/SELF-HOST-AUDIT.md).
+//
+// Unlike the four collectors before it this one is SCOPE-THREADED, so the body
+// cannot simply be handed back: a lambda body sees the enclosing scope plus its
+// own params, and a `return` inside it returns from the LAMBDA. Both are built
+// exactly as call_diags' ExprLambda arm builds them, so the two passes agree on
+// what a lambda body's scope is rather than each inventing one.
+//
+// `cur` arrives as a PARAMETER because the caller reassigns its own per
+// statement; pruned at ExprLambda because the recursive call already covers the
+// whole body, nested lambdas included.
+function assign_stmt_own_lambdas(st: parser.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprLambda(lm) => {
+        var lsc: Scope = cur;
+        for param in lm.params {
+          lsc = lsc.bind(param.name, type_from_name_with_structs_unions(param.type_name, cur.structs, cur.unions));
+        }
+        if (lm.ret_type.len() > 0) {
+          lsc = lsc.with_ret_type(type_from_name_with_structs_unions(lm.ret_type, cur.structs, cur.unions));
+        } else {
+          lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
+        }
+        return util.append_diags(acc, stmts_assign_diags(lm.body, lsc, unions));
+      },
+      _ => { return acc; }
+    }
+  }
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+}
+
 function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
   var out: util.Diag[] = [];
   var cur: Scope = s;
@@ -7902,6 +7945,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
       },
       _ => {}
     }
+    out = util.append_diags(out, assign_stmt_own_lambdas(st, cur, unions));
     cur = check_stmt(st, cur).scope;
     // Bind a `var (a, b) = …` destructure's split names for subsequent
     // assignments to `a` / `b` (only for comma names — rebinding a normal
