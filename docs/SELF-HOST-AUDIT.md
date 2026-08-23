@@ -367,6 +367,46 @@ findings. Ranked by leverage.
     ordinary type-check traversal and therefore reaches every node by
     construction.
 
+    **The lambda-body hole is a CLASS, and it is WIDE OPEN.** A pass that walks
+    statements and never enters an expression cannot see anything written
+    inside a lambda body — and since a nested named function parses as a
+    `StmtVar` holding an `ExprLambda`, that means inside any local function
+    too. Five collectors have been fixed one at a time: `e049_expr_lambdas`
+    (#7363), `e060_e062_stmts` (#7387), `e053` (#7390), `match_diags` (#7395),
+    `dupvar_diags` (#7410).
+
+    **Sweep, do not guess — and size the sweep before believing it.** Eight
+    hand-picked triggers agreed on seven and disagreed on one, which reads like
+    a nearly-exhausted class. Re-running the same transform over the whole
+    existing corpus says the opposite: take all 655 applicable rows of
+    `self_host_checker_codes_test.go`, move `main`'s body into a lambda, and
+    diff the two checkers.
+
+    | | rows |
+    |---|---:|
+    | applied | 655 |
+    | agree | 618 |
+    | **differ — self-host SILENT in every case** | **37** |
+
+    | code | rows | emitting pass |
+    |---|---:|---|
+    | E003 | ~18 | `stmts_assign_diags` |
+    | E049 | 7 | the `cap-assign-*` family |
+    | E051 | 3 | `ow_stmts` |
+    | E008 | 2 | condition checks |
+    | E001 / E024 / E044 | 1 each | `vref_stmts` (scope-threaded) / tuple destructure / `e044_stmts` |
+
+    Spot-checked rather than trusted: `var s: string = 1` is E003 in both
+    compilers at top level and native-only inside a lambda. The eight triggers
+    happened to land almost entirely on passes that DO descend, which is why a
+    small sample read as a closed class. `stmts_assign_diags` is the same
+    walks-statements-never-enters-an-expression shape as the five above; the
+    E001 row lands on `vref_stmts`, which this row already lists as blocked for
+    scope-threading, so that one is not a transcription either.
+
+    The corpus-wide sweep is the tool for this row: it is cheap, it is already
+    written, and it turns "is this class closed?" from a judgement into a count.
+
     **A collector can be fold-SHAPED and still be wrong to fold, because the
     spine's visit ORDER is not the consumer's.** `match_diags` was the strongest
     remaining candidate — append-only accumulator, node-local `seen`, no scope
