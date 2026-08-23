@@ -181,9 +181,10 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         exhausted)` and exits 125 once the cursor passes the limit. Loads/stores
         use `[base + disp]` with `movzx`/`movsx` + `byte/word ptr` for sub-word
         and the value sub-register for narrow stores. The heap section + init
-        are emitted only when a program uses memory ops. The arena ends at
-        `0x8000_0000`: `maskFix` sign-extends an i32-width address, so a wider
-        one would hand out truncated pointers before the guard could fire
+        are emitted only when a program uses memory ops. The arena is 16 GiB
+        based at 16 GiB, so every address it hands out has bits above 31 set and
+        any arithmetic that narrows a pointer is wrong from the first
+        allocation; `ssa.ResolveWidths` is what keeps the address path 64-bit
         (#7329).
         Validated natively: full-word round-trip, sub-word zero/sign-extension,
         a byte array, and a heap **shared across a call** (callee allocs, caller

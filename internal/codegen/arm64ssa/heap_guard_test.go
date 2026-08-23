@@ -6,13 +6,15 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// The arena has to stay inside the address range the backend's arithmetic can
-// carry: an i32-width add of a base and an offset is sign-extended back through
-// maskFix, so an object at or above 0x80000000 is reached through a truncated,
-// negative pointer. It also has to load as movz + lsl, since _start materialises
-// its base and size without a literal pool.
+// The arena is 16 GiB — the native backend's size — based high enough that
+// every address it hands out has bits above 31 set, so any arithmetic that
+// narrows a pointer to 32 bits is wrong for the very first allocation instead
+// of only past 2 GiB (#7329). It also has to load as movz + lsl, since _start
+// materialises its base and size without a literal pool.
 func TestHeapReservationFitsTheAddressRange(t *testing.T) {
 	if got := int64(heapUnits) << heapShift; got != heapBytes {
 		t.Fatalf("heapUnits<<heapShift = %d, want heapBytes = %d", got, heapBytes)
@@ -20,14 +22,36 @@ func TestHeapReservationFitsTheAddressRange(t *testing.T) {
 	if heapUnits > 0xffff {
 		t.Errorf("heapUnits = %d does not fit a movz immediate", heapUnits)
 	}
-	end := int64(1)<<heapBaseShift + heapBytes
-	if end > 0x80000000 {
-		t.Errorf("arena ends at %#x, past the %#x ceiling this backend's i32-width "+
-			"address arithmetic can address", end, 0x80000000)
+	if want := int64(16) << 30; heapBytes != want {
+		t.Errorf("arena is %d bytes, want %d (the native backend's 16 GiB)", heapBytes, want)
+	}
+	if base := int64(1) << heapBaseShift; base <= 0xffffffff {
+		t.Errorf("arena base %#x is inside the low 4 GiB, so a truncated pointer "+
+			"still addresses live memory and the suite stops detecting one", base)
 	}
 	if heapSlackBytes%4096 != 0 || heapSlackBytes == 0 {
 		t.Errorf("heapSlackBytes = %d, want a non-zero whole number of pages",
 			heapSlackBytes)
+	}
+}
+
+// ssa.ResolveWidths decides whether a call result keeps the i32 sign-extend
+// mask by looking the callee up by name, so a helper it has never heard of gets
+// the wrong answer silently — a truncated pointer if the helper returns one, a
+// zero-extended negative i32 if it does not. Neither shows up under a low
+// arena. Every helper this backend emits therefore has to be classified.
+func TestEveryRuntimeHelperResultIsClassified(t *testing.T) {
+	names := make([]string, 0, len(runtimeHelperEmitters))
+	for name := range runtimeHelperEmitters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !ssa.RuntimeHelperResultClassified(name) {
+			t.Errorf("%s: unclassified — add it to runtimeHelperWideResult (pointer / "+
+				"f64 / i64 result) or narrowRuntimeHelpers (void / i32) in internal/ssa/width.go",
+				name)
+		}
 	}
 }
 

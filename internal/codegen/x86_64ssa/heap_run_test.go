@@ -37,15 +37,46 @@ func TestRunAllocsPastSixtyFourKiB(t *testing.T) {
 	runMatchesEval(t, f, 10)
 }
 
+// An address the program COMPUTES, rather than one a load folds into its
+// immediate: five half-gigabyte blocks, each written at both ends through an
+// explicit offset add and read back through another. That add is the op the i32
+// sign-extend mask used to narrow, so before #7329 every one of these stores
+// landed at a truncated negative address and the program died by signal. Only
+// two pages per block are touched, so the run costs address space rather than
+// memory — which is also why it checks the real run against a hand-computed
+// answer rather than against ssa.Eval, whose model heap is a Go slice it would
+// have to materialise whole.
+func TestRunAllocsPastTwoGiB(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	sum := constOp(f, e, 0)
+	for i := 0; i < 5; i++ {
+		p := allocOp(f, e, 512<<20)
+		for _, off := range []int64{0, (512 << 20) - 8} {
+			at := f.AddOp(e, ssa.OpAdd, p, constOp(f, e, off))
+			storeOp(f, e, at, constOp(f, e, int64(i)+1), 0)
+			sum = f.AddOp(e, ssa.OpAdd, sum, loadOp(f, e, at, 0))
+		}
+	}
+	f.SetRet(e, sum)
+
+	code, stderr := runCapturing(t, f, 10)
+	if code != 30 {
+		t.Errorf("exit = %d (stderr %q), want 30 — 2*(1+2+3+4+5); a negative code "+
+			"is a signal death on a truncated address", code, stderr)
+	}
+}
+
 // Exhausting the arena is a diagnostic and the documented status, not a store
-// into unmapped memory: five half-gigabyte blocks ask for more than the
-// reservation holds, so the bump that runs past it aborts. The blocks are never
-// written, so the run costs address space rather than pages.
+// into unmapped memory: thirty-four half-gigabyte blocks ask for more than the
+// 16 GiB reservation holds, so the bump that runs past it aborts. Only each
+// block's rc header is written, so the run costs address space rather than
+// pages.
 func TestRunHeapExhaustionAbortsWithArenaStatus(t *testing.T) {
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()
 	var last ssa.Value
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 34; i++ {
 		last = allocOp(f, e, 512<<20)
 	}
 	f.SetRet(e, last)

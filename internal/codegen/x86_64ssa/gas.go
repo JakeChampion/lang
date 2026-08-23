@@ -54,6 +54,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if _, ok := funcs[entry]; !ok {
 		return "", fmt.Errorf("EmitAsmModule: unknown entry %q", entry)
 	}
+	// Resolve every op's result width across the module before instruction
+	// selection: which results are addresses (and so must never be narrowed to
+	// 32 bits) is a whole-module question, and no caller can be expected to
+	// remember to ask it.
+	ssa.ResolveWidths(funcs)
 	names := make([]string, 0, len(funcs))
 	for name := range funcs {
 		names = append(names, name)
@@ -1030,20 +1035,10 @@ func fConvSeq(in Inst, scratch int) (string, error) {
 
 // Heap symbols + size backing the x86-64 SSA bump allocator: a lazy mmap
 // reservation seeded in _start, mirroring the stack-machine backend's
-// __fern_alloc arena (internal/codegen/x86_64) — same MAP_NORESERVE window at
-// the same hint, same diagnostic and exit status when a bump runs past it.
-// Pages commit only as they are touched, so the window costs nothing until a
-// program grows into it.
-//
-// The window ends at 0x8000_0000 rather than matching the native backend's
-// 16 GiB because this backend's address arithmetic is not 64-bit clean: an
-// i32-width add of a base and an offset is sign-extended back through maskFix
-// (`movsxd`), so an object above 0x7fffffff is addressed through a truncated,
-// negative pointer. That bound is what makes exhaustion REACHABLE: a wider
-// window hands out truncated pointers long before the cursor meets the limit,
-// and a bump site writes its rc header at the new base, so the program dies on
-// that store instead of reporting. Widening the window means fixing the
-// addressing first (#7329).
+// __fern_alloc arena (internal/codegen/x86_64) — same 16 GiB MAP_NORESERVE
+// window, same diagnostic and exit status when a bump runs past it. Pages
+// commit only as they are touched, so the window costs nothing until a program
+// grows into it.
 const (
 	heapPtrSym   = "__ssa_heap_ptr"
 	heapEndSym   = "__ssa_heap_end"
@@ -1051,9 +1046,13 @@ const (
 	heapOOMLabel = ".Lssa_heap_oom"
 	heapOOMMsg   = "__ssa_msg_oom"
 
-	// The reservation: heapBytes at heapHint, ending exactly at 0x8000_0000.
-	heapHint  = 0x10000000
-	heapBytes = 0x80000000 - heapHint // 1.75 GiB
+	// The reservation: heapBytes at heapHint. The hint sits at 16 GiB rather
+	// than low in the address space so that every address handed out has bits
+	// above 31 set — arithmetic that narrows a pointer to 32 bits is then wrong
+	// for the first allocation of the smallest program, instead of being
+	// invisible until a program grows past 2 GiB (#7329).
+	heapHint  = 0x400000000
+	heapBytes = 0x400000000 // 16 GiB
 
 	// The reservation's last page is not handed out: a bump site writes the
 	// object's rc header at the new block's base BEFORE it publishes the cursor
@@ -1063,18 +1062,14 @@ const (
 	heapSlackBytes = 4096
 )
 
-// emitHeapReserve seeds the arena in _start: one lazy anonymous mmap at the same
-// hint and with the same MAP_NORESERVE flags the stack-machine backend's
-// __fern_alloc uses, then the cursor/limit pair the guard compares.
+// emitHeapReserve seeds the arena in _start: one lazy anonymous mmap with the
+// same MAP_NORESERVE flags the stack-machine backend's __fern_alloc uses, then
+// the cursor/limit pair the guard compares.
 //
 // The limit is the reservation's end minus the slack page (see heapSlackBytes).
-// The hint is only a hint: a region the kernel placed elsewhere can sit above
-// the 0x7fffffff line this backend's address arithmetic is limited to, and
-// handing out addresses from it would truncate every pointer. Report that as out
-// of memory rather than miscompiling around it.
 func emitHeapReserve(w func(string, ...any)) {
-	w("\tmov edi, %d", heapHint)
-	w("\tmov esi, %d", heapBytes)
+	w("\tmovabs rdi, %d", heapHint)
+	w("\tmovabs rsi, %d", heapBytes)
 	w("\tmov edx, 3")       // PROT_READ|PROT_WRITE
 	w("\tmov r10d, 0x4022") // MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE
 	w("\tmov r8d, -1")      // fd
@@ -1085,10 +1080,8 @@ func emitHeapReserve(w func(string, ...any)) {
 	w("\tjl %s", heapOOMLabel)
 	w("\tmov [rip + %s], rax", heapPtrSym)
 	w("\tmov rcx, rax")
-	w("\tadd rcx, %d", heapBytes-heapSlackBytes)
-	w("\tmov edx, %d", 0x80000000)
-	w("\tcmp rcx, rdx")
-	w("\tjae %s", heapOOMLabel)
+	w("\tmovabs rdx, %d", heapBytes-heapSlackBytes)
+	w("\tadd rcx, rdx")
 	w("\tmov [rip + %s], rcx", heapEndSym)
 }
 

@@ -99,7 +99,7 @@ function main(): i32 { return scale(3.5) as i32; }`,
 			// The f32 sibling of float_call, and NOT redundant with it: a float
 			// lives in a general register as its f64 bit pattern, so an f32
 			// return whose width is 32 must not be sign-extended from bit 31 at
-			// the call boundary — which is what ssa.AnnotateCallWidths does if it
+			// the call boundary — which is what ssa.ResolveWidths does if it
 			// consults ReturnWidth without ReturnFloat. That keeps the low
 			// mantissa half and drops the sign + exponent, so every f32 crossing a call
 			// arrived as a denormal that reads back as 0 — this returned 0
