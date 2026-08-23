@@ -559,6 +559,34 @@ answer, these are the tools, in the order they are usually reached for:
   to two functions in one file; `printf "%d %d", $esi, $edx` at the same
   breakpoint gives each crossing's oldLen / stride if you want the distribution
   rather than the total.
+- **`fern -append-report FILE.fern`** — the STATIC complement to the two
+  counters above, and the one to reach for first when the question is "which
+  appends in this program copy". It prints one line per `.append` site — the
+  function, source position, receiver, in-place-vs-copy, and the rule that
+  decided — by running the real lowering and reporting what `emitArrayPush`
+  chose, so it cannot disagree with the emitted code. No `-g`, no gdb, no run.
+  Different population from the counters, not a cheaper reading of the same
+  one: this names the sites that copy on EVERY execution because the compiler
+  forced it, which is what a code change can remove; a copy bought by a stray
+  upstream retain at run time is invisible here and is exactly what
+  `__arr_push_shared_count()` is for.
+
+  **The two populations are disjoint at the top of the cost curve, so do not
+  read one as a proxy for the other.** `.github/cliff-baseline.txt` puts 267 MB
+  of its 268 MB on `irlower.LowerState.emit` and `checker.Scope.bind` — and
+  this report calls both of them IN PLACE (`s.ops`, `s.names` / `s.types`,
+  "the container is not read again"). Both readings are right: the compiler
+  forced no copy there, and `__fern_arr_push`'s un-share path copied anyway
+  because the buffer arrived at rc > 1. So a site this report clears is not a
+  site that does not copy, and the bytes gate is where a cost question gets
+  answered. Ranking by this report alone would have aimed work at the sites
+  paying least — the trap `.github/cliff-baseline.txt` and
+  `docs/LOCAL-DEV-LOOP.md` both record two earlier rounds falling into.
+
+  `.with` is deliberately absent: it lowers to a copy-on-write helper that
+  reads the refcount at run time, so it has no compile-time decision to
+  report — and the cliff counters miss it too, so nothing measures a
+  quadratic `.with` today.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see. Under `-sanitize` the same
   counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in

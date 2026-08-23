@@ -753,6 +753,10 @@ type Func struct {
 	// InlineHint carries the source-level `@inline` / `@noinline`
 	// attribute through to the Inline pass (#4412 Rec §14).
 	InlineHint ast.InlineHint
+	// AppendSites records what emitArrayPush decided at each `.append`
+	// in this function, in lowering order. Populated always; read by
+	// the -append-report build mode (#6992).
+	AppendSites []AppendSite
 	// ExternallyReachable marks a function callable from outside this
 	// program: a `-shared -export` symbol on the natives, or an `@export`
 	// world export on wasm. Such a function has a caller no op stream
@@ -18718,25 +18722,86 @@ func (b *builder) curAppendOrder() identOrder {
 	return b.appendOrder
 }
 
-// appendForcesCopy reports whether emitArrayPush takes the #4827
-// forced-copy path for this `__method_Array_push` call: an append whose
-// receiver buffer is still readable after the grow, so the rc==1 in-place
-// mutation would be observable. Two receiver shapes qualify — a
-// non-self-reassign plain-IDENT operand that is reused after (not its last
-// occurrence) and outside the inPlacePushes exemptions (#4849's
-// return-position / borrowed-param self-reassign shapes), and a FIELD place
-// the container can still be read through (#6665, fieldPlaceAppendCopies).
-func (b *builder) appendForcesCopy(n *ast.Call) bool {
+// AppendSite records the in-place-vs-copy decision emitArrayPush made at
+// one `.append` call, for `fern -append-report` (#6992). A copying append
+// reallocates and copies the whole buffer, so one inside a loop is O(n²)
+// bytes while producing the same answer as the O(1) form — under the
+// leak-mode arena the difference surfaces only as an eventual OOM.
+//
+// `.with` has no entry here and cannot have one: it lowers to
+// __fern_arr_cow_inplace, which reads the refcount at run time, so both
+// paths are the same emitted code. `.insert` has no array lowering at all.
+type AppendSite struct {
+	Func string
+	Line int
+	Col  int
+	// Recv is the receiver as written, for matching the site back to
+	// the source line.
+	Recv string
+	// Copies is true when the append reallocates rather than growing in
+	// place.
+	Copies bool
+	// Reason names the branch of appendDecision that decided.
+	Reason string
+}
+
+// appendRecvString spells an append receiver for the report. Only the
+// shapes appendDecision distinguishes need to read back exactly; anything
+// else is a temporary, which the report says in its reason.
+func appendRecvString(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.Ident:
+		return v.Name
+	case *ast.FieldAccess:
+		return appendRecvString(v.Target) + "." + v.Field
+	case *ast.Index:
+		return appendRecvString(v.Array) + "[...]"
+	case *ast.Call:
+		return appendRecvString(v.Callee) + "(...)"
+	}
+	return "<expr>"
+}
+
+// appendDecision reports whether emitArrayPush takes the #4827 forced-copy
+// path for this `__method_Array_push` call — an append whose receiver
+// buffer is still readable after the grow, so the rc==1 in-place mutation
+// would be observable — and which rule decided. Two receiver shapes force
+// the copy: a non-self-reassign plain-IDENT operand that is reused after
+// (not its last occurrence) and outside the inPlacePushes exemptions
+// (#4849's return-position / borrowed-param self-reassign shapes), and a
+// FIELD place the container can still be read through (#6665,
+// fieldPlaceAppendCopies).
+//
+// The reason is what `fern -append-report` prints (#6992), from these
+// branches rather than a second walk, so the report cannot drift from what
+// was emitted. It names the rule, not the aliasing binding: the copy branch
+// knows only that the receiver is read again somewhere later, so a report
+// naming "the binding that forced it" would be inventing one.
+func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 	if ast.Expr(n) == b.selfPushMoveCall {
-		return false
+		return false, "self-reassign move: the only reference is overwritten by the assignment"
 	}
 	if _, ok := n.Args[0].(*ast.FieldAccess); ok {
 		b.curAppendOrder() // refresh appendFieldCopy for the current fn
-		return b.appendFieldCopy[n]
+		if b.appendFieldCopy[n] {
+			return true, "field receiver: the container can still be read through (#6665)"
+		}
+		return false, "field receiver: the container is not read again"
 	}
 	id, ok := n.Args[0].(*ast.Ident)
-	return ok && needsRcIncOnAlias(n.Args[0], b) &&
-		!b.curAppendOrder().isLast(id) && !b.appendInPlaceOK[n]
+	if !ok {
+		return false, "temporary receiver: nothing else holds the buffer"
+	}
+	if !needsRcIncOnAlias(n.Args[0], b) {
+		return false, "unshareable receiver: aliasing it costs no reference"
+	}
+	if b.curAppendOrder().isLast(id) {
+		return false, "receiver's last occurrence: no later read can observe the grow"
+	}
+	if b.appendInPlaceOK[n] {
+		return false, "self-reassign of a borrowed param or a return-position append (#4849)"
+	}
+	return true, "receiver \"" + id.Name + "\" is read again after this append"
 }
 
 func (b *builder) emitArrayPush(n *ast.Call) error {
@@ -18819,7 +18884,15 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	//     accumulated array per append — O(n²) bytes that the leak-mode
 	//     bump arena never reclaims, which blew the per-module emit past
 	//     the arena ceiling (exit 137) and OOM-killed the CI runners.
-	forceCopy := b.appendForcesCopy(n)
+	forceCopy, why := b.appendDecision(n)
+	b.out.AppendSites = append(b.out.AppendSites, AppendSite{
+		Func:   b.out.Name,
+		Line:   n.P.Line,
+		Col:    n.P.Col,
+		Recv:   appendRecvString(n.Args[0]),
+		Copies: forceCopy,
+		Reason: why,
+	})
 	if forceCopy {
 		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
