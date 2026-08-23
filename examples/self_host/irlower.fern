@@ -54914,6 +54914,52 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         }
         head = head + "\n";
     }
+    // lastUses (#4482 — before preciseDrops, native dumpRcPlan's order): for
+    // each free-eligible name, the LAST top-level statement index mentioning
+    // it (ident reads + assign targets — astwalk.collect_idents_stmt, the
+    // walk native's identCounts mirrors). Rendered `name=idx`, name-sorted;
+    // a name the body never mentions is omitted.
+    if (fe.len() > 0) {
+        var lu_names: string[] = [];
+        var lu_idx: i32[] = [];
+        var lsi: i32 = 0;
+        while (lsi < fn.body.len()) {
+            var ments: string[] = astwalk.collect_idents_stmt(fn.body[lsi], []);
+            var mi3: i32 = 0;
+            while (mi3 < ments.len()) {
+                if (util.index_of_str(fe, ments[mi3]) >= 0) {
+                    var at0: i32 = util.index_of_str(lu_names, ments[mi3]);
+                    if (at0 >= 0) { lu_idx = lu_idx.with(at0, lsi); }
+                    else { lu_names = lu_names.append(ments[mi3]); lu_idx = lu_idx.append(lsi); }
+                }
+                mi3 = mi3 + 1;
+            }
+            lsi = lsi + 1;
+        }
+        if (lu_names.len() > 0) {
+            var lu_sorted: string[] = [];
+            var so: i32 = 0;
+            while (so < lu_names.len()) {
+                var at1: i32 = 0;
+                while (at1 < lu_sorted.len() && lu_sorted[at1] < lu_names[so]) { at1 = at1 + 1; }
+                var ns2: string[] = [];
+                var q2: i32 = 0;
+                while (q2 < at1) { ns2 = ns2.append(lu_sorted[q2]); q2 = q2 + 1; }
+                ns2 = ns2.append(lu_names[so]);
+                while (q2 < lu_sorted.len()) { ns2 = ns2.append(lu_sorted[q2]); q2 = q2 + 1; }
+                lu_sorted = ns2;
+                so = so + 1;
+            }
+            head = head + "lastUses: ";
+            var lo: i32 = 0;
+            while (lo < lu_sorted.len()) {
+                if (lo > 0) { head = head + ","; }
+                head = head + lu_sorted[lo] + "=" + util.i32_to_string(lu_idx[util.index_of_str(lu_names, lu_sorted[lo])]);
+                lo = lo + 1;
+            }
+            head = head + "\n";
+        }
+    }
     var arr_ret: string[] = array_ret_fn_names(funcs);
     var pd: PreciseDrops = precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)), str_fresh_ret_fns_of(funcs));
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
