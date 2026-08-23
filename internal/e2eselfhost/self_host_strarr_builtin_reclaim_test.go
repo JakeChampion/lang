@@ -42,13 +42,9 @@ import (
 //	split + lines  182400 -> 0            262400 -> 76800
 //
 // The two columns were fixed by two different pieces. wasm's split COPIES, so
-// crediting the class was enough there. The register backends' split yields
-// zero-copy VIEWS — a 24-byte box over the source's bytes carrying the immortal
-// rc sentinel — and __fern_str_arr_free's per-element __fern_str_free skips an
-// immortal rc BY CONTRACT, that skip being what stops a view freeing bytes it
-// does not own. So the credit fired there and reclaimed nothing until
-// __fern_str_arr_view_free landed: the same walk with __fern_str_view_free per
-// element, emitted only for this class.
+// crediting the class was enough there. The register backends' split used to
+// yield zero-copy views needing a view-aware walk; since #7230 the segments
+// are OWNED COPIES and the class takes the ordinary __fern_str_arr_free.
 //
 // What is left on wasm (67200 for the 18-part split) is a separate question from
 // this one and is not the element boxes.
