@@ -1436,6 +1436,63 @@ function main(): i32 {
 	}
 }
 
+// TestArm64SSAConstAddressWidth pins the sign-extension of a negative i32 read
+// back out of a struct field, against a program where a constant reaches BOTH a
+// pointer parameter and an i32 one.
+//
+// ssa.ResolveWidths classifies address-carrying values so the backend skips the
+// i32 mask on them. An integer literal is the one value that can honestly be
+// both — CSE merges the null pointer the struct's drop thunk is handed with the
+// zero passed to to_string — so marking it made the pass classify to_string's
+// parameter as an address, and the field load feeding the SECOND call then lost
+// the sxtw that makes an i32 negative. -219 printed as 4294967077.
+//
+// The exit code cannot see this: the corruption is a sign-extension from bit 31,
+// which never changes main's low byte. Only stdout shows it.
+func TestArm64SSAConstAddressWidth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("arm64 -backend ssa not exercised on windows")
+	}
+	qemu := arm64QemuOrEmpty(t)
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build fern: %v\n%s", err, out)
+	}
+
+	src := `import "std/i32";
+struct Pair { fst: i32, snd: i32 }
+function main(): i32 {
+    var p: Pair = Pair { fst: (651 - 870), snd: 3 };
+    print((0).to_string());
+    print((p.fst).to_string());
+    return 0;
+}
+`
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "main.bin")
+	emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", out, srcPath)
+	// Not a coverage gap to skip over: every construct here is in the subset,
+	// and a refusal is a regression in its own right.
+	if o, err := emit.CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, o)
+	}
+
+	got, err := runArm64Bin(qemu, out).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	const want = "0\n-219\n"
+	if string(got) != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+}
+
 // TestArm64SSACoverageGapErrors confirms a program reaching a builtin the SSA
 // path can't produce fails cleanly rather than miscompiling — the
 // experimental-backend contract that lets the epic widen coverage incrementally.
