@@ -2473,7 +2473,13 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 // the None fallback); left ungated the corpus grows programs that take far
 // longer to compile than they are worth.
 func (g *Generator) emitCheckedFold(b *strings.Builder, sc *scope, t gtype, depth int) {
-	op := []string{"+?", "-?", "*?", "/?", "%?", "<<?", ">>?"}[g.ch.intN(7)]
+	// Ordered by the size the checker desugars each one to, cheapest first,
+	// because an exhausted stream takes index 0 and the contract is that
+	// truncation never grows the program. Measured in AST nodes over the
+	// whole match production: shifts 25, `+?` / `-?` 29, `/?` / `%?` 35,
+	// `*?` 41 — the overflow test each check expands to differs by
+	// operator, so this is not a table where the order is cosmetic.
+	op := []string{"<<?", ">>?", "+?", "-?", "/?", "%?", "*?"}[g.ch.intN(7)]
 	bind := fmt.Sprintf("__chk_v%d", g.optBindCounter)
 	g.optBindCounter++
 	b.WriteString("(match ((")
