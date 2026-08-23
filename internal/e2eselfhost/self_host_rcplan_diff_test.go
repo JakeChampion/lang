@@ -302,6 +302,24 @@ function main(): i32 { return f(); }`,
 			},
 		},
 		{
+			// MOVE-ON-ALIAS, tuple limb (the rc-tuple flavor — the one whose
+			// release-role transfer is load-bearing): at the source's last
+			// top-level mention both sides elide the transfer inc; the
+			// self-host moves the "TUPRCS:" deep-sweep class to the alias
+			// site and copies the slot facts the deep free reads
+			// (tuple_elems / tup_elem_kinds), and the tuple sweep loops skip
+			// the elided source. Anchored agreement — the last aliasBindIncs
+			// move family burned down.
+			name: "move-on-alias-tuple",
+			src: `function f(): i32 {
+	var t: (i32, i32[]) = (7, [1, 2]);
+	var v: (i32, i32[]) = t;
+	return v.0;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"movedLocals": "t", "moveSites": "3:2", "aliasBindIncs": ""}},
+		},
+		{
 			// MOVE-ON-ALIAS, struct limb: at the source's last top-level
 			// mention both sides elide the transfer inc; the self-host drops
 			// the alias's box-only NODEEP marker so it inherits the source's
