@@ -283,6 +283,12 @@ const (
 	// docs/FLOAT-SEMANTICS.md) is never compared, so NaN / Inf /
 	// rounding stay off the oracle's diff while the codegen for
 	// float arithmetic and comparison is still exercised.
+	//
+	// Floats reach AGGREGATES only here as well — arrays, struct
+	// fields, tuple elements and enum payloads (floatVarTypes,
+	// pickFieldType). A float element's width is invisible until one
+	// sits next to another, and that is a portable observation: the
+	// slots are read back through the same truncating cast.
 	ProfilePrintable
 )
 
@@ -358,6 +364,9 @@ type Generator struct {
 	// (`__local_fn0`, ...). Generator-private prefix keeps
 	// these out of the user-style namespace.
 	localFnCounter int
+	// floatAggCounter names the aggregates the printable profile's
+	// mandatory float-aggregate observation declares (`__fag0`, ...).
+	floatAggCounter int
 	// lambdaCounter names lambda parameters (`__lam_x0`, ...).
 	// Numbered across the whole program rather than per-lambda so a
 	// lambda emitted inside another lambda's body gets a distinct
@@ -390,13 +399,21 @@ type structField struct {
 	t    gtype
 }
 
-// enumShape is the runtime-allocated form of a payload-less
-// enum decl. Variants are bare names; payload-bearing variants
-// are out of scope for the first cut — `Some(T)` and friends
-// are reserved built-ins anyway.
+// enumShape is the runtime-allocated form of an enum decl.
+// A variant carries 0..2 payload slots; a multi-slot payload is
+// the one shape that shows a float element's width, since the
+// second slot is what a too-wide store of the first reaches.
 type enumShape struct {
 	name     string
-	variants []string
+	variants []enumVariant
+}
+
+// enumVariant is one arm of a dynamic enum decl. An empty
+// payload is the payload-less form (`Red`), otherwise the
+// variant is declared and constructed as `V(T0, T1)`.
+type enumVariant struct {
+	name    string
+	payload []gtype
 }
 
 // helperSig is the bare minimum the generator needs to emit a
@@ -412,14 +429,14 @@ type helperSig struct {
 // has its own literal form, applicable operators, and per-type
 // bucket inside scope.
 //
-// Composite types here are deliberately limited to a single
-// representative per kind: one array per scalar (i32 / i64 /
-// bool element), one fixed `struct Pair { fst: i32, snd: i32 }`,
-// and one fixed payload-less `enum Color { Red, Green, Blue }`.
-// That keeps the generator's nominal-type tracking trivial (no
-// map keyed on declarations) while still exercising the codegen
-// paths for array literals + indexing, struct construction +
-// field access, and enum literals + match dispatch.
+// Each composite in the block is a distinct LAYOUT rather than a
+// second spelling of one already there: a uniform-scalar array
+// against a pointer-element one, a uniform struct against a
+// mixed-width one, a payload-less enum against a single- and a
+// multi-slot payload. Adding a type whose layout an existing entry
+// already covers buys nothing; the program-declared struct / enum
+// shapes in structShapes / enumShapes cover the per-program
+// variation instead.
 type gtype int
 
 const (
@@ -545,6 +562,37 @@ const (
 	// indirect call. Nothing else in the corpus produces a pointer-
 	// element array whose elements own a nested resource.
 	tArrFnI32I32
+	// Float-bearing aggregates. Every other composite in the corpus
+	// holds integers, booleans, strings or closures, so before these a
+	// float existed only as a scalar local — and a float element's
+	// WIDTH is only observable once one sits next to a neighbour in
+	// memory. That is precisely the shape #7333 needed and the corpus
+	// could not express: an 8-byte float store for a 4-byte element
+	// overwrites the elements after it, which a single-slot payload
+	// cannot show. All five are drawn only in the profiles that admit
+	// floats (ProfileFree / ProfilePrintable); the return-byte oracle
+	// keeps its float-free pool.
+	//
+	// tArrF32 / tArrF64: three or more elements at a 4- resp. 8-byte
+	// stride, the direct #7333 shape.
+	tArrF32
+	tArrF64
+	// tTupF32F64 = `(f32, f64)`. Mixes the two float widths in one
+	// box so the 4-byte and the 8-byte element sit at offsets a
+	// uniform-stride backend gets wrong — the float counterpart of
+	// tTupI32I64.
+	tTupF32F64
+	// tVec2 = `struct Vec2 { x: f32, y: f32 }`. Two ADJACENT narrow
+	// float fields: the per-field offset arithmetic at the one width
+	// where a store that is too wide reaches its neighbour.
+	tVec2
+	// tFShape = `enum FShape { FNone, FTwo(f32, f32), FWide(f64, f64) }`.
+	// The corpus's first payload-carrying enum beyond Option / Result,
+	// and its first MULTI-SLOT payload — `examples/wasm/shape_area.fern`,
+	// where the first f32 of a two-field payload read back as 0, is
+	// exactly this shape. Option's single payload slot is the case
+	// that worked.
+	tFShape
 	numTypes
 )
 
@@ -553,6 +601,7 @@ var allTypes = [numTypes]gtype{
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
 	tXyz, tStatus, tResI32I32, tTupI32I64, tU32, tU64, tF64, tU8,
 	tFnI32I32, tArrFnI32I32,
+	tArrF32, tArrF64, tTupF32F64, tVec2, tFShape,
 }
 
 // gtypeNames is the source-level name for each builtin gtype, in
@@ -587,6 +636,11 @@ var gtypeNames = [numTypes]string{
 	// parse the `[]` onto the RETURN type, not the function type.
 	tFnI32I32:    "(i32) => i32",
 	tArrFnI32I32: "((i32) => i32)[]",
+	tArrF32:      "f32[]",
+	tArrF64:      "f64[]",
+	tTupF32F64:   "(f32, f64)",
+	tVec2:        "Vec2",
+	tFShape:      "FShape",
 }
 
 // String reports the source-level name for a builtin gtype.
@@ -637,6 +691,10 @@ func arrayTypeFor(t gtype) (gtype, bool) {
 		return tArrBool, true
 	case tFnI32I32:
 		return tArrFnI32I32, true
+	case tF32:
+		return tArrF32, true
+	case tF64:
+		return tArrF64, true
 	}
 	return 0, false
 }
@@ -653,6 +711,10 @@ func arrayElemOf(t gtype) (gtype, bool) {
 		return tBool, true
 	case tArrFnI32I32:
 		return tFnI32I32, true
+	case tArrF32:
+		return tF32, true
+	case tArrF64:
+		return tF64, true
 	}
 	return 0, false
 }
@@ -797,13 +859,14 @@ func (g *Generator) MainProgram() string {
 
 // MainPrintableProgram emits the printable-oracle counterpart of
 // MainProgram: a `main` that prints a sequence of computed values and
-// returns 0. See ProfilePrintable for the portability contract. Var
-// declarations stay on the float-free runnable type pool (so floats
-// only ever appear inside the print observations, never as a bare
-// `var` whose formatting would be compared); the observations
-// themselves draw in float (f32) arithmetic + comparison, including a
-// guaranteed NaN/Inf-aware float comparison so the oracle reaches the
-// unordered-comparison codegen the return-byte path can't.
+// returns 0. See ProfilePrintable for the portability contract.
+//
+// Main's vars are drawn from mainVarTypes plus floatVarTypes, so a
+// float — scalar or held in a multi-slot box — can be a main-level
+// local and therefore reach an observation. Two observations are
+// mandatory per program: a NaN/Inf-aware float comparison, which
+// covers the unordered-comparison codegen the return-byte path
+// can't, and a float-aggregate read of every slot of one aggregate.
 func (g *Generator) MainPrintableProgram() string {
 	prevProfile := g.profile
 	prevHelpers := g.helpers
@@ -863,7 +926,10 @@ func (g *Generator) MainPrintableProgram() string {
 
 	// One mandatory NaN/Inf-aware float comparison (guarantees the
 	// unordered path is covered every program, and that __fz/__fo are
-	// referenced), then a handful of random observations.
+	// referenced), one mandatory float-aggregate read, then a handful
+	// of random observations. The aggregate goes first so the var it
+	// declares is in scope for everything after it.
+	g.emitFloatAggregateObservation(&b, sc)
 	g.emitFloatSpecialObservation(&b, sc)
 	nObs := g.ch.intN(maxInt(g.cfg.MaxStmts, 1))
 	for i := 0; i < nObs; i++ {
@@ -879,12 +945,18 @@ func (g *Generator) MainPrintableProgram() string {
 // unsigned integers via .to_string(), booleans (including float
 // comparisons) as "T"/"F", strings raw, and floats truncated through
 // `as i32`.
+//
+// Exhaustion convention: option 0 is the raw-string channel, the
+// smallest of the nine measured in AST nodes (4 against 6 for an
+// integer `.to_string()` and 7 for a cast or a comparison). An
+// exhausted corpus takes option 0, so any other ordering lets
+// truncation grow the program and the shrinker walk uphill.
 func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 	switch g.ch.intN(9) {
 	case 0:
-		b.WriteString("print((")
-		g.expr(b, sc, tI32, 0)
-		b.WriteString(").to_string()); ")
+		b.WriteString("print(")
+		g.expr(b, sc, tString, 0)
+		b.WriteString("); ")
 	case 1:
 		b.WriteString("print((")
 		g.expr(b, sc, tI64, 0)
@@ -894,9 +966,9 @@ func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 		g.expr(b, sc, tBool, 0)
 		b.WriteString(") { \"T\" } else { \"F\" }); ")
 	case 3:
-		b.WriteString("print(")
-		g.expr(b, sc, tString, 0)
-		b.WriteString("); ")
+		b.WriteString("print((")
+		g.expr(b, sc, tI32, 0)
+		b.WriteString(").to_string()); ")
 	case 4:
 		// Float value observed by truncation — exercises float
 		// arithmetic + the saturating float→int conversion, both
@@ -933,38 +1005,180 @@ func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 	}
 }
 
+// floatAggArrayLen is how many elements the mandatory float-array
+// observation declares. More than one, because a float element's
+// width is only observable when there is a neighbour for a too-wide
+// access to reach; three so a corruption that spares the first or
+// the last slot still shows.
+const floatAggArrayLen = 3
+
+// emitFloatAggregateObservation declares one aggregate holding floats
+// and prints EVERY slot of it through the truncating `as i32`
+// channel. Emitted once per printable program, unconditionally.
+//
+// Unconditional because sampling cannot be relied on to reach the
+// class. Widening the type pools alone puts float aggregates into
+// generated source without any of them reaching a position the
+// oracle compares — helper return types nothing calls, or an array
+// the ordinary read production only ever indexes at [0]. This is
+// the production that makes a green sweep evidence about
+// floats-in-aggregates rather than about their absence.
+//
+// The declared var stays in scope, so the observations that follow
+// can draw from it too.
+func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope) {
+	idx := g.floatAggCounter
+	g.floatAggCounter++
+	name := fmt.Sprintf("__fag%d", idx)
+	// One production level below the cap: short enough to keep the
+	// emitted statement readable, deep enough that the slots hold
+	// float arithmetic rather than a row of bare literals.
+	d := maxInt(g.cfg.MaxExprDepth-1, 0)
+	// Exhaustion convention: option 0 is Vec2, the smallest of the five
+	// measured in AST nodes (20, against 29 for the enum payload and 32
+	// for either array) — and still two adjacent f32 slots, so even the
+	// collapsed form keeps the shape this production exists for.
+	switch g.ch.intN(5) {
+	case 1:
+		g.emitFloatArrayObservation(b, sc, name, tArrF32, d)
+	case 2:
+		g.emitFloatArrayObservation(b, sc, name, tArrF64, d)
+	case 3:
+		fmt.Fprintf(b, "var %s: (f32, f64) = (", name)
+		g.expr(b, sc, tF32, d)
+		b.WriteString(", ")
+		g.expr(b, sc, tF64, d)
+		b.WriteString("); ")
+		sc.declare(tTupF32F64, name)
+		g.printFloatAsI32(b, name+".0")
+		g.printFloatAsI32(b, name+".1")
+	case 4:
+		// Built as a payload-CARRYING variant rather than through the
+		// FShape literal production, so the observation can never be
+		// the FNone no-op.
+		if g.flip(0.5) {
+			fmt.Fprintf(b, "var %s: FShape = (FTwo(", name)
+			g.expr(b, sc, tF32, d)
+			b.WriteString(", ")
+			g.expr(b, sc, tF32, d)
+		} else {
+			fmt.Fprintf(b, "var %s: FShape = (FWide(", name)
+			g.expr(b, sc, tF64, d)
+			b.WriteString(", ")
+			g.expr(b, sc, tF64, d)
+		}
+		b.WriteString(")); ")
+		sc.declare(tFShape, name)
+		// One print per payload SLOT: a match that reads only the
+		// first binding is the read pattern that let the second slot's
+		// corruption go unseen.
+		for slot := 0; slot < 2; slot++ {
+			narrowA := fmt.Sprintf("__fs_a%d_%d", idx, slot)
+			narrowB := fmt.Sprintf("__fs_b%d_%d", idx, slot)
+			wideA := fmt.Sprintf("__fs_c%d_%d", idx, slot)
+			wideB := fmt.Sprintf("__fs_d%d_%d", idx, slot)
+			narrowRead, wideRead := narrowA, wideA
+			if slot == 1 {
+				narrowRead, wideRead = narrowB, wideB
+			}
+			fmt.Fprintf(b,
+				"print((match (%s) { FNone => 0i32, FTwo(%s, %s) => ((%s) as i32), FWide(%s, %s) => ((%s) as i32) }).to_string()); ",
+				name, narrowA, narrowB, narrowRead, wideA, wideB, wideRead)
+		}
+	default:
+		fmt.Fprintf(b, "var %s: Vec2 = (Vec2 { x: ", name)
+		g.expr(b, sc, tF32, d)
+		b.WriteString(", y: ")
+		g.expr(b, sc, tF32, d)
+		b.WriteString(" }); ")
+		sc.declare(tVec2, name)
+		g.printFloatAsI32(b, name+".x")
+		g.printFloatAsI32(b, name+".y")
+	}
+}
+
+// emitFloatArrayObservation declares a float array of
+// floatAggArrayLen elements and prints each one.
+func (g *Generator) emitFloatArrayObservation(b *strings.Builder, sc *scope, name string, arrT gtype, depth int) {
+	elem, _ := arrayElemOf(arrT)
+	fmt.Fprintf(b, "var %s: %s = [", name, g.typeName(arrT))
+	for i := 0; i < floatAggArrayLen; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		g.expr(b, sc, elem, depth)
+	}
+	b.WriteString("]; ")
+	sc.declare(arrT, name)
+	for i := 0; i < floatAggArrayLen; i++ {
+		g.printFloatAsI32(b, fmt.Sprintf("%s[%di32]", name, i))
+	}
+}
+
+// printFloatAsI32 prints one float-valued expression through the
+// truncating cast — the only float observation the oracle takes,
+// since decimal rendering of a float is under-specified
+// (docs/FLOAT-SEMANTICS.md).
+func (g *Generator) printFloatAsI32(b *strings.Builder, expr string) {
+	fmt.Fprintf(b, "print(((%s) as i32).to_string()); ", expr)
+}
+
 // emitFloatSpecialObservation prints the result of a float comparison
-// ("T"/"F") whose operands may be NaN or ±Inf (built from the runtime
-// __fz / __fo zeros and ones). Float division is well-defined (never
-// traps) so these are safe to emit; the boolean result is portable,
-// which is what makes the unordered-comparison codegen testable.
+// ("T"/"F") whose LEFT operand is always NaN or ±Inf (built from the
+// runtime __fz / __fo zeros and ones) and whose right operand is
+// either another special value or an ordinary finite expression.
+// Float division is well-defined (never traps) so these are safe to
+// emit; the boolean result is portable, which is what makes the
+// unordered-comparison codegen testable.
+//
+// Special on the left rather than on a draw, so the guarantee holds
+// for a byte-driven corpus too: an exhausted stream takes the
+// smallest branch everywhere, and the smallest of the four operand
+// forms is the ordinary one — a program shrunk to nothing would
+// otherwise compare two finite floats and reach no unordered path.
 func (g *Generator) emitFloatSpecialObservation(b *strings.Builder, sc *scope) {
 	op := []string{"<", "<=", ">", ">=", "==", "!="}[g.ch.intN(6)]
 	b.WriteString("print(if ((")
-	g.emitFloatSpecialOperand(b, sc)
+	g.emitSpecialFloatValue(b)
 	fmt.Fprintf(b, ") %s (", op)
-	g.emitFloatSpecialOperand(b, sc)
+	g.emitFloatComparand(b, sc)
 	b.WriteString(")) { \"T\" } else { \"F\" }); ")
 }
 
-// emitFloatSpecialOperand writes one operand of a special-value float
-// comparison: NaN (0/0), +Inf (1/0), -Inf ((0-1)/0), or an ordinary
-// finite f32 expression.
-func (g *Generator) emitFloatSpecialOperand(b *strings.Builder, sc *scope) {
-	switch g.ch.intN(4) {
-	case 0:
-		b.WriteString("(__fz / __fz)") // NaN
+// emitSpecialFloatValue writes NaN (0/0), +Inf (1/0) or -Inf
+// ((0-1)/0), all built from the runtime __fz / __fo.
+//
+// Exhaustion convention: option 0 is NaN — tied with +Inf for the
+// fewest AST nodes, and the value the unordered comparisons exist for.
+func (g *Generator) emitSpecialFloatValue(b *strings.Builder) {
+	switch g.ch.intN(3) {
 	case 1:
 		b.WriteString("(__fo / __fz)") // +Inf
 	case 2:
 		b.WriteString("((__fz - __fo) / __fz)") // -Inf
 	default:
-		g.expr(b, sc, tF32, 1) // ordinary finite f32 expression
+		b.WriteString("(__fz / __fz)") // NaN
 	}
 }
 
-// mainVarTypes are the gtypes legal for `var v<N>` declarations
-// inside `main` under ProfileRunnable. Strings are exercised
+// emitFloatComparand writes the right-hand operand of a special-value
+// comparison: an ordinary finite f32 expression, or a second special
+// value so NaN-against-Inf and Inf-against-Inf are reached too.
+//
+// Exhaustion convention: option 0 is the ordinary expression, which
+// collapses to a single leaf where every special form is a fixed
+// three or five nodes.
+func (g *Generator) emitFloatComparand(b *strings.Builder, sc *scope) {
+	if g.ch.intN(4) == 0 {
+		g.expr(b, sc, tF32, 1)
+		return
+	}
+	g.emitSpecialFloatValue(b)
+}
+
+// mainVarTypes are the float-free gtypes legal for `var v<N>`
+// declarations inside `main` in every profile — floatVarTypes
+// below adds to them where floats are admitted. Strings are exercised
 // through `len(s)` in the i32 path (see tryCompositeProduction),
 // so they
 // flow into the byte oracle even without a separate stdout
@@ -987,6 +1201,23 @@ var mainVarTypes = []gtype{
 	// so Map values flowing into main's expression path
 	// round-trip through interp + native backends identically.
 	tMapI32I32,
+}
+
+// floatVarTypes are the extra `main`-local types the printable
+// profile admits on top of mainVarTypes. Every entry past the two
+// scalars holds floats in a box with more than one slot, which is
+// the only arrangement in which a float element's WIDTH is
+// observable: an access too wide for the element reaches its
+// neighbour, and a single-slot payload has none.
+//
+// They belong in main rather than only in helper signatures
+// because only main's locals reach the print observations —
+// a helper returning `f32[]` that main never calls is generated
+// coverage nothing looks at.
+var floatVarTypes = []gtype{
+	tF32, tF64,
+	tArrF32, tArrF64,
+	tTupF32F64, tVec2, tFShape,
 }
 
 // preludeDecls emits the fixed `struct Pair` + `enum Color`
@@ -1049,6 +1280,14 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// then exercises end-to-end.
 	b.WriteString("function id[T](x: T): T { return x; }\n")
 	b.WriteString("function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\n")
+	// Float-bearing nominals, declared only where floats are drawn at
+	// all — the return-byte oracle's programs never construct one, so
+	// emitting the decls there would be dead source. `Vec2` is two
+	// adjacent f32 fields; `FShape` is the multi-slot enum payload.
+	if g.profile.floatsAllowed() {
+		b.WriteString("struct Vec2 { x: f32, y: f32 }\n")
+		b.WriteString("enum FShape { FNone, FTwo(f32, f32), FWide(f64, f64) }\n")
+	}
 	// Dynamic nominal types — per-program random struct + enum
 	// shapes. See declareDynamicNominals for the field /
 	// variant generation rules.
@@ -1061,10 +1300,10 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 // fresh gtype value past `numTypes` so the scope's map keys
 // stay collision-free with the fixed Pair / Xyz / Color / Status.
 //
-// Field types are drawn from the runnable-safe scalar set
-// (i32 / i64 / boolean / string) — composites stay out of
-// fields for the first cut to keep the recursive expression
-// generation finite and the codegen layout simple.
+// Field types and variant-payload slots are drawn from
+// `pickFieldType` — scalars only, so the recursive expression
+// generation stays finite and the codegen layout simple, plus
+// f32 / f64 in the profiles that admit floats.
 //
 // Variant names use a generator-private `__E<i>_V<j>` prefix to
 // guarantee global uniqueness without colliding with any
@@ -1093,7 +1332,7 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 			if j > 0 {
 				b.WriteString(", ")
 			}
-			ft := []gtype{tI32, tI64, tBool, tString}[g.ch.intN(4)]
+			ft := g.pickFieldType()
 			fname := fmt.Sprintf("f%d", j)
 			fields[j] = structField{name: fname, t: ft}
 			fmt.Fprintf(b, "%s: %s", fname, ft)
@@ -1103,20 +1342,39 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 		g.nextNominal++
 		g.structShapes[gt] = &structShape{name: name, fields: fields}
 	}
-	// Up to 2 extra enums. Each has 2..4 payload-less variants.
+	// Up to 2 extra enums. Each has 2..4 variants, some carrying a
+	// 1- or 2-slot payload.
 	nEnums := g.ch.intN(3) // 0..2
 	for i := 0; i < nEnums; i++ {
 		name := fmt.Sprintf("E%d", i)
 		nVariants := 2 + g.ch.intN(3) // 2..4
-		variants := make([]string, nVariants)
+		variants := make([]enumVariant, nVariants)
 		fmt.Fprintf(b, "enum %s { ", name)
 		for j := 0; j < nVariants; j++ {
 			if j > 0 {
 				b.WriteString(", ")
 			}
 			vname := fmt.Sprintf("__E%d_V%d", i, j)
-			variants[j] = vname
 			b.WriteString(vname)
+			// Exhaustion convention: `true` is the payload-LESS variant,
+			// so a spent corpus collapses each enum back to the bare-name
+			// form rather than growing payload slots and the construction
+			// and destructuring they drag in.
+			var payload []gtype
+			if !g.flip(0.55) {
+				nSlots := 1 + g.ch.intN(2) // 1..2
+				payload = make([]gtype, nSlots)
+				b.WriteByte('(')
+				for k := 0; k < nSlots; k++ {
+					if k > 0 {
+						b.WriteString(", ")
+					}
+					payload[k] = g.pickFieldType()
+					b.WriteString(g.typeName(payload[k]))
+				}
+				b.WriteByte(')')
+			}
+			variants[j] = enumVariant{name: vname, payload: payload}
 		}
 		b.WriteString(" }\n")
 		gt := g.nextNominal
@@ -1348,7 +1606,7 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	// available, skip.
 	var arrayVar string
 	var elemType gtype
-	for _, at := range []gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32} {
+	for _, at := range []gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32, tArrF32, tArrF64} {
 		vars := sc.inScope(at)
 		if len(vars) > 0 {
 			arrayVar = vars[g.ch.intN(len(vars))]
@@ -1684,6 +1942,31 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// `(f32, f64)` element access — the float counterpart of the
+	// tuple read above, and the read side without which a float
+	// tuple would be built and never observed.
+	if t == tF32 || t == tF64 {
+		tups := sc.inScope(tTupF32F64)
+		if len(tups) > 0 {
+			name := tups[g.ch.intN(len(tups))]
+			if t == tF32 {
+				fmt.Fprintf(b, "%s.0", name)
+			} else {
+				fmt.Fprintf(b, "%s.1", name)
+			}
+			return true
+		}
+	}
+	// Vec2 field access. Both fields are f32 and adjacent, so a
+	// store too wide for the first is read back through the second.
+	if t == tF32 {
+		vecs := sc.inScope(tVec2)
+		if len(vecs) > 0 {
+			name := vecs[g.ch.intN(len(vecs))]
+			fmt.Fprintf(b, "%s.%s", name, []string{"x", "y"}[g.ch.intN(2)])
+			return true
+		}
+	}
 	// Xyz field access. `Xyz.n` is i32, `Xyz.valid` is bool.
 	if t == tI32 {
 		xyzs := sc.inScope(tXyz)
@@ -1743,6 +2026,33 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			g.expr(b, sc, t, depth+1)
 			b.WriteString(", Pending => ")
 			g.expr(b, sc, t, depth+1)
+			b.WriteString(" })")
+			return true
+		}
+	}
+	// FShape match-with-payload-binding. Routes a float-carrying
+	// enum into any other t, binding BOTH payload slots so an arm
+	// body can read either — reading only the first is what let
+	// #7333 hide, since a too-wide store of slot 0 is visible in
+	// slot 1.
+	if t != tFShape {
+		shapes := sc.inScope(tFShape)
+		if len(shapes) > 0 {
+			name := shapes[g.ch.intN(len(shapes))]
+			idx := g.optBindCounter
+			g.optBindCounter++
+			fmt.Fprintf(b, "(match (%s) { FNone => ", name)
+			g.expr(b, sc, t, depth+1)
+			innerTwo := newScope(sc)
+			innerTwo.declare(tF32, fmt.Sprintf("__fs_a%d", idx))
+			innerTwo.declare(tF32, fmt.Sprintf("__fs_b%d", idx))
+			fmt.Fprintf(b, ", FTwo(__fs_a%d, __fs_b%d) => ", idx, idx)
+			g.expr(b, innerTwo, t, depth+1)
+			innerWide := newScope(sc)
+			innerWide.declare(tF64, fmt.Sprintf("__fs_c%d", idx))
+			innerWide.declare(tF64, fmt.Sprintf("__fs_d%d", idx))
+			fmt.Fprintf(b, ", FWide(__fs_c%d, __fs_d%d) => ", idx, idx)
+			g.expr(b, innerWide, t, depth+1)
 			b.WriteString(" })")
 			return true
 		}
@@ -1878,13 +2188,30 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			continue
 		}
 		vname := vars[g.ch.intN(len(vars))]
+		bindIdx := g.optBindCounter
+		g.optBindCounter++
 		fmt.Fprintf(b, "(match (%s) {", vname)
 		for i, v := range sh.variants {
 			if i > 0 {
 				b.WriteString(",")
 			}
-			fmt.Fprintf(b, " %s => ", v)
-			g.expr(b, sc, t, depth+1)
+			arm := sc
+			if len(v.payload) == 0 {
+				fmt.Fprintf(b, " %s => ", v.name)
+			} else {
+				arm = newScope(sc)
+				fmt.Fprintf(b, " %s(", v.name)
+				for k, pt := range v.payload {
+					if k > 0 {
+						b.WriteString(", ")
+					}
+					bind := fmt.Sprintf("__dv%d_%d_%d", bindIdx, i, k)
+					arm.declare(pt, bind)
+					b.WriteString(bind)
+				}
+				b.WriteString(") => ")
+			}
+			g.expr(b, arm, t, depth+1)
 		}
 		b.WriteString(" })")
 		return true
@@ -2383,7 +2710,7 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		fmt.Fprintf(b, "%.2ff32", float64(g.ch.intN(10000))/100.0)
 	case tString:
 		b.WriteString(g.stringLiteral())
-	case tArrI32, tArrI64, tArrBool, tArrFnI32I32:
+	case tArrI32, tArrI64, tArrBool, tArrFnI32I32, tArrF32, tArrF64:
 		elem, _ := arrayElemOf(t)
 		g.arrayLiteral(b, sc, elem, depth)
 	case tFnI32I32:
@@ -2428,6 +2755,39 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			g.expr(b, sc, tI32, depth+1)
 			b.WriteString("))")
 		}
+	case tVec2:
+		b.WriteString("(Vec2 { x: ")
+		g.expr(b, sc, tF32, depth+1)
+		b.WriteString(", y: ")
+		g.expr(b, sc, tF32, depth+1)
+		b.WriteString(" })")
+	case tTupF32F64:
+		// Both float widths in one box, at the offsets a uniform
+		// stride gets wrong.
+		b.WriteString("(")
+		g.expr(b, sc, tF32, depth+1)
+		b.WriteString(", ")
+		g.expr(b, sc, tF64, depth+1)
+		b.WriteString(")")
+	case tFShape:
+		// Exhaustion convention: `FNone` (no sub-expression) is the
+		// smallest arm, so a spent corpus stops building payloads.
+		switch {
+		case g.flip(0.4):
+			b.WriteString("FNone")
+		case g.flip(0.5):
+			b.WriteString("(FTwo(")
+			g.expr(b, sc, tF32, depth+1)
+			b.WriteString(", ")
+			g.expr(b, sc, tF32, depth+1)
+			b.WriteString("))")
+		default:
+			b.WriteString("(FWide(")
+			g.expr(b, sc, tF64, depth+1)
+			b.WriteString(", ")
+			g.expr(b, sc, tF64, depth+1)
+			b.WriteString("))")
+		}
 	case tTupI32I64:
 		// `(<i32>, <i64>)` — heterogeneous on purpose, so the 4-byte
 		// and 8-byte elements sit at different offsets and a backend
@@ -2445,7 +2805,7 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			return
 		}
 		if sh, ok := g.enumShapes[t]; ok {
-			b.WriteString(sh.variants[g.ch.intN(len(sh.variants))])
+			g.dynEnumLiteral(b, sc, sh, depth)
 			return
 		}
 		panic(fmt.Sprintf("literal: unknown gtype %d", int(t)))
@@ -2466,6 +2826,38 @@ func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, sh *structSh
 		g.expr(b, sc, f.t, depth+1)
 	}
 	b.WriteString(" })")
+}
+
+// dynEnumLiteral emits one variant of a dynamic enum shape:
+// the bare name for a payload-less variant, `(V(<expr>, ...))`
+// for a payload-carrying one. The parens match the Some / Ok
+// pattern so the literal survives an arm-block slot.
+//
+// Payload-LESS variants are preferred once the corpus is spent:
+// scanning for one keeps truncation from growing the program by
+// filling payload slots with expressions.
+func (g *Generator) dynEnumLiteral(b *strings.Builder, sc *scope, sh *enumShape, depth int) {
+	v := sh.variants[g.ch.intN(len(sh.variants))]
+	if g.ch.exhausted() {
+		for _, cand := range sh.variants {
+			if len(cand.payload) == 0 {
+				v = cand
+				break
+			}
+		}
+	}
+	if len(v.payload) == 0 {
+		b.WriteString(v.name)
+		return
+	}
+	fmt.Fprintf(b, "(%s(", v.name)
+	for i, pt := range v.payload {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		g.expr(b, sc, pt, depth+1)
+	}
+	b.WriteString("))")
 }
 
 // mapLiteral emits `Map { k: v, k2: v2, ... }` with 0..3 entries.
@@ -2584,13 +2976,21 @@ func (g *Generator) pickType() gtype {
 	return pool[g.ch.intN(len(pool))]
 }
 
-// pickMainVarType is pickType's ProfileRunnable counterpart.
-// Same shape as typePool's runnable branch (drops f32) and
-// includes any dynamic nominal types declared in
+// pickMainVarType draws the type of a `var v<N>` declared directly
+// in `main`, plus any dynamic nominal types declared in
 // declareDynamicNominals so main's vars can hold values of
 // user-declared struct / enum types.
+//
+// Profile-aware, and it has to be: main's locals are the only
+// values an observation channel can reach, so a type absent here
+// is a type the oracle never sees no matter how freely the rest of
+// the generator produces it. floatVarTypes joins the pool only
+// where floats are admitted at all.
 func (g *Generator) pickMainVarType() gtype {
 	pool := append([]gtype{}, mainVarTypes...)
+	if g.profile.floatsAllowed() {
+		pool = append(pool, floatVarTypes...)
+	}
 	pool = append(pool, g.sortedDynamicTypes()...)
 	return pool[g.ch.intN(len(pool))]
 }
@@ -2632,6 +3032,20 @@ func (g *Generator) sortedDynamicTypes() []gtype {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+// pickFieldType draws the scalar type of a dynamic struct field or
+// a dynamic enum variant's payload slot. Floats join the pool in
+// the profiles that admit them: a float FIELD is the cheapest way
+// to put one next to a neighbour, which is the only arrangement in
+// which its element width is observable at all.
+//
+// Exhaustion convention: option 0 is tI32, the narrowest.
+func (g *Generator) pickFieldType() gtype {
+	if g.profile.floatsAllowed() {
+		return []gtype{tI32, tI64, tBool, tString, tF32, tF64}[g.ch.intN(6)]
+	}
+	return []gtype{tI32, tI64, tBool, tString}[g.ch.intN(4)]
 }
 
 // pickNumeric draws from the numeric types only, honouring
