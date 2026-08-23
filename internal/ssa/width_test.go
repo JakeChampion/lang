@@ -256,6 +256,60 @@ func TestResolveWidthsResolvesCodegenAliases(t *testing.T) {
 	}
 }
 
+// An integer literal is the one value in the SSA that is genuinely polymorphic:
+// CSE merges by (kind, operands) and the IR carries no type, so the null pointer
+// a drop call passes and the zero an i32 expression evaluates to are ONE value.
+// Marking it makes every use of that zero an address, and the fixpoint then
+// carries the classification into the callees those uses reach — here far enough
+// to skip the sign-extension on an unrelated i32 field load, which read back
+// zero-extended (4294967077 for -219).
+func TestResolveWidthsDoesNotMarkIntegerConstants(t *testing.T) {
+	drop := NewFunc("drop")
+	db := drop.NewBlock()
+	drop.AddParam()
+	drop.ParamAddrs = []bool{true}
+	drop.SetRet(db, Value{})
+
+	// Takes an i32 and returns it: nothing about it is address-shaped.
+	show := NewFunc("show")
+	sb := show.NewBlock()
+	show.SetRet(sb, show.AddParam())
+
+	caller := NewFunc("caller")
+	cb := caller.NewBlock()
+	base := caller.AddParam()
+	caller.ParamAddrs = []bool{true}
+	zero := zeroConst(caller, cb)
+	caller.AddOp(cb, OpCall, zero) // drop(null)
+	cb.Ops[len(cb.Ops)-1].Str = "drop"
+	caller.AddOp(cb, OpCall, zero) // show(0)
+	cb.Ops[len(cb.Ops)-1].Str = "show"
+	fld := caller.AddOp(cb, OpLoad32U, base)
+	caller.SetRet(cb, caller.AddOp(cb, OpCall, fld))
+	cb.Ops[len(cb.Ops)-1].Str = "show"
+
+	ResolveWidths(map[string]*Func{"caller": caller, "drop": drop, "show": show})
+
+	widths := map[int32]int8{}
+	for _, op := range cb.Ops {
+		widths[op.Result.ID] = op.Width
+	}
+	if widths[zero.ID] == 64 {
+		t.Errorf("constant zero Width = 64, want narrow")
+	}
+	if widths[fld.ID] == 64 {
+		t.Errorf("i32 field load Width = 64, want narrow (its sign-extension would be skipped)")
+	}
+	if len(show.ParamAddrs) > 0 && show.ParamAddrs[0] {
+		t.Errorf("show's i32 parameter was classified as an address")
+	}
+	// The genuine pointer must still be wide: this is the classification the
+	// constant guard has to leave intact.
+	if !drop.ParamAddrs[0] {
+		t.Errorf("drop's pointer parameter lost its address classification")
+	}
+}
+
 // The exclusion list is what keeps a type nobody thought about from silently
 // becoming truncatable, so pin both directions.
 func TestIsAddressAstType(t *testing.T) {

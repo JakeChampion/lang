@@ -135,8 +135,12 @@ func (r *widthResolver) mark(f *Func, v Value) bool {
 	if !v.IsValid() || r.addr[f][v.ID] {
 		return false
 	}
+	d := r.def[f][v.ID]
+	if d != nil && isIntConst(d.Kind) {
+		return false
+	}
 	r.addr[f][v.ID] = true
-	if d := r.def[f][v.ID]; d != nil {
+	if d != nil {
 		d.Addr = true
 		return true
 	}
@@ -236,6 +240,23 @@ func (r *widthResolver) step() bool {
 		}
 	}
 	return changed
+}
+
+// isIntConst reports whether `k` defines an integer literal. Such a value is
+// never a machine address: every address in a Fern program comes from an
+// allocation, a runtime helper, or a string constant, all of which seed
+// address-ness directly.
+//
+// The distinction matters because a literal is the one value in the SSA that is
+// genuinely polymorphic. CSE merges by (kind, operands) and the IR carries no
+// type, so the null pointer a drop call passes and the integer zero a loop
+// counter starts at become ONE value. Marking it would make every use of that
+// zero an address — including the i32 uses — and the fixpoint then carries that
+// through the callees they reach. Refusing costs nothing: a literal small enough
+// to be an i32 sign-extends to itself, and a wider one already has Width 64 from
+// the lift, which this pass only ever raises.
+func isIntConst(k OpKind) bool {
+	return k == OpConstInt || k == OpConstBool
 }
 
 func anyAddr(addr map[int32]bool, args []Value) bool {
