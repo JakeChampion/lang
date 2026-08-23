@@ -6048,6 +6048,52 @@ func TestWASMReadFileNotFound(t *testing.T) {
 	}
 }
 
+// read_file_bytes returns Ok(u8[]) with the raw bytes — content
+// that is not valid UTF-8 round-trips exactly (D9, #5714).
+func TestWASMReadFileBytesOk(t *testing.T) {
+	src := `function main(): i32 {
+		match (read_file_bytes("blob.bin")) {
+			Ok(b) => {
+				if (b.len() != 4) { write("FAIL len"); return 1; }
+				if ((b[0] as i32) != 0) { write("FAIL b0"); return 2; }
+				if ((b[1] as i32) != 255) { write("FAIL b1"); return 3; }
+				if ((b[2] as i32) != 128) { write("FAIL b2"); return 4; }
+				if ((b[3] as i32) != 10) { write("FAIL b3"); return 5; }
+				write("bytes-ok");
+				return 0;
+			},
+			Err(_) => { write("FAIL err"); return 6; }
+		}
+		return 7;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, map[string]string{
+		"blob.bin": "\x00\xff\x80\n",
+	})
+	if !strings.Contains(stdout, "bytes-ok") {
+		t.Errorf("expected bytes-ok; got %q", stdout)
+	}
+}
+
+// read_file_bytes classifies errors identically to read_file.
+func TestWASMReadFileBytesNotFound(t *testing.T) {
+	src := `function main(): i32 {
+		match (read_file_bytes("does_not_exist.bin")) {
+			Ok(_) => { return 0; },
+			Err(err) => {
+				match (err) {
+					NotFound(p) => { write(p); return 44; },
+					_ => { return 99; }
+				}
+			}
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	if !strings.Contains(stdout, "does_not_exist.bin") {
+		t.Errorf("stdout should echo the missing path; got %q", stdout)
+	}
+}
+
 // `write_file` truncates the target and writes `content`. We
 // verify by reading the file back from the host side after
 // the program returns.

@@ -1129,6 +1129,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // (asmcore.rt_src_read_file, #2649) via the stack ABI, as asm_ir does.
             s = s.need("heap"); s = s.need("read_file");
             s = s.write("    bl __fn___fern_read_file\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 233) {  // read_file_bytes
+            // [pathbox] IS param[0]; call the Fern-compiled
+            // __fn___fern_read_file_bytes (asmcore.rt_src_read_file_bytes) via
+            // the stack ABI — pushes a fresh Result[u8[], IoError].
+            s = s.need("heap"); s = s.need("read_file_bytes");
+            s = s.write("    bl __fn___fern_read_file_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 170) {  // write_file
             // [pathbox][contentbox] ARE param[0..1]; call the Fern-compiled
             // __fn___fern_write_file (asmcore.rt_src_write_file, #2649). The stack
@@ -5878,10 +5884,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // dirent name offset is a direntoff row. open_fd was the last leaf still
     // hand-written; with it Fern too, the register-ABI hand-asm classifier is
     // gone and this bundle is the only __fern_io_error.
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt); }
+        if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes(tgt); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(tgt); }
         if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec(tgt); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(tgt); }

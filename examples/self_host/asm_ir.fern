@@ -2514,7 +2514,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Gate: the union of every fs helper that calls it (the manual
     // dependency-marking fragility #2649 tracks — keep this in sync with
     // the call sites below).
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
             || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")
             || s.has_need("temp_dir") || s.has_need("create_dir_all")) {
         var sh_nf: ShapeRefOut = shape_ref(s, "NotFound");
@@ -4371,7 +4371,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // __fern_print_int / __fern_eprint_str / __fern_putchar are gone.
         "__fn___fern_print_str", "__fn___fern_print_int",
         "__fn___fern_eprint_str", "__fn___fern_putchar",
-        "__fn___fern_read_int", "__fn___fern_read_line", "__fn___fern_read_file",
+        "__fn___fern_read_int", "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
         "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
@@ -5399,6 +5399,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // (#2649) via the stack ABI — pushes a fresh Result[string, IoError].
             s = s.write("    call __fn___fern_read_file\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("read_file");
+        } else if (o.kind_tag == 233) {  // read_file_bytes
+            // [pathbox] IS param[0] (+16); call the Fern-compiled
+            // __fn___fern_read_file_bytes via the stack ABI — pushes a fresh
+            // Result[u8[], IoError].
+            s = s.write("    call __fn___fern_read_file_bytes\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("read_file_bytes");
         } else if (o.kind_tag == 170) {  // write_file
             // operand stack [pathbox, contentbox] (content on top). Call the
             // Fern-compiled __fn___fern_write_file (#2649) via the stack ABI:
@@ -6933,6 +6939,7 @@ pub function all_runtime_need_roots(): string[] {
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         "print_int", "proc_exec", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
+        "read_file_bytes",
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
@@ -7504,7 +7511,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // Pre-intern the IoError variant shapes for __fern_io_error (#4370) —
     // same reasoning as FileStat above; keep the gate in sync with the
     // helper's own (the union of the fs needs).
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
             || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")
             || s.has_need("temp_dir") || s.has_need("create_dir_all")) {
         var ioePre1: ShapeRefOut = shape_ref(s, "NotFound");
@@ -7918,11 +7925,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
+    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64"); }
+        if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64"); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }

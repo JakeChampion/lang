@@ -95,7 +95,11 @@ default → Other(path, "")).
 
 Coverage: `Test{Arm64,X86_64}ReadFileOk` /
 `...ReadFileNotFound` / `...WriteFileOk` /
-`...ReadWriteFileRoundtrip` per backend.
+`...ReadWriteFileRoundtrip` per backend, plus
+`...ReadFileBytesOk` / `...ReadFileBytesNotFound` for
+`read_file_bytes(path): Result[u8[], IoError]` — the raw
+sibling whose Ok payload is a `u8[]` in the `__alloc_u8` box
+shape (#5714).
 
 arm64-darwin parity: `read_file` and `now_unix_ms` are ported
 to Darwin syscalls — `fstat` uses `fstat64` (BSD 339) with

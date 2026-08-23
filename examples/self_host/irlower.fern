@@ -9986,6 +9986,17 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!rfs.ok) { return rfs; }
         return rfs.emit(ir.op_read_file());
     }
+    // Built-in `read_file_bytes(path)` — read_file's raw sibling: push a
+    // fresh Result[u8[], IoError] box (Ok(contents u8[]) / Err(_)). A
+    // value op consuming the lowered path arg. The Result type is
+    // resolved by opt_ret_type's read_file_bytes case so `match
+    // (read_file_bytes(p)) { Ok(b) => .., Err(e) => .. }` lowers like
+    // any other Result.
+    if (cid.name == "read_file_bytes" && c.args.len() == 1) {
+        var rbs: LowerState = lower_expr(c.args[0], s);
+        if (!rbs.ok) { return rbs; }
+        return rbs.emit(ir.op_read_file_bytes());
+    }
     // Built-in `write_file(path, content)` — write the whole content
     // to the named file, push a fresh Result[(), IoError] box (Ok(())
     // on success / Err(_) on error). A value op consuming the lowered
@@ -55418,6 +55429,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // op_read_file). Checked AFTER the registry so a user decl of the same name
     // still wins. read_file → Result[string, IoError].
     if (name == "read_file") { return "Result[string, IoError]"; }
+    if (name == "read_file_bytes") { return "Result[u8[], IoError]"; }
     if (name == "write_file") { return "Result[void, IoError]"; }
     if (name == "write_file_exec") { return "Result[void, IoError]"; }
     if (name == "remove_dir_all") { return "Result[void, IoError]"; }

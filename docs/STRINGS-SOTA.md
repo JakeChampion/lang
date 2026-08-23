@@ -766,12 +766,14 @@ because hex output genuinely is text.
 
 The builtin half (tracked as #5714 after #5730 auto-closed) crosses the
 checker and all four backends. `random_bytes` has moved: it returns
-`u8[]` on every backend, in the same box shape as `__alloc_u8`. What
-remains is `tcp_recv` and `read_file` — where `read_file` is used
-pervasively as *text* and so likely wants a `read_file_bytes` sibling
-rather than a signature change. Slice 4 (the "no stdlib operation
-produces an invalid `string`" property test) is unblocked for the
-stdlib modules and `random_bytes` — it must still hold `tcp_recv` and
+`u8[]` on every backend, in the same box shape as `__alloc_u8`.
+`read_file` keeps its text signature but has its raw sibling now —
+`read_file_bytes(path): Result[u8[], IoError]` on every backend — so
+binary reads no longer have to come back typed `string`; the remaining
+`read_file` work is producing `IoError.InvalidUtf8` (declared
+everywhere, emitted nowhere) after a validity scan. `tcp_recv` remains
+entirely. Slice 4 (the "no stdlib operation produces an invalid
+`string`" property test) must still hold `tcp_recv` and un-validated
 `read_file` out until they move.
 
 Costs, stated honestly:

@@ -844,6 +844,11 @@ pub function op_read_line(): Op { return op0("read_line"); }
 // each backend's __fern_read_file helper. No wasm file I/O here, so a read_file
 // module is wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_read_file(): Op { return op0("read_file"); }
+// `read_file_bytes` pops a path string value and reads the whole named file,
+// pushing a fresh Result[u8[], IoError] box: Ok(contents) on success, Err(_) on
+// any I/O error (a VALUE op — one arg consumed, the box left on the stack).
+// Lowers to each backend's __fern_read_file_bytes helper.
+pub function op_read_file_bytes(): Op { return op0("read_file_bytes"); }
 // `write_file` pops a content string value and a path string value and writes the
 // content to the named file, pushing a fresh Result[(), IoError]: Ok(()) on success,
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
@@ -1585,6 +1590,7 @@ function kind_id_4(name: string): i32 {
     if (name == "read_int") { return 167; }
     if (name == "read_line") { return 168; }
     if (name == "read_file") { return 169; }
+    if (name == "read_file_bytes") { return 233; }
     if (name == "write_file") { return 170; }
     if (name == "read_dir") { return 171; }
     if (name == "remove_dir_all") { return 172; }
@@ -1867,6 +1873,7 @@ function kind_name_4(id: i32): string {
     if (id == 167) { return "read_int"; }
     if (id == 168) { return "read_line"; }
     if (id == 169) { return "read_file"; }
+    if (id == 233) { return "read_file_bytes"; }
     if (id == 170) { return "write_file"; }
     if (id == 171) { return "read_dir"; }
     if (id == 172) { return "remove_dir_all"; }
@@ -2024,7 +2031,7 @@ function pops1_io(t: i32): boolean {
     // operand, `return` the function's result).
     return t == 154 || t == 158 || t == 159 || t == 160                  // if, brif, drop, return
         || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
-        || t == 169 || t == 171 || t == 172 || t == 173                  // read_file, read_dir, remove_dir_all, remove_file
+        || t == 169 || t == 233 || t == 171 || t == 172 || t == 173      // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
@@ -3183,6 +3190,8 @@ pub function op_allocates(tag: i32): boolean {
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
     // Result[(), IoError] result — both via __fern_str_box, so they need the heap.
     if (tag == 169 || tag == 170) { return true; }
+    // read_file_bytes boxes the contents into a fresh u8[] + a Result wrapper.
+    if (tag == 233) { return true; }
     // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path
     // strings while recursing, so it needs the heap runtime.
     if (tag == 172) { return true; }
