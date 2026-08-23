@@ -1089,9 +1089,8 @@ function disarms_defer_flag(v: parser.Expr): boolean {
 // an ancestor of that defer.
 function armed_defer_flags(stmts: parser.Stmt[], acc: string[]): string[] {
     var out: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => {
                 if (is_defer_flag_name(a.target) && !disarms_defer_flag(a.value) && util.index_of_str(out, a.target) < 0) { out = out.append(a.target); }
             },
@@ -1107,7 +1106,6 @@ function armed_defer_flags(stmts: parser.Stmt[], acc: string[]): string[] {
             },
             _ => {},
         }
-        i = i + 1;
     }
     return out;
 }
@@ -22104,10 +22102,9 @@ pub function append_inplace_names_of(fn: parser.FuncDecl): string[] {
 // readable past a `return acc.append(v)`.
 function append_lambda_idents(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        a = grow_lambda_idents_stmt(stmts[i], a);
-        match (stmts[i]) {
+    for stmt in stmts {
+        a = grow_lambda_idents_stmt(stmt, a);
+        match (stmt) {
             parser.StmtIf(f) => {
                 a = append_lambda_idents(f.then_body, a);
                 a = append_lambda_idents(f.else_body, a);
@@ -22120,7 +22117,6 @@ function append_lambda_idents(stmts: parser.Stmt[], acc: string[]): string[] {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -22130,9 +22126,8 @@ function append_lambda_idents(stmts: parser.Stmt[], acc: string[]): string[] {
 // against collect_append_recvs_stmt's total for the same name.
 function append_inplace_recvs(stmts: parser.Stmt[], esc: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var recvs: string[] = collect_append_recvs_expr(r.value, []);
                 var j: i32 = 0;
@@ -22176,7 +22171,6 @@ function append_inplace_recvs(stmts: parser.Stmt[], esc: string[], acc: string[]
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -23840,10 +23834,9 @@ function body_unsafe_for_clo(stmts: parser.Stmt[], name: string, borrowable: str
 // approved closure and aliased — and a copy of this walker would have to be kept
 // in step with the closure and tuple interlocks above forever.
 function body_unsafe_for_clo_alias(stmts: parser.Stmt[], name: string, borrowable: string[], clo_ok: string[], recv_borrow: string[], alias_ok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
+    for stmt in stmts {
         var skip: boolean = false;
-        match (stmts[i]) {
+        match (stmt) {
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprLambda(_) => {
@@ -23896,8 +23889,7 @@ function body_unsafe_for_clo_alias(stmts: parser.Stmt[], name: string, borrowabl
             },
             _ => {}
         }
-        if (!skip && stmt_unsafe_for_alias(stmts[i], name, borrowable, recv_borrow, alias_ok)) { return true; }
-        i = i + 1;
+        if (!skip && stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; }
     }
     return false;
 }
@@ -23918,9 +23910,8 @@ function body_unsafe_for_clo_alias(stmts: parser.Stmt[], name: string, borrowabl
 // source uncredited and the box unreleased.
 function alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprIdent(aid) => {
@@ -23945,7 +23936,6 @@ function alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowable: stri
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -23957,9 +23947,8 @@ function alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowable: stri
 // to the plain walker and would dangle under the deep free.
 function strarr_alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowable: string[], str_fresh: string[], body: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprIdent(aid) => {
@@ -23984,7 +23973,6 @@ function strarr_alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowabl
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -24020,8 +24008,7 @@ function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[
 // of `name` — a container element, a call argument, a return, a lambda capture,
 // a reassignment — still flags, because none of those takes the bind's retain.
 function body_unsafe_for_alias(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_alias(stmts[i], name, borrowable, recv_borrow, alias_ok)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; } }
     return false;
 }
 function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
@@ -24097,8 +24084,7 @@ function stmt_unsafe_for_alias(st: parser.Stmt, name: string, borrowable: string
 // still walked in full — as is every other use of the name anywhere in the
 // function, so an alias, a return or a call argument still refuses the candidate.
 function body_unsafe_for_match_borrow(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_match_borrow(stmts[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_unsafe_for_match_borrow(stmt, name, borrowable, recv_borrow)) { return true; } }
     return false;
 }
 function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
@@ -24146,8 +24132,7 @@ function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable:
 // caller, not retained). Every other unsafe use — an alias `var c = name`, a
 // store into a container, a non-borrowable call arg, a slice — is still flagged.
 function body_unsafe_for_allow_ret(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_allow_ret(stmts[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_unsafe_for_allow_ret(stmt, name, borrowable, recv_borrow)) { return true; } }
     return false;
 }
 function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
@@ -24242,8 +24227,7 @@ function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string
 // relaxation — a `name = g(.., name, ..)` whose callee is consume-safe at name's
 // position(s) is NOT an escape.
 function body_consume_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_consume_unsafe_for(stmts[i], name, borrowable, consume_safe, recv_borrow)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_consume_unsafe_for(stmt, name, borrowable, consume_safe, recv_borrow)) { return true; } }
     return false;
 }
 function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
@@ -26167,8 +26151,7 @@ function walk_expr_escapes(e: parser.Expr, acc: string[]): string[] {
 // walk_stmts_escapes / walk_stmt_escapes walk a statement list for escapes.
 function walk_stmts_escapes(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = walk_stmt_escapes(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = walk_stmt_escapes(stmt, a); }
     return a;
 }
 
@@ -26303,10 +26286,8 @@ function expr_view_borrow_only(e: parser.Expr, name: string): boolean {
 
 function stmts_view_borrow_only(stmts: parser.Stmt[], name: string): boolean {
     var ok: boolean = true;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (!stmt_view_borrow_only(stmts[i], name)) { ok = false; }
-        i = i + 1;
+    for stmt in stmts {
+        if (!stmt_view_borrow_only(stmt, name)) { ok = false; }
     }
     return ok;
 }
@@ -26355,10 +26336,8 @@ function stmt_view_borrow_only(st: parser.Stmt, name: string): boolean {
 // the candidates the borrow scan then filters.
 function view_slice_binding_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        a = view_slice_binding_names_stmt(stmts[i], a);
-        i = i + 1;
+    for stmt in stmts {
+        a = view_slice_binding_names_stmt(stmt, a);
     }
     return a;
 }
@@ -26477,8 +26456,7 @@ function alias_names_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 
 function alias_names_in_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = alias_names_in_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = alias_names_in_stmt(stmt, a); }
     return a;
 }
 
@@ -26635,9 +26613,8 @@ function tuple_bare_elem_sole_use(init: parser.Expr, name: string): boolean {
 // the map's sweep, which is the one ordering the relaxation cannot survive.
 function tuple_elem_host_names(stmts: parser.Stmt[], name: string, acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (tuple_bare_elem_sole_use(v.init, name)) { a = push_str_unique(a, v.name); } },
             parser.StmtIf(f) => {
                 a = tuple_elem_host_names(f.then_body, name, a);
@@ -26651,7 +26628,6 @@ function tuple_elem_host_names(stmts: parser.Stmt[], name: string, acc: string[]
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -26667,10 +26643,9 @@ function tuple_elem_host_names(stmts: parser.Stmt[], name: string, acc: string[]
 // looked at, and the condition / iterator / scrutinee / guard positions it does
 // not cover are checked here.
 function used_only_as_tuple_elem(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], hosts: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
+    for stmt in stmts {
         var skip: boolean = false;
-        match (stmts[i]) {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(hosts, v.name) >= 0 && tuple_bare_elem_sole_use(v.init, name)) { skip = true; }
             },
@@ -26704,11 +26679,10 @@ function used_only_as_tuple_elem(stmts: parser.Stmt[], name: string, borrowable:
             _ => {}
         }
         if (!skip) {
-            if (stmt_unsafe_for(stmts[i], name, borrowable, recv_borrow)) { return false; }
+            if (stmt_unsafe_for(stmt, name, borrowable, recv_borrow)) { return false; }
             var none: string[] = [];
-            if (util.index_of_str(alias_names_in_stmt(stmts[i], none), name) >= 0) { return false; }
+            if (util.index_of_str(alias_names_in_stmt(stmt, none), name) >= 0) { return false; }
         }
-        i = i + 1;
     }
     return true;
 }
@@ -26827,8 +26801,7 @@ function tuple_pos_esc_stmt(st: parser.Stmt, host: string, idx: i32): boolean {
 }
 
 function tuple_pos_esc_stmts(stmts: parser.Stmt[], host: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (tuple_pos_esc_stmt(stmts[i], host, idx)) { return true; } i = i + 1; }
+    for stmt in stmts { if (tuple_pos_esc_stmt(stmt, host, idx)) { return true; } }
     return false;
 }
 
@@ -26992,8 +26965,7 @@ function is_fresh_struct_init(e: parser.Expr, structs: parser.StructDecl[]): boo
 // share a verdict frees a live box rather than merely leaking.
 function collect_fresh_struct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_in_stmt(stmts[i], structs, a); i = i + 1; }
+    for stmt in stmts { a = collect_fresh_in_stmt(stmt, structs, a); }
     return a;
 }
 
@@ -27248,8 +27220,7 @@ function tuple_type_is_all_scalar(t: string): boolean {
 // escaping tuple local is excluded (never freed here — moved to its new owner).
 function collect_fresh_scalar_tuple_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_tuple_in_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = collect_fresh_tuple_in_stmt(stmt, a); }
     return a;
 }
 function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
@@ -27289,9 +27260,8 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // be judged — an assignment carries no type of its own, so `p = (i, i + 1)` can only
 // be known scalar-element-wise through the slot it stores into.
 function scalar_tuple_decl_ann_all_scalar(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { return tuple_type_is_all_scalar(v.type_name); } },
             parser.StmtIf(f) => {
                 if (scalar_tuple_decl_ann_all_scalar(f.then_body, name)) { return true; }
@@ -27308,7 +27278,6 @@ function scalar_tuple_decl_ann_all_scalar(stmts: parser.Stmt[], name: string): b
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -27332,10 +27301,8 @@ function scalar_tuple_decl_ann_all_scalar(stmts: parser.Stmt[], name: string): b
 // SARR: discipline: validate each rebind rather than refuse the name for being
 // rebound at all.
 function all_assigns_fresh_scalar_tuple(stmts: parser.Stmt[], name: string, ann_ok: boolean): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (!stmt_assigns_fresh_scalar_tuple(stmts[i], name, ann_ok)) { return false; }
-        i = i + 1;
+    for stmt in stmts {
+        if (!stmt_assigns_fresh_scalar_tuple(stmt, name, ann_ok)) { return false; }
     }
     return true;
 }
@@ -27377,8 +27344,7 @@ function stmt_assigns_fresh_scalar_tuple(st: parser.Stmt, name: string, ann_ok: 
 // reclaimable_names_of before crediting, so an escaping tuple is never freed.
 function collect_fresh_rc_tuple_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_rc_tuple_in_stmt(stmts[i], structs, a); i = i + 1; }
+    for stmt in stmts { a = collect_fresh_rc_tuple_in_stmt(stmt, structs, a); }
     return a;
 }
 function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
@@ -27448,10 +27414,8 @@ function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructD
 // release alone still leaks the LAST chain, and this credit alone still leaks
 // every superseded one.
 function all_assigns_fresh_rc_tuple(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (!stmt_assigns_fresh_rc_tuple(stmts[i], name, ttype, structs)) { return false; }
-        i = i + 1;
+    for stmt in stmts {
+        if (!stmt_assigns_fresh_rc_tuple(stmt, name, ttype, structs)) { return false; }
     }
     return true;
 }
@@ -27484,8 +27448,7 @@ function stmt_assigns_fresh_rc_tuple(st: parser.Stmt, name: string, ttype: strin
 
 function collect_sweepable_rc_tuple_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_sweepable_rc_tuple_in_stmt(stmts[i], structs, a); i = i + 1; }
+    for stmt in stmts { a = collect_sweepable_rc_tuple_in_stmt(stmt, structs, a); }
     return a;
 }
 function collect_sweepable_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
@@ -27519,9 +27482,8 @@ function collect_sweepable_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.Str
 // element read (`t.0`, safe copy) from a whole POINTER-element extraction (`keep = t.1`,
 // an owned array / struct box the deep-drop would free — an escape).
 function rctuple_type_of_decl(stmts: parser.Stmt[], name: string): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name && v.type_name.len() >= 2 && v.type_name[0:1] == "(") { return v.type_name; }
             },
@@ -27539,7 +27501,6 @@ function rctuple_type_of_decl(stmts: parser.Stmt[], name: string): string {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return "";
 }
@@ -27805,10 +27766,8 @@ function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: stri
 // exactly its unfixed 8000 while the scalar-tuple sibling went to 0. Enumerate
 // the scans a class consults, not just the shared one.
 function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (rctuple_esc_stmt_alias(stmts[i], name, ttype, structs, alias_ok)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, alias_ok)) { return true; }
     }
     return false;
 }
@@ -27846,10 +27805,8 @@ function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype
 // DEEP drop that matters more than it did for the scalar box, since the payload
 // is released too.
 function all_assigns_fresh_rcenum(stmts: parser.Stmt[], name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (!stmt_assigns_fresh_rcenum(stmts[i], name, owner, structs, opt_fresh_ret, str_fresh)) { return false; }
-        i = i + 1;
+    for stmt in stmts {
+        if (!stmt_assigns_fresh_rcenum(stmt, name, owner, structs, opt_fresh_ret, str_fresh)) { return false; }
     }
     return true;
 }
@@ -27901,9 +27858,8 @@ function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string,
 function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
-    var vi: i32 = 0;
-    while (vi < stmts.len()) {
-        match (stmts[vi]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
                 var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
@@ -27922,7 +27878,6 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
             },
             _ => {}
         }
-        vi = vi + 1;
     }
     return a;
 }
@@ -28493,8 +28448,7 @@ function litstr_tostring_recv_stmt(st: parser.Stmt, name: string): boolean {
 }
 
 function litstr_tostring_recv_body(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (litstr_tostring_recv_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (litstr_tostring_recv_stmt(stmt, name)) { return true; } }
     return false;
 }
 
@@ -28559,9 +28513,8 @@ function param_decl_types(params: parser.ParamDecl[], ts: string[]): string[] {
 
 function tostr_decl_names(stmts: parser.Stmt[], ns: string[]): string[] {
     var out_n: string[] = ns;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.type_name.len() > 0) { out_n = out_n.append(v.name); } },
             parser.StmtIf(f) => { out_n = tostr_decl_names(f.then_body, out_n); out_n = tostr_decl_names(f.else_body, out_n); },
             parser.StmtWhile(w) => { out_n = tostr_decl_names(w.body, out_n); },
@@ -28572,16 +28525,14 @@ function tostr_decl_names(stmts: parser.Stmt[], ns: string[]): string[] {
             },
             _ => {},
         }
-        i = i + 1;
     }
     return out_n;
 }
 
 function tostr_decl_vals(stmts: parser.Stmt[], ts: string[]): string[] {
     var out_t: string[] = ts;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.type_name.len() > 0) { out_t = out_t.append(v.type_name); } },
             parser.StmtIf(f) => { out_t = tostr_decl_vals(f.then_body, out_t); out_t = tostr_decl_vals(f.else_body, out_t); },
             parser.StmtWhile(w) => { out_t = tostr_decl_vals(w.body, out_t); },
@@ -28592,7 +28543,6 @@ function tostr_decl_vals(stmts: parser.Stmt[], ts: string[]): string[] {
             },
             _ => {},
         }
-        i = i + 1;
     }
     return out_t;
 }
@@ -28697,9 +28647,8 @@ function trim_str_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
 // recursing through nested blocks like its siblings.
 function collect_trim_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (trim_str_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_trim_local_names(f.then_body, ns, ts, a); a = collect_trim_local_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_trim_local_names(w.body, ns, ts, a); },
@@ -28710,7 +28659,6 @@ function collect_trim_local_names(stmts: parser.Stmt[], ns: string[], ts: string
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -28815,9 +28763,8 @@ function sfrrecv_str_chain_rooted(e: parser.Expr, ns: string[], ts: string[], st
 // recursing through nested blocks like its siblings.
 function collect_sfrrecv_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], str_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (sfrrecv_str_init(v.init, ns, ts, str_fresh_ret)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_sfrrecv_local_names(f.then_body, ns, ts, str_fresh_ret, a); a = collect_sfrrecv_local_names(f.else_body, ns, ts, str_fresh_ret, a); },
             parser.StmtWhile(w) => { a = collect_sfrrecv_local_names(w.body, ns, ts, str_fresh_ret, a); },
@@ -28828,7 +28775,6 @@ function collect_sfrrecv_local_names(stmts: parser.Stmt[], ns: string[], ts: str
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -28837,9 +28783,8 @@ function collect_sfrrecv_local_names(stmts: parser.Stmt[], ns: string[], ts: str
 // binding, recursing through nested blocks like its siblings.
 function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (replace_str_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_replace_local_names(f.then_body, ns, ts, a); a = collect_replace_local_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_replace_local_names(w.body, ns, ts, a); },
@@ -28850,7 +28795,6 @@ function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: str
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -28863,9 +28807,8 @@ function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: str
 // not credited (params carry no `var` declaration in the body).
 function collect_join_strarr_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (join_strarr_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
             parser.StmtIf(f) => { a = collect_join_strarr_names(f.then_body, ns, ts, a); a = collect_join_strarr_names(f.else_body, ns, ts, a); },
             parser.StmtWhile(w) => { a = collect_join_strarr_names(w.body, ns, ts, a); },
@@ -28876,7 +28819,6 @@ function collect_join_strarr_names(stmts: parser.Stmt[], ns: string[], ts: strin
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -28885,9 +28827,8 @@ function collect_join_strarr_names(stmts: parser.Stmt[], ns: string[], ts: strin
 // binding, recursing through nested blocks like its siblings.
 function collect_tostr_scalar_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (tostr_scalar_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
             },
@@ -28900,7 +28841,6 @@ function collect_tostr_scalar_names(stmts: parser.Stmt[], ns: string[], ts: stri
             },
             _ => {},
         }
-        i = i + 1;
     }
     return a;
 }
@@ -28909,9 +28849,8 @@ function collect_tostr_scalar_names(stmts: parser.Stmt[], ns: string[], ts: stri
 // through nested blocks exactly as collect_fresh_string_names does.
 function collect_litstr_local_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprString(_) => { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); },
@@ -28927,15 +28866,13 @@ function collect_litstr_local_names(stmts: parser.Stmt[], acc: string[]): string
             },
             _ => {},
         }
-        i = i + 1;
     }
     return a;
 }
 
 function collect_fresh_string_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_string_in_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = collect_fresh_string_in_stmt(stmt, a); }
     return a;
 }
 function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] {
@@ -28979,9 +28916,8 @@ function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] 
 // result can alias no parameter, field or live local of the callee.
 function collect_str_fresh_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0
                     && (is_fresh_ret_binding(v.init, "", str_fresh_ret)
@@ -28996,7 +28932,6 @@ function collect_str_fresh_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_fresh_ret_call_names(m.arms[ai].body, str_fresh_ret, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -29046,8 +28981,7 @@ function str_accum_reassign_ok(e: parser.Expr, name: string, borrowable: string[
 // would then be a UAF). `return name` stays unsafe (non-escaping accumulators
 // only; the move-out builder is a follow-up).
 function str_accum_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_accum_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_accum_unsafe_for(stmt, name, borrowable)) { return true; } }
     return false;
 }
 function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
@@ -29117,9 +29051,8 @@ function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string
 // s that never escapes, is proven by str_accum_unsafe_for at the crediting site.
 function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) >= 0) {
                     var init_ok: boolean = str_local_binding_is_fresh(v.init);
@@ -29133,7 +29066,6 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_accumulator_names(m.arms[ai].body, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -29210,13 +29142,11 @@ function str_local_is_fresh_ret(stmts: parser.Stmt[], name: string, reg: string[
 }
 
 function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { return str_return_is_fresh_reg(v.init, reg, body, params); } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -29224,9 +29154,8 @@ function strloc_declared_fresh(stmts: parser.Stmt[], name: string, reg: string[]
 // strloc_escapes: `name` appears somewhere other than its own declaration, an
 // assignment TO it whose value is fresh, and a bare `return name`.
 function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name != name && expr_mentions_name(v.init, name)) { return true; }
             },
@@ -29267,7 +29196,6 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], body:
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -29335,9 +29263,8 @@ function tostring_recv_is_scalar_param(e: parser.Expr, body: parser.Stmt[], para
 // annotated string. The count gate is what makes the flat verdict safe: with
 // exactly one declaration there is no shadowed sibling to mis-attribute.
 function decl_string_local(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { return v.type_name == "string"; } },
             parser.StmtIf(f) => {
                 if (decl_string_local(f.then_body, name)) { return true; }
@@ -29351,16 +29278,14 @@ function decl_string_local(stmts: parser.Stmt[], name: string): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
 
 function decl_scalar_local(stmts: parser.Stmt[], name: string): boolean {
     var found: boolean = false;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     if (!is_scalar_type_name(v.type_name)) { return false; }
@@ -29393,7 +29318,6 @@ function decl_scalar_local(stmts: parser.Stmt[], name: string): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return found;
 }
@@ -29404,9 +29328,8 @@ function decl_scalar_local(stmts: parser.Stmt[], name: string): boolean {
 // absence of a counter-example, and the two recursions cannot be folded into one
 // boolean without losing which of the two it is reporting.
 function decl_scalar_local_bad(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name && !is_scalar_type_name(v.type_name)) { return true; } },
             parser.StmtIf(f) => { if (decl_scalar_local_bad(f.then_body, name) || decl_scalar_local_bad(f.else_body, name)) { return true; } },
             parser.StmtWhile(w) => { if (decl_scalar_local_bad(w.body, name)) { return true; } },
@@ -29424,7 +29347,6 @@ function decl_scalar_local_bad(stmts: parser.Stmt[], name: string): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -29454,9 +29376,8 @@ function str_return_is_fresh_reg(e: parser.Expr, reg: string[], body: parser.Stm
 }
 
 function body_has_nonfresh_str_return_reg(stmts: parser.Stmt[], reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!str_return_is_fresh_reg_in(r.value, reg, body, params)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_str_return_reg(f.then_body, reg, body, params) || body_has_nonfresh_str_return_reg(f.else_body, reg, body, params)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_str_return_reg(w.body, reg, body, params)) { return true; } },
@@ -29464,15 +29385,13 @@ function body_has_nonfresh_str_return_reg(stmts: parser.Stmt[], reg: string[], b
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return_reg(m.arms[a].body, reg, body, params)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
 
 function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string, reg: string[], body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var ok: boolean = str_return_is_fresh_reg_in(r.value, reg, body, params);
                 if (!ok) {
@@ -29495,7 +29414,6 @@ function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshrecv_str_return_reg(m.arms[a].body, recv, reg, body, params)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -29678,9 +29596,8 @@ function tuple_return_is_fresh(e: parser.Expr): boolean {
 // return in a tuple-typed fn (unreachable in checked code) declines the
 // same way.
 function body_has_nonfresh_tuple_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!tuple_return_is_fresh(r.value)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_tuple_return(f.then_body) || body_has_nonfresh_tuple_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_tuple_return(w.body)) { return true; } },
@@ -29688,7 +29605,6 @@ function body_has_nonfresh_tuple_return(stmts: parser.Stmt[]): boolean {
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_tuple_return(m.arms[a].body)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -29844,9 +29760,8 @@ function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // the returned box sole-owns), 's' for anything else. Feeds the ARRF: flags.
 function collect_tuple_ret_shapes(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprTuple(tl) => {
@@ -29870,7 +29785,6 @@ function collect_tuple_ret_shapes(stmts: parser.Stmt[], acc: string[]): string[]
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_tuple_ret_shapes(m.arms[ai].body, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -29924,9 +29838,8 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
 // closure body, not the registered producer), and this credit has to refuse the
 // same shape — otherwise the sweep would free a string no read ever retained.
 function body_declares_name(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { return true; } },
             parser.StmtIf(f) => { if (body_declares_name(f.then_body, name) || body_declares_name(f.else_body, name)) { return true; } },
             parser.StmtWhile(w) => { if (body_declares_name(w.body, name)) { return true; } },
@@ -29934,7 +29847,6 @@ function body_declares_name(stmts: parser.Stmt[], name: string): boolean {
             parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (body_declares_name(m.arms[k].body, name)) { return true; } k = k + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -29994,9 +29906,8 @@ function owned_container_read_str_binding(init: parser.Expr, body: parser.Stmt[]
 // mis-credit here frees a box the read never handed over.
 function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: parser.Stmt[], fresh_ret: string[], reassigned: string[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0
                         && owned_container_read_str_binding(v.init, body, fresh_ret, structs)) {
@@ -30009,7 +29920,6 @@ function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: pars
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_owned_container_read_str_names(m.arms[ai].body, body, fresh_ret, reassigned, structs, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -30020,9 +29930,8 @@ function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: pars
 // crediting "TUP:" — the same shallow-box-free class as a scalar-tuple literal.
 function collect_fresh_tuple_ret_call_names(stmts: parser.Stmt[], tup_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0 && is_fresh_ret_binding(v.init, "", tup_fresh_ret)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
@@ -30034,7 +29943,6 @@ function collect_fresh_tuple_ret_call_names(stmts: parser.Stmt[], tup_fresh_ret:
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_tuple_ret_call_names(m.arms[ai].body, tup_fresh_ret, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -30044,9 +29952,8 @@ function collect_fresh_tuple_ret_call_names(stmts: parser.Stmt[], tup_fresh_ret:
 // gate (body_unsafe_for) is applied by reclaimable_names_of before crediting "STR:".
 function collect_fresh_str_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) < 0 && is_fresh_ret_binding(v.init, "", str_fresh_ret)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
@@ -30058,7 +29965,6 @@ function collect_fresh_str_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_str_ret_call_names(m.arms[ai].body, str_fresh_ret, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -30077,9 +29983,8 @@ function collect_fresh_str_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: s
 // rejects any r that is returned / stored / passed to a non-borrowable param.
 function collect_fresh_ret_call_names(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 // A fresh-ret-CALL struct local (`var t: P = f(i)`, f strict-fresh)
                 // is reclaim-safe whether or not it carries an rc-array field: a
@@ -30103,7 +30008,6 @@ function collect_fresh_ret_call_names(stmts: parser.Stmt[], structs: parser.Stru
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, structs, fresh_ret, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -30139,9 +30043,8 @@ function is_fresh_map_init(e: parser.Expr): boolean {
 // blocks like collect_fresh_map_names.
 function collect_mapf_call_names(stmts: parser.Stmt[], registry: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
                     match (v.init) {
@@ -30166,7 +30069,6 @@ function collect_mapf_call_names(stmts: parser.Stmt[], registry: string[], acc: 
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -30175,8 +30077,7 @@ function collect_mapf_call_names(stmts: parser.Stmt[], registry: string[], acc: 
 // recursing through nested blocks (the map sibling of collect_fresh_struct_names).
 function collect_fresh_map_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_map_in_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = collect_fresh_map_in_stmt(stmt, a); }
     return a;
 }
 function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
@@ -30227,9 +30128,8 @@ function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // side — this was two functions differing only in which of map_key_of /
 // map_value_of they called, recursion skeleton and all.
 function map_decl_type(stmts: parser.Stmt[], name: string, want_key: boolean): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     if (want_key) { return map_key_of(v.type_name); }
@@ -30250,7 +30150,6 @@ function map_decl_type(stmts: parser.Stmt[], name: string, want_key: boolean): s
             },
             _ => {}
         }
-        i = i + 1;
     }
     return "";
 }
@@ -30335,9 +30234,8 @@ function map_expr_sets_unfresh_arg(e: parser.Expr, name: string, argidx: i32, bo
 // map_no_unfresh_set_arg: no statement in `stmts` sets a non-fresh string at
 // `argidx` on map `name` (recursing nested blocks). Reads (m.get/has/len) ignored.
 function map_no_unfresh_set_arg(stmts: parser.Stmt[], name: string, argidx: i32, boxfresh: boolean): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtExpr(e) => { if (map_expr_sets_unfresh_arg(e.value, name, argidx, boxfresh)) { return false; } },
             parser.StmtVar(v) => { if (map_expr_sets_unfresh_arg(v.init, name, argidx, boxfresh)) { return false; } },
             parser.StmtAssign(a) => { if (map_expr_sets_unfresh_arg(a.value, name, argidx, boxfresh)) { return false; } },
@@ -30350,7 +30248,6 @@ function map_no_unfresh_set_arg(stmts: parser.Stmt[], name: string, argidx: i32,
             },
             _ => {}
         }
-        i = i + 1;
     }
     return true;
 }
@@ -30423,9 +30320,8 @@ function map_box_value_reclaimable(stmts: parser.Stmt[], name: string, structs: 
     return map_init_chain_arg_ok(stmts, name, 1, true);
 }
 function map_init_chain_arg_ok(stmts: parser.Stmt[], name: string, argidx: i32, boxfresh: boolean): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { return map_insert_chain_arg_fresh(v.init, argidx, boxfresh); } },
             parser.StmtIf(f) => {
                 if (stmts_declare(f.then_body, name)) { return map_init_chain_arg_ok(f.then_body, name, argidx, boxfresh); }
@@ -30439,19 +30335,16 @@ function map_init_chain_arg_ok(stmts: parser.Stmt[], name: string, argidx: i32, 
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
 // stmts_declare: does a `var name = …` appear directly in `stmts`?
 function stmts_declare(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -30496,10 +30389,8 @@ function expr_iters_map(e: parser.Expr, name: string): boolean {
 // keys/values BUFFERS never dangles them — the reclaim runs after the loop completes.
 // Recurses through nested blocks and statement expressions.
 function map_has_explicit_iter(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (map_has_explicit_iter_stmt(stmts[i], name)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (map_has_explicit_iter_stmt(stmt, name)) { return true; }
     }
     return false;
 }
@@ -30683,11 +30574,10 @@ function is_map_selfcow_assign(st: parser.Stmt, name: string): boolean {
 // still releases exactly one live box). Any other rebind (a fresh literal, a
 // different call, an alias) disqualifies exactly as before.
 function map_nonself_reassigned(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => {
-                if (a.target == name && !is_map_selfcow_assign(stmts[i], name)) { return true; }
+                if (a.target == name && !is_map_selfcow_assign(stmt, name)) { return true; }
             },
             parser.StmtIf(iff) => { if (map_nonself_reassigned(iff.then_body, name) || map_nonself_reassigned(iff.else_body, name)) { return true; } },
             parser.StmtWhile(w) => { if (map_nonself_reassigned(w.body, name)) { return true; } },
@@ -30698,7 +30588,6 @@ function map_nonself_reassigned(stmts: parser.Stmt[], name: string): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -30707,10 +30596,8 @@ function map_nonself_reassigned(stmts: parser.Stmt[], name: string): boolean {
 // on `name` (see expr_map_identity_use) anywhere? Shared soundness gate for
 // BOTH map reclaim sites — the "MAP:" exit set and the precise-drop candidate.
 function map_identity_escape(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (map_identity_escape_stmt(stmts[i], name)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (map_identity_escape_stmt(stmt, name)) { return true; }
     }
     return false;
 }
@@ -30872,8 +30759,7 @@ function boxarr_lit_all_elems_fresh(e: parser.Expr, structs: parser.StructDecl[]
 // nowhere else.
 function collect_builtin_strarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_builtin_strarr_in_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = collect_builtin_strarr_in_stmt(stmt, a); }
     return a;
 }
 function collect_builtin_strarr_in_stmt(st: parser.Stmt, acc: string[]): string[] {
@@ -30912,8 +30798,7 @@ function collect_builtin_strarr_in_stmt(st: parser.Stmt, acc: string[]): string[
 
 function collect_fresh_strarr_names(stmts: parser.Stmt[], body: parser.Stmt[], fresh_ret: string[], str_fresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_fresh_strarr_in_stmt(stmts[i], body, fresh_ret, str_fresh, a); i = i + 1; }
+    for stmt in stmts { a = collect_fresh_strarr_in_stmt(stmt, body, fresh_ret, str_fresh, a); }
     return a;
 }
 function collect_fresh_strarr_in_stmt(st: parser.Stmt, body: parser.Stmt[], fresh_ret: string[], str_fresh: string[], acc: string[]): string[] {
@@ -31137,8 +31022,7 @@ function strarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: strin
 // __fern_str_arr_free arbitrates (elements walk only at the last owner's
 // rc==1). The parameter rather than a second walker, as body_unsafe_for_clo_alias.
 function strarr_unsafe_for_alias(stmts: parser.Stmt[], name: string, borrowable: string[], str_fresh: string[], alias_ok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_strarr_unsafe_for(stmts[i], name, borrowable, str_fresh, alias_ok)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_strarr_unsafe_for(stmt, name, borrowable, str_fresh, alias_ok)) { return true; } }
     return false;
 }
 function stmt_strarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], str_fresh: string[], alias_ok: string[]): boolean {
@@ -31287,8 +31171,7 @@ function clo_rc_candidate_names(body: parser.Stmt[], borrowable: string[]): stri
 // recorded as "" so it never qualifies (the two envs' capture sets differ).
 function collect_clo_lambda_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_clo_lambda_in_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = collect_clo_lambda_in_stmt(stmt, a); }
     return a;
 }
 function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
@@ -31348,8 +31231,7 @@ function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // type resolves against every declaration in scope.
 function collect_dyn_struct_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_dyn_struct_in_stmt(stmts[i], body, structs, fresh_ret, struct_ret_fns, a); i = i + 1; }
+    for stmt in stmts { a = collect_dyn_struct_in_stmt(stmt, body, structs, fresh_ret, struct_ret_fns, a); }
     return a;
 }
 function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
@@ -31474,8 +31356,7 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], struct
 // i). A name bound twice is blanked (shadow — the element lists may differ).
 function collect_dyn_arr_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_dyn_arr_in_stmt(stmts[i], structs, a); i = i + 1; }
+    for stmt in stmts { a = collect_dyn_arr_in_stmt(stmt, structs, a); }
     return a;
 }
 function collect_dyn_arr_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
@@ -31719,8 +31600,7 @@ function darr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]): b
 // doesn't track); an element dispatch as a bare statement expression is
 // transient-safe (its result is discarded before the sweep).
 function darr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_darr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_darr_unsafe_for(stmt, name, borrowable)) { return true; } }
     return false;
 }
 function stmt_darr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
@@ -31869,8 +31749,7 @@ function moves_fields_expr(e: parser.Expr, name: string, nomove: string[]): bool
 }
 
 function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (moves_fields_stmt(stmts[i], name, nomove)) { return true; } i = i + 1; }
+    for stmt in stmts { if (moves_fields_stmt(stmt, name, nomove)) { return true; } }
     return false;
 }
 function moves_fields_stmt(st: parser.Stmt, name: string, nomove: string[]): boolean {
@@ -32052,8 +31931,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
 // body_returns_bare_ident: some `return name;` in `stmts` hands `name` itself
 // back, rather than a value derived from it.
 function body_returns_bare_ident(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_returns_bare_ident(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_returns_bare_ident(stmt, name)) { return true; } }
     return false;
 }
 function stmt_returns_bare_ident(st: parser.Stmt, name: string): boolean {
@@ -32226,8 +32104,7 @@ function method_result_moved_expr(e: parser.Expr, name: string, method: string, 
 }
 
 function method_result_moved_stmts(stmts: parser.Stmt[], name: string, method: string, borrowable: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (method_result_moved_stmt(stmts[i], name, method, borrowable)) { return true; } i = i + 1; }
+    for stmt in stmts { if (method_result_moved_stmt(stmt, name, method, borrowable)) { return true; } }
     return false;
 }
 function method_result_moved_stmt(st: parser.Stmt, name: string, method: string, borrowable: string[]): boolean {
@@ -32282,8 +32159,7 @@ function method_result_moved_stmt(st: parser.Stmt, name: string, method: string,
 // Such a local is left to LEAK, exactly like the borrowed match-payload struct
 // bindings already are (see the k_enum struct-payload note in lower_stmt_match).
 function reassigned_from_alias(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_reassigns_alias(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_reassigns_alias(stmt, name)) { return true; } }
     return false;
 }
 function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
@@ -33357,9 +33233,8 @@ function is_fresh_struct_ret_value(e: parser.Expr, structs: parser.StructDecl[])
 // control flow included). A function is fresh-returning iff it has at least one
 // return AND every return value is a fresh struct construction.
 function body_has_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(_) => { return true; },
             parser.StmtIf(f) => { if (body_has_return(f.then_body) || body_has_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_return(w.body)) { return true; } },
@@ -33367,14 +33242,12 @@ function body_has_return(stmts: parser.Stmt[]): boolean {
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_return(m.arms[a].body)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
 function body_has_nonfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!is_fresh_struct_ret_value(r.value, structs)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_return(f.then_body, structs) || body_has_nonfresh_return(f.else_body, structs)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_return(w.body, structs)) { return true; } },
@@ -33382,7 +33255,6 @@ function body_has_nonfresh_return(stmts: parser.Stmt[], structs: parser.StructDe
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -33444,9 +33316,8 @@ function struct_lit_field_ident_count(slit: parser.ExprStructLit, name: string):
 // blocks included.
 function local_decl_count(stmts: parser.Stmt[], name: string): i32 {
     var n: i32 = 0;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { n = n + 1; } },
             parser.StmtIf(f) => { n = n + local_decl_count(f.then_body, name) + local_decl_count(f.else_body, name); },
             parser.StmtWhile(w) => { n = n + local_decl_count(w.body, name); },
@@ -33455,7 +33326,6 @@ function local_decl_count(stmts: parser.Stmt[], name: string): i32 {
             parser.StmtDefer(d) => { n = n + local_decl_count([d.action], name); },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -33501,8 +33371,7 @@ function body_unsafe_for_allow_bare_ret(stmts: parser.Stmt[], name: string, borr
 }
 
 function body_unsafe_for_ret_ok(stmts: parser.Stmt[], name: string, borrowable: string[], bare_ret_ok: boolean): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for_ret_ok(stmts[i], name, borrowable, bare_ret_ok)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_unsafe_for_ret_ok(stmt, name, borrowable, bare_ret_ok)) { return true; } }
     return false;
 }
 function stmt_unsafe_for_ret_ok(st: parser.Stmt, name: string, borrowable: string[], bare_ret_ok: boolean): boolean {
@@ -33746,9 +33615,8 @@ function struct_ret_local_is_frame_fresh(name: string, structs: parser.StructDec
 // the conservative direction: an undeclared name is a parameter or a shadow the
 // caller already refused.
 function struct_ret_local_init_strictfresh(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     return return_value_is_strictfresh_struct(v.init, structs, fnbody, arr_fresh, fwd, fnparams, sfok);
@@ -33769,7 +33637,6 @@ function struct_ret_local_init_strictfresh(stmts: parser.Stmt[], name: string, s
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -33781,9 +33648,8 @@ function struct_ret_local_init_strictfresh(stmts: parser.Stmt[], name: string, s
 // be. A body with no return at all answers false via the caller's
 // body_has_return check.
 function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string, arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var self_ret: boolean = false;
                 match (r.value) {
@@ -33798,14 +33664,12 @@ function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return true;
 }
 function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody, arr_fresh, fwd, fnparams, sfok) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
@@ -33813,7 +33677,6 @@ function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.St
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -33824,9 +33687,8 @@ function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.St
 // dec (which never reads elements) is balanced against it. A bare `return out`
 // of a local declines (could alias / be swept by the callee).
 function body_has_nonfresh_arrlit_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var fresh: boolean = false;
                 match (r.value) {
@@ -33841,7 +33703,6 @@ function body_has_nonfresh_arrlit_return(stmts: parser.Stmt[]): boolean {
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrlit_return(m.arms[a].body)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -33865,9 +33726,8 @@ function body_has_nonfresh_arrlit_return(stmts: parser.Stmt[]): boolean {
 // outright if any return is some other shape.
 function arr_returned_ident_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprIdent(rid) => { a = push_str_unique(a, rid.name); },
@@ -33880,14 +33740,12 @@ function arr_returned_ident_names(stmts: parser.Stmt[], acc: string[]): string[]
             parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { a = arr_returned_ident_names(m.arms[k].body, a); k = k + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
 function body_has_nonident_arr_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var ok: boolean = false;
                 match (r.value) { parser.ExprIdent(_) => { ok = true; }, _ => {} }
@@ -33899,7 +33757,6 @@ function body_has_nonident_arr_return(stmts: parser.Stmt[]): boolean {
             parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (body_has_nonident_arr_return(m.arms[k].body)) { return true; } k = k + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -33909,9 +33766,8 @@ function body_has_nonident_arr_return(stmts: parser.Stmt[]): boolean {
 // producer in `arr_fresh`. Without this the name could be seeded from a
 // parameter and the caller would free the caller's caller's buffer.
 function arr_local_init_is_frame_fresh(stmts: parser.Stmt[], name: string, arr_fresh: string[], fnbody: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     match (v.init) {
@@ -33941,7 +33797,6 @@ function arr_local_init_is_frame_fresh(stmts: parser.Stmt[], name: string, arr_f
             parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_local_init_is_frame_fresh(m.arms[k].body, name, arr_fresh, fnbody)) { return true; } k = k + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -33952,9 +33807,8 @@ function arr_local_init_is_frame_fresh(stmts: parser.Stmt[], name: string, arr_f
 // reads as safe there while it is exactly what would alias a buffer this frame
 // does not own.
 function arr_reassigned_other_than_selfappend(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => {
                 if (a.target == name) {
                     var self_append: boolean = false;
@@ -33984,7 +33838,6 @@ function arr_reassigned_other_than_selfappend(stmts: parser.Stmt[], name: string
             parser.StmtDefer(d) => { if (arr_reassigned_other_than_selfappend([d.action], name)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -34047,9 +33900,8 @@ function strarr_value_is_fresh(e: parser.Expr, str_fresh: string[]): boolean {
 // body_has_nonfresh_arrlit_return, with the element proof that one does not need
 // (its elements are scalars).
 function body_has_nonfresh_strarr_lit_return(stmts: parser.Stmt[], str_fresh: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var fresh: boolean = false;
                 match (r.value) {
@@ -34071,7 +33923,6 @@ function body_has_nonfresh_strarr_lit_return(stmts: parser.Stmt[], str_fresh: st
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_strarr_lit_return(m.arms[a].body, str_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -34081,9 +33932,8 @@ function body_has_nonfresh_strarr_lit_return(stmts: parser.Stmt[], str_fresh: st
 // arr_reassigned_other_than_selfappend (which prove the BUFFER is this frame's),
 // it proves every ELEMENT is this frame's too.
 function strarr_local_stores_nonfresh(stmts: parser.Stmt[], name: string, str_fresh: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     match (v.init) {
@@ -34122,7 +33972,6 @@ function strarr_local_stores_nonfresh(stmts: parser.Stmt[], name: string, str_fr
             parser.StmtDefer(d) => { if (strarr_local_stores_nonfresh([d.action], name, str_fresh)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -34160,9 +34009,8 @@ function body_returns_local_built_strarr(stmts: parser.Stmt[], str_fresh: string
 // construction alias-inc), so handing it to the destination and freeing the box
 // is one owner in, one owner out.
 function body_strfields_all_fresh(stmts: parser.Stmt[], structs: parser.StructDecl[], str_fresh: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprStructLit(slit) => {
@@ -34182,7 +34030,6 @@ function body_strfields_all_fresh(stmts: parser.Stmt[], structs: parser.StructDe
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_strfields_all_fresh(m.arms[a].body, structs, str_fresh)) { return false; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return true;
 }
@@ -34335,9 +34182,8 @@ function arrown_ret_value(e: parser.Expr, fn: parser.FuncDecl, structs: parser.S
 // body_has_non_arrown_return: some return in `stmts` hands back something the
 // caller does not own, so it cannot be told it owns one on every path.
 function body_has_non_arrown_return(stmts: parser.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!arrown_ret_value(r.value, fn, structs)) { return true; } },
             parser.StmtIf(f) => { if (body_has_non_arrown_return(f.then_body, fn, structs) || body_has_non_arrown_return(f.else_body, fn, structs)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_non_arrown_return(w.body, fn, structs)) { return true; } },
@@ -34346,7 +34192,6 @@ function body_has_non_arrown_return(stmts: parser.Stmt[], fn: parser.FuncDecl, s
             parser.StmtDefer(_) => {},
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -34635,9 +34480,8 @@ function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl
 }
 function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 // Order the predicates cheapest + most-selective first: the
                 // annotation, the (small-list) reassigned scan and the
@@ -34660,7 +34504,6 @@ function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs:
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_snap_locals(m.arms[ai].body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -35011,10 +34854,8 @@ function match_scrutinee_is(st: parser.Stmt, name: string): boolean {
 // precise-drop candidate kind below asks this same question, which is why it is
 // one function rather than the four copies it used to be.
 function body_has_top_level_match(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (match_scrutinee_is(stmts[i], name)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (match_scrutinee_is(stmt, name)) { return true; }
     }
     return false;
 }
@@ -35037,8 +34878,7 @@ function sole_top_level_match_idx(stmts: parser.Stmt[], name: string): i32 {
 // body_mentions_name: does `name` appear anywhere in `stmts`, at any depth?
 function body_mentions_name(stmts: parser.Stmt[], name: string): boolean {
     var seen: string[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) { seen = astwalk.collect_idents_stmt(stmts[i], seen); i = i + 1; }
+    for stmt in stmts { seen = astwalk.collect_idents_stmt(stmt, seen); }
     return util.index_of_str(seen, name) >= 0;
 }
 
@@ -35614,10 +35454,8 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
 // opt_body_binding_escapes — used by the rc-payload enum precise-drop path, where the
 // consuming match sits in a NESTED block. A true result rejects the candidate.
 function enum_body_binds_rc_payload(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (enum_stmt_binds_rc_payload(stmts[i], name, structs)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (enum_stmt_binds_rc_payload(stmt, name, structs)) { return true; }
     }
     return false;
 }
@@ -36092,9 +35930,8 @@ function variant_ctor_array_payloads_fresh(e: parser.Expr, structs: parser.Struc
 // then be aliased/escape).
 function enum_only_wildcard_used_rec(stmts: parser.Stmt[], name: string, enum_name: string, structs: parser.StructDecl[]): boolean {
     var none: string[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        var st: parser.Stmt = stmts[i];
+    for stmt in stmts {
+        var st: parser.Stmt = stmt;
         if (util.index_of_str(astwalk.collect_idents_stmt(st, none), name) >= 0) {
             match (st) {
                 parser.StmtVar(v) => {
@@ -36169,7 +36006,6 @@ function enum_only_wildcard_used_rec(stmts: parser.Stmt[], name: string, enum_na
                 _ => { return false; }
             }
         }
-        i = i + 1;
     }
     return true;
 }
@@ -36599,10 +36435,8 @@ function nested_opt_payload_arm_escapes(st: parser.Stmt, variant: string): boole
 // this lifts it over the whole body. A true result rejects the precise-drop
 // candidate (its payload could be aliased past the box free).
 function opt_body_binding_escapes(stmts: parser.Stmt[], name: string, variant: string, scrut_borrow: boolean): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (opt_stmt_binding_escapes(stmts[i], name, variant, scrut_borrow)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (opt_stmt_binding_escapes(stmt, name, variant, scrut_borrow)) { return true; }
     }
     return false;
 }
@@ -36806,9 +36640,8 @@ function optstruct_bind_esc_stmt(st: parser.Stmt, name: string, sty: string, str
 // qualified spelling too: `a.B` is tried as written, then as the mangled `a__B`,
 // then as the bare tail `B`. "" when the name is not a struct-annotated local.
 function declared_struct_type_of(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name && v.type_name.len() > 0) {
                     if (decl_is_struct(structs, v.type_name)) { return v.type_name; }
@@ -36841,7 +36674,6 @@ function declared_struct_type_of(stmts: parser.Stmt[], name: string, structs: pa
             },
             _ => {}
         }
-        i = i + 1;
     }
     return "";
 }
@@ -37090,10 +36922,8 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
 // optstruct_body_moves_field: any statement in `stmts` moves a NON-SCALAR field of
 // the struct local `name` (declared type `sty`) into something longer-lived.
 function optstruct_body_moves_field(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (fieldmove_stmt(stmts[i], name, sty, structs, borrowable)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (fieldmove_stmt(stmt, name, sty, structs, borrowable)) { return true; }
     }
     return false;
 }
@@ -37140,10 +36970,8 @@ function opt_arm_field_moved(st: parser.Stmt, variant: string, sty: string, stru
 // precise-drop path whose consuming match sits in a NESTED block — the field-level
 // sibling of opt_body_binding_escapes, and the same recursion.
 function opt_body_field_moved(stmts: parser.Stmt[], name: string, variant: string, sty: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (opt_stmt_field_moved(stmts[i], name, variant, sty, structs)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (opt_stmt_field_moved(stmt, name, variant, sty, structs)) { return true; }
     }
     return false;
 }
@@ -38075,9 +37903,8 @@ function optaarr_lit_is_fresh(e: parser.Expr): boolean {
 // index-scrutinee sibling of opt_body_binding_escapes (which keys on ident
 // scrutinees).
 function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtMatch(m) => {
                 var is_elem: boolean = false;
                 match (m.scrutinee) {
@@ -38089,7 +37916,7 @@ function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boole
                     },
                     _ => {}
                 }
-                if (is_elem && opt_arm_binding_escapes(stmts[i], "Some", false)) { return true; }
+                if (is_elem && opt_arm_binding_escapes(stmt, "Some", false)) { return true; }
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
                     if (optaarr_elem_payload_escapes(m.arms[ai].body, name)) { return true; }
@@ -38101,7 +37928,6 @@ function optaarr_elem_payload_escapes(stmts: parser.Stmt[], name: string): boole
             parser.StmtFor(fo) => { if (optaarr_elem_payload_escapes(fo.body, name)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -38338,9 +38164,8 @@ function opttup_arm_stmt_escapes(st: parser.Stmt, p: string, inner: string, stru
 // opt_body_binding_escapes in the OPTTUP admission. Scans nested blocks for the
 // `match (name)`; a `Some(_)` (no binding) never escapes.
 function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtMatch(m) => {
                 var is_scrut: boolean = false;
                 match (m.scrutinee) {
@@ -38374,7 +38199,6 @@ function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: strin
             parser.StmtFor(fo) => { if (opttup_payload_escapes(fo.body, name, inner, structs)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -38446,9 +38270,8 @@ function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.Struct
 // holds an option box the free would dangle).
 function collect_fresh_optaarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (optaarr_ann_is(v.type_name) && optaarr_lit_is_fresh(v.init)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
             },
@@ -38461,7 +38284,6 @@ function collect_fresh_optaarr_names(stmts: parser.Stmt[], acc: string[]): strin
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -38551,9 +38373,8 @@ function structarr_self_append_elem(e: parser.Expr, name: string, fresh_ret: str
 // structarr_name_is_appended: `name` takes at least one sanctioned self-append,
 // which is what admits an empty-literal init as an append-built candidate.
 function structarr_name_is_appended(stmts: parser.Stmt[], name: string, fresh_ret: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => { if (a.target == name && structarr_self_append_elem(a.value, name, fresh_ret)) { return true; } },
             parser.StmtIf(f) => {
                 if (structarr_name_is_appended(f.then_body, name, fresh_ret)) { return true; }
@@ -38567,7 +38388,6 @@ function structarr_name_is_appended(stmts: parser.Stmt[], name: string, fresh_re
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -38582,8 +38402,7 @@ function structarr_name_is_appended(stmts: parser.Stmt[], name: string, fresh_re
 // which is sound because this class's own element hazard — a bound element box
 // — is checked separately by structarr_elem_escapes, applied alongside this gate.
 function structarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], fresh_ret: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_structarr_unsafe_for(stmts[i], name, borrowable, fresh_ret)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_structarr_unsafe_for(stmt, name, borrowable, fresh_ret)) { return true; } }
     return false;
 }
 function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], fresh_ret: string[]): boolean {
@@ -38637,9 +38456,8 @@ function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 // slot_is_reclaimable_structarr consults.
 function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (structarr_lit_is_fresh(v.init)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // APPEND-BUILT candidate (#6127): `var g: P[] = []` grown by
@@ -38666,7 +38484,6 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[]
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -38918,8 +38735,7 @@ function arrarr_row_store_strings_fresh(e: parser.Expr): boolean {
 // this gate. The sanctioned form never descends into its own receiver, so
 // `g` appearing as the append receiver is not read as an escape.
 function arrarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], ofr: SigReg): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_arrarr_unsafe_for(stmts[i], name, borrowable, ofr)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_arrarr_unsafe_for(stmt, name, borrowable, ofr)) { return true; } }
     return false;
 }
 function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], ofr: SigReg): boolean {
@@ -39033,9 +38849,8 @@ function arrarr_row_call_kind(e: parser.Expr, ofr: SigReg): i32 {
 // a body with no rebinds at all trivially passes (the initializer's own strict
 // marker still governs).
 function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: SigReg): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => {
                 if (a.target == name && arrarr_self_append_row(a.value, name, ofr) == 0) { return false; }
             },
@@ -39054,7 +38869,6 @@ function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: S
             },
             _ => {}
         }
-        i = i + 1;
     }
     return true;
 }
@@ -39064,9 +38878,8 @@ function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: S
 // candidate — arrarr_lit_is_fresh rejects `[]` outright (len == 0), which is
 // correct for a literal-only credit but excludes the shape this fix is about.
 function arrarr_name_is_appended(stmts: parser.Stmt[], name: string, ofr: SigReg): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => { if (a.target == name && arrarr_self_append_row(a.value, name, ofr) >= 0) { return true; } },
             parser.StmtIf(f) => {
                 if (arrarr_name_is_appended(f.then_body, name, ofr)) { return true; }
@@ -39080,7 +38893,6 @@ function arrarr_name_is_appended(stmts: parser.Stmt[], name: string, ofr: SigReg
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -39102,9 +38914,8 @@ function arrarr_lit_is_empty(e: parser.Expr): boolean {
 // borrows (`g[i][j]`, `g[i].len()`) don't bind the row and stay admissible
 // (they're inside larger expressions, not a bare ExprIndex RHS).
 function arrarr_row_escapes(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (expr_is_bare_row_read(v.init, name)) { return true; } },
             parser.StmtAssign(asg) => { if (expr_is_bare_row_read(asg.value, name)) { return true; } },
             parser.StmtFor(fo) => {
@@ -39122,7 +38933,6 @@ function arrarr_row_escapes(stmts: parser.Stmt[], name: string): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -39151,9 +38961,8 @@ function expr_is_bare_row_read(e: parser.Expr, name: string): boolean {
 // read (not a bind) is fine. Field aliasing (`var s = p.name`) is always safe
 // here — the reclaim is a SHALLOW box dec that never frees a field pointer.
 function structarr_elem_escapes(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (expr_is_bare_row_read(v.init, name)) { return true; } },
             parser.StmtAssign(asg) => { if (expr_is_bare_row_read(asg.value, name)) { return true; } },
             parser.StmtFor(fo) => {
@@ -39175,7 +38984,6 @@ function structarr_elem_escapes(stmts: parser.Stmt[], name: string, borrowable: 
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -39484,9 +39292,8 @@ function optstruct_arm_stmt_escapes(st: parser.Stmt, p: string, sty: string, str
 // the consuming `match (name)`'s Some-arm use its bound payload in an escaping way? The
 // struct-aware sibling of opttup_payload_escapes.
 function optstruct_payload_escapes(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtMatch(m) => {
                 var is_scrut: boolean = false;
                 match (m.scrutinee) {
@@ -39520,7 +39327,6 @@ function optstruct_payload_escapes(stmts: parser.Stmt[], name: string, sty: stri
             parser.StmtFor(fo) => { if (optstruct_payload_escapes(fo.body, name, sty, structs)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -39809,9 +39615,8 @@ function opt_assign_is_fresh(e: parser.Expr, kind: string, inner: string, struct
 // identical and differ only in which freshness predicate they apply, so the
 // recursion belongs in one place; opt_assign_is_fresh carries the difference.
 function opt_rebinds_all_fresh(stmts: parser.Stmt[], name: string, kind: string, inner: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => {
                 if (a.target == name && !opt_assign_is_fresh(a.value, kind, inner, structs)) { return false; }
             },
@@ -39830,7 +39635,6 @@ function opt_rebinds_all_fresh(stmts: parser.Stmt[], name: string, kind: string,
             },
             _ => {}
         }
-        i = i + 1;
     }
     return true;
 }
@@ -39913,9 +39717,8 @@ function optarr_arm_stmt_escapes(st: parser.Stmt, a: string): boolean {
 // optarr_payload_escapes: does the Some-arm payload binding of `name` escape
 // anywhere? Mirrors optarrarr_payload_escapes with the flat-array borrow rules.
 function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtMatch(m) => {
                 var is_scrut: boolean = false;
                 match (m.scrutinee) {
@@ -39952,7 +39755,6 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
             parser.StmtFor(fo) => { if (optarr_payload_escapes(fo.body, name)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -39997,9 +39799,8 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // (#6360). Per-LOCAL rather than per-slot-class because the OPTARR credit is
 // shared with the reassigned+match class.
 function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_fresh_reg: SigReg): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     if (opt_payload_type(v.type_name, "Err") != "string") { return false; }
@@ -40032,7 +39833,6 @@ function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (unmatched_optarr_err_str_fresh(m.arms[a].body, name, opt_fresh_reg)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -40040,9 +39840,8 @@ function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_
 function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
-    var vi: i32 = 0;
-    while (vi < stmts.len()) {
-        match (stmts[vi]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
@@ -40060,7 +39859,6 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
             },
             _ => {}
         }
-        vi = vi + 1;
     }
     return a;
 }
@@ -40068,9 +39866,8 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
 function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
-    var vi: i32 = 0;
-    while (vi < stmts.len()) {
-        match (stmts[vi]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
@@ -40088,7 +39885,6 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
             },
             _ => {}
         }
-        vi = vi + 1;
     }
     return a;
 }
@@ -40374,9 +40170,8 @@ function optarrarr_arm_stmt_escapes(st: parser.Stmt, g: string): boolean {
     return false;
 }
 function optarrarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtMatch(m) => {
                 var is_scrut: boolean = false;
                 match (m.scrutinee) {
@@ -40410,7 +40205,6 @@ function optarrarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean 
             parser.StmtFor(fo) => { if (optarrarr_payload_escapes(fo.body, name)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -40576,9 +40370,8 @@ function arrtup_lit_is_fresh(e: parser.Expr, ttype: string, structs: parser.Stru
 // sibling of body_has_nonfresh_arrlit_return, which needs no per-element proof
 // because its elements are scalars.
 function body_has_nonfresh_arrtup_return(stmts: parser.Stmt[], elem: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!arrtup_lit_is_fresh(r.value, elem, structs)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_arrtup_return(f.then_body, elem, structs) || body_has_nonfresh_arrtup_return(f.else_body, elem, structs)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_arrtup_return(w.body, elem, structs)) { return true; } },
@@ -40586,7 +40379,6 @@ function body_has_nonfresh_arrtup_return(stmts: parser.Stmt[], elem: string, str
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrtup_return(m.arms[a].body, elem, structs)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -40609,9 +40401,8 @@ function fn_returns_fresh_arrtup(fn: parser.FuncDecl, structs: parser.StructDecl
 // producer, anywhere in the body. Escape gates applied by reclaimable_names_of.
 function collect_fresh_arrtup_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (arrtup_ann_is(v.type_name, structs) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name, structs), structs)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL: the annotation supplies the element type the
@@ -40643,7 +40434,6 @@ function collect_fresh_arrtup_names(stmts: parser.Stmt[], body: parser.Stmt[], s
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -40652,9 +40442,8 @@ function collect_fresh_arrtup_names(stmts: parser.Stmt[], body: parser.Stmt[], s
 // `name` from its declaration anywhere in the body (for the escape checker). "" if
 // not an arrtup declaration.
 function arrtup_elem_type_of_decl(stmts: parser.Stmt[], structs: parser.StructDecl[], name: string): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name && arrtup_ann_is(v.type_name, structs)) { return arrtup_elem_tuple_type(v.type_name, structs); } },
             parser.StmtIf(f) => {
                 var t1: string = arrtup_elem_type_of_decl(f.then_body, structs, name);
@@ -40670,7 +40459,6 @@ function arrtup_elem_type_of_decl(stmts: parser.Stmt[], structs: parser.StructDe
             },
             _ => {}
         }
-        i = i + 1;
     }
     return "";
 }
@@ -40914,10 +40702,8 @@ function arrtup_elem_esc_stmt(st: parser.Stmt, name: string, ttype: string, stru
 // SCALAR-field read / indexed array-field read / .len() is a borrow (reclaim proceeds);
 // a whole struct element or a bare struct array-field extraction escapes. #4365.
 function arrtup_elem_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (arrtup_elem_esc_stmt(stmts[i], name, ttype, structs)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (arrtup_elem_esc_stmt(stmt, name, ttype, structs)) { return true; }
     }
     return false;
 }
@@ -41099,9 +40885,8 @@ function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parse
     return false;
 }
 function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_append_elem(a.value, name, structs, msites)) { return true; } },
             parser.StmtIf(f) => {
                 if (arrstruct_name_is_appended(f.then_body, name, structs, msites)) { return true; }
@@ -41115,7 +40900,6 @@ function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs:
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -41125,8 +40909,7 @@ function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs:
 // field-payload extraction) are checked separately by arrarr_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
 function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[], msites: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_arrstruct_unsafe_for(stmts[i], name, borrowable, structs, msites)) { return true; } i = i + 1; }
+    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites)) { return true; } }
     return false;
 }
 function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[], msites: string[]): boolean {
@@ -41175,9 +40958,8 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 // array-of-structs literal. The array-of-structs sibling of
 // body_has_nonfresh_arrtup_return.
 function body_has_nonfresh_arrstruct_return(stmts: parser.Stmt[], structs: parser.StructDecl[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!arrstruct_lit_is_fresh(r.value, structs)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, structs) || body_has_nonfresh_arrstruct_return(f.else_body, structs)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, structs)) { return true; } },
@@ -41185,7 +40967,6 @@ function body_has_nonfresh_arrstruct_return(stmts: parser.Stmt[], structs: parse
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -41223,9 +41004,8 @@ function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: parser.StructD
 // then grows by self-append. Escape gates applied by reclaimable_names_of.
 function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[], msites: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
@@ -41254,7 +41034,6 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[]
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -41263,9 +41042,8 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[]
 // from its declaration anywhere in the body (for the escape checker). "" if not an
 // array-of-structs declaration.
 function arrstruct_elem_type_of_decl(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { var t: string = arrstruct_elem_struct_type(v.type_name, structs); if (t != "") { return t; } } },
             parser.StmtIf(f) => {
                 var t1: string = arrstruct_elem_type_of_decl(f.then_body, name, structs);
@@ -41281,7 +41059,6 @@ function arrstruct_elem_type_of_decl(stmts: parser.Stmt[], name: string, structs
             },
             _ => {}
         }
-        i = i + 1;
     }
     return "";
 }
@@ -41487,10 +41264,8 @@ function arrstruct_elem_esc_stmt(st: parser.Stmt, name: string, sty: string, str
     return false;
 }
 function arrstruct_elem_payload_escapes(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[], msites: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (arrstruct_elem_esc_stmt(stmts[i], name, sty, structs, msites)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (arrstruct_elem_esc_stmt(stmt, name, sty, structs, msites)) { return true; }
     }
     return false;
 }
@@ -41668,10 +41443,8 @@ function arrenum_esc_stmt(st: parser.Stmt, name: string): boolean {
 }
 
 function arrenum_escapes(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (arrenum_esc_stmt(stmts[i], name)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (arrenum_esc_stmt(stmt, name)) { return true; }
     }
     return false;
 }
@@ -41683,9 +41456,8 @@ function arrenum_escapes(stmts: parser.Stmt[], name: string): boolean {
 function collect_fresh_arrenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 var owner: string = arrenum_lit_enum(v.init, structs);
                 if (owner.len() > 0 && util.index_of_str(reassigned, v.name) < 0) {
@@ -41701,7 +41473,6 @@ function collect_fresh_arrenum_names(stmts: parser.Stmt[], structs: parser.Struc
             },
             _ => {},
         }
-        i = i + 1;
     }
     return a;
 }
@@ -42371,9 +42142,8 @@ function fresh_struct_lit_type_deep(stmts: parser.Stmt[], name: string): string 
 }
 function fresh_struct_lit_types_acc(stmts: parser.Stmt[], name: string, acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     match (v.init) {
@@ -42397,7 +42167,6 @@ function fresh_struct_lit_types_acc(stmts: parser.Stmt[], name: string, acc: str
             parser.StmtDefer(d) => { a = fresh_struct_lit_types_acc([d.action], name, a); },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -42717,10 +42486,8 @@ function sa_assigns_ok_stmt(st: parser.Stmt, name: string, tyname: string, struc
 // p, which is what proves p is the box's sole owner.
 function sa_escape_names(stmts: parser.Stmt[], name: string, tyname: string, acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        a = sa_escape_stmt(stmts[i], name, tyname, a);
-        i = i + 1;
+    for stmt in stmts {
+        a = sa_escape_stmt(stmt, name, tyname, a);
     }
     return a;
 }
@@ -42771,10 +42538,8 @@ function sa_escape_stmt(st: parser.Stmt, name: string, tyname: string, acc: stri
 // the container. slot_of resolves to the shadowing slot, so admitting the name
 // at all would fire the reuse there; the whole name is refused instead.
 function sa_rebound_below(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (sa_rebound_stmt(stmts[i], name)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (sa_rebound_stmt(stmt, name)) { return true; }
     }
     return false;
 }
@@ -45225,9 +44990,8 @@ function emit_inarm_match_reuse(y_name: string, y_site: string, init: parser.Exp
 // result for field / method access (#3640 slice B.1). Recurses nested bodies so
 // a binding inside an if / while / for / match arm counts.
 function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: SigReg): SigReg {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.type_name == "fn") {
                     match (v.init) {
@@ -45248,7 +45012,6 @@ function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: SigReg): 
             },
             _ => {}
         }
-        i = i + 1;
     }
     return reg;
 }
@@ -47517,9 +47280,8 @@ function erased_return_value_ok(e: parser.Expr, names: string[]): boolean {
 // passes `A` to a closure typed at the concrete `A`, so init must NOT widen.
 // Conservative: any unrecognised statement, or any non-return use, fails safe.
 function erased_uses_only_returned(stmts: parser.Stmt[], names: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 // The returned value must be a safe erased sink: a bare erased param,
                 // a tuple of such, or an expression not touching the erased params.
@@ -47553,7 +47315,6 @@ function erased_uses_only_returned(stmts: parser.Stmt[], names: string[]): boole
             parser.StmtDefer(d) => { if (!erased_uses_only_returned([d.action], names)) { return false; } },
             _ => { return false; }
         }
-        i = i + 1;
     }
     return true;
 }
@@ -47856,9 +47617,8 @@ function opt_return_is_direct_ctor(e: parser.Expr): boolean {
 // body_has_nonctor_opt_return: any return whose value is NOT a direct
 // Ok/Err/Some/None construction (the shape gate for opt_fresh_ret_fns_of).
 function body_has_nonctor_opt_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { if (!opt_return_is_direct_ctor(r.value)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonctor_opt_return(f.then_body) || body_has_nonctor_opt_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonctor_opt_return(w.body)) { return true; } },
@@ -47866,7 +47626,6 @@ function body_has_nonctor_opt_return(stmts: parser.Stmt[]): boolean {
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonctor_opt_return(m.arms[a].body)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -47895,9 +47654,8 @@ function body_has_nonfresh_opt_err_payload(stmts: parser.Stmt[]): boolean {
 // syntactically-fresh string producer? One walk, selected by which constructor it
 // inspects — the two verdicts differ only in that name.
 function body_has_nonfresh_opt_payload(stmts: parser.Stmt[], err: boolean): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprCall(c) => {
@@ -47923,7 +47681,6 @@ function body_has_nonfresh_opt_payload(stmts: parser.Stmt[], err: boolean): bool
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_opt_payload(m.arms[a].body, err)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -48050,9 +47807,8 @@ function row_producer_kind(body: parser.Stmt[]): i32 {
 // and rebinds no matter how deeply the return is nested.
 function body_row_return_kind(stmts: parser.Stmt[], fnbody: parser.Stmt[]): i32 {
     var worst: i32 = 1;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var k: i32 = row_return_value_kind(r.value, fnbody);
                 if (k < 0) { return -1; }
@@ -48087,7 +47843,6 @@ function body_row_return_kind(stmts: parser.Stmt[], fnbody: parser.Stmt[]): i32 
             },
             _ => {}
         }
-        i = i + 1;
     }
     return worst;
 }
@@ -48131,9 +47886,8 @@ function append_built_row_local_kind(fnbody: parser.Stmt[], name: string): i32 {
 // row_local_init_kind: the declaration of `name` in this body inits it with an
 // array literal. -1 = not declared here, or not an array-literal init.
 function row_local_init_kind(stmts: parser.Stmt[], name: string): i32 {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     match (v.init) {
@@ -48167,7 +47921,6 @@ function row_local_init_kind(stmts: parser.Stmt[], name: string): i32 {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return -1;
 }
@@ -48177,9 +47930,8 @@ function row_local_init_kind(stmts: parser.Stmt[], name: string): i32 {
 // there are no rebinds at all — the init alone then governs).
 function row_local_rebind_kind(stmts: parser.Stmt[], name: string): i32 {
     var worst: i32 = 1;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => {
                 if (a.target == name) {
                     var k: i32 = row_self_append_elem_kind(a.value, name);
@@ -48216,7 +47968,6 @@ function row_local_rebind_kind(stmts: parser.Stmt[], name: string): i32 {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return worst;
 }
@@ -48347,9 +48098,8 @@ function rcenum_ctor_payload_strings_fresh(e: parser.Expr, structs: parser.Struc
 // any covered nested block disqualifies; uncovered statement kinds cannot
 // contain returns that reach this function's exit.
 function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: parser.StructDecl[], owner: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 // Strict set only ([]): this proof registers "RCE:" rows while
                 // str_fresh_ret_fns is built independently; keeping it syntactic
@@ -48363,7 +48113,6 @@ function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: par
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner)) { return true; } a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -48378,9 +48127,8 @@ function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: par
 // the StmtVar lowering, and slot_is_reclaimable_str's type gate keys on it).
 function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: SigReg, reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0) {
                     match (v.init) {
@@ -48411,7 +48159,6 @@ function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: SigR
             parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_try_str_binding_names(m.arms[ai].body, opt_fresh_ret, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -48582,9 +48329,8 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
 // REASSIGN `t = x.f` is not retained and stays unsafe.
 function strfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { a = strfld_safe_operand(v.init, a); },
             parser.StmtReturn(r) => { a = strfld_collect_unsafe(r.value, a); },
             parser.StmtAssign(as2) => { a = strfld_collect_unsafe(as2.value, a); },
@@ -48613,7 +48359,6 @@ function strfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): strin
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -49058,9 +48803,8 @@ function structfld_collect_unsafe_assign(target: string, v: parser.Expr, acc: st
 // `t = x.f` is not, matching the string scan's split.
 function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { a = structfld_safe_operand(v.init, a, borrowable); },
             parser.StmtReturn(r) => { a = structfld_collect_unsafe(r.value, a, borrowable); },
             parser.StmtAssign(as2) => { a = structfld_collect_unsafe_assign(as2.target, as2.value, a, borrowable); },
@@ -49093,7 +48837,6 @@ function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[], bor
             },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -49257,9 +49000,8 @@ function clofld_scan(e: parser.Expr, structs: parser.StructDecl[], acc: string[]
 }
 function clofld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { a = clofld_scan(v.init, structs, a); },
             parser.StmtAssign(as2) => { a = clofld_scan(as2.value, structs, a); },
             parser.StmtExpr(ex) => { a = clofld_scan(ex.value, structs, a); },
@@ -49289,7 +49031,6 @@ function clofld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], a
             parser.StmtDefer(d) => { a = clofld_scan_stmts([d.action], structs, a); },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -49453,9 +49194,8 @@ function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.St
 // walked with `top` false, where an assignment only ever retracts.
 function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: FnptrAcc, top: boolean): FnptrAcc {
     var a: FnptrAcc = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 a = fnptr_scan(v.init, funcs, structs, a);
                 // Bind: remember a local proven to hold an all-fn-value array
@@ -49521,7 +49261,6 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
             parser.StmtDefer(d) => { a = fnptr_scan_stmts([d.action], funcs, structs, a, false); },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -49700,9 +49439,8 @@ pub function check_fn_array_fields(mod: parser.Module): string {
 function fnfld_read_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var b: string[] = binds;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 a = fnfld_read_expr(v.init, structs, b, a);
                 // `var r: R = …` binds by annotation; `var r = R { … }` by the
@@ -49740,7 +49478,6 @@ function fnfld_read_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], bi
             parser.StmtDefer(d) => { a = fnfld_read_stmts([d.action], structs, b, a); },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -50063,9 +49800,8 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
 function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var b: string[] = binds;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 a = strarrfld_scan(v.init, structs, b, str_fresh, strarr_producers, a);
                 // `var r: R = …` binds by annotation, `var r = R { … }` by the
@@ -50103,7 +49839,6 @@ function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[]
             parser.StmtDefer(d) => { a = strarrfld_scan_stmts([d.action], structs, b, str_fresh, strarr_producers, a); },
             _ => {}
         }
-        i = i + 1;
     }
     return a;
 }
@@ -51425,9 +51160,8 @@ function body_binds_closurearr_local(body: parser.Stmt[], name: string, closures
 // LowerState exists.
 function iife_arms_closurearr(stmts: parser.Stmt[], closureset: string[], caset: string[], seen: i32): i32 {
     var n: i32 = seen;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprArray(_) => {
@@ -51467,7 +51201,6 @@ function iife_arms_closurearr(stmts: parser.Stmt[], closureset: string[], caset:
             },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -52055,8 +51788,7 @@ function elem_read_stmt(st: parser.Stmt, name: string): boolean {
     return false;
 }
 function elem_read_in_body(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (elem_read_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (elem_read_stmt(stmt, name)) { return true; } }
     return false;
 }
 // borrowable_params_of computes, for each free function, which params are
@@ -52182,8 +51914,7 @@ function param_consumed_stmt(st: parser.Stmt, name: string): boolean {
 }
 function param_consumed_in_body(stmts: parser.Stmt[], name: string, reassigned: string[]): boolean {
     if (util.index_of_str(reassigned, name) >= 0) { return true; }
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (param_consumed_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (param_consumed_stmt(stmt, name)) { return true; } }
     return false;
 }
 
@@ -52199,10 +51930,8 @@ function param_consumed_in_body(stmts: parser.Stmt[], name: string, reassigned: 
 // would read as "no rc payload bound" and be admitted. Checking bindings without
 // consulting their type costs only the scalar arms, which no caller frees anyway.
 function param_match_binding_escapes(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (param_match_binding_escapes_stmt(stmts[i], name)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (param_match_binding_escapes_stmt(stmt, name)) { return true; }
     }
     return false;
 }
@@ -52387,8 +52116,7 @@ function arrparam_use_ok(e: parser.Expr, pn: string, counted: boolean, reg: stri
 }
 
 function arrparam_uses_ok_stmts(stmts: parser.Stmt[], pn: string, reg: string[], pfx: string, structs: parser.StructDecl[], sfok: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (!arrparam_use_ok_stmt(stmts[i], pn, reg, pfx, structs, sfok)) { return false; } i = i + 1; }
+    for stmt in stmts { if (!arrparam_use_ok_stmt(stmt, pn, reg, pfx, structs, sfok)) { return false; } }
     return true;
 }
 function arrparam_use_ok_stmt(st: parser.Stmt, pn: string, reg: string[], pfx: string, structs: parser.StructDecl[], sfok: string[]): boolean {
@@ -52971,8 +52699,7 @@ function tv_expr(e: parser.Expr, name: string): boolean {
 }
 
 function tv_stmts(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (tv_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (tv_stmt(stmt, name)) { return true; } }
     return false;
 }
 
@@ -53409,9 +53136,8 @@ struct FeState { tainted: string[], an: string[], av: parser.Expr[], types_n: st
 // t's tuple annotation positionally (best-effort: bare-ident RHS only).
 function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): FeState {
     var st: FeState = s;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (rc_fe_is_destructure(v.name)) {
                     // destructure (`var (a, b) = t` — parsed as a comma-joined
@@ -53501,7 +53227,6 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
             },
             _ => {}
         }
-        i = i + 1;
     }
     return st;
 }
@@ -53645,9 +53370,8 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
 // binding forms, recurses into nested blocks and value expressions.
 function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[]): FeState {
     var st: FeState = s;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 // A destructure's bindings are counted owners (each extracted
                 // element is dup'd) — neither tainted nor recorded as assigns.
@@ -53699,7 +53423,6 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
             parser.StmtExpr(x) => { st = rc_fe_walk_expr(x.value, st, structs); },
             _ => {}
         }
-        i = i + 1;
     }
     return st;
 }
@@ -53933,8 +53656,7 @@ function rc_ml_count_in_stmt(st: parser.Stmt, name: string): i32 {
 
 function rc_ml_count_in_stmts(stmts: parser.Stmt[], name: string): i32 {
     var n: i32 = 0;
-    var i: i32 = 0;
-    while (i < stmts.len()) { n = n + rc_ml_count_in_stmt(stmts[i], name); i = i + 1; }
+    for stmt in stmts { n = n + rc_ml_count_in_stmt(stmt, name); }
     return n;
 }
 
@@ -53957,8 +53679,7 @@ function rc_ml_stmt_has_return(st: parser.Stmt): boolean {
 }
 
 function rc_ml_stmts_have_return(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (rc_ml_stmt_has_return(stmts[i])) { return true; } i = i + 1; }
+    for stmt in stmts { if (rc_ml_stmt_has_return(stmt)) { return true; } }
     return false;
 }
 
@@ -54158,10 +53879,8 @@ function rc_ml_stmt_has_early_exit(st: parser.Stmt): boolean {
 }
 
 function rc_ml_stmts_have_early_exit(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (rc_ml_stmt_has_early_exit(stmts[i])) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (rc_ml_stmt_has_early_exit(stmt)) { return true; }
     }
     return false;
 }
@@ -54185,9 +53904,8 @@ function rc_ml_allow_at(declared: string[], decl_exits: i32[], exits: i32): stri
 // body-local `declared` set no longer identifies which one a use refers to.
 function rc_ml_decl_count(stmts: parser.Stmt[], name: string): i32 {
     var n: i32 = 0;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { if (v.name == name) { n = n + 1; } },
             parser.StmtIf(f) => { n = n + rc_ml_decl_count(f.then_body, name) + rc_ml_decl_count(f.else_body, name); },
             parser.StmtWhile(w) => { n = n + rc_ml_decl_count(w.body, name); },
@@ -54195,7 +53913,6 @@ function rc_ml_decl_count(stmts: parser.Stmt[], name: string): i32 {
             parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { n = n + rc_ml_decl_count(m.arms[a].body, name); a = a + 1; } },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -54312,9 +54029,8 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
 // top-level walk.
 function rc_ml_loop_body_moves(stmts: parser.Stmt[], fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut): MlOut {
     var out: MlOut = moved;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtWhile(w) => {
                 out = rc_ml_one_loop_body(w.body, fn, types_n, types_t, structs, out);
                 out = rc_ml_loop_body_moves(w.body, fn, types_n, types_t, structs, out);
@@ -54333,7 +54049,6 @@ function rc_ml_loop_body_moves(stmts: parser.Stmt[], fn: parser.FuncDecl, types_
             },
             _ => {}
         }
-        i = i + 1;
     }
     return out;
 }
@@ -54582,9 +54297,8 @@ function rc_asi_expr(e: parser.Expr, body: parser.Stmt[], k: i32, self_name: str
 
 function rc_asi_stmts(stmts: parser.Stmt[], body: parser.Stmt[], k: i32, borrowed: string[], out: string[]): string[] {
     var acc: string[] = out;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { acc = rc_asi_expr(v.init, body, k, "", borrowed, acc); },
             parser.StmtAssign(a) => { acc = rc_asi_expr(a.value, body, k, a.target, borrowed, acc); },
             parser.StmtReturn(r) => { acc = rc_asi_expr(r.value, body, k, "", borrowed, acc); },
@@ -54603,7 +54317,6 @@ function rc_asi_stmts(stmts: parser.Stmt[], body: parser.Stmt[], k: i32, borrowe
             },
             _ => {}
         }
-        i = i + 1;
     }
     return acc;
 }
@@ -54708,9 +54421,8 @@ function xblock_recip_pos(iff: parser.StmtIf, recip: string): string {
     return xblock_recip_pos_in(iff.else_body, recip);
 }
 function xblock_recip_pos_in(stmts: parser.Stmt[], recip: string): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (v.name == recip) {
                     match (v.init) {
@@ -54722,7 +54434,6 @@ function xblock_recip_pos_in(stmts: parser.Stmt[], recip: string): string {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return "";
 }
@@ -54766,9 +54477,8 @@ function reuse_xblock_pairs(stmts: parser.Stmt[], structs: parser.StructDecl[], 
     }
     // recurse into nested blocks (a cross-block pairing whose donor is in an
     // inner loop / arm and recipient in an if nested there).
-    var r: i32 = 0;
-    while (r < stmts.len()) {
-        match (stmts[r]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtIf(f) => { acc = reuse_xblock_pairs(f.then_body, structs, fresh_ret, acc); acc = reuse_xblock_pairs(f.else_body, structs, fresh_ret, acc); },
             parser.StmtWhile(w) => { acc = reuse_xblock_pairs(w.body, structs, fresh_ret, acc); },
             parser.StmtFor(fo) => { acc = reuse_xblock_pairs(fo.body, structs, fresh_ret, acc); },
@@ -54778,7 +54488,6 @@ function reuse_xblock_pairs(stmts: parser.Stmt[], structs: parser.StructDecl[], 
             },
             _ => {}
         }
-        r = r + 1;
     }
     return acc;
 }
@@ -54829,9 +54538,8 @@ function reuse_sources_block(stmts: parser.Stmt[], structs: parser.StructDecl[],
         j = j + 1;
     }
     // recurse into nested blocks.
-    var k: i32 = 0;
-    while (k < stmts.len()) {
-        match (stmts[k]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtIf(f) => { acc = reuse_sources_block(f.then_body, structs, fresh_ret, acc); acc = reuse_sources_block(f.else_body, structs, fresh_ret, acc); },
             parser.StmtWhile(w) => { acc = reuse_sources_block(w.body, structs, fresh_ret, acc); },
             parser.StmtFor(fo) => { acc = reuse_sources_block(fo.body, structs, fresh_ret, acc); },
@@ -54841,7 +54549,6 @@ function reuse_sources_block(stmts: parser.Stmt[], structs: parser.StructDecl[],
             },
             _ => {}
         }
-        k = k + 1;
     }
     return acc;
 }
@@ -54874,9 +54581,8 @@ function reuse_consumed_block(stmts: parser.Stmt[], structs: parser.StructDecl[]
         if (util.index_of_str(acc, xt.donors[j]) < 0) { acc = acc.append(xt.donors[j]); }
         j = j + 1;
     }
-    var k: i32 = 0;
-    while (k < stmts.len()) {
-        match (stmts[k]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtIf(f) => { acc = reuse_consumed_block(f.then_body, structs, fresh_ret, acc); acc = reuse_consumed_block(f.else_body, structs, fresh_ret, acc); },
             parser.StmtWhile(w) => { acc = reuse_consumed_block(w.body, structs, fresh_ret, acc); },
             parser.StmtFor(fo) => { acc = reuse_consumed_block(fo.body, structs, fresh_ret, acc); },
@@ -54886,7 +54592,6 @@ function reuse_consumed_block(stmts: parser.Stmt[], structs: parser.StructDecl[]
             },
             _ => {}
         }
-        k = k + 1;
     }
     return acc;
 }
@@ -54938,9 +54643,8 @@ function consuming_match_reuse_block(stmts: parser.Stmt[], structs: parser.Struc
         }
         i = i + 1;
     }
-    var k: i32 = 0;
-    while (k < stmts.len()) {
-        match (stmts[k]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtIf(f) => { acc = consuming_match_reuse_block(f.then_body, structs, acc); acc = consuming_match_reuse_block(f.else_body, structs, acc); },
             parser.StmtWhile(w) => { acc = consuming_match_reuse_block(w.body, structs, acc); },
             parser.StmtFor(fo) => { acc = consuming_match_reuse_block(fo.body, structs, acc); },
@@ -54950,7 +54654,6 @@ function consuming_match_reuse_block(stmts: parser.Stmt[], structs: parser.Struc
             },
             _ => {}
         }
-        k = k + 1;
     }
     return acc;
 }
@@ -55501,9 +55204,8 @@ pub function (s: LowerState) callee_param_is_fn(name: string, idx: i32): boolean
 // even though the register backends lower it fine: the wasm backend types an
 // erased param local i32, so both wide kinds must refuse the wasm lowering.
 pub function erased_wide_stmts(stmts: parser.Stmt[], s: LowerState): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 if (erased_wide_expr(v.init, s)) { return true; }
                 if (erased_elem_dest_wide(v.type_name, v.init, s)) { return true; }
@@ -55547,7 +55249,6 @@ pub function erased_wide_stmts(stmts: parser.Stmt[], s: LowerState): boolean {
             parser.StmtDefer(d) => { if (erased_wide_stmts([d.action], s)) { return true; } },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -56542,13 +56243,11 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
 function lift_stmts(stmts: parser.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts {
     var a: LiftAcc = acc;
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        var r: LiftStmts = lift_stmt(stmts[i], a, gfns);
+    for stmt in stmts {
+        var r: LiftStmts = lift_stmt(stmt, a, gfns);
         a = r.acc;
         var j: i32 = 0;
         while (j < r.stmts.len()) { out = out.append(r.stmts[j]); j = j + 1; }
-        i = i + 1;
     }
     return LiftStmts { stmts: out, acc: a };
 }
@@ -57344,9 +57043,8 @@ function body_assign_targets(stmts: parser.Stmt[]): string[] {
 // consumed_rcpayload_enum_frees, which lower_block runs on every nested block —
 // and an if-chain's else-body IS the whole remaining chain (#6911).
 function assign_targets_into(out: string[], stmts: parser.Stmt[]): string[] {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtAssign(a) => { out = out.append(a.target); },
             parser.StmtIf(f) => {
                 out = assign_targets_into(out, f.then_body);
@@ -57360,7 +57058,6 @@ function assign_targets_into(out: string[], stmts: parser.Stmt[]): string[] {
             },
             _ => { }
         }
-        i = i + 1;
     }
     return out;
 }
@@ -57467,9 +57164,8 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
 
 function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, capargs: parser.Expr[]): parser.Stmt[] {
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => { var ns: parser.Stmt = parser.StmtReturn { value: subst_fcall_expr(r.value, fname, lname, capargs), line: r.line, col: r.col }; out = out.append(ns); },
             parser.StmtVar(v) => { var ns: parser.Stmt = parser.StmtVar { name: v.name, type_name: v.type_name, init: subst_fcall_expr(v.init, fname, lname, capargs), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; out = out.append(ns); },
             parser.StmtExpr(s) => { var ns: parser.Stmt = parser.StmtExpr { value: subst_fcall_expr(s.value, fname, lname, capargs), line: s.line }; out = out.append(ns); },
@@ -57502,9 +57198,8 @@ function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, c
                 var ns: parser.Stmt = parser.StmtMatch { ...mm, scrutinee: subst_fcall_expr(mm.scrutinee, fname, lname, capargs), arms: narms };
                 out = out.append(ns);
             },
-            _ => { out = out.append(stmts[i]); }
+            _ => { out = out.append(stmt); }
         }
-        i = i + 1;
     }
     return out;
 }
@@ -58003,9 +57698,8 @@ function iife_scope_fd(fd: parser.FuncDecl, body: parser.Stmt[]): parser.FuncDec
 // something that is not boxable.
 function iife_arm_values_boxable(stmts: parser.Stmt[], seen: i32): i32 {
     var n: i32 = seen;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprLambda(_) => { n = n + 1; },
@@ -58039,7 +57733,6 @@ function iife_arm_values_boxable(stmts: parser.Stmt[], seen: i32): i32 {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -58051,9 +57744,8 @@ function iife_arm_values_boxable(stmts: parser.Stmt[], seen: i32): i32 {
 // the destination reads as a box from one arm and dispatches every arm that
 // way. Checked rather than assumed, so a decline anywhere abandons the rewrite.
 function iife_arms_all_marked(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprCall(rc) => {
@@ -58083,7 +57775,6 @@ function iife_arms_all_marked(stmts: parser.Stmt[]): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return true;
 }
@@ -58098,9 +57789,8 @@ function iife_arm_lambda_captures(stmts: parser.Stmt[], fd: parser.FuncDecl): bo
 }
 
 function iife_arm_lambda_captures_in(stmts: parser.Stmt[], fd: parser.FuncDecl): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprLambda(rl) => { if (lambda_captures(rl, fd).len() > 0) { return true; } },
@@ -58129,7 +57819,6 @@ function iife_arm_lambda_captures_in(stmts: parser.Stmt[], fd: parser.FuncDecl):
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -58149,9 +57838,8 @@ function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: 
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtIf(iff) => {
                 var cr: InlineCloRes = lift_inline_closures_expr(iff.cond, fd, fs, ct, gfns, structs, mfuncs);
                 fs = cr.funcs; ct = cr.counter;
@@ -58174,9 +57862,8 @@ function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: 
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms });
             },
-            _ => { out = out.append(stmts[i]); }
+            _ => { out = out.append(stmt); }
         }
-        i = i + 1;
     }
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
@@ -58189,9 +57876,8 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var vr: InlineCloRes = try_fn_field_value(r.value, fd, fs, ct, gfns, mfuncs, structs);
                 fs = vr.funcs; ct = vr.counter;
@@ -58215,9 +57901,8 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms });
             },
-            _ => { out = out.append(stmts[i]); }
+            _ => { out = out.append(stmt); }
         }
-        i = i + 1;
     }
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
@@ -58680,9 +58365,8 @@ function iife_callee_boxed_arms(callee: parser.Expr, s: LowerState): boolean {
 // iife_arms_hold_fn_value; the difference is what it asks of each arm value.
 function iife_stmts_all_boxed(stmts: parser.Stmt[], s: LowerState, seen: i32): i32 {
     var n: i32 = seen;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 if (!expr_is_closure_box(r.value, s)) { return 0 - 1; }
                 n = n + 1;
@@ -58703,7 +58387,6 @@ function iife_stmts_all_boxed(stmts: parser.Stmt[], s: LowerState, seen: i32): i
             },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -58763,9 +58446,8 @@ function iife_callee_closurearr_arms(callee: parser.Expr, s: LowerState): boolea
 
 function iife_stmts_all_closurearr(stmts: parser.Stmt[], s: LowerState, seen: i32): i32 {
     var n: i32 = seen;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 if (!expr_is_closure_array(r.value, s)) { return 0 - 1; }
                 n = n + 1;
@@ -58786,7 +58468,6 @@ function iife_stmts_all_closurearr(stmts: parser.Stmt[], s: LowerState, seen: i3
             },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -58892,9 +58573,8 @@ function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
 // and a MIXED IIFE (Repro D — one closure-local arm, one lambda) hoists,
 // because the lambda is the binding constraint.
 function iife_arms_have_lambda(stmts: parser.Stmt[], mfuncs: MFuncs): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 if (passthrough_arg_has_lambda(r.value, mfuncs)) { return true; }
             },
@@ -58911,7 +58591,6 @@ function iife_arms_have_lambda(stmts: parser.Stmt[], mfuncs: MFuncs): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -58950,9 +58629,8 @@ function passthrough_arg_has_lambda(e: parser.Expr, mfuncs: MFuncs): boolean {
 }
 
 function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 if (lift_arg_is_fn_value(r.value, mfuncs)) { return true; }
                 // A fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`)
@@ -58989,7 +58667,6 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -59016,9 +58693,8 @@ function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: pa
 // if/match whose own arms satisfy the same test.
 function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprArray(arr) => {
@@ -59078,7 +58754,6 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
             },
             _ => {}
         }
-        i = i + 1;
     }
     return n;
 }
@@ -59092,9 +58767,8 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 var nv: parser.Expr = r.value;
                 match (r.value) {
@@ -59167,9 +58841,8 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms });
             },
-            _ => { out = out.append(stmts[i]); }
+            _ => { out = out.append(stmt); }
         }
-        i = i + 1;
     }
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
@@ -59790,8 +59463,7 @@ function value_use_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 // as a call callee) anywhere in `stmts`.
 function stmts_value_use(stmts: parser.Stmt[], name: string): boolean {
     var used: string[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) { used = value_use_idents_stmt(stmts[i], used); i = i + 1; }
+    for stmt in stmts { used = value_use_idents_stmt(stmt, used); }
     return util.index_of_str(used, name) >= 0;
 }
 
@@ -59951,9 +59623,8 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => {
                 // A fn-VALUE local binding `var g = dbl` (the init a bare module
                 // fn-name with >= 1 param — a function value, not a zero-arg
@@ -60170,9 +59841,8 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms });
             },
-            _ => { out = out.append(stmts[i]); }
+            _ => { out = out.append(stmt); }
         }
-        i = i + 1;
     }
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
@@ -60324,8 +59994,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
 
 function box_rewrite_stmts(stmts: parser.Stmt[], boxed: string[], btypes: string[]): parser.Stmt[] {
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) { out = out.append(box_rewrite_stmt(stmts[i], boxed, btypes)); i = i + 1; }
+    for stmt in stmts { out = out.append(box_rewrite_stmt(stmt, boxed, btypes)); }
     return out;
 }
 
@@ -60335,9 +60004,8 @@ function box_rewrite_stmts(stmts: parser.Stmt[], boxed: string[], btypes: string
 // locals the StmtVar rewrite can actually turn into a cell — never a parameter.
 function body_var_decl_names(stmts: parser.Stmt[]): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtVar(v) => { out = out.append(v.name); },
             parser.StmtIf(f) => {
                 out = append_all(out, body_var_decl_names(f.then_body));
@@ -60351,7 +60019,6 @@ function body_var_decl_names(stmts: parser.Stmt[]): string[] {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return out;
 }
@@ -60427,8 +60094,7 @@ function ident_used_as_value_stmt(st: parser.Stmt, name: string): boolean {
 }
 
 function ident_used_as_value_stmts(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (ident_used_as_value_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    for stmt in stmts { if (ident_used_as_value_stmt(stmt, name)) { return true; } }
     return false;
 }
 
@@ -60906,10 +60572,8 @@ function has_wide_cap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[],
 }
 
 function has_wide_cap_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, atargets: string[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (has_wide_cap_stmt(stmts[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
-        i = i + 1;
+    for stmt in stmts {
+        if (has_wide_cap_stmt(stmt, fd, gfns, structs, mfuncs, atargets)) { return true; }
     }
     return false;
 }
@@ -61193,9 +60857,8 @@ function iife_bind(nm: string, lam: parser.Expr, line: i32, col: i32): parser.St
 function name_source_iifes_stmts(stmts: parser.Stmt[], fdname: string, k0: i32): IifeNamed {
     var out: parser.Stmt[] = [];
     var k: i32 = k0;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        var st: parser.Stmt = stmts[i];
+    for stmt in stmts {
+        var st: parser.Stmt = stmt;
         match (st) {
             parser.StmtVar(v) => {
                 if (iife_is_source_written(v.init)) {
@@ -61260,7 +60923,6 @@ function name_source_iifes_stmts(stmts: parser.Stmt[], fdname: string, k0: i32):
             _ => {}
         }
         out = out.append(st);
-        i = i + 1;
     }
     return IifeNamed { stmts: out, k: k };
 }
@@ -61808,9 +61470,8 @@ function grow_dying_passes_stmt(st: parser.Stmt, params: string[], acc: string[]
 // mv_returns_bare reports whether `stmts` contains `return <name>;` — the one
 // emission site this inference changes.
 function mv_returns_bare(stmts: parser.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtReturn(r) => {
                 match (r.value) {
                     parser.ExprIdent(id) => { if (id.name == name) { return true; } },
@@ -61836,7 +61497,6 @@ function mv_returns_bare(stmts: parser.Stmt[], name: string): boolean {
             },
             _ => {}
         }
-        i = i + 1;
     }
     return false;
 }
@@ -62196,8 +61856,7 @@ pub function (s: LowerState) callee_param_may_grow(name: string, idx: i32): bool
 
 function grow_ident_census(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) { a = astwalk.collect_idents_stmt(stmts[i], a); i = i + 1; }
+    for stmt in stmts { a = astwalk.collect_idents_stmt(stmt, a); }
     return a;
 }
 
@@ -62213,9 +61872,8 @@ function grow_count_in(xs: string[], name: string): i32 {
 // body, since those re-evaluate too.
 function grow_repeating_idents(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    for stmt in stmts {
+        match (stmt) {
             parser.StmtWhile(w) => {
                 a = astwalk.collect_idents_expr(w.cond, a);
                 a = grow_ident_census(w.body, a);
@@ -62235,8 +61893,7 @@ function grow_repeating_idents(stmts: parser.Stmt[], acc: string[]): string[] {
             _ => {},
         }
         // A lambda anywhere in the statement repeats on every call of the closure.
-        a = grow_lambda_idents_stmt(stmts[i], a);
-        i = i + 1;
+        a = grow_lambda_idents_stmt(stmt, a);
     }
     return a;
 }
