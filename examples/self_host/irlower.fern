@@ -19100,7 +19100,15 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // defers to view_frame_names_of, whose expr_view_borrow_only refuses a
             // bare ident in binding position outright. An aliased view is heap-boxed
             // like every other string.
-            else if (slot_is_reclaimable_str(se, aid_slot)) { alias_inc = true; }
+            else if (slot_is_reclaimable_str(se, aid_slot)) {
+                // Move-on-alias, string limb: at the source's last top-level
+                // mention the bind transfers the reference — elide the retain
+                // and the source's exit release with it (note_moved_elided;
+                // the string sweep loop skips elided slots), the same
+                // cancellation the array clause above performs.
+                if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
+                else { alias_inc = true; }
+            }
             // A struct box. The gate is the CREDIT predicate, not a type test, and
             // the difference is the whole of #7368: struct_type_of_slot is a
             // type-NAME carrier, set for enum names, dyn tags, "clo", and the
@@ -25179,7 +25187,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // were already freed at the rebind; this frees the final live one.
     var sj: i32 = st.n_params;
     while (sj < st.locals.len()) {
-        if (!slot_list_has(keeps, sj) && slot_is_reclaimable_str(st, sj)) {
+        if (!slot_list_has(keeps, sj) && !slot_list_has(st.moved_elided, sj) && slot_is_reclaimable_str(st, sj)) {
             st = emit_str_slot_release(st, sj);
         }
         sj = sj + 1;

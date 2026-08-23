@@ -16,12 +16,16 @@ import (
 // escape gate, and the alias earned none of its own. Four releases lost, not
 // one, and `frees=0` rather than a partial count.
 //
-// THE MODEL IS DUPLICATION, NOT TRANSFER. Both slots own a counted reference and
-// both release it; the refcount arbitrates. `alias_in_a_conditional` is why:
-// under a transfer model `if (c) { var v = t; }` leaves the source un-swept on
-// the path where no transfer happened, so a leak becomes branch-dependent —
-// strictly worse than the leak it replaces. Duplication emits the inc and the
-// dec on the same path by construction.
+// THE MODEL IS DUPLICATION, NOT TRANSFER — except at a proven MOVE site. Both
+// slots own a counted reference and both release it; the refcount arbitrates.
+// `alias_in_a_conditional` is why: under a transfer model `if (c) { var v = t; }`
+// leaves the source un-swept on the path where no transfer happened, so a leak
+// becomes branch-dependent — strictly worse than the leak it replaces.
+// Duplication emits the inc and the dec on the same path by construction.
+// A TOP-LEVEL alias at the source's last mention is the safe exception: it
+// always executes, so the retain and the source's release are elided as one
+// decision (moves_local_at + note_moved_elided) — the counts here are
+// unchanged by that, since the single box still frees exactly once.
 //
 // THE INVARIANT: only the BOX is retained at the bind, so only the BOX may be
 // released twice. The alias therefore takes the box-only release and the source
