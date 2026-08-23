@@ -116,6 +116,25 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 40, allocs: 200, frees: 200,
 		},
 		{
+			// The CANCELLED path (#4402 opt 1, struct limb): the alias is read
+			// but never returned and the source is read after it — a LIVE
+			// source, so this is the cancellation, not the move above. The
+			// inc and the alias's box-only "NODEEP:" dec are elided; the
+			// source keeps the one deep field walk. Counts cannot move (a
+			// paired cancellation changes rc traffic, not allocs/frees); the
+			// __rc_underflow_count guard catches an unpaired elision.
+			name: "struct_alias_cancelled",
+			src: `struct P { xs: i32[] }
+function round(i: i32): i32 {
+    var t: P = P { xs: [i, i + 1] };
+    var v: P = t;
+    var n: i32 = v.xs[0];
+    return n + t.xs[1] + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 10, allocs: 200, frees: 200,
+		},
+		{
 			// The fresh-RET-CALL producer, the other half of the struct credit's
 			// collector pair (collect_fresh_ret_call_names). Base: 200/0, 8000.
 			name: "struct_alias_fresh_call",

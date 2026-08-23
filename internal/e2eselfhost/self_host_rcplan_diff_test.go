@@ -504,8 +504,11 @@ function main(): i32 { return f(); }`,
 		},
 		{
 			// STRUCT alias bind (#7282 struct limb / the #7349 site-keyed
-			// credit), LIVE source: retain fires on the self-host, native
-			// elides the pair (dead-alias cancellation — a separate port).
+			// credit), LIVE source: a closed divergence — the dead-alias
+			// cancellation's struct limb elides the borrowed view's inc and
+			// its box-only "NODEEP:" dec exactly as native does; the source
+			// keeps its one deep field walk at the exit sweep. Anchored
+			// agreement.
 			name: "alias-bind-struct",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {
@@ -515,10 +518,108 @@ function f(): i32 {
 	return n;
 }
 function main(): i32 { return f(); }`,
-			anchor: map[string]map[string]string{"f": {"freeEligible": "p,v"}},
+			anchor: map[string]map[string]string{"f": {"freeEligible": "p,v", "aliasBindIncs": ""}},
+		},
+		{
+			// The returned-alias exclusion, struct limb: the retain stays on
+			// both sides — the positive control pinning that the struct
+			// cancellation still increments where it must. Native
+			// precise-drops the source at its last use; the self-host leaves
+			// it to the sweep (the known placement class).
+			name: "dead-alias-struct-returned-excluded",
+			src: `struct P { xs: i32[], n: i32 }
+function f(): i32 {
+	var p: P = P { xs: [1, 2], n: 3 };
+	var v: P = p;
+	var n: i32 = p.n;
+	return v.n + n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "4:2=v"}},
 			diverge: map[string]map[string]divergence{
-				"f": {"aliasBindIncs": {native: "", selfhost: "4:2=v"}},
+				"f": {"preciseDrops": {native: "2=p", selfhost: ""}},
 			},
+		},
+		{
+			// LOOP-BODY-MOVED source exclusion: p's last mention is a
+			// loop-body construction move (the #5879 class), which is in
+			// native's movedLocals but NOT in the top-level set the emitting
+			// predicates read — the pure half consults the FULL moved set so
+			// both sides refuse the cancellation (movedLocals anchors the
+			// gate's premise). Native then retains the excluded alias; the
+			// self-host never granted that retain — a loop-body struct
+			// escaping into an append is never credited (freeEligible shows
+			// only vals), and the retain is co-extensive with the credit.
+			// The divergences predate the cancellation.
+			name: "dead-alias-struct-loop-body-moved-source-excluded",
+			src: `struct P { xs: i32[], n: i32 }
+function f(): i32 {
+	var vals: P[] = [];
+	var n: i32 = 0;
+	var i: i32 = 0;
+	while (i < 3) {
+		var p: P = P { xs: [i, i + 1], n: i };
+		var v: P = p;
+		n = n + v.n;
+		vals = vals.append(p);
+		i = i + 1;
+	}
+	return n + vals.len();
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22"}},
+			diverge: map[string]map[string]divergence{
+				"f": {
+					"aliasBindIncs": {native: "8:3=v", selfhost: ""},
+					"freeEligible":  {native: "p,v,vals", selfhost: "vals"},
+					"lastUses":      {native: "p=3,v=3,vals=4", selfhost: "vals=4"},
+					"nestedDrops":   {native: "9:5=v", selfhost: ""},
+				},
+			},
+		},
+		{
+			// A CALL-producer struct source: native cancels; the self-host's
+			// pure half admits struct pairs only on struct-LITERAL evidence
+			// (no structs registry there, so no annotation route), so the
+			// retain stays. The slot-fact half would have admitted it (the
+			// fresh-ret-call credit — freeEligible agrees on both sides);
+			// only the evidence gate refuses. A coverage gap, not a hazard —
+			// the kept pair is net-zero. Tabled so drift on either side is
+			// caught.
+			name: "dead-alias-struct-call-producer",
+			src: `struct P { xs: i32[], n: i32 }
+function mk(i: i32): P { return P { xs: [i, i + 1], n: i }; }
+function f(): i32 {
+	var p: P = mk(1);
+	var v: P = p;
+	var n: i32 = v.n + p.n;
+	return n;
+}
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"aliasBindIncs": {native: "", selfhost: "5:2=v"}},
+			},
+		},
+		{
+			// LOOP-scoped pair, struct limb: both sides cancel, and the alias
+			// bind must then store WITHOUT the dec-on-overwrite — the same
+			// third-release-site audit as the string limb; the runtime half
+			// is pinned by the loop_local alias cell in the leak matrix.
+			name: "dead-alias-struct-loop-scoped",
+			src: `struct P { xs: i32[], n: i32 }
+function f(): i32 {
+	var n: i32 = 0;
+	var i: i32 = 0;
+	while (i < 3) {
+		var p: P = P { xs: [i, i + 1], n: i };
+		var v: P = p;
+		n = n + v.n + p.xs.len();
+		i = i + 1;
+	}
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": ""}},
 		},
 		{
 			// MOVE-ON-CONSTRUCTION: an owned rc local consumed at last use in
