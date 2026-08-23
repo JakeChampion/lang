@@ -112,9 +112,11 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 // world-driven component as space-separated decimal bytes.
 const selfHostComposeWorldDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = blob_to_bytes(s);
+            var core: i32[] = [];
+            var i: i32 = 0;
+            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
             var tbody: i32[] = wit_section_body(blob_to_bytes(FERN_BIN()), 7);
             var comp: i32[] = component_from_world(tbody, core);
             var j: i32 = 0;
@@ -250,9 +252,11 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 // selfHostComposeUserDriver composes from a user world payload (USER_BIN).
 const selfHostComposeUserDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
-            var core: i32[] = blob_to_bytes(s);
+            var core: i32[] = [];
+            var i: i32 = 0;
+            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
             var tbody: i32[] = wit_section_body(blob_to_bytes(USER_BIN()), 7);
             var comp: i32[] = component_from_world(tbody, core);
             var j: i32 = 0;
