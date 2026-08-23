@@ -15,7 +15,7 @@ var mathCases = []struct {
 }{
 	{"range-sum", "import \"./math\";\nfunction main(): i32 { var r = math.range(0, 5); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 10},
 	{"range-step-sum", "import \"./math\";\nfunction main(): i32 { var r = math.range_step(0, 10, 2); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 20},
-	{"random-bytes-len", "import \"./math\";\nfunction main(): i32 { var b: string = random_bytes(7); return b.len(); }\n", 7},
+	{"random-bytes-len", "import \"./math\";\nfunction main(): i32 { var b: u8[] = random_bytes(7); return b.len(); }\n", 7},
 }
 
 // TestSelfHostMathX86_64 proves the self-hosted compiler compiles the

@@ -748,7 +748,8 @@ the stdlib's own **byte-container APIs**, which use `string` as a raw
 byte bag and routinely hold bytes that are not UTF-8 at all:
 `crypto.sha256_bytes` / `hmac_sha256_bytes` / `pbkdf2_sha256` /
 `hkdf_*`, `base64_decode`, `base32_decode`, `hex_decode`, and the
-`random_bytes` / `tcp_recv` / `read_file` builtins. A 32-byte SHA-256
+`tcp_recv` / `read_file` builtins (`random_bytes` has since moved to
+`u8[]`). A 32-byte SHA-256
 digest is essentially never valid UTF-8, so under a validating
 constructor `sha256_bytes` would return `None` for almost every input.
 These are not edge cases — `base64_decode` of a PNG is the normal use.
@@ -763,14 +764,15 @@ encoder-input slice. Digests, derived keys, decoder outputs and encoder
 inputs are all `u8[]`; the `*_hex` variants still return `string`,
 because hex output genuinely is text.
 
-What remains under #5730 is the builtin half — `random_bytes`,
-`tcp_recv`, and `read_file` — which crosses the checker and all four
-backends, and where `read_file` is used pervasively as *text* and so
-likely wants a `read_file_bytes` sibling rather than a signature change.
-Slice 4 (the "no stdlib operation produces an invalid `string`" property
-test) is unblocked for the stdlib modules — it would previously have
-failed immediately on `sha256_bytes` — but must still hold those three
-builtins out until they move.
+The builtin half (tracked as #5714 after #5730 auto-closed) crosses the
+checker and all four backends. `random_bytes` has moved: it returns
+`u8[]` on every backend, in the same box shape as `__alloc_u8`. What
+remains is `tcp_recv` and `read_file` — where `read_file` is used
+pervasively as *text* and so likely wants a `read_file_bytes` sibling
+rather than a signature change. Slice 4 (the "no stdlib operation
+produces an invalid `string`" property test) is unblocked for the
+stdlib modules and `random_bytes` — it must still hold `tcp_recv` and
+`read_file` out until they move.
 
 Costs, stated honestly:
 

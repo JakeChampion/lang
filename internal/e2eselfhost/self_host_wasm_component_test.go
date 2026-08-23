@@ -1497,7 +1497,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var b: string = random_bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
+	src := `function main(): i32 { var b: u8[] = random_bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -1659,7 +1659,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	t.Run("len", func(t *testing.T) {
 		// random_bytes(16) returns 16 elements; print the count.
-		comp := build(t, `function main(): i32 { var b: i32[] = random_bytes(16); print_int(b.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { var b: u8[] = random_bytes(16); print_int(b.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "16" {
 			t.Errorf("len: stdout = %q, want %q", string(out), "16")
@@ -1668,7 +1668,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	t.Run("byte-range", func(t *testing.T) {
 		// Every drawn byte must be in 0..255 (the shift+mask is correct).
-		comp := build(t, `function main(): i32 { var b: i32[] = random_bytes(64); var i: i32 = 0; while (i < b.len()) { if (b[i] < 0) { return 1; } if (b[i] > 255) { return 2; } i = i + 1; } write("inrange\n"); return 0; }`)
+		comp := build(t, `function main(): i32 { var b: u8[] = random_bytes(64); var i: i32 = 0; while (i < b.len()) { if ((b[i] as i32) < 0) { return 1; } if ((b[i] as i32) > 255) { return 2; } i = i + 1; } write("inrange\n"); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "inrange\n" {
 			t.Errorf("byte-range: stdout = %q, want %q", string(out), "inrange\n")
@@ -1677,7 +1677,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 
 	t.Run("non-multiple-of-8", func(t *testing.T) {
 		// A length that isn't a multiple of 8 must still return exactly n.
-		comp := build(t, `function main(): i32 { var b: i32[] = random_bytes(13); print_int(b.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { var b: u8[] = random_bytes(13); print_int(b.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", comp).Output()
 		if string(out) != "13" {
 			t.Errorf("non-multiple-of-8: stdout = %q, want %q", string(out), "13")
@@ -3095,7 +3095,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var id: string = random_bytes(8); match (write_file("id.bin", id)) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
+	src := `function main(): i32 { var id: u8[] = random_bytes(8); match (write_file("id.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -3261,8 +3261,8 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	}
 
 	t.Run("gen-and-persist", func(t *testing.T) {
-		// Draw 16 random bytes (as a string), write them, report the count.
-		comp := build(t, `function main(): i32 { var id: string = random_bytes(16); match (write_file("token.bin", id)) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
+		// Draw 16 random bytes (a u8[]), write them, report the count.
+		comp := build(t, `function main(): i32 { var id: u8[] = random_bytes(16); match (write_file("token.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
 		if string(out) != "16" {
 			t.Errorf("gen-and-persist: stdout = %q, want %q", string(out), "16")

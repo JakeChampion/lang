@@ -1217,38 +1217,38 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitRandomBytesHelper writes random_bytes(n) → a fresh single-word rc string of
-// n kernel-CSPRNG bytes (getrandom(2), flags=0), NUL-terminated past the end.
-// Returns the data pointer in x0. Leaf: it bump-allocates inline and the getrandom
-// svc preserves all registers but x0, so n (x9) and the data pointer (x10) survive
-// the syscall without callee-saved spills. x0=n.
+// emitRandomBytesHelper writes random_bytes(n) → a fresh u8[] of n
+// kernel-CSPRNG bytes (getrandom(2), flags=0), in the __alloc_u8 box shape
+// (16-byte header; cap@-12, rc=1@-8, len@-4). Returns the data pointer in x0.
+// Leaf: it bump-allocates inline and the getrandom svc preserves all
+// registers but x0, so n (x9) and the data pointer (x10) survive the syscall
+// without callee-saved spills. No zero-fill: getrandom overwrites all n data
+// bytes. x0=n.
 func emitRandomBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("random_bytes"))
 	w("\tmov x9, x0") // n
-	// Allocate a single-word rc string: 8-byte header + n + 1 NUL.
+	// Allocate a u8[] box: 16-byte header + n data bytes.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #7")
 	w("\tand x4, x4, #-8")
-	w("\tadd x5, x9, #9")
+	w("\tadd x5, x9, #16")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
 	emitHeapGuardCall(w)
+	w("\tadd x10, x4, #16")     // data ptr (past 16-byte header)
+	w("\tstur w9, [x10, #-12]") // cap = n
 	w("\tmov w7, #1")
-	w("\tstr w7, [x4]")     // rc = 1
-	w("\tstr w9, [x4, #4]") // len = n
-	w("\tadd x10, x4, #8")  // data ptr
+	w("\tstur w7, [x10, #-8]") // rc = 1
+	w("\tstur w9, [x10, #-4]") // len = n
 	// getrandom(data, n, 0).
 	w("\tmov x0, x10")
 	w("\tmov x1, x9")
 	w("\tmov x2, #0")
 	w("\tmov x8, #278") // getrandom
 	w("\tsvc #0")
-	// Trailing NUL at data[n].
-	w("\tadd x1, x10, x9")
-	w("\tstrb wzr, [x1]")
 	w("\tmov x0, x10") // return data ptr
 	w("\tret")
 }

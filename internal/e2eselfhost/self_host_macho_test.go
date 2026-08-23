@@ -98,7 +98,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// Linux getrandom). Assert the length round-trips AND the bytes
 		// were actually written (OR of 8 bytes != 0 → the syscall filled
 		// the buffer; a zero OR would mean it silently failed).
-		{"random_bytes", `function main(): i32 { var b: string = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
+		{"random_bytes", `function main(): i32 { var b: u8[] = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 		// Static aggregate constant (#6149) — a struct literal of constants is
 		// interned as a __DATA block whose first word is an ABSOLUTE pointer to
 		// the shape string. dyld slides a PIE image, so that word needs an

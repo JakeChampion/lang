@@ -48,7 +48,7 @@ pub function random_int(lo: i32, hi: i32): i32 {
 // __random_u32 draws a full 32-bit value from the platform CSPRNG
 // (kernel getrandom on natives, wasi_random on wasm).
 function __random_u32(): u32 {
-    var b: string = random_bytes(4);
+    var b: u8[] = random_bytes(4);
     return ((b[0] as u32) << (24 as u32)) |
            ((b[1] as u32) << (16 as u32)) |
            ((b[2] as u32) << (8 as u32)) |

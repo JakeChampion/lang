@@ -178,7 +178,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// __fn___fern_random_bytes via the stack ABI, whose body does the
 			// getrandom syscall through the raw `syscall` the __syscall3 op emits.
 			"random_bytes",
-			`function main(): i32 { var b: string = random_bytes(8); return b.len(); }`,
+			`function main(): i32 { var b: u8[] = random_bytes(8); return b.len(); }`,
 			"__fn___fern_random_bytes",
 			[]string{"\n__fern_random_bytes:"},
 		},

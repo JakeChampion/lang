@@ -1739,8 +1739,8 @@ pub function random_imports_p2(): string {
 // random_func_p2 is the preview2 $__fern_random_bytes: same i32[] array
 // block result ([len][cap][bytes-as-i32]), but the byte source is
 // get-random-u64 — one u64 (8 bytes) fetched per 8 output bytes, each byte
-// sliced out with a shift+mask. Matches random_func's return shape so every
-// random_bytes call site is unchanged.
+// sliced out with a shift+mask. Matches random_bytes_ir_func's return shape
+// so every random_bytes call site is unchanged.
 pub function random_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
@@ -4020,7 +4020,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         if (o.width == 64) { parts = parts.append("    call $__fern_arr_slice8\n"); }
         else { parts = parts.append("    call $__fern_arr_slice\n"); }
     } else if (o.kind_tag == 185) {  // random_bytes
-        // stack: n -> $__fern_random_bytes(n) -> fresh string block [len][bytes].
+        // stack: n -> $__fern_random_bytes(n) -> fresh i32[] array block.
         parts = parts.append("    call $__fern_random_bytes\n");
     } else if (o.kind_tag == 186) {  // random_i32
         // -> $__fern_random_i32() -> i32.
@@ -4940,14 +4940,10 @@ pub function cos_func(): string {
 // emit_ir_module_units, one gated call each) and pure WAT strings with no deps,
 // so they live here in the IR emitter, not the AST emitter wasm.fern #3457 deletes.
 // random_get_import / random_bytes_ir_func / random_i32_func / str_bytes_func
-// are the IR-path byte-source helpers (issue #2747). They are kept SEPARATE
-// from random_helpers / random_func (the AST path's bundle, whose
-// $__fern_random_bytes returns a u8[] array) because the IR path types
-// random_bytes as a string: random_bytes_ir_func builds a `[len][bytes]` string
-// block so str_index / str_len read it correctly, matching the register
-// backends. The wasm_ir_run driver emits these gated by module_emits_op; a
-// single compile picks one path, so the shared $__fern_random_* symbols never
-// clash.
+// are the IR-path byte-source helpers (issue #2747). random_bytes_ir_func
+// builds the `[len][cap][elems]` i32[] array block (random_bytes returns
+// u8[]), matching the register backends and the preview-2 random_func_p2.
+// The wasm_ir_run driver emits these gated by module_emits_op.
 pub function random_get_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"random_get\" (func $random_get (param i32 i32) (result i32)))\n";
 }
@@ -5003,17 +4999,27 @@ pub function reader_fd_close_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"fd_close\" (func $fd_close (param i32) (result i32)))\n";
 }
 
-// $__fern_random_bytes(n) -> a fresh `[len][bytes]` string block of n CSPRNG
-// bytes. Allocates 4+n bytes via $__fern_str_box, stores len@0, fills bytes@4
-// from random_get.
+// $__fern_random_bytes(n) -> a fresh `[len][cap][elems]` i32[] array block of
+// n CSPRNG bytes, one byte per 4-byte slot. random_get writes packed bytes,
+// so fill a raw scratch first, then spread bytes one-per-slot — the same
+// shape str_bytes_func builds, and the same block random_func_p2 already
+// returns on the preview-2 path.
 pub function random_bytes_ir_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
-    o = o + "    (local $s i32)\n";
-    o = o + "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
-    o = o + "    (i32.store (local.get $s) (local.get $n))\n";
-    o = o + "    (drop (call $random_get (i32.add (local.get $s) (i32.const 4)) (local.get $n)))\n";
-    o = o + "    (local.get $s))\n";
+    o = o + "    (local $arr i32) (local $buf i32) (local $i i32)\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $n)))\n";
+    o = o + "    (drop (call $random_get (local.get $buf) (local.get $n)))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
     return o;
 }
 
@@ -8689,10 +8695,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // keys/values via map_helpers above, so gated after it). Emitted when the
     // module iterates a map (m.iter() / for-in-map).
     if (need(needs, "map_iter")) { parts = parts.append(map_iter_helpers()); }
-    // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
-    // string block; str_bytes returns a u8[]; both reference the heap runtime
-    // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
-    // random_i32 is heap-free. The import is emitted above.
+    // Byte-source helpers (issue #2747). random_bytes and str_bytes both
+    // return a u8[] array block, referencing the heap runtime ($__fern_alloc
+    // / $__fern_arr_box) that module_allocates pulls in. random_i32 is
+    // heap-free. The import is emitted above.
     // mode 2 defines these three from the preview2 interfaces instead (see
     // component_io_shims); emitting the preview1 bodies too would duplicate
     // the function names.

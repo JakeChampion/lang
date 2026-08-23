@@ -3054,9 +3054,10 @@ func TestEmitWrite(t *testing.T) {
 	}
 }
 
-// TestEmitRandomBytes — random_bytes(8) returns a (data, len)
-// pair. len should be 8 (heap form, top bit clear). The
-// actual bytes are unpredictable; just verify the length.
+// TestEmitRandomBytes — random_bytes(8) returns a u8[] data
+// pointer in the __alloc_u8 box shape; the length lives at
+// data-4. The actual bytes are unpredictable; just verify
+// the length.
 func TestEmitRandomBytes(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
@@ -3064,7 +3065,9 @@ func TestEmitRandomBytes(t *testing.T) {
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 8},
 			{Kind: ir.OpCallDirect, Str: "random_bytes"},
-			{Kind: ir.OpStrLen},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpSub},
+			{Kind: ir.OpLoad},
 		},
 	}}}
 	bin, err := Emit(prog)
@@ -3076,8 +3079,8 @@ func TestEmitRandomBytes(t *testing.T) {
 	}
 }
 
-// TestEmitRandomBytesEmpty — random_bytes(0) returns the
-// inline empty sentinel (0, 0x80000000). str_len → 0.
+// TestEmitRandomBytesEmpty — random_bytes(0) returns a
+// header-only empty u8[] box; length prefix at data-4 → 0.
 func TestEmitRandomBytesEmpty(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
@@ -3085,7 +3088,9 @@ func TestEmitRandomBytesEmpty(t *testing.T) {
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpCallDirect, Str: "random_bytes"},
-			{Kind: ir.OpStrLen},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpSub},
+			{Kind: ir.OpLoad},
 		},
 	}}}
 	bin, err := Emit(prog)

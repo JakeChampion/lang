@@ -44,7 +44,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// rejects (E043) and the compile path refuses it too (#7380).
 	prog := "import \"std/array\";\n" +
 		"function main(): i32 {\n" +
-		"    var b: string = random_bytes(8);\n" +
+		"    var b: u8[] = random_bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
@@ -306,7 +306,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_darwin_rb")
 
 	prog := "function main(): i32 {\n" +
-		"    var b: string = random_bytes(8);\n" +
+		"    var b: u8[] = random_bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin_d.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +

@@ -1051,7 +1051,7 @@ func builtinTcpPollable(_ *Interp, args []Value) (Value, error) {
 	return fd, nil
 }
 
-// builtinRandomBytes returns a string of n cryptographic-
+// builtinRandomBytes returns a `u8[]` of n cryptographic-
 // quality random bytes from `crypto/rand`. Mirrors the AOT
 // backends' `getrandom(2)` / WASI `random_get` behaviour.
 func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
@@ -1069,7 +1069,11 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 	if _, err := cryptorand.Read(buf); err != nil {
 		return nil, fmt.Errorf("random_bytes: %v", err)
 	}
-	return String(buf), nil
+	out := make(Array, len(buf))
+	for i, b := range buf {
+		out[i] = Number(b)
+	}
+	return out, nil
 }
 
 // builtinRandomI32 returns a single cryptographic-quality random

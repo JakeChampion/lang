@@ -1497,6 +1497,7 @@ func (g *generator) recordUse(target string) {
 	case "random_bytes":
 		g.usesRandomBytes = true
 		g.usesAlloc = true
+		g.usesAllocU8 = true
 	case "random_i32":
 		g.usesRandomI32 = true
 	case "__method_string_as_bytes":
@@ -9223,8 +9224,9 @@ func (g *generator) emitArgsRuntime() {
 }
 
 // emitRandomBytesRuntime emits `__fern_random_bytes(n)` —
-// allocates a fresh length-prefixed lang string of n bytes
-// and fills it with kernel CSPRNG output via a single
+// allocates a fresh `u8[]` of n bytes via `__alloc_u8` (which
+// owns the header layout and the n==0 empty sentinel) and
+// fills it with kernel CSPRNG output via a single
 // `getrandom(buf, n, 0)` syscall (Linux x86-64 #318;
 // blocks at most very briefly until the urandom pool is
 // initialised; flags=0). Returns the data pointer.
@@ -9238,19 +9240,15 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("push rbx")     // n
 	g.emit("push r12")     // data ptr
 	g.emit("mov ebx, edi") // rbx = n
-	// L2 rc-header layout (see __fern_strcat): payload = n data + 1 NUL.
-	g.emit("lea edi, [rbx + 1]")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov r12, rax")          // r12 = data ptr (= base+8)
-	g.emitStrLenStore("ebx", "r12") // length prefix at data-4
-	// getrandom(buf=r12, n=rbx, flags=0)
+	g.emit("mov edi, ebx")
+	g.emit("call __alloc_u8")
+	g.emit("mov r12, rax") // r12 = data ptr
+	// getrandom(buf=r12, n=rbx, flags=0); a no-op write when
+	// n == 0 (the shared empty sentinel is never written).
 	g.emit("mov rdi, r12")
 	g.emit("mov rsi, rbx")
 	g.emit("xor edx, edx")
 	g.emitSyscall(sysGetrandom)
-	// Trailing NUL at data + n. (getrandom doesn't write
-	// past the requested length.)
-	g.emit("mov byte ptr [r12 + rbx], 0")
 	g.emit("mov rax, r12")
 	g.emit("pop r12")
 	g.emit("pop rbx")

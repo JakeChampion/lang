@@ -516,9 +516,9 @@ pub function op_ascii_run(): Op { return op0("ascii_run"); }
 // helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
 // them as known ops rather than disqualifying call_directs.
 //
-// `random_bytes` pops [n] → a fresh string of n cryptographic-quality random
-// bytes (Linux getrandom / WASI random_get). Result is a string box; the bytes
-// have no encoding, so `s[i]` reads a 0..255 value (str_index).
+// `random_bytes` pops [n] → a fresh `u8[]` of n cryptographic-quality random
+// bytes (Linux getrandom / WASI random_get). Result is an array box; element
+// i is a 0..255 value (arr_get).
 pub function op_random_bytes(): Op { return op0("random_bytes"); }
 // `random_i32` takes no operands → a single CSPRNG i32. A 4-byte random read
 // reinterpreted as an i32 (cheaper than random_bytes for one small value).

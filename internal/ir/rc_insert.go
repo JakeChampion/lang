@@ -243,12 +243,10 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	}
 	// Only USER-DECLARED functions qualify (the oracle map keys every decl in
 	// prog.Funcs, true or false). Source-level BUILTINS live in FuncSigs too
-	// without a `__` prefix — e.g. `random_bytes(n)`, whose darwin helper
-	// returns a buffer allocated WITHOUT an rc header, so the is_unique gate
-	// would read a garbage header word and free through it (the
-	// `random_bytes(32).len()` receiver crash). A builtin's allocation
-	// contract is per-helper, not the user-fn return-transfer model this
-	// reclaim's safety argument rests on.
+	// without a `__` prefix — e.g. `strbuf_take`, whose result may alias
+	// runtime-owned storage. A builtin's allocation contract is per-helper,
+	// not the user-fn return-transfer model this reclaim's safety argument
+	// rests on.
 	if _, isUserFn := b.returnsNoParamEscape[id.Name]; !isUserFn {
 		return nil, false
 	}

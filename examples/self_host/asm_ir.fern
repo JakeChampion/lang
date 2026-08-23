@@ -2814,9 +2814,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // the __syscall3 sub-floor (exit 134), which is why it alone takes a target.
     // __fern_random_bytes is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
-    // random_bytes) — it allocs n bytes, fills them from getrandom via the
-    // __syscall3 sub-floor, and boxes them with __raw_string. The op_random_bytes
-    // handler calls the stack-arg __fn___fern_random_bytes symbol.
+    // random_bytes) — it fills n scratch bytes from getrandom via the __syscall3
+    // sub-floor, then spreads them one-per-slot into a fresh u8[] box
+    // (__raw_arr_box). The op_random_bytes handler calls the stack-arg
+    // __fn___fern_random_bytes symbol.
     // __fern_str_bytes was hand-written here through #2649; it is now a Fern
     // runtime function (asmcore.rt_src_str_bytes) lowered through the IR pipeline
     // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it builds
@@ -7676,9 +7677,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), all_structs, s);
     }
     // random_bytes — now a Fern runtime function (#2649), lowered through the IR
-    // pipeline: alloc n bytes, fill from getrandom via the __syscall3 sub-floor,
-    // box with __raw_string. Heap-dependent (present above). The source is shared
-    // with arm64 (asm_arm64_ir passes its own target); asmcore.sysno picks 318.
+    // pipeline: fill n scratch bytes from getrandom via the __syscall3 sub-floor,
+    // spread them into a fresh u8[] box (__raw_arr_box). Heap-dependent (present
+    // above). The source is shared with arm64 (asm_arm64_ir passes its own
+    // target); asmcore.sysno picks 318.
     if (s.has_need("random_bytes")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), all_structs, s);

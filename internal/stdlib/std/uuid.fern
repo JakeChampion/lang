@@ -6,10 +6,10 @@
 // canonical hyphenated lowercase form `xxxxxxxx-xxxx-xxxx-xxxx-
 // xxxxxxxxxxxx`. The companion validator is `string.is_uuid()`.
 //
-// The byte source is `random_bytes(n)` (kernel CSPRNG); a UUID
-// string is built purely from string concat + a sliced hex-digit
-// literal, so `uuid_v4` lowers through the self-hosted compiler's
-// IR path on every backend (no chr / byte-array round-trip).
+// The byte source is `random_bytes(n)` (kernel CSPRNG), a `u8[]`;
+// the UUID string is built purely from string concat + a sliced
+// hex-digit literal, so `uuid_v4` lowers through the self-hosted
+// compiler's IR path on every backend (no chr round-trip).
 
 // uuid_hex_digit renders a nibble (0-15) as a one-character
 // lowercase hex string. Slicing a literal (rather than `chr`)
@@ -26,7 +26,7 @@ function uuid_byte_hex(b: i32): string {
 // uuid_v4(): a random UUID. Bytes 6 and 8 carry the version (4)
 // and the RFC 4122 variant (10xx); every other byte is random.
 pub function uuid_v4(): string {
-    var b: string = random_bytes(16);
+    var b: u8[] = random_bytes(16);
     var b6: i32 = ((b[6] as i32) & 15) | 64;    // version 4 in the high nibble
     var b8: i32 = ((b[8] as i32) & 63) | 128;   // variant 10xx in the high bits
     return uuid_byte_hex((b[0] as i32)) + uuid_byte_hex((b[1] as i32)) + uuid_byte_hex((b[2] as i32)) + uuid_byte_hex((b[3] as i32))
@@ -43,7 +43,7 @@ pub function uuid_v4(): string {
 // v7s minted in the same millisecond order by their random tail.
 pub function uuid_v7(): string {
     var ms: i64 = now_unix_ms();
-    var r: string = random_bytes(10);  // 10 random bytes for the tail
+    var r: u8[] = random_bytes(10);  // 10 random bytes for the tail
     var t0: i32 = ((ms >> 40) & 255) as i32;
     var t1: i32 = ((ms >> 32) & 255) as i32;
     var t2: i32 = ((ms >> 24) & 255) as i32;

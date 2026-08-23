@@ -1310,7 +1310,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// / bytes byte values on a literal are fixed. (random_i32 + the random byte
 		// VALUES are non-deterministic, so they ride the IR-only block below.)
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`},
-		{"random-bytes-len-var", `function main(): i32 { var s: string = random_bytes(13); return s.len(); }`},
+		{"random-bytes-len-var", `function main(): i32 { var s: u8[] = random_bytes(13); return s.len(); }`},
 		// Clock leaves migrated to Fern on the IR path (#2649). The VALUES are
 		// non-deterministic, but deterministic PROPERTIES (a live clock reads
 		// positive; realtime is past 2023) hold identically on the hand-asm AST
@@ -1860,7 +1860,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// sign-extends. Ranged, not exact, since the draws are real.
 		{"random-i32-signed", `function main(): i32 { var neg: i32 = 0; var i: i32 = 0; while (i < 200) { if (random_i32() < 0) { neg = neg + 1; } i = i + 1; } if (neg == 0) { return 1; } if (neg > 60) { if (neg < 140) { return 7; } } return 2; }`, 7},
 		// A random byte is in 0..255.
-		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		{"random-bytes-byte-range", `function main(): i32 { var s: u8[] = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		// random_bytes over MORE than one chunk (#2649). The Fern helper fills
 		// the buffer in <= 256-byte pieces — getentropy's per-call ceiling on
 		// Darwin, and on Linux the fix for getrandom short-filling a big n. The
@@ -1897,7 +1897,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"stat-dir-and-missing", `function main(): i32 { match (stat("/tmp")) { Ok(d) => { if (d.is_file) { return 1; } if (!d.is_dir) { return 2; } match (stat("/tmp/fern_no_such_path_xyz")) { Ok(_) => { return 3; }, Err(e) => { match (e) { NotFound(_) => { return 37; }, _ => { return 4; } } } } }, Err(_) => { return 5; } } }`, 37},
 		{"tempdir-env", `function main(): i32 { match (temp_dir("fernrt")) { Ok(d) => { if (d.len() < 12) { return 1; } match (write_file(d + "/f.txt", "abc")) { Ok(_) => {}, Err(_) => { return 2; } } match (read_file(d + "/f.txt")) { Ok(c) => { if (c != "abc") { return 3; } }, Err(_) => { return 4; } } match (remove_file(d + "/f.txt")) { Ok(_) => {}, Err(_) => { return 5; } } match (env("PATH")) { Some(v) => { if (v.len() == 0) { return 6; } }, None => { return 7; } } match (env("FERN_DEFINITELY_UNSET_XYZ")) { Some(_) => { return 8; }, None => {} } return 39; }, Err(_) => { return 9; } } }`, 39},
 		{"fs-roundtrip", `function main(): i32 { var p: string = "/tmp/fern_fsrt_x86.txt"; match (write_file(p, "hello world")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(c) => { if (c != "hello world") { return 2; } }, Err(_) => { return 3; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 4; } } match (read_file(p)) { Ok(_) => { return 5; }, Err(_) => {} } return 41; }`, 41},
-		{"random-bytes-chunked", `function main(): i32 { var b: string = random_bytes(600); if (b.len() != 600) { return 1; } var v: i32 = 0; var i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } var w: i32 = 0; var j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
+		{"random-bytes-chunked", `function main(): i32 { var b: u8[] = random_bytes(600); if (b.len() != 600) { return 1; } var v: i32 = 0; var i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } var w: i32 = 0; var j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
 		// uuid_v4: 36 chars, '4' at index 14, '-' at 8, distinct draws.
 		{"uuid-v4", uuidV4Program, 0},
 		// Range-for through the x86-64 self-host IR path (#2699). The legacy

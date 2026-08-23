@@ -9537,8 +9537,8 @@ func TestArm64SliceMake(t *testing.T) {
 // from getrandom + actual entropy).
 func TestArm64RandomBytes(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
-    var s: string = random_bytes(16);
-    write(s);
+    var s: u8[] = random_bytes(16);
+    write(string_from_bytes_unchecked(s));
     return s.len();
 }`)
 	if code != 16 {
@@ -9881,9 +9881,6 @@ function main(): i32 {
     m = m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
-		// random_bytes(n) — Darwin getentropy path
-		// (chunked, 256-byte cap per call). Just verify the
-		// length round-trips; can't assert content.
 		// Map[string, i32] — string keys exercise the
 		// pointer-width entry-slot fix. set("world", 99)
 		// writes the string pointer through __store_ptr (8

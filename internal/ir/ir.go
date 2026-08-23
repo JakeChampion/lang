@@ -12723,8 +12723,8 @@ func resultCannotAliasArg(t ast.Type) bool {
 //     they are today. A concrete string result cannot hide a type var.
 //   - USER-DECLARED callees only (the returnsNoParamEscape map keys every decl in
 //     prog.Funcs). A builtin's allocation contract is per-helper rather than the
-//     return-transfer model this argument rests on — `random_bytes` hands back a
-//     buffer with no rc header at all — so builtins keep their prior safe-leak.
+//     return-transfer model this argument rests on, so builtins keep their
+//     prior safe-leak.
 func (b *builder) resultIsCountedStringAlias(name string, t ast.Type) bool {
 	if !ast.RcFreeEnabled {
 		return false
