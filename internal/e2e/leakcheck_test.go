@@ -1479,3 +1479,97 @@ func TestArm64LeakCheckStringArgTempReclaim(t *testing.T) {
 		})
 	}
 }
+
+// --- Threaded array accumulator: `acc = step(acc, x)` on a string[] (#6425) ---
+//
+// The shape every fold, DFS accumulator and incremental builder takes once the
+// loop body is factored into a function. It leaked the superseded array buffer
+// on every grow, unbounded, while the same work written inline was flat.
+//
+// Two independent causes, one per ABI, which is why both backends are pinned:
+//
+//   - The array result was ineligible to free because rhsTainted propagated a
+//     SCALAR argument's taint onto it (`i` is tainted — `i = i + 1` is a
+//     non-concat Binary), so the overwrite fell to the flat non-freeing
+//     `__fern_rc_dec`. A scalar cannot alias a pointer result, so it no longer
+//     does. Passing a string in that same position was flat all along.
+//   - On the two-word ABI the plain grow helper RETAINS each (data, len)
+//     element via __fern_str_inc, and the buffer-only __fern_arr_dec stranded
+//     every one of those retains.
+//
+// `inline-append` is the control on the second half, and it is not decorative:
+// the self-append form grows through the MOVE helper, which transfers the
+// elements instead of retaining them, so releasing them there is a double free
+// — an earlier draft of this fix segfaulted exactly here.
+const threadedArrAccumScalarArgSrc = `import "std/i32";
+function step(xs: string[], i: i32): string[] { return xs.append("p" + i.to_string()); }
+function main(): i32 {
+    var g: string[] = [];
+    var i: i32 = 0;
+    while (i < 16) { g = step(g, i); i = i + 1; }
+    return g.len();
+}`
+
+// The callee never reads its argument and appends a literal, so nothing about
+// the element explains the leak — before the fix this froze at allocs=4
+// frees=0, every array buffer stranded and not one freed.
+const threadedArrAccumIgnoredArgSrc = `function step(xs: string[], i: i32): string[] { return xs.append("lit"); }
+function main(): i32 {
+    var g: string[] = [];
+    var i: i32 = 0;
+    while (i < 16) { g = step(g, i); i = i + 1; }
+    return g.len();
+}`
+
+const inlineArrAccumSrc = `import "std/i32";
+function main(): i32 {
+    var g: string[] = [];
+    var i: i32 = 0;
+    while (i < 16) { g = g.append("p" + i.to_string()); i = i + 1; }
+    return g.len();
+}`
+
+var threadedArrAccumCases = []struct {
+	name string
+	src  string
+}{
+	{"scalar-arg", threadedArrAccumScalarArgSrc},
+	{"ignored-arg", threadedArrAccumIgnoredArgSrc},
+	{"inline-append", inlineArrAccumSrc},
+}
+
+func TestX86_64LeakCheckThreadedArrayAccumulator(t *testing.T) {
+	for _, tc := range threadedArrAccumCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			if code != 16 {
+				t.Fatalf("exit=%d, want 16 — the accumulator's contents are wrong, not just its accounting", code)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckThreadedArrayAccumulator(t *testing.T) {
+	for _, tc := range threadedArrAccumCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			if code != 16 {
+				t.Fatalf("exit=%d, want 16 — the accumulator's contents are wrong, not just its accounting", code)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}

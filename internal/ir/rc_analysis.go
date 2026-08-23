@@ -1524,7 +1524,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		changed := false
 		for name, rhss := range assigns {
 			for _, rhs := range rhss {
-				if !tainted[name] && !countedSeed[rhs] && !countedAssign[rhs] && b.rhsTainted(rhs, tainted) {
+				if !tainted[name] && !countedSeed[rhs] && !countedAssign[rhs] &&
+					b.rhsTainted(rhs, tainted) && !b.threadedCallOnlyScalarTainted(rhs, name, tainted) {
 					tainted[name] = true
 					changed = true
 				}
@@ -5246,4 +5247,56 @@ func sortedByDeclIdx(declIdx map[string]int) []string {
 		return names[i] < names[j]
 	})
 	return names
+}
+
+// threadedCallOnlyScalarTainted rescues `name = f(.., name, ..)` from a taint
+// that came solely from a SCALAR argument.
+//
+// A scalar cannot alias a pointer result — there is no pointer in it to carry
+// out — but the generic any-arg-tainted rule propagated it anyway. A loop
+// counter is always tainted (`i = i + 1` is a non-concat Binary), so
+// `acc = step(acc, i)` left the ARRAY ineligible to free and its overwrite fell
+// to the flat non-freeing `__fern_rc_dec`, leaking the superseded buffer on
+// every grow. The same call with a string argument was flat, which is how two
+// programs differing only in an argument the callee never reads came to differ
+// in whether four buffers were reclaimed (#6425).
+//
+// Restricted to the THREADED shape, where the result supersedes `name`'s own
+// binding and carries the reference it already held, so a scalar elsewhere in
+// the argument list cannot introduce a new alias to it.
+//
+// A FRESH binding keeps the conservative taint, because there the result can
+// carry a reference belonging to a DIFFERENT local: `var g: Map = grow(base,
+// i + 2)` gets back the handle `base` still owns, and crediting `g` deep-drops
+// a map the caller is still using. That is the soundness negative
+// rc_heap_bump_map_intermediate_test pins, and the scalar taint was all that
+// stood in front of it.
+func (b *builder) threadedCallOnlyScalarTainted(rhs ast.Expr, name string, tainted map[string]bool) bool {
+	call, ok := rhs.(*ast.Call)
+	if !ok {
+		return false
+	}
+	threads := false
+	for _, a := range call.Args {
+		if id, isID := a.(*ast.Ident); isID && id.Name == name {
+			threads = true
+			break
+		}
+	}
+	if !threads {
+		return false
+	}
+	// Every argument that is not PROVABLY scalar must be untainted. exprType
+	// returns nil for what it cannot classify — a consuming-match binding is not
+	// a declared local — and nil is not a scalar: reading it as one released a
+	// payload `ident(a)` hands straight back.
+	for _, a := range call.Args {
+		if at := b.exprType(a); at != nil && !ast.IsPointerType(at) {
+			continue
+		}
+		if b.rhsTainted(a, tainted) {
+			return false
+		}
+	}
+	return true
 }

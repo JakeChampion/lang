@@ -16176,10 +16176,27 @@ func (b *builder) assign(n *ast.Assign) error {
 				// __fern_rc_dec the catch-all else emits never frees) — the
 				// dominant churn in the self-host SSA build_func loops.
 				stride := int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))
+				// Which grow helper superseded the buffer decides what it still
+				// owes its elements. A self-append (`a = a.append(x)`) grows
+				// through the MOVE helper, which TRANSFERS the elements to the
+				// new buffer — the old one owns nothing afterwards, so walking it
+				// would release them twice. The general `a = f(a)` form grows
+				// inside the callee through the plain helper, and on the two-word
+				// ABI that helper RETAINS each (data, len) element via
+				// __fern_str_inc: those retains are the old buffer's to release,
+				// and __fern_arr_dec (buffer only) stranded every one of them —
+				// the arm64 half of #6425. __fern_drop_arr_str walks and releases
+				// them, and is_unique-gates like every other drop helper, so the
+				// in-place path (rc 2 -> 1) still only decs.
+				decHelper := "__fern_arr_dec"
+				if _, isStr := at.Elem.(ast.StringType); isStr &&
+					ast.UseTwoWordStrings(b.ptrW) && !b.isSelfArrayPushLocal(n.Value, t.Name) {
+					decHelper = "__fern_drop_arr_str"
+				}
 				arrDec := func() {
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
 					b.emit(Op{Kind: OpConstI32, I32: stride})
-					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2})
+					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: decHelper, I32: 2})
 					b.emit(Op{Kind: OpDrop})
 				}
 				if b.isConsumedArrayParam(t.Name) {

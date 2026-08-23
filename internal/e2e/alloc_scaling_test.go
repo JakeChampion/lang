@@ -570,6 +570,40 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// The threaded accumulator every fold, DFS and incremental builder has
+		// once the loop body is factored into a function — `acc = step(acc, x)`
+		// over a `string[]` (#6425). It leaked the superseded array buffer on
+		// every grow, 2.0x per doubling, while the same work written inline
+		// (`acc = acc.append(x)`) was flat.
+		//
+		// The scalar argument is the whole point of the fixture and must stay
+		// one. `i` is tainted (`i = i + 1` is a non-concat Binary), and
+		// rhsTainted propagated that taint through the call onto the ARRAY
+		// result, making it ineligible to free and dropping the overwrite onto
+		// the flat non-freeing `__fern_rc_dec`. Passing a string there instead
+		// was flat all along, which is what identified it: two programs
+		// differing only in an argument the callee never reads.
+		//
+		// Constant in n: the array is built and dies each round.
+		name: "threaded-array-accumulator",
+		decls: `import "std/i32";
+function step(xs: string[], i: i32): string[] { return xs.append("p" + i.to_string()); }
+function round(): i32 {
+    var g: string[] = [];
+    var i: i32 = 0;
+    while (i < 16) { g = step(g, i); i = i + 1; }
+    return g.len();
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < n) { t = t + round(); r = r + 1; }
+    return t % 7;
+}`,
+		n:        200,
+		maxRatio: 130,
+	},
+	{
 		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
 		// incs at the binding site and was never credited with owning the
 		// reference, so the element leaked once per extraction, unbounded.
