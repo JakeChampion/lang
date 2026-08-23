@@ -413,14 +413,30 @@ findings. Ranked by leverage.
     the transform matches fewer than 600 rows, because a gate that quietly stops
     matching reports success forever.
 
-    `stmts_assign_diags` closed 26 of the 37 (E001, E003, E008, E024) with no
-    new divergences — 618 agreeing rows became 644, and nothing that agreed
-    before stopped. **11 remain**, in three families:
+    | fix | agree | differ |
+    |---|---:|---:|
+    | (found) | 618 | **37** |
+    | `stmts_assign_diags` — E001/E003/E008/E024 | 644 | **11** |
+    | `e049_check_assigns` — E049 | 651 | **4** |
 
-    | code | rows | pass | why it is not a transcription |
+    No row that agreed before has stopped agreeing at any step, which is the
+    check that matters for changes that make a checker see MORE.
+
+    **The E049 one was not a missing entry point — it was the wrong argument.**
+    Every lambda was already reached (#7363 saw to that), but each was handed the
+    enclosing FUNCTION's name set, so a variable declared in an intervening
+    lambda was in neither the enclosing set nor the inner lambda's locals, and
+    nothing flagged an assignment to it. The set has to GROW as the walk
+    descends: what a nested lambda captures is its parent's own names plus
+    whatever the parent captured. Reached is not the same as reached correctly,
+    and a comment claiming each lambda is visited "exactly once however deep it
+    nests" was true and still described a broken walk.
+
+    **4 remain**, and neither family is a transcription:
+
+    | code | rows | pass | blocker |
     |---|---:|---|---|
-    | E049 | 7 | the `cap-assign-*` family | #7363 reached NESTED lambdas; a body-level one is a different entry point |
-    | E051 | 3 | `ow_stmts` | flow-sensitive `moved` set, the same blocker as `ru_expr` |
+    | E051 | 3 | `ow_stmts` | flow-sensitive `moved` set with a join at `StmtIf` — the same blocker as `ru_expr` |
     | E044 | 1 | `e044_stmts` | the under-report already pinned in the sequence gate; needs a scoping decision |
 
     Emptying that map closes the class.

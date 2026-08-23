@@ -1534,17 +1534,10 @@ func wrapMainBodyInLambda(src string) string {
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
 var lambdaBodyDivergences = map[string]string{
-	"cap-assign-string":       "E049 — the cap-assign family; e049 reaches nested lambdas (#7363) but not a body-level one",
-	"cap-assign-array":        "E049 — same family",
-	"cap-assign-struct":       "E049 — same family",
-	"cap-assign-unann-string": "E049 — same family",
-	"cap-assign-unann-array":  "E049 — same family",
-	"cap-assign-unann-struct": "E049 — same family",
-	"cap-assign-unann-tuple":  "E049 — same family",
-	"own-self-reassign-ok":    "E051 — ow_stmts, the linear/own walk",
-	"own-kept-alive-bad":      "E051 — same pass",
-	"own-second-read-bad":     "E051 — same pass",
-	"e044-capture-void":       "E044 — the under-report already pinned in the sequence gate; needs a scoping decision",
+	"own-self-reassign-ok": "E051 — ow_stmts, whose `moved` set is flow-sensitive and joins at StmtIf; the same blocker as ru_expr",
+	"own-kept-alive-bad":   "E051 — same pass",
+	"own-second-read-bad":  "E051 — same pass",
+	"e044-capture-void":    "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
 }
 
 func equalStrings(a, b []string) bool {
