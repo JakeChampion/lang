@@ -3258,16 +3258,37 @@ order being "independently unsound", is superseded. The LEAK half (cause 1,
 the escape taint) is still open, and the load leak this section set out to
 explain is unchanged by the fix.
 
-**RESOLVED, the LEAK half (2026-08-23, #7345).** `escapeOwned` no longer taints
-a source the sink RETAINS: it taints only what a sink stores uncounted
-(`dyn Trait`, which `needsRcIncOnAlias` declines). A counted source keeps a
-reference of its own, so it stays reclaimable, and the container's deep drop
-releases the dup — the rule `ArrayLit` elements always had. The 2026-07-29
-verdict below ("both fixes proven UNSOUND") was measured against the ORDER half
-landing alongside it and against a tree whose `computeConsumedParams` still
-under-counted enum params; on today's tree the taint half stands alone and is
-green, including the whole-compiler `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`
-and every test in that section's failure signature. Keep the shape table and the
+**RESOLVED, the LEAK half (2026-08-23, #7345), and what the taint was really
+hiding.** `escapeOwned` no longer taints a source the sink RETAINS: it taints
+only what a sink stores uncounted (`dyn Trait`, which `needsRcIncOnAlias`
+declines). A counted source keeps a reference of its own, so it stays
+reclaimable, and the container's deep drop releases the dup — the rule
+`ArrayLit` elements always had.
+
+The 2026-07-29 verdict below ("both fixes proven UNSOUND") was right that
+removing the taint broke the self-host compile, and wrong about where the bug
+was. The taint was not protecting anything; it was suppressing the
+`freeEligible` that let the ENUM REUSE layer reach a union enum, and that
+layer had a type-confusion defect of its own — `uniformEnumDropLoads` compared
+offsets and drop KIND, so `parser.Expr` read as uniform and its old payload was
+released through the FIRST variant's drop glue
+(`__drop_struct_parser__ExprNumber` handed an `ExprIdent` box). Comparing the
+payload TYPE fixes it; the taint change is then green.
+
+Two things worth keeping from that. The defect is a live one on main
+independent of any taint change — `E { VA(A), VB(B) }` replaced in a loop
+strands one buffer per replacement, pinned by
+`TestX86_64EnumUnionReplaceReclaimsDisplacedPayload`. And the bisect that found
+it is the function-name-hash recipe this section already describes: by SINK
+first (tuple green, struct red), then by function (bucket 270 =
+`ssa__synth_match_chain`), then by LAYER (`RcReuseEnabled` off is green,
+general FBIP off is not, `tryEnumReuseOverwrite` off is).
+
+`TestSelfHostLoadFixpointX86_64` is gone (#5971 deleted the merged bundle
+fixpoints); its successor is
+`TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`, and the reproducer that
+actually catches this class is `TestSelfHostSSAEmitArm64` — ~10 s, and the
+symptom is a segfault rather than a subtle answer. Keep the shape table and the
 refuted hypotheses below — they are still the map of this area.
 
 Probing out from this section's probe found four distinct shapes that strand
