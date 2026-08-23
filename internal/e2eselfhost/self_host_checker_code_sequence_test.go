@@ -48,28 +48,36 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		src  string
 		// want is the codes in emission order, duplicates kept, comma
 		// separated. "" means the program is clean.
-		want string
+		//
+		// With withMsg, each entry is `CODE(message)` instead of the bare code.
+		// That is the only way to gate ORDER in a pass that emits ONE code:
+		// swap two E053s and the code sequence is byte-identical, so this gate
+		// sees their count and never their order. The message is what
+		// distinguishes them, and no other gate compares message order either —
+		// the hint-text differential groups into a sorted unique set.
+		want    string
+		withMsg bool
 	}{
 		// Two independent leaks in one function: multiplicity, no ordering
 		// question. A collector that starts reporting a leak twice fails here
 		// while every set-based gate stays green.
-		{"two-leaks", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { var a: Ticket = Ticket { id: 1 }; var b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067"},
+		{"two-leaks", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { var a: Ticket = Ticket { id: 1 }; var b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067", false},
 		// Two leaks in two different functions: pins the order the checker
 		// walks top-level declarations in.
-		{"leak-in-each-of-two-fns", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { var a: Ticket = Ticket { id: 1 }; }\nfunction g(): void { var b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067"},
+		{"leak-in-each-of-two-fns", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction f(): void { var a: Ticket = Ticket { id: 1 }; }\nfunction g(): void { var b: Ticket = Ticket { id: 2 }; }\nfunction main(): i32 { return 0; }\n", "E067,E067", false},
 		// A lambda nested in a lambda, the INNER one assigning a captured
 		// string. This is the row that catches a lost prune in
 		// e049_expr_lambdas: descending into the lambda body as well as
 		// handing it to e049_check_assigns reports the inner E049 twice.
-		{"nested-lambda-capture-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { var g = function(): i32 { s = \"y\"; return 0; }; return g(); }; return f(); }\n", "E049"},
+		{"nested-lambda-capture-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { var g = function(): i32 { s = \"y\"; return 0; }; return g(); }; return f(); }\n", "E049", false},
 		// Both lambdas assigning: two E049s, and the count is what a lost
 		// prune inflates.
-		{"nested-lambda-both-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"a\"; var g = function(): i32 { s = \"y\"; return 0; }; return g(); }; return f(); }\n", "E049,E049"},
+		{"nested-lambda-both-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"a\"; var g = function(): i32 { s = \"y\"; return 0; }; return g(); }; return f(); }\n", "E049,E049", false},
 		// Two sibling lambdas, each assigning a captured string: two E049s
 		// with no nesting, so a prune change moves the nested rows above but
 		// not this one — which is what separates "order changed" from
 		// "descent changed".
-		{"sibling-lambdas-capture-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"a\"; return 0; }; var g = function(): i32 { s = \"b\"; return 0; }; return f() + g(); }\n", "E049,E049"},
+		{"sibling-lambdas-capture-assign", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"a\"; return 0; }; var g = function(): i32 { s = \"b\"; return 0; }; return f() + g(); }\n", "E049,E049", false},
 		// E036 (a variant declared in two enums, referenced unqualified). These
 		// three guard vref_expr, whose ExprLambda arm calls the SCOPE-THREADED
 		// vref_stmts rather than itself — precisely so a variant name shadowed
@@ -77,9 +85,9 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// would walk the lambda body with the OUTER scope and report the
 		// shadowed case: the middle row goes from clean to E036, and nothing
 		// else here would notice.
-		{"two-ambiguous-variant-refs", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var x = Red; var y = Red; return 0; }\n", "E036,E036"},
-		{"lambda-shadows-variant-name", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var Red: i32 = 1; return Red; }; return 0; }\n", ""},
-		{"lambda-does-not-shadow", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var z = Red; return 0; }; return 0; }\n", "E036"},
+		{"two-ambiguous-variant-refs", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var x = Red; var y = Red; return 0; }\n", "E036,E036", false},
+		{"lambda-shadows-variant-name", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var Red: i32 = 1; return Red; }; return 0; }\n", "", false},
+		{"lambda-does-not-shadow", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var f = function(): i32 { var z = Red; return 0; }; return 0; }\n", "E036", false},
 		// E043 / E005 from slit_diags, which is POST-order: it recurses into a
 		// literal's field_values BEFORE emitting its own diagnostics, where
 		// astwalk's fold is pre-order. These rows pin the relative order, which
@@ -99,9 +107,9 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// needing an expected type, so the extra reports may be the better
 		// answer. This pins today's behaviour so the difference is visible and
 		// cannot drift further while someone decides.
-		{"struct-lit-unknown-and-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, zz: 2 }; return 0; }\n", "E043,E005"},
-		{"struct-lit-nested-bad-fields", "struct In { a: i32 }\nstruct Out { x: In }\nfunction main(): i32 { var o: Out = Out { bad2: In { bad1: 1 } }; return 0; }\n", "E043,E005,E043,E005"},
-		{"struct-lit-two-siblings-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var a: P = P { x: 1 }; var b: P = P { x: 2 }; return 0; }\n", "E005,E005"},
+		{"struct-lit-unknown-and-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, zz: 2 }; return 0; }\n", "E043,E005", false},
+		{"struct-lit-nested-bad-fields", "struct In { a: i32 }\nstruct Out { x: In }\nfunction main(): i32 { var o: Out = Out { bad2: In { bad1: 1 } }; return 0; }\n", "E043,E005,E043,E005", false},
+		{"struct-lit-two-siblings-missing", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var a: P = P { x: 1 }; var b: P = P { x: 2 }; return 0; }\n", "E005,E005", false},
 		// E044 (a lambda capturing a variable of unsupported type). e044_expr
 		// prunes at ExprLambda for the same reason e049_expr_lambdas does — its
 		// own comment says "stmts_mention already recursed into any nested
@@ -109,7 +117,7 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// that guard: the outer lambda captures x transitively through the
 		// inner one, so BOTH are reported and the count is exactly two. Lose
 		// the prune and the inner one is counted again.
-		{"two-sibling-lambdas-bad-capture", "function f[T](x: T): i32 {\n  var g = () => x;\n  var h = () => x;\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044,E044"},
+		{"two-sibling-lambdas-bad-capture", "function f[T](x: T): i32 {\n  var g = () => x;\n  var h = () => x;\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044,E044", false},
 		// UNDER-REPORT, pinned so it cannot drift: the Go checker reports E044
 		// twice here — the inner lambda captures x directly, the outer captures
 		// it transitively — and the self-host reports once. Same code SET
@@ -131,7 +139,7 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// reaching a nested lambda needs a decision about whether it reuses
 		// those suspects minus accumulated param shadowing, or recomputes them
 		// for the inner scope. That choice changes which diagnostics appear.
-		{"nested-lambda-bad-capture", "function f[T](x: T): i32 {\n  var g = function(): i32 { var h = () => x; return 0; };\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044"},
+		{"nested-lambda-bad-capture", "function f[T](x: T): i32 {\n  var g = function(): i32 { var h = () => x; return 0; };\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044", false},
 		// E032 from e032_expr, which prunes at ExprLambda and hands the body to
 		// e032_stmts — the same prune-and-delegate shape as vref_expr. The
 		// lambda row exercises that path. These also pin how two SEPARATE
@@ -147,8 +155,8 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// collector cannot change it. Recorded here because this gate is where
 		// it became visible, and pinned so it cannot drift while someone
 		// decides whether the self-host should match the oracle's order.
-		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E038,E038,E032,E032"},
-		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    var f = function(): i32 { use n <- add(1); return n; };\n    return f();\n}\n", "E038,E032"},
+		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E038,E038,E032,E032", false},
+		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    var f = function(): i32 { use n <- add(1); return n; };\n    return f();\n}\n", "E038,E032", false},
 		// E060 / E062 from e060_e062_stmts. Captured against the UNCONVERTED hand
 		// walk first, which is how the three divergences below were found rather
 		// than inferred: it listed nine expression kinds and dropped the rest on a
@@ -157,24 +165,39 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// Folding it onto astwalk fixed all three. The first two rows already
 		// matched the Go checker and still do — they are the control that separates
 		// "coverage widened" from "behaviour changed".
-		{"two-bad-downcasts", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct Tri { t: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Square) { Some(sq) => { return sq.s; }, None => {} }\n    match (d as? Tri) { Some(tr) => { return tr.t; }, None => {} }\n    return 0;\n}\n", "E060,E060"},
+		{"two-bad-downcasts", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct Tri { t: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Square) { Some(sq) => { return sq.s; }, None => {} }\n    match (d as? Tri) { Some(tr) => { return tr.t; }, None => {} }\n    return 0;\n}\n", "E060,E060", false},
 		// Was "" — the walk stopped at ExprLambda, so a bad downcast inside a
 		// lambda body was accepted outright. Go reports E060 here.
-		{"downcast-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    var f = function(): i32 {\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060"},
+		{"downcast-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    var f = function(): i32 {\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060", false},
 		// Was "" for the other half of the same gap: e060_collect_dyn_locals never
 		// entered a lambda either, so a `dyn` local DECLARED inside one was not in
 		// the name set and nothing downstream could flag its downcast.
-		{"dyn-local-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var f = function(): i32 {\n        var d: dyn Shape = Circle { r: 3 };\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060"},
+		{"dyn-local-inside-lambda", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var f = function(): i32 {\n        var d: dyn Shape = Circle { r: 3 };\n        match (d as? Square) { Some(sq) => { return sq.s; }, None => { return 0; } }\n    };\n    return f();\n}\n", "E060", false},
 		// Was "E060,E062" — the hand walk visited a struct literal's field_values
 		// before its `...base`, where source order and astwalk both put the base
 		// first. Two DIFFERENT codes, one in each slot, is what makes the order
 		// visible to this gate at all: with the same code in both, the sequence is
 		// unchanged and only the messages move, which every gate here is blind to.
-		{"structlit-base-before-fields", "trait Shape { function area(self: Self): i32; }\ntrait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct S { v: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nstruct Box { a: i32, b: i32 }\nfunction cs(o: Option[Square]): i32 { return 0; }\nfunction boxify(n: i32): Box { return Box { a: n, b: n }; }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    var e: dyn A + B = S { v: 1 };\n    var q: Box = Box { ...boxify(e.m()), a: cs(d as? Square) };\n    return q.a;\n}\n", "E062,E060"},
-		{"ambiguous-dyn-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 1 };\n    return d.m();\n}\n", "E062"},
+		{"structlit-base-before-fields", "trait Shape { function area(self: Self): i32; }\ntrait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\nstruct S { v: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nstruct Box { a: i32, b: i32 }\nfunction cs(o: Option[Square]): i32 { return 0; }\nfunction boxify(n: i32): Box { return Box { a: n, b: n }; }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    var e: dyn A + B = S { v: 1 };\n    var q: Box = Box { ...boxify(e.m()), a: cs(d as? Square) };\n    return q.a;\n}\n", "E062,E060", false},
+		{"ambiguous-dyn-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return self.v; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 1 };\n    return d.m();\n}\n", "E062", false},
+		// E053 (`fip` / `fbip` allocation freedom) from e053_at_node. A
+		// single-code pass, so these rows carry messages: without them the gate
+		// would see two E053s swap places as no change at all.
+		//
+		// The control row. Two array literals, both reported, in source order —
+		// identical before and after the fold, which is what separates "coverage
+		// widened" from "behaviour changed".
+		{"e053-two-arrays", "fip function f(n: i32): i32 {\n    var a: i32[] = [1];\n    var b: i32[] = [2];\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may not allocate (array literal))", true},
+		// Was "" — e053_expr pruned at ExprLambda, so an allocation anywhere in a
+		// closure body was excused outright. Go reports it. And since the
+		// self-host has no FuncDecl statement — a nested named function parses as
+		// a StmtVar holding an ExprLambda — the same hole covered both spellings,
+		// which the second row pins.
+		{"e053-lambda-body-array", "fip function f(n: i32): i32 {\n    var g = function(): i32 { var a: i32[] = [1]; return a.len(); };\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal))", true},
+		{"e053-nested-named-fn-array", "fip function f(n: i32): i32 {\n    function inner(): i32 { var a: i32[] = [1]; return a.len(); }\n    return n + inner();\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may only call other `fip` functions, not \"inner\")", true},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
-		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049"},
+		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049", false},
 	}
 
 	for _, tc := range cases {
@@ -190,6 +213,10 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 
 			var codes []string
 			for _, d := range driverDiags(out) {
+				if tc.withMsg {
+					codes = append(codes, d.code+"("+d.msg+")")
+					continue
+				}
 				codes = append(codes, d.code)
 			}
 			got := strings.Join(codes, ",")

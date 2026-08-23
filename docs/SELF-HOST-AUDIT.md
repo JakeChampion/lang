@@ -353,7 +353,8 @@ findings. Ranked by leverage.
 
     Done so far: `mc_mentions_expr` / `mc_mentions_stmts`, `ow_count_ident`,
     `e049_expr_lambdas`, `vref_expr`, `e032_expr`, `e060_e062_stmts` (which
-    absorbed `e060_e062_expr`), `e060_collect_dyn_locals`. A converted collector
+    absorbed `e060_e062_expr`), `e060_collect_dyn_locals`, `e053_expr` (now
+    `e053_at_node` + `e053_own_exprs`). A converted collector
     stops matching the "hand-enumerated walk" heuristic entirely — it becomes a
     short visitor naming one or two variants — which is how to tell the count is
     falling for the right reason.
@@ -383,6 +384,29 @@ findings. Ranked by leverage.
     and nothing ever reports the gap. Expect to find one in any collector whose
     match ends in a wildcard — and check the wildcard FIRST, since it decides
     whether the conversion changes behaviour at all.
+
+    **A collector's STATEMENT half can be blocked while its expression half
+    converts cleanly.** `e053_stmts` advances `cur = check_stmt(stmt, cur).scope`
+    once per statement and enters each nested block with the scope as of the
+    statement enclosing it — a whole-subtree `fold_stmt` has one accumulator and
+    cannot carry that. But the level it DOES want exists: `fold_stmt_own` visits
+    exactly the expressions one statement owns and stops, which is what a
+    per-statement driver needs when it walks its own child blocks. The loop
+    stays; only the expression walk folds. Order per statement is (1) the
+    statement-shaped check, (2) `fold_stmt_own`, (3) nested blocks — which
+    reproduces the hand-written emission order arm for arm.
+
+    Pass `fx` and `cur` to the visitor's enclosing function as PARAMETERS.
+    Reading them from the driver's loop would close over a binding reassigned
+    once per statement, which is a different question from closing over a
+    parameter and not one worth answering by experiment.
+
+    **A single-code pass needs `withMsg` rows or its order is not gated at all.**
+    E053 is the whole of `fip`/`fbip` allocation-freedom, so every diagnostic it
+    emits carries the same code: swap two and the code sequence is byte-identical
+    and the gate reports success. The sequence gate now compares
+    `CODE(message)` on rows that ask for it. Check whether a collector's codes
+    discriminate its diagnostics BEFORE writing its rows.
 
     **A conversion moves loops INTO a nested named function, which is its own
     compiler surface.** The `for tr in trs` loops in `e060_e062_stmts`'s visitor

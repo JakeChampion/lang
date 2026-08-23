@@ -47,11 +47,11 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **40** — 4 anonymous `function(…)` exprs and 36 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 15 in `checker`'s collectors); 20 of the 40 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **307** in 2 modules — 292 in `checker.fern`, 15 in `visibility.fern`; falling as SH-022 folds collectors onto `astwalk` | floor |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **41** — 4 anonymous `function(…)` exprs and 37 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 16 in `checker`'s collectors); 21 of the 41 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **303** in 2 modules — 288 in `checker.fern`, 15 in `visibility.fern`; falling as SH-022 folds collectors onto `astwalk` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **98** across 11 modules | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **99** across 11 modules | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
