@@ -45,9 +45,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `require` is the set of oracle legs this runner is meant to
+        # exercise, passed to the test as FERN_REQUIRE_DIFF_BACKENDS so a
+        # lost toolchain FAILS here instead of skipping. Per-arch by
+        # design: each runner has its own register backend plus wasm, and
+        # skips the other one (see the header note). Before #7310 a runner
+        # that lost a toolchain reported its seeds green having executed
+        # no compiled code at all.
         host:
-          - { runner: ubuntu-latest,    name: x86_64  }
-          - { runner: ubuntu-24.04-arm, name: aarch64 }
+          - { runner: ubuntu-latest,    name: x86_64,  require: "x86_64,wasmbin"      }
+          - { runner: ubuntu-24.04-arm, name: aarch64, require: "arm64-linux,wasmbin" }
         # Two shards = 1024 seeds each. See the shard-count note above
         # before changing this (keep DIFF_ORACLE_SHARD's /N in sync).
         shard: [0, 1]
@@ -63,6 +70,7 @@ jobs:
       - name: go test (differential shard ${{ matrix.shard }}/2)
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          FERN_REQUIRE_DIFF_BACKENDS: "${{ matrix.host.require }}"
           # Per-shard artifact dir so multiple shards on the
           # same runner don't clobber each other's failed-
           # program asm. `diffOracleArtifactDir()` reads this.
