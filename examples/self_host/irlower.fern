@@ -2873,7 +2873,16 @@ pub function expr_map_kind(e: parser.Expr, s: LowerState): i32 {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     if (cfa.field == "insert" || cfa.field == "set" || cfa.field == "delete") {
-                        return expr_map_kind(cfa.obj, s);
+                        var base: i32 = expr_map_kind(cfa.obj, s);
+                        // `map_new` is BOTH the string constructor and what the
+                        // parser falls back to when it cannot classify the keys,
+                        // so a 0 off a literal's chain is only a guess. The key
+                        // argument is the typed answer it could not give.
+                        if (base == 0 && map_lit_ctor_root(cfa.obj) && c.args.len() >= 1
+                                && map_key_int_evidence(c.args[0], s)) {
+                            return 1;
+                        }
+                        return base;
                     }
                     return 0 - 1;
                 },
@@ -2883,6 +2892,71 @@ pub function expr_map_kind(e: parser.Expr, s: LowerState): i32 {
         _ => { return 0 - 1; }
     }
     return 0 - 1;
+}
+
+// map_lit_ctor_root reports whether `e` is a `Map { … }` literal's desugared
+// constructor chain: a bare `map_new` / `map_new_i32` call, or an `.insert` /
+// `.set` / `.delete` on one. A map LOCAL's chain roots at an IDENT instead, and
+// its declared `Map[K, V]` is authoritative, so that answers false.
+function map_lit_ctor_root(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    return (cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "insert" || cfa.field == "set" || cfa.field == "delete") {
+                        return map_lit_ctor_root(cfa.obj);
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// map_key_int_evidence reports POSITIVE evidence that a `Map { … }` literal's
+// KEY is an integer rather than a string.
+//
+// The parser desugars the literal to `map_new[_i32](n).insert(k, v)…` and picks
+// the constructor — which is what carries the key kind through every backend —
+// from the key expressions' SYNTAX, because it has no types. A key set of bare
+// identifiers is unclassifiable there and falls back to `map_new`, the STRING
+// constructor; the integer keys then reach __fern_map_set's string compare,
+// which dereferences each as a pointer. That is a SIGSEGV at construction with
+// no read of the map anywhere (#6207's residue, #7438).
+//
+// EVIDENCE only, never a default: an unresolvable key keeps whatever the
+// constructor spelled, so a string key this cannot type is never flipped to
+// integer. A composite (struct / enum) key answers false too — its own override
+// respells the tag and selects kind 2.
+function map_key_int_evidence(k: parser.Expr, s: LowerState): boolean {
+    if (expr_is_str(k, s)) { return false; }
+    if (expr_struct_type(k, s) != "") { return false; }
+    match (k) {
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprIdent(kid) => {
+            var ksl: i32 = s.slot_of(kid.name);
+            if (ksl < 0) { return false; }
+            if (s.is_i64_slot(ksl) || s.is_u32_slot(ksl) || s.is_u64_slot(ksl)) { return true; }
+            return s.is_i32_scalar_slot(ksl);
+        },
+        // A CALL key resolves off the checker's stamped result type (#5531)
+        // where the annotate pass ran; "" (the asm / wasm drivers) is no
+        // evidence and keeps the constructor's kind.
+        parser.ExprCall(kc) => { return is_int_irtag(kc.ty); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// is_int_irtag reports whether an irlower type tag names an integer scalar.
+function is_int_irtag(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "boolean";
 }
 
 // expr_map_type_tag returns the full "Map[K, V]" type of a map EXPRESSION — a
@@ -10893,6 +10967,13 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             if (kexp != "") {
                 mtype = map_with_key(mtype, kexp);
                 meqfn = map_key_eqfn(mtype);
+            } else if (mkk2 == 0 && map_lit_ctor_root(fa.obj) && map_key_int_evidence(c.args[0], s)) {
+                // The literal's FIRST entry: its receiver is the bare
+                // constructor, which carries no key of its own for
+                // expr_map_kind to read, so the string tag recovered from it is
+                // the parser's fallback. This key argument answers it (#7438).
+                mtype = map_with_key(mtype, "i32");
+                mkk2 = map_key_kind_of(mtype);
             }
         }
         if (meqfn != "") { mkk2 = 2; }
@@ -18403,27 +18484,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 _ => { }
             }
             // A fn-typed binding whose init call carries an env BOX as an
-            // argument (`var v: (i32) => i32 = id(<boxed lambda>)`): the box was
-            // built by the lift for an erased-generic parameter, and an erased
-            // generic returns its argument, so what lands here is a box. Bind it
-            // a closure local — otherwise `v(1)` bare-calls the box pointer as
+            // argument (`var v: (i32) => i32 = id(<boxed lambda>)`): an erased
+            // generic returns its argument, so what lands here is that box. Bind
+            // it a closure local — otherwise `v(1)` bare-calls the box pointer as
             // code, which is the segfault #6466 records against widening the
-            // lift alone. Keyed on the `__mkclo$` marker rather than the callee,
-            // so it holds for any passthrough that returns the boxed argument.
+            // lift alone. Keyed on the ARGUMENT rather than the callee, so it
+            // holds for any passthrough that returns the boxed argument.
             if (v.type_name == "fn" || is_fn_payload_spelling(v.type_name)) {
                 var mka: i32 = 0;
                 while (mka < cc.args.len()) {
-                    match (cc.args[mka]) {
-                        parser.ExprCall(mkc) => {
-                            match (mkc.callee) {
-                                parser.ExprIdent(mkid) => {
-                                    if (mkid.name.len() > 8 && mkid.name[0:8] == "__mkclo$") { clo_init = true; }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
+                    if (expr_is_closure_box(cc.args[mka], s)) { clo_init = true; }
                     mka = mka + 1;
                 }
             }
@@ -55481,21 +55551,27 @@ function expr_is_map_new_base(e: parser.Expr): boolean {
 }
 
 // lower_expr_map_base lowers a map-insert RECEIVER. It is ordinary lower_expr
-// except for the chain base of a composite-keyed `Map { … }` literal: `map_new`
-// / `map_new_i32` are the only two constructor spellings, so a struct / enum key
-// has none and the desugar falls back to `map_new` — the STRING one. The generic
-// constructor arm reads the kind off that callee NAME, so the box was built
-// string-keyed and no per-insert eq could rescue it, the box carrying its own
-// kind. Here the DECLARED `Map[K, V]` is in hand, which is the same authority
-// the annotated `var m: Map[K, V] = map_new(n)` binding already uses to build a
-// kind-2 box. #7001.
+// except for the chain base of a `Map { … }` literal, where it builds the box
+// from the `Map[K, V]` in hand instead of from the constructor's NAME.
+//
+// `map_new` / `map_new_i32` are the only two spellings, and the parser picks
+// between them without types: a struct / enum key has no spelling at all and a
+// key set it cannot classify falls back to `map_new` — the STRING one either
+// way. The generic constructor arm reads the kind off that callee name, so the
+// BOX was built string-keyed and no per-insert kind could rescue it, the box
+// carrying its own. The recovered / declared `Map[K, V]` is the same authority
+// the annotated `var m: Map[K, V] = map_new(n)` binding already builds from.
+// #7001 (composite keys), #7438 (i32 keys the parser could not classify).
 function lower_expr_map_base(e: parser.Expr, mtype: string, s: LowerState): LowerState {
+    if (!expr_is_map_new_base(e)) { return lower_expr(e, s); }
     var k: string = map_key_eqfn(mtype);
-    if (k == "" || !expr_is_map_new_base(e)) { return lower_expr(e, s); }
+    var kind: i32 = map_key_kind_of(mtype);
+    if (k != "") { kind = 2; }
     match (e) {
         parser.ExprCall(c) => {
             var b: LowerState = lower_expr(c.args[0], s);
             if (!b.ok) { return b; }
+            if (kind != 2) { return b.emit(ir.op_map_new(kind, "")); }
             var kt: string = map_key_of(mtype);
             return b.emit(ir.op_map_new(2, kt + ".hash|" + kt + ".eq"));
         },
@@ -56369,7 +56445,7 @@ function passthrough_lambda_param_types(e: parser.Expr, mfuncs: MFuncs): string[
 // fn-typed PARAM: that additionally needs fn_ret, fn_param_types and
 // fn_param_dyn, the sidecars parse_param records precisely because the flat tag
 // throws the signature away. A param built without them is not the one the call
-// side reads — hoist_capturing_iife used to decline every fn-typed capture for
+// side reads — hoist_value_iife used to decline every fn-typed capture for
 // exactly this reason, which is what kept #6256's Repro D bailing.
 //
 // Four sources are exact enough to use, and nothing else is:
@@ -58303,16 +58379,21 @@ function expr_is_closure_array(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
-// expr_is_closure_box reports whether an arm value is already a closure box: a
+// expr_is_closure_box reports whether a value is already a closure box: a
 // closure LOCAL (the `v0` alias shape), a `__mkclo$…` env-box marker the lift
-// pass produced, or a nested value-position if/match whose own arms are all
-// boxed. Anything else — a bare fn name, a call, a literal — answers false.
+// pass produced, a call of a closure-RETURNING function (closure_fns, which the
+// hoisted `<fd>$iifeN` value-position desugar joins), or a nested value-position
+// if/match whose own arms are all boxed. Anything else — a bare fn name, a
+// scalar-returning call, a literal — answers false.
 function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return s.is_closure_local(id.name); },
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(cid) => { return cid.name.len() > 8 && cid.name[0:8] == "__mkclo$"; },
+                parser.ExprIdent(cid) => {
+                    if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") { return true; }
+                    return util.index_of_str(s.sigs.closure_fns, cid.name) >= 0;
+                },
                 parser.ExprLambda(_) => { return c.args.len() == 0 && iife_callee_boxed_arms(c.callee, s); },
                 _ => { return false; }
             }
@@ -58322,38 +58403,34 @@ function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
-// ---- fn-valued arms of a CAPTURING value-position if / match (#6256) --------
+// ---- fn-valued arms of a value-position if / match (#6256, #7438) ----------
 //
 // A value-position `if` / `match` parses as an IIFE — `ExprCall{callee:
-// ExprLambda{params: [], body: [StmtIf|StmtMatch]}}`. Whether its arms ever meet
-// a closure-lift pass depends on something that has nothing to do with the arms:
-// a NO-CAPTURE IIFE is hoisted to a top-level `__lam_N` FuncDecl by
-// lift_call_arg, and BECOMING a FuncDecl is what gets its body walked. A
-// CAPTURING one is "left in place (stays on AST)", lower_iife lowers its arms
-// inline in the enclosing function, and no lift pass ever sees them. So a
+// ExprLambda{params: [], body: [StmtIf|StmtMatch]}}`. Left alone, its arms are
+// STATEMENTS inside an expression, so no closure-lift pass reaches them: a
 // fn-valued arm reached lower_expr as a bare ExprLambda and asked for a
-// `<cur_fn>$clo` nothing had built — the module bailed with "function value
-// <fn>$clo not defined". A fn-typed arm was worse than a bail: it lowered to a
-// bare fn pointer that the env-first call side dispatched as a box (#6256's
-// SIGSEGV row).
+// `<cur_fn>$clo` nothing had built (a module bail), and a no-capture one was
+// worse — lift_call_arg hoisted it to a bare `__lam_N` fn POINTER while the
+// destination dispatched the result env-first as a box, so the call loaded a
+// "box slot 0" out of a function's first code bytes and jumped through it.
 //
-// The fix is to stop the fork existing: hoist the capturing IIFE to a real
-// top-level function too, taking its captures as ORDINARY PARAMETERS. An IIFE
-// is applied immediately, so its captures need no env box — by-value params
-// carry them, which also lifts the i64/u64/f64 restriction the env box imposes
-// (cap_slot_ok rejects a wide scalar; a param does not). The IIFE call site
-// becomes `<fd>$iifeN(caps…)`, an ordinary direct call returning a fn value —
-// the shape a local binding and a `return` already dispatch env-first, which is
-// what makes the RESULT usable and not just the arms well-formed. Boxing the
-// arms alone left the destination unmarked and turned a bail into a SIGSEGV.
+// So the IIFE is hoisted to a real top-level function taking its captures as
+// ORDINARY PARAMETERS. An IIFE is applied immediately, so its captures need no
+// env box — by-value params carry them, which also lifts the i64/u64/f64
+// restriction the env box imposes (cap_slot_ok rejects a wide scalar; a param
+// does not). The call site becomes `<fd>$iifeN(caps…)`, an ordinary direct call
+// returning a fn value — the shape a local binding and a `return` already
+// dispatch env-first, which is what makes the RESULT usable and not just the
+// arms well-formed. Boxing the arms alone left the destination unmarked and
+// turned a bail into a SIGSEGV.
 //
-// Once hoisted the body is a FuncDecl, so the worklist drain re-processes it
-// and every ordinary pass walks its arms — the same mechanism that already
-// makes a NO-CAPTURE IIFE work, and the reason this needs no arm walker.
+// The hoist runs whether or not the IIFE captures. A no-capture one becoming a
+// `__lam_N` FuncDecl is NOT equivalent: the worklist drain deliberately withholds
+// the `return <lambda>` desugar from lifted bodies (#5281, the curry shape), which
+// is the very rewrite that turns an arm lambda into a boxed closure local — so the
+// arm stayed a bare pointer (#7438). hoist_value_iife applies that desugar itself.
 //
-// Gated on the IIFE both CAPTURING (lambda_has_no_captures — the very predicate
-// that decides whether the existing hoist fires) and holding a fn-VALUED arm.
-// Everything else is left exactly as it was, so no working program changes path.
+// Gated on the IIFE holding a fn-VALUED arm; everything else keeps its path.
 // iife_arms_have_lambda reports whether any arm of a value-position if/match
 // yields an inline LAMBDA — directly, or through a generic passthrough call that
 // hands it back unchanged — which is the only thing the hoist is needed for.
@@ -58644,11 +58721,12 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
 
-// hoist_capturing_iife builds `<fd>$iifeN(caps…)` from the IIFE lambda and
+// hoist_value_iife builds `<fd>$iifeN(caps…)` from the IIFE lambda and
 // returns the direct call that replaces it. Declines — signalled by returning
 // the counter unchanged — when any capture's type does not resolve, leaving the
-// IIFE exactly as it was so the module bails as before.
-function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
+// IIFE exactly as it was so the module bails as before. A capture-free IIFE
+// hoists to a zero-parameter `<fd>$iifeN()`.
+function hoist_value_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
     var caps: string[] = lambda_captures(lam, fd);
     var ps: parser.ParamDecl[] = [];
     var args: parser.Expr[] = [];
@@ -58806,18 +58884,16 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             match (call.callee) {
                 parser.ExprIdent(_) => {},
                 parser.ExprLambda(ielam) => {
-                    // A CAPTURING IIFE holding a fn-valued arm — the value-position
-                    // if/match desugar lift_call_arg will NOT hoist, so nothing ever
-                    // walks its arms and nothing marks its destination (#6256).
-                    // Hoist it into a real function taking its captures as params;
-                    // the call that replaces it is an ordinary fn-value-returning
-                    // call both a binding and a return already handle. A no-capture
-                    // IIFE falls through untouched — the existing hoist gets it.
+                    // An IIFE holding a fn-valued arm — the value-position
+                    // if/match desugar — leaves its arms where no lift walks them
+                    // and its destination unmarked (#6256). Hoist it into a real
+                    // function taking its captures as params; the call that
+                    // replaces it is an ordinary fn-value-returning call both a
+                    // binding and a return already handle.
                     if (call.args.len() == 0 && ielam.params.len() == 0
-                        && !lambda_has_no_captures(ielam, gfns)
                         && iife_arms_have_lambda(ielam.body, mfuncs)
                         && iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
-                        var iar: InlineCloRes = hoist_capturing_iife(ielam, fd, fs, ct, structs, mfuncs);
+                        var iar: InlineCloRes = hoist_value_iife(ielam, fd, fs, ct, structs, mfuncs);
                         if (iar.counter > ct) {
                             fs = iar.funcs; ct = iar.counter;
                             return InlineCloRes { expr: iar.expr, funcs: fs, counter: ct };
@@ -58896,8 +58972,11 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             // array (no capturing element) keeps the bare fn-pointer + plain-
             // dispatch representation unchanged.
             // An ELEMENT that is a value-position if/match counts too (#6256):
-            // its arms hold the lambdas, so a capturing one there puts the array
-            // on the env-first ABI exactly as a direct capturing element does.
+            // its arms hold the lambdas, and hoist_value_iife turns any such
+            // IIFE into a call yielding a box — capturing or not — so the array
+            // holding it is on the env-first ABI exactly as a direct capturing
+            // element puts it there. The gate is the hoist's own, so the two
+            // cannot disagree about the representation (#7438).
             var has_cap_lam: boolean = false;
             var sc: i32 = 0;
             while (sc < arr.elements.len()) {
@@ -58907,7 +58986,8 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         match (sccall.callee) {
                             parser.ExprLambda(scil) => {
                                 if (sccall.args.len() == 0 && scil.params.len() == 0
-                                    && iife_arm_lambda_captures(scil.body, fd)) { has_cap_lam = true; }
+                                    && iife_arms_have_lambda(scil.body, mfuncs)
+                                    && iife_arms_hold_fn_value(scil.body, fd, structs, mfuncs)) { has_cap_lam = true; }
                             },
                             // A generic PASSTHROUGH element (`id(<lambda>)`,
                             // `pick(c, <lambda>, …)`) forwards the box the lift
