@@ -17475,9 +17475,10 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
         sb = LowerState { ...sb, alias_incs: sb.alias_incs.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + "=" + v.name) };
     }
     // Dead-alias cancellation, second half (#4402 opt 1): the retain was
-    // skipped at this bind (arr_dead_alias_bind — the same predicate the
-    // ladder consulted), so the ALIAS slot's exit dec is elided with it.
-    if (arr_dead_alias_bind(v, se)) { sb = sb.note_moved_elided(slot); }
+    // skipped at this bind (arr_dead_alias_bind / str_dead_alias_bind — the
+    // same per-kind predicate the ladder consulted), so the ALIAS slot's exit
+    // dec is elided with it.
+    if (arr_dead_alias_bind(v, se) || str_dead_alias_bind(v, se)) { sb = sb.note_moved_elided(slot); }
     // A tuple MOVE-alias transfers the source's release role to this slot
     // (the ladder's tuple clause swapped the credit class), so the slot facts
     // that release reads move with it: the element type tags the "TUPRCS:"
@@ -17990,6 +17991,16 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // carries alias_inc across, so an aliasing bind retains the shared box
     // (#7282). Loop-body re-binds free the prior iteration's box; the final
     // value is freed by the exit string sweep.
+    // Dead-alias-cancelled bind (#4402 opt 1): a plain store is the whole
+    // bind. No retain was taken, so the dec-on-overwrite must not fire
+    // either — on a loop's second iteration the slot holds the source's
+    // PRIOR box, which the source's own rebind already freed at rc 1, and
+    // the cow-guarded free below would free it again (native skips
+    // emitVarReinitDropOld at borrowed-alias sites for the same reason).
+    // Only the cancellation elide above marks the BIND slot moved_elided
+    // (every other caller marks a pre-existing SOURCE slot, whose index is
+    // lower), so membership here means exactly "this bind is cancelled".
+    if (slot_list_has(sb.moved_elided, slot)) { return sb.emit(ir.op_store_local(slot)); }
     if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot, vt.alias_inc); }
     // A reclaimable rc-TUPLE loop-local (`while { var t = (i, [i, i+1]); }`): the
     // loop-rebind must DEEP-drop the prior tuple's fresh array element(s) before the
@@ -19193,7 +19204,10 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // the string sweep loop skips elided slots), the same
                 // cancellation the array clause above performs.
                 if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
-                else { alias_inc = true; }
+                // Dead-alias cancellation, string limb (#4402 opt 1): a proven
+                // borrowed VIEW skips the retain, and bind_var_slot elides the
+                // alias slot's sweep dec under the same predicate.
+                else if (!str_dead_alias_bind(v, se)) { alias_inc = true; }
             }
             // A struct box. The gate is the CREDIT predicate, not a type test, and
             // the difference is the whole of #7368: struct_type_of_slot is a
@@ -25252,9 +25266,11 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Reclaimable fresh heap-string locals — free the box + data buffer via
     // __fern_str_free at scope exit (the sibling of the struct/tuple loops above).
     // Only fresh, proven-non-escaping, non-reassigned string locals qualify
-    // (slot_is_reclaimable_str), so the box is the sole reference: a returned /
-    // stored / aliased string is escaping → never in the set → never swept (no
-    // move-on-return keep needed). Slots are zeroed at entry, so an untaken-branch
+    // (slot_is_reclaimable_str): a returned / stored string is escaping → never
+    // in the set → never swept (no move-on-return keep needed). An aliased
+    // source stays in the set (the alias site earns the same "STR:" class and
+    // the refcount arbitrates); a dead-alias-cancelled alias slot is skipped
+    // here via moved_elided. Slots are zeroed at entry, so an untaken-branch
     // slot frees a guarded null. A loop-body string local's per-iteration boxes
     // were already freed at the rebind; this frees the final live one.
     var sj: i32 = st.n_params;
@@ -53904,9 +53920,9 @@ pub function move_sites_toplevel_of(fn: parser.FuncDecl, structs: parser.StructD
 // a source is not itself cancelled). sites: the cancelled alias BIND-site
 // keys; srcs: the borrow-source names (the precise-drop exclusion set).
 //
-// Slice 1 covers ARRAY pairs only — the pure kind gate is y's array
-// annotation or array evidence at x's declaration; the emitting side
-// (arr_dead_alias_bind) re-checks against the SLOT facts and is final.
+// Covers ARRAY and STRING pairs — the pure kind gate is y's annotation or
+// kind evidence at x's declaration; the emitting side (arr_dead_alias_bind /
+// str_dead_alias_bind) re-checks against the SLOT facts and is final.
 pub struct DeadAliases { sites: string[], srcs: string[] }
 
 pub function dead_alias_of(body: parser.Stmt[]): DeadAliases {
@@ -53953,6 +53969,41 @@ function da_decl_array_evidence(stmts: parser.Stmt[], name: string): boolean {
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
                     if (da_decl_array_evidence(m.arms[mi].body, name)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// da_decl_string_evidence: x's declaration carries a string annotation or a
+// string-literal init — the string sibling of da_decl_array_evidence.
+function da_decl_string_evidence(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (v.type_name == "string") { return true; }
+                    match (v.init) {
+                        parser.ExprString(_) => { return true; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                if (da_decl_string_evidence(f.then_body, name)) { return true; }
+                if (da_decl_string_evidence(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (da_decl_string_evidence(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (da_decl_string_evidence(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (da_decl_string_evidence(m.arms[mi].body, name)) { return true; }
                     mi = mi + 1;
                 }
             },
@@ -54021,7 +54072,8 @@ function da_scan(stmts: parser.Stmt[], body: parser.Stmt[], assigned: string[], 
                             && util.index_of_str(rets, v.name) < 0
                             && util.index_of_str(scruts, id.name) < 0 && util.index_of_str(scruts, v.name) < 0
                             && local_decl_count(body, id.name) == 1 && local_decl_count(body, v.name) == 1
-                            && (is_array_type_name(v.type_name) || da_decl_array_evidence(body, id.name))) {
+                            && (is_array_type_name(v.type_name) || da_decl_array_evidence(body, id.name)
+                                || v.type_name == "string" || da_decl_string_evidence(body, id.name))) {
                             a = DeadAliases {
                                 sites: a.sites.append(reclaim_site_key_of(v.name, v.line, v.col)),
                                 srcs: push_str_unique(a.srcs, id.name)
@@ -54057,6 +54109,28 @@ function arr_dead_alias_bind(v: parser.StmtVar, se: LowerState): boolean {
             var src: i32 = se.slot_of(id.name);
             if (src < 0 || src < se.n_params) { return false; }
             if (!se.is_arr_slot(src) || se.is_borrowed_arr_slot(src)) { return false; }
+            if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
+            if (util.index_of_str(se.moved_names, id.name) >= 0 || util.index_of_str(se.moved_names, v.name) >= 0) { return false; }
+            return util.index_of_str(se.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// str_dead_alias_bind: the string sibling of arr_dead_alias_bind — THE one
+// predicate for the string limb, consulted by the ladder (skip the retain)
+// and by bind_var_slot (skip the alias slot's sweep dec). The slot facts are
+// final: the source must be a credited (non-param) string slot, and a MOVE
+// site takes the move path instead. Strings have no precise-drop class, so
+// the pd_filter half of the cancellation is vacuous here — only the inc/dec
+// pair is elided; the source's release stays the exit sweep it already was.
+function str_dead_alias_bind(v: parser.StmtVar, se: LowerState): boolean {
+    match (v.init) {
+        parser.ExprIdent(id) => {
+            var src: i32 = se.slot_of(id.name);
+            if (src < 0 || src < se.n_params) { return false; }
+            if (!slot_is_reclaimable_str(se, src)) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.moved_names, id.name) >= 0 || util.index_of_str(se.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;

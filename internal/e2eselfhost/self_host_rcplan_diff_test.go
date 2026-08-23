@@ -264,12 +264,10 @@ function main(): i32 { return f(); }`,
 			anchor: map[string]map[string]string{"f": {"movedLocals": "s", "moveSites": "3:2", "aliasBindIncs": ""}},
 		},
 		{
-			// STRING alias bind (#7282 string limb), LIVE source: the
-			// self-host retains at the bind (slot_is_reclaimable_str gate)
-			// and releases both slots; native proves the alias a borrowed
-			// view and elides the inc/dec pair (dead-alias cancellation,
-			// #4402 opt 1). Both sound — the table documents the elision gap
-			// per site.
+			// STRING alias bind (#7282 string limb), LIVE source: a closed
+			// divergence — the dead-alias cancellation's string limb elides
+			// the borrowed view's inc/dec pair exactly as native does, and
+			// the source releases only at the exit sweep. Anchored agreement.
 			name: "alias-bind-string",
 			src: `function f(): i32 {
 	var s: string = "hi" + "!";
@@ -278,10 +276,7 @@ function main(): i32 { return f(); }`,
 	return n;
 }
 function main(): i32 { return f(); }`,
-			anchor: map[string]map[string]string{"f": {"freeEligible": "s,v"}},
-			diverge: map[string]map[string]divergence{
-				"f": {"aliasBindIncs": {native: "", selfhost: "3:2=v"}},
-			},
+			anchor: map[string]map[string]string{"f": {"freeEligible": "s,v", "aliasBindIncs": ""}},
 		},
 		{
 			// STRING[] alias bind, LIVE source: a closed divergence, twice
@@ -356,6 +351,121 @@ function main(): i32 { return f(); }`,
 			diverge: map[string]map[string]divergence{
 				"f": {"preciseDrops": {native: "3=c", selfhost: ""}},
 			},
+		},
+		{
+			// The returned-alias exclusion, string limb: v is mentioned in a
+			// RETURN expression (native's returned[y] gate), so the retain
+			// stays on both sides — the positive control pinning that the
+			// string cancellation still increments where it must.
+			name: "dead-alias-string-returned-excluded",
+			src: `function f(): i32 {
+	var s: string = "hi" + "!";
+	var v: string = s;
+	var n: i32 = s.len();
+	return v.len() + n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "3:2=v"}},
+		},
+		{
+			// Source-reassigned exclusion, string limb: both sides refuse the
+			// cancellation, but the self-host's retain never fired here in
+			// the first place — a reassigned string source earns no "STR:"
+			// credit (the single-bind refusal, the str__rebind leak-matrix
+			// family), and the retain is co-extensive with the credit. Native
+			// retains; the divergence predates the cancellation.
+			name: "dead-alias-string-source-reassigned-excluded",
+			src: `function f(): i32 {
+	var a: string = "hi" + "!";
+	var b: string = a;
+	var n: i32 = b.len();
+	a = "x" + "y";
+	return n + a.len();
+}
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"aliasBindIncs": {native: "3:2=b", selfhost: ""}},
+			},
+		},
+		{
+			// CHAIN refusal, string limb: b borrows a (cancelled on both
+			// sides), and c aliasing b is refused on both sides (a cancelled
+			// alias sources nothing). Native keeps c's retain; the self-host
+			// never granted it — a re-aliased alias loses its "STR:" credit
+			// (the credit collector's own chain refusal), and the retain is
+			// co-extensive with the credit. The divergence is the credit
+			// model's, not the cancellation's.
+			name: "dead-alias-string-chain-refused",
+			src: `function f(): i32 {
+	var a: string = "hi" + "!";
+	var b: string = a;
+	var c: string = b;
+	var n: i32 = c.len() + b.len() + a.len();
+	return n;
+}
+function main(): i32 { return f(); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {"aliasBindIncs": {native: "4:2=c", selfhost: ""}},
+			},
+		},
+		{
+			// Conditional (if-arm) alias, string limb: native's walker visits
+			// the nested Var and da_scan recurses into if arms, so both sides
+			// cancel. Pinned because the alias model's stated reason for
+			// duplication was branch-dependence — the cancellation must stay
+			// branch-safe: nothing is emitted in the arm at all and the
+			// source sweeps unconditionally at exit.
+			name: "dead-alias-string-conditional",
+			src: `function f(c: i32): i32 {
+	var s: string = "hi" + "!";
+	var n: i32 = 0;
+	if (c > 0) {
+		var v: string = s;
+		n = v.len();
+	}
+	return n + s.len();
+}
+function main(): i32 { return f(1); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "", "freeEligible": "s,v"}},
+		},
+		{
+			// A CALL-producer source — the "STR:" credit family beyond the
+			// concat literal (the import-free proxy for the .to_string()/
+			// .join() families this harness cannot compile). Both sides
+			// cancel.
+			name: "dead-alias-string-call-producer",
+			src: `function mk(a: string): string { return a + "!"; }
+function f(): i32 {
+	var s: string = mk("ab");
+	var v: string = s;
+	var n: i32 = v.len() + s.len();
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "", "freeEligible": "s,v"}},
+		},
+		{
+			// LOOP-scoped pair: both sides cancel, and the alias bind must
+			// then store WITHOUT the dec-on-overwrite — the source's own
+			// rebind already freed the prior box at rc 1 (native skips
+			// emitVarReinitDropOld at borrowed-alias sites). The runtime
+			// half is pinned by the loop_local alias cells in the leak
+			// matrix, whose sanitize leg is the instrument that sees the
+			// double free.
+			name: "dead-alias-string-loop-scoped",
+			src: `function f(): i32 {
+	var n: i32 = 0;
+	var i: i32 = 0;
+	while (i < 3) {
+		var s: string = "hi" + "!";
+		var v: string = s;
+		n = n + v.len() + s.len();
+		i = i + 1;
+	}
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": ""}},
 		},
 		{
 			// MOVE-ON-ALIAS, tuple limb (the rc-tuple flavor — the one whose

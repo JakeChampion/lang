@@ -101,10 +101,12 @@ opt_arr__shadow_siblings__unused              clean  clean  clean on both sides
 opt_arr__shadow_siblings__match               clean  clean  clean on both sides
 arr_i32__fnscope__alias_local                 clean  clean  clean on both sides
 arr_i32__if_block__alias_local                clean  clean  clean on both sides
+arr_i32__loop_local__alias_local              clean  clean  clean on both sides
 arr_i32__fnscope__alias_param                 clean  clean  clean on both sides
 arr_i32__if_block__alias_param                clean  clean  clean on both sides
 str__fnscope__alias_local                     clean  clean  clean on both sides
 str__if_block__alias_local                    clean  clean  clean on both sides
+str__loop_local__alias_local                  clean  clean  clean on both sides
 str__fnscope__alias_param                     leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
 str__if_block__alias_param                    leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
 str_arr__fnscope__alias_local                 clean  clean  #7391: alias shares the "SARR:" credit; __fern_str_arr_free's rc gate walks elements once, at the last owner
