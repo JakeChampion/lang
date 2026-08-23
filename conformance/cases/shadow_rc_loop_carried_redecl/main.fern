@@ -1,0 +1,31 @@
+// The same name declared inside a LOOP body on alternating iterations, one
+// fresh and one aliasing. This reaches the retire-and-rebind path rather than
+// the sibling-block one covered by shadow_rc_struct_sibling_scopes: the two
+// declarations are the same syntactic slot on different trips, so a name-keyed
+// credit cannot distinguish them even in principle (#7349 `collide_loop`).
+//
+// MEASURE WITH THE SELF-HOST. Native and interp are correct on both sides.
+struct P { xs: i32[], s: string }
+
+function w(s: string): string { return s + ""; }
+
+function round(base: P, i: i32): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 2) {
+        if (k == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+        if (k == 1) { var v: P = base; t = t + v.xs.len(); }
+        k = k + 1;
+    }
+    return t;
+}
+
+function main(): i32 {
+    var base: P = P { xs: [1, 2, 3], s: w("b") };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + round(base, i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (base.xs.len() != 3) { return 98; }
+    return t % 251;
+}
