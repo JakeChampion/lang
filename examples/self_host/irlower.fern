@@ -524,6 +524,9 @@ pub struct LowerState {
     // the `-rc-plan` aliasBindIncs table (#4482); nothing on the emit path
     // reads it.
     alias_incs: string[],
+    // dead_alias_ok: the dead-alias-cancelled bind-site keys (#4402 opt 1,
+    // dead_alias_of) — arr_dead_alias_bind's pure half. Threaded read-only.
+    dead_alias_ok: string[],
     // fn_dyn / fn_sig / fn_ret: the fn-typed value signature sidecars
     // (#5276/#6282/#6862), one concept split by what an indirect call needs:
     // "<name>|<positions>" dyn-boxed argument indices, "<name>|<sigtag>" the
@@ -17471,6 +17474,10 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (vt.alias_inc) {
         sb = LowerState { ...sb, alias_incs: sb.alias_incs.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + "=" + v.name) };
     }
+    // Dead-alias cancellation, second half (#4402 opt 1): the retain was
+    // skipped at this bind (arr_dead_alias_bind — the same predicate the
+    // ladder consulted), so the ALIAS slot's exit dec is elided with it.
+    if (arr_dead_alias_bind(v, se)) { sb = sb.note_moved_elided(slot); }
     // A tuple MOVE-alias transfers the source's release role to this slot
     // (the ladder's tuple clause swapped the credit class), so the slot facts
     // that release reads move with it: the element type tags the "TUPRCS:"
@@ -19102,7 +19109,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // Var's own position, which is what move_sites_toplevel_of
                 // records and the rcplan moveSites diff pins against native.
                 if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
-                else { alias_inc = true; }
+                // Dead-alias cancellation (#4402 opt 1): a proven borrowed
+                // VIEW skips the retain; bind_var_slot elides the alias
+                // slot's sweep dec under the same predicate, and the
+                // source's precise drop is withheld (pd_filter_names) so it
+                // releases only at the exit sweep.
+                else if (!arr_dead_alias_bind(v, se)) { alias_inc = true; }
             }
             // A struct slot is not in slot_is_rc_container — its release is a
             // deep field drop rather than a box dec, so it carries its own
@@ -46188,7 +46200,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], alias_incs: [], fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body).sites, fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -46238,7 +46250,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns);
+    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns), dead_alias_of(fn.body).srcs);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -53881,6 +53893,200 @@ pub function move_sites_toplevel_of(fn: parser.FuncDecl, structs: parser.StructD
     return rc_ml_compute_toplevel(fn, structs).sites;
 }
 
+// --- Dead-alias cancellation (#4402 opt 1, native computeBorrowedAliases) ---
+//
+// A `var y = x` bind whose alias is a pure borrowed VIEW elides the transfer
+// inc AND y's exit dec — a net-zero pair — while the source x keeps the sole
+// count and releases ONLY at the exit sweep: its precise drop is withheld,
+// because an early free would dangle the live borrow. Mirrors native's gates:
+// neither name reassigned, y never mentioned in a return, neither a match
+// scrutinee, both single-decl, no chains (a cancelled alias sources nothing,
+// a source is not itself cancelled). sites: the cancelled alias BIND-site
+// keys; srcs: the borrow-source names (the precise-drop exclusion set).
+//
+// Slice 1 covers ARRAY pairs only — the pure kind gate is y's array
+// annotation or array evidence at x's declaration; the emitting side
+// (arr_dead_alias_bind) re-checks against the SLOT facts and is final.
+pub struct DeadAliases { sites: string[], srcs: string[] }
+
+pub function dead_alias_of(body: parser.Stmt[]): DeadAliases {
+    var assigned: string[] = body_assign_targets(body);
+    var rets: string[] = da_returned_names(body, []);
+    var scruts: string[] = da_scrutinee_names(body, []);
+    return da_scan(body, body, assigned, rets, scruts, DeadAliases { sites: [], srcs: [] });
+}
+
+// da_name_in_sites: is `name` the bound name of any recorded site key
+// (`name@line:col`)? The cancelled-alias membership check, without a third
+// list to keep in step.
+function da_name_in_sites(sites: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < sites.len()) {
+        if (reclaim_site_name(sites[i]) == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// da_decl_array_evidence: x's declaration carries an array annotation or an
+// array-literal init — the pure proxy for "x is an owned array local".
+function da_decl_array_evidence(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (is_array_type_name(v.type_name)) { return true; }
+                    match (v.init) {
+                        parser.ExprArray(_) => { return true; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                if (da_decl_array_evidence(f.then_body, name)) { return true; }
+                if (da_decl_array_evidence(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (da_decl_array_evidence(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (da_decl_array_evidence(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (da_decl_array_evidence(m.arms[mi].body, name)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function da_returned_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { a = astwalk.collect_idents_expr(r.value, a); },
+            parser.StmtIf(f) => { a = da_returned_names(f.then_body, a); a = da_returned_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = da_returned_names(w.body, a); },
+            parser.StmtFor(fo) => { a = da_returned_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = da_returned_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function da_scrutinee_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                match (m.scrutinee) {
+                    parser.ExprIdent(sid) => { a = push_str_unique(a, sid.name); },
+                    _ => {}
+                }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = da_scrutinee_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            parser.StmtIf(f) => { a = da_scrutinee_names(f.then_body, a); a = da_scrutinee_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = da_scrutinee_names(w.body, a); },
+            parser.StmtFor(fo) => { a = da_scrutinee_names(fo.body, a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function da_scan(stmts: parser.Stmt[], body: parser.Stmt[], assigned: string[], rets: string[], scruts: string[], acc: DeadAliases): DeadAliases {
+    var a: DeadAliases = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprIdent(id) => {
+                        if (id.name != v.name
+                            && !da_name_in_sites(a.sites, v.name) && !da_name_in_sites(a.sites, id.name)
+                            && util.index_of_str(a.srcs, v.name) < 0
+                            && util.index_of_str(assigned, id.name) < 0 && util.index_of_str(assigned, v.name) < 0
+                            && util.index_of_str(rets, v.name) < 0
+                            && util.index_of_str(scruts, id.name) < 0 && util.index_of_str(scruts, v.name) < 0
+                            && local_decl_count(body, id.name) == 1 && local_decl_count(body, v.name) == 1
+                            && (is_array_type_name(v.type_name) || da_decl_array_evidence(body, id.name))) {
+                            a = DeadAliases {
+                                sites: a.sites.append(reclaim_site_key_of(v.name, v.line, v.col)),
+                                srcs: push_str_unique(a.srcs, id.name)
+                            };
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = da_scan(f.then_body, body, assigned, rets, scruts, a); a = da_scan(f.else_body, body, assigned, rets, scruts, a); },
+            parser.StmtWhile(w) => { a = da_scan(w.body, body, assigned, rets, scruts, a); },
+            parser.StmtFor(fo) => { a = da_scan(fo.body, body, assigned, rets, scruts, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = da_scan(m.arms[mi].body, body, assigned, rets, scruts, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// arr_dead_alias_bind: THE one predicate deciding whether this array alias
+// bind is dead-alias-cancelled — consulted by the ladder (skip the retain)
+// and by bind_var_slot (skip the alias slot's sweep dec, via
+// note_moved_elided), so the two halves of the net-zero pair cannot drift.
+// The slot facts are the final authority: source must be an owned (non-param,
+// non-borrowed) array slot, and a MOVE site takes the move path instead.
+function arr_dead_alias_bind(v: parser.StmtVar, se: LowerState): boolean {
+    match (v.init) {
+        parser.ExprIdent(id) => {
+            var src: i32 = se.slot_of(id.name);
+            if (src < 0 || src < se.n_params) { return false; }
+            if (!se.is_arr_slot(src) || se.is_borrowed_arr_slot(src)) { return false; }
+            if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
+            if (util.index_of_str(se.moved_names, id.name) >= 0 || util.index_of_str(se.moved_names, v.name) >= 0) { return false; }
+            return util.index_of_str(se.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// pd_filter_names: drop the precise-drop rows naming a borrow SOURCE — a
+// dead-alias source releases only at the exit sweep (an early free would
+// dangle the live borrow). The reuse-donor suppression's shape, shared by
+// lower_func and the rc_plan_dump so the dump mirrors the lowering.
+pub function pd_filter_names(pd: PreciseDrops, names: string[]): PreciseDrops {
+    if (names.len() == 0 || pd.idxs.len() == 0) { return pd; }
+    var fidx: i32[] = [];
+    var fnames: string[] = [];
+    var fkinds: string[] = [];
+    var i: i32 = 0;
+    while (i < pd.idxs.len()) {
+        if (util.index_of_str(names, pd.names[i]) < 0) {
+            fidx = fidx.append(pd.idxs[i]);
+            fnames = fnames.append(pd.names[i]);
+            fkinds = fkinds.append(pd.kinds[i]);
+        }
+        i = i + 1;
+    }
+    return PreciseDrops { idxs: fidx, names: fnames, kinds: fkinds };
+}
+
 // --- arraySetInc port (#4482, native computeArraySetIncs) --------------------
 //
 // Per `.with(i, v)` call: must the lowering rc-inc the RECEIVER before the
@@ -54604,7 +54810,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)), str_fresh_ret_fns_of(funcs));
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)), str_fresh_ret_fns_of(funcs)), dead_alias_of(fn.body).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -54718,7 +54924,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
