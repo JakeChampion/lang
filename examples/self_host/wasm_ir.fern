@@ -7406,6 +7406,121 @@ pub function print_int_helper(buf: i32): string {
     o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
     return o;
 }
+// leak_check_on — FERN_LEAKCHECK read at emit time, the wasm half of the
+// census (#5362; the x86/arm64 self-host precedent). Counts at the
+// allocator's rounded-8 block size on both sides — $__fern_alloc's rounded
+// request and the bsz slot a free site reads are the same number for the
+// same block — so an alloc and its eventual free cancel exactly.
+function leak_check_on(): boolean {
+    match (env("FERN_LEAKCHECK")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// lc_globals: the four census counters. Emitted OUTSIDE the heap gate and
+// once per module, in every mode: the bump sites (heap helpers, any mode)
+// and the mode-0 report both reference them, and a heap-free mode-0 program
+// still reports zeros.
+pub function lc_globals(): string {
+    if (!leak_check_on()) { return ""; }
+    var o: string = "  (global $__fern_lc_alloc_count (mut i64) (i64.const 0))\n";
+    o = o + "  (global $__fern_lc_alloc_bytes (mut i64) (i64.const 0))\n";
+    o = o + "  (global $__fern_lc_free_count (mut i64) (i64.const 0))\n";
+    o = o + "  (global $__fern_lc_free_bytes (mut i64) (i64.const 0))\n";
+    return o;
+}
+
+// lc_bump_alloc / lc_bump_free: the counter updates, spliced into
+// $__fern_alloc (after its rounding, before the freelist pop — a pop is an
+// alloc too) and into each free path before its bsz slot is overwritten by
+// the freelist next-pointer. `nexpr` is a wat i32 expression for the
+// rounded block size.
+function lc_bump_alloc(nexpr: string): string {
+    if (!leak_check_on()) { return ""; }
+    var o: string = "    (global.set $__fern_lc_alloc_count (i64.add (global.get $__fern_lc_alloc_count) (i64.const 1)))\n";
+    o = o + "    (global.set $__fern_lc_alloc_bytes (i64.add (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u " + nexpr + ")))\n";
+    return o;
+}
+function lc_bump_free(nexpr: string): string {
+    if (!leak_check_on()) { return ""; }
+    var o: string = "    (global.set $__fern_lc_free_count (i64.add (global.get $__fern_lc_free_count) (i64.const 1)))\n";
+    o = o + "    (global.set $__fern_lc_free_bytes (i64.add (global.get $__fern_lc_free_bytes) (i64.extend_i32_u " + nexpr + ")))\n";
+    return o;
+}
+
+// lc_report_and_exit_wrapper: `$__fern_lc_report` — the census summary on
+// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line — plus
+// the `$proc_exit` wrapper that reports before dying, so BOTH exit paths
+// (the exit() op and $_start) report through the one flag-gated definition;
+// preview1_imports renames the raw import to $__fern_proc_exit_raw under the
+// same flag. Mode 0 only: the component modes have no preview1 proc_exit and
+// their $fd_write shims cannot be assumed. The line is built in a buffer
+// taken from the bump heap AT REPORT TIME (the process is exiting, and this
+// avoids touching the computed data-pool layout); labels are packed-word
+// stores; digits are $__fern_print_int64's loop. fd_write's iovec scratch
+// at 0/4 is free at exit.
+pub function lc_report_and_exit_wrapper(): string {
+    if (!leak_check_on()) { return ""; }
+    var o: string = "";
+    // $__fern_lc_wr(p, len): one fd_write(2) of [p, p+len).
+    o = o + "  (func $__fern_lc_wr (param $p i32) (param $len i32)\n";
+    o = o + "    (i32.store (i32.const 0) (local.get $p))\n";
+    o = o + "    (i32.store (i32.const 4) (local.get $len))\n";
+    o = o + "    (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+    // $__fern_lc_wrnum(n, buf): signed decimal, digits backwards from buf+24.
+    o = o + "  (func $__fern_lc_wrnum (param $n i64) (param $buf i32)\n";
+    o = o + "    (local $i i32) (local $neg i32)\n";
+    o = o + "    (if (i64.eqz (local.get $n)) (then\n";
+    o = o + "      (i32.store8 (local.get $buf) (i32.const 48))\n";
+    o = o + "      (call $__fern_lc_wr (local.get $buf) (i32.const 1))\n";
+    o = o + "      (return)))\n";
+    o = o + "    (local.set $neg (i64.lt_s (local.get $n) (i64.const 0)))\n";
+    o = o + "    (if (local.get $neg) (then (local.set $n (i64.sub (i64.const 0) (local.get $n)))))\n";
+    o = o + "    (local.set $i (i32.add (local.get $buf) (i32.const 24)))\n";
+    o = o + "    (block $d (loop $l\n";
+    o = o + "      (br_if $d (i64.eqz (local.get $n)))\n";
+    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
+    o = o + "      (i32.store8 (local.get $i) (i32.wrap_i64 (i64.add (i64.const 48) (i64.rem_u (local.get $n) (i64.const 10)))))\n";
+    o = o + "      (local.set $n (i64.div_u (local.get $n) (i64.const 10)))\n";
+    o = o + "      (br $l)))\n";
+    o = o + "    (if (local.get $neg) (then\n";
+    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
+    o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
+    o = o + "    (call $__fern_lc_wr (local.get $i) (i32.sub (i32.add (local.get $buf) (i32.const 24)) (local.get $i))))\n";
+    // The report. Label bytes are little-endian packed constants for
+    // "leakcheck: allocs=", " frees=", " live_bytes=", and the newline.
+    o = o + "  (func $__fern_lc_report\n";
+    o = o + "    (local $b i32)\n";
+    // Fixed scratch at 8..40 — clear of the fd_write iovec at 0..8, and free
+    // to clobber at exit. NOT $__fern_alloc: a heap-free program has none.
+    o = o + "    (local.set $b (i32.const 8))\n";
+    o = o + "    (i32.store (local.get $b) (i32.const 1801545068))\n";
+    o = o + "    (i32.store (i32.add (local.get $b) (i32.const 4)) (i32.const 1667590243))\n";
+    o = o + "    (i32.store (i32.add (local.get $b) (i32.const 8)) (i32.const 1629502059))\n";
+    o = o + "    (i32.store (i32.add (local.get $b) (i32.const 12)) (i32.const 1668246636))\n";
+    o = o + "    (i32.store16 (i32.add (local.get $b) (i32.const 16)) (i32.const 15731))\n";
+    o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 18))\n";
+    o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_alloc_count) (local.get $b))\n";
+    o = o + "    (i32.store (local.get $b) (i32.const 1701996064))\n";
+    o = o + "    (i32.store16 (i32.add (local.get $b) (i32.const 4)) (i32.const 29541))\n";
+    o = o + "    (i32.store8 (i32.add (local.get $b) (i32.const 6)) (i32.const 61))\n";
+    o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 7))\n";
+    o = o + "    (call $__fern_lc_wrnum (global.get $__fern_lc_free_count) (local.get $b))\n";
+    o = o + "    (i32.store (local.get $b) (i32.const 1986620448))\n";
+    o = o + "    (i32.store (i32.add (local.get $b) (i32.const 4)) (i32.const 2036490085))\n";
+    o = o + "    (i32.store (i32.add (local.get $b) (i32.const 8)) (i32.const 1030972788))\n";
+    o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 12))\n";
+    o = o + "    (call $__fern_lc_wrnum (i64.sub (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (local.get $b))\n";
+    o = o + "    (i32.store8 (local.get $b) (i32.const 10))\n";
+    o = o + "    (call $__fern_lc_wr (local.get $b) (i32.const 1)))\n";
+    // The reporting $proc_exit.
+    o = o + "  (func $proc_exit (param $c i32)\n";
+    o = o + "    (call $__fern_lc_report)\n";
+    o = o + "    (call $__fern_proc_exit_raw (local.get $c)))\n";
+    return o;
+}
+
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
@@ -7431,6 +7546,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     // linear memory anyway.
     o = o + "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
+    o = o + lc_bump_alloc("(local.get $n)");
     o = o + "    (local.set $cls (i32.shr_u (local.get $n) (i32.const 3)))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (local.set $head (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
@@ -7503,6 +7619,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (local.set $base (i32.sub (local.get $t) (i32.const 8)))\n";
     o = o + "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
     o = o + "      (return (local.get $t))))\n";
+    o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))");
     o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
     o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
@@ -7530,6 +7647,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (if (i32.le_s (local.get $rc) (i32.const 0)) (then\n";
     o = o + "      (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n";
     o = o + "      (return (local.get $a))))\n";
+    o = o + lc_bump_free("(i32.load (i32.add (local.get $base) (i32.const 4)))");
     o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
     o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
@@ -7986,13 +8104,20 @@ pub function arr_push_wide(vty: string, sop: string): string {
 // mode flag through sixty individual gates.
 function preview1_imports(needs: string[]): string {
     var parts: string[] = [];
-    parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
+    if (leak_check_on()) {
+        // Census (#5362): the raw import steps aside so the flag-gated
+        // reporting $proc_exit (lc_report_and_exit_wrapper) can define the
+        // name every existing call site — the exit op and $_start — uses.
+        parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit_raw (param i32)))\n");
+    } else {
+        parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
+    }
     // wasi random_get import (issue #2747) — must precede the function
     // section. Emitted when the module uses random_bytes / random_i32.
     if (need(needs, "@uses_random")) { parts = parts.append(random_get_import()); }
     // print_int / print_str / eprint_str / putchar write via WASI fd_write
     // — import it only when the module writes to stdout or stderr.
-    if (need(needs, "print_int") || need(needs, "print_i64") || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write")) {
+    if (leak_check_on() || need(needs, "print_int") || need(needs, "print_i64") || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write")) {
         parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
     }
     // read_file / write_file open paths under preopen fd 3: path_open +
@@ -8295,6 +8420,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
         }
     }
     parts = parts.append(const_agg_data(sv, cv, mod.structs));
+    // Census counters (#5362): outside the heap gate — the mode-0 report and
+    // any mode's bump sites reference them, and a heap-free mode-0 program
+    // still reports zeros. Empty when FERN_LEAKCHECK is off.
+    parts = parts.append(lc_globals());
     // mode 2 folds into the heap gate: the $fd_write shim allocates its
     // canonical-ABI return area through $__fern_alloc, so a component-io core
     // needs the heap even when the program itself never allocates.
@@ -8606,6 +8735,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
         parts = parts.append("  (func $main (result i32)\n    (i32.const 0))\n");
     }
     if (mode == 0) {
+        // Census report + the reporting $proc_exit (#5362). Mode 0 only: the
+        // component modes have no preview1 proc_exit to wrap. Empty when the
+        // flag is off.
+        parts = parts.append(lc_report_and_exit_wrapper());
         parts = parts.append("  (func $_start (call $proc_exit (call $main)))\n");
         parts = parts.append(xps);
         parts = parts.append("  (export \"_start\" (func $_start)))\n");
