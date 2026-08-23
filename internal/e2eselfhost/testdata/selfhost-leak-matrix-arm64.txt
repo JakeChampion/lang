@@ -1,0 +1,126 @@
+# The arm64 leak-matrix pins: cell, native-arm64 verdict, self-host-arm64
+# verdict, note. Same loader rules as selfhost-leak-matrix.txt (the x86 file);
+# regenerate with FERN_LEAK_MATRIX_DUMP=1 on TestSelfHostLeakMatrixIRArm64.
+#
+# Six rows differ from the x86 file on the NATIVE side only: native-x86 reads
+# clean because SSO keeps these <=7-byte strings inline (allocs=0), while
+# native-arm64 heap-allocates them (no SSO on its concat path) and its own
+# reclaim then leaks the shape - measured 200/100, 16 B/round on the rebind
+# probe. A native-arm64 backend gap surfaced by the cross-ISA census; the
+# self-host columns agree with the x86 file on every cell. Filed as #7446.
+
+arr_i32__fnscope__read                        clean  clean  clean on both sides
+arr_i32__fnscope__unused                      clean  clean  clean on both sides
+arr_i32__if_block__read                       clean  clean  clean on both sides
+arr_i32__if_block__unused                     clean  clean  clean on both sides
+arr_i32__loop_local__read                     clean  clean  clean on both sides
+arr_i32__loop_local__unused                   clean  clean  clean on both sides
+arr_i32__rebind__read                         clean  clean  clean on both sides
+arr_i32__rebind__unused                       clean  clean  clean on both sides
+arr_i32__shadow_siblings__read                clean  clean  clean on both sides
+arr_i32__shadow_siblings__unused              clean  clean  clean on both sides
+str__fnscope__read                            clean  clean  clean on both sides
+str__fnscope__unused                          clean  clean  clean on both sides
+str__if_block__read                           clean  clean  clean on both sides
+str__if_block__unused                         clean  clean  clean on both sides
+str__loop_local__read                         clean  clean  clean on both sides
+str__loop_local__unused                       clean  clean  clean on both sides
+str__rebind__read                             leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str__rebind__unused                           leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str__shadow_siblings__read                    clean  clean  clean on both sides
+str__shadow_siblings__unused                  clean  clean  clean on both sides
+str_arr__fnscope__read                        clean  clean  clean on both sides
+str_arr__fnscope__unused                      clean  clean  clean on both sides
+str_arr__if_block__read                       clean  clean  clean on both sides
+str_arr__if_block__unused                     clean  clean  clean on both sides
+str_arr__loop_local__read                     clean  clean  clean on both sides
+str_arr__loop_local__unused                   clean  clean  clean on both sides
+str_arr__rebind__read                         leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str_arr__rebind__unused                       leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str_arr__shadow_siblings__read                clean  clean  clean on both sides
+str_arr__shadow_siblings__unused              clean  clean  clean on both sides
+struct_arr_field__fnscope__read               clean  clean  clean on both sides
+struct_arr_field__fnscope__unused             clean  clean  clean on both sides
+struct_arr_field__if_block__read              clean  clean  clean on both sides
+struct_arr_field__if_block__unused            clean  clean  clean on both sides
+struct_arr_field__loop_local__read            clean  clean  clean on both sides
+struct_arr_field__loop_local__unused          clean  clean  clean on both sides
+struct_arr_field__rebind__read                clean  clean  clean on both sides
+struct_arr_field__rebind__unused              clean  clean  clean on both sides
+struct_arr_field__shadow_siblings__read       clean  clean  clean on both sides
+struct_arr_field__shadow_siblings__unused     clean  clean  clean on both sides
+enum_rc_payload__fnscope__unused              clean  clean  clean on both sides
+enum_rc_payload__fnscope__match               clean  clean  clean on both sides
+enum_rc_payload__if_block__unused             clean  clean  clean on both sides
+enum_rc_payload__if_block__match              clean  clean  clean on both sides
+enum_rc_payload__loop_local__unused           clean  clean  clean on both sides
+enum_rc_payload__loop_local__match            clean  clean  clean on both sides
+enum_rc_payload__rebind__unused               clean  clean  clean on both sides
+enum_rc_payload__rebind__match                clean  clean  clean on both sides
+enum_rc_payload__shadow_siblings__unused      clean  clean  clean on both sides
+enum_rc_payload__shadow_siblings__match       clean  clean  clean on both sides
+enum_str_payload__fnscope__unused             clean  clean  clean on both sides
+enum_str_payload__fnscope__match              clean  clean  clean on both sides
+enum_str_payload__if_block__unused            clean  clean  clean on both sides
+enum_str_payload__if_block__match             clean  clean  clean on both sides
+enum_str_payload__loop_local__unused          clean  clean  clean on both sides
+enum_str_payload__loop_local__match           clean  clean  clean on both sides
+enum_str_payload__rebind__unused              clean  clean  clean on both sides
+enum_str_payload__rebind__match               clean  clean  clean on both sides
+enum_str_payload__shadow_siblings__unused     clean  clean  clean on both sides
+enum_str_payload__shadow_siblings__match      clean  clean  clean on both sides
+enum_scalar__fnscope__unused                  clean  clean  clean on both sides
+enum_scalar__fnscope__match                   clean  clean  clean on both sides
+enum_scalar__if_block__unused                 clean  clean  clean on both sides
+enum_scalar__if_block__match                  clean  clean  clean on both sides
+enum_scalar__loop_local__unused               clean  clean  clean on both sides
+enum_scalar__loop_local__match                clean  clean  clean on both sides
+enum_scalar__rebind__unused                   clean  clean  clean on both sides
+enum_scalar__rebind__match                    clean  clean  clean on both sides
+enum_scalar__shadow_siblings__unused          clean  clean  clean on both sides
+enum_scalar__shadow_siblings__match           clean  clean  clean on both sides
+tuple_mixed__fnscope__read                    clean  clean  clean on both sides
+tuple_mixed__fnscope__unused                  clean  clean  clean on both sides
+tuple_mixed__if_block__read                   clean  clean  clean on both sides
+tuple_mixed__if_block__unused                 clean  clean  clean on both sides
+tuple_mixed__loop_local__read                 clean  clean  clean on both sides
+tuple_mixed__loop_local__unused               clean  clean  clean on both sides
+tuple_mixed__rebind__read                     clean  clean  clean on both sides
+tuple_mixed__rebind__unused                   clean  clean  clean on both sides
+tuple_mixed__shadow_siblings__read            clean  clean  clean on both sides
+tuple_mixed__shadow_siblings__unused          clean  clean  clean on both sides
+opt_arr__fnscope__unused                      clean  clean  clean on both sides
+opt_arr__fnscope__match                       clean  clean  clean on both sides
+opt_arr__if_block__unused                     clean  clean  clean on both sides
+opt_arr__if_block__match                      clean  clean  clean on both sides
+opt_arr__loop_local__unused                   clean  clean  clean on both sides
+opt_arr__loop_local__match                    clean  clean  clean on both sides
+opt_arr__rebind__unused                       clean  leak   rebound Option[i32[]] with no consuming match; the match cell is clean
+opt_arr__rebind__match                        clean  clean  clean on both sides
+opt_arr__shadow_siblings__unused              clean  clean  clean on both sides
+opt_arr__shadow_siblings__match               clean  clean  clean on both sides
+arr_i32__fnscope__alias_local                 clean  clean  clean on both sides
+arr_i32__if_block__alias_local                clean  clean  clean on both sides
+arr_i32__fnscope__alias_param                 clean  clean  clean on both sides
+arr_i32__if_block__alias_param                clean  clean  clean on both sides
+str__fnscope__alias_local                     clean  clean  clean on both sides
+str__if_block__alias_local                    clean  clean  clean on both sides
+str__fnscope__alias_param                     leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str__if_block__alias_param                    leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str_arr__fnscope__alias_local                 clean  clean  #7391: alias shares the "SARR:" credit; __fern_str_arr_free's rc gate walks elements once, at the last owner
+str_arr__if_block__alias_local                clean  clean  same #7391 alias credit, block-scoped site
+str_arr__fnscope__alias_param                 clean  leak   constant keep-sweep refusal, string[] flavor
+str_arr__if_block__alias_param                clean  leak   same as fnscope
+struct_arr_field__fnscope__alias_local        clean  clean  clean on both sides
+struct_arr_field__if_block__alias_local       clean  clean  clean on both sides
+struct_arr_field__fnscope__alias_param        clean  leak   constant keep-sweep refusal, struct flavor
+struct_arr_field__if_block__alias_param       clean  leak   same as fnscope
+tuple_mixed__fnscope__alias_local             clean  clean  clean on both sides
+tuple_mixed__if_block__alias_local            clean  clean  clean on both sides
+tuple_mixed__fnscope__alias_param             clean  leak   constant keep-sweep refusal, tuple flavor
+tuple_mixed__if_block__alias_param            clean  leak   same as fnscope
+for_in_str_elem__loop__read                   clean  leak   for-in binder is not a StmtVar, no collector credits it; the fresh string[] and its elements survive (#7292/#7356 family)
+field_read_arr__fnscope__read                 clean  clean  clean on both sides
+field_read_arr__fnscope__alias_param          clean  clean  clean on both sides
+enum_rc_payload__fnscope__alias_match         clean  leak   alias consumed by match while source lives: credit denied (sound), both boxes leak
+opt_arr__fnscope__alias_match                 clean  leak   Option sibling of the enum alias_match denial
