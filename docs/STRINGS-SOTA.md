@@ -767,14 +767,17 @@ because hex output genuinely is text.
 The builtin half (tracked as #5714 after #5730 auto-closed) crosses the
 checker and all four backends. `random_bytes` has moved: it returns
 `u8[]` on every backend, in the same box shape as `__alloc_u8`.
-`read_file` keeps its text signature but has its raw sibling now —
-`read_file_bytes(path): Result[u8[], IoError]` on every backend — so
-binary reads no longer have to come back typed `string`; the remaining
-`read_file` work is producing `IoError.InvalidUtf8` (declared
-everywhere, emitted nowhere) after a validity scan. `tcp_recv` remains
-entirely. Slice 4 (the "no stdlib operation produces an invalid
-`string`" property test) must still hold `tcp_recv` and un-validated
-`read_file` out until they move.
+`read_file` keeps its text signature, has its raw sibling
+(`read_file_bytes(path): Result[u8[], IoError]` on every backend), and
+the NATIVE compilers now validate: interp, x86-64, arm64 (both string
+ABIs, Linux + Darwin), arm64ssa and wasm (preview-1 and -2) return
+`Err(InvalidUtf8(path))` on malformed content, via a per-backend
+`__fern_utf8_valid` and a synthetic EILSEQ through the existing
+errno→IoError classifiers. The SELF-HOST compiler's own `read_file`
+does not validate yet — that mirror is the remaining `read_file` work.
+`tcp_recv` remains entirely. Slice 4 (the "no stdlib operation
+produces an invalid `string`" property test) must still hold `tcp_recv`
+and the self-host `read_file` out until they move.
 
 Costs, stated honestly:
 

@@ -735,6 +735,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReadFileBytes {
 		g.emitReadFileBytesRuntime()
 	}
+	if g.usesUtf8Valid {
+		g.emitUtf8ValidRuntime()
+	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
@@ -7389,11 +7392,13 @@ func (g *generator) emitStringAsBytesRuntime() {
 //
 //	ENOENT (2)  → NotFound          EACCES (13) → PermissionDenied
 //	EEXIST (17) → AlreadyExists     EINTR  (4)  → Interrupted
+//	EILSEQ (84 Linux / 92 Darwin) → InvalidUtf8
 //	all other   → Other(path, "")
 //
-// We don't surface InvalidUtf8 here (the kernel APIs we use
-// don't produce it) or Unsupported (Linux always supports the
-// ops we issue). The Other variant carries (path, "") — the
+// EILSEQ is synthetic — read_file's UTF-8 validation dispatches
+// it; no file syscall produces it (#5714). Unsupported is never
+// surfaced (both OSes support the ops we issue). The Other
+// variant carries (path, "") — the
 // second string is a deliberately empty placeholder rather
 // than e.g. strerror text; tracker note in BACKEND-PARITY.md
 // can promote that later.
@@ -7424,6 +7429,8 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("b.eq .Lioe_exists")
 	g.emit("cmp w19, #4") // EINTR
 	g.emit("b.eq .Lioe_intr")
+	g.emit("cmp w19, #%d", g.eilseq()) // EILSEQ (synthetic, #5714)
+	g.emit("b.eq .Lioe_ilseq")
 
 	// Other(path, ""). The "" payload needs the SECOND string
 	// payload at +16 (third 8-byte slot). Box is 24 bytes for
@@ -7447,6 +7454,9 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("b .Lioe_with_path")
 	g.label(".Lioe_exists")
 	g.emit("mov w19, #2")
+	g.emit("b .Lioe_with_path")
+	g.label(".Lioe_ilseq")
+	g.emit("mov w19, #3")
 	g.emit("b .Lioe_with_path")
 	g.label(".Lioe_intr")
 	// Interrupted has no payload → 8-byte box.
@@ -7519,6 +7529,8 @@ func (g *generator) emitIoErrorRuntime2W() {
 	g.emit("b.eq .Lioe2w_exists")
 	g.emit("cmp w19, #4") // EINTR
 	g.emit("b.eq .Lioe2w_intr")
+	g.emit("cmp w19, #%d", g.eilseq()) // EILSEQ (synthetic, #5714)
+	g.emit("b.eq .Lioe2w_ilseq")
 	// Other(path, "") — 40-byte box, msg = empty inline pair.
 	g.emit("mov x0, #40")
 	g.emit("bl __fern_alloc_box")
@@ -7538,6 +7550,9 @@ func (g *generator) emitIoErrorRuntime2W() {
 	g.emit("b .Lioe2w_with_path")
 	g.label(".Lioe2w_exists")
 	g.emit("mov w19, #2")
+	g.emit("b .Lioe2w_with_path")
+	g.label(".Lioe2w_ilseq")
+	g.emit("mov w19, #3")
 	g.emit("b .Lioe2w_with_path")
 	g.label(".Lioe2w_intr")
 	g.emit("mov x0, #8")
@@ -7631,6 +7646,28 @@ func (g *generator) emitReadFileRuntime() {
 	// close(fd).
 	g.emit("mov x0, x20")
 	g.syscall("close")
+	// Zero the shrink tail [x21+x23, x21+x22): a file that shrank
+	// between fstat and read would otherwise leave alloc slack there,
+	// making the validation below nondeterministic. NUL bytes are
+	// valid UTF-8.
+	g.emit("subs x2, x22, x23")
+	g.emit("b.le .Lrf_validate")
+	g.emit("add x1, x21, x23")
+	g.label(".Lrf_zfill")
+	g.emit("strb wzr, [x1], #1")
+	g.emit("subs x2, x2, #1")
+	g.emit("b.gt .Lrf_zfill")
+	g.label(".Lrf_validate")
+	// D9 (#5714): the text read validates at the boundary; invalid
+	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
+	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x22")
+	g.emit("bl __fern_utf8_valid")
+	g.emit("cbnz w0, .Lrf_ok")
+	g.emit("mov x21, #%d", g.eilseq()) // EILSEQ
+	g.emit("b .Lrf_err_dispatch")
+	g.label(".Lrf_ok")
 	// Build Result.Ok(string).
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
@@ -7743,6 +7780,26 @@ func (g *generator) emitReadFileRuntime2W() {
 	// close(fd).
 	g.emit("mov x0, x21")
 	g.syscall("close")
+	// Zero the shrink tail [x22+x24, x22+x23) so the validation
+	// below is deterministic (NUL bytes are valid UTF-8).
+	g.emit("subs x2, x23, x24")
+	g.emit("b.le .Lrf2w_validate")
+	g.emit("add x1, x22, x24")
+	g.label(".Lrf2w_zfill")
+	g.emit("strb wzr, [x1], #1")
+	g.emit("subs x2, x2, #1")
+	g.emit("b.gt .Lrf2w_zfill")
+	g.label(".Lrf2w_validate")
+	// D9 (#5714): validate at the boundary; invalid content
+	// dispatches as Err(InvalidUtf8(path)) via the synthetic EILSEQ
+	// errno. Raw reads go through __fern_read_file_bytes.
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x23")
+	g.emit("bl __fern_utf8_valid")
+	g.emit("cbnz w0, .Lrf2w_ok")
+	g.emit("mov x22, #%d", g.eilseq()) // EILSEQ
+	g.emit("b .Lrf2w_err_dispatch")
+	g.label(".Lrf2w_ok")
 	// Build Result.Ok(string) box: 24 bytes — {tag@0,
 	// pad@4, data@8, len@16}.
 	g.emit("mov x0, #24")
@@ -7780,6 +7837,129 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("ret")
 	g.sizeDirective("__fern_read_file")
 	g.line(".ltorg")
+}
+
+// emitUtf8ValidRuntime emits `__fern_utf8_valid(data, len) → 1/0` —
+// the strict well-formedness scan behind read_file's D9 validation
+// (#5714). Accepts exactly what std/utf8.is_valid_utf8 accepts:
+// stray continuations, overlong 2/3/4-byte forms, surrogates
+// U+D800–DFFF, truncation at the end, and leads above 0xF4 all
+// reject. Byte-range formulation (no codepoint assembly), with an
+// 8-byte word skip over ASCII runs. Leaf — no calls, no frame.
+// Takes a raw (x0=data, x1=len) pair, so one body serves both
+// string ABIs.
+func (g *generator) emitUtf8ValidRuntime() {
+	g.line("")
+	g.line(".global __fern_utf8_valid")
+	g.typeDirective("__fern_utf8_valid")
+	g.label("__fern_utf8_valid")
+	// x0 = cursor, x2 = end, x9 = 0x8080..80 top-bit mask.
+	g.emit("add x2, x0, x1")
+	g.emit("movz x9, #0x8080")
+	g.emit("movk x9, #0x8080, lsl #16")
+	g.emit("movk x9, #0x8080, lsl #32")
+	g.emit("movk x9, #0x8080, lsl #48")
+	g.label(".Luv_loop")
+	g.emit("cmp x0, x2")
+	g.emit("b.hs .Luv_ok")
+	// ASCII word skip: 8 bytes at a time while every top bit is clear.
+	g.emit("sub x3, x2, x0")
+	g.emit("cmp x3, #8")
+	g.emit("b.lo .Luv_byte")
+	g.emit("ldr x3, [x0]")
+	g.emit("and x3, x3, x9")
+	g.emit("cbnz x3, .Luv_byte")
+	g.emit("add x0, x0, #8")
+	g.emit("b .Luv_loop")
+	g.label(".Luv_byte")
+	g.emit("ldrb w3, [x0]")
+	g.emit("cmp w3, #0x80")
+	g.emit("b.hs .Luv_multi")
+	g.emit("add x0, x0, #1")
+	g.emit("b .Luv_loop")
+	g.label(".Luv_multi")
+	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
+	g.emit("cmp w3, #0xC2")
+	g.emit("b.lo .Luv_bad")
+	g.emit("cmp w3, #0xE0")
+	g.emit("b.hs .Luv_3plus")
+	// 2-byte lead C2..DF: one continuation.
+	g.emit("add x4, x0, #2")
+	g.emit("cmp x4, x2")
+	g.emit("b.hi .Luv_bad")
+	g.emit("ldrb w5, [x0, #1]")
+	g.emit("and w6, w5, #0xC0")
+	g.emit("cmp w6, #0x80")
+	g.emit("b.ne .Luv_bad")
+	g.emit("add x0, x0, #2")
+	g.emit("b .Luv_loop")
+	g.label(".Luv_3plus")
+	g.emit("cmp w3, #0xF0")
+	g.emit("b.hs .Luv_4")
+	// 3-byte lead E0..EF: two continuations; E0 overlong / ED
+	// surrogate carried by the first continuation's range.
+	g.emit("add x4, x0, #3")
+	g.emit("cmp x4, x2")
+	g.emit("b.hi .Luv_bad")
+	g.emit("ldrb w5, [x0, #1]") // c1
+	g.emit("ldrb w6, [x0, #2]")
+	g.emit("and w7, w6, #0xC0")
+	g.emit("cmp w7, #0x80")
+	g.emit("b.ne .Luv_bad")
+	g.emit("and w7, w5, #0xC0")
+	g.emit("cmp w7, #0x80")
+	g.emit("b.ne .Luv_bad")
+	g.emit("cmp w3, #0xE0")
+	g.emit("b.ne .Luv_3_not_e0")
+	g.emit("cmp w5, #0xA0") // E0 A0.. only (overlong below)
+	g.emit("b.lo .Luv_bad")
+	g.label(".Luv_3_not_e0")
+	g.emit("cmp w3, #0xED")
+	g.emit("b.ne .Luv_3_done")
+	g.emit("cmp w5, #0xA0") // ED ..9F only (surrogates above)
+	g.emit("b.hs .Luv_bad")
+	g.label(".Luv_3_done")
+	g.emit("add x0, x0, #3")
+	g.emit("b .Luv_loop")
+	g.label(".Luv_4")
+	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
+	// >U+10FFFF carried by the first continuation's range.
+	g.emit("cmp w3, #0xF4")
+	g.emit("b.hi .Luv_bad")
+	g.emit("add x4, x0, #4")
+	g.emit("cmp x4, x2")
+	g.emit("b.hi .Luv_bad")
+	g.emit("ldrb w5, [x0, #1]") // c1
+	g.emit("ldrb w6, [x0, #2]")
+	g.emit("and w7, w6, #0xC0")
+	g.emit("cmp w7, #0x80")
+	g.emit("b.ne .Luv_bad")
+	g.emit("ldrb w6, [x0, #3]")
+	g.emit("and w7, w6, #0xC0")
+	g.emit("cmp w7, #0x80")
+	g.emit("b.ne .Luv_bad")
+	g.emit("and w7, w5, #0xC0")
+	g.emit("cmp w7, #0x80")
+	g.emit("b.ne .Luv_bad")
+	g.emit("cmp w3, #0xF0")
+	g.emit("b.ne .Luv_4_not_f0")
+	g.emit("cmp w5, #0x90") // F0 90.. only
+	g.emit("b.lo .Luv_bad")
+	g.label(".Luv_4_not_f0")
+	g.emit("cmp w3, #0xF4")
+	g.emit("b.ne .Luv_4_done")
+	g.emit("cmp w5, #0x90") // F4 ..8F only
+	g.emit("b.hs .Luv_bad")
+	g.label(".Luv_4_done")
+	g.emit("add x0, x0, #4")
+	g.emit("b .Luv_loop")
+	g.label(".Luv_ok")
+	g.emit("mov w0, #1")
+	g.emit("ret")
+	g.label(".Luv_bad")
+	g.emit("mov w0, #0")
+	g.emit("ret")
+	g.sizeDirective("__fern_utf8_valid")
 }
 
 // emitReadFileBytesRuntime emits
@@ -10097,6 +10277,9 @@ type generator struct {
 	usesReadFile      bool
 	usesReadFileBytes bool
 	usesWriteFile     bool
+	// usesUtf8Valid pulls in `__fern_utf8_valid(data, len) → 1/0`,
+	// read_file's strict D9 well-formedness scan (#5714).
+	usesUtf8Valid bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -10336,6 +10519,16 @@ func (g *generator) atFdCwd() int {
 		return -2
 	}
 	return -100
+}
+
+// eilseq returns the platform's EILSEQ errno — the synthetic code
+// read_file's UTF-8 validation dispatches through __fern_io_error
+// (#5714). 84 on Linux, 92 on Darwin.
+func (g *generator) eilseq() int {
+	if g.darwin {
+		return 92
+	}
+	return 84
 }
 
 func (g *generator) syscall(name string) {
@@ -13352,6 +13545,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesReadFile = true
 			g.usesAlloc = true
 			g.usesIoError = true
+			g.usesUtf8Valid = true
 		case "read_file_bytes":
 			// read_file_bytes(path): Result[u8[], IoError] —
 			// read_file's raw sibling; the contents land in a

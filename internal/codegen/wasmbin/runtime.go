@@ -519,6 +519,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
+					needs.add("__fern_utf8_valid")
 					needs.add("__fern_read_file")
 				case "__fern_read_file_bytes":
 					// (path) → Result[u8[], IoError] — read_file's
@@ -930,6 +931,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 // unbreakable rather than merely written down. Every edge here is
 // read off the callee lookup at the top of the caller's build*Body.
 var unconditionalHelperCalls = map[string][]string{
+	"__fern_read_file": {"__fern_utf8_valid"},
 	"__fern_str_copy":  {"__fern_alloc_rc1"},
 	"__fern_str_dec":   {"__fern_box_free"},
 	"__fern_box_free":  {"__free"},
@@ -1105,6 +1107,180 @@ func intDivRemSpec(w64, unsigned, isRem bool) runtimeHelperSpec {
 		results: []byte{vt},
 		body:    buildIntDivRemBody(w64, unsigned, isRem),
 	}
+}
+
+// buildUtf8ValidBody assembles __fern_utf8_valid.
+//
+// Signature: (data, len) → i32 — 1 when the buffer is well-formed
+// UTF-8, 0 otherwise. Strict per std/utf8.is_valid_utf8, in the
+// byte-range formulation (no codepoint assembly): stray
+// continuations and 0xC0/0xC1 leads reject as leads below 0xC2;
+// overlong 3-byte forms via E0's first continuation < 0xA0;
+// surrogates via ED's first continuation >= 0xA0; overlong 4-byte
+// forms via F0's first continuation < 0x90; > U+10FFFF via leads
+// above 0xF4 and F4's first continuation >= 0x90; truncation via
+// the per-sequence bounds check. The buffer is always a heap
+// pointer (callers validate raw read buffers, never SSO strings),
+// so a straight i32.load8_u scan suffices.
+//
+// Locals (after the two params 0=data, 1=len):
+//
+//	2: $p    cursor
+//	3: $end  data + len
+//	4: $b    lead byte
+//	5: $c1   first continuation byte
+func buildUtf8ValidBody(idxs map[string]uint32) []byte {
+	var body []byte
+
+	// contCheck: (mem8[p+off] & 0xC0) != 0x80 → br $bad.
+	contCheck := func(b []byte, off, badDepth uint32) []byte {
+		b = inst.InstLocalGet(b, 2)
+		b = memory.InstI32Load8U(b, 0, off)
+		b = inst.InstI32Const(b, 0xC0)
+		b = numeric.InstI32And(b)
+		b = inst.InstI32Const(b, 0x80)
+		b = numeric.InstI32Ne(b)
+		b = inst.InstBrIf(b, badDepth)
+		return b
+	}
+	// boundsCheck: p + n > end → br $bad (truncated sequence).
+	boundsCheck := func(b []byte, n int32, badDepth uint32) []byte {
+		b = inst.InstLocalGet(b, 2)
+		b = inst.InstI32Const(b, n)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalGet(b, 3)
+		b = numeric.InstI32GtU(b)
+		b = inst.InstBrIf(b, badDepth)
+		return b
+	}
+	// advance: p += n; continue the scan loop.
+	advance := func(b []byte, n int32, loopDepth uint32) []byte {
+		b = inst.InstLocalGet(b, 2)
+		b = inst.InstI32Const(b, n)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalSet(b, 2)
+		b = inst.InstBr(b, loopDepth)
+		return b
+	}
+	// c1Range: b == leadVal && (c1 < bound) != wantBelow → br $bad.
+	// wantBelow=true rejects c1 < bound (E0/F0 overlong floors);
+	// wantBelow=false rejects c1 >= bound (ED surrogate / F4 ceiling).
+	c1Range := func(b []byte, leadVal, bound int32, rejectBelow bool, ifBadDepth uint32) []byte {
+		b = inst.InstLocalGet(b, 4)
+		b = inst.InstI32Const(b, leadVal)
+		b = numeric.InstI32Eq(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		{
+			b = inst.InstLocalGet(b, 5)
+			b = inst.InstI32Const(b, bound)
+			if rejectBelow {
+				b = numeric.InstI32LtU(b)
+			} else {
+				b = numeric.InstI32GeU(b)
+			}
+			b = inst.InstBrIf(b, ifBadDepth)
+		}
+		b = inst.InstEnd(b)
+		return b
+	}
+
+	// p = data; end = data + len
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 3)
+
+	// block $bad { block $done { loop $scan { … } } return 1 } return 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // $bad
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // $done
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // $scan
+	{
+		// Label depths from the loop body: $scan=0, $done=1, $bad=2;
+		// +1 inside each nested if.
+
+		// if p >= end → br $done (whole buffer scanned, valid)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+
+		// b = mem8[p]
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstLocalTee(body, 4)
+
+		// ASCII: b < 0x80 → p += 1, continue.
+		body = inst.InstI32Const(body, 0x80)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = advance(body, 1, 1)
+		body = inst.InstEnd(body)
+
+		// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 0xC2)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstBrIf(body, 2)
+
+		// 2-byte lead C2..DF: one continuation.
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 0xE0)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = boundsCheck(body, 2, 3)
+			body = contCheck(body, 1, 3)
+			body = advance(body, 2, 1)
+		}
+		body = inst.InstEnd(body)
+
+		// 3-byte lead E0..EF: two continuations; E0 overlong / ED
+		// surrogate carried by the first continuation's range.
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 0xF0)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = boundsCheck(body, 3, 3)
+			body = inst.InstLocalGet(body, 2)
+			body = memory.InstI32Load8U(body, 0, 1)
+			body = inst.InstLocalSet(body, 5) // c1
+			body = contCheck(body, 2, 3)
+			body = contCheck(body, 1, 3)
+			body = c1Range(body, 0xE0, 0xA0, true, 4)  // E0 A0.. only
+			body = c1Range(body, 0xED, 0xA0, false, 4) // ED ..9F only
+			body = advance(body, 3, 1)
+		}
+		body = inst.InstEnd(body)
+
+		// 4-byte lead F0..F4: three continuations; F0 overlong / F4
+		// > U+10FFFF carried by the first continuation's range.
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 0xF4)
+		body = numeric.InstI32GtU(body)
+		body = inst.InstBrIf(body, 2)
+		body = boundsCheck(body, 4, 2)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load8U(body, 0, 1)
+		body = inst.InstLocalSet(body, 5) // c1
+		body = contCheck(body, 2, 2)
+		body = contCheck(body, 3, 2)
+		body = contCheck(body, 1, 2)
+		body = c1Range(body, 0xF0, 0x90, true, 3)  // F0 90.. only
+		body = c1Range(body, 0xF4, 0x90, false, 3) // F4 ..8F only
+		body = advance(body, 4, 0)
+	}
+	body = inst.InstEnd(body) // end $scan
+	body = inst.InstEnd(body) // end $done
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body) // end $bad
+	body = inst.InstI32Const(body, 0)
+
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 var runtimeHelperSpecs = map[string]runtimeHelperSpec{
@@ -1817,6 +1993,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildBuildIoErrorBody,
+	},
+	"__fern_utf8_valid": {
+		// (data, len) → i32 1/0 — strict UTF-8 well-formedness
+		// scan over a linear-memory byte buffer, matching
+		// std/utf8.is_valid_utf8. Backs read_file's D9
+		// validation (#5714).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUtf8ValidBody,
 	},
 	"__fern_read_file": {
 		// (path_data, path_len) → i32 — heap-form

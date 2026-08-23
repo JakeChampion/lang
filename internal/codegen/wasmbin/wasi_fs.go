@@ -55,6 +55,7 @@ const (
 	errnoSuccess int32 = 0
 	errnoAccess  int32 = 2  // EACCES → PermissionDenied
 	errnoExist   int32 = 20 // EEXIST → AlreadyExists
+	errnoIlseq   int32 = 25 // EILSEQ → InvalidUtf8 (synthetic — raised by __fern_utf8_valid, not the host)
 	errnoIntr    int32 = 27 // EINTR  → Interrupted
 	errnoNoEnt   int32 = 44 // ENOENT → NotFound
 	errnoNoTsup  int32 = 58 // ENOTSUP → Unsupported
@@ -161,6 +162,7 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 	body = emitSingleStringCase(body, errnoNoEnt, ioErrTagNotFound)
 	body = emitSingleStringCase(body, errnoAccess, ioErrTagPermissionDenied)
 	body = emitSingleStringCase(body, errnoExist, ioErrTagAlreadyExists)
+	body = emitSingleStringCase(body, errnoIlseq, ioErrTagInvalidUtf8)
 	body = emitNullaryCase(body, errnoIntr, ioErrTagInterrupted)
 	body = emitNullaryCase(body, errnoNoTsup, ioErrTagUnsupported)
 
@@ -299,36 +301,39 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 	body = inst.InstCall(body, pathOpen)
 	body = inst.InstLocalTee(body, 3) // $errno
 
+	// wrapErrReturn expects the errno on the operand stack: builds
+	// the IoError via __build_io_error (stashed in local 9 — $new_buf
+	// is dead on the error paths) and returns it wrapped in an Err
+	// box. The IR's payloadLayout for `Result[String, IoError]`'s Err
+	// variant places the (pointer-shaped) IoError payload at offset 4
+	// — no 8-byte alignment padding because the slot itself is 4
+	// bytes wide. Total Err allocation is 8 bytes (tag at +0, IoError
+	// ptr at +4); Ok stays 16 (string is 8-byte-aligned at +8).
+	wrapErrReturn := func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 0) // path_data
+		b = inst.InstLocalGet(b, 1) // path_len
+		b = inst.InstCall(b, buildIoErr)
+		b = inst.InstLocalSet(b, 9)
+		b = inst.InstI32Const(b, 8)
+		b = inst.InstCall(b, allocBox)
+		b = inst.InstLocalTee(b, 12) // $result
+		b = inst.InstI32Const(b, 1)  // tag = 1 (Err)
+		b = memory.InstI32Store(b, 2, 0)
+		b = inst.InstLocalGet(b, 12)
+		b = inst.InstI32Const(b, 4)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalGet(b, 9) // IoError ptr
+		b = memory.InstI32Store(b, 2, 0)
+		b = inst.InstLocalGet(b, 12)
+		b = inst.InstReturn(b)
+		return b
+	}
+
 	// if errno != 0 { return build_io_error(errno, path_data, path_len) wrapped in Err }
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		// Build the IoError variant via __build_io_error;
-		// stash it in local 9 (reusing $new_buf — unused on
-		// the error path).
 		body = inst.InstLocalGet(body, 3) // errno
-		body = inst.InstLocalGet(body, 0) // path_data
-		body = inst.InstLocalGet(body, 1) // path_len
-		body = inst.InstCall(body, buildIoErr)
-		body = inst.InstLocalSet(body, 9)
-		// Wrap as Err. The IR's payloadLayout for
-		// `Result[String, IoError]`'s Err variant places the
-		// (pointer-shaped) IoError payload at offset 4 — no
-		// 8-byte alignment padding because the slot itself is
-		// 4 bytes wide. Total Err allocation is 8 bytes (tag
-		// at +0, IoError ptr at +4); Ok stays 16 (string is
-		// 8-byte-aligned at +8).
-		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocBox)
-		body = inst.InstLocalTee(body, 12) // $result
-		body = inst.InstI32Const(body, 1)  // tag = 1 (Err)
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstLocalGet(body, 12)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 9) // IoError ptr
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstLocalGet(body, 12)
-		body = inst.InstReturn(body)
+		body = wrapErrReturn(body)
 	}
 	body = inst.InstEnd(body)
 
@@ -433,6 +438,23 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstCall(body, fdClose)
 	body = inst.InstDrop(body)
+
+	if !asBytes {
+		// read_file validates UTF-8 (D9, #5714); read_file_bytes is
+		// the unvalidated escape hatch. The accumulator holds exactly
+		// the bytes read (cur grows to EOF — no fstat-sized shrink
+		// tail to zero-fill), so validation sees only file content.
+		body = inst.InstLocalGet(body, 5) // buf
+		body = inst.InstLocalGet(body, 7) // cur
+		body = inst.InstCall(body, idxs["__fern_utf8_valid"])
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, errnoIlseq)
+			body = wrapErrReturn(body)
+		}
+		body = inst.InstEnd(body)
+	}
 
 	if asBytes {
 		// arr = __alloc_u8(cur); memory.copy(arr, buf, cur).
@@ -680,6 +702,26 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	// end $read loop, end $end block
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
+
+	if !asBytes {
+		// read_file validates UTF-8 (D9, #5714); read_file_bytes is
+		// the unvalidated escape hatch. acc_cur is exactly the bytes
+		// streamed to EOF — no stat-sized shrink tail to zero-fill.
+		// The synthetic EILSEQ goes straight to __build_io_error,
+		// bypassing the p2 error-code translator (it maps
+		// wasi:filesystem error-codes, not errnos).
+		body = inst.InstLocalGet(body, 8)  // acc_buf
+		body = inst.InstLocalGet(body, 10) // acc_cur
+		body = inst.InstCall(body, idxs["__fern_utf8_valid"])
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, errnoIlseq)
+			body = inst.InstLocalSet(body, 16)
+			body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+		}
+		body = inst.InstEnd(body)
+	}
 
 	if asBytes {
 		// arr = __alloc_u8(acc_cur); memory.copy(arr, acc_buf, acc_cur)
