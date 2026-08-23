@@ -302,8 +302,26 @@ function main(): i32 { return f(); }`,
 			},
 		},
 		{
+			// MOVE-ON-ALIAS, struct limb: at the source's last top-level
+			// mention both sides elide the transfer inc; the self-host drops
+			// the alias's box-only NODEEP marker so it inherits the source's
+			// deep field walk (the struct-specific release-role transfer),
+			// and the struct sweep loop skips the elided source. Anchored
+			// agreement — the third aliasBindIncs family burned down.
+			name: "move-on-alias-struct",
+			src: `struct P { xs: i32[], n: i32 }
+function f(): i32 {
+	var p: P = P { xs: [1, 2], n: 3 };
+	var v: P = p;
+	return v.n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "4:2", "aliasBindIncs": ""}},
+		},
+		{
 			// STRUCT alias bind (#7282 struct limb / the #7349 site-keyed
-			// credit): retain fires on the self-host, native elides the pair.
+			// credit), LIVE source: retain fires on the self-host, native
+			// elides the pair (dead-alias cancellation — a separate port).
 			name: "alias-bind-struct",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {

@@ -95,13 +95,16 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// The struct limb, and the one class whose release is NOT the box dec:
-			// a struct is a DEEP FIELD DROP (__struct_drop_P) plus a box dec. Only
-			// the box was retained at the bind, so the alias carries "NODEEP:" and
-			// takes a box-only release while the source keeps the single field
-			// walk. Verified in the emitted asm: `round` gains exactly one rc_inc
-			// and exactly one __struct_drop_P. Two deep drops would free `xs`
-			// twice — measured as exit 99, with allocs == frees at live_bytes 0.
-			// Base: allocs=200 frees=0, 8000 live.
+			// a struct is a DEEP FIELD DROP (__struct_drop_P) plus a box dec.
+			// Under duplication only the box is retained at the bind, so the
+			// alias carries "NODEEP:" (box-only) while the source keeps the
+			// single field walk; two deep drops would free `xs` twice —
+			// measured as exit 99, with allocs == frees at live_bytes 0.
+			// This shape is a MOVE (t's last mention is the bind), so the
+			// retain is elided and the alias inherits the source's whole
+			// release role: no rc_inc, one __struct_drop_P on the alias.
+			// Either model frees each allocation exactly once — the counts
+			// below hold for both. Base: allocs=200 frees=0, 8000 live.
 			name: "struct_alias",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
