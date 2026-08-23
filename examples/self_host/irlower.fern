@@ -17431,6 +17431,23 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (vt.alias_inc) {
         sb = LowerState { ...sb, alias_incs: sb.alias_incs.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + "=" + v.name) };
     }
+    // A tuple MOVE-alias transfers the source's release role to this slot
+    // (the ladder's tuple clause swapped the credit class), so the slot facts
+    // that release reads move with it: the element type tags the "TUPRCS:"
+    // deep free walks, and the construction-retain kinds the "TUP:" sweep
+    // gives back (both are SLOT-keyed on the source today). Same predicate
+    // as the ladder — the two sites cannot disagree.
+    match (v.init) {
+        parser.ExprIdent(mvid) => {
+            var mvsrc: i32 = se.slot_of(mvid.name);
+            if (mvsrc >= 0 && se.slot_is_tuple_box(mvsrc) && se.moves_local_at(mvid.name, v.line, v.col)) {
+                if (se.locals[mvsrc].tuple_elems.len() > 0) { sb = sb.mark_tuple_elems(slot, se.locals[mvsrc].tuple_elems); }
+                var mvkinds: string = se.tup_elem_kinds_of(mvsrc);
+                if (mvkinds.len() > 0) { sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + mvkinds); }
+            }
+        },
+        _ => {}
+    }
     // The binding-SITE key, recorded before anything reads a credit off this slot
     // (#7272). Two `var t` in sibling blocks are two slots under one name; the
     // tuple class credits are keyed on this instead, so each resolves its own.
@@ -19097,7 +19114,23 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // never retained: exit 99 on `var t: (i32, i32[]) = (i, [i, i+1]);
             // var v = t;`, with allocs == frees at live_bytes 0 as always.
             else if (se.slot_is_tuple_box(aid_slot)
-                     && (slot_is_reclaimable_tuple(se, aid_slot) || slot_is_reclaimable_rctuple(se, aid_slot))) { alias_inc = true; }
+                     && (slot_is_reclaimable_tuple(se, aid_slot) || slot_is_reclaimable_rctuple(se, aid_slot))) {
+                // Move-on-alias, tuple limb: at the source's last top-level
+                // mention the bind transfers the reference. A scalar tuple's
+                // "TUP:" alias copy already IS the whole release (a box dec);
+                // an rc-tuple's deep sweep class ("TUPRCS:") moves to the
+                // alias site so the one type-driven deep free runs there —
+                // the same release-role inheritance as the struct limb, with
+                // the slot facts it reads (tuple_elems / tup_elem_kinds)
+                // copied across in bind_var_slot under the same predicate.
+                if (se.moves_local_at(id.name, v.line, v.col)) {
+                    if (reclaim_has(se.reclaimable_names, "TUPRCS:", se.reclaim_site_key(aid_slot))) {
+                        se = se.drop_reclaim_row("TUP:" + reclaim_site_key_of(v.name, v.line, v.col));
+                        se = LowerState { ...se, reclaimable_names: se.reclaimable_names.append("TUPRCS:" + reclaim_site_key_of(v.name, v.line, v.col)) };
+                    }
+                    se = se.note_moved_elided(aid_slot);
+                } else { alias_inc = true; }
+            }
             // A string box, on the one class that grants the alias a credit.
             // slot_is_reclaimable_str asks about the box AND the credit on its own
             // (`locals[i].is_str` plus the "STR:" lookup), so unlike the tuple
@@ -25028,7 +25061,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Slots are zeroed at entry, so an untaken-branch slot decs a guarded null.
     var tj: i32 = st.n_params;
     while (tj < st.locals.len()) {
-        if (!slot_list_has(keeps, tj) && slot_is_reclaimable_tuple(st, tj)) {
+        if (!slot_list_has(keeps, tj) && !slot_list_has(st.moved_elided, tj) && slot_is_reclaimable_tuple(st, tj)) {
             // Give back the construction retains first (#7226): an element that
             // named an rc-container local made the tuple a second owner, and the
             // is_arr sweep above only ever decs the LOCAL's own reference. The
@@ -25052,7 +25085,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // one), so no box is dec'd twice.
     var rtj: i32 = st.n_params;
     while (rtj < st.locals.len()) {
-        if (!slot_list_has(keeps, rtj) && slot_is_reclaimable_rctuple_sweep(st, rtj)) {
+        if (!slot_list_has(keeps, rtj) && !slot_list_has(st.moved_elided, rtj) && slot_is_reclaimable_rctuple_sweep(st, rtj)) {
             st = emit_rctuple_deep_free(st, rtj);
         }
         rtj = rtj + 1;
