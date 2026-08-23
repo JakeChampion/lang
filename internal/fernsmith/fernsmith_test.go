@@ -2,6 +2,7 @@ package fernsmith_test
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -794,6 +795,193 @@ var (
 	fnCallRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:v\d+|p\d+|lp\d+|w\d+_\d+|__fe_x\d+|__lam_x\d+)\(`)
 )
 
+// ---- float-in-aggregate coverage (#7348) -----------------------------
+
+// reFloatAggDecl matches the aggregate the printable profile's mandatory
+// float-aggregate observation declares, capturing its name and its type.
+var reFloatAggDecl = regexp.MustCompile(`var (__fag\d+): (.+?) = `)
+
+// floatAggObservation reports which kind of float-bearing aggregate the
+// mandatory observation built in this program, and whether EVERY slot of
+// it is printed. The second half is the part that matters: a float
+// element's width is only observable next to a neighbour, so an
+// aggregate whose later slots are never read is a shape in the corpus
+// that the oracle still cannot see.
+func floatAggObservation(mainBody string) (kind string, allSlotsPrinted bool) {
+	m := reFloatAggDecl.FindStringSubmatch(mainBody)
+	if m == nil {
+		return "", false
+	}
+	name, kind := m[1], strings.TrimSpace(m[2])
+	var want []string
+	switch kind {
+	case "f32[]", "f64[]":
+		for i := 0; i < 3; i++ {
+			want = append(want, fmt.Sprintf("print(((%s[%di32]) as i32)", name, i))
+		}
+	case "(f32, f64)":
+		want = []string{
+			fmt.Sprintf("print(((%s.0) as i32)", name),
+			fmt.Sprintf("print(((%s.1) as i32)", name),
+		}
+	case "Vec2":
+		want = []string{
+			fmt.Sprintf("print(((%s.x) as i32)", name),
+			fmt.Sprintf("print(((%s.y) as i32)", name),
+		}
+	case "FShape":
+		// One match per payload slot, each reading a DIFFERENT binding:
+		// slot 0 through the first, slot 1 through the second. Other
+		// observations may match on the same var too, so the check is
+		// for these two exact reads rather than a count.
+		idx := strings.TrimPrefix(name, "__fag")
+		for slot, narrow := range []string{"a", "b"} {
+			wide := []string{"c", "d"}[slot]
+			want = append(want, fmt.Sprintf(
+				"print((match (%s) { FNone => 0i32, FTwo(__fs_a%s_%d, __fs_b%s_%d) => ((__fs_%s%s_%d) as i32), FWide(__fs_c%s_%d, __fs_d%s_%d) => ((__fs_%s%s_%d) as i32) }).to_string());",
+				name, idx, slot, idx, slot, narrow, idx, slot, idx, slot, idx, slot, wide, idx, slot))
+		}
+	default:
+		return kind, false
+	}
+	for _, w := range want {
+		if !strings.Contains(mainBody, w) {
+			return kind, false
+		}
+	}
+	return kind, true
+}
+
+func mainBodyOf(src string) string {
+	if i := strings.Index(src, "function main"); i >= 0 {
+		return src[i:]
+	}
+	return ""
+}
+
+var (
+	// A dynamic struct decl with at least one float field.
+	reDynStructFloatField = regexp.MustCompile(`struct S\d+ \{[^}]*: f(?:32|64)`)
+	// A dynamic enum variant declared with a float payload slot.
+	reDynEnumFloatPayload = regexp.MustCompile(`__E\d+_V\d+\([^)]*f(?:32|64)`)
+	// An ordinary main-level local, as drawn by pickMainVarType.
+	reMainLocalDecl = regexp.MustCompile(`var v\d+: (.+?) = `)
+)
+
+// TestGenPrintableFloatsReachAggregates is the non-vacuity gate on the
+// float-in-aggregate widening, and it is stated as FREQUENCY floors
+// rather than "seen at least once" on purpose.
+//
+// The class this covers — a float sharing a box with a neighbour, where
+// an access too wide for the element reaches the slot after it — was
+// unreachable for the whole life of the generator, so #7333 had to be
+// found by hand. A widening that merely CAN produce the shape is worse
+// than none: it reads as coverage while a distribution that emits one
+// in five hundred seeds leaves the class as unreached as it was. So each
+// landmark carries the share of seeds it must reach, generously below
+// what the generator actually produces (measured at the floors' comment)
+// but far enough above zero that a regression to "technically possible"
+// fails here.
+func TestGenPrintableFloatsReachAggregates(t *testing.T) {
+	const seeds = 512
+	// Measured over 1024 seeds when written: each mandatory-observation
+	// kind ~19-21%, each ordinary main-local kind ~7-9%, float struct
+	// field 64%, float enum payload 41%.
+	landmarks := []struct {
+		name  string
+		floor float64
+		hit   func(src, body string) bool
+	}{
+		{"f32[] built and every element printed", 0.10, func(_, body string) bool {
+			k, ok := floatAggObservation(body)
+			return k == "f32[]" && ok
+		}},
+		{"f64[] built and every element printed", 0.10, func(_, body string) bool {
+			k, ok := floatAggObservation(body)
+			return k == "f64[]" && ok
+		}},
+		{"(f32, f64) built and both elements printed", 0.10, func(_, body string) bool {
+			k, ok := floatAggObservation(body)
+			return k == "(f32, f64)" && ok
+		}},
+		{"Vec2 built and both f32 fields printed", 0.10, func(_, body string) bool {
+			k, ok := floatAggObservation(body)
+			return k == "Vec2" && ok
+		}},
+		{"FShape multi-slot payload built and both slots printed", 0.10, func(_, body string) bool {
+			k, ok := floatAggObservation(body)
+			return k == "FShape" && ok
+		}},
+		{"f32[] as an ordinary main-level local", 0.03, mainLocalIs("f32[]")},
+		{"f64[] as an ordinary main-level local", 0.03, mainLocalIs("f64[]")},
+		{"(f32, f64) as an ordinary main-level local", 0.03, mainLocalIs("(f32, f64)")},
+		{"Vec2 as an ordinary main-level local", 0.03, mainLocalIs("Vec2")},
+		{"FShape as an ordinary main-level local", 0.03, mainLocalIs("FShape")},
+		{"f32 as an ordinary main-level local", 0.03, mainLocalIs("f32")},
+		{"f64 as an ordinary main-level local", 0.03, mainLocalIs("f64")},
+		{"dynamic struct with a float field", 0.25, func(src, _ string) bool {
+			return reDynStructFloatField.MatchString(src)
+		}},
+		{"dynamic enum variant with a float payload slot", 0.15, func(src, _ string) bool {
+			return reDynEnumFloatPayload.MatchString(src)
+		}},
+		// Every seed: the observation is mandatory, so a seed that does
+		// not observe an aggregate-carried float is a wiring bug, not a
+		// sampling shortfall.
+		{"every slot of one float aggregate observed", 1.0, func(_, body string) bool {
+			_, ok := floatAggObservation(body)
+			return ok
+		}},
+	}
+	hits := make([]int, len(landmarks))
+	for seed := uint64(0); seed < seeds; seed++ {
+		src := fernsmith.GenPrintableMain(seed)
+		body := mainBodyOf(src)
+		for i, l := range landmarks {
+			if l.hit(src, body) {
+				hits[i]++
+			}
+		}
+	}
+	for i, l := range landmarks {
+		got := float64(hits[i]) / float64(seeds)
+		if got < l.floor {
+			t.Errorf("%s: %d/%d seeds (%.1f%%), want at least %.1f%% — the class is reachable in theory and unreached in practice",
+				l.name, hits[i], seeds, 100*got, 100*l.floor)
+		}
+	}
+}
+
+func mainLocalIs(typeName string) func(src, body string) bool {
+	return func(_, body string) bool {
+		for _, m := range reMainLocalDecl.FindAllStringSubmatch(body, -1) {
+			if strings.TrimSpace(m[1]) == typeName {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// TestGenMainStaysFloatFree pins the other half of the widening: the
+// return-byte oracle compares main()'s exit code bit-for-bit across
+// backends, and Fern deliberately under-specifies IEEE edge cases
+// (docs/FLOAT-SEMANTICS.md), so ProfileRunnable admits no float at all.
+// Widening the aggregate element types is exactly the kind of change
+// that leaks one in through a type list that is not profile-gated —
+// a dynamic struct field, an array element, an enum payload slot — and
+// the leak would show up as a non-portable exit byte reported as a
+// codegen bug.
+func TestGenMainStaysFloatFree(t *testing.T) {
+	banned := regexp.MustCompile(`\b(?:f32|f64|Vec2|FShape)\b`)
+	for seed := uint64(0); seed < sweepN(t, 512); seed++ {
+		src := fernsmith.GenMain(seed)
+		if m := banned.FindString(src); m != "" {
+			t.Fatalf("seed=%d: ProfileRunnable program mentions %q — floats must not reach the return-byte oracle\nsrc:\n%s", seed, m, src)
+		}
+	}
+}
+
 // TestGenBytesShrinkIsMonotonicAndValid is the minimisation contract
 // stated as a property rather than sampled at three points, and it is the
 // gate on growing this generator (#6073).
@@ -836,43 +1024,65 @@ var (
 // fewer declarations, shallower nesting, less recursion — so the property
 // counts AST nodes. That is insensitive to leaf-name width and is what
 // "smoothly collapses" actually means.
+//
+// # Why all three entry points
+//
+// Each byte-driven entry point has productions the others do not — the
+// runnable and printable mains draw their locals from their own pools
+// and the printable one emits observation statements no free-form
+// program contains. Checking only GenBytes left the two corpora the
+// differential oracles actually shrink unproven.
 func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
-	// One type-check per truncation point per seed: the full sweep is
-	// ~4,600 of them, about six minutes, which does not belong in a
-	// default `go test ./internal/fernsmith`. Three seeds always run,
-	// because a contract nothing checks is a contract that lapses —
-	// three is not a token sample, since seed 0 alone found every
-	// flip-site defect this property was written for. The dedicated
-	// test-fernsmith workflow sets RUN_SHRINK_PROPERTY=1 for the rest.
-	seeds := uint64(3)
+	gens := []struct {
+		name string
+		gen  func([]byte) string
+	}{
+		{"GenBytes", fernsmith.GenBytes},
+		{"GenMainBytes", fernsmith.GenMainBytes},
+		{"GenPrintableMainBytes", fernsmith.GenPrintableMainBytes},
+	}
+	// One type-check per truncation point per seed per entry point: the
+	// full sweep is tens of thousands of them, which does not belong in
+	// a default `go test ./internal/fernsmith`. Two seeds each always
+	// run, because a contract nothing checks is a contract that lapses —
+	// not a token sample, since seed 0 alone found every flip-site
+	// defect this property was written for. The dedicated test-fernsmith
+	// workflow sets RUN_SHRINK_PROPERTY=1 for the rest.
+	seeds := uint64(2)
 	if os.Getenv("RUN_SHRINK_PROPERTY") == "1" {
 		seeds = sweepN(t, 24)
 	}
-	for seed := uint64(0); seed < seeds; seed++ {
-		r := rand.New(rand.NewPCG(seed, 0x5eed))
-		corpus := randBytes(r, 192)
+	for _, g := range gens {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+			for seed := uint64(0); seed < seeds; seed++ {
+				r := rand.New(rand.NewPCG(seed, 0x5eed))
+				corpus := randBytes(r, 192)
 
-		// prev is the program from the NEXT-larger corpus, so each step
-		// asserts against its immediate neighbour rather than a distant
-		// sample — a single uphill step is enough to break convergence.
-		prevSrc := fernsmith.GenBytes(corpus)
-		prevNodes, err := astNodeCount(t, prevSrc)
-		if err != nil {
-			t.Fatalf("seed=%d: full corpus does not type-check:\n%s\nerr: %v", seed, prevSrc, err)
-		}
-		for n := len(corpus) - 1; n >= 0; n-- {
-			src := fernsmith.GenBytes(corpus[:n])
-			nodes, err := astNodeCount(t, src)
-			if err != nil {
-				t.Fatalf("seed=%d: truncating to %d bytes produced a program that does not type-check — the shrinker would hand back a non-compiling repro\nsrc:\n%s\nerr: %v",
-					seed, n, src, err)
+				// prev is the program from the NEXT-larger corpus, so each
+				// step asserts against its immediate neighbour rather than a
+				// distant sample — a single uphill step is enough to break
+				// convergence.
+				prevSrc := g.gen(corpus)
+				prevNodes, err := astNodeCount(t, prevSrc)
+				if err != nil {
+					t.Fatalf("seed=%d: full corpus does not type-check:\n%s\nerr: %v", seed, prevSrc, err)
+				}
+				for n := len(corpus) - 1; n >= 0; n-- {
+					src := g.gen(corpus[:n])
+					nodes, err := astNodeCount(t, src)
+					if err != nil {
+						t.Fatalf("seed=%d: truncating to %d bytes produced a program that does not type-check — the shrinker would hand back a non-compiling repro\nsrc:\n%s\nerr: %v",
+							seed, n, src, err)
+					}
+					if nodes > prevNodes {
+						t.Fatalf("seed=%d: truncating to %d bytes GREW the program (%d AST nodes > %d) — the shrinker can walk uphill from here\nsmaller corpus produced:\n%s\nlarger corpus produced:\n%s",
+							seed, n, nodes, prevNodes, src, prevSrc)
+					}
+					prevSrc, prevNodes = src, nodes
+				}
 			}
-			if nodes > prevNodes {
-				t.Fatalf("seed=%d: truncating to %d bytes GREW the program (%d AST nodes > %d) — the shrinker can walk uphill from here\nsmaller corpus produced:\n%s\nlarger corpus produced:\n%s",
-					seed, n, nodes, prevNodes, src, prevSrc)
-			}
-			prevSrc, prevNodes = src, nodes
-		}
+		})
 	}
 }
 

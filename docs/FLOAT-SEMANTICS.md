@@ -297,29 +297,49 @@ no verbatim parse, so `fern -fmt` there fails on the file instead.
 
 ## Generator + oracle implications
 
-`internal/fernsmith` has two generation profiles (see
+`internal/fernsmith` has three generation profiles (see
 `Profile` in `fernsmith.go`):
 
-- `ProfileFree` — free-form generation; f32 is in the type pool.
-  Used by the parser-roundtrip fuzzer and the deterministic
+- `ProfileFree` — free-form generation; every float type is in the
+  pool. Used by the parser-roundtrip fuzzer and the deterministic
   feature-coverage sweep. Those tests don't compare runtime
   output, so NaN-edge programs are fine.
 
-- `ProfileRunnable` — drives the cross-backend differential
-  oracle (`FuzzGenerate_ExecutionAgrees`, `TestDifferential_LangsmithMain`).
-  f32 is **deliberately excluded from the type pool** because the
-  oracle compares `main()`'s 1-byte return code across backends and
-  the non-portable float edges (NaN bit-patterns, `-0.0`-vs-`+0.0`)
-  would surface as mismatches if a generated program reinterpreted a
-  float's bits. (Float→int *conversion* is now portable — it
-  saturates — but the bit-level edges above still aren't.) This
-  isn't a workaround — it's the policy applied at the generator
-  level so the oracle stays a clean signal for real codegen bugs.
+- `ProfileRunnable` — drives the cross-backend exit-byte oracle
+  (`FuzzGenerate_ExecutionAgrees`, `TestDifferential_LangsmithMain`).
+  Floats are **deliberately excluded from every draw** — the type
+  pool, `main`'s local pool, dynamic struct fields, and enum payload
+  slots — because the oracle compares `main()`'s 1-byte return code
+  across backends and the non-portable float edges (NaN bit-patterns,
+  `-0.0`-vs-`+0.0`) would surface as mismatches if a generated program
+  reinterpreted a float's bits. (Float→int *conversion* is portable
+  — it saturates — but the bit-level edges above still aren't.)
+  This isn't a workaround — it's the policy applied at the generator
+  level so the oracle stays a clean signal for real codegen bugs, and
+  `TestGenMainStaysFloatFree` pins it.
 
-If a future feature needs the generator to exercise float code in
-the runnable profile, the program-generator side (not the oracle)
-is the right place to add the NaN/Inf-safe return path shown above.
-The oracle deliberately stays simple.
+- `ProfilePrintable` — drives the stdout oracle
+  (`TestDifferential_PrintableStdout`, `TestDifferential_Arm64SSAStdout`).
+  This is where float coverage lives, and the reason it can exist is
+  the observation channel, not a change to what this document
+  under-specifies: a float reaches stdout only as `"T"`/`"F"` from a
+  boolean comparison, or through a truncating `as i32` cast. Decimal
+  rendering of a float is never compared, so NaN payloads, sign of
+  zero and rounding stay off the diff while the arithmetic,
+  comparison and memory codegen underneath are exercised.
+
+  Floats appear **inside aggregates** here — `f32[]` / `f64[]`
+  elements, struct fields, tuple elements and multi-slot enum
+  payloads — and every printable program reads every slot of one
+  such aggregate back. That is not decoration: a float element's
+  WIDTH is only observable when a neighbour is there for an access
+  too wide for the element to reach, which is how #7333 stayed
+  invisible to a differential that ran clean for hundreds of seeds.
+
+Float coverage belongs in the printable profile, through those
+channels. Widening the runnable profile to reach floats would mean
+inventing a NaN/Inf-safe return path per program; the printable
+oracle already has one that costs nothing.
 
 ## Hand-written float tests
 
