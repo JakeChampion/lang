@@ -56,19 +56,24 @@ func TestSelfHostMoveOnConstructionIRX86_64(t *testing.T) {
 		moved string
 		// incs is how many `__fern_rc_inc` calls the emitter wrote into `f`.
 		// 0 where the emitter consumes the moved verdict (#6726: the struct
-		// -literal field site), 1 where it does not yet — and 1 on the rows the
-		// ANALYSIS declines, which is where 1 is the right answer for good.
+		// -literal field site, and the var-bind array ALIAS as of the
+		// moves_local_at elision in lower_stmt_var), 1 where it does not yet
+		// — and 1 on the rows the ANALYSIS declines, which is where 1 is the
+		// right answer for good.
 		//
-		// Every construction row is 1, INCLUDING the moved ones, where native
-		// emits 0: the emitter does not consume the move verdict at a
-		// construction site, so the inc it cancels against is still written
+		// The remaining CONSTRUCTION rows (tuple-element, array-element) are
+		// still 1 where native emits 0: those emitters do not consume the
+		// move verdict yet, so the inc they cancel against is still written
 		// (and so is the exit-sweep dec, which is why the program is correct
 		// and no value-or-underflow test could see this). Filed as #6726;
-		// when it is fixed these rows go to 0 and this test says so.
+		// when each is fixed its row goes to 0 and this test says so.
 		incs int
 	}{
 		// --- the analysis marks these moved, native emits no inc ----------
 		{
+			// The var-bind alias consumes the verdict: the transfer inc is
+			// elided and x's exit dec elided with it (note_moved_elided) —
+			// pinned to agree with native by the rcplan aliasBindIncs diff.
 			name: "alias-last-use",
 			src: `function f(): i32 {
     var x: i32[] = [1, 2, 3];
@@ -76,7 +81,7 @@ func TestSelfHostMoveOnConstructionIRX86_64(t *testing.T) {
     return b[0];
 }
 function main(): i32 { return f(); }`,
-			moved: "x", incs: 1,
+			moved: "x", incs: 0,
 		},
 		{
 			name: "struct-field-last-use",
