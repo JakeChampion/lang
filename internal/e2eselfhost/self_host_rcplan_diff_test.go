@@ -45,7 +45,7 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 
 	// The tables diffed per function; ALL NINE dumped tables are diffed as
 	// of the consumingMatchReuse port (#4482 complete).
-	diffedTables := []string{"arraySetInc", "consumedParams", "consumingMatchReuse", "freeEligible", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
+	diffedTables := []string{"aliasBindIncs", "arraySetInc", "consumedParams", "consumingMatchReuse", "freeEligible", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -201,7 +201,12 @@ function main(): i32 { return tup(("a", 2)); }`,
 		{
 			// MOVE-ON-ALIAS: `var b = a` at a's last mention — the alias inc
 			// and a's exit-sweep dec cancel; b owns the box. movedLocals: a on
-			// both sides.
+			// both sides. KNOWN aliasBindIncs DIVERGENCE: native elides the
+			// transfer inc at the move site (the movedLocals pair
+			// cancellation); the self-host's var-bind array path does not
+			// consult move_sites, so it still emits the retain (balanced by
+			// keeping a's sweep dec — moved_elided never fires). Both sound;
+			// the self-host spends an inc/dec pair native elides.
 			name: "move-on-alias",
 			src: `function mv(): i32 {
 	var a: i32[] = [1, 2];
@@ -210,6 +215,90 @@ function main(): i32 { return tup(("a", 2)); }`,
 }
 function main(): i32 { return mv(); }`,
 			anchor: map[string]map[string]string{"mv": {"movedLocals": "a", "moveSites": "3:2"}},
+			diverge: map[string]map[string]divergence{
+				"mv": {"aliasBindIncs": {native: "", selfhost: "3:2=b"}},
+			},
+		},
+		{
+			// ALIAS-BIND retain, live source: `a` is read again after
+			// `var b = a`, so neither side can move or dead-alias-cancel —
+			// the transfer inc fires on BOTH and the site agrees exactly.
+			// The retain-plan agreement anchor for the #7282 array limb.
+			name: "alias-bind-live-source-array",
+			src: `function f(): i32 {
+	var a: i32[] = [1, 2];
+	var b: i32[] = a;
+	return a[0] + b[0];
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "3:2=b"}},
+		},
+		{
+			// ALIAS of a borrowed PARAM: the callee's new binding takes a
+			// counted retain (its exit dec balances) on both sides — the
+			// binding-origin the leak matrix's alias_param rows probe, at the
+			// retain level. Agreement anchor.
+			name: "alias-bind-param-source",
+			src: `function g(xs: i32[]): i32 {
+	var v: i32[] = xs;
+	return v[0] + xs[0];
+}
+function main(): i32 { var a: i32[] = [4, 5]; return g(a); }`,
+			anchor: map[string]map[string]string{"g": {"aliasBindIncs": "2:2=v"}},
+		},
+		{
+			// STRING alias bind (#7282 string limb): the self-host retains at
+			// the bind (slot_is_reclaimable_str gate) and releases both slots;
+			// native proves the alias a borrowed view and elides the inc/dec
+			// pair (dead-alias cancellation, #4402 opt 1). Both sound — the
+			// table documents the elision gap per site.
+			name: "alias-bind-string",
+			src: `function f(): i32 {
+	var s: string = "hi" + "!";
+	var v: string = s;
+	var n: i32 = v.len() + s.len();
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "s,v"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"aliasBindIncs": {native: "", selfhost: "3:2=v"}},
+			},
+		},
+		{
+			// STRING[] alias bind — the #7391 limb, at the retain level: the
+			// bind-site retain FIRES on the self-host (this row is what moves
+			// when the deep-retain fix lands: the site stays, the depth
+			// changes); native elides the pair as above.
+			name: "alias-bind-strarr",
+			src: `function f(): i32 {
+	var xs: string[] = ["a", "bb"];
+	var v: string[] = xs;
+	var n: i32 = v.len() + xs.len();
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "v,xs"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"aliasBindIncs": {native: "", selfhost: "3:2=v"}},
+			},
+		},
+		{
+			// STRUCT alias bind (#7282 struct limb / the #7349 site-keyed
+			// credit): retain fires on the self-host, native elides the pair.
+			name: "alias-bind-struct",
+			src: `struct P { xs: i32[], n: i32 }
+function f(): i32 {
+	var p: P = P { xs: [1, 2], n: 3 };
+	var v: P = p;
+	var n: i32 = v.n + p.n;
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "p,v"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"aliasBindIncs": {native: "", selfhost: "4:2=v"}},
+			},
 		},
 		{
 			// MOVE-ON-CONSTRUCTION: an owned rc local consumed at last use in
@@ -826,6 +915,14 @@ function main(): i32 { return fill(3); }`,
 }
 function main(): i32 { return raw(3); }`,
 			anchor: map[string]map[string]string{"raw": {"freeEligible": ""}},
+			// KNOWN aliasBindIncs DIVERGENCE: the self-host classifies the
+			// `buf as usize` bind array-shaped and retains it (addr's sweep
+			// dec balances; buf stays unswept, the guard above); native emits
+			// no retain — buf is tainted on both sides either way. Both leak
+			// the buffer by design, one count apart.
+			diverge: map[string]map[string]divergence{
+				"raw": {"aliasBindIncs": {native: "", selfhost: "3:2=addr"}},
+			},
 		},
 	}
 

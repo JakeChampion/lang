@@ -69,6 +69,11 @@ type rcPlan struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// aliasBindIncs records each *ast.Var binding whose init took the
+	// transfer inc (the alias-retain the Var case of stmt() emits). Recorded
+	// only while RcPlanHook is armed and read only by dumpRcPlan — the
+	// self-host's bind-site retain plan is diffed against it (#4482).
+	aliasBindIncs map[*ast.Var]bool
 	// ownCallMoveArgs[argExpr] is true for the specific argument NODE that
 	// move-on-call marked as the consuming transfer of an `own` param (the
 	// occurrence computeMovedLocals proved to be the param's last use). Every
@@ -272,6 +277,7 @@ func (b *builder) computeRcAnalyses() {
 	// borrowed-derived locals are excluded (only the owner frees).
 	b.rc.freeEligible = b.computeFreeEligible()
 	b.rc.moveSites = map[ast.Node]bool{}
+	b.rc.aliasBindIncs = map[*ast.Var]bool{}
 	b.rc.ownCallMoveArgs = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
 	// Per-RETURN-SITE own-param transfers, which the whole-function

@@ -55,6 +55,11 @@ function wrapped(): i32 {
 		Leaf(l) => { return l.v[0]; },
 		Node(n) => { return 2; },
 	}
+}
+function aliaser(): i32 {
+	var a: i32[] = [1, 2, 3];
+	var b: i32[] = a;
+	return a[0] + b[0];
 }`)
 
 	check := func(fn string, wantLines ...string) {
@@ -78,6 +83,10 @@ function wrapped(): i32 {
 	check("wrapper", "consumedParams: e")
 	// mover: `var b = a` is a's last use — a moves into b.
 	check("mover", "movedLocals: a", "moveSites: ")
+	// aliaser: `a` is read again after `var b = a`, so the bind is a true
+	// alias — the transfer inc fires and the bind site lands in
+	// aliasBindIncs (the retain-plan table the self-host diffs against).
+	check("aliaser", "aliasBindIncs: 42:2=b")
 	// dropper: big's last use is `big[0]` at top-level statement 1 — the
 	// precise drop lands right after it.
 	check("dropper", "freeEligible: big", "preciseDrops: 1=big")

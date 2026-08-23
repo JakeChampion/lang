@@ -349,6 +349,11 @@ function main(): i32 {
     }
 
     if (want_rc_plan) {
+        // The pure per-table analyses come from rc_plan_dump; the retain plan
+        // (aliasBindIncs) is an EMISSION-time record, so lower the module the
+        // way the eval path does and read each function's alias_incs off its
+        // LoweredFn. Same funcs order, so the two halves key together.
+        var pfns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
         var out: string = "";
         var fi: i32 = 0;
         while (fi < mod.funcs.len()) {
@@ -358,6 +363,31 @@ function main(): i32 {
             }
             out = out + "== " + key + "\n";
             out = out + irlower.rc_plan_dump(mod.funcs[fi], mod.structs, mod.funcs);
+            if (fi < pfns.len() && pfns[fi].ok && pfns[fi].alias_incs.len() > 0) {
+                // Lexicographic sort, mirroring native sort.Strings.
+                var abi: string[] = [];
+                var xi: i32 = 0;
+                while (xi < pfns[fi].alias_incs.len()) {
+                    var entry: string = pfns[fi].alias_incs[xi];
+                    var at: i32 = 0;
+                    while (at < abi.len() && abi[at] < entry) { at = at + 1; }
+                    var ns: string[] = [];
+                    var q: i32 = 0;
+                    while (q < at) { ns = ns.append(abi[q]); q = q + 1; }
+                    ns = ns.append(entry);
+                    while (q < abi.len()) { ns = ns.append(abi[q]); q = q + 1; }
+                    abi = ns;
+                    xi = xi + 1;
+                }
+                out = out + "aliasBindIncs: ";
+                var ao: i32 = 0;
+                while (ao < abi.len()) {
+                    if (ao > 0) { out = out + ","; }
+                    out = out + abi[ao];
+                    ao = ao + 1;
+                }
+                out = out + "\n";
+            }
             fi = fi + 1;
         }
         write(out);
