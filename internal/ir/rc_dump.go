@@ -72,6 +72,15 @@ func (b *builder) dumpRcPlan() string {
 	sort.Strings(sites)
 	line("moveSites", strings.Join(sites, ","))
 
+	abi := make([]string, 0, len(b.rc.aliasBindIncs))
+	for v, ok := range b.rc.aliasBindIncs {
+		if ok {
+			abi = append(abi, fmt.Sprintf("%s=%s", nodePos(v), v.Name))
+		}
+	}
+	sort.Strings(abi)
+	line("aliasBindIncs", strings.Join(abi, ","))
+
 	incs := make([]string, 0, len(b.rc.arraySetInc))
 	for c, inc := range b.rc.arraySetInc {
 		incs = append(incs, fmt.Sprintf("%s=%t", nodePos(c), inc))

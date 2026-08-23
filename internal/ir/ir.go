@@ -7886,6 +7886,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
 		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] &&
 			!b.isOwnedContainerRead(n.Init) {
+			if RcPlanHook != nil {
+				b.rc.aliasBindIncs[n] = true
+			}
 			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this

@@ -518,6 +518,12 @@ pub struct LowerState {
     // field per #7253 step 2, formerly "TUPELEM:"-multiplexed into
     // reclaimable_names.
     tup_elem_kinds: string[],
+    // alias_incs: dump-only record of the var-bind alias retains this
+    // function's lowering decided (`line:col=name` per bind whose
+    // VarTypes.alias_inc fired). Exported through LowerResult/LoweredFn for
+    // the `-rc-plan` aliasBindIncs table (#4482); nothing on the emit path
+    // reads it.
+    alias_incs: string[],
     // fn_dyn / fn_sig / fn_ret: the fn-typed value signature sidecars
     // (#5276/#6282/#6862), one concept split by what an indirect call needs:
     // "<name>|<positions>" dyn-boxed argument indices, "<name>|<sigtag>" the
@@ -17395,6 +17401,12 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     var opt_ty: string = vt.opt_ty;
     var sb: LowerState = se.add_local(v.name);
     var slot: i32 = sb.slot_of(v.name);
+    // Retain-plan record (#4482 aliasBindIncs): the classification decided this
+    // bind takes the transfer inc. Dump-only — the store emitters below read
+    // vt.alias_inc themselves.
+    if (vt.alias_inc) {
+        sb = LowerState { ...sb, alias_incs: sb.alias_incs.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + "=" + v.name) };
+    }
     // The binding-SITE key, recorded before anything reads a credit off this slot
     // (#7272). Two `var t` in sibling blocks are two slots under one name; the
     // tuple class credits are keyed on this instead, so each resolves its own.
@@ -25836,6 +25848,10 @@ pub struct LowerResult {
     // Empty when ok. The strict-IR diagnostic prints it; nothing on the emit
     // path reads it.
     why: string,
+    // alias_incs: the var-bind alias retains this lowering decided
+    // (`line:col=name`), carried out of LowerState for the `-rc-plan`
+    // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+    alias_incs: string[],
 }
 
 // lower_failed builds a signature-refusal LowerResult carrying `why`. The
@@ -25845,7 +25861,7 @@ pub struct LowerResult {
 function lower_failed(fn: parser.FuncDecl, why: string): LowerResult {
     var noops: ir.Op[] = [];
     var noslots: i32[] = [];
-    return LowerResult { ok: false, ops: noops, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, str_slots: noslots, why: why };
+    return LowerResult { ok: false, ops: noops, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, str_slots: noslots, why: why, alias_incs: [] };
 }
 
 // fail_why_or_unknown reads a failed state's bail description, naming the gap
@@ -46312,7 +46328,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], alias_incs: [], fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -46451,7 +46467,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     if (trmc_ctor != "") {
         var ts: LowerState = emit_trmc(fn, trmc_ctor, s);
         if (ts.ok) {
-            return LowerResult { ok: true, ops: ir.optimize_ops(ts.ops), n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts), str_slots: str_slots_of(ts), why: "" };
+            return LowerResult { ok: true, ops: ir.optimize_ops(ts.ops), n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts), str_slots: str_slots_of(ts), why: "", alias_incs: ts.alias_incs };
         }
         return lower_failed(fn, "TRMC body did not lower: " + fail_why_or_unknown(ts));
     }
@@ -46632,7 +46648,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             s = lower_stmt_or_self_assign_reuse(fn.body[j], s);
         }
         s = s.with_optret_pending(optret_prev);
-        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, str_slots: noslots, why: fail_why_or_unknown(s) }; }
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, str_slots: noslots, why: fail_why_or_unknown(s), alias_incs: [] }; }
         var pi: i32 = 0;
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
@@ -46856,7 +46872,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // behind -O), in the shared lowering rather than per backend, so all three
     // get it. See ir.optimize_ops.
     tco_ops = ir.optimize_ops(tco_ops);
-    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s), str_slots: str_slots_of(s), why: "" };
+    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s), str_slots: str_slots_of(s), why: "", alias_incs: s.alias_incs };
 }
 
 // lower_module lowers every function in a program. It first collects the
@@ -55013,7 +55029,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -55779,7 +55795,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
         if (funcs[i].receiver_type.len() > 0) {
             fname = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
         }
-        out = out.append(ir.LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots, i64_slots: r.i64_slots, f64_slots: r.f64_slots, str_slots: r.str_slots, ret_type: funcs[i].ret_type });
+        out = out.append(ir.LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots, i64_slots: r.i64_slots, f64_slots: r.f64_slots, str_slots: r.str_slots, ret_type: funcs[i].ret_type, alias_incs: r.alias_incs });
         i = i + 1;
     }
     return out;

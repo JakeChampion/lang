@@ -3370,4 +3370,8 @@ pub struct LoweredFn {
     // ("i32", "string", "" for void) — the type the ops must leave on the
     // stack at the end of the function.
     ret_type: string,
+    // alias_incs: the var-bind alias retains lowering decided
+    // (`line:col=name`), read only by irlower_run's `-rc-plan` mode for the
+    // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+    alias_incs: string[],
 }
