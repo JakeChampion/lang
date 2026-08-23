@@ -42028,10 +42028,10 @@ function emit_structarr_reclaim_store(se: LowerState, slot: i32): LowerState {
 // reclaimable string[] slot gets. One route since #7230: split/lines segments
 // are OWNED COPIES now (rt_src_str_split / rt_src_str_lines append
 // `slice + ""`), so the SARRB class takes the same rc-aware full free as every
-// other string[] — the view-aware siblings (__fern_str_arr_view_free freeing
-// boxes alone) would strand each element's data buffer. The strarr_builtin
-// flag still gates the SARRB credit (slot_is_reclaimable_strarr): it is the
-// binding-site type confirmation, no longer a release selector.
+// other string[] — a box-only free would strand each element's data buffer.
+// The strarr_builtin flag still gates the SARRB credit
+// (slot_is_reclaimable_strarr): it is the binding-site type confirmation, no
+// longer a release selector.
 function strarr_free_helper(s: LowerState, i: i32): string {
     return "__fern_str_arr_free";
 }
