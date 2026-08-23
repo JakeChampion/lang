@@ -598,15 +598,15 @@ function leak_check_on(): boolean {
 // clean run stays silent of `fern-sanitizer:` lines, so "was this clean" is
 // answerable without reading the census numbers.
 //
-// Two gaps versus the native backend, both honest subsets rather than
+// One gap versus the native backend, an honest subset rather than
 // silently-different behaviour:
 //
-//   - No use-after-free quarantine. Native poisons a freed block's rc word
-//     and refuses to recycle it; this runtime's free sites would each need
-//     the same treatment.
 //   - No backtrace under the report. Native routes through __fern_report,
 //     which walks the frame-pointer chain; there is no such helper here, so
 //     the message is the whole diagnostic.
+//
+// The use-after-free quarantine that used to be the second gap is
+// rc_free_debug_on() below — implied by this flag, ast.ApplySanitize parity.
 //
 // It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
 // probe you point at a reduced repro, not a standing mode.
@@ -615,6 +615,41 @@ function sanitize_on(): boolean {
         Some(_) => { return true; },
         None => { return false; }
     }
+}
+
+// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
+// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
+// the native RcFreeDebug port, closing the first gap listed above). Under it
+// NOTHING is recycled: every free site writes ast.RcPoison (0x7EEDFACE) over
+// the rc word where the block has one and declines its freelist push — a
+// recycled block would overwrite its own poison — so __fern_alloc just keeps
+// bumping, and the rc helpers die with a named report the moment a stale
+// reference touches a poisoned block. A quarantined block still counts as a
+// FREE for the census (hev_free runs at the release), so the two detectors
+// compose instead of every correct free reading as a leak.
+function rc_free_debug_on(): boolean {
+    if (sanitize_on()) { return true; }
+    match (env("FERN_RC_FREE_DEBUG")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// quarantine_rc: the rc-word store a free path writes as it releases the
+// block — ast.RcPoison under the quarantine (nothing pushes the block, so the
+// poison survives to the next toucher), the defensive 0 otherwise.
+function quarantine_rc(addr: string): string {
+    if (rc_free_debug_on()) { return "    movl $2129656526, " + addr + "\n"; }
+    return "    movl $0, " + addr + "\n";
+}
+
+// san_poison_check: the UAF trap after an rc-word load. ast.RcPoison is a
+// large POSITIVE value precisely so the immortal (`js`) guard cannot swallow
+// it; only this explicit compare sees it. The abort never returns, so a bare
+// je needs no live-side label.
+function san_poison_check(reg: string): string {
+    if (rc_free_debug_on()) { return "    cmpl $2129656526, " + reg + "\n    je __fern_san_abort_uaf\n"; }
+    return "";
 }
 
 // hev_on reports whether either heap-event diagnostic is on, i.e. whether the
@@ -667,10 +702,15 @@ function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: s
     s = s.write("    call __fn___fern_" + vfree + "\n");
     s = s.write("    addq $8, %rsp\n");
     s = hev_free(s, "%rbx", "$2");
+    // Quarantine (rc_free_debug_on): the raw 16-byte box has no rc word to
+    // poison, so declining the push is the whole treatment — never recycled,
+    // never able to alias a later allocation.
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
     s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
     s = s.write("    movq %rbx, 16(%r8)\n");         // freelist[2] = box
+    }
     s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
     s = s.write("    popq %rbx\n");
     s = s.write(".L" + lbl + "_ret:\n");
@@ -994,6 +1034,28 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
 function san_underflow_abort(): string {
     if (sanitize_on()) { return "    call __fern_san_abort\n"; }
     return "";
+}
+
+// emit_san_uaf_abort emits __fern_san_abort_uaf — the quarantine's fatal
+// report: one write(2) of the diagnostic (byte-for-byte the native backends'
+// text) and exit 124 (ExitSanitizer). .globl because the rc helpers that
+// jump here are emitted into ORDINARY generated code, which under
+// -per-module-emit-all lands in a different unit from this (the entry's).
+function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .section .rodata\n");
+    s = s.write(".Lsan_uaf:\n    .ascii \"fern-sanitizer: use-after-free (touched a quarantined block)\\n\"\n");
+    s = s.write("    .section .text\n");
+    s = s.write("    .globl __fern_san_abort_uaf\n");
+    s = s.write("__fern_san_abort_uaf:\n");
+    s = s.write("    leaq .Lsan_uaf(%rip), %rsi\n");
+    s = s.write("    movq $61, %rdx\n");
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    movq $1, %rax\n");
+    s = s.write("    syscall\n");
+    s = s.write("    movq $124, %rdi\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    syscall\n");
+    return s;
 }
 
 // hev_shim_site emits a box shim's site prologue: record OUR caller as the
@@ -1727,6 +1789,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Lshrcinc_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lshrcinc_ret\n");
     s = s.write("    addl $1, %ecx\n");
@@ -1761,6 +1824,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    call __fern_hev_f\n");
         s = s.write("    addq $16, %rsp\n");
     }
+    // Quarantine (rc_free_debug_on): the large tier's single choke point —
+    // one decline covers every >=512 KiB free. Callers with an rc word have
+    // already poisoned it at their own rc store.
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq 524287(%rsi), %rax\n");        // bytes + (512 KiB - 1)
     s = s.write("    andq $-524288, %rax\n");            // cap = round_up(bytes, 512 KiB)
     s = s.write("    shrq $19, %rax\n");                 // class = cap >> 19
@@ -1768,6 +1835,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq (%rdx,%rax,8), %rcx\n");       // old head
     s = s.write("    movq %rcx, (%r8)\n");               // *base = old head
     s = s.write("    movq %r8, (%rdx,%rax,8)\n");        // heads[class] = base
+    }
     s = s.write(".Llpush_ret:\n");
     s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
@@ -1777,6 +1845,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Larrdec_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Larrdec_ret\n");
     s = s.write("    cmpl $1, %ecx\n");
@@ -1790,17 +1859,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl %ecx, -8(%rax)\n");
     s = s.write("    jmp .Larrdec_ret\n");
     s = s.write(".Larrdec_free:\n");
-    s = s.write("    movl $0, -8(%rax)\n");
+    s = s.write(quarantine_rc("-8(%rax)"));
     s = s.write("    movl -16(%rax), %ecx\n");
     s = s.write("    addq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Larrdec_large\n");
     s = s.write("    leaq -16(%rax), %rdx\n");
     s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+    }
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): return the >=512 KiB array block (base = arr-16, bytes =
@@ -1840,6 +1911,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // rc==1 frees the data buffer + the box; rc==0 is a double-free, caught by the
     // underflow counter (matching __fn___fern_arr_dec) rather than corrupting the heap.
     s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lstrfree_ret\n");          // negative = immortal -> skip
     s = s.write("    cmpl $1, %ecx\n");
@@ -1866,20 +1938,27 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rdx\n");         // large tier -> recycle via __fern_large_push
     s = s.write("    jae .Lstrfree_large\n");
     s = hev_free(s, "%rcx", "%rdx");
+    // Quarantine (rc_free_debug_on): the DATA buffer carries no rc word, so
+    // declining the push is the whole treatment for it.
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
     s = s.write("    movq %rsi, (%rcx)\n");         // *data = old head
     s = s.write("    movq %rcx, (%r8,%rdx,8)\n");   // freelist[words] = data
+    }
     s = s.write(".Lstrfree_box:\n");
-    // The rc-headered block is base = box-8 (24 bytes = class 3). Zero the rc first
-    // (defensive against a re-free reading a live rc), then push base onto freelist[3].
-    s = s.write("    movl $0, -8(%rax)\n");         // rc = 0
+    // The rc-headered block is base = box-8 (24 bytes = class 3). The rc store
+    // (0, or the quarantine poison) lands before the push so a re-free reads a
+    // dead count, then base goes onto freelist[3].
+    s = s.write(quarantine_rc("-8(%rax)"));
     s = s.write("    leaq -8(%rax), %rdx\n");       // base = box-8
     s = hev_free(s, "%rdx", "$3");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 24(%r8), %rsi\n");        // freelist[3] (24-byte block = 3 words)
     s = s.write("    movq %rsi, (%rdx)\n");         // *base = old head
     s = s.write("    movq %rdx, 24(%r8)\n");        // freelist[3] = base
+    }
     s = s.write("    jmp .Lstrfree_ret\n");
     // Large tier (#3425): recycle the >=512 KiB string DATA buffer (%rcx = data,
     // %rdx = words) instead of leaking, then continue to free the 24-byte box. %rax
@@ -1936,12 +2015,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jb .Lstrvfree_ret\n");
     s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
     s = s.write("    jae .Lstrvfree_ret\n");        // base >= heap_end -> not our arena, skip
-    s = s.write("    movl $0, -8(%rax)\n");         // rc = 0 (defensive vs a re-free)
+    s = s.write(quarantine_rc("-8(%rax)"));
     s = hev_free(s, "%rdx", "$3");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 24(%r8), %rsi\n");        // freelist[3] (24-byte block = 3 words)
     s = s.write("    movq %rsi, (%rdx)\n");         // *base = old head
     s = s.write("    movq %rdx, 24(%r8)\n");        // freelist[3] = base
+    }
     s = s.write(".Lstrvfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the
@@ -1966,6 +2047,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
     s = s.write("    jb .Lsaf_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lsaf_ret\n");              // negative = immortal -> skip
     s = s.write("    cmpl $1, %ecx\n");
@@ -1989,17 +2071,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lsaf_loop\n");
     s = s.write(".Lsaf_freebuf:\n");
     // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-    s = s.write("    movl $0, -8(%rbx)\n");         // rc = 0 (defensive vs re-free)
+    s = s.write(quarantine_rc("-8(%rbx)"));
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
     s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
+    }
     s = s.write(".Lsaf_pop:\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -2047,6 +2131,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
     s = s.write("    jb .Lsavf_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lsavf_ret\n");             // negative = immortal buffer -> skip
     s = s.write("    cmpl $1, %ecx\n");
@@ -2068,17 +2153,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Lsavf_loop\n");
     s = s.write(".Lsavf_freebuf:\n");
-    s = s.write("    movl $0, -8(%rbx)\n");         // rc = 0 (defensive vs re-free)
+    s = s.write(quarantine_rc("-8(%rbx)"));
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lsavf_large\n");
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
     s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
+    }
     s = s.write(".Lsavf_pop:\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -2118,6 +2205,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
     s = s.write("    jb .Laaf_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Laaf_ret\n");              // negative = immortal -> skip
     s = s.write("    cmpl $1, %ecx\n");
@@ -2139,17 +2227,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Laaf_loop\n");
     s = s.write(".Laaf_freebuf:\n");
-    s = s.write("    movl $0, -8(%rbx)\n");         // rc = 0 (defensive vs re-free)
+    s = s.write(quarantine_rc("-8(%rbx)"));
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Laaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+    }
     s = s.write(".Laaf_pop:\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -2185,6 +2275,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");
     s = s.write("    jb .Lssaf_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Lssaf_ret\n");
     s = s.write("    cmpl $1, %ecx\n");
@@ -2206,17 +2297,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Lssaf_loop\n");
     s = s.write(".Lssaf_freebuf:\n");
-    s = s.write("    movl $0, -8(%rbx)\n");
+    s = s.write(quarantine_rc("-8(%rbx)"));
     s = s.write("    movl -16(%rbx), %ecx\n");
     s = s.write("    addq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");
     s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+    }
     s = s.write(".Lssaf_pop:\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -2256,6 +2349,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
     s = s.write("    jb .Loaf_ret\n");
     s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    testl %ecx, %ecx\n");
     s = s.write("    js .Loaf_ret\n");              // negative = immortal -> skip
     s = s.write("    cmpl $1, %ecx\n");
@@ -2297,17 +2391,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Loaf_loop\n");
     s = s.write(".Loaf_freebuf:\n");
-    s = s.write("    movl $0, -8(%rbx)\n");         // rc = 0 (defensive vs re-free)
+    s = s.write(quarantine_rc("-8(%rbx)"));
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Loaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+    }
     s = s.write(".Loaf_pop:\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -2409,10 +2505,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rdx\n");
     s = s.write("    jae .Lsarelo_fresh\n");
     s = hev_free(s, "%rcx", "%rdx");
+    if (rc_free_debug_on()) {
+        // Quarantine: the mispaired donor is freed here, so it gets the same
+        // poison-and-decline every other free path applies.
+        s = s.write("    movl $2129656526, -8(%rax)\n");
+    } else {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rdx,8), %rsi\n");    // old head
     s = s.write("    movq %rsi, (%rcx)\n");          // *block = head
     s = s.write("    movq %rcx, (%r8,%rdx,8)\n");    // freelist[words] = block
+    }
     s = s.write(".Lsarelo_fresh:\n");
     s = s.write("    movq 8(%rsp), %rdi\n");         // slots = arr_box cap
     // TAIL-jump (not call): arr_box returns straight to OUR caller with the
@@ -2439,6 +2541,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0x10000, %rcx\n");      // low-addr / SSO sentinel
     s = s.write("    jb .Lsd_ret\n");
     s = s.write("    movl -8(%rcx), %esi\n");      // old rc
+    s = s.write(san_poison_check("%esi"));
     s = s.write("    testl %esi, %esi\n");
     s = s.write("    js .Lsd_ret\n");              // static sentinel (rc<0)
     s = s.write("    cmpl $1, %esi\n");
@@ -2447,20 +2550,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $3, %rsi\n");            // words = cap + 3 (header)
     s = s.write("    cmpq $65536, %rsi\n");
     s = s.write("    jae .Lsd_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    movl $0, -8(%rcx)\n");        // mark freed
+    s = s.write(quarantine_rc("-8(%rcx)"));
     s = s.write("    leaq -16(%rcx), %rdi\n");     // old box base
     s = hev_free(s, "%rdi", "%rsi");
+    if (!rc_free_debug_on()) {
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rsi,8), %r9\n");
     s = s.write("    movq %r9, (%rdi)\n");         // node.next = head
     s = s.write("    movq %rdi, (%r8,%rsi,8)\n");  // head = node
+    }
     s = s.write(".Lsd_ret:\n");
     s = s.write("    ret\n");                      // %rax = new
     // Large tier (#3425): recycle the >=512 KiB old box (base = old-16, bytes =
     // words*8) instead of leaking. %rax holds the return value `new` and
     // __fern_large_push clobbers it, so preserve it across the call.
     s = s.write(".Lsd_large:\n");
-    s = s.write("    movl $0, -8(%rcx)\n");        // mark freed
+    s = s.write(quarantine_rc("-8(%rcx)"));
     s = s.write("    leaq -16(%rcx), %r8\n");      // base = old - 16
     s = s.write("    leaq 0(,%rsi,8), %rsi\n");    // bytes = words*8
     s = s.write("    pushq %rax\n");               // preserve return value (new)
@@ -2853,6 +2958,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // note below, never freed). rc == 1 (sole owner) and the bit-31
     // static/immortal sentinel keep today's in-place fast path.
     s = s.write("    movq -8(%r12), %rcx\n");    // rc word
+    s = s.write(san_poison_check("%ecx"));
     s = s.write("    cmpq $1, %rcx\n");
     s = s.write("    je .Larr_push_rc_ok\n");
     s = s.write("    btq $31, %rcx\n");
@@ -2966,6 +3072,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    cmpq $0x10000, %r12\n");     // grew: free the dead old box %r12
         s = s.write("    jb .Lapo_ret\n");            // low-addr / SSO sentinel
         s = s.write("    movl -8(%r12), %ecx\n");     // old rc
+        s = s.write(san_poison_check("%ecx"));
         s = s.write("    testl %ecx, %ecx\n");
         s = s.write("    js .Lapo_ret\n");            // static sentinel (rc<0)
         s = s.write("    cmpl $1, %ecx\n");
@@ -2974,13 +3081,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    addq $3, %rcx\n");           // words = cap + 3 (header)
         s = s.write("    cmpq $65536, %rcx\n");
         s = s.write("    jae .Lapo_large\n");         // large tier -> recycle via __fern_large_push
-        s = s.write("    movl $0, -8(%r12)\n");       // mark freed
+        s = s.write(quarantine_rc("-8(%r12)"));
         s = s.write("    leaq -16(%r12), %rdx\n");    // old box base
         s = hev_free(s, "%rdx", "%rcx");
+        if (!rc_free_debug_on()) {
         s = s.write("    leaq __fern_freelist(%rip), %r8\n");
         s = s.write("    movq (%r8,%rcx,8), %rdi\n");
         s = s.write("    movq %rdi, (%rdx)\n");       // node.next = head
         s = s.write("    movq %rdx, (%r8,%rcx,8)\n"); // head = node
+        }
         s = s.write(".Lapo_ret:\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
@@ -2991,7 +3100,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // `new` and __fern_large_push clobbers it, so preserve it across the call;
         // %r12 is callee-saved.
         s = s.write(".Lapo_large:\n");
-        s = s.write("    movl $0, -8(%r12)\n");       // mark freed
+        s = s.write(quarantine_rc("-8(%r12)"));
         s = s.write("    leaq -16(%r12), %r8\n");     // base = old - 16
         s = s.write("    leaq 0(,%rcx,8), %rsi\n");   // bytes = words*8
         s = s.write("    pushq %rax\n");              // preserve return value (new)
@@ -7576,6 +7685,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (hev_on()) {
         s = s.write("    .text\n");
         s = emit_hev_runtime(s);
+    }
+    // The UAF quarantine's fatal report. Self-contained — its own write(2) +
+    // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
+    // standalone, without leakcheck. Entry-only, like the hev block above.
+    if (rc_free_debug_on()) {
+        s = s.write("    .text\n");
+        s = emit_san_uaf_abort(s);
     }
     // FFI __c_call<n> shims (#4375): allocation-free register-marshal + `call
     // *fn`, so independent of the heap runtime above. Emitted in .text when the
