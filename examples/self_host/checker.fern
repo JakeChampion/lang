@@ -6179,15 +6179,15 @@ function trait_req_idx(tr: string, reqs: parser.TraitReq[]): i32 {
 // does not answer a `Type.f()` call. Supertraits are followed, so `T: Num`
 // reaches `Zero.zero` when `trait Num: Zero`; `depth` bounds a cyclic
 // supertrait chain.
-function trait_assoc_req(s: Scope, tr: string, field: string, depth: i32): AssocHit {
+function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, depth: i32): AssocHit {
   if (depth > 8) {
     return assoc_miss();
   }
-  var idx: i32 = trait_req_idx(tr, s.trait_reqs);
+  var idx: i32 = trait_req_idx(tr, reqs);
   if (idx < 0) {
     return assoc_miss();
   }
-  var req: parser.TraitReq = s.trait_reqs[idx];
+  var req: parser.TraitReq = reqs[idx];
   for rs in req.req_sigs {
     if (rs.name == field) {
       if (rs.params.len() == 0) {
@@ -6199,7 +6199,7 @@ function trait_assoc_req(s: Scope, tr: string, field: string, depth: i32): Assoc
     }
   }
   for supertrait in req.supertraits {
-    var sh: AssocHit = trait_assoc_req(s, supertrait, field, depth + 1);
+    var sh: AssocHit = trait_assoc_req(reqs, supertrait, field, depth + 1);
     if (sh.found) {
       return sh;
     }
@@ -6227,7 +6227,7 @@ function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
     if (i == bound.len() || bound[i] == b'+') {
       if (i > start) {
         var tr: str = bound[start:i];
-        var h: AssocHit = trait_assoc_req(s, tr, field, 0);
+        var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, 0);
         if (h.found) {
           return h;
         }
@@ -6263,7 +6263,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
   for imp in s.impls {
     if (imp.impl_type == tyname && util.has_str(imp.method_names, field)) {
       if (s.lookup_method(field, tyname).name.len() == 0) {
-        var h: AssocHit = trait_assoc_req(s, imp.trait_name, field, 0);
+        var h: AssocHit = trait_assoc_req(s.trait_reqs, imp.trait_name, field, 0);
         if (h.found) {
           return h;
         }
@@ -10617,7 +10617,8 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-// --- E060 / E062: dyn downcast target + ambiguous dyn method (#4347) --------
+// --- E060 / E062 / E021: dyn downcast target, ambiguous dyn method (#4347),
+// --- associated function called through a dyn value (#7398) ----------------
 //
 // Both checks key on a local/param whose ANNOTATION is a `dyn` type ("dyn A" /
 // "dyn A + B") — the self-host checker has no dyn-trait Type (a dyn value
@@ -10754,6 +10755,8 @@ function e060_is_primitive_name(t: string): boolean {
 //   any trait in d's set (every trait known) → the not-implementing arm, with
 //   the missing traits joined " + " exactly like native's missingDynTraits.
 //   E062 — `d.m(args)` where d's set has 2+ traits and 2+ of them declare m.
+//   E021 — `d.m(args)` where m is an ASSOCIATED (receiver-less) requirement of
+//   a trait in d's set: nothing can dispatch it through the erased Self.
 //
 // The recursion is astwalk's, so the checks reach every expression kind the
 // shared spine knows. The hand-written walk this replaced listed nine kinds and
@@ -10810,21 +10813,31 @@ function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Modul
                 var rset: string = e060_set_of_name(dyns, rid.name);
                 if (rset.len() > 0) {
                   var rtrs: string[] = e060_split_traits(rset);
-                  if (rtrs.len() >= 2) {
-                    var declaring: string = "";
-                    var n_decl: i32 = 0;
-                    for rtr in rtrs {
-                      if (e060_trait_declares(mod, rtr, fa.field)) {
-                        if (n_decl > 0) {
-                          declaring = declaring + ", ";
-                        }
-                        declaring = declaring + rtr;
-                        n_decl = n_decl + 1;
+                  var declaring: string = "";
+                  var n_decl: i32 = 0;
+                  for rtr in rtrs {
+                    if (e060_trait_declares(mod, rtr, fa.field)) {
+                      if (n_decl > 0) {
+                        declaring = declaring + ", ";
+                      }
+                      declaring = declaring + rtr;
+                      n_decl = n_decl + 1;
+                    }
+                  }
+                  if (rtrs.len() >= 2 && n_decl >= 2) {
+                    return out.append(dg_at("E062", "ambiguous method \"" + fa.field + "\" on `dyn " + rset + "`: declared by traits " + declaring, fa.line, fa.col));
+                  }
+                  var assoc_owner: string = "";
+                  for atr in rtrs {
+                    if (assoc_owner.len() == 0) {
+                      var ah: AssocHit = trait_assoc_req(mod.trait_reqs, atr, fa.field, 0);
+                      if (ah.found) {
+                        assoc_owner = ah.owner;
                       }
                     }
-                    if (n_decl >= 2) {
-                      return out.append(dg_at("E062", "ambiguous method \"" + fa.field + "\" on `dyn " + rset + "`: declared by traits " + declaring, fa.line, fa.col));
-                    }
+                  }
+                  if (assoc_owner.len() > 0) {
+                    return out.append(dg_at("E021", "\"" + fa.field + "\" is an associated function of trait " + assoc_owner + ", not a method; it has no `self` receiver, so it cannot be called through a `dyn " + rset + "` value — call it on a concrete type", fa.line, fa.col));
                   }
                 }
               },

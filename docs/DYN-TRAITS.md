@@ -198,11 +198,17 @@ Rules (checked when a `dyn Trait` type is **used**, so a trait can have
 non-object-safe methods and still be usable statically — only `dyn`
 usage is gated):
 
-1. Every method's first parameter is `self: Self` (already guaranteed by
-   the trait grammar).
-2. No method takes `Self` (or a type mentioning `Self`, e.g. `Self[]`,
+1. No method takes `Self` (or a type mentioning `Self`, e.g. `Self[]`,
    `Option[Self]`) in a non-receiver parameter.
-3. No method returns `Self` (or a type mentioning `Self`).
+2. No method returns `Self` (or a type mentioning `Self`).
+
+A trait requirement with no `self` receiver is an **associated function**
+(`trait Zero { function zero(): Self; }`). Whether such a trait may be a
+`dyn` object at all is open (#7264) — native's `objectSafe` allows it and
+the self-host's does not. What is settled either way is the CALL: an
+associated function has no receiver to dispatch on and gets no vtable
+slot, so `d.f(...)` through a `dyn` value is E021 in both compilers
+(#7398). Reach it through a concrete type instead.
 
 A `dyn Trait` whose trait violates these is an error at the use site:
 

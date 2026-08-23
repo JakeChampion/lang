@@ -5883,7 +5883,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
                 }
                 dfi = dfi + 1;
             }
-            s = s.write("    pushq $0\n");   // fallback (unreachable for a valid dyn value)
+            // No arm matched. Unreachable for a well-typed dyn value, so abort
+            // (exit 134, like __fern_oob_abort) rather than answer 0.
+            s = s.write("    movq $60, %rax\n    movq $134, %rdi\n    syscall\n");
             s = s.write(dend + ":\n");
         } else if (o.kind_tag == 146) {  // dyn_box
             // Heap-box a primitive/string value coerced into a `dyn Trait` slot
