@@ -571,6 +571,104 @@ function mk(): (string, i32) { return (w("ab"), 7); }
 function round(i: i32): i32 { var (a, b) = mk(); var v: string = a; return v.len() + b + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 57, allocs: 300, frees: 0,
+		},
+		{
+			// The string[] limb (#7391), and the one whose alias takes the SAME
+			// DEEP "SARR:" class the source holds — where a struct alias must take
+			// box-only "NODEEP:". The difference is in the release itself:
+			// __fern_str_arr_free is rc-gated (rc>1 decs and leaves the elements
+			// to the other owner; only rc==1 walks them), so two credited slots
+			// cannot walk twice. #7391 was filed proposing a deep retain against
+			// an ungated walk; the gate has been there since #7292, which is what
+			// makes the ordinary shallow duplication sound. Base: 500 allocs /
+			// 100 frees per 100 rounds, 6400 live.
+			name: "strarr_alias",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var src: string[] = [mkstr("x"), mkstr("y")];
+    var t: i32 = 0;
+    var x: string[] = src;
+    t = (t + x.len()) % 101;
+    t = (t + src.len()) % 101;
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 68, allocs: 500, frees: 500,
+		},
+		{
+			// The block-scoped alias site — the matrix's if_block row, first-class.
+			name: "strarr_alias_in_a_conditional",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var src: string[] = [mkstr("x"), mkstr("y")];
+    var t: i32 = 0;
+    if (i % 2 == 0) { var x: string[] = src; t = (t + x.len()) % 101; }
+    t = (t + src.len()) % 101;
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 51, allocs: 500, frees: 500,
+		},
+		{
+			// ELEMENT BYTES read through both slots before the sweep — the answer
+			// is what proves the gated walk freed elements exactly once and late:
+			// a premature element free turns 'x'/'y' into recycled bytes (a wrong
+			// answer, the #7393 signature), a double walk trips the underflow 99.
+			name: "strarr_alias_element_bytes",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var src: string[] = [mkstr("x"), mkstr("y")];
+    var x: string[] = src;
+    return (x[0][0] as i32 + src[1][0] as i32 + i) % 101;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 32, allocs: 500, frees: 500,
+		},
+		{
+			// REFUSED: a chain makes x itself strarr-unsafe (`var y = x` is a
+			// bare-ident bind the forgiveness list doesn't hold), so x is not an
+			// eligible alias site and src keeps no credit. The shallow is_arr
+			// decs still return the BUFFER; the element box + data leak, which is
+			// the sound direction.
+			name: "strarr_alias_chain_refused",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var src: string[] = [mkstr("x")];
+    var x: string[] = src;
+    var y: string[] = x;
+    return (x.len() + y.len() + src.len() + i) % 101;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 68, allocs: 300, frees: 100,
+		},
+		{
+			// REFUSED: an ELEMENT BIND from the alias (`var e = x[0]`) is a
+			// lasting element pointer the deep free would dangle — exactly the
+			// hazard that makes the alias vet through the strarr gate rather
+			// than body_unsafe_for. Sound leak; MORE frees here means the vet
+			// weakened.
+			name: "strarr_alias_elem_bind_refused",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var src: string[] = [mkstr("x"), mkstr("y")];
+    var x: string[] = src;
+    var e: string = x[0];
+    return (e.len() + src.len() + i) % 101;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 67, allocs: 500, frees: 100,
+		},
+		{
+			// REFUSED: a parameter source owns nothing to share — the collector
+			// never lists one, so neither forgiveness nor credit exists. The
+			// shallow decs return the buffer; the element leaks. The string[]
+			// sibling of string_alias_of_a_parameter_refused.
+			name: "strarr_alias_of_a_parameter_refused",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function plen(p: string[]): i32 { var v: string[] = p; return v.len(); }
+function round(i: i32): i32 { var src: string[] = [mkstr("x")]; return (plen(src) + i) % 101; }
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 70, allocs: 300, frees: 100,
 		}}
 }
 

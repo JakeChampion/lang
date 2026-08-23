@@ -106,8 +106,8 @@ str__fnscope__alias_local                     clean  clean  clean on both sides
 str__if_block__alias_local                    clean  clean  clean on both sides
 str__fnscope__alias_param                     clean  leak   call-arg escape taints main's keep; constant-size (keep never swept), not per-round
 str__if_block__alias_param                    clean  leak   same constant keep-sweep refusal as the fnscope cell
-str_arr__fnscope__alias_local                 clean  leak   string[] sibling of the #7282 alias-credit family, not yet granted; per-round
-str_arr__if_block__alias_local                clean  leak   same missing string[] alias credit
+str_arr__fnscope__alias_local                 clean  clean  #7391: alias shares the "SARR:" credit; __fern_str_arr_free's rc gate walks elements once, at the last owner
+str_arr__if_block__alias_local                clean  clean  same #7391 alias credit, block-scoped site
 str_arr__fnscope__alias_param                 clean  leak   constant keep-sweep refusal, string[] flavor
 str_arr__if_block__alias_param                clean  leak   same as fnscope
 struct_arr_field__fnscope__alias_local        clean  clean  clean on both sides
