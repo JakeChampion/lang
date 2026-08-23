@@ -3360,36 +3360,38 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 
 // uniformEnumDropLoads reports the per-box droppable payload loads
 // for an enum IFF every payload-carrying variant shares an
-// identical droppable signature — same offsets, and the same
-// array-drop-vs-flat-dec kind at each. In that case the loads can
-// be emitted unconditionally inside the is_unique guard with no
-// runtime tag switch, because every heap box of this enum (whatever
-// its tag) holds droppable pointers at exactly those offsets.
+// identical droppable signature — the same offsets, carrying the same
+// TYPE at each. In that case the loads can be emitted unconditionally
+// inside the is_unique guard with no runtime tag switch, because every
+// heap box of this enum (whatever its tag) holds droppable payloads of
+// exactly those types at exactly those offsets.
 //
-// This is the union shape (`type V = A | B | ...`): each variant
-// carries a single struct pointer at offset 4. Payloadless
-// variants (sentinels — never heap boxes) don't constrain the
-// signature and are skipped. Returns (nil, false) when no variant
+// The type, not just the drop kind, is what makes the signature uniform:
+// callers release `ld.typ` with a TYPE-SPECIFIC helper (the generated
+// `__drop_struct_<T>`, the per-element array walk), so a union whose
+// variants carry different concrete payloads at one offset would have one
+// variant's box released through another's drop glue — reading fields at
+// the wrong offsets and widths.
+//
+// Payloadless variants (sentinels — never heap boxes) don't constrain
+// the signature and are skipped. Returns (nil, false) when no variant
 // has a droppable payload, or when payload-carrying variants
 // disagree — those enums fall back to the plain box dec (their
 // payloads leak, which is safe under no-free). Generic ParamType
 // payloads are not statically droppable, so generic enums return
 // (nil, false) too.
 func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
-	dropKind := func(t ast.Type) (int, bool) {
+	droppable := func(t ast.Type) bool {
 		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
-			return 1, true // recursive array drop
+			return true // recursive array drop
 		}
 		if arrElemIsRcTracked(t) {
-			return 2, true // flat dec (struct / enum / closure)
+			return true // struct / enum / closure
 		}
-		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
-			return 3, true // two-word string dec (__fern_str_dec)
+		if _, isStr := t.(ast.StringType); isStr {
+			return ast.UseTwoWordStrings(ptrW) || ptrW == 8
 		}
-		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
-			return 4, true // single-word native string dec (__fern_str_dec)
-		}
-		return 0, false
+		return false
 	}
 	var want []enumDropLoad
 	var wantKey string
@@ -3402,12 +3404,11 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 		var loads []enumDropLoad
 		key := ""
 		for i, pt := range v.Payloads {
-			kind, ok := dropKind(pt)
-			if !ok {
+			if !droppable(pt) {
 				continue
 			}
 			loads = append(loads, enumDropLoad{off: offsets[i], typ: pt})
-			key += fmt.Sprintf("%d:%d;", offsets[i], kind)
+			key += fmt.Sprintf("%d:%s;", offsets[i], pt.String())
 		}
 		if len(loads) == 0 {
 			// A payload-carrying variant with NO droppable payload
