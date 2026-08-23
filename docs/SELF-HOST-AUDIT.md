@@ -432,14 +432,31 @@ findings. Ranked by leverage.
     and a comment claiming each lambda is visited "exactly once however deep it
     nests" was true and still described a broken walk.
 
-    **4 remain**, and neither family is a transcription:
+    | `ru_expr` — E051 | 653 | **2** |
 
-    | code | rows | pass | blocker |
-    |---|---:|---|---|
-    | E051 | 3 | `ow_stmts` | flow-sensitive `moved` set with a join at `StmtIf` — the same blocker as `ru_expr` |
-    | E044 | 1 | `e044_stmts` | the under-report already pinned in the sequence gate; needs a scoping decision |
+    **The class is finished AS A TRAVERSAL PROBLEM.** Neither remaining row is a
+    walk that fails to reach somewhere:
 
-    Emptying that map closes the class.
+    | code | row | why it is not a missing traversal |
+    |---|---|---|
+    | E051 | `own-self-reassign-ok` | the **Go checker over-reports** — the `own` self-reassign allowance is lost inside a lambda body (#7452). The self-host's silence is CORRECT and must not be "fixed" |
+    | E044 | `e044-capture-void` | the under-report already pinned in the sequence gate; needs a scoping decision |
+
+    **The oracle is not automatically right.** Every other row this gate
+    surfaced was a self-host under-report, and the reflex is to close the gap by
+    matching native. On `own-self-reassign-ok` that would have taught the
+    self-host to reproduce a false positive. The entry in
+    `lambdaBodyDivergences` says so explicitly for that reason.
+
+    `ru_expr` had no `ExprLambda` arm at all — only the IIFE case inside
+    `ExprCall`, where the body genuinely belongs to the enclosing flow because
+    it runs in place. A closure body is analysed the way `ow_loop` analyses a
+    loop body: from the state at the point the closure is CREATED, out-state
+    discarded. Measured, not assumed — native reports E050 for a capture
+    consumed inside a closure AFTER being moved outside it, which only a walk
+    carrying the enclosing `moved` in can produce, and native reports no
+    loop-style "may repeat" diagnostic for closures, which is why this adds
+    none.
 
     **A collector can be fold-SHAPED and still be wrong to fold, because the
     spine's visit ORDER is not the consumer's.** `match_diags` was the strongest

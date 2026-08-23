@@ -1534,9 +1534,14 @@ func wrapMainBodyInLambda(src string) string {
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
 var lambdaBodyDivergences = map[string]string{
-	"own-self-reassign-ok": "E051 — ow_stmts, whose `moved` set is flow-sensitive and joins at StmtIf; the same blocker as ru_expr",
-	"own-kept-alive-bad":   "E051 — same pass",
-	"own-second-read-bad":  "E051 — same pass",
+	// The SELF-HOST is right here and the Go checker over-reports, so this row
+	// must NOT be "fixed" by matching the oracle. An `own` parameter needs a
+	// fresh construction or another `own` param — passing a local is E051 in
+	// both compilers everywhere — except for the self-reassign form
+	// `a = grow(a, 1)`, which both accept at top level. Move that body into a
+	// lambda and the Go checker loses the allowance and flags every call; the
+	// self-host keeps it. Filed as a Go-side bug.
+	"own-self-reassign-ok": "E051 — Go checker over-reports: the self-reassign allowance is lost inside a lambda body. The self-host's silence is CORRECT",
 	"e044-capture-void":    "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
 }
 
