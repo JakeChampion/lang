@@ -94,18 +94,14 @@ pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt
         parser.ExprUnary(u) => { return fold_expr_nodes(u.operand, acc, visit_stmt, visit_expr, descend); },
         parser.ExprCall(c) => {
             acc = fold_expr_nodes(c.callee, acc, visit_stmt, visit_expr, descend);
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = fold_expr_nodes(c.args[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for arg in c.args {
+                acc = fold_expr_nodes(arg, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
         parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                acc = fold_expr_nodes(a.elements[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for el in a.elements {
+                acc = fold_expr_nodes(el, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
@@ -127,10 +123,8 @@ pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt
             return acc;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = fold_expr_nodes(t.elements[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for el in t.elements {
+                acc = fold_expr_nodes(el, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
@@ -145,19 +139,15 @@ pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { acc = fold_expr_nodes(sl.base, acc, visit_stmt, visit_expr, descend); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = fold_expr_nodes(sl.field_values[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for field_value in sl.field_values {
+                acc = fold_expr_nodes(field_value, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
         parser.ExprFieldAccess(fa) => { return fold_expr_nodes(fa.obj, acc, visit_stmt, visit_expr, descend); },
         parser.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                acc = fold_stmt_nodes(lm.body[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for body_st in lm.body {
+                acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
@@ -175,48 +165,36 @@ pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stm
         parser.StmtExpr(e) => { return fold_expr_nodes(e.value, acc, visit_stmt, visit_expr, descend); },
         parser.StmtIf(i) => {
             acc = fold_expr_nodes(i.cond, acc, visit_stmt, visit_expr, descend);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = fold_stmt_nodes(i.then_body[ti], acc, visit_stmt, visit_expr, descend);
-                ti = ti + 1;
+            for body_st in i.then_body {
+                acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = fold_stmt_nodes(i.else_body[ei], acc, visit_stmt, visit_expr, descend);
-                ei = ei + 1;
+            for body_st in i.else_body {
+                acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
         parser.StmtWhile(w) => {
             acc = fold_expr_nodes(w.cond, acc, visit_stmt, visit_expr, descend);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = fold_stmt_nodes(w.body[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for body_st in w.body {
+                acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
         parser.StmtAssign(a) => { return fold_expr_nodes(a.value, acc, visit_stmt, visit_expr, descend); },
         parser.StmtMatch(m) => {
             acc = fold_expr_nodes(m.scrutinee, acc, visit_stmt, visit_expr, descend);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) { acc = fold_expr_nodes(m.arms[ai].guard, acc, visit_stmt, visit_expr, descend); }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = fold_stmt_nodes(m.arms[ai].body[bi], acc, visit_stmt, visit_expr, descend);
-                    bi = bi + 1;
+            for arm in m.arms {
+                if (arm.has_guard) { acc = fold_expr_nodes(arm.guard, acc, visit_stmt, visit_expr, descend); }
+                for body_st in arm.body {
+                    acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
                 }
-                ai = ai + 1;
             }
             return acc;
         },
         parser.StmtFor(f) => {
             acc = fold_expr_nodes(f.iter, acc, visit_stmt, visit_expr, descend);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = fold_stmt_nodes(f.body[i], acc, visit_stmt, visit_expr, descend);
-                i = i + 1;
+            for body_st in f.body {
+                acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
@@ -262,10 +240,8 @@ pub function fold_stmt_own_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Exp
         parser.StmtFor(f) => { return fold_expr_pruned(f.iter, acc, visit, descend); },
         parser.StmtMatch(m) => {
             acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) { acc = fold_expr_pruned(m.arms[ai].guard, acc, visit, descend); }
-                ai = ai + 1;
+            for arm in m.arms {
+                if (arm.has_guard) { acc = fold_expr_pruned(arm.guard, acc, visit, descend); }
             }
             return acc;
         },
@@ -314,20 +290,17 @@ pub function map_expr(e: parser.Expr, visit: (parser.Expr) => parser.Expr): pars
         parser.ExprUnary(u) => { return visit(parser.ExprUnary { ...u, operand: map_expr(u.operand, visit) }); },
         parser.ExprCall(c) => {
             var args: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { args = args.append(map_expr(c.args[i], visit)); i = i + 1; }
+            for arg in c.args { args = args.append(map_expr(arg, visit)); }
             return visit(parser.ExprCall { ...c, callee: map_expr(c.callee, visit), args: args });
         },
         parser.ExprArray(a) => {
             var els: parser.Expr[] = [];
-            var j: i32 = 0;
-            while (j < a.elements.len()) { els = els.append(map_expr(a.elements[j], visit)); j = j + 1; }
+            for el in a.elements { els = els.append(map_expr(el, visit)); }
             return visit(parser.ExprArray { ...a, elements: els });
         },
         parser.ExprTuple(t) => {
             var tel: parser.Expr[] = [];
-            var k: i32 = 0;
-            while (k < t.elements.len()) { tel = tel.append(map_expr(t.elements[k], visit)); k = k + 1; }
+            for el in t.elements { tel = tel.append(map_expr(el, visit)); }
             return visit(parser.ExprTuple { ...t, elements: tel });
         },
         parser.ExprIndex(ix) => {
@@ -338,8 +311,7 @@ pub function map_expr(e: parser.Expr, visit: (parser.Expr) => parser.Expr): pars
         },
         parser.ExprStructLit(st) => {
             var fv: parser.Expr[] = [];
-            var m: i32 = 0;
-            while (m < st.field_values.len()) { fv = fv.append(map_expr(st.field_values[m], visit)); m = m + 1; }
+            for field_value in st.field_values { fv = fv.append(map_expr(field_value, visit)); }
             // `base` is only a real expression when has_base; the slot is
             // otherwise whatever the parser left there.
             var nb: parser.Expr = st.base;
@@ -351,10 +323,8 @@ pub function map_expr(e: parser.Expr, visit: (parser.Expr) => parser.Expr): pars
         parser.ExprMapLit(ml) => {
             var ks: parser.Expr[] = [];
             var vs: parser.Expr[] = [];
-            var n: i32 = 0;
-            while (n < ml.keys.len()) { ks = ks.append(map_expr(ml.keys[n], visit)); n = n + 1; }
-            var n2: i32 = 0;
-            while (n2 < ml.vals.len()) { vs = vs.append(map_expr(ml.vals[n2], visit)); n2 = n2 + 1; }
+            for key in ml.keys { ks = ks.append(map_expr(key, visit)); }
+            for val in ml.vals { vs = vs.append(map_expr(val, visit)); }
             return visit(parser.ExprMapLit { ...ml, keys: ks, vals: vs });
         },
         parser.ExprFString(fs) => {
@@ -389,12 +359,10 @@ pub function map_stmt(st: parser.Stmt, visit: (parser.Expr) => parser.Expr): par
         parser.StmtFor(fo) => { return parser.StmtFor { ...fo, iter: map_expr(fo.iter, visit), body: map_stmts(fo.body, visit) }; },
         parser.StmtMatch(mt) => {
             var arms: parser.MatchArm[] = [];
-            var i: i32 = 0;
-            while (i < mt.arms.len()) {
-                var g: parser.Expr = mt.arms[i].guard;
-                if (mt.arms[i].has_guard) { g = map_expr(mt.arms[i].guard, visit); }
-                arms = arms.append(parser.MatchArm { ...mt.arms[i], body: map_stmts(mt.arms[i].body, visit), guard: g });
-                i = i + 1;
+            for arm in mt.arms {
+                var g: parser.Expr = arm.guard;
+                if (arm.has_guard) { g = map_expr(arm.guard, visit); }
+                arms = arms.append(parser.MatchArm { ...arm, body: map_stmts(arm.body, visit), guard: g });
             }
             return parser.StmtMatch { ...mt, scrutinee: map_expr(mt.scrutinee, visit), arms: arms };
         },
@@ -408,8 +376,7 @@ pub function map_stmt(st: parser.Stmt, visit: (parser.Expr) => parser.Expr): par
 
 pub function map_stmts(stmts: parser.Stmt[], visit: (parser.Expr) => parser.Expr): parser.Stmt[] {
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) { out = out.append(map_stmt(stmts[i], visit)); i = i + 1; }
+    for stmt in stmts { out = out.append(map_stmt(stmt, visit)); }
     return out;
 }
 
@@ -441,12 +408,9 @@ pub function splice_stmts(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.S
 // lambda body, and descending again would splice a nested one twice.
 function splice_own(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt[] {
     var out: parser.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        var repl: parser.Stmt[] = visit(splice_own_children(stmts[i], visit));
-        var j: i32 = 0;
-        while (j < repl.len()) { out = out.append(repl[j]); j = j + 1; }
-        i = i + 1;
+    for stmt in stmts {
+        var repl: parser.Stmt[] = visit(splice_own_children(stmt, visit));
+        for r in repl { out = out.append(r); }
     }
     return out;
 }
@@ -463,10 +427,8 @@ function splice_own_children(st: parser.Stmt, visit: (parser.Stmt) => parser.Stm
         parser.StmtFor(fo) => { return parser.StmtFor { ...fo, body: splice_own(fo.body, visit) }; },
         parser.StmtMatch(mt) => {
             var arms: parser.MatchArm[] = [];
-            var i: i32 = 0;
-            while (i < mt.arms.len()) {
-                arms = arms.append(parser.MatchArm { ...mt.arms[i], body: splice_own(mt.arms[i].body, visit) });
-                i = i + 1;
+            for arm in mt.arms {
+                arms = arms.append(parser.MatchArm { ...arm, body: splice_own(arm.body, visit) });
             }
             return parser.StmtMatch { ...mt, arms: arms };
         },
@@ -495,17 +457,12 @@ function ident_of(e: parser.Expr, acc: string[]): string[] {
             // node's whole contribution, and descending would re-add the very
             // names it removed.
             var inner_used: string[] = [];
-            var iu: i32 = 0;
-            while (iu < lm.body.len()) { inner_used = collect_idents_stmt(lm.body[iu], inner_used); iu = iu + 1; }
+            for body_st in lm.body { inner_used = collect_idents_stmt(body_st, inner_used); }
             var inner_bound: string[] = [];
-            var ip: i32 = 0;
-            while (ip < lm.params.len()) { inner_bound = inner_bound.append(lm.params[ip].name); ip = ip + 1; }
-            var ib: i32 = 0;
-            while (ib < lm.body.len()) { inner_bound = collect_bound_stmt(lm.body[ib], inner_bound); ib = ib + 1; }
-            var ik: i32 = 0;
-            while (ik < inner_used.len()) {
-                if (util.index_of_str(inner_bound, inner_used[ik]) < 0) { acc = acc.append(inner_used[ik]); }
-                ik = ik + 1;
+            for p in lm.params { inner_bound = inner_bound.append(p.name); }
+            for body_st in lm.body { inner_bound = collect_bound_stmt(body_st, inner_bound); }
+            for nm in inner_used {
+                if (util.index_of_str(inner_bound, nm) < 0) { acc = acc.append(nm); }
             }
             return acc;
         },
@@ -589,8 +546,7 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 // against the module instead of capturing it.
 function append_bound_name(acc: string[], name: string): string[] {
     var has_comma: boolean = false;
-    var ci: i32 = 0;
-    while (ci < name.len()) { if (name[ci] == b',') { has_comma = true; } ci = ci + 1; }
+    for ch in name { if (ch == b',') { has_comma = true; } }
     if (!has_comma) { return acc.append(name); }
     var start: i32 = 0;
     var i: i32 = 0;
@@ -668,20 +624,11 @@ function pattern_binders(p: parser.Pattern, acc: string[]): string[] {
         parser.PatVariant(pv) => {
             if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
             if (pv.at_binding.len() > 0) { acc = acc.append(pv.at_binding); }
-            var ebi: i32 = 0;
-            while (ebi < pv.extra_bindings.len()) {
-                // Bind the element to a typed local before .len() — a direct
-                // `pv.extra_bindings[ebi].len()` mis-dispatched the string
-                // element as i32 (an undefined `__fn_i32__len` at single-module
-                // link), the idiom irlower.fern uses for the same field.
-                var ebn: string = pv.extra_bindings[ebi];
-                if (ebn.len() > 0) { acc = acc.append(ebn); }
-                ebi = ebi + 1;
+            for eb in pv.extra_bindings {
+                if (eb.len() > 0) { acc = acc.append(eb); }
             }
-            var ni: i32 = 0;
-            while (ni < pv.nested.len()) {
-                acc = pattern_binders(pv.nested[ni], acc);
-                ni = ni + 1;
+            for sub in pv.nested {
+                acc = pattern_binders(sub, acc);
             }
             return acc;
         },
@@ -699,10 +646,8 @@ function binders_of(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtVar(v) => { return append_bound_name(acc, v.name); },
         parser.StmtFor(f) => { return append_bound_name(acc, f.var_name); },
         parser.StmtMatch(m) => {
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                acc = pattern_binders(m.arms[ai].pattern, acc);
-                ai = ai + 1;
+            for arm in m.arms {
+                acc = pattern_binders(arm.pattern, acc);
             }
             return acc;
         },
@@ -730,10 +675,8 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 // body, so a bare reference to it is local throughout" set that shadowing
 // means for bare names — want this one.
 pub function collect_bound_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        acc = collect_bound_stmt(stmts[i], acc);
-        i = i + 1;
+    for stmt in stmts {
+        acc = collect_bound_stmt(stmt, acc);
     }
     return acc;
 }

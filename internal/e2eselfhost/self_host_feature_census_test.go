@@ -370,8 +370,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// to climb, and pinning one would fight the migration it measures. The
 	// feature rows above stay pinned because a move there is news either way;
 	// a module converting more loops is not.
-	atLeast(t, c, "for..in loops", 303,
-		"288 in checker.fern and 15 in visibility.fern. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms. That has now lowered this floor five times running (326 -> 325 for mc_mentions, 325 -> 321 for e049_expr_lambdas, 321 -> 317 for vref_expr, 317 -> 313 for e032_expr, 313 -> 307 for the e060/e062 pair, 307 -> 303 for e053), which is worth noticing: while the SH-022 walker migration runs, this row and `astwalk call sites` move in OPPOSITE directions, so a floor here has to be lowered on every conversion and protects nothing in between. The astwalk floor is the one carrying the signal for that work. Lower this one for a conversion; investigate it otherwise.")
+	atLeast(t, c, "for..in loops", 336,
+		"288 in checker.fern, 15 in visibility.fern, 32 in astwalk.fern. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms. That lowered this floor five times running (326 -> 325 for mc_mentions, 325 -> 321 for e049_expr_lambdas, 321 -> 317 for vref_expr, 317 -> 313 for e032_expr, 313 -> 307 for the e060/e062 pair, 307 -> 303 for e053), which is worth noticing: while the SH-022 walker migration runs, this row and `astwalk call sites` move in OPPOSITE directions, so a floor here has to be lowered on every conversion and protects nothing in between. The astwalk floor is the one carrying the signal for that work. Lower this one for a conversion; investigate it otherwise. The 303 -> 336 step is the other direction: astwalk.fern's own 32 index-style while loops became for..in, which is a source-shape change inside the walker rather than a consumer folding onto it.")
 	atLeast(t, c, "astwalk call sites", 99,
 		"Hand-written AST walkers collapsing onto the shared fold spine is what this counts. It should only climb; a fall means a consumer went back to spelling its own traversal. Raise it to the measurement on every conversion — left at a stale 85 while the count reached 96, it would have accepted a walker going back to hand-indexing without a word.")
 
@@ -382,7 +382,7 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// wholesale in the old dialect trips it.
 	atMost(t, c, "wildcard match arms", 2800, 2563,
 		"A `_ =>` arm is a match that does not enumerate its cases, so a new parser node added later is silently swallowed instead of caught. The fold spine exists to remove them.")
-	atMost(t, c, "increment by one", 5200, 4728,
+	atMost(t, c, "increment by one", 5200, 4686,
 		"Every `x = x + 1` is one hand-written index loop that `for x in xs` would carry. This is the dialect the compiler is written in, and the count is the size of the migration left.")
 }
 
