@@ -1334,16 +1334,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.FloatType{Width: 64},
 	}
-	// random_bytes(n: number): string — returns a fresh string
+	// random_bytes(n: number): u8[] — returns a fresh buffer
 	// of n cryptographic-quality random bytes from the
 	// kernel's CSPRNG (`getrandom(2)` on Linux,
 	// `wasi_snapshot_preview1.random_get` on WASM). Useful
 	// for session IDs, request IDs, nonce generation, etc.
-	// The string has no encoding — it's raw bytes — so
-	// `s[i]` returns a number 0..255.
 	c.info.FuncSigs["random_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.StringType{},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
 	// random_i32(): i32 — returns a single cryptographic-quality
 	// random i32. Backed by the kernel CSPRNG (or

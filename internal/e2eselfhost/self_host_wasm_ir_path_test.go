@@ -1012,7 +1012,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"i64arr-unannot-while", `function main(): i32 { var xs = [1 as i64, 2 as i64, 3 as i64]; var s: i64 = 0 as i64; var i = 0; while (i < 3) { s = s + xs[i]; i = i + 1; } return s as i32; }`, 6},
 		{"i64arr-unannot-forin", `function main(): i32 { var xs = [10 as i64, 20 as i64]; var s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
-		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		{"random-bytes-byte-range", `function main(): i32 { var s: u8[] = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
 		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); if (b[0] != 65) { return 20; } if (b[1] != 66) { return 21; } return 6; }`, 6},

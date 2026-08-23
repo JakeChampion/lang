@@ -316,10 +316,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_random_i32")
 					needs.add("__fern_map_hash_seed")
 				case "__fern_random_bytes":
-					// (n) → (data, len) — wasi_random_get into
-					// a fresh n-byte heap allocation. Returns
-					// the (data, len) pair of the heap string.
+					// (n) → data — wasi_random_get into a fresh
+					// n-byte u8[] box from __alloc_u8.
 					needs.add("__fern_alloc")
+					needs.add("__alloc_u8")
 					needs.add("__fern_random_bytes")
 				case "__fern_now_ns":
 					// wasi_clock_time_get + alloc-per-call for
@@ -1192,11 +1192,10 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildMapHashSeedBody,
 	},
 	"__fern_random_bytes": {
-		// (n) → (data, len) — heap-form string of n random
-		// bytes via wasi_random_get. Empty (n=0) → inline empty
-		// (0, 0x80000000).
+		// (n) → data — a fresh u8[] of n random bytes via
+		// wasi_random_get, in the __alloc_u8 box shape.
 		params:  []byte{encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
 		body:    buildRandomBytesBody,
 	},
 	"__fern_now_ns": {

@@ -5735,6 +5735,8 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     // `__alloc_u8(n)` yields a fresh n-element byte array.
                     if (cid.name == "__alloc_u8") { return true; }
+                    // `random_bytes(n)` yields a fresh n-element u8[] (op_random_bytes).
+                    if (cid.name == "random_bytes" && c.args.len() == 1) { return true; }
                     // `str_split(s, sep)` yields a fresh string[] (op_str_split).
                     if (cid.name == "str_split" && c.args.len() == 2) { return true; }
                     return s.is_arr_ret_fn(s.mod_fn_name(cid.name));
@@ -5846,11 +5848,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     _ => {}
                 }
             }
-            // A call to a string-returning user function (str_ret_fns), or the
-            // random_bytes builtin (a fresh string of n random bytes).
+            // A call to a string-returning user function (str_ret_fns), or a
+            // string-returning builtin.
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name == "random_bytes") { return true; }
                     // read_all_stdin() reads fd 0 to EOF into ONE string box, so
                     // its result str-tracks (`s.len()` dispatches to str_len, the
                     // binding takes the string reclaim path). Unlike read_line it
@@ -9496,9 +9497,9 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!sfb.ok) { return sfb; }
         return sfb.emit(ir.op_str_from_bytes());
     }
-    // random_bytes(n): a fresh string of n CSPRNG bytes. The
-    // result is a string box (str_index reads the bytes); the
-    // IR backends emit the __fern_random_bytes helper.
+    // random_bytes(n): a fresh u8[] of n CSPRNG bytes (arr_get
+    // reads the slots); the IR backends emit the
+    // __fern_random_bytes helper.
     if (cid.name == "random_bytes" && c.args.len() == 1) {
         var rb: LowerState = lower_expr(c.args[0], s);
         if (!rb.ok) { return rb; }
@@ -19298,6 +19299,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // `__alloc_u8(n)` yields a fresh owned byte array (a
                     // move, like an arr-returning call).
                     if (fid.name == "__alloc_u8") { is_arr = true; }
+                    // `random_bytes(n)` yields a fresh owned u8[] — same move.
+                    else if (fid.name == "random_bytes" && cc.args.len() == 1) { is_arr = true; }
                     // `str_split(s, sep)` yields a fresh owned string[] — a
                     // move, track as array (is_strarr comes from expr_is_strarr).
                     else if (fid.name == "str_split" && cc.args.len() == 2) { is_arr = true; }
@@ -46785,7 +46788,7 @@ function str_leaf_is_string(e: parser.Expr, funcs: parser.FuncDecl[], depth: i32
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name == "random_bytes" || cid.name == "string_from_bytes_unchecked") { return true; }
+                    if (cid.name == "string_from_bytes_unchecked") { return true; }
                     for fn in funcs {
                         if (fn.name == cid.name) {
                             if (fn.ret_type == "string") { return true; }
@@ -53198,6 +53201,9 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                     // untaint would reclaim a buffer still being written through
                     // the raw pointer.
                     if (cid.name == "__alloc_u8") { return false; }
+                    // random_bytes(n): same argument — a fresh rc=1 u8[] box
+                    // whose only argument is a scalar byte count.
+                    if (cid.name == "random_bytes") { return false; }
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.

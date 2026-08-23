@@ -563,8 +563,10 @@ pub function direntoff(t: string, name: string): string {
 
 // rt_src_random_bytes backs `random_bytes(n)` (#2649) — the first syscall-leaf
 // helper written in Fern, over the syscall sub-floor (docs/RUNTIME-INTRINSICS.md
-// step 5). Allocate n bytes, fill them from the CSPRNG in <= 256-byte chunks,
-// box the buffer back into a string. Only dep is `heap` (mark_random_bytes).
+// step 5). Allocate n scratch bytes, fill them from the CSPRNG in <= 256-byte
+// chunks, then spread the bytes one-per-slot into a fresh `u8[]` box (all
+// self-host arrays use full element slots). Only dep is `heap`
+// (mark_random_bytes).
 //
 // The three targets agree on the (buf, len, flags) argument shape — Darwin's
 // getentropy simply ignores the third arg — but NOT on the result: getrandom
@@ -579,7 +581,7 @@ pub function direntoff(t: string, name: string): string {
 // an ordinary `+` back to 32 bits and the syscall gets a truncated heap address.
 // wasm keeps its WASI `random_get` bundle — it has no generic syscall.
 pub function rt_src_random_bytes(t: string): string {
-    return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); var off: i32 = 0; while (off < n) { var want: i32 = n - off; if (want > 256) { want = 256; } var r: i32 = __syscall3(" + sysno(t, "getrandom") + ", __raw_addr(p, off), want, 0); if (r < 0) { off = n; } else { off = off + want; } } return __raw_string(p, n); }";
+    return "function __fern_random_bytes(n: i32): i32[] { var p: i32 = __raw_alloc(n); var off: i32 = 0; while (off < n) { var want: i32 = n - off; if (want > 256) { want = 256; } var r: i32 = __syscall3(" + sysno(t, "getrandom") + ", __raw_addr(p, off), want, 0); if (r < 0) { off = n; } else { off = off + want; } } var b: i32 = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i)); i = i + 1; } return __raw_array(b); }";
 }
 
 // rt_src_random_i32 backs a single CSPRNG i32 (#2649, syscall-leaf) — the
@@ -2992,7 +2994,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "args") { return ty_array_string(); }
                     if (id.name == "__alloc_u8") { return ty_array_i32(); }
                     if (id.name == "string_from_bytes_unchecked") { return ty_string(); }
-                    if (id.name == "random_bytes") { return ty_string(); }
+                    if (id.name == "random_bytes") { return ty_array_i32(); }
                     if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
                     if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
                     if (id.name == "cell_new" && c.args.len() == 1) { return ty_cell(infer_expr_type(c.args[0], s)); }

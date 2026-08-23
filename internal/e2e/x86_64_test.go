@@ -798,8 +798,8 @@ function main(): i32 {
 // actual entropy).
 func TestX86_64RandomBytes(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `function main(): i32 {
-    var s: string = random_bytes(16);
-    write(s);
+    var s: u8[] = random_bytes(16);
+    write(string_from_bytes_unchecked(s));
     return s.len();
 }`)
 	if code != 16 {

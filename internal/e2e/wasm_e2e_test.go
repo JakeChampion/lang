@@ -5919,11 +5919,17 @@ func TestWASMGenericResult(t *testing.T) {
 // content checks since it's a CSPRNG.
 func TestWASMRandomBytes(t *testing.T) {
 	src := `function main(): i32 {
-		var a: string = random_bytes(16);
-		var b: string = random_bytes(16);
+		var a: u8[] = random_bytes(16);
+		var b: u8[] = random_bytes(16);
 		if (a.len() != 16) { return 1; }
 		if (b.len() != 16) { return 2; }
-		if (a == b) { return 3; }
+		var same: i32 = 1;
+		var i: i32 = 0;
+		while (i < 16) {
+			if ((a[i] as i32) != (b[i] as i32)) { same = 0; }
+			i = i + 1;
+		}
+		if (same == 1) { return 3; }
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -11345,7 +11351,7 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "randbytes.fern")
 	src := []byte(`function main(): i32 {
-    var b: string = random_bytes(3);
+    var b: u8[] = random_bytes(3);
     if (b.len() == 3) { return 0; }
     return 1;
 }`)

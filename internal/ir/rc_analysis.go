@@ -1921,19 +1921,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// whenever it flows into a container or out through a return.
 				return false
 			case "random_bytes":
-				// random_bytes returns a string the two-word backends
-				// (arm64 / wasm) allocate as RAW n bytes with NO rc header
-				// (__fern_alloc, not __fern_alloc_rc1), so it is not a
-				// reclaimable owned string — str_dec'ing it at scope exit
-				// reads garbage for the rc and corrupts / over-releases the
-				// buffer (TestArm64RandomBytes: 83 bytes, want 16). It must
-				// stay ineligible. This was protected only by accident before
-				// the scalar-arg untaint below — the literal size arg used to
-				// taint the result; now it's marked explicitly. (The runtime
-				// fills the buffer through a raw pointer too, which the
-				// CastExpr escape taint can't see — it lives in asm, not Fern
-				// source.)
-				return true
+				// A fresh rc=1 u8[] in the __alloc_u8 box shape on every
+				// backend, filled with CSPRNG bytes. Same argument as
+				// __alloc_u8 above: the only argument is a scalar byte
+				// count, so the result cannot alias it.
+				return false
 			}
 		}
 		// #4357: a call to a user function whose RETURN provably aliases no

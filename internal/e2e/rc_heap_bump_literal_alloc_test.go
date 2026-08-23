@@ -21,9 +21,8 @@ import (
 //   - a buffer cast to a raw integer (`buf as usize`) is escape-tainted in
 //     computeFreeEligible, so int_to_string's scratch stays protected (heavy
 //     coverage via every `(n).to_string()` / radix path);
-//   - random_bytes' result (a raw, header-less string on the two-word
-//     backends) is tainted explicitly — guarded by the TestX/Arm64/WASM
-//     RandomBytes tests, which over-released before that taint.
+//   - random_bytes' result is a fresh rc=1 u8[] box, untainted like
+//     __alloc_u8's — guarded by the TestX/Arm64/WASM RandomBytes tests.
 // The scalar-BINARY arg case is deliberately left tainted: untainting it
 // over-released int_to_string_radix's result buffer (see TestToRgbHexNoOverRelease).
 

@@ -599,17 +599,17 @@ function main(): i32 {
 			want: 7,
 		},
 		{
-			// random_bytes(n) — a fresh single-word rc string of n CSPRNG bytes; the
+			// random_bytes(n) — a fresh single-word rc u8[] box of n CSPRNG bytes; the
 			// length is deterministic (n) even though the contents aren't. len = 16.
 			name: "random_bytes_len",
-			src:  `function main(): i32 { var b: string = random_bytes(16); return b.len(); }`,
+			src:  `function main(): i32 { var b: u8[] = random_bytes(16); return b.len(); }`,
 			want: 16,
 		},
 		{
-			// random_bytes(0) edge — a zero-length string (getrandom is a no-op); the
-			// 8-byte header + trailing NUL are still written. len = 0, +5 = 5.
+			// random_bytes(0) edge — an empty u8[] box (getrandom is a no-op); the
+			// header is still written, with no trailing NUL. len = 0, +5 = 5.
 			name: "random_bytes_zero",
-			src:  `function main(): i32 { var b: string = random_bytes(0); return b.len() + 5; }`,
+			src:  `function main(): i32 { var b: u8[] = random_bytes(0); return b.len() + 5; }`,
 			want: 5,
 		},
 		{

@@ -48,8 +48,9 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.)
 > short-filling an n > 256 — and the chunk address cannot be written `p + off`,
 > which arm64 truncates to 32 bits. Migrating also fixed a live arm64 bug: the
 > hand-asm built a bare 16-byte `{data,len}` box, so every dec of a
-> `random_bytes` string read its refcount out of the preceding allocation;
-> `__raw_string` goes through `__fern_str_box`, which writes the rc header.
+> `random_bytes` result read its refcount out of the preceding allocation;
+> the boxing intrinsics (`__raw_string` then, `__raw_arr_box` now that the
+> result is a `u8[]`) write the rc header.
 >
 > **The fs leaves followed** — `read_file`, `write_file`, `remove_file`,
 > `temp_dir` and `env` are Fern on arm64 too, with `__syscall4` gaining its arm64

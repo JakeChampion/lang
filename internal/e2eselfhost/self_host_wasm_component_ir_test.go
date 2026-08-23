@@ -130,7 +130,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// positionally.
 		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
-		{"io-random-bytes", true, `function main(): i32 { var b: i32[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
+		{"io-random-bytes", true, `function main(): i32 { var b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
 		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
