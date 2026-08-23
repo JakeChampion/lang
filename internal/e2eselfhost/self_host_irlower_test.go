@@ -119,13 +119,21 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
 		{"set-index", "function main(): i32 { var a = [10, 20, 30]; a[1] = 99; return a[0] + a[1] + a[2]; }", 139},
 		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }", 37},
-		// RC counting (slice 10): __rc reads the header; aliasing increments it.
+		// RC counting (slice 10): __rc reads the header. A borrow-only alias
+		// is dead-alias-CANCELLED (#4402 opt 1): no transfer inc, no alias
+		// dec — the count stays 1 and the source alone releases at exit,
+		// matching native's model. An alias the cancellation excludes (one
+		// mentioned in a return, a reassigned source, ...) still increments.
 		{"rc-fresh", "function main(): i32 { var a = [10, 20, 30]; return __rc(a); }", 1},
-		{"rc-one-alias", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc(a); }", 2},
-		{"rc-two-aliases", "function main(): i32 { var a = [1, 2]; var b = a; var c = a; return __rc(a); }", 3},
+		{"rc-one-alias", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc(a); }", 1},
+		{"rc-two-aliases", "function main(): i32 { var a = [1, 2]; var b = a; var c = a; return __rc(a); }", 1},
+		{"rc-returned-alias-incs", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc(a) + b[0] - b[0]; }", 2},
 		// Exit dec-sweep + underflow detector (slice 11).
 		{"rc-clean-no-underflow", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc_underflow(); }", 0},
-		{"rc-balanced-manual-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); __rc_dec(b); return __rc_underflow(); }", 0},
+		// Under the cancellation the count is 1, so the second hand-written
+		// dec is an over-release the detector must see — the pair was
+		// balanced only under the old duplication model.
+		{"rc-balanced-manual-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); __rc_dec(b); return __rc_underflow(); }", 1},
 		{"rc-detects-overrelease", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); __rc_dec(a); return __rc_underflow(); }", 1},
 		// Free path + reuse (slice 12): a freed block is reused by a same-size
 		// alloc (a - b == 0); values stay correct.
