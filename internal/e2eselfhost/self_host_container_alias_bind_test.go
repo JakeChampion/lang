@@ -503,23 +503,19 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 38, allocs: 400, frees: 400,
 		},
 		{
-			// `<string>.trim()` binds a `str` — a borrowed VIEW, whose box carries a
-			// NEGATIVE rc. Both __fern_rc_inc and __fern_str_free bail on the sign, so
-			// the retain and the alias' release are each no-ops and only the source's
-			// __fern_str_view_free reclaims the box: the alias is safe because of the
-			// box's rc word, not because of the slot's str_view_local flag (which an
-			// alias does not inherit).
-			//
-			// PARTIAL, and pinned as measured rather than as wished for: 200 → 250
-			// frees of 300 allocs, 2400 → 1200 live. The view class keeps a leak this
-			// change does not close, and the row exists so that it cannot silently
-			// become an over-release.
-			name: "string_alias_trim_view_partial",
+			// Formerly string_alias_trim_view_partial, the pinned view-class
+			// residue (300/250, 1200 live): `.trim()` copies since #7393, so the
+			// binding is an ordinary fresh string with the full alias treatment
+			// and the class CLOSES — 400/400, live 0 (the extra alloc per round
+			// is the trim copy). Underflow 0 is the half that must hold: this is
+			// now the row that fails if the copy ever reverts to the view whose
+			// escape was #7393's wrong-answer UAF.
+			name: "string_alias_trim_closes",
 			src: `import "std/string";
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var s: string = w("  ab  "); var t: str = s.trim(); var v: str = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 55, allocs: 300, frees: 250,
+			want: 55, allocs: 400, frees: 400,
 		},
 		{
 			// REFUSED, and correctly so: a chain `var v = t; var u = v;` makes v itself

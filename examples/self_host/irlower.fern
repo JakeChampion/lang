@@ -2136,29 +2136,6 @@ function replace_src_slot_of(e: parser.Expr, s: LowerState): i32 {
     return 0 - 1;
 }
 
-// init_is_str_trim: `<string>.trim()`. trim is the one string builtin whose
-// result is a fresh box over bytes it does NOT own — rt_src_str_trim returns
-// `s[start:end]`, always a slice, so the box is new every call and carries the
-// immortal rc the slice op stamps. That is why it is excluded from
-// str_fresh_alloc_method (which is about boxes that own their data) and why it
-// still needs releasing.
-function init_is_str_trim(e: parser.Expr, s: LowerState): boolean {
-    match (e) {
-        parser.ExprCall(c) => {
-            if (c.args.len() != 0) { return false; }
-            match (c.callee) {
-                parser.ExprFieldAccess(fa) => {
-                    if (fa.field != "trim") { return false; }
-                    return expr_is_str(fa.obj, s);
-                },
-                _ => { return false; }
-            }
-        },
-        _ => {}
-    }
-    return false;
-}
-
 pub function (s: LowerState) is_strarr_builtin_slot(i: i32): boolean {
     if (i < 0) { return false; }
     if (i >= s.locals.len()) { return false; }
@@ -6019,9 +5996,6 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 // digits to a tight fresh buffer) across all backends — a separate slice.
 //
 // DELIBERATELY EXCLUDED — these alias live data and would OVER-RELEASE if freed:
-//   - `s.trim()` / `str_trim`   (returns a fresh box whose data pointer is a
-//     zero-copy VIEW into the receiver's buffer — freeing it frees the parent's
-//     data)
 //   - `s.replace(a, b)` / `str_replace`  (returns the receiver box UNCHANGED on
 //     an empty `old` / no match — an alias of the receiver)
 //   - `.to_string()` / `.to_debug()`     (the string-identity case returns the
@@ -6096,7 +6070,12 @@ pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
                     return 1;
                 },
                 parser.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "trim" && c.args.len() == 0) { return 2; }   // zero-copy view
+                    // trim copies since #7393, but only a STRING receiver's trim
+                    // is the builtin — a user method of the same name may alias.
+                    if (cfa.field == "trim" && c.args.len() == 0) {
+                        if (expr_is_str(cfa.obj, s)) { return 0; }
+                        return 1;
+                    }
                     if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "reverse")
                             && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return 0; }
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return 0; }
@@ -6213,7 +6192,7 @@ function str_free_producer_ident(c: parser.ExprCall): boolean {
         parser.ExprIdent(cid) => {
             if (cid.name == "chr" || cid.name == "string_from_bytes_unchecked") { return true; }
             if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
-                    || cid.name == "str_repeat") { return true; }
+                    || cid.name == "str_repeat" || cid.name == "str_trim") { return true; }
             if (cid.name == "i32_to_string" && c.args.len() == 1) { return true; }
             if (cid.name == "__raw_string" && c.args.len() == 2) { return true; }
             return false;
@@ -6233,19 +6212,18 @@ function str_free_producer_ident(c: parser.ExprCall): boolean {
 // reclaimed even though it matches syntactically. The admitted shapes each allocate
 // a fresh buffer + box when they ARE strings:
 //   - an UNAMBIGUOUS named producer (str_free_producer_ident) — chr /
-//     string_from_bytes_unchecked / str_to_upper / str_to_lower / str_repeat / i32_to_string
-//     / __raw_string;
+//     string_from_bytes_unchecked / str_to_upper / str_to_lower / str_repeat /
+//     str_trim (copies since #7393) / i32_to_string / __raw_string;
 //   - an `a + b` CONCAT (fresh buffer + box when either side is a string);
-//   - a `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` method (each
-//     copies into a fresh buffer on a string receiver; expr_is_str only marks the
-//     slot is_str for a STRING receiver, so an array `.reverse()`/`.repeat()` is
-//     never reclaimed).
+//   - a `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` / `.trim()`
+//     method (each copies into a fresh buffer on a string receiver; expr_is_str
+//     only marks the slot is_str for a STRING receiver, so an array
+//     `.reverse()`/`.repeat()` is never reclaimed).
 // DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release,
 // and each is is_str yet NOT fresh, so the type gate alone would not stop them):
 // a string LITERAL (static, not heap), a bare ident / field / index / slice
-// (aliases a live string), `.trim()` (zero-copy VIEW into the receiver buffer),
-// `.replace()` / `.to_string()` (receiver-identity fast-paths), and a general
-// call (may return a borrowed param).
+// (aliases a live string), `.replace()` / `.to_string()` (receiver-identity
+// fast-paths), and a general call (may return a borrowed param).
 function str_local_binding_is_fresh(init: parser.Expr): boolean {
     match (init) {
         parser.ExprCall(c) => {
@@ -6347,9 +6325,13 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
 // str_fresh_alloc_method: a string builtin whose result is ALWAYS a newly
 // allocated box. Strictly smaller than str_borrowing_method, which also admits
 // the predicates (scalar results, no box at all) and is about what a method does
-// to its RECEIVER; this is about what it returns. `trim` returns a view and
-// `replace` returns the receiver unchanged when the needle is absent, so neither
-// belongs here — and `lines` / `split` return arrays, not strings.
+// to its RECEIVER; this is about what it returns. `trim` copies since #7393
+// but stays OUT of this state-free set: a user method named `trim` on a
+// non-string receiver may return a field alias, and admitting it by name
+// alone frees the field under its owner (the str-trim-user-method pin) — its
+// credit comes from the receiver-TYPE-gated trim collector instead. `replace`
+// returns the receiver unchanged when the needle is absent, so it stays out —
+// and `lines` / `split` return arrays, not strings.
 function str_fresh_alloc_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower"
         || field == "reverse" || field == "repeat";
@@ -8952,7 +8934,7 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     }
     if (field == "to_ascii_upper") { return free_stashed_recv(p.emit(ir.op_str_to_upper()), rslots, rview); }
     if (field == "to_ascii_lower") { return free_stashed_recv(p.emit(ir.op_str_to_lower()), rslots, rview); }
-    if (field == "trim") { return p.emit(ir.op_str_trim()); }
+    if (field == "trim") { return free_stashed_recv(p.emit(ir.op_str_trim()), rslots, rview); }
     if (field == "reverse") { return free_stashed_recv(p.emit(ir.op_str_reverse()), rslots, rview); }
     if (field == "lines") { return p.emit(ir.op_str_lines()); }
     p = lower_expr(args[0], p);
@@ -10422,7 +10404,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             // `f(a + "x")`, a producer `f(chr(n))`, a copying
             // method `f(s.to_upper())` (is_fresh_str_temp, which
             // type-gates via expr_is_str and excludes aliasing
-            // shapes: bare idents / fields / .trim() views) —
+            // shapes: bare idents / fields / slices) —
             // allocates a fresh buffer + box nothing frees. At a
             // BORROWABLE param position of a known free function
             // the callee cannot retain or return it, so the box is
@@ -12890,8 +12872,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // EVERY other value is inc'd so the field-drop only decs the dup:
                     //   - a string local / param / field read may alias a live string
                     //     the IR path never sweeps;
-                    //   - `.trim()` is a zero-copy VIEW into its receiver's buffer and
-                    //     `.replace()` / `.to_string()` have receiver-identity fast-paths,
+                    //   - `.replace()` / `.to_string()` have receiver-identity fast-paths,
                     //     so each may alias a live box — retained conservatively.
                     // Each non-fresh case leaks (sound), never over-releases.
                     // #4297 A2: retain (rc_inc) a NON-fresh string field of a
@@ -17444,7 +17425,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // Same shape for the trim class: the receiver's type is known here, and the
     // flag is what makes the release site pick the view-aware free. A chain link
     // can return `s[a:b]` too, so its result gets the same view-aware release.
-    if (vt.is_str) { sb = sb.mark_str_view_local(slot, init_is_str_trim(v.init, se) || sfroot >= 0); }
+    if (vt.is_str) { sb = sb.mark_str_view_local(slot, sfroot >= 0); }
     // …and the slot the result may BE, for the identity guard the release needs:
     // replace's receiver, or the chain's root.
     if (vt.is_str) {
@@ -28587,12 +28568,10 @@ function join_strarr_init(init: parser.Expr, ns: string[], ts: string[]): boolea
 // trim_str_init: `init` is `<ident>.trim()` whose receiver is declared `string`.
 // The receiver-type test lives here for the same reason join_strarr_init's does —
 // str_local_binding_is_fresh is state-free, and a user-declared `.trim()` on
-// another type would otherwise be admitted by name alone.
-//
-// The credit is for the BOX, not the bytes. rt_src_str_trim returns
-// `s[start:end]`, so on the register backends the result is a fresh 24-byte view
-// over the receiver's buffer carrying the immortal rc sentinel, and on wasm the
-// slice copies. str_free_helper picks the release that is right for each.
+// another type would otherwise be admitted by name alone (the
+// str-trim-user-method pin is what fails when it is). Since #7393 the builtin
+// trim returns an OWNED copy, so a credited binding takes the ordinary full
+// __fern_str_free — no view-aware release, no box-only carve-out.
 function trim_str_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
     match (init) {
         parser.ExprCall(c) => {
@@ -28617,6 +28596,29 @@ function trim_str_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
     }
     return false;
 }
+
+// collect_trim_local_names gathers every `var t: string = s.trim()` binding,
+// recursing through nested blocks like its siblings.
+function collect_trim_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (trim_str_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
+            parser.StmtIf(f) => { a = collect_trim_local_names(f.then_body, ns, ts, a); a = collect_trim_local_names(f.else_body, ns, ts, a); },
+            parser.StmtWhile(w) => { a = collect_trim_local_names(w.body, ns, ts, a); },
+            parser.StmtFor(fo) => { a = collect_trim_local_names(fo.body, ns, ts, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_trim_local_names(m.arms[mi].body, ns, ts, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 
 // replace_str_init: `init` is `<ident>.replace(old, new)` whose receiver is
 // declared `string`. Fourth consumer of the declared-name/type pair, for the same
@@ -28757,27 +28759,6 @@ function collect_replace_local_names(stmts: parser.Stmt[], ns: string[], ts: str
     return a;
 }
 
-// collect_trim_local_names gathers every `var t: string = s.trim()` binding,
-// recursing through nested blocks like its siblings.
-function collect_trim_local_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
-    var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtVar(v) => { if (trim_str_init(v.init, ns, ts)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); } },
-            parser.StmtIf(f) => { a = collect_trim_local_names(f.then_body, ns, ts, a); a = collect_trim_local_names(f.else_body, ns, ts, a); },
-            parser.StmtWhile(w) => { a = collect_trim_local_names(w.body, ns, ts, a); },
-            parser.StmtFor(fo) => { a = collect_trim_local_names(fo.body, ns, ts, a); },
-            parser.StmtMatch(m) => {
-                var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_trim_local_names(m.arms[mi].body, ns, ts, a); mi = mi + 1; }
-            },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return a;
-}
 
 // collect_join_strarr_names gathers every `var s: string = xs.join(sep)` binding,
 // recursing through nested blocks like its siblings. An UNANNOTATED receiver is
@@ -29203,6 +29184,28 @@ function strloc_escapes(stmts: parser.Stmt[], name: string, reg: string[], body:
 // live field, which is the same reason tostring_recv_is_scalar gates on it.
 // A receiver that is not one of the callee's params answers false: its type is
 // not in the signature, and an unregistered function merely leaks.
+// trim_recv_is_string_param: the receiver of a `.trim()` is provably a STRING
+// — a param annotated `string`, or a callee local declared `var s: string = …`
+// with exactly one declaration. The return-side twin of trim_str_init's
+// receiver-type test: a user method named `trim` on another type may return a
+// field alias, so a return `x.trim()` is the fresh builtin copy (#7393) only
+// when the receiver's string-ness is proven, not assumed from the name.
+function trim_recv_is_string_param(e: parser.Expr, body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var i: i32 = 0;
+            while (i < params.len()) {
+                if (params[i].name == id.name) { return params[i].type_name == "string"; }
+                i = i + 1;
+            }
+            if (local_decl_count(body, id.name) != 1) { return false; }
+            return decl_string_local(body, id.name);
+        },
+        _ => {}
+    }
+    return false;
+}
+
 function tostring_recv_is_scalar_param(e: parser.Expr, body: parser.Stmt[], params: parser.ParamDecl[]): boolean {
     match (e) {
         parser.ExprNumber(_) => { return true; },
@@ -29231,6 +29234,32 @@ function tostring_recv_is_scalar_param(e: parser.Expr, body: parser.Stmt[], para
 // them keeps a shadow from licensing the outer name. An un-annotated `var`
 // answers false — the type is what carries the proof here, and refusing costs a
 // leak where guessing would cost an over-release.
+// decl_string_local: the single `var <name>: string = …` declaration test the
+// trim return arm pairs with local_decl_count == 1 — one declaration anywhere,
+// annotated string. The count gate is what makes the flat verdict safe: with
+// exactly one declaration there is no shadowed sibling to mis-attribute.
+function decl_string_local(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return v.type_name == "string"; } },
+            parser.StmtIf(f) => {
+                if (decl_string_local(f.then_body, name)) { return true; }
+                if (decl_string_local(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (decl_string_local(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (decl_string_local(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (decl_string_local(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function decl_scalar_local(stmts: parser.Stmt[], name: string): boolean {
     var found: boolean = false;
     var i: i32 = 0;
@@ -29389,6 +29418,10 @@ function str_return_is_fresh(e: parser.Expr, body: parser.Stmt[], params: parser
                 match (c.callee) {
                     parser.ExprFieldAccess(fa) => {
                         if (fa.field == "to_string" && tostring_recv_is_scalar_param(fa.obj, body, params)) { return true; }
+                        // `.trim()` on a proven-string receiver is the builtin
+                        // owned copy (#7393); a name-only admission would reach
+                        // user methods that alias (the str-trim-user-method pin).
+                        if (fa.field == "trim" && trim_recv_is_string_param(fa.obj, body, params)) { return true; }
                     },
                     _ => {}
                 }
@@ -32592,21 +32625,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         ji = ji + 1;
     }
-    // `<string>.trim()` locals — same gates again. The slot's str_view_local flag
-    // is what makes the release view-aware; the credit itself is an ordinary
-    // "STR:" name, because the question of whether the BOX is this frame's is the
-    // same question every other entry here answers.
+    // `<string>.trim()` locals — same gates again. Since #7393 the builtin trim
+    // returns an owned copy, so the credit is an ordinary "STR:" name with the
+    // ordinary full release; the collector's receiver-TYPE test is what keeps a
+    // user method named `trim` (which may return a field alias) uncredited.
     var tms: string[] = collect_trim_local_names(body, tsn, tst, []);
     var tmi: i32 = 0;
     while (tmi < tms.len()) {
         var mnm: string = reclaim_site_name(tms[tmi]);
-        // Aliasing a trim local is safe even when its box is a VIEW over another
-        // string's bytes: the discriminator is the box's rc word, not the slot's
-        // str_view_local flag (which the alias does not inherit). A view carries a
-        // NEGATIVE rc, and __fern_rc_inc and __fern_str_free both bail on the sign
-        // — so the retain and the alias' release are each no-ops and only the
-        // source's __fern_str_view_free reclaims the box. A trim that returned a
-        // genuine fresh box has a positive rc and duplicates like any other string.
         var mal: string[] = alias_bind_sites_of(body, mnm, borrowable, recv_borrow, body, []);
         if (util.index_of_str(strs, tms[tmi]) < 0
             && util.index_of_str(reassigned, mnm) < 0
@@ -41713,23 +41739,18 @@ function emit_structarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     return st.emit(ir.op_store_local(slot));
 }
 
-// strarr_free_helper / strarr_elem_free_helper: which element-walking release a
-// reclaimable string[] slot gets. The SARRB class — a builtin `s.split(sep)` /
-// `s.lines()` result — is the one whose elements are zero-copy VIEWS on the
-// register backends: a 24-byte box over the source's bytes carrying the immortal
-// rc sentinel, which __fern_str_free skips BY CONTRACT so a view cannot free
-// bytes it does not own. The view-aware siblings free that box alone.
-//
-// Only this class may take them. The immortal rc makes a second holder uncounted
-// and undetectable, so the warrant has to come from the classification: the
-// runtime helper made these boxes and stored them into this array and nowhere
-// else, and the slot is proven non-escaping.
+// strarr_free_helper / strarr_elem_free_helper: the element-walking release a
+// reclaimable string[] slot gets. One route since #7230: split/lines segments
+// are OWNED COPIES now (rt_src_str_split / rt_src_str_lines append
+// `slice + ""`), so the SARRB class takes the same rc-aware full free as every
+// other string[] — the view-aware siblings (__fern_str_arr_view_free freeing
+// boxes alone) would strand each element's data buffer. The strarr_builtin
+// flag still gates the SARRB credit (slot_is_reclaimable_strarr): it is the
+// binding-site type confirmation, no longer a release selector.
 function strarr_free_helper(s: LowerState, i: i32): string {
-    if (s.is_strarr_builtin_slot(i)) { return "__fern_str_arr_view_free"; }
     return "__fern_str_arr_free";
 }
 function strarr_elem_free_helper(s: LowerState, i: i32): string {
-    if (s.is_strarr_builtin_slot(i)) { return "__fern_str_view_free"; }
     return "__fern_str_free";
 }
 
