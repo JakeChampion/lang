@@ -207,12 +207,11 @@ function main(): i32 { return tup(("a", 2)); }`,
 		{
 			// MOVE-ON-ALIAS: `var b = a` at a's last mention — the alias inc
 			// and a's exit-sweep dec cancel; b owns the box. movedLocals: a on
-			// both sides. KNOWN aliasBindIncs DIVERGENCE: native elides the
-			// transfer inc at the move site (the movedLocals pair
-			// cancellation); the self-host's var-bind array path does not
-			// consult move_sites, so it still emits the retain (balanced by
-			// keeping a's sweep dec — moved_elided never fires). Both sound;
-			// the self-host spends an inc/dec pair native elides.
+			// both sides, and BOTH sides now elide the transfer inc at the
+			// move site (the self-host's var-bind array path consults
+			// moves_local_at and note_moved_elided's sweep skip pairs with
+			// it), so aliasBindIncs is anchored EMPTY — the first pinned
+			// divergence of the retain-plan table, burned down.
 			name: "move-on-alias",
 			src: `function mv(): i32 {
 	var a: i32[] = [1, 2];
@@ -220,10 +219,7 @@ function main(): i32 { return tup(("a", 2)); }`,
 	return b[0];
 }
 function main(): i32 { return mv(); }`,
-			anchor: map[string]map[string]string{"mv": {"movedLocals": "a", "moveSites": "3:2"}},
-			diverge: map[string]map[string]divergence{
-				"mv": {"aliasBindIncs": {native: "", selfhost: "3:2=b"}},
-			},
+			anchor: map[string]map[string]string{"mv": {"movedLocals": "a", "moveSites": "3:2", "aliasBindIncs": ""}},
 		},
 		{
 			// ALIAS-BIND retain, live source: `a` is read again after

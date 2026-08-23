@@ -19035,7 +19035,17 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // allocs == frees at live_bytes 0, so only __rc_underflow_count()
             // dissented. See credit_alias_sites' callers in reclaimable_names_of.
             var aid_slot: i32 = se.slot_of(id.name);
-            if (se.is_arr_slot(aid_slot)) { is_arr = true; alias_inc = true; }
+            if (se.is_arr_slot(aid_slot)) {
+                is_arr = true;
+                // Move-on-alias: `var b = a` at a's last top-level mention
+                // TRANSFERS the reference — the retain is elided and a's exit
+                // dec is elided with it (note_moved_elided), the same net-zero
+                // pair native cancels at this site. moves_local_at keys on the
+                // Var's own position, which is what move_sites_toplevel_of
+                // records and the rcplan moveSites diff pins against native.
+                if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
+                else { alias_inc = true; }
+            }
             // A struct slot is not in slot_is_rc_container — its release is a
             // deep field drop rather than a box dec, so it carries its own
             // clause rather than widening that predicate under three other
