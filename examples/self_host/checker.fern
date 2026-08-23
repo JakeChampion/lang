@@ -774,7 +774,7 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_bound: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, type_params: string[], param_bound: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -991,6 +991,16 @@ function (s: Scope) with_impls(impls: parser.ImplInfo[], trait_reqs: parser.Trai
 // trait bounds. Read by assoc_call_req to resolve `T.zero()`.
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
   return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+}
+
+// resolve_type resolves a type SPELLING as written in this scope: the enclosing
+// function's type parameters are type VARIABLES, every other name resolves
+// against the declared structs and unions. Every spelling read while checking a
+// body goes through here — a `var` annotation, a lambda's parameter or return,
+// a cast — so a type parameter cannot be captured by a same-named declared type
+// at one of them.
+function (s: Scope) resolve_type(name: string): Type {
+  return type_from_name_erasing_tparams(name, s.tparams, s.structs, s.unions);
 }
 
 // bind_tpvar records that value `name` was declared with the type parameter
@@ -1251,7 +1261,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
+  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, type_params: [], param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -2329,10 +2339,19 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     var bt: Type[] = [];
     var bpi: i32 = 0;
     while (bpi < sig.param_type_names.len() && bpi < c.args.len()) {
-      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[bpi]), check_expr(c.args[bpi], s), s.structs, s.unions, bn, bt);
+      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[bpi]), check_expr(c.args[bpi], s), sig.type_params, s.structs, s.unions, bn, bt);
       bn = bn2;
       bt = bt2;
       bpi = bpi + 1;
+    }
+    // A declared type parameter no argument bound stays a VARIABLE in the
+    // substitution. Resolving it by name instead would find a same-named
+    // declared type and hand the call site a concrete result it never had.
+    for tp in sig.type_params {
+      if (util.index_of_str(bn, tp) < 0) {
+        bn = bn.append(tp);
+        bt = bt.append(t_unknown("type parameter " + tp));
+      }
     }
     if (bn.len() > 0) {
       var gsubst: Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.structs, s.unions);
@@ -2732,9 +2751,9 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       // surrounding scope (lexical capture).
       var pts: Type[] = [];
       for param in lm.params {
-        pts = pts.append(type_from_name_with_structs_unions(param.type_name, s.structs, s.unions));
+        pts = pts.append(s.resolve_type(param.type_name));
       }
-      var rt: Type = type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions);
+      var rt: Type = s.resolve_type(lm.ret_type);
       // Walk the body for side-effect checks. The body's
       // returns are checked against the lambda's own
       // ret_type (when one is declared), not the enclosing
@@ -2793,9 +2812,9 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
         parser.ExprLambda(lm) => {
           var lpts: Type[] = [];
           for param in lm.params {
-            lpts = lpts.append(type_from_name_with_structs_unions(param.type_name, s.structs, s.unions));
+            lpts = lpts.append(s.resolve_type(param.type_name));
           }
-          var lrt: Type = type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions);
+          var lrt: Type = s.resolve_type(lm.ret_type);
           init_scope = s.bind(v.name, t_func(lpts, lrt));
         },
         _ => {}
@@ -2808,7 +2827,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
       // variant value flows into a union slot via the
       // existing type_assignable widening).
       if (v.type_name.len() > 0) {
-        var declared: Type = type_from_name_with_structs_unions(v.type_name, s.structs, s.unions);
+        var declared: Type = s.resolve_type(v.type_name);
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
         }
@@ -3103,7 +3122,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(param.type_name);
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), type_param_count: fd.type_param_count, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -3536,13 +3555,18 @@ function type_from_name_erasing_tparams(name: string, tparams: string[], structs
   return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased, structs, unions);
 }
 
-// gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE rather
-// than a declared type — i.e. it resolves to nothing. `T` resolves to unknown,
-// `f64` and a declared `Box` do not, so a concrete spelling can never be
-// mistaken for a variable and shadow a real type.
-function gc_is_typevar_name(n: string, structs: StructSig[], unions: UnionSig[]): boolean {
+// gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE of the
+// callee. `tparams` is what the callee DECLARED, which is the authority: a user
+// `struct T` does not stop `sort_by[T]`'s T being a variable. The
+// resolves-to-nothing fallback catches the unbounded parameters parse_func_decl
+// drops from the decl, so `f64` and a declared `Box` still cannot be read as
+// variables.
+function gc_is_typevar_name(n: string, tparams: string[], structs: StructSig[], unions: UnionSig[]): boolean {
   if (n.len() == 0) {
     return false;
+  }
+  if (util.index_of_str(tparams, n) >= 0) {
+    return true;
   }
   return type_contains_unknown(type_from_name_with_structs_unions(n, structs, unions));
 }
@@ -3558,14 +3582,14 @@ function gc_is_typevar_name(n: string, structs: StructSig[], unions: UnionSig[])
 // First binding wins; a shape that does not line up contributes nothing rather
 // than guessing, so an unbindable variable simply leaves the return type
 // partially unknown and the caller falls back to the old behaviour.
-function gc_bind_param(r: parser.TypeRef, at: Type, structs: StructSig[], unions: UnionSig[], names: string[], types: Type[]): (string[], Type[]) {
+function gc_bind_param(r: parser.TypeRef, at: Type, tparams: string[], structs: StructSig[], unions: UnionSig[], names: string[], types: Type[]): (string[], Type[]) {
   var ns: string[] = names;
   var ts: Type[] = types;
   if (r.array_depth > 0) {
     match (at) {
       TypeArray(a) => {
         var elem: parser.TypeRef = parser.elem_type_ref(r);
-        return gc_bind_param(elem, a.elem, structs, unions, ns, ts);
+        return gc_bind_param(elem, a.elem, tparams, structs, unions, ns, ts);
       },
       _ => {
         return (ns, ts);
@@ -3578,7 +3602,7 @@ function gc_bind_param(r: parser.TypeRef, at: Type, structs: StructSig[], unions
         if (tp.elements.len() == r.args.len()) {
           var ti: i32 = 0;
           while (ti < r.args.len()) {
-            let (tn2, tt2) = gc_bind_param(r.args[ti], tp.elements[ti], structs, unions, ns, ts);
+            let (tn2, tt2) = gc_bind_param(r.args[ti], tp.elements[ti], tparams, structs, unions, ns, ts);
             ns = tn2;
             ts = tt2;
             ti = ti + 1;
@@ -3589,7 +3613,7 @@ function gc_bind_param(r: parser.TypeRef, at: Type, structs: StructSig[], unions
     }
     return (ns, ts);
   }
-  if (r.args.len() == 0 && gc_is_typevar_name(r.base, structs, unions) && util.index_of_str(ns, r.base) < 0) {
+  if (r.args.len() == 0 && gc_is_typevar_name(r.base, tparams, structs, unions) && util.index_of_str(ns, r.base) < 0) {
     ns = ns.append(r.base);
     ts = ts.append(at);
   }
@@ -3756,7 +3780,7 @@ function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   // the uncoded over-reject, the same way a `[T]` function does (#4346
   // piece 2). A concrete receiver resolves without unknown and stays strict.
   if (!generic && fd.receiver_type.len() > 0) {
-    if (type_contains_unknown(type_from_name_with_structs_unions(fd.receiver_type, s.structs, s.unions))) {
+    if (type_contains_unknown(s.resolve_type(fd.receiver_type))) {
       generic = true;
     }
   }
@@ -4647,9 +4671,9 @@ function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: st
     parser.ExprLambda(lm) => {
       var pts: Type[] = [];
       for param in lm.params {
-        pts = pts.append(type_from_name_with_structs_unions(param.type_name, cur.structs, cur.unions));
+        pts = pts.append(cur.resolve_type(param.type_name));
       }
-      var rt: Type = type_from_name_with_structs_unions(lm.ret_type, cur.structs, cur.unions);
+      var rt: Type = cur.resolve_type(lm.ret_type);
       var lsc: Scope = cur;
       if (self_name.len() > 0) {
         lsc = lsc.bind(self_name, t_func(pts, rt));
@@ -4684,7 +4708,7 @@ function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: st
         parser.ExprLambda(lm) => {
           var lsc: Scope = cur;
           for param in lm.params {
-            lsc = lsc.bind(param.name, type_from_name_with_structs_unions(param.type_name, cur.structs, cur.unions));
+            lsc = lsc.bind(param.name, cur.resolve_type(param.type_name));
           }
           out = util.append_diags(out, lret_stmts(lm.body, lsc, unions));
         },
@@ -5060,7 +5084,7 @@ function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.Enu
     parser.ExprLambda(lm) => {
       var lsc: Scope = s;
       for param in lm.params {
-        lsc = lsc.bind(param.name, type_from_name_with_structs_unions(param.type_name, s.structs, s.unions));
+        lsc = lsc.bind(param.name, s.resolve_type(param.type_name));
       }
       out = util.append_diags(out, mx_stmts(lm.body, lsc, unions, enums));
     },
@@ -6370,7 +6394,7 @@ function assoc_hit_type(h: AssocHit, obj: parser.Expr, s: Scope): Type {
     },
     _ => {}
   }
-  return type_from_name_with_structs_unions(parser.subst_self(h.ret, self_name), s.structs, s.unions);
+  return s.resolve_type(parser.subst_self(h.ret, self_name));
 }
 
 function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
@@ -7227,7 +7251,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
       // isn't mis-flagged as E001.
       var lsc: Scope = s;
       for param in lm.params {
-        lsc = lsc.bind(param.name, type_from_name_with_structs_unions(param.type_name, s.structs, s.unions));
+        lsc = lsc.bind(param.name, s.resolve_type(param.type_name));
       }
       // A return inside the lambda returns from the LAMBDA — thread
       // its declared return type (or unknown when undeclared) so the
@@ -7235,7 +7259,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
       // the enclosing function's return type. Mirrors the lambda-body
       // scope in check_expr's ExprLambda arm.
       if (lm.ret_type.len() > 0) {
-        lsc = lsc.with_ret_type(type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions));
+        lsc = lsc.with_ret_type(s.resolve_type(lm.ret_type));
       } else {
         lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
       }
@@ -7395,7 +7419,7 @@ function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope):
   if (type_name.len() == 0) {
     return [];
   }
-  var declared: Type = type_from_name_with_structs_unions(type_name, s.structs, s.unions);
+  var declared: Type = s.resolve_type(type_name);
   return array_elem_check(array_elem_type_of(declared), init, s);
 }
 
@@ -7416,9 +7440,9 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): util.Diag[] {
           parser.ExprLambda(lm) => {
             var fpts: Type[] = [];
             for param in lm.params {
-              fpts = fpts.append(type_from_name_with_structs_unions(param.type_name, cur.structs, cur.unions));
+              fpts = fpts.append(cur.resolve_type(param.type_name));
             }
-            vsc = cur.bind(v.name, t_func(fpts, type_from_name_with_structs_unions(lm.ret_type, cur.structs, cur.unions)));
+            vsc = cur.bind(v.name, t_func(fpts, cur.resolve_type(lm.ret_type)));
             cur = vsc;
           },
           _ => {}
@@ -7845,10 +7869,10 @@ function assign_stmt_own_lambdas(st: parser.Stmt, cur: Scope, unions: UnionSig[]
       parser.ExprLambda(lm) => {
         var lsc: Scope = cur;
         for param in lm.params {
-          lsc = lsc.bind(param.name, type_from_name_with_structs_unions(param.type_name, cur.structs, cur.unions));
+          lsc = lsc.bind(param.name, cur.resolve_type(param.type_name));
         }
         if (lm.ret_type.len() > 0) {
-          lsc = lsc.with_ret_type(type_from_name_with_structs_unions(lm.ret_type, cur.structs, cur.unions));
+          lsc = lsc.with_ret_type(cur.resolve_type(lm.ret_type));
         } else {
           lsc = lsc.with_ret_type(t_unknown("no enclosing function"));
         }
@@ -7874,7 +7898,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
     match (st) {
       parser.StmtVar(v) => {
         if (v.type_name.len() > 0) {
-          var declared: Type = type_from_name_with_structs_unions(v.type_name, cur.structs, cur.unions);
+          var declared: Type = cur.resolve_type(v.type_name);
           var initt: Type = check_expr(v.init, cur);
           if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !type_assignable(initt, declared, unions)) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
@@ -12242,7 +12266,7 @@ function annotate_advance(st: parser.Stmt, s: Scope): Scope {
   match (st) {
     parser.StmtVar(v) => {
       if (v.type_name.len() > 0) {
-        return s.bind(v.name, type_from_name_with_structs_unions(v.type_name, s.structs, s.unions));
+        return s.bind(v.name, s.resolve_type(v.type_name));
       }
       return s.bind(v.name, check_expr(v.init, s));
     },
@@ -12312,7 +12336,7 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
     parser.ExprLambda(lm) => {
       var ls: Scope = s;
       for param in lm.params {
-        ls = ls.bind(param.name, type_from_name_with_structs_unions(param.type_name, s.structs, s.unions));
+        ls = ls.bind(param.name, s.resolve_type(param.type_name));
       }
       return parser.ExprLambda { ...lm, body: annotate_block(lm.body, ls) };
     },
