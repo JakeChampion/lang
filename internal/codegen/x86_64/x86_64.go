@@ -814,6 +814,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesReadFileBytes {
 		g.emitReadFileBytesRuntime()
 	}
+	if g.usesUtf8Valid {
+		g.emitUtf8ValidRuntime()
+	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
@@ -1211,6 +1214,9 @@ type generator struct {
 	usesReadFile      bool
 	usesReadFileBytes bool
 	usesWriteFile     bool
+	// usesUtf8Valid pulls in `__fern_utf8_valid(data, len) → 1/0`,
+	// read_file's strict D9 well-formedness scan (#5714).
+	usesUtf8Valid bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -1531,6 +1537,7 @@ func (g *generator) recordUse(target string) {
 		g.usesReadFile = true
 		g.usesAlloc = true
 		g.usesIoError = true
+		g.usesUtf8Valid = true
 	case "read_file_bytes":
 		g.usesReadFileBytes = true
 		g.usesAlloc = true
@@ -9977,6 +9984,10 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("je .Lioe_exists")
 	g.emit("cmp ebx, 4")
 	g.emit("je .Lioe_intr")
+	// EILSEQ is synthetic — read_file's UTF-8 validation dispatches
+	// it; no file syscall produces it (#5714).
+	g.emit("cmp ebx, 84")
+	g.emit("je .Lioe_ilseq")
 
 	// Other(path, ""). 24-byte box: tag, pad, path, "".
 	g.emit("mov edi, 24")
@@ -9995,6 +10006,9 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("jmp .Lioe_with_path")
 	g.label(".Lioe_exists")
 	g.emit("mov ebx, 2")
+	g.emit("jmp .Lioe_with_path")
+	g.label(".Lioe_ilseq")
+	g.emit("mov ebx, 3")
 	g.emit("jmp .Lioe_with_path")
 	g.label(".Lioe_intr")
 	g.emit("mov edi, 8")
@@ -10104,6 +10118,29 @@ func (g *generator) emitReadFileRuntime() {
 	g.label(".Lrf_done")
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
+	// Zero the shrink tail [r13+r15, r13+r14): a file that shrank
+	// between fstat and read used to leave alloc slack there, which
+	// would make the validation below nondeterministic. NUL bytes
+	// are valid UTF-8.
+	g.emit("mov rcx, r14")
+	g.emit("sub rcx, r15")
+	g.emit("jle .Lrf_validate")
+	g.emit("lea rdi, [r13 + r15]")
+	g.emit("xor eax, eax")
+	g.emit("cld")
+	g.emit("rep stosb")
+	g.label(".Lrf_validate")
+	// D9 (#5714): the text read validates at the boundary; invalid
+	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
+	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, r14")
+	g.emit("call __fern_utf8_valid")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lrf_ok")
+	g.emit("mov r13d, 84") // EILSEQ
+	g.emit("jmp .Lrf_err_dispatch")
+	g.label(".Lrf_ok")
 	// Result.Ok(string): 16-byte box, tag=0 @0, str_ptr @8.
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
@@ -10144,6 +10181,127 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_file, .-__fern_read_file")
+}
+
+// emitUtf8ValidRuntime emits `__fern_utf8_valid(data, len) → 1/0` —
+// the strict well-formedness scan behind read_file's D9 validation
+// (#5714). Accepts exactly what std/utf8.is_valid_utf8 accepts:
+// stray continuations, overlong 2/3/4-byte forms, surrogates
+// U+D800–DFFF, truncation at the end, and leads above 0xF4 all
+// reject. Byte-range formulation (no codepoint assembly), with an
+// 8-byte word skip over ASCII runs. Leaf — no calls, no frame.
+func (g *generator) emitUtf8ValidRuntime() {
+	g.line("")
+	g.line(".globl __fern_utf8_valid")
+	g.line(".type __fern_utf8_valid, @function")
+	g.label("__fern_utf8_valid")
+	// rdi = data cursor, rsi = len.
+	g.emit("lea r8, [rdi + rsi]") // r8 = end
+	g.emit("mov r9, 0x8080808080808080")
+	g.label(".Luv_loop")
+	g.emit("cmp rdi, r8")
+	g.emit("jae .Luv_ok")
+	// ASCII word skip: 8 bytes at a time while every top bit is clear.
+	g.emit("mov rax, r8")
+	g.emit("sub rax, rdi")
+	g.emit("cmp rax, 8")
+	g.emit("jb .Luv_byte")
+	g.emit("mov rax, [rdi]")
+	g.emit("test rax, r9")
+	g.emit("jnz .Luv_byte")
+	g.emit("add rdi, 8")
+	g.emit("jmp .Luv_loop")
+	g.label(".Luv_byte")
+	g.emit("movzx eax, byte ptr [rdi]")
+	g.emit("cmp eax, 0x80")
+	g.emit("jae .Luv_multi")
+	g.emit("inc rdi")
+	g.emit("jmp .Luv_loop")
+	g.label(".Luv_multi")
+	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
+	g.emit("cmp eax, 0xC2")
+	g.emit("jb .Luv_bad")
+	g.emit("cmp eax, 0xE0")
+	g.emit("jae .Luv_3plus")
+	// 2-byte lead C2..DF: one continuation.
+	g.emit("lea rcx, [rdi + 2]")
+	g.emit("cmp rcx, r8")
+	g.emit("ja .Luv_bad")
+	g.emit("movzx edx, byte ptr [rdi + 1]")
+	g.emit("and edx, 0xC0")
+	g.emit("cmp edx, 0x80")
+	g.emit("jne .Luv_bad")
+	g.emit("add rdi, 2")
+	g.emit("jmp .Luv_loop")
+	g.label(".Luv_3plus")
+	g.emit("cmp eax, 0xF0")
+	g.emit("jae .Luv_4")
+	// 3-byte lead E0..EF: two continuations; E0 overlong / ED surrogate
+	// carried by the first continuation's range.
+	g.emit("lea rcx, [rdi + 3]")
+	g.emit("cmp rcx, r8")
+	g.emit("ja .Luv_bad")
+	g.emit("movzx ecx, byte ptr [rdi + 1]") // c1
+	g.emit("movzx edx, byte ptr [rdi + 2]")
+	g.emit("and edx, 0xC0")
+	g.emit("cmp edx, 0x80")
+	g.emit("jne .Luv_bad")
+	g.emit("mov edx, ecx")
+	g.emit("and edx, 0xC0")
+	g.emit("cmp edx, 0x80")
+	g.emit("jne .Luv_bad")
+	g.emit("cmp eax, 0xE0")
+	g.emit("jne .Luv_3_not_e0")
+	g.emit("cmp ecx, 0xA0") // E0 A0.. only (overlong below)
+	g.emit("jb .Luv_bad")
+	g.label(".Luv_3_not_e0")
+	g.emit("cmp eax, 0xED")
+	g.emit("jne .Luv_3_done")
+	g.emit("cmp ecx, 0xA0") // ED ..9F only (surrogates above)
+	g.emit("jae .Luv_bad")
+	g.label(".Luv_3_done")
+	g.emit("add rdi, 3")
+	g.emit("jmp .Luv_loop")
+	g.label(".Luv_4")
+	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
+	// >U+10FFFF carried by the first continuation's range.
+	g.emit("cmp eax, 0xF4")
+	g.emit("ja .Luv_bad")
+	g.emit("lea rcx, [rdi + 4]")
+	g.emit("cmp rcx, r8")
+	g.emit("ja .Luv_bad")
+	g.emit("movzx ecx, byte ptr [rdi + 1]") // c1
+	g.emit("movzx edx, byte ptr [rdi + 2]")
+	g.emit("and edx, 0xC0")
+	g.emit("cmp edx, 0x80")
+	g.emit("jne .Luv_bad")
+	g.emit("movzx edx, byte ptr [rdi + 3]")
+	g.emit("and edx, 0xC0")
+	g.emit("cmp edx, 0x80")
+	g.emit("jne .Luv_bad")
+	g.emit("mov edx, ecx")
+	g.emit("and edx, 0xC0")
+	g.emit("cmp edx, 0x80")
+	g.emit("jne .Luv_bad")
+	g.emit("cmp eax, 0xF0")
+	g.emit("jne .Luv_4_not_f0")
+	g.emit("cmp ecx, 0x90") // F0 90.. only
+	g.emit("jb .Luv_bad")
+	g.label(".Luv_4_not_f0")
+	g.emit("cmp eax, 0xF4")
+	g.emit("jne .Luv_4_done")
+	g.emit("cmp ecx, 0x90") // F4 ..8F only
+	g.emit("jae .Luv_bad")
+	g.label(".Luv_4_done")
+	g.emit("add rdi, 4")
+	g.emit("jmp .Luv_loop")
+	g.label(".Luv_ok")
+	g.emit("mov eax, 1")
+	g.emit("ret")
+	g.label(".Luv_bad")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.line(".size __fern_utf8_valid, .-__fern_utf8_valid")
 }
 
 // emitReadFileBytesRuntime emits `__fern_read_file_bytes(path) →

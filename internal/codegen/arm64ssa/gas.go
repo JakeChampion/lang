@@ -670,6 +670,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
 	"__fern_io_error":               emitIoErrorHelper,
+	"__fern_utf8_valid":             emitUtf8ValidHelper,
 	"tcp_listen":                    emitTcpListenHelper,
 	"tcp_accept":                    emitTcpAcceptHelper,
 	"tcp_recv":                      emitTcpRecvHelper,
@@ -1971,7 +1972,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
 	"write_file":                    {"__fern_io_error"},
-	"read_file":                     {"__fern_io_error"},
+	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
 	"remove_file":                   {"__fern_io_error"},
 	"create_dir_all":                {"__fern_io_error"},
@@ -2793,8 +2794,8 @@ func emitEnvHelper(w func(string, ...any)) {
 // emitIoErrorHelper writes __fern_io_error(errno, path) -> IoError box: map a
 // (positive) errno to the matching IoError variant and build its heap box,
 // matching the native layout so a Match on the value reads the right tag/payload.
-// Payloaded path variants — NotFound(0)/PermissionDenied(1)/AlreadyExists(2) —
-// are {tag@0, path@8}; Interrupted(4) is tag-only; the Other(6) fallback carries
+// Payloaded path variants — NotFound(0)/PermissionDenied(1)/AlreadyExists(2)/
+// InvalidUtf8(3) — are {tag@0, path@8}; Interrupted(4) is tag-only; the Other(6) fallback carries
 // {tag@0, path@8, msg@16} with an empty msg string built on the heap. Every box
 // carries the standard rc header (rc=1 at [box-8]). Leaf; x0=errno, x1=path.
 func emitIoErrorHelper(w func(string, ...any)) {
@@ -2808,6 +2809,10 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tb.eq .Lssa_ioe_ex")
 	w("\tcmp w0, #4") // EINTR
 	w("\tb.eq .Lssa_ioe_intr")
+	// EILSEQ is synthetic — read_file's UTF-8 validation dispatches
+	// it; no file syscall produces it (#5714).
+	w("\tcmp w0, #84") // EILSEQ
+	w("\tb.eq .Lssa_ioe_il")
 	// Other(path, ""): build the empty msg string, then a 3-slot box.
 	w("\tadrp x2, %s", heapPtrSym)
 	w("\tadd x2, x2, #:lo12:%s", heapPtrSym) // x2 = &cursor
@@ -2859,6 +2864,9 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tb .Lssa_ioe_path")
 	w(".Lssa_ioe_ex:")
 	w("\tmov w7, #2")
+	w("\tb .Lssa_ioe_path")
+	w(".Lssa_ioe_il:")
+	w("\tmov w7, #3")
 	w(".Lssa_ioe_path:")
 	w("\tadrp x2, %s", heapPtrSym)
 	w("\tadd x2, x2, #:lo12:%s", heapPtrSym)
@@ -2978,10 +2986,12 @@ func emitWriteFileHelper(w func(string, ...any)) {
 
 // emitReadFileHelper writes read_file(path) -> Result[string, IoError]: open the
 // file read-only, fstat it for the size, read the whole thing into a fresh
-// single-word rc string, and return Ok(string) (tag 0, string@8). Any syscall
-// failure maps -errno through __fern_io_error and returns Err(IoError) (tag 1,
-// box@8). The path is NUL-terminated into a heap buffer first. Non-leaf (calls
-// __fern_io_error); frame carries a 192-byte statbuf scratch plus callee-saved
+// single-word rc string, UTF-8-validate it (D9, #5714 — invalid content maps to
+// Err(InvalidUtf8(path)) via a synthetic EILSEQ), and return Ok(string) (tag 0,
+// string@8). Any syscall failure maps -errno through __fern_io_error and returns
+// Err(IoError) (tag 1, box@8). The path is NUL-terminated into a heap buffer
+// first. Non-leaf (calls __fern_io_error / __fern_utf8_valid); frame carries a
+// 192-byte statbuf scratch plus callee-saved
 // x19=path / x20=fd / x21=data-or-errno / x22=size / x23=bytes_read / x24=path_nul.
 // x0=path.
 func emitReadFileHelper(w func(string, ...any)) {
@@ -3065,6 +3075,28 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tmov x0, x20")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
+	// Zero the shrink tail [x21+x23, x21+x22): a file that shrank
+	// between fstat and read would otherwise leave heap slack there,
+	// making the validation below nondeterministic. NUL bytes are
+	// valid UTF-8.
+	w("\tsubs x2, x22, x23")
+	w("\tb.le .Lssa_rf_val")
+	w("\tadd x1, x21, x23")
+	w(".Lssa_rf_zfill:")
+	w("\tstrb wzr, [x1], #1")
+	w("\tsubs x2, x2, #1")
+	w("\tb.gt .Lssa_rf_zfill")
+	w(".Lssa_rf_val:")
+	// D9 (#5714): the text read validates at the boundary; invalid
+	// content dispatches as Err(InvalidUtf8(path)) via the synthetic
+	// EILSEQ errno. Raw reads go through read_file_bytes.
+	w("\tmov x0, x21")
+	w("\tmov x1, x22")
+	w("\tbl %s", fnLabel("__fern_utf8_valid"))
+	w("\tcbnz w0, .Lssa_rf_okb")
+	w("\tmov x21, #84") // EILSEQ
+	w("\tb .Lssa_rf_err_dispatch")
+	w(".Lssa_rf_okb:")
 	// Result.Ok(string): box {rc=1, tag=0, string@8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -3113,6 +3145,123 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #256")
+	w("\tret")
+}
+
+// emitUtf8ValidHelper writes __fern_utf8_valid(data, len) -> 1/0 — the strict
+// well-formedness scan behind read_file's D9 validation (#5714). Accepts exactly
+// what std/utf8.is_valid_utf8 accepts: stray continuations, overlong 2/3/4-byte
+// forms, surrogates U+D800–DFFF, truncation at the end, and leads above 0xF4 all
+// reject. Byte-range formulation (no codepoint assembly), with an 8-byte word
+// skip over ASCII runs. Leaf; x0=data, x1=len.
+func emitUtf8ValidHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_utf8_valid"))
+	// x0 = cursor, x2 = end, x9 = 0x8080..80 top-bit mask.
+	w("\tadd x2, x0, x1")
+	w("\tmovz x9, #0x8080")
+	w("\tmovk x9, #0x8080, lsl #16")
+	w("\tmovk x9, #0x8080, lsl #32")
+	w("\tmovk x9, #0x8080, lsl #48")
+	w(".Lssa_uv_loop:")
+	w("\tcmp x0, x2")
+	w("\tb.hs .Lssa_uv_ok")
+	// ASCII word skip: 8 bytes at a time while every top bit is clear.
+	w("\tsub x3, x2, x0")
+	w("\tcmp x3, #8")
+	w("\tb.lo .Lssa_uv_byte")
+	w("\tldr x3, [x0]")
+	w("\tand x3, x3, x9")
+	w("\tcbnz x3, .Lssa_uv_byte")
+	w("\tadd x0, x0, #8")
+	w("\tb .Lssa_uv_loop")
+	w(".Lssa_uv_byte:")
+	w("\tldrb w3, [x0]")
+	w("\tcmp w3, #0x80")
+	w("\tb.hs .Lssa_uv_multi")
+	w("\tadd x0, x0, #1")
+	w("\tb .Lssa_uv_loop")
+	w(".Lssa_uv_multi:")
+	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
+	w("\tcmp w3, #0xC2")
+	w("\tb.lo .Lssa_uv_bad")
+	w("\tcmp w3, #0xE0")
+	w("\tb.hs .Lssa_uv_3plus")
+	// 2-byte lead C2..DF: one continuation.
+	w("\tadd x4, x0, #2")
+	w("\tcmp x4, x2")
+	w("\tb.hi .Lssa_uv_bad")
+	w("\tldrb w5, [x0, #1]")
+	w("\tand w6, w5, #0xC0")
+	w("\tcmp w6, #0x80")
+	w("\tb.ne .Lssa_uv_bad")
+	w("\tadd x0, x0, #2")
+	w("\tb .Lssa_uv_loop")
+	w(".Lssa_uv_3plus:")
+	w("\tcmp w3, #0xF0")
+	w("\tb.hs .Lssa_uv_4")
+	// 3-byte lead E0..EF: two continuations; E0 overlong / ED
+	// surrogate carried by the first continuation's range.
+	w("\tadd x4, x0, #3")
+	w("\tcmp x4, x2")
+	w("\tb.hi .Lssa_uv_bad")
+	w("\tldrb w5, [x0, #1]") // c1
+	w("\tldrb w6, [x0, #2]")
+	w("\tand w7, w6, #0xC0")
+	w("\tcmp w7, #0x80")
+	w("\tb.ne .Lssa_uv_bad")
+	w("\tand w7, w5, #0xC0")
+	w("\tcmp w7, #0x80")
+	w("\tb.ne .Lssa_uv_bad")
+	w("\tcmp w3, #0xE0")
+	w("\tb.ne .Lssa_uv_3_not_e0")
+	w("\tcmp w5, #0xA0") // E0 A0.. only (overlong below)
+	w("\tb.lo .Lssa_uv_bad")
+	w(".Lssa_uv_3_not_e0:")
+	w("\tcmp w3, #0xED")
+	w("\tb.ne .Lssa_uv_3_done")
+	w("\tcmp w5, #0xA0") // ED ..9F only (surrogates above)
+	w("\tb.hs .Lssa_uv_bad")
+	w(".Lssa_uv_3_done:")
+	w("\tadd x0, x0, #3")
+	w("\tb .Lssa_uv_loop")
+	w(".Lssa_uv_4:")
+	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
+	// >U+10FFFF carried by the first continuation's range.
+	w("\tcmp w3, #0xF4")
+	w("\tb.hi .Lssa_uv_bad")
+	w("\tadd x4, x0, #4")
+	w("\tcmp x4, x2")
+	w("\tb.hi .Lssa_uv_bad")
+	w("\tldrb w5, [x0, #1]") // c1
+	w("\tldrb w6, [x0, #2]")
+	w("\tand w7, w6, #0xC0")
+	w("\tcmp w7, #0x80")
+	w("\tb.ne .Lssa_uv_bad")
+	w("\tldrb w6, [x0, #3]")
+	w("\tand w7, w6, #0xC0")
+	w("\tcmp w7, #0x80")
+	w("\tb.ne .Lssa_uv_bad")
+	w("\tand w7, w5, #0xC0")
+	w("\tcmp w7, #0x80")
+	w("\tb.ne .Lssa_uv_bad")
+	w("\tcmp w3, #0xF0")
+	w("\tb.ne .Lssa_uv_4_not_f0")
+	w("\tcmp w5, #0x90") // F0 90.. only
+	w("\tb.lo .Lssa_uv_bad")
+	w(".Lssa_uv_4_not_f0:")
+	w("\tcmp w3, #0xF4")
+	w("\tb.ne .Lssa_uv_4_done")
+	w("\tcmp w5, #0x90") // F4 ..8F only
+	w("\tb.hs .Lssa_uv_bad")
+	w(".Lssa_uv_4_done:")
+	w("\tadd x0, x0, #4")
+	w("\tb .Lssa_uv_loop")
+	w(".Lssa_uv_ok:")
+	w("\tmov w0, #1")
+	w("\tret")
+	w(".Lssa_uv_bad:")
+	w("\tmov w0, #0")
 	w("\tret")
 }
 

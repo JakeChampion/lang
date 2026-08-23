@@ -2,6 +2,8 @@ package interp
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -668,5 +670,44 @@ func TestInterpTupleMatch(t *testing.T) {
 	v, _ := evalProgram(t, src)
 	if n, ok := v.(Number); !ok || n != 158 {
 		t.Errorf("tuple match: got %v, want 158", v)
+	}
+}
+
+// read_file validates UTF-8 at the boundary (D9, #5714): malformed
+// content surfaces as Err(InvalidUtf8(path)); read_file_bytes hands
+// the same bytes back raw. The interp is the differential oracle, so
+// its verdicts must match the AOT backends' __fern_utf8_valid.
+func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.bin")
+	if err := os.WriteFile(bad, []byte{0xff, 0xfe}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := builtinReadFile(nil, []Value{String(bad)})
+	if err != nil {
+		t.Fatalf("builtinReadFile: %v", err)
+	}
+	res, ok := v.(*Enum)
+	if !ok || res.VariantName != "Err" {
+		t.Fatalf("got %#v, want Err", v)
+	}
+	ioe, ok := res.Payloads[0].(*Enum)
+	if !ok || ioe.VariantName != "InvalidUtf8" || ioe.Index != 3 {
+		t.Fatalf("got %#v, want InvalidUtf8 (tag 3)", res.Payloads[0])
+	}
+	if p, ok := ioe.Payloads[0].(String); !ok || string(p) != bad {
+		t.Fatalf("payload = %#v, want the path", ioe.Payloads[0])
+	}
+	// The raw sibling stays unvalidated.
+	v, err = builtinReadFileBytes(nil, []Value{String(bad)})
+	if err != nil {
+		t.Fatalf("builtinReadFileBytes: %v", err)
+	}
+	res, ok = v.(*Enum)
+	if !ok || res.VariantName != "Ok" {
+		t.Fatalf("bytes: got %#v, want Ok", v)
+	}
+	if arr, ok := res.Payloads[0].(Array); !ok || len(arr) != 2 {
+		t.Fatalf("bytes payload = %#v, want 2-byte array", res.Payloads[0])
 	}
 }

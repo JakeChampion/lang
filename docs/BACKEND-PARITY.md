@@ -91,7 +91,10 @@ heap obj with `tag:i32 @0` + pointer payload `@8` on native;
 variants). Shared `__fern_io_error(errno, path)` runtime does
 the errno → variant mapping (ENOENT → NotFound, EACCES →
 PermissionDenied, EEXIST → AlreadyExists, EINTR → Interrupted,
-default → Other(path, "")).
+EILSEQ → InvalidUtf8 — synthetic, dispatched by `read_file`'s
+UTF-8 validation via `__fern_utf8_valid`, 84 on Linux / 92 on
+Darwin / WASI errno 25; no file syscall produces it — default →
+Other(path, "")).
 
 Coverage: `Test{Arm64,X86_64}ReadFileOk` /
 `...ReadFileNotFound` / `...WriteFileOk` /
