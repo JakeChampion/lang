@@ -133,9 +133,9 @@ step 0:
   scalar — clean census, SIGSEGV in CI) into an immediate local failure.
 - **Run leak-matrix cells with quarantine + `FERN_RC_UNDERFLOW_TRAP=1`** so
   the latent class (stray dec into an unclaimed box) goes red before its leak
-  is fixed, not after. The matrix runs on x86-64; `asm_arm64_ir.fern` now has
-  a leakcheck emitter (census only — no sanitizer there yet), so an arm64
-  matrix leg is buildable; `wasm_ir.fern` still has none.
+  is fixed, not after. The census now reaches every backend — the x86-64 hev
+  block, `asm_arm64_ir.fern`'s emitter (with its own matrix leg), and
+  `wasm_ir.fern`'s mode-0 emitter — with the sanitizer still x86-only.
 
 ## What this is not
 
