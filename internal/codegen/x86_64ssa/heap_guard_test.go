@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ssa"
 )
 
 // The arena is 16 GiB — the native backend's size — based high enough that
@@ -29,26 +27,6 @@ func TestHeapReservationFitsTheAddressRange(t *testing.T) {
 	if heapSlackBytes >= heapBytes {
 		t.Errorf("heapSlackBytes = %d leaves nothing of the %d-byte reservation to hand out",
 			heapSlackBytes, heapBytes)
-	}
-}
-
-// ssa.ResolveWidths decides whether a call result keeps the i32 sign-extend
-// mask by looking the callee up by name, so a helper it has never heard of gets
-// the wrong answer silently — a truncated pointer if the helper returns one, a
-// zero-extended negative i32 if it does not. Neither shows up under a low
-// arena. Every helper this backend emits therefore has to be classified.
-func TestEveryRuntimeHelperResultIsClassified(t *testing.T) {
-	names := make([]string, 0, len(runtimeHelperEmitters))
-	for name := range runtimeHelperEmitters {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if !ssa.RuntimeHelperResultClassified(name) {
-			t.Errorf("%s: unclassified — add it to runtimeHelperWideResult (pointer / "+
-				"f64 / i64 result) or narrowRuntimeHelpers (void / i32) in internal/ssa/width.go",
-				name)
-		}
 	}
 }
 

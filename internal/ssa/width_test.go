@@ -52,34 +52,65 @@ func TestResolveWidthsCallResult(t *testing.T) {
 	}
 }
 
-// A callee absent from the map is a backend-emitted runtime helper. Its result
-// width comes from the helper ABI table instead: a pointer-returning helper is
-// widened, an i32-returning one keeps the mask that normalises its result.
-func TestResolveWidthsRuntimeHelperResult(t *testing.T) {
+// A callee absent from the map is a backend-provided builtin or runtime
+// helper: there is no ssa.Func to read a signature off, so the result width
+// arrives already stamped on the op by the lift (from ir.ResAddr / ResWide /
+// ResNarrow at the site that emitted the call). This pass must leave that
+// stamp alone rather than re-deriving it from the name.
+func TestResolveWidthsKeepsTheStampOnAnUnresolvableCallee(t *testing.T) {
 	cases := []struct {
-		callee string
-		want   int8
+		name     string
+		width    int8
+		addr     bool
+		wantWide int8
 	}{
-		{"__alloc", 64},
-		{"__str_concat", 64},
-		{"__arr_idx_nc", 64},
-		{"__str_len", 0},
-		{"__fern_memchr", 0},
+		{"unstamped stays narrow", 0, false, 0},
+		{"wide value stays wide", 64, false, 64},
+		{"address stays wide", 64, true, 64},
 	}
 	for _, c := range cases {
-		t.Run(c.callee, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			caller := NewFunc("caller")
 			eb := caller.NewBlock()
 			r := caller.AddOp(eb, OpCall)
-			eb.Ops[len(eb.Ops)-1].Str = c.callee
+			eb.Ops[len(eb.Ops)-1].Str = "__some_helper"
+			eb.Ops[len(eb.Ops)-1].Width = c.width
+			eb.Ops[len(eb.Ops)-1].Addr = c.addr
 			caller.SetRet(eb, r)
 
 			ResolveWidths(map[string]*Func{"caller": caller})
 
-			if got := eb.Ops[0].Width; got != c.want {
-				t.Errorf("%s: call Width = %d, want %d", c.callee, got, c.want)
+			if got := eb.Ops[0].Width; got != c.wantWide {
+				t.Errorf("call Width = %d, want %d", got, c.wantWide)
+			}
+			if got := eb.Ops[0].Addr; got != c.addr {
+				t.Errorf("call Addr = %v, want %v", got, c.addr)
 			}
 		})
+	}
+}
+
+// An address a helper returns has to propagate into the arithmetic that
+// offsets it, exactly as an OpAlloc's does — that propagation is the whole
+// reason the stamp distinguishes an address from a plain 64-bit value.
+func TestResolveWidthsPropagatesAStampedHelperAddress(t *testing.T) {
+	f := NewFunc("f")
+	b := f.NewBlock()
+	base := f.AddOp(b, OpCall)
+	b.Ops[len(b.Ops)-1].Str = "__some_helper"
+	b.Ops[len(b.Ops)-1].Width, b.Ops[len(b.Ops)-1].Addr = 64, true
+	off := f.AddOp(b, OpConstInt)
+	b.Ops[len(b.Ops)-1].Imm = 8
+	elem := f.AddOp(b, OpAdd, base, off)
+	f.SetRet(b, elem)
+
+	ResolveWidths(map[string]*Func{"f": f})
+
+	for _, op := range b.Ops {
+		if op.Result.IsValid() && op.Result.ID == elem.ID && op.Width != 64 {
+			t.Errorf("helper_result + 8 has Width %d, want 64 — the offset address is "+
+				"truncated back to 32 bits", op.Width)
+		}
 	}
 }
 
