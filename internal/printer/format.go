@@ -789,7 +789,13 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		if p.Own {
 			f.b.WriteString("own ")
 		}
-		f.b.WriteString(writtenName(p.Name))
+		// A destructuring parameter prints the pattern it was written with,
+		// not the holder the desugar minted (#7338).
+		if p.Pattern != nil {
+			f.formatParamPattern(p)
+		} else {
+			f.b.WriteString(writtenName(p.Name))
+		}
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
 	}
@@ -803,7 +809,13 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		return
 	}
 	f.b.WriteByte(' ')
-	f.formatBlock(fn.Body, depth)
+	// The parameter list carries the patterns now, so the prelude `let`s that
+	// bind them would be a second, redundant binding of the same names.
+	if n, ok := desugarPreludeLen(fn.Params, fn.Body); ok && n > 0 {
+		f.formatBlockFrom(fn.Body, depth, n)
+	} else {
+		f.formatBlock(fn.Body, depth)
+	}
 	f.b.WriteByte('\n')
 }
 
@@ -811,6 +823,19 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 // its own line at depth+1, then `}` indented to depth. Empty blocks
 // stay one-liners. Pending comments that fall inside the block but
 // before its statements get drained at the right indent.
+// formatBlockFrom is formatBlock starting at statement `skip`, for a body whose
+// leading statements are the parameter desugar's prelude and are already
+// spelled in the parameter list (#7338). A block that is nothing BUT prelude
+// prints empty, which is correct: the bindings live in the parameters.
+func (f *formatter) formatBlockFrom(blk *ast.Block, depth, skip int) {
+	if blk == nil || skip >= len(blk.Stmts) {
+		f.b.WriteString("{}")
+		return
+	}
+	rest := &ast.Block{Stmts: blk.Stmts[skip:]}
+	f.formatBlock(rest, depth)
+}
+
 func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	if blk == nil || len(blk.Stmts) == 0 {
 		// Even an empty block can host comments — but supporting
@@ -1853,8 +1878,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// reconstructed whenever that shape is intact. The `function`
 		// rendering has to invent a return type for it, and `void` is a
 		// lie for every arrow whose expression has a value.
-		if x.Arrow && x.Body != nil && len(x.Body.Stmts) == 1 {
-			if ret, ok := x.Body.Stmts[0].(*ast.Return); ok && ret.Value != nil {
+		if ret, prelude, ok := arrowReturn(x); ok {
+			{
+				_ = prelude
 				// The body runs as far right as it can, so any context
 				// that continues with a tighter operator needs parens.
 				// An assignment's RHS is terminal, hence `>` not `>=`.
@@ -1867,7 +1893,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 					if i > 0 {
 						f.b.WriteString(", ")
 					}
-					f.b.WriteString(writtenName(p.Name))
+					// A destructuring parameter prints the pattern it was
+					// written with, not the holder the desugar minted.
+					if p.Pattern != nil {
+						f.formatParamPattern(p)
+					} else {
+						f.b.WriteString(writtenName(p.Name))
+					}
 					f.b.WriteString(": ")
 					f.b.WriteString(formatType(p.Type))
 				}
@@ -1885,11 +1917,20 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 		}
 		f.b.WriteString("function(")
+		lamPrelude, lamPreludeOK := desugarPreludeLen(x.Params, x.Body)
 		for i, p := range x.Params {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			f.b.WriteString(writtenName(p.Name))
+			// A destructuring parameter prints its written pattern here too:
+			// a lambda that states a return type never reaches the arrow
+			// branch above, and printing the holder there left the two
+			// spellings disagreeing about the same parameter (#7338).
+			if p.Pattern != nil && lamPreludeOK {
+				f.formatParamPattern(p)
+			} else {
+				f.b.WriteString(writtenName(p.Name))
+			}
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(p.Type))
 		}
@@ -1899,12 +1940,21 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteString(formatType(x.ReturnType))
 		}
 		f.b.WriteByte(' ')
-		if x.Body != nil && len(x.Body.Stmts) == 1 && isSingleLineStmt(x.Body.Stmts[0]) {
+		if !lamPreludeOK {
+			lamPrelude = 0
+		}
+		// The parameter list carries the patterns now, so the prelude `let`s
+		// would bind the same names a second time.
+		lamStmts := x.Body
+		if lamPrelude > 0 && x.Body != nil {
+			lamStmts = &ast.Block{Stmts: x.Body.Stmts[lamPrelude:]}
+		}
+		if lamStmts != nil && len(lamStmts.Stmts) == 1 && isSingleLineStmt(lamStmts.Stmts[0]) {
 			f.b.WriteString("{ ")
-			f.formatStmt(x.Body.Stmts[0], 0)
+			f.formatStmt(lamStmts.Stmts[0], 0)
 			f.b.WriteString(" }")
 		} else {
-			f.formatBlock(x.Body, 0)
+			f.formatBlock(lamStmts, 0)
 		}
 	case *ast.BlockExpr:
 		// Reached only if a BlockExpr appears outside an if/match branch
@@ -1925,6 +1975,122 @@ func writtenName(name string) string {
 		return "_"
 	}
 	return name
+}
+
+// arrowReturn reports whether x can be reprinted in the arrow form, and if so
+// yields the `return expr` that becomes the arrow's body.
+//
+// An arrow lambda parses to a one-statement body wrapping its expression in a
+// return — except when a parameter was DESTRUCTURED. The parser desugars each
+// such parameter into a holder plus a leading `let` in the body, so the shape
+// becomes k prelude destructures followed by the return, and the arrow form was
+// unreachable: the printer fell back to `function(…)`, which needs a return type
+// nobody wrote and the printer (running before the checker) cannot infer. Native
+// wrote `: void` and the self-host wrote nothing; both make the formatted
+// program fail to compile, which is #7338.
+//
+// The prelude is matched by HOLDER NAME rather than by counting, so a body whose
+// leading statements are the user's own destructuring — not the desugar's —
+// keeps the verbose spelling instead of having those statements silently
+// swallowed into a parameter list.
+// desugarPreludeLen reports how many leading statements of body are the `let`s
+// the parser minted for destructuring parameters, and whether every such
+// parameter was accounted for.
+//
+// Matched by HOLDER NAME rather than by counting, so a body whose leading
+// statements are the USER's own destructuring is not mistaken for the
+// desugar's and silently swallowed into a parameter list. `ok` is false when
+// any pattern parameter's prelude is missing, which leaves the caller printing
+// the desugared form rather than a program that drops a binding.
+func desugarPreludeLen(params []ast.Param, body *ast.Block) (n int, ok bool) {
+	holders := map[string]bool{}
+	for _, p := range params {
+		if p.Pattern != nil {
+			holders[p.Name] = true
+		}
+	}
+	if len(holders) == 0 || body == nil {
+		return 0, len(holders) == 0
+	}
+	for n < len(body.Stmts) && len(holders) > 0 {
+		d, isD := body.Stmts[n].(*ast.Destructure)
+		if !isD {
+			break
+		}
+		id, isID := d.Init.(*ast.Ident)
+		if !isID || !holders[id.Name] {
+			break
+		}
+		delete(holders, id.Name)
+		n++
+	}
+	return n, len(holders) == 0
+}
+
+// arrowReturn reports whether x can be reprinted in the arrow form, and if so
+// yields the `return expr` that becomes the arrow's body.
+//
+// An arrow lambda parses to a one-statement body wrapping its expression in a
+// return — except when a parameter was DESTRUCTURED, where the desugar's
+// prelude sits in front of it. Without accounting for that prelude the arrow
+// form was unreachable and the printer fell back to `function(…)`, which needs
+// a return type nobody wrote and the printer (running before the checker)
+// cannot infer. Native wrote `: void` and the self-host wrote nothing; both
+// make the formatted program fail to compile, which is #7338.
+func arrowReturn(x *ast.Lambda) (ret *ast.Return, prelude int, ok bool) {
+	if !x.Arrow || x.Body == nil {
+		return nil, 0, false
+	}
+	n, okPrelude := desugarPreludeLen(x.Params, x.Body)
+	if !okPrelude || n != len(x.Body.Stmts)-1 {
+		return nil, 0, false
+	}
+	r, isR := x.Body.Stmts[n].(*ast.Return)
+	if !isR || r.Value == nil {
+		return nil, 0, false
+	}
+	return r, n, true
+}
+
+// formatParamPattern renders a destructuring PARAMETER's written pattern —
+// `(p, q)` for a tuple, `Point { x: a, y }` for a struct. The tuple spelling is
+// formatDestructurePattern's; the struct one is the parameter position's own,
+// since a struct pattern never appears as a bare `let` target.
+func (f *formatter) formatParamPattern(p ast.Param) {
+	// An `@` binding names the WHOLE value beside the pattern — `v @ P { x, y }`
+	// — and the parser uses that name as the holder instead of minting one. It
+	// is a real binding the body may read, so printing the pattern alone drops
+	// it and the formatted program stops compiling.
+	if !strings.HasPrefix(p.Name, "__ptuple_") {
+		f.b.WriteString(writtenName(p.Name))
+		f.b.WriteString(" @ ")
+	}
+	d := p.Pattern
+	if d.StructName == "" {
+		f.formatDestructurePattern(d)
+		return
+	}
+	f.b.WriteString(writtenName(d.StructName))
+	f.b.WriteString(" { ")
+	for i, n := range d.Names {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		fld := n
+		if i < len(d.Fields) {
+			fld = d.Fields[i]
+		}
+		// `Point { x }` when the binder matches the field, `Point { x: a }`
+		// when it was renamed — the shorthand is what the source wrote.
+		if fld == n {
+			f.b.WriteString(writtenName(n))
+			continue
+		}
+		f.b.WriteString(writtenName(fld))
+		f.b.WriteString(": ")
+		f.b.WriteString(writtenName(n))
+	}
+	f.b.WriteString(" }")
 }
 
 // formatDestructurePattern renders a tuple destructure's pattern `(a, (b, c))`.

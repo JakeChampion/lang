@@ -1187,7 +1187,7 @@ func TestFormatPipeHoleRoundTrip(t *testing.T) {
 // round trip, including the parameter-pattern desugar that produces a
 // struct-mode Destructure in the body prelude.
 func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
-	for _, tc := range []struct{ name, src, want string }{
+	for _, tc := range []struct{ name, src, want, notWant string }{
 		{
 			name: "rename",
 			src:  "struct Point { x: i32, y: i32 }\nfunction f(p: Point): i32 { let Point { x: a, y } = p; return a + y; }",
@@ -1199,9 +1199,16 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 			want: "let Point { y } = p;",
 		},
 		{
-			name: "param_pattern_prelude",
-			src:  "struct Point { x: i32, y: i32 }\nfunction f(Point { x: a, y }: Point): i32 { return a + y; }",
-			want: "let Point { x: a, y } = __ptuple_",
+			// A destructuring parameter reprints as the pattern the source
+			// wrote. This case used to pin the OPPOSITE — the desugar's leak,
+			// `let Point { x: a, y } = __ptuple_` — as expected output, which
+			// defined the formatter's job as emitting the parser's holder
+			// rather than the program someone typed (#7338). `notWant` is
+			// checked below, so the holder cannot creep back in.
+			name:    "param_pattern_written_form",
+			src:     "struct Point { x: i32, y: i32 }\nfunction f(Point { x: a, y }: Point): i32 { return a + y; }",
+			want:    "function f(Point { x: a, y }: Point): i32 {",
+			notWant: "__ptuple_",
 		},
 		{
 			name: "tuple_mode_unchanged",
@@ -1232,6 +1239,11 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 			got := formatSrc(t, tc.src)
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			// notWant pins a spelling that must NOT survive into the output —
+			// a lowering detail the source never wrote.
+			if tc.notWant != "" && strings.Contains(got, tc.notWant) {
+				t.Errorf("got:\n%s\nwant it NOT to contain %q", got, tc.notWant)
 			}
 			// Re-parse + re-format: the output must be a valid program that
 			// formats to itself, which is what catches a mode swap.
