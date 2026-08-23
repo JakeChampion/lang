@@ -9128,11 +9128,9 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") {
         var clonm: str = cid.name[8 : cid.name.len()];
         var mks: LowerState = s.emit(ir.op_const_func(0, clonm));
-        var mka: i32 = 0;
-        while (mka < c.args.len()) {
-            mks = lower_expr(c.args[mka], mks);
+        for arg in c.args {
+            mks = lower_expr(arg, mks);
             if (!mks.ok) { return mks; }
-            mka = mka + 1;
         }
         return mks.emit(ir.op_arr_make(c.args.len() + 1, 32));
     }
@@ -10670,11 +10668,9 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         var tfn: i32 = util.digits_to_i32(fa.field);
         if (expr_tuple_elem_tag(fa.obj, tfn, s) == "fn") {
             var tfs: LowerState = s;
-            var tfi: i32 = 0;
-            while (tfi < c.args.len()) {
-                tfs = lower_expr(c.args[tfi], tfs);
+            for arg in c.args {
+                tfs = lower_expr(arg, tfs);
                 if (!tfs.ok) { return tfs; }
-                tfi = tfi + 1;
             }
             tfs = lower_expr(fa.obj, tfs);
             if (!tfs.ok) { return tfs; }
@@ -10697,11 +10693,9 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             var tcslot: i32 = tcs.slot_of(tctmp);
             tcs = tcs.emit(ir.op_store_local(tcslot));
             tcs = tcs.emit(ir.op_load_local(tcslot));   // __env (the box)
-            var tca: i32 = 0;
-            while (tca < c.args.len()) {
-                tcs = lower_expr(c.args[tca], tcs);
+            for arg in c.args {
+                tcs = lower_expr(arg, tcs);
                 if (!tcs.ok) { return tcs; }
-                tca = tca + 1;
             }
             tcs = tcs.emit(ir.op_load_local(tcslot));
             tcs = tcs.emit(ir.op_const_i32(0));
@@ -12135,11 +12129,9 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         var fbslot: i32 = ffs.slot_of(fbtmp);
         ffs = ffs.emit(ir.op_store_local(fbslot));
         ffs = ffs.emit(ir.op_load_local(fbslot));   // __env (the box)
-        var ffi: i32 = 0;
-        while (ffi < c.args.len()) {
-            ffs = lower_expr(c.args[ffi], ffs);
+        for arg in c.args {
+            ffs = lower_expr(arg, ffs);
             if (!ffs.ok) { return ffs; }
-            ffi = ffi + 1;
         }
         ffs = ffs.emit(ir.op_load_local(fbslot));
         ffs = ffs.emit(ir.op_const_i32(0));
@@ -12239,11 +12231,9 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         if (amn.len() > 0) {
             var ams: LowerState = lower_expr(fa.obj, s);
             if (!ams.ok) { return ams; }
-            var amai: i32 = 0;
-            while (amai < c.args.len()) {
-                ams = lower_expr(c.args[amai], ams);
+            for arg in c.args {
+                ams = lower_expr(arg, ams);
                 if (!ams.ok) { return ams; }
-                amai = amai + 1;
             }
             return ams.emit(ir.op_call_direct(amn, 1 + c.args.len()));
         }
@@ -13950,11 +13940,9 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         var btslot: i32 = bxs.slot_of(btmp);
                         bxs = bxs.emit(ir.op_store_local(btslot));
                         bxs = bxs.emit(ir.op_load_local(btslot));   // __env (the box)
-                        var cca: i32 = 0;
-                        while (cca < c.args.len()) {
-                            bxs = lower_expr(c.args[cca], bxs);
+                        for arg in c.args {
+                            bxs = lower_expr(arg, bxs);
                             if (!bxs.ok) { return bxs; }
-                            cca = cca + 1;
                         }
                         bxs = bxs.emit(ir.op_load_local(btslot));
                         bxs = bxs.emit(ir.op_const_i32(0));
@@ -13967,11 +13955,9 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         // guarantees the element is callable (a non-fn array indexed
                         // in call position wouldn't type-check).
                         var pfs: LowerState = s;
-                        var pfa: i32 = 0;
-                        while (pfa < c.args.len()) {
-                            pfs = lower_expr(c.args[pfa], pfs);
+                        for arg in c.args {
+                            pfs = lower_expr(arg, pfs);
                             if (!pfs.ok) { return pfs; }
-                            pfa = pfa + 1;
                         }
                         pfs = lower_expr(c.callee, pfs);   // fns[i] -> fn pointer on TOS
                         if (!pfs.ok) { return pfs; }
@@ -14057,11 +14043,9 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         bs = bs.mark_arr(bslot, true);
                         bs = bs.emit(ir.op_store_local(bslot));
                         bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
-                        var ba: i32 = 0;
-                        while (ba < c.args.len()) {
-                            bs = lower_expr(c.args[ba], bs);
+                        for arg in c.args {
+                            bs = lower_expr(arg, bs);
                             if (!bs.ok) { return bs; }
-                            ba = ba + 1;
                         }
                         bs = bs.emit(ir.op_load_local(bslot));          // box again
                         bs = bs.emit(ir.op_const_i32(0));
@@ -14069,11 +14053,9 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         return bs.emit(ir.op_call_indirect(c.args.len() + 1));
                     }
                     var cocs: LowerState = s;
-                    var coci: i32 = 0;
-                    while (coci < c.args.len()) {
-                        cocs = lower_expr(c.args[coci], cocs);
+                    for arg in c.args {
+                        cocs = lower_expr(arg, cocs);
                         if (!cocs.ok) { return cocs; }
-                        coci = coci + 1;
                     }
                     var coce: LowerState = lower_expr(c.callee, cocs);
                     if (!coce.ok) { return coce; }
@@ -14913,8 +14895,7 @@ function iife_expr_mentions_ident(e: parser.Expr, name: string): boolean {
         parser.ExprIndex(ix) => { return iife_expr_mentions_ident(ix.array, name) || iife_expr_mentions_ident(ix.index, name); },
         parser.ExprCall(c) => {
             if (iife_expr_mentions_ident(c.callee, name)) { return true; }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (iife_expr_mentions_ident(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (iife_expr_mentions_ident(arg, name)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -15094,10 +15075,8 @@ function iife_arg_is_payload_borrow(arg: parser.Expr, name: string): boolean {
                 parser.ExprIdent(_) => {},
                 _ => { return false; }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (iife_expr_mentions_ident(c.args[i], name) && !iife_arg_is_payload_borrow(c.args[i], name)) { return false; }
-                i = i + 1;
+            for each_arg in c.args {
+                if (iife_expr_mentions_ident(each_arg, name) && !iife_arg_is_payload_borrow(each_arg, name)) { return false; }
             }
             return true;
         },
@@ -15138,10 +15117,8 @@ function iife_call_is_i32_borrow(c: parser.ExprCall, name: string, ft: string, s
         },
         _ => { return false; }
     }
-    var i: i32 = 0;
-    while (i < c.args.len()) {
-        if (!iife_call_arg_borrow_safe(c.args[i], name, ft, s)) { return false; }
-        i = i + 1;
+    for arg in c.args {
+        if (!iife_call_arg_borrow_safe(arg, name, ft, s)) { return false; }
     }
     return true;
 }
@@ -25244,10 +25221,8 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
                     // Enum-variant construction: bare array-local payload args move
                     // into the box (recurse to also catch nested `V(W(a))`).
                     if (variant_enum_owner(s.structs, cid.name) != "") {
-                        var ai: i32 = 0;
-                        while (ai < c.args.len()) {
-                            out = returned_moved_arr_slots(c.args[ai], s, out);
-                            ai = ai + 1;
+                        for arg in c.args {
+                            out = returned_moved_arr_slots(arg, s, out);
                         }
                     }
                     // Built-in payload constructors `Ok(a)/Err(a)/Some(a)`: the
@@ -26116,8 +26091,7 @@ function walk_expr_escapes(e: parser.Expr, acc: string[]): string[] {
         parser.ExprFieldAccess(fa) => { return walk_fieldread_obj(fa.obj, acc); },
         parser.ExprCall(c) => {
             var a: string[] = walk_call_callee(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = walk_expr_escapes(c.args[i], a); i = i + 1; }
+            for arg in c.args { a = walk_expr_escapes(arg, a); }
             return a;
         },
         parser.ExprBinary(b) => { return walk_expr_escapes(b.right, walk_expr_escapes(b.left, acc)); },
@@ -26259,10 +26233,8 @@ function expr_view_borrow_only(e: parser.Expr, name: string): boolean {
         },
         parser.ExprCall(c) => {
             var args_ok: boolean = true;
-            var ai: i32 = 0;
-            while (ai < c.args.len()) {
-                if (!expr_view_borrow_only(c.args[ai], name)) { args_ok = false; }
-                ai = ai + 1;
+            for arg in c.args {
+                if (!expr_view_borrow_only(arg, name)) { args_ok = false; }
             }
             if (!args_ok) { return false; }
             match (c.callee) {
@@ -26732,8 +26704,7 @@ function tuple_pos_esc_expr(e: parser.Expr, host: string, idx: i32): boolean {
                 _ => { callee_esc = tuple_pos_esc_expr(c.callee, host, idx); }
             }
             if (callee_esc) { return true; }
-            var ai: i32 = 0;
-            while (ai < c.args.len()) { if (tuple_pos_esc_expr(c.args[ai], host, idx)) { return true; } ai = ai + 1; }
+            for arg in c.args { if (tuple_pos_esc_expr(arg, host, idx)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return tuple_pos_esc_expr(b.left, host, idx) || tuple_pos_esc_expr(b.right, host, idx); },
@@ -27576,8 +27547,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                                     parser.ExprIdent(oid) => {
                                         // name.<i>.len() : array-element length borrow.
                                         if (oid.name == name && util.is_all_digits(ofa.field)) {
-                                            var ci: i32 = 0;
-                                            while (ci < c.args.len()) { if (rctuple_esc_expr(c.args[ci], name, ttype, structs)) { return true; } ci = ci + 1; }
+                                            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs)) { return true; } }
                                             return false;
                                         }
                                     },
@@ -27586,8 +27556,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                                         match (o2.obj) {
                                             parser.ExprIdent(o2id) => {
                                                 if (o2id.name == name && util.is_all_digits(o2.field)) {
-                                                    var cj: i32 = 0;
-                                                    while (cj < c.args.len()) { if (rctuple_esc_expr(c.args[cj], name, ttype, structs)) { return true; } cj = cj + 1; }
+                                                    for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs)) { return true; } }
                                                     return false;
                                                 }
                                             },
@@ -27604,8 +27573,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                 _ => {}
             }
             if (rctuple_esc_expr(c.callee, name, ttype, structs)) { return true; }
-            var ai: i32 = 0;
-            while (ai < c.args.len()) { if (rctuple_esc_expr(c.args[ai], name, ttype, structs)) { return true; } ai = ai + 1; }
+            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return rctuple_esc_expr(b.left, name, ttype, structs) || rctuple_esc_expr(b.right, name, ttype, structs); },
@@ -28092,8 +28060,7 @@ function len_recv_callees_expr(e: parser.Expr, acc: string[]): string[] {
                 },
                 _ => { a = len_recv_callees_expr(c.callee, a); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = len_recv_callees_expr(c.args[i], a); i = i + 1; }
+            for arg in c.args { a = len_recv_callees_expr(arg, a); }
             return a;
         },
         parser.ExprArray(ar) => {
@@ -28187,8 +28154,7 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     var has_lit: boolean = false;
-                    var li: i32 = 0;
-                    while (li < c.args.len()) {
+                    for arg in c.args {
                         // ExprArray: the #4365 stage-(b) fresh array-literal arg
                         // (the scalar-element gate runs at the lowering with type
                         // info; over-collection here just seeds a harmless entry).
@@ -28199,10 +28165,9 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                         // type info, so a non-producing call only seeds a
                         // spare entry — the same over-collection the method
                         // arm below already documents.
-                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, parser.ExprCall(_) => { has_lit = true; }, _ => {
-                            if (str_local_binding_is_fresh(c.args[li])) { has_lit = true; }
+                        match (arg) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, parser.ExprCall(_) => { has_lit = true; }, _ => {
+                            if (str_local_binding_is_fresh(arg)) { has_lit = true; }
                         } }
-                        li = li + 1;
                     }
                     if (has_lit) { a = push_str_unique(a, cid.name); }
                 },
@@ -28214,20 +28179,17 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                 // same-named method on another type only seeds a spare entry.
                 parser.ExprFieldAccess(mfa) => {
                     var mhas: boolean = false;
-                    var mli: i32 = 0;
-                    while (mli < c.args.len()) {
-                        match (c.args[mli]) { parser.ExprString(_) => { mhas = true; }, _ => {
-                            if (str_local_binding_is_fresh(c.args[mli])) { mhas = true; }
+                    for arg in c.args {
+                        match (arg) { parser.ExprString(_) => { mhas = true; }, _ => {
+                            if (str_local_binding_is_fresh(arg)) { mhas = true; }
                         } }
-                        mli = mli + 1;
                     }
                     if (mhas) { a = push_str_unique(a, mfa.field); }
                     a = lit_arg_callees_expr(c.callee, a);
                 },
                 _ => { a = lit_arg_callees_expr(c.callee, a); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = lit_arg_callees_expr(c.args[i], a); i = i + 1; }
+            for arg in c.args { a = lit_arg_callees_expr(arg, a); }
             return a;
         },
         parser.ExprBinary(b) => { a = lit_arg_callees_expr(b.left, a); return lit_arg_callees_expr(b.right, a); },
@@ -28360,8 +28322,7 @@ function litstr_tostring_receiver(e: parser.Expr, name: string): boolean {
                 _ => {}
             }
             if (litstr_tostring_receiver(c.callee, name)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (litstr_tostring_receiver(c.args[ci], name)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (litstr_tostring_receiver(arg, name)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return litstr_tostring_receiver(b.left, name) || litstr_tostring_receiver(b.right, name); },
@@ -30310,8 +30271,7 @@ function expr_iters_map(e: parser.Expr, name: string): boolean {
                 },
                 _ => { if (expr_iters_map(c.callee, name)) { return true; } }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (expr_iters_map(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (expr_iters_map(arg, name)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return expr_iters_map(b.left, name) || expr_iters_map(b.right, name); },
@@ -30387,8 +30347,7 @@ function expr_map_identity_use(e: parser.Expr, name: string): boolean {
                 },
                 _ => { if (expr_map_identity_use(c.callee, name)) { return true; } }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (expr_map_identity_use(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (expr_map_identity_use(arg, name)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return expr_map_identity_use(b.left, name) || expr_map_identity_use(b.right, name); },
@@ -30435,8 +30394,7 @@ function map_expr_mentions_name(e: parser.Expr, name: string): boolean {
         parser.ExprSlice(sl) => { return map_expr_mentions_name(sl.array, name) || map_expr_mentions_name(sl.start, name) || map_expr_mentions_name(sl.end, name); },
         parser.ExprCall(c) => {
             if (map_expr_mentions_name(c.callee, name)) { return true; }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (map_expr_mentions_name(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (map_expr_mentions_name(arg, name)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
@@ -30486,10 +30444,8 @@ function is_map_selfcow_assign(st: parser.Stmt, name: string): boolean {
                                 },
                                 _ => { return false; }
                             }
-                            var i: i32 = 0;
-                            while (i < c.args.len()) {
-                                if (map_expr_mentions_name(c.args[i], name)) { return false; }
-                                i = i + 1;
+                            for arg in c.args {
+                                if (map_expr_mentions_name(arg, name)) { return false; }
                             }
                             return true;
                         },
@@ -31403,10 +31359,8 @@ function darr_elem_dispatch(e: parser.Expr, name: string): boolean {
 function darr_dispatch_args_unsafe(e: parser.Expr, name: string, borrowable: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
-            var ai: i32 = 0;
-            while (ai < c.args.len()) {
-                if (darr_expr_unsafe(c.args[ai], name, borrowable)) { return true; }
-                ai = ai + 1;
+            for arg in c.args {
+                if (darr_expr_unsafe(arg, name, borrowable)) { return true; }
             }
             return false;
         },
@@ -31635,10 +31589,8 @@ function moves_fields_expr(e: parser.Expr, name: string, nomove: string[]): bool
                 },
                 _ => { if (moves_fields_expr(c.callee, name, nomove)) { return true; } }
             }
-            var ai: i32 = 0;
-            while (ai < c.args.len()) {
-                if (moves_fields_expr(c.args[ai], name, nomove)) { return true; }   // a receiver nested inside an arg
-                ai = ai + 1;
+            for arg in c.args {
+                if (moves_fields_expr(arg, name, nomove)) { return true; }   // a receiver nested inside an arg
             }
             return false;
         },
@@ -36450,16 +36402,14 @@ function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, stru
                     var rt: string = optstruct_chain_leaf_type(cfa.obj, name, sty, structs);
                     if (cfa.field == "len" && rt == "?") { return true; }
                     if (cfa.field == "len" && rt.len() > 0) {
-                        var ci: i32 = 0;
-                        while (ci < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
+                        for arg in c.args { if (optstruct_bind_esc_expr(arg, name, sty, structs)) { return true; } }
                         return false;
                     }
                 },
                 _ => {}
             }
             if (optstruct_bind_esc_expr(c.callee, name, sty, structs)) { return true; }
-            var ai: i32 = 0;
-            while (ai < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ai], name, sty, structs)) { return true; } ai = ai + 1; }
+            for arg in c.args { if (optstruct_bind_esc_expr(arg, name, sty, structs)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return optstruct_bind_esc_expr(b.left, name, sty, structs) || optstruct_bind_esc_expr(b.right, name, sty, structs); },
@@ -37943,8 +37893,7 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string, struc
                                     // `p.N.len()`: array tuple-element length.
                                     parser.ExprIdent(pid) => {
                                         if (pid.name == p && util.is_all_digits(pfa.field)) {
-                                            var ai: i32 = 0;
-                                            while (ai < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ai], p, inner, structs)) { return true; } ai = ai + 1; }
+                                            for arg in c.args { if (opttup_arm_expr_escapes(arg, p, inner, structs)) { return true; } }
                                             return false;
                                         }
                                     },
@@ -37953,8 +37902,7 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string, struc
                                         match (ppfa.obj) {
                                             parser.ExprIdent(ppid) => {
                                                 if (ppid.name == p && util.is_all_digits(ppfa.field)) {
-                                                    var aj: i32 = 0;
-                                                    while (aj < c.args.len()) { if (opttup_arm_expr_escapes(c.args[aj], p, inner, structs)) { return true; } aj = aj + 1; }
+                                                    for arg in c.args { if (opttup_arm_expr_escapes(arg, p, inner, structs)) { return true; } }
                                                     return false;
                                                 }
                                             },
@@ -37971,8 +37919,7 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string, struc
                 _ => {}
             }
             if (opttup_arm_expr_escapes(c.callee, p, inner, structs)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (opttup_arm_expr_escapes(c.args[ci], p, inner, structs)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (opttup_arm_expr_escapes(arg, p, inner, structs)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return opttup_arm_expr_escapes(b.left, p, inner, structs) || opttup_arm_expr_escapes(b.right, p, inner, structs); },
@@ -39077,8 +39024,7 @@ function optstruct_arm_expr_escapes(e: parser.Expr, p: string, sty: string, stru
                             match (pfa.obj) {
                                 parser.ExprIdent(pid) => {
                                     if (pid.name == p && cfa.field == "len") {
-                                        var ai: i32 = 0;
-                                        while (ai < c.args.len()) { if (optstruct_arm_expr_escapes(c.args[ai], p, sty, structs)) { return true; } ai = ai + 1; }
+                                        for arg in c.args { if (optstruct_arm_expr_escapes(arg, p, sty, structs)) { return true; } }
                                         return false;
                                     }
                                 },
@@ -39091,8 +39037,7 @@ function optstruct_arm_expr_escapes(e: parser.Expr, p: string, sty: string, stru
                 _ => {}
             }
             if (optstruct_arm_expr_escapes(c.callee, p, sty, structs)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (optstruct_arm_expr_escapes(c.args[ci], p, sty, structs)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (optstruct_arm_expr_escapes(arg, p, sty, structs)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return optstruct_arm_expr_escapes(b.left, p, sty, structs) || optstruct_arm_expr_escapes(b.right, p, sty, structs); },
@@ -39535,8 +39480,7 @@ function optarr_arm_expr_escapes(e: parser.Expr, a: string): boolean {
                 },
                 _ => { if (optarr_arm_expr_escapes(c.callee, a)) { return true; } }
             }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (optarr_arm_expr_escapes(c.args[ci], a)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (optarr_arm_expr_escapes(arg, a)) { return true; } }
             return false;
         },
         _ => { return true; }
@@ -39949,8 +39893,7 @@ function optarrarr_arm_expr_escapes(e: parser.Expr, g: string): boolean {
                                 parser.ExprIndex(rix2) => { if (optarrarr_arm_expr_escapes(rix2.index, g)) { return true; } },
                                 _ => {}
                             }
-                            var ai: i32 = 0;
-                            while (ai < c.args.len()) { if (optarrarr_arm_expr_escapes(c.args[ai], g)) { return true; } ai = ai + 1; }
+                            for arg in c.args { if (optarrarr_arm_expr_escapes(arg, g)) { return true; } }
                             return false;
                         }
                     }
@@ -39958,8 +39901,7 @@ function optarrarr_arm_expr_escapes(e: parser.Expr, g: string): boolean {
                 _ => {}
             }
             if (optarrarr_arm_expr_escapes(c.callee, g)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (optarrarr_arm_expr_escapes(c.args[ci], g)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (optarrarr_arm_expr_escapes(arg, g)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return optarrarr_arm_expr_escapes(b.left, g) || optarrarr_arm_expr_escapes(b.right, g); },
@@ -40414,8 +40356,7 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, struc
                                             parser.ExprIdent(pid) => {
                                                 if (pid.name == name && util.is_all_digits(pfa.field)) {
                                                     if (arrtup_elem_esc_expr(pix.index, name, ttype, structs)) { return true; }
-                                                    var ai: i32 = 0;
-                                                    while (ai < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ai], name, ttype, structs)) { return true; } ai = ai + 1; }
+                                                    for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
                                                     return false;
                                                 }
                                             },
@@ -40430,8 +40371,7 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, struc
                                                     parser.ExprIdent(ppid) => {
                                                         if (ppid.name == name && util.is_all_digits(ppfa.field)) {
                                                             if (arrtup_elem_esc_expr(ppix.index, name, ttype, structs)) { return true; }
-                                                            var aj: i32 = 0;
-                                                            while (aj < c.args.len()) { if (arrtup_elem_esc_expr(c.args[aj], name, ttype, structs)) { return true; } aj = aj + 1; }
+                                                            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
                                                             return false;
                                                         }
                                                     },
@@ -40459,8 +40399,7 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, struc
                     match (lfa.obj) {
                         parser.ExprIdent(lid) => {
                             if (lid.name == name && lfa.field == "len") {
-                                var li: i32 = 0;
-                                while (li < c.args.len()) { if (arrtup_elem_esc_expr(c.args[li], name, ttype, structs)) { return true; } li = li + 1; }
+                                for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
                                 return false;
                             }
                         },
@@ -40470,8 +40409,7 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, struc
                 _ => {}
             }
             if (arrtup_elem_esc_expr(c.callee, name, ttype, structs)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ci], name, ttype, structs)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return arrtup_elem_esc_expr(b.left, name, ttype, structs) || arrtup_elem_esc_expr(b.right, name, ttype, structs); },
@@ -40963,8 +40901,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                                         parser.ExprIdent(pid) => {
                                             if (pid.name == name && cfa.field == "len") {
                                                 if (arrstruct_elem_esc_expr(pix.index, name, sty, structs, msites)) { return true; }
-                                                var ai: i32 = 0;
-                                                while (ai < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ai], name, sty, structs, msites)) { return true; } ai = ai + 1; }
+                                                for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites)) { return true; } }
                                                 return false;
                                             }
                                         },
@@ -40992,8 +40929,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                     match (lfa.obj) {
                         parser.ExprIdent(lid) => {
                             if (lid.name == name && lfa.field == "len") {
-                                var li: i32 = 0;
-                                while (li < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[li], name, sty, structs, msites)) { return true; } li = li + 1; }
+                                for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites)) { return true; } }
                                 return false;
                             }
                         },
@@ -41029,8 +40965,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 _ => {}
             }
             if (arrstruct_elem_esc_expr(c.callee, name, sty, structs, msites)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ci], name, sty, structs, msites)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return arrstruct_elem_esc_expr(b.left, name, sty, structs, msites) || arrstruct_elem_esc_expr(b.right, name, sty, structs, msites); },
@@ -41191,8 +41126,7 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
                         match (cfa.obj) {
                             parser.ExprIdent(rid) => {
                                 if (rid.name == name) {
-                                    var ai: i32 = 0;
-                                    while (ai < c.args.len()) { if (arrenum_esc_expr(c.args[ai], name)) { return true; } ai = ai + 1; }
+                                    for arg in c.args { if (arrenum_esc_expr(arg, name)) { return true; } }
                                     return false;
                                 }
                             },
@@ -41203,8 +41137,7 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
                 _ => {}
             }
             if (arrenum_esc_expr(c.callee, name)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (arrenum_esc_expr(c.args[ci], name)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (arrenum_esc_expr(arg, name)) { return true; } }
             return false;
         },
         parser.ExprArray(a) => {
@@ -44936,8 +44869,7 @@ function trmc_count_self_calls(e: parser.Expr, fname: string): i32 {
                 parser.ExprIdent(cid) => { if (cid.name == fname) { n = n + 1; } },
                 _ => { n = n + trmc_count_self_calls(c.callee, fname); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { n = n + trmc_count_self_calls(c.args[i], fname); i = i + 1; }
+            for arg in c.args { n = n + trmc_count_self_calls(arg, fname); }
             return n;
         },
         parser.ExprBinary(b) => { return trmc_count_self_calls(b.left, fname) + trmc_count_self_calls(b.right, fname); },
@@ -47864,9 +47796,8 @@ function body_has_nonstrfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
 function rcenum_ctor_payload_strings_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
-            var ai: i32 = 0;
-            while (ai < c.args.len()) {
-                match (c.args[ai]) {
+            for arg in c.args {
+                match (arg) {
                     parser.ExprStructLit(sl) => {
                         if (sl.has_base) { return false; }
                         var si: i32 = rc_struct_decl_index(structs, sl.type_name);
@@ -47892,7 +47823,6 @@ function rcenum_ctor_payload_strings_fresh(e: parser.Expr, structs: parser.Struc
                     },
                     _ => {}
                 }
-                ai = ai + 1;
             }
             return true;
         },
@@ -48736,8 +48666,7 @@ function clofld_scan(e: parser.Expr, structs: parser.StructDecl[], acc: string[]
                 },
                 _ => { a = clofld_scan(c.callee, structs, a); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = clofld_scan(c.args[i], structs, a); i = i + 1; }
+            for arg in c.args { a = clofld_scan(arg, structs, a); }
             return a;
         },
         parser.ExprBinary(b) => { return clofld_scan(b.right, structs, clofld_scan(b.left, structs, a)); },
@@ -48917,8 +48846,7 @@ function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.St
         parser.ExprFieldAccess(fa) => { return fnptr_scan(fa.obj, funcs, structs, a); },
         parser.ExprCall(c) => {
             a = fnptr_scan(c.callee, funcs, structs, a);
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = fnptr_scan(c.args[i], funcs, structs, a); i = i + 1; }
+            for arg in c.args { a = fnptr_scan(arg, funcs, structs, a); }
             return a;
         },
         parser.ExprBinary(b) => { return fnptr_scan(b.right, funcs, structs, fnptr_scan(b.left, funcs, structs, a)); },
@@ -49305,8 +49233,7 @@ function fnfld_read_expr(e: parser.Expr, structs: parser.StructDecl[], binds: st
                 },
                 _ => { a = fnfld_read_expr(c.callee, structs, binds, a); }
             }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { a = fnfld_read_expr(c.args[ci], structs, binds, a); ci = ci + 1; }
+            for arg in c.args { a = fnfld_read_expr(arg, structs, binds, a); }
             return a;
         },
         parser.ExprIndex(ix) => { return fnfld_read_expr(ix.index, structs, binds, fnfld_read_expr(ix.array, structs, binds, a)); },
@@ -49481,8 +49408,7 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                 },
                 _ => { a = strarrfld_scan(c.callee, structs, binds, str_fresh, strarr_producers, a); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = strarrfld_scan(c.args[i], structs, binds, str_fresh, strarr_producers, a); i = i + 1; }
+            for arg in c.args { a = strarrfld_scan(arg, structs, binds, str_fresh, strarr_producers, a); }
             return a;
         },
         parser.ExprBinary(b) => { return strarrfld_scan(b.right, structs, binds, str_fresh, strarr_producers, strarrfld_scan(b.left, structs, binds, str_fresh, strarr_producers, a)); },
@@ -51147,11 +51073,9 @@ function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body:
                     seen = seen + ka; okc = okc + kb;
                 }
             }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) {
-                var (aa, ab) = ca_classify_expr(c.args[ci], fname, pidx, caller_body, closureset, caset, caller_cparams);
+            for arg in c.args {
+                var (aa, ab) = ca_classify_expr(arg, fname, pidx, caller_body, closureset, caset, caller_cparams);
                 seen = seen + aa; okc = okc + ab;
-                ci = ci + 1;
             }
         },
         parser.ExprBinary(b) => {
@@ -51506,8 +51430,7 @@ function elem_read_expr(e: parser.Expr, name: string): boolean {
                 },
                 _ => { if (elem_read_expr(c.callee, name)) { return true; } }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (elem_read_expr(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (elem_read_expr(arg, name)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return elem_read_expr(b.left, name) || elem_read_expr(b.right, name); },
@@ -51631,8 +51554,7 @@ function param_consumed_expr(e: parser.Expr, name: string): boolean {
                 },
                 _ => { if (param_consumed_expr(c.callee, name)) { return true; } }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (param_consumed_expr(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (param_consumed_expr(arg, name)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return param_consumed_expr(b.left, name) || param_consumed_expr(b.right, name); },
@@ -52455,8 +52377,7 @@ function tv_expr(e: parser.Expr, name: string): boolean {
                 _ => {}
             }
             if (!direct && tv_expr(c.callee, name)) { return true; }
-            var ci: i32 = 0;
-            while (ci < c.args.len()) { if (tv_expr(c.args[ci], name)) { return true; } ci = ci + 1; }
+            for arg in c.args { if (tv_expr(arg, name)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return tv_expr(b.left, name) || tv_expr(b.right, name); },
@@ -53091,11 +53012,9 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                         // EnumRcPayloads migration covers; full escape otherwise.
                         var en: string = variant_enum_owner(structs, id.name);
                         var rcp: boolean = enum_all_variants_array_payload(structs, en);
-                        var i: i32 = 0;
-                        while (i < c.args.len()) {
-                            if (rcp) { st = FeState { tainted: rc_fe_escape_owned(c.args[i], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
-                            else { st = FeState { tainted: rc_fe_escape(c.args[i], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
-                            i = i + 1;
+                        for arg in c.args {
+                            if (rcp) { st = FeState { tainted: rc_fe_escape_owned(arg, st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            else { st = FeState { tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
                         }
                     }
                 },
@@ -53125,8 +53044,7 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                 },
                 _ => {}
             }
-            var ai: i32 = 0;
-            while (ai < c.args.len()) { st = rc_fe_walk_expr(c.args[ai], st, structs); ai = ai + 1; }
+            for arg in c.args { st = rc_fe_walk_expr(arg, st, structs); }
         },
         parser.ExprBinary(b) => { st = rc_fe_walk_expr(b.left, st, structs); st = rc_fe_walk_expr(b.right, st, structs); },
         parser.ExprUnary(u) => {
@@ -53274,10 +53192,8 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                 },
                 _ => {}
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (rc_fe_rhs_tainted(c.args[i], tainted, types_n, types_t, structs)) { return true; }
-                i = i + 1;
+            for arg in c.args {
+                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs)) { return true; }
             }
             return false;
         },
@@ -53388,8 +53304,7 @@ function rc_ml_count_in_expr(e: parser.Expr, name: string): i32 {
         parser.ExprSlice(sl) => { return rc_ml_count_in_expr(sl.array, name) + rc_ml_count_in_expr(sl.start, name) + rc_ml_count_in_expr(sl.end, name); },
         parser.ExprCall(c) => {
             var n: i32 = rc_ml_count_in_expr(c.callee, name);
-            var i: i32 = 0;
-            while (i < c.args.len()) { n = n + rc_ml_count_in_expr(c.args[i], name); i = i + 1; }
+            for arg in c.args { n = n + rc_ml_count_in_expr(arg, name); }
             return n;
         },
         parser.ExprArray(ar) => {
@@ -53585,8 +53500,7 @@ function rc_ml_expr_has_try(e: parser.Expr): boolean {
         parser.ExprBinary(b) => { return rc_ml_expr_has_try(b.left) || rc_ml_expr_has_try(b.right); },
         parser.ExprCall(c) => {
             if (rc_ml_expr_has_try(c.callee)) { return true; }
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (rc_ml_expr_has_try(c.args[i])) { return true; } i = i + 1; }
+            for arg in c.args { if (rc_ml_expr_has_try(arg)) { return true; } }
             return false;
         },
         parser.ExprArray(a) => {
@@ -54046,8 +53960,7 @@ function rc_asi_expr(e: parser.Expr, body: parser.Stmt[], k: i32, self_name: str
             } else {
                 acc = rc_asi_expr(c.callee, body, k, "", borrowed, acc);
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = rc_asi_expr(c.args[i], body, k, "", borrowed, acc); i = i + 1; }
+            for arg in c.args { acc = rc_asi_expr(arg, body, k, "", borrowed, acc); }
         },
         parser.ExprBinary(b) => { acc = rc_asi_expr(b.left, body, k, "", borrowed, acc); acc = rc_asi_expr(b.right, body, k, "", borrowed, acc); },
         parser.ExprUnary(u) => { acc = rc_asi_expr(u.operand, body, k, "", borrowed, acc); },
@@ -55149,8 +55062,7 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
                     if (erased_wide_expr(c.callee, s)) { return true; }
                 }
             }
-            var aj: i32 = 0;
-            while (aj < c.args.len()) { if (erased_wide_expr(c.args[aj], s)) { return true; } aj = aj + 1; }
+            for arg in c.args { if (erased_wide_expr(arg, s)) { return true; } }
             return false;
         },
         parser.ExprBinary(b) => { return erased_wide_expr(b.left, s) || erased_wide_expr(b.right, s); },
@@ -55709,12 +55621,10 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             var ce: LiftExpr = lift_call_callee(c, a, gfns);
             a = ce.acc;
             var nargs: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                var r: LiftExpr = lift_call_arg(c.args[i], a, gfns);
+            for arg in c.args {
+                var r: LiftExpr = lift_call_arg(arg, a, gfns);
                 a = r.acc;
                 nargs = nargs.append(r.expr);
-                i = i + 1;
             }
             return LiftExpr { expr: parser.ExprCall { callee: ce.expr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, acc: a };
         },
@@ -56840,8 +56750,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
     match (e) {
         parser.ExprCall(c) => {
             var nargs: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { nargs = nargs.append(subst_fcall_expr(c.args[i], fname, lname, capargs)); i = i + 1; }
+            for arg in c.args { nargs = nargs.append(subst_fcall_expr(arg, fname, lname, capargs)); }
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     if (cid.name == fname) {
@@ -59111,8 +59020,7 @@ function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
                 },
                 _ => { acc = value_use_idents_expr(c.callee, acc); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = value_use_idents_expr(c.args[i], acc); i = i + 1; }
+            for arg in c.args { acc = value_use_idents_expr(arg, acc); }
             return acc;
         },
         parser.ExprIdent(id) => { return acc.append(id.name); },
@@ -59673,8 +59581,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
         parser.ExprUnary(u) => { return parser.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes), line: u.line, col: u.col }; },
         parser.ExprCall(c) => {
             var nargs: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { nargs = nargs.append(box_rewrite_expr(c.args[i], boxed, btypes)); i = i + 1; }
+            for arg in c.args { nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes)); }
             return parser.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprArray(a) => {
@@ -59791,8 +59698,7 @@ function ident_used_as_value_expr(e: parser.Expr, name: string): boolean {
         parser.ExprBinary(b) => { return ident_used_as_value_expr(b.left, name) || ident_used_as_value_expr(b.right, name); },
         parser.ExprUnary(u) => { return ident_used_as_value_expr(u.operand, name); },
         parser.ExprCall(c) => {
-            var i: i32 = 0;
-            while (i < c.args.len()) { if (ident_used_as_value_expr(c.args[i], name)) { return true; } i = i + 1; }
+            for arg in c.args { if (ident_used_as_value_expr(arg, name)) { return true; } }
             match (c.callee) {
                 parser.ExprIdent(cid) => { if (cid.name == name) { return false; } },
                 _ => {}
@@ -60034,10 +59940,9 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
             var cal: WCapExpr = wcap_expr(c.callee, fd, gfns, structs, mfuncs, acc, atargets);
             var a: WCaps = cal.caps;
             var na: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                var ar: WCapExpr = wcap_expr(c.args[i], fd, gfns, structs, mfuncs, a, atargets);
-                a = ar.caps; na = na.append(ar.expr); i = i + 1;
+            for arg in c.args {
+                var ar: WCapExpr = wcap_expr(arg, fd, gfns, structs, mfuncs, a, atargets);
+                a = ar.caps; na = na.append(ar.expr);
             }
             return WCapExpr { expr: parser.ExprCall { callee: cal.expr, args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, caps: a };
         },
@@ -60260,10 +60165,8 @@ function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], 
                 }
             }
             if (has_wide_cap_expr(c.callee, fd, gfns, structs, mfuncs, atargets)) { return true; }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (has_wide_cap_expr(c.args[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
-                i = i + 1;
+            for arg in c.args {
+                if (has_wide_cap_expr(arg, fd, gfns, structs, mfuncs, atargets)) { return true; }
             }
             return false;
         },
@@ -60515,8 +60418,7 @@ function box_nested_lambdas(e: parser.Expr, acc: parser.ExprLambda[]): parser.Ex
         },
         parser.ExprCall(c) => {
             out = box_nested_lambdas(c.callee, out);
-            var i: i32 = 0;
-            while (i < c.args.len()) { out = box_nested_lambdas(c.args[i], out); i = i + 1; }
+            for arg in c.args { out = box_nested_lambdas(arg, out); }
             return out;
         },
         parser.ExprArray(ar) => {
@@ -60981,10 +60883,8 @@ function collect_append_recvs_expr(e: parser.Expr, acc: string[]): string[] {
                 },
                 _ => { acc = collect_append_recvs_expr(c.callee, acc); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = collect_append_recvs_expr(c.args[i], acc);
-                i = i + 1;
+            for arg in c.args {
+                acc = collect_append_recvs_expr(arg, acc);
             }
             return acc;
         },
@@ -61265,8 +61165,7 @@ function mv_violate_expr(e: parser.Expr, fnames: string[], acc: string[]): strin
                 },
                 _ => { a = mv_violate_expr(c.callee, fnames, a); }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = mv_violate_expr(c.args[i], fnames, a); i = i + 1; }
+            for arg in c.args { a = mv_violate_expr(arg, fnames, a); }
             return a;
         },
         parser.ExprIdent(id) => {
@@ -61324,13 +61223,11 @@ function mv_scan_stmt(st: parser.Stmt, fnames: string[], acc: string[]): string[
                                 // The target ident must be passed EXACTLY once:
                                 // twice and one occurrence outlives the move.
                                 var occ: i32 = 0;
-                                var oi: i32 = 0;
-                                while (oi < c.args.len()) {
-                                    match (c.args[oi]) {
+                                for arg in c.args {
+                                    match (arg) {
                                         parser.ExprIdent(aid) => { if (aid.name == asg.target) { occ = occ + 1; } },
                                         _ => {}
                                     }
-                                    oi = oi + 1;
                                 }
                                 var ai2: i32 = 0;
                                 while (ai2 < c.args.len()) {
@@ -61346,8 +61243,7 @@ function mv_scan_stmt(st: parser.Stmt, fnames: string[], acc: string[]): string[
                                     else { a = push_str_unique(a, "B:" + key); }
                                     ai2 = ai2 + 1;
                                 }
-                                var aj: i32 = 0;
-                                while (aj < c.args.len()) { a = mv_violate_expr(c.args[aj], fnames, a); aj = aj + 1; }
+                                for arg in c.args { a = mv_violate_expr(arg, fnames, a); }
                                 return a;
                             }
                         },
@@ -61655,8 +61551,7 @@ function grow_lambda_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprLambda(_) => { return astwalk.collect_idents_expr(e, a); },
         parser.ExprCall(c) => {
             a = grow_lambda_idents_expr(c.callee, a);
-            var i: i32 = 0;
-            while (i < c.args.len()) { a = grow_lambda_idents_expr(c.args[i], a); i = i + 1; }
+            for arg in c.args { a = grow_lambda_idents_expr(arg, a); }
             return a;
         },
         parser.ExprBinary(b) => { a = grow_lambda_idents_expr(b.left, a); return grow_lambda_idents_expr(b.right, a); },
@@ -61697,9 +61592,8 @@ pub function grow_exempt_names_of_stmt(st: parser.Stmt): string[] {
         parser.StmtAssign(a) => {
             match (a.value) {
                 parser.ExprCall(c) => {
-                    var ai: i32 = 0;
-                    while (ai < c.args.len()) {
-                        match (c.args[ai]) {
+                    for arg in c.args {
+                        match (arg) {
                             parser.ExprIdent(aid) => {
                                 if (aid.name == a.target && grow_ident_count(a.value, aid.name) == 1) {
                                     out = out.append(aid.name);
@@ -61707,7 +61601,6 @@ pub function grow_exempt_names_of_stmt(st: parser.Stmt): string[] {
                             },
                             _ => {}
                         }
-                        ai = ai + 1;
                     }
                 },
                 _ => {}
