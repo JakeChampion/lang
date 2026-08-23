@@ -11597,21 +11597,24 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         var sl: LowerState = lnst.state;
         if (!sl.ok) { return sl; }
         if (str_recv) { return free_parked_view_after(sl.emit(ir.op_str_len()), lnst.slot); }
-        // A FRESH-ARRAY-returning call receiver (`mk(i).len()` /
-        // `h.mk().len()`, the callee in the strict-fresh "ARR:"
-        // registry — every return a direct scalar-element array
-        // literal): the returned rc=1 buffer is dead after the
-        // length read. Stash, read, then release with the
-        // rc-guarded __fern_rc_dec — the discarded-statement
-        // "ARR:" reclaim's shape, in receiver position (native
-        // #5141 twin). Element-blind is sound: the ARR: contract
-        // is scalar elements only.
+        // An ARRAY-returning call receiver (`mk(i).len()` / `h.mk().len()`)
+        // whose callee leaves this frame owning one reference: a strict-fresh
+        // "ARR:" producer hands back an rc=1 buffer, an "ARROWN:" one a
+        // reference it retained or moved out (#7259). The receiver has no slot
+        // to sweep it, and it is dead once the length is read. Stash, read, then
+        // release with the rc-guarded __fern_rc_dec — the discarded-statement
+        // reclaim's shape, in receiver position.
+        //
+        // The dec is element-blind, which each admission makes sound its own
+        // way: "ARR:" is scalar elements only, and an "ARROWN:" buffer either
+        // has scalar elements too or belongs to whoever the callee borrowed from.
+        //
         // owned_fresh_call_callee resolves BOTH registry key forms — a bare name
         // for a free function and "<Base>.<method>" for a method — so this site
         // reads the same admission the #6491 read reclaim does instead of
-        // re-deriving it. It open-coded the free-function half until #7259, which
-        // is why a method returning a fresh array was reclaimed here by nobody.
-        var alfresh: boolean = owned_fresh_call_callee(fa.obj, "ARR:", s) != "";
+        // re-deriving it.
+        var alfresh: boolean = owned_fresh_call_callee(fa.obj, "ARR:", s) != ""
+            || owned_fresh_call_callee(fa.obj, "ARROWN:", s) != "";
         if (alfresh) {
             var ascr: string = "$lenra" + util.i32_to_string(sl.locals.len());
             sl = sl.add_local(ascr);
@@ -13781,11 +13784,17 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // owns; without it __fern_str_arr_free would free it out from under
             // the read, and without the deep free the three elements it did not
             // extract would strand.
+            // The "ARROWN:" half (#7259) takes the shallow release with no
+            // retain on the element: the dec gives back the reference the callee
+            // handed over, and the elements are either scalars or owned by
+            // whoever the callee borrowed the buffer from. Retaining the element
+            // as the "STRARR:" arm does would strand it.
             var ixtag: string = ix_type_tag(ix, s);
             var ixown: string = "";
             var ixdeep: boolean = false;
             if (!expr_is_str(ix.array, s)) {
                 ixown = owned_fresh_call_callee(ix.array, "ARR:", s);
+                if (ixown == "") { ixown = owned_fresh_call_callee(ix.array, "ARROWN:", s); }
                 if (ixown == "") {
                     ixown = owned_fresh_call_callee(ix.array, "STRARR:", s);
                     if (ixown != "") { ixdeep = true; }
@@ -17066,15 +17075,17 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 } else {
                                     se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
                                 }
-                            } else if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0) {
-                                // A discarded call to an ARRAY-fresh-ret free function
-                                // (`mk(i);`, every return a direct scalar-element array
-                                // literal — the "ARR:" entries of the strict-fresh
-                                // registry, #4365): the returned rc=1 buffer leaks if
-                                // merely dropped (native bounds this shape). Release it
-                                // with the shallow rc-guarded __fern_rc_dec — element-
-                                // blind, so the scalar elements ride the freed buffer
-                                // and nothing can dangle.
+                            } else if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
+                                    || util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
+                                // A discarded call to an ARRAY-returning free function
+                                // that leaves this frame owning one reference: an "ARR:"
+                                // producer (every return a direct scalar-element array
+                                // literal — #4365) hands back an rc=1 buffer, an
+                                // "ARROWN:" one (#7259) a reference it retained or moved
+                                // out. Both leak if merely dropped. Release with the
+                                // shallow rc-guarded __fern_rc_dec — element-blind,
+                                // which the "ARR:" scalar-element contract makes sound
+                                // one way and the surviving owner the other.
                                 se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
                             } else if (reclaim_has(s.reclaimable_names, "MAPRET:", dcid.name)) {
                                 // A discarded call to a MAPF-registered map builder
@@ -17137,14 +17148,14 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                             }
                         },
-                        // A discarded call to an ARRAY-fresh-ret METHOD (`h.mk();`).
-                        // The free-function arm above reads "ARR:<name>"; a method
-                        // keys "ARR:<Base>.<method>", which is what
-                        // owned_fresh_call_callee already resolves for the READ
-                        // reclaim one expression position over (#6491). Same shallow
-                        // rc-guarded __fern_rc_dec, same element-blind argument: the
-                        // registry admits only scalar-element arrays, so the elements
-                        // ride the freed buffer and nothing can dangle.
+                        // A discarded call to an ARRAY-returning METHOD (`h.mk();` /
+                        // `h.get();`). The free-function arm above reads
+                        // "ARR:<name>" / "ARROWN:<name>"; a method keys
+                        // "<Base>.<method>", which is what owned_fresh_call_callee
+                        // already resolves for the READ reclaim one expression
+                        // position over (#6491). Same shallow rc-guarded
+                        // __fern_rc_dec, same element-blind argument as the free
+                        // function.
                         //
                         // The receiver must be a bare LOCAL naming a struct, for
                         // owned_fresh_call_callee's reason: expr_struct_type reports a
@@ -17159,7 +17170,8 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 _ => {}
                             }
                             if (drty != "" && decl_field_type(s.structs, drty, dcfa.field) == ""
-                                && util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0) {
+                                && (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
+                                    || util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0)) {
                                 se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
                             }
                         },
@@ -34087,6 +34099,127 @@ pub function arr_fresh_ret_key(fn: parser.FuncDecl): string {
     return fn.name;
 }
 
+// --- owned-array-returning callees ("ARROWN:", #7259) -----------------------
+//
+// The general form of "ARR:", which asks the same question of a narrower body.
+// The question is: does a call to this function leave THIS frame owning one
+// reference to the result? Three return shapes say yes, by two mechanisms:
+//
+//   - `return h.xs` (an rc-array field of the receiver or a struct param) and
+//     `return a` (a bare BORROWED array param) are RETAINED on the way out —
+//     the return-transfer Perceus dup — so the caller holds a counted alias;
+//   - `return [x, y]` MOVES a fresh reference out of the callee's frame.
+//
+// An `own` param returned bare is NOT admitted. It moves the caller's own
+// reference back out, so the caller would hold two names for one reference and
+// the release under-flows — measured on the `id(own a) { return a; }` shape,
+// which the checker rejects at the call site but the self-host still lowers.
+//
+// A caller that BINDS the result pays the dec from the binding slot's exit
+// sweep. A caller that consumes it in place — `h.get().len()`, `grab(h)[0]`,
+// a discarded `h.get();` — has no slot, so nothing paid it and the rc ratcheted
+// up once per call: 48 B/round on `i32[]`, unbounded, where native is flat at
+// zero. These entries are what the in-place consumers release against.
+//
+// The release is the SHALLOW rc-guarded `__fern_rc_dec`. For a retained alias
+// that is right at any element kind — the dup was on the buffer POINTER and the
+// elements belong to whoever the callee borrowed from. For a moved LITERAL the
+// elements come with it, so that shape is admitted only at a scalar element
+// type, where shallow and complete are the same thing. That is also what
+// separates this from "STRARR:", whose deep free needs a fresh buffer.
+
+// arrown_ret_type: `t` is one of the four rc-array types the StmtReturn dup arms
+// classify — scalar-element, array-of-struct, array-of-enum, `string[]`. A
+// `T[][]` field is deliberately absent: no return arm claims it, so it reaches
+// the generic move-on-return path with no dup to release.
+function arrown_ret_type(structs: parser.StructDecl[], t: string): boolean {
+    return is_leaksafe_array_field(t) || is_struct_array_field_type(structs, t)
+        || is_enum_array_field_type(structs, t) || t == "string[]";
+}
+
+// arrown_obj_struct_type: the DECLARED struct type of `name` inside `fn` when it
+// is the receiver or a struct-typed parameter, else "". Those are the two
+// receivers whose `expr_struct_type` the lowering resolves from the signature
+// alone, which is what keeps this AST-side answer and the lowering's agreeing.
+function arrown_obj_struct_type(fn: parser.FuncDecl, name: string, structs: parser.StructDecl[]): string {
+    if (fn.receiver_name.len() > 0 && fn.receiver_name == name) {
+        var rty: string = util.base_type_name(fn.receiver_type);
+        if (decl_is_struct(structs, rty)) { return rty; }
+        return "";
+    }
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        if (fn.params[i].name == name) {
+            if (decl_is_struct(structs, fn.params[i].type_name)) { return fn.params[i].type_name; }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// arrown_ret_value: `e` is a return value that leaves the caller owning one
+// reference — the three shapes in the section comment. An array LITERAL moves
+// rather than retains, so it carries its elements with it and is admitted only
+// at a scalar element type.
+function arrown_ret_value(e: parser.Expr, fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    var oty: string = arrown_obj_struct_type(fn, oid.name, structs);
+                    if (oty.len() == 0) { return false; }
+                    return arrown_ret_type(structs, decl_field_type(structs, oty, fa.field));
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            var i: i32 = 0;
+            while (i < fn.params.len()) {
+                if (fn.params[i].name == id.name) {
+                    if (fn.params[i].own) { return false; }
+                    return arrown_ret_type(structs, fn.params[i].type_name);
+                }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprArray(_) => { return is_leaksafe_array_field(fn.ret_type); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// body_has_non_arrown_return: some return in `stmts` hands back something the
+// caller does not own, so it cannot be told it owns one on every path.
+function body_has_non_arrown_return(stmts: parser.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!arrown_ret_value(r.value, fn, structs)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_non_arrown_return(f.then_body, fn, structs) || body_has_non_arrown_return(f.else_body, fn, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_non_arrown_return(w.body, fn, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_non_arrown_return(fo.body, fn, structs)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_non_arrown_return(m.arms[a].body, fn, structs)) { return true; } a = a + 1; } },
+            parser.StmtDefer(_) => {},
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// fn_returns_owned_arr: EVERY return of `fn` leaves the caller owning one
+// reference to the result. All-or-nothing — the consumers release
+// unconditionally, so one path that hands back a borrow refuses the whole
+// function.
+pub function fn_returns_owned_arr(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    return arrown_ret_type(structs, fn.ret_type)
+        && body_has_return(fn.body)
+        && !body_has_non_arrown_return(fn.body, fn, structs);
+}
+
 // fresh_struct_fwd_fixpoint: the bare NAMES of free functions whose every return
 // is a strict-fresh struct — the set the forwarding arm of
 // return_value_is_strictfresh_struct resolves a callee against. Iterated to a
@@ -34199,6 +34332,14 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         var arrkey: string = arr_fresh_ret_key(funcs[k]);
         if (util.index_of_str(arr_fresh, arrkey) >= 0) {
             out = out.append("ARR:" + arrkey);
+        }
+        // "ARROWN:<key>" — the general sibling of "ARR:" (#7259): every return
+        // leaves the caller owning one reference, whether the callee retained a
+        // borrowed buffer or moved a fresh one out. Consumed by the same
+        // in-place release sites; the two overlap where a body is all fresh
+        // literals, and both spell the same shallow dec there.
+        if (fn_returns_owned_arr(funcs[k], structs)) {
+            out = out.append("ARROWN:" + arrkey);
         }
         // "STRARR:<name>" — the POINTER-element sibling of "ARR:" (#6491): a FREE
         // function returning a `string[]` every element of which this frame
@@ -36704,6 +36845,32 @@ function fieldmove_selfrebind_alias(e: parser.Expr, name: string, sty: string, s
     return false;
 }
 
+// fieldmove_counted_arr_return: `e` is exactly `name.<f>` where f is one of the
+// rc-ARRAY field kinds StmtReturn hands back WITH the return-transfer dup
+// (arrown_ret_type). The escape is therefore COUNTED, and every arm that
+// reclaims such a field is rc-guarded — `__fern_arr_dec` and
+// `__fern_str_arr_free` both dec a shared buffer instead of freeing it — so the
+// deep drop cannot take the buffer out from under the caller.
+//
+// Marking it a move costs `name` its whole reclaim credit, which is all-or-
+// nothing: one field-returning method left every rc field of the struct
+// stranded, including fields that method never names (#7259).
+function fieldmove_counted_arr_return(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    return arrown_ret_type(structs, decl_field_type(structs, sty, fa.field));
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     match (st) {
         // A direct `var t = x.f` init is a BORROW, not a move — the same split
@@ -36737,7 +36904,10 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
             }
             return fieldmove_is_move_value(a.value, name, sty, structs, borrowable) || fieldmove_expr(a.value, name, sty, structs, borrowable);
         },
-        parser.StmtReturn(r) => { return fieldmove_is_move_value(r.value, name, sty, structs, borrowable) || fieldmove_expr(r.value, name, sty, structs, borrowable); },
+        parser.StmtReturn(r) => {
+            if (fieldmove_counted_arr_return(r.value, name, sty, structs)) { return false; }
+            return fieldmove_is_move_value(r.value, name, sty, structs, borrowable) || fieldmove_expr(r.value, name, sty, structs, borrowable);
+        },
         parser.StmtExpr(e) => { return fieldmove_expr(e.value, name, sty, structs, borrowable); },
         parser.StmtIf(f) => {
             if (fieldmove_expr(f.cond, name, sty, structs, borrowable)) { return true; }
