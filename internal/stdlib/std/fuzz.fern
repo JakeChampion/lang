@@ -521,8 +521,10 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
                     match (stat(full)) {
                         Ok(s) => {
                             if (s.is_file) {
-                                match (read_file(full)) {
-                                    Ok(content) => { seeds = seeds.append(content); },
+                                // Seeds are byte-level artifacts (mutated corpora are
+                                // routinely not UTF-8), so read them raw.
+                                match (read_file_bytes(full)) {
+                                    Ok(content) => { seeds = seeds.append(string_from_bytes_unchecked(content)); },
                                     Err(_) => { },
                                 }
                             }

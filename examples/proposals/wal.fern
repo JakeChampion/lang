@@ -378,12 +378,12 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
                 Ok(_) => { },
             }
             var whole: Replay = replay([]);
-            match (read_file(path)) {
+            match (read_file_bytes(path)) {
                 Err(e) => {
                     var _x: Result[void, IoError] = remove_dir_all(d);
                     return test.fail("could not read the log back");
                 },
-                Ok(body) => { whole = replay(bytes_of(body)); },
+                Ok(body) => { whole = replay(body); },
             }
             if (whole.torn || whole.records.len() != recs.len()) {
                 var _x: Result[void, IoError] = remove_dir_all(d);
@@ -396,12 +396,12 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
             var _t: Result[void, IoError] = write_file(path,
                 string_from_bytes_unchecked(take_bytes(log, cut)));
             var torn: Replay = replay([]);
-            match (read_file(path)) {
+            match (read_file_bytes(path)) {
                 Err(e) => {
                     var _x: Result[void, IoError] = remove_dir_all(d);
                     return test.fail("could not read the truncated log");
                 },
-                Ok(body) => { torn = replay(bytes_of(body)); },
+                Ok(body) => { torn = replay(body); },
             }
             var _x2: Result[void, IoError] = remove_dir_all(d);
             if (!torn.torn) {

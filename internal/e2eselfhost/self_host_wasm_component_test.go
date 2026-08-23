@@ -247,7 +247,7 @@ func bytesEqual(a, b []byte) bool {
 // with component_full into a complete wasi:cli/run component.
 const componentFullDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -505,7 +505,7 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 // wasi:cli/run I/O component via component_full_io.
 const componentFullIODriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -745,7 +745,7 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 // it into a wasi:cli/run component via component_full_io_fs.
 const componentFullIOFSDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -1072,7 +1072,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 // wraps it into a wasi:cli/run component via component_full_io_fs_write.
 const componentFullIOFSWriteDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -1333,7 +1333,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 // core and wraps it into a wasi:cli/run component via component_full_io_fs_rw.
 const componentFullIOFSRWDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -1568,7 +1568,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 // it into a wasi:cli/run component via component_full_io_random.
 const componentFullIORandomDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -1796,7 +1796,7 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 // into a wasi:cli/run component via component_full_io_env.
 const componentFullIOEnvDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -2024,7 +2024,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 // into a wasi:cli/run component via component_full_io_args.
 const componentFullIOArgsDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -2258,7 +2258,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 // it into a wasi:cli/run component via component_full_io_clock.
 const componentFullIOClockDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -2502,7 +2502,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 // core and wraps it via component_full_io_clock_mono.
 const componentFullIOClockMonoDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -2717,7 +2717,7 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 // wraps it via component_full_io_fs_read_env.
 const componentFullIOFSReadEnvDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -2948,7 +2948,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 // it via component_full_io_fs_rw_env.
 const componentFullIOFSRWEnvDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -3173,7 +3173,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 // wraps it via component_full_io_random_write.
 const componentFullIORandomWriteDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -3393,7 +3393,7 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 // component_full_io_eprint.
 const componentFullIOEprintDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -3626,7 +3626,7 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 // component_full_io_exit.
 const componentFullIOExitDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -3855,7 +3855,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 // via component_full_io_fs_args_read.
 const componentFullIOFSArgsReadDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
@@ -4088,7 +4088,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 // it via component_full_io_fs_rw_args.
 const componentFullIOFSRWArgsDriver = `
 function main(): i32 {
-    match (read_file("core.bin")) {
+    match (read_file_bytes("core.bin")) {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
