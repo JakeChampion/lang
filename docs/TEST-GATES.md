@@ -422,6 +422,16 @@ Worth knowing so you do not assume coverage you do not have:
    as a RATIO — `TestNumericProperty_Differential` fails when under 80% of its
    seeds reach the oracle, because a wall of skips nobody totals is the same
    vacuum in slower motion.
+
+   **That ratio covers the INTERPRETER side only.** It counts seeds that reached
+   the oracle, and a backend leg skipping for a missing toolchain is its own
+   sub-test that counted against nothing — so on a host with no toolchain the
+   sweep reported "60 of 60 generated programs reached the oracle" with 180 legs
+   skipped and 0 executed, and passed. `TestDifferential_PrintableStdout` had no
+   floor at all (128 seeds, 384 legs skipped, 0 executed, PASS). Both now carry a
+   per-leg execution tally as well (#7400), the same instrument #7310 put on the
+   diff oracle. A sweep needs both numbers: seeds that reached the legs, and what
+   each leg then ran.
 11. **Most lanes cannot tell you whether a given test RAN.** They use gotestsum's
    `pkgname-and-test-fails` formatter, which prints one line per package plus
    failures — so a PASS, a SKIP and a cached replay are indistinguishable in the

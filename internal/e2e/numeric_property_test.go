@@ -23,13 +23,16 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
+	e2eharness "github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
@@ -279,14 +282,14 @@ func trimOut(s string) string { return strings.TrimRight(strings.TrimSpace(s), "
 // backend and asserts they match the interp's output.
 func assertNumProgramAgrees(t *testing.T, src string) {
 	t.Helper()
-	assertNumProgramAgreesSkipping(t, src, nil)
+	assertNumProgramAgreesSkipping(t, src, nil, nil)
 }
 
 // assertGeneratedNumProgramAgrees is assertNumProgramAgrees for a program the
 // generator produced, where an interp gap skips rather than fails.
-func assertGeneratedNumProgramAgrees(t *testing.T, src string) {
+func assertGeneratedNumProgramAgrees(t *testing.T, src string, tally *legTally) {
 	t.Helper()
-	runBackendsAgainst(t, src, interpStdoutOrSkip(t, src), nil)
+	runBackendsAgainst(t, src, interpStdoutOrSkip(t, src), nil, tally)
 }
 
 // assertNumProgramAgreesSkipping is assertNumProgramAgrees with a set of
@@ -295,15 +298,56 @@ func assertGeneratedNumProgramAgrees(t *testing.T, src string) {
 // backends still run — which is the point: that they agree is the
 // evidence the skipped one has a bug rather than the program being
 // invalid.
-func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]string) {
+func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]string, tally *legTally) {
 	t.Helper()
-	runBackendsAgainst(t, src, interpStdout(t, src), skip)
+	runBackendsAgainst(t, src, interpStdout(t, src), skip, tally)
 }
+
+// numBackendLegs are the three legs runBackendsAgainst runs, and how to tell
+// whether this host can run each. Names match the sub-test names below,
+// because those are what a tally and a failure message report.
+var numBackendLegs = []backendLeg{
+	{name: "x86_64", available: func() bool {
+		_, _, ok := e2eharness.LookupX86_64Tooling()
+		return ok
+	}},
+	{name: "arm64-linux", available: func() bool {
+		_, _, ok := e2eharness.LookupArm64Tooling()
+		return ok
+	}},
+	{name: "wasm32-wasi", available: func() bool {
+		if runtime.GOOS == "windows" {
+			return false
+		}
+		_, err := exec.LookPath("wasmtime")
+		return err == nil
+	}},
+}
+
+// numMinRunRatio is the floor for the two oracles behind runBackendsAgainst.
+//
+// Higher than the diff oracle's, because these legs have no per-seed skip of
+// their own: the only one is a `skip` map row, and both callers pass either
+// nil or a table the test owns. So an available leg is expected to run on
+// every compared seed, and the gap to 1.00 is headroom for a handful of
+// listed divergences rather than for anything the generator does.
+const numMinRunRatio = 0.98
 
 // runBackendsAgainst runs src on every backend and compares each against want,
 // one sub-test per backend so a missing toolchain skips only its own leg.
-func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string) {
+//
+// `tally` records which legs actually executed, and may be nil for a caller
+// that runs one hand-written program rather than a sweep. For a sweep it must
+// not be: rule 9's per-leg sub-test is what makes the parent PASS when every
+// leg skips, and only the tally sees that (#7400, and #7310 for the same hole
+// in the diff oracle).
+func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string, tally *legTally) {
 	t.Helper()
+	ran := func(name string) {
+		if tally != nil {
+			tally.legRan(name)
+		}
+	}
 	known := func(t *testing.T, backend string) bool {
 		if issue, ok := skip[backend]; ok {
 			t.Skipf("known divergence, see %s — remove this entry when it is fixed", issue)
@@ -317,6 +361,7 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string) 
 			return
 		}
 		out, _ := compileAndRunX86_64(t, src)
+		ran("x86_64")
 		if got := trimOut(out); got != want {
 			t.Errorf("x86_64 = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
@@ -326,6 +371,7 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string) 
 			return
 		}
 		out, _ := compileAndRunArm64(t, src)
+		ran("arm64-linux")
 		if got := trimOut(out); got != want {
 			t.Errorf("arm64 = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
@@ -335,6 +381,7 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string) 
 			return
 		}
 		comp := buildNumComponent(t, src)
+		ran("wasm32-wasi")
 		out, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit=%d\nstdout:%s\nstderr:%s\nsrc:\n%s", ec, out, stderr, src)
@@ -401,19 +448,37 @@ func TestNumericProperty_Differential(t *testing.T) {
 	}
 	const seeds = 60
 	ran := 0
+
+	// Two floors, because they answer different questions. `ran` counts seeds
+	// that reached the interp oracle; the tally counts what each BACKEND leg
+	// then executed. The comment below used to be the whole story and is the
+	// #7400 hole: a backend leg skipping is its own sub-test, so it never
+	// counted against anything, and a host with no toolchain passed this
+	// sweep having compiled nothing.
+	have, missing := availableLegs(numBackendLegs)
+	if len(have) == 0 {
+		t.Fatalf("no backend can run here (missing: %s) — every seed would compare "+
+			"the interpreter against nothing and the sweep would still report PASS",
+			describeLegs(missing))
+	}
+	t.Logf("backend legs available here: %s", describeLegs(have))
+	tally := newLegTally(have, numMinRunRatio)
+	t.Cleanup(func() { tally.check(t) })
+
 	for s := 0; s < seeds; s++ {
 		r := rand.New(rand.NewSource(int64(s)))
 		src := genNumProgram(r)
 		t.Run(fmt.Sprintf("seed%d", s), func(t *testing.T) {
 			// The parent sub-test skips exactly when the interp oracle found a
-			// gap; a backend leg skipping for a missing toolchain is its own
-			// sub-test and does not count against the floor.
+			// gap, which is not a leg's fault — so a skipped seed counts
+			// against neither floor.
 			defer func() {
 				if !t.Skipped() {
 					ran++
+					tally.seedCompared()
 				}
 			}()
-			assertGeneratedNumProgramAgrees(t, src)
+			assertGeneratedNumProgramAgrees(t, src, tally)
 		})
 	}
 	if ran*100 < seeds*minSeedsRunPct {
@@ -540,6 +605,7 @@ func FuzzNumericProperty(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, seed int64) {
 		r := rand.New(rand.NewSource(seed))
-		assertGeneratedNumProgramAgrees(t, genNumProgram(r))
+		// One program per invocation, so there is no ratio to hold: nil.
+		assertGeneratedNumProgramAgrees(t, genNumProgram(r), nil)
 	})
 }
