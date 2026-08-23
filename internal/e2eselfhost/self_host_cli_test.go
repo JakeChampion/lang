@@ -1319,6 +1319,24 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("check-position-array-literal", func(t *testing.T) {
+		// E053 at an array literal is reported at the `[`. parser.ExprArray
+		// carried no line/col at all — alone among the literal nodes — so this
+		// diagnostic rendered at 0:0 and no gate could see it: the codes and
+		// hint-text differentials compare codes and messages, and the driver
+		// they run through prints neither position. Position is checked only
+		// here, and only for the codes these rows name.
+		srcPath := filepath.Join(dir, "fip_array.fern")
+		src := "fip function f(n: i32): i32 {\n    var a: i32[] = [1];\n    return n + a.len();\n}\nfunction main(): i32 { return f(1); }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		if !strings.Contains(string(combined), "2:20: error[E053]") {
+			t.Errorf("-check diagnostics = %q, want it to contain \"2:20: error[E053]\"", combined)
+		}
+	})
+
 	t.Run("check-position-struct", func(t *testing.T) {
 		// E007 (duplicate field) is reported at the struct decl position.
 		srcPath := filepath.Join(dir, "dup_field.fern")

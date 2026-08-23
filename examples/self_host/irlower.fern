@@ -7383,7 +7383,7 @@ pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
         aref = parser.ExprIdent { name: an, line: 0, col: 0 };
     }
     // var $tjout: u8[] = [];  — the growable output buffer (#4379)
-    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "u8[]", init: parser.ExprArray { elements: [], elem_ty: "u8" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "u8[]", init: parser.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_str: false, fn_ret: "" };
     s2 = lower_stmt(dout, s2);
     if (!s2.ok) { return s2; }
     // $tjout = $tjout.append(91 as u8);  — '['
@@ -10148,7 +10148,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // a 1-element array [v] so it reuses the array machinery on
     // every backend (#5510). c.get()/c.set() desugar to c[0] below.
     if (cid.name == "cell_new" && c.args.len() == 1) {
-        return lower_expr(parser.ExprArray { elements: [c.args[0]], elem_ty: "" }, s);
+        return lower_expr(parser.ExprArray { elements: [c.args[0]], elem_ty: "", line: 0, col: 0 }, s);
     }
     // Raw-memory intrinsics (#2649 Tier-2 floor — see
     // docs/RUNTIME-INTRINSICS.md). Each lowers its args left-to-right
@@ -59929,7 +59929,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
         parser.StmtVar(v) => {
             var bxi: i32 = util.index_of_str(boxed, v.name);
             if (bxi >= 0) {
-                var cell: parser.Expr = parser.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes)], elem_ty: btypes[bxi] };
+                var cell: parser.Expr = parser.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes)], elem_ty: btypes[bxi], line: 0, col: 0 };
                 return parser.StmtVar { name: mcap_cell_name(v.name), type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false, fn_ret: "" };
             }
             return parser.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
@@ -60176,7 +60176,7 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 // wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
 function wcap_cell_decl(c: string, ty: string): parser.Stmt {
     var src: parser.Expr = parser.ExprIdent { name: c, line: 0, col: 0 };
-    return parser.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: parser.ExprArray { elements: [src], elem_ty: ty }, line: 0, col: 0, is_str: false, fn_ret: "" };
+    return parser.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: parser.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_str: false, fn_ret: "" };
 }
 
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
