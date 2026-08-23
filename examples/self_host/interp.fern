@@ -350,19 +350,42 @@ function unwrap_try(v: Value): Value {
 //     backends special-case Some / None / Ok / Err rather than emit variant
 //     structs for them. The interpreter has no such special case, so it wants
 //     ordinary decls (#5990).
-function module_variant_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
+// module_type_decls is every struct declaration in reach — the module's own,
+// the front end's injected enums, and the synthesised Option / Result variants.
+//
+// It used to drop everything with no enum_owner, i.e. every plain struct, which
+// left the interpreter unable to name the declared type of a struct FIELD. That
+// is what made a `dyn` value held in a field dispatch on the runtime value alone
+// and answer from the first provider (#7291). variant_arity does the
+// enum_owner test itself now, so the variant consumers are unaffected by the
+// wider list.
+function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
     var all: parser.StructDecl[] = parser.inject_builtin_enums(structs);
     all = add_variant_decl(all, "Some", 1, "Option");
     all = add_variant_decl(all, "None", 0, "Option");
     all = add_variant_decl(all, "Ok", 1, "Result");
     all = add_variant_decl(all, "Err", 1, "Result");
-    var out: parser.StructDecl[] = [];
+    return all;
+}
+
+// struct_field_type names the declared type of `field` on the struct `sname`,
+// or "" when either is unknown. A lookup, not inference — which is exactly the
+// line #7291 draws: a field's type is written on its declaration, an inferred
+// binding's is written nowhere.
+function struct_field_type(decls: parser.StructDecl[], sname: string, field: string): string {
     var i: i32 = 0;
-    while (i < all.len()) {
-        if (all[i].enum_owner.len() > 0) { out = out.append(all[i]); }
+    while (i < decls.len()) {
+        if (decls[i].name == sname) {
+            var j: i32 = 0;
+            while (j < decls[i].fields.len()) {
+                if (decls[i].fields[j].name == field) { return decls[i].fields[j].type_name; }
+                j = j + 1;
+            }
+            return "";
+        }
         i = i + 1;
     }
-    return out;
+    return "";
 }
 
 // add_variant_decl synthesises one variant struct, skipping it when the
@@ -387,10 +410,17 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
 
 // variant_arity returns the payload count of the enum variant of this name, or
 // -1 when no enum declares it.
-function variant_arity(name: string, variants: parser.StructDecl[]): i32 {
+//
+// The enum_owner test is what keeps this answering about VARIANTS while the
+// list it reads also carries plain struct declarations (#7291): a `struct
+// Holder` must stay -1 here, or a bare `Holder` would be taken for a
+// nullary variant at the three call sites that ask.
+function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
     var i: i32 = 0;
-    while (i < variants.len()) {
-        if (variants[i].name == name) { return variants[i].fields.len(); }
+    while (i < decls.len()) {
+        if (decls[i].name == name && decls[i].enum_owner.len() > 0) {
+            return decls[i].fields.len();
+        }
         i = i + 1;
     }
     return 0 - 1;
@@ -436,21 +466,23 @@ function v_variant(name: string, args: Value[]): Value {
 // `function (sh: Shape) area()`) when the receiver is one of
 // the union's variant structs.
 //
-// variants carries every enum-variant decl the program can name — the
-// parser lowers `enum Shape { Circle(i32) }` to a StructDecl per variant
-// with `enum_owner` set, and `module_variant_decls` adds the front-end's
-// injected enums on top. It is what tells a call to `Circle(7)` apart from
-// a call to a function nobody declared.
+// type_decls carries every struct declaration the program can name, enum
+// variants included — the parser lowers `enum Shape { Circle(i32) }` to a
+// StructDecl per variant with `enum_owner` set, and `module_type_decls` adds
+// the front-end's injected enums on top. It is what tells a call to `Circle(7)`
+// apart from a call to a function nobody declared, and what names the declared
+// type of a struct field.
 //
 // `types` runs parallel to names/values and holds each binding's DECLARED type
-// spelling, empty where the source wrote no annotation. The value plane is
+// spelling — the annotation the source wrote, or the one its initialiser's
+// declaration states, and empty when neither is in reach. The value plane is
 // untyped, so a static type — which `dyn Trait` dispatch needs and no runtime
 // value carries — can only enter through the annotation a binding was made
 // under; this is the slot the checker's Scope holds a Type in.
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[] }
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[] }
 
 // new_env seeds a declaration-free scope: the bare-statement driver
-// (eval_program) has no module around it, so the only variants in reach are
+// (eval_program) has no module around it, so the only declarations in reach are
 // the front-end's own injected enums.
 function new_env(): Env {
     var ns: string[] = [];
@@ -459,14 +491,14 @@ function new_env(): Env {
     var fs: parser.FuncDecl[] = [];
     var al: parser.TypeAlias[] = [];
     var no_structs: parser.StructDecl[] = [];
-    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, variants: module_variant_decls(no_structs) };
+    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs) };
 }
 
 function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
     var ts: string[] = [];
-    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, variants: vd };
+    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -494,11 +526,19 @@ function (e: Env) decl_type(name: string): string {
     return "";
 }
 
-// static_type_of names the declared type of an EXPRESSION. Only the shapes a
-// declaration reaches are answerable: an identifier's own annotation, and an
-// element of an array whose annotation names one. Everything else — a struct
-// field, a call result, an unannotated binding — has no declared type in reach
-// and answers "", which leaves dispatch on the runtime value alone.
+// static_type_of names the declared type of an EXPRESSION. Every shape it
+// answers reaches a written-down type by lookup, never by inference: an
+// identifier's own annotation, an element of an array whose annotation names
+// one, a FIELD whose owning struct type is itself answerable, and the result of
+// a call — to a top-level function or a method — whose return type the callee's
+// declaration states.
+//
+// Anything reachable only by inferring a type nobody wrote still answers ""
+// (#7291, docs/DYN-TRAITS.md §4.3).
+//
+// "" leaves dispatch on the runtime value alone, which picks the FIRST provider
+// when two traits claim one method name — a silent wrong answer, so the set of
+// shapes answered here is the set of shapes that dispatch correctly.
 function (e: Env) static_type_of(x: parser.Expr): string {
     match (x) {
         parser.ExprIdent(id) => { return e.decl_type(id.name); },
@@ -507,8 +547,73 @@ function (e: Env) static_type_of(x: parser.Expr): string {
             if (name_ends_with(at, "[]")) { return at[0 : at.len() - 2] + ""; }
             return "";
         },
+        parser.ExprFieldAccess(fa) => {
+            var ot: string = e.static_type_of(fa.obj);
+            if (ot.len() == 0) { return ""; }
+            return struct_field_type(e.type_decls, ot, fa.field);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    // A local binding of the same name shadows the function and
+                    // holds a closure, whose return type is not declared here.
+                    if (e.binds_name(id.name)) { return ""; }
+                    return func_ret_type(e.funcs, id.name);
+                },
+                // A METHOD call: the receiver's own declared type names the
+                // definition, whose return type the declaration states. A
+                // closure held in a FIELD matches no declaration and answers "".
+                parser.ExprFieldAccess(fa) => {
+                    var rt: string = e.static_type_of(fa.obj);
+                    if (rt.len() == 0) { return ""; }
+                    return method_ret_type(e.funcs, rt, fa.field);
+                },
+                _ => { return ""; }
+            }
+        },
         _ => { return ""; }
     }
+}
+
+// method_ret_type names the declared return type of `recv_ty`'s `name` method.
+// Two declarations answering one name for one type — which the parser's
+// interposition normally rules out — leave it ambiguous, and it answers ""
+// rather than picking one.
+function method_ret_type(funcs: parser.FuncDecl[], recv_ty: string, name: string): string {
+    var found: string = "";
+    var seen: boolean = false;
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_type == recv_ty) {
+            if (seen && funcs[i].ret_type != found) { return ""; }
+            found = funcs[i].ret_type;
+            seen = true;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+// binds_name reports whether a local binding shadows `name`.
+function (e: Env) binds_name(name: string): boolean {
+    var i: i32 = e.names.len() - 1;
+    while (i >= 0) {
+        if (e.names[i] == name) { return true; }
+        i = i - 1;
+    }
+    return false;
+}
+
+// func_ret_type names the declared return type of a top-level function.
+function func_ret_type(funcs: parser.FuncDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
+            return funcs[i].ret_type;
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 function (e: Env) lookup(name: string): Value {
@@ -1421,7 +1526,7 @@ function resolve_ident_value(name: string, env: Env): Value {
         while (ci < env.funcs.len()) {
             if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0) {
                 var no_args: Value[] = [];
-                return call_func(name, no_args, env.funcs, env.aliases, env.variants);
+                return call_func(name, no_args, env.funcs, env.aliases, env.type_decls);
             }
             ci = ci + 1;
         }
@@ -1430,7 +1535,7 @@ function resolve_ident_value(name: string, env: Env): Value {
         // first, so a user `const None = …` still wins. A variant that DOES
         // carry payloads falls through to the undefined-identifier error, as
         // naming it without calling it is a checker error upstream.
-        if (variant_arity(name, env.variants) == 0) {
+        if (variant_arity(name, env.type_decls) == 0) {
             var none_args: Value[] = [];
             return v_variant(name, none_args);
         }
@@ -1526,7 +1631,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     // after the VFunc probe and behind user_func_exists so a
                     // local closure or a user-declared function of the same
                     // name still wins (#5990).
-                    if (!is_closure && variant_arity(name, env.variants) >= 0 && !user_func_exists(name, env.funcs)) {
+                    if (!is_closure && variant_arity(name, env.type_decls) >= 0 && !user_func_exists(name, env.funcs)) {
                         is_variant = true;
                         variant_name = name;
                     }
@@ -1588,7 +1693,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                                     // and its arity probe is the cheap test, so the
                                     // function-table scan only runs for a field no
                                     // variant answers to.
-                                    if (variant_arity(fa.field, env.variants) < 0 && assoc_index(env.funcs, oid.name, fa.field) >= 0) {
+                                    if (variant_arity(fa.field, env.type_decls) < 0 && assoc_index(env.funcs, oid.name, fa.field) >= 0) {
                                         variant_call = false;
                                         static_type = oid.name;
                                     }
@@ -1634,12 +1739,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             if (is_variant) { return v_variant(variant_name, arg_vals); }
             if (is_method) {
-                return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.variants);
+                return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls);
             }
             if (is_closure) {
-                return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.variants);
+                return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls);
             }
-            return call_func(name, arg_vals, env.funcs, env.aliases, env.variants);
+            return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls);
         },
         parser.ExprTuple(t) => {
             var elems: Value[] = [];
@@ -1954,7 +2059,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[
 // captured names + values seed the body's env so free idents in
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
-function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
+function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
     var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
     match (cv) {
         VFunc(v) => { fv = v; },
@@ -1963,7 +2068,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != fv.params.len()) {
         return v_err("arity mismatch calling closure");
     }
-    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, variants: variants };
+    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls };
     var j: i32 = 0;
     while (j < fv.params.len()) {
         env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -1996,12 +2101,12 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
 // impl type (`Self` was rewritten to it at parse time), so coercing the result
 // to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
 // body literally evaluates to.
-function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
+function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
     var ai: i32 = assoc_index(funcs, type_name, name);
     if (ai < 0) { return v_err("undefined associated function `" + name + "` on `" + type_name + "`"); }
     var fd: parser.FuncDecl = funcs[ai];
     if (args.len() != fd.params.len()) { return v_err("arity mismatch calling `" + type_name + "." + name + "`"); }
-    var env: Env = new_module_env(funcs, aliases, variants);
+    var env: Env = new_module_env(funcs, aliases, type_decls);
     var j: i32 = 0;
     while (j < fd.params.len()) {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -2106,11 +2211,11 @@ function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: pars
     return parser.dyn_provider_name(funcs, value_type_name(recv), traits, name);
 }
 
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
     // `i32.zero()` / `T.zero()` — the receiver is a TYPE, not a value, so no
     // value-receiver method can match and only the associated table applies.
     match (recv) {
-        VType(tv) => { return call_assoc(tv.name, name, args, funcs, aliases, variants); },
+        VType(tv) => { return call_assoc(tv.name, name, args, funcs, aliases, type_decls); },
         _ => {}
     }
     // Built-in VMap methods are dispatched ahead of the user
@@ -2263,7 +2368,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             var ti: i32 = util.digits_to_i32(name);
             if (ti >= 0 && ti < tv.elements.len()) {
                 match (tv.elements[ti]) {
-                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases, variants); },
+                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases, type_decls); },
                     _ => {}
                 }
             }
@@ -2294,7 +2399,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling method `" + name + "`");
             }
-            var env: Env = new_module_env(funcs, aliases, variants);
+            var env: Env = new_module_env(funcs, aliases, type_decls);
             env = bind_tyargs(env, fd, true, recv, args);
             // No declared type on the receiver: an array receiver is always the
             // abstract `T[]`, whose element spelling would self-pin an empty
@@ -2330,7 +2435,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                     conv_args = conv_args.append(args[aj]);
                     aj = aj + 1;
                 }
-                return call_func(funcs[ai].name, conv_args, funcs, aliases, variants);
+                return call_func(funcs[ai].name, conv_args, funcs, aliases, type_decls);
             }
             ai = ai + 1;
         }
@@ -2350,7 +2455,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             while (fi < sv2.field_names.len()) {
                 if (sv2.field_names[fi] == name) {
                     match (sv2.field_values[fi]) {
-                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases, variants); },
+                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls); },
                         _ => {}
                     }
                 }
@@ -2362,7 +2467,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     return v_err("undefined method `" + name + "` on `" + recv_type + "`");
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
     // Builtin: `len(a)` on an array → i32. Special-cased here
     // because the parser doesn't model builtins separately and
     // the interp has no Go-side host functions yet.
@@ -2494,7 +2599,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling `" + name + "`");
             }
-            var env: Env = new_module_env(funcs, aliases, variants);
+            var env: Env = new_module_env(funcs, aliases, type_decls);
             var no_recv: Value = v_err("__noreceiver__");
             env = bind_tyargs(env, fd, false, no_recv, args);
             var j: i32 = 0;
@@ -2696,7 +2801,12 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     _ => { return step_stop(env, v_err("destructuring `" + v.name + "`: initialiser is not a tuple")); }
                 }
             }
-            var env2: Env = env.bind_decl(v.name, val, v.type_name);
+            // An unannotated `var` carries its initialiser's declared type, so
+            // a `dyn` value keeps the type its dispatch depends on across the
+            // binding (#7291).
+            var declared: string = v.type_name;
+            if (declared.len() == 0) { declared = env.static_type_of(v.init); }
+            var env2: Env = env.bind_decl(v.name, val, declared);
             return step_none(env2);
         },
         parser.StmtReturn(r) => {
@@ -3067,7 +3177,7 @@ pub function eval_module(raw_mod: parser.Module): Value {
     // Fold each enum into the alias table as a synthetic union so a method
     // declared on the enum type dispatches on its variant values.
     var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);
-    var all_variants: parser.StructDecl[] = module_variant_decls(mod.structs);
+    var all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {

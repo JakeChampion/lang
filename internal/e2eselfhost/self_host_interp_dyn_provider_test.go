@@ -25,7 +25,10 @@ import (
 //
 //   - both traits implemented, reached through `dyn` — the shapes a declaration
 //     is in reach of: a local binding, a parameter, an array element (indexed
-//     and iterated), and a binding captured by a closure.
+//     and iterated), a binding captured by a closure, a struct FIELD, and a
+//     CALL RESULT. The last two reach their type by lookup like the rest: a
+//     field's is written on the struct declaration and a call's on the callee,
+//     so no inference is involved in answering for either.
 //   - each trait ALONE — controls on the resolution, since with one provider
 //     nothing is interposed and the bare name must still answer. `only-trait-b`
 //     is the one that discriminates a resolver that reaches for `B.m`
@@ -80,6 +83,28 @@ impl B for S { function m(self: Self): i32 { return 7; } }
 		// Captured by a closure: the lambda snapshots the enclosing scope, so
 		// the declared type has to travel with the captured value.
 		{"dyn-captured-by-closure", twoProviders + `function main(): i32 { var d: dyn B = S { v: 3 }; var f: () => i32 = (() => d.m()); return f(); }`},
+		// A STRUCT FIELD, whose type is written on the struct declaration
+		// rather than anywhere the receiver expression is bound (#7291).
+		{"dyn-struct-field", twoProviders + `struct Holder { d: dyn B }
+function main(): i32 { var h: Holder = Holder { d: S { v: 3 } }; return h.d.m(); }`},
+		{"dyn-nested-struct-field", twoProviders + `struct Holder { d: dyn B }
+struct Outer { h: Holder }
+function main(): i32 { var o: Outer = Outer { h: Holder { d: S { v: 3 } } }; return o.h.d.m(); }`},
+		{"dyn-struct-field-array", twoProviders + `struct Holder { ds: dyn B[] }
+function main(): i32 { var h: Holder = Holder { ds: [S { v: 3 }] }; return h.ds[0].m(); }`},
+		// A CALL RESULT, whose type the callee's declaration states.
+		{"dyn-call-result", twoProviders + `function mk(): dyn B { return S { v: 3 }; }
+function main(): i32 { return mk().m(); }`},
+		{"dyn-method-call-result", twoProviders + `struct Mk { z: i32 }
+function (k: Mk) make(): dyn B { return S { v: 3 }; }
+function main(): i32 { var k: Mk = Mk { z: 0 }; return k.make().m(); }`},
+		{"dyn-field-of-call-result", twoProviders + `struct Holder { d: dyn B }
+function mk(): Holder { return Holder { d: S { v: 3 } }; }
+function main(): i32 { return mk().d.m(); }`},
+		// An UNANNOTATED binding of a call result: the type is written on the
+		// callee, so the binding carries it rather than losing it.
+		{"dyn-call-result-binding", twoProviders + `function mk(): dyn B { return S { v: 3 }; }
+function main(): i32 { var d = mk(); return d.m(); }`},
 
 		// CONTROLS — each trait alone. Nothing is interposed, so the bare name
 		// must answer for whichever trait is the sole provider.
@@ -115,6 +140,23 @@ function main(): i32 { var s: S = S { v: 3 }; return s.m(); }`},
 		{"i64-width-binding", `function main(): i32 { var x: i64 = 100000; var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
 		{"f32-precision-binding", `function main(): i32 { var f: f32 = 16777217.0; var g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
 		{"param-width-binding", `function wide(x: i64): i32 { var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; } function main(): i32 { return wide(100000); }`},
+		// The same coercion where the type comes from the CALLEE rather than
+		// an annotation. An unannotated binding of a call result used to carry
+		// no declared type at all, which lost i64 width and f32 precision as
+		// well as the dyn provider.
+		{"inferred-i64-from-call", `function big(): i64 { return 100000; }
+function main(): i32 { var x = big(); var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
+		{"inferred-f32-from-call", `function narrow(): f32 { return 16777217.0; }
+function main(): i32 { var f = narrow(); var g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
+		// A local SHADOWING a top-level function holds a closure, whose return
+		// type is not the shadowed declaration's. Reading the declaration here
+		// widens this multiply to 64 bits and answers 42.
+		{"call-shadowed-by-local", `function pick(): i64 { return 1; }
+function main(): i32 { var pick: () => i32 = (() => 100000); var x = pick(); var y = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
+		// A closure held in a FIELD is called through the same field-access
+		// callee shape as a method, and matches no method declaration.
+		{"closure-in-field-call", `struct H { f: () => i32 }
+function main(): i32 { var h: H = H { f: (() => 42) }; var x = h.f(); return x; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
