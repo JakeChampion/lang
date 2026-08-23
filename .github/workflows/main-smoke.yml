@@ -1,0 +1,55 @@
+name: Main smoke
+
+# The only lane that runs on the MERGED result. Every other workflow
+# here is `pull_request`-triggered, which leaves one class of breakage
+# with no gate at all: two PRs that are each green against their own
+# base and conflict only once both have landed. Git sees no textual
+# conflict, so nothing re-checks the combination.
+#
+# That is not hypothetical — it is how #7312 broke main. One PR changed
+# `FnSigs.fn_names` from `string[]` to a `SigReg`; a concurrent one added
+# a `util.index_of_str(s.sigs.fn_names, clo)` call against the old type.
+# Both merged clean and green. main was left failing E038 at
+# irlower.fern:14089 with no signal until someone happened to build it.
+#
+# So this lane deliberately re-runs cheap checks the PR lanes already
+# cover. The point is not the check, it is *when* it runs.
+#
+# Keep it fast and keep it boring. A red run here means main is broken
+# and someone should be reverting or fixing forward, so anything flaky
+# or slow enough to be ignored actively costs more than it catches.
+# Current budget, measured on a 4-core container:
+#   go build ./...                          ~2.3s
+#   go vet ./...                            ~11.8s
+#   fern -check (self-host, ~175k lines)    ~2.0s
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: main-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # The self-host is 94 modules that only the Fern checker type-checks;
+      # `go build` says nothing about them. This is the step that catches
+      # the #7312 class, and it is the cheapest of the three.
+      - name: fern -check (self-host)
+        run: |
+          go build -o /tmp/fern ./cmd/fern
+          /tmp/fern -check examples/self_host/fern.fern
