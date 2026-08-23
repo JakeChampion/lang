@@ -10,8 +10,9 @@ import "github.com/jakechampion/lang/internal/ir"
 // arithmetic op (`sxtw` / `movsxd`). Applied to a MACHINE ADDRESS that mask is
 // destructive: any pointer above 0x7fffffff comes back negative and its loads
 // and stores land somewhere else. Addresses and i32 values share the SSA's
-// integer ops, so the width is what tells them apart, and the IR the lift
-// consumes does not carry it — it sizes an address the same as an i32.
+// integer ops, so the width is what tells them apart, and the IR sizes an
+// address the same as an i32 everywhere except a call, where the result
+// classification rides on the op (ir.ResAddr / ResWide / ResNarrow).
 
 // ResolveWidths fixes each op's result width across a whole module, for the
 // 64-bit backends (arm64 / x86-64). It seeds address-ness from what is known
@@ -64,8 +65,8 @@ type widthResolver struct {
 }
 
 // seed records the address-ness that needs no analysis: the op kinds that
-// always produce a heap pointer, the declared type behind a parameter, and the
-// runtime-helper ABI.
+// always produce a heap pointer, the declared type behind a parameter, and
+// what a call's callee returns.
 func (r *widthResolver) seed(f *Func) {
 	set := map[int32]bool{}
 	def := map[int32]*Op{}
@@ -87,18 +88,15 @@ func (r *widthResolver) seed(f *Func) {
 			}
 			switch op.Kind {
 			case OpCall, OpCallPair:
+				// A callee the module defines answers for itself. One it
+				// does not — a backend-provided builtin or runtime helper —
+				// has no signature to read, so the lift stamped the answer
+				// onto the op from the IR (ir.ResAddr / ResWide / ResNarrow)
+				// before this pass ran.
 				if callee, ok := r.callee(op); ok {
 					if callee.ReturnWidth == 64 || callee.ReturnFloat {
 						op.Width = 64
 					}
-					break
-				}
-				if runtimeHelperWideResult[op.Str] {
-					// A helper's result fills the register either as a pointer
-					// or as an f64 / i64 value; only the pointer propagates
-					// through address arithmetic.
-					op.Width = 64
-					op.Addr = op.Addr || (op.Kind == OpCall && !wideNonAddressHelpers[op.Str])
 				}
 			case OpAlloc, OpMakeClosure, OpMakeEnv, OpBoxDyn, OpConstVtable,
 				OpConstString, OpEnumSentinel:
@@ -266,149 +264,4 @@ func anyAddr(addr map[int32]bool, args []Value) bool {
 		}
 	}
 	return false
-}
-
-// runtimeHelperWideResult names the backend-provided runtime helpers whose
-// result fills a whole 64-bit register — a heap pointer, or an f64 bit pattern.
-// The lift cannot read these off a signature (a helper has no ssa.Func), so the
-// ABI the backends implement is written down here instead. A name absent from
-// the map returns void or an i32, for which the i32 mask is correct.
-//
-// Every helper a backend emits must be classified: arm64ssa's
-// TestEveryRuntimeHelperResultIsClassified fails on one that is not.
-var runtimeHelperWideResult = map[string]bool{
-	"__str_concat":                  true,
-	"__str_slice":                   true,
-	"__str_idx":                     true,
-	"__load_ptr":                    true,
-	"__load_i64":                    true,
-	"__memcpy":                      true,
-	"__fern_map_drop":               true,
-	"__alloc":                       true,
-	"__alloc_reuse":                 true,
-	"__alloc_u8":                    true,
-	"__fern_box_free":               true,
-	"__fern_rc_inc":                 true,
-	"__fern_rc_dec":                 true,
-	"__fern_str_dec":                true,
-	"__fern_arr_dec":                true,
-	"__fern_drop_arr_ptr":           true,
-	"__fern_drop_arr_str":           true,
-	"__fern_closure_drop":           true,
-	"__fern_io_error":               true,
-	"__fern_arr_push_grow":          true,
-	"__fern_arr_push_grow_ptr":      true,
-	"__fern_arr_push_grow_str":      true,
-	"__fern_arr_push_grow_move_ptr": true,
-	"__fern_arr_push_grow_move_str": true,
-	"__fern_arr_cow_inplace":        true,
-	"string_from_bytes_unchecked":   true,
-	"args":                          true,
-	"env":                           true,
-	"strbuf_take":                   true,
-	"write_file":                    true,
-	"read_file":                     true,
-	"remove_file":                   true,
-	"create_dir_all":                true,
-	"remove_dir_all":                true,
-	"temp_dir":                      true,
-	"read_dir":                      true,
-	"random_bytes":                  true,
-	"tcp_recv":                      true,
-	"open_writer":                   true,
-	"open_reader":                   true,
-	"open_appender":                 true,
-	"__method_Writer_write":         true,
-	"__method_Writer_close":         true,
-	"__method_Reader_read_chunk":    true,
-	"__method_Reader_read_line":     true,
-	"__method_Reader_close":         true,
-	"stdin":                         true,
-	"stdout":                        true,
-	"stderr":                        true,
-	"__arr_idx":                     true,
-	"__arr_idx_1":                   true,
-	"__arr_idx_8":                   true,
-	"__arr_idx_16":                  true,
-	"__arr_idx_nc":                  true,
-	"__arr_idx_1_nc":                true,
-	"__arr_idx_8_nc":                true,
-	"__arr_idx_16_nc":               true,
-	"__abs_f64":                     true,
-	"__sqrt_f64":                    true,
-	"__floor_f64":                   true,
-	"__ceil_f64":                    true,
-	"__trunc_f64":                   true,
-	"__round_f64":                   true,
-	"__exp_f64":                     true,
-	"__log_f64":                     true,
-	"__pow_f64":                     true,
-	"__sin_f64":                     true,
-	"__cos_f64":                     true,
-}
-
-// wideNonAddressHelpers is the subset of runtimeHelperWideResult whose 64 bits
-// are an f64 bit pattern or an i64 value rather than a machine address, so
-// nothing derived from one is an address either.
-var wideNonAddressHelpers = map[string]bool{
-	"__abs_f64":   true,
-	"__sqrt_f64":  true,
-	"__floor_f64": true,
-	"__ceil_f64":  true,
-	"__trunc_f64": true,
-	"__round_f64": true,
-	"__exp_f64":   true,
-	"__log_f64":   true,
-	"__pow_f64":   true,
-	"__sin_f64":   true,
-	"__cos_f64":   true,
-	"__load_i64":  true,
-}
-
-// RuntimeHelperResultClassified reports whether `name` appears in either helper
-// table. A backend's completeness test uses it to prove that every helper it
-// emits has an answer here, since an unlisted one is treated as narrow and
-// would have its pointer result truncated without ever failing a test.
-func RuntimeHelperResultClassified(name string) bool {
-	return runtimeHelperWideResult[name] || narrowRuntimeHelpers[name]
-}
-
-// narrowRuntimeHelpers names the backend-provided helpers whose result is void
-// or a genuine i32 — the ones for which the i32 sign-extend mask is correct and
-// must stay. It exists so that a newly added helper belongs to neither map and
-// trips the completeness test, rather than silently defaulting to narrow.
-var narrowRuntimeHelpers = map[string]bool{
-	"__str_len":            true,
-	"__str_eq":             true,
-	"__str_ord":            true,
-	"__ptr_width":          true,
-	"__load_i32":           true,
-	"__store_i32":          true,
-	"__store_ptr":          true,
-	"__store_i64":          true,
-	"__free":               true,
-	"__fern_rc_is_unique":  true,
-	"__memset":             true,
-	"__fern_map_hash_seed": true,
-	"__fern_memchr":        true,
-	"__fern_ascii_run":     true,
-	"isatty":               true,
-	"poll":                 true,
-	"print":                true,
-	"write":                true,
-	"eprint":               true,
-	"putchar":              true,
-	"exit":                 true,
-	"strbuf_reset":         true,
-	"strbuf_append":        true,
-	"random_i32":           true,
-	"tcp_listen":           true,
-	"tcp_accept":           true,
-	"tcp_send":             true,
-	"tcp_close":            true,
-	"tcp_pollable":         true,
-	"wasm_timer_pollable":  true,
-	"wasm_poll":            true,
-	"wasm_pollable_drop":   true,
-	"wasm_block":           true,
 }

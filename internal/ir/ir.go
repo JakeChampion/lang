@@ -598,6 +598,65 @@ const WidthPtr = -1
 // 0 (i32 default), 64 (i64), and -1 (WidthPtr).
 const WidthString = -2
 
+// On an OpCallDirect, Width is the RESULT classification: what the callee
+// leaves in the register the 64-bit backends read its result out of. The
+// SSA layer can read that off an ssa.Func for a callee the program
+// defines, but a backend-provided builtin or runtime helper has no
+// signature it can reach, so the fact travels on the call instead.
+//
+// Zero is not a default here: it means unclassified, which ir.Verify
+// rejects on a provided callee. OpCallDirectPair's Width means something
+// else — the payload width of the pair box — so only OpCallDirect carries
+// a result classification.
+const (
+	// ResNarrow is void, boolean, or an i32: the i32 sign-extend the
+	// 64-bit backends re-establish after each op is correct on it.
+	ResNarrow = 32
+	// ResWide is an i64, or a float — which rides in a general register
+	// as its f64 bit pattern, so masking one to 32 bits keeps the low
+	// mantissa half and discards the sign and exponent.
+	ResWide = 64
+	// ResAddr is a machine address: 64 bits, and address-ness that
+	// propagates through the arithmetic that offsets it.
+	ResAddr = WidthPtr
+)
+
+// callResultWidth is the OpCallDirect Width stamp for a callee returning
+// t. `usize` is an address: it is the type every raw-pointer builtin
+// (__alloc, __load_ptr, the rc pass-throughs) returns its pointer as.
+func callResultWidth(t ast.Type) int {
+	if t == nil {
+		return ResNarrow
+	}
+	switch n := t.(type) {
+	case ast.VoidType:
+		return ResNarrow
+	case ast.FloatType:
+		return ResWide
+	case ast.NumberType:
+		if n.IsPointerWidth() {
+			return ResAddr
+		}
+		if n.Width == 64 {
+			return ResWide
+		}
+		return ResNarrow
+	}
+	if ast.IsPointerType(t) {
+		return ResAddr
+	}
+	return ResNarrow
+}
+
+// isProvidedCallee reports whether a FuncSigs callee is provided by the
+// backend rather than defined by the program — a user-callable builtin,
+// or one of the `__`-prefixed compiler-internal builtins that carry no
+// capability classification. These are exactly the callees the SSA width
+// pass cannot look up, so their calls carry a result width.
+func isProvidedCallee(name string) bool {
+	return isBuiltin(name) || strings.HasPrefix(name, "__")
+}
+
 // Op is one instruction in a function's linear op list. Operands that
 // don't apply to a given op are zero-valued.
 type Op struct {
@@ -2610,7 +2669,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			// (base, size) and returns nothing, so nothing follows it.
 			emit(Op{Kind: OpLoadLocal, I32: 0})
 			emit(Op{Kind: OpConstI32, I32: int32(2 * ptrW)})
-			emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", I32: 2})
+			emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
 			emit(Op{Kind: OpEnd}) // close the cell != 0 guard
 			emit(Op{Kind: OpReturnVoid})
 			out = append(out, fn)
@@ -8027,7 +8086,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// alongside the tuple box. Without it the tuple's deep-
 				// drop __fern_str_dec would free the buffer under the
 				// still-live binding (UAF).
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 			} else if _, isStr := elemTypes[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				// Native single-word string element: dup via __fern_rc_inc
 				// so the binding co-owns the buffer alongside the tuple
@@ -9492,7 +9551,7 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 		}
 		if n.IsString {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_idx", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_idx", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpLoadByte})
 		} else if n.IsSlice {
 			// Slice-index variants per stride: __slice_idx_1
@@ -9507,7 +9566,7 @@ func (b *builder) expr(e ast.Expr) error {
 			case 16:
 				sliceHelper = "__slice_idx_16"
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: sliceHelper, I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Str: sliceHelper, Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		} else {
 			// Per-stride helper: __arr_idx_1 for byte arrays
@@ -9535,7 +9594,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if n.Unchecked {
 				helper = helper + "_nc"
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		}
 		// Dec the stashed fresh array container now that the element is
@@ -9603,7 +9662,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// a user-callable name) — the arm64 two-word ABI
 			// needs `(string, i32, i32)` to count the string
 			// arg as 2 operand-stack slots.
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_slice", I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_slice", Width: ResAddr, I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 			b.decStashedStringTemps(slSrc)
 			break
 		}
@@ -9671,7 +9730,7 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: srcLenSlot})
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: srcLenSlot})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__slice_range", I32: 3})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__slice_range", Width: ResNarrow, I32: 3})
 		b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
 
 		// data_ptr = source data + low * stride. For sub-slicing,
@@ -9700,7 +9759,7 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpAdd})
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__slice_make", I32: 2})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__slice_make", Width: ResAddr, I32: 2})
 	case *ast.ArrayLit:
 		// Allocate `headerBytes + len*stride` bytes (header + payload),
 		// store the length at base+headerBytes-4, then each element
@@ -9829,7 +9888,7 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
 		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
 		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info, b.genEnumDrops, b.genTupleDrops)})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "map_new", I32: 3})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "map_new", Width: ResAddr, I32: 3})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
@@ -10041,7 +10100,7 @@ func (b *builder) expr(e ast.Expr) error {
 				// value on the stack for the store).
 				if ast.IsPointerType(ft) {
 					if _, isStr := ft.(ast.StringType); isStr && b.twoWordStrings() {
-						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 1})
+						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
 					} else {
 						b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 					}
@@ -11124,7 +11183,7 @@ func (b *builder) decStashedStringTemps(slots ...int32) {
 			continue
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: sl})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 }
@@ -11280,7 +11339,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		// on its fallback path — exactly the dec the loop below would have
 		// emitted for the stashed temp.
 		if ast.Expr(n) == b.selfStrAppendBin || consumeLeftTemp {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append", Width: ResAddr, I32: 2})
 			if !consumeLeftTemp {
 				b.selfStrAppendDone = true
 			}
@@ -12934,7 +12993,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// global. Lets the detector run on all three backends.
 	if id.Name == "__rc_underflow_count" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rc_underflow_count", I32: 0})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rc_underflow_count", Width: ResNarrow, I32: 0})
 			return nil
 		}
 	}
@@ -12945,7 +13004,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// its own store (wasm a linear-memory slot, the natives a BSS global).
 	if id.Name == "__arr_push_shared_count" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_push_shared_count", I32: 0})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_push_shared_count", Width: ResNarrow, I32: 0})
 			return nil
 		}
 	}
@@ -12955,7 +13014,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// site against another, which the count cannot do.
 	if id.Name == "__arr_push_shared_bytes" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_push_shared_bytes", I32: 0})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_push_shared_bytes", Width: ResWide, I32: 0})
 			return nil
 		}
 	}
@@ -12964,7 +13023,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// backend owns the cached word and the lazy CSPRNG draw that fills it.
 	if id.Name == "__map_hash_seed" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_hash_seed", I32: 0})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_hash_seed", Width: ResNarrow, I32: 0})
 			return nil
 		}
 	}
@@ -12979,7 +13038,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// __fern_heap_ptr minus __fern_heap_base).
 	if id.Name == "__heap_bump_bytes" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_heap_bump_bytes", I32: 0})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_heap_bump_bytes", Width: ResWide, I32: 0})
 			return nil
 		}
 	}
@@ -13025,7 +13084,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// shape. Without it this segfaults on arm64 and is fine on
 			// x86-64, which is exactly the kind of divergence that
 			// survives a green x86-64 suite.
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr", I32: 3,
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 			return nil
 		}
@@ -13040,7 +13099,7 @@ func (b *builder) callBody(n *ast.Call) error {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", I32: 2,
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_ascii_run", Width: ResNarrow, I32: 2,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
 			return nil
 		}
@@ -13059,7 +13118,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// pointers well past the arena, several units into a checkpointed emit).
 	if id.Name == "__heap_mark" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__heap_mark", I32: 0})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__heap_mark", Width: ResWide, I32: 0})
 			return nil
 		}
 	}
@@ -13068,7 +13127,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			if err := b.expr(n.Args[0]); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__heap_release_to", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__heap_release_to", Width: ResNarrow, I32: 1})
 			return nil
 		}
 	}
@@ -13334,7 +13393,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpLoad, Width: WidthString})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 		}
@@ -13476,7 +13535,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				// walk dec at map drop. Mirrors emitMapGetRebox's
 				// boxed-V retain.
 				if _, isStr := n.TypeArgs[1].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 				}
 				return nil
 			}
@@ -13495,7 +13554,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				// wasm + arm64-TwoWordOverride): same rationale as the
 				// value retain above.
 				if _, isStr := n.TypeArgs[0].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 				}
 				return nil
 			}
@@ -13750,6 +13809,9 @@ func (b *builder) callBody(n *ast.Call) error {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			kind := OpCallDirect
 			width := 0
+			if isProvidedCallee(id.Name) {
+				width = callResultWidth(sig.Result)
+			}
 			if b.pairForm[id.Name] {
 				kind = OpCallDirectPair
 				// Carry the payload width on the call so the
@@ -14177,7 +14239,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32, declineDups
 	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: dAlloc})
 	b.emit(Op{Kind: OpConstI32, I32: cAlloc})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", Width: ResAddr, I32: 3})
 	return reusedSlot
 }
 
@@ -14342,7 +14404,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", Width: ResAddr, I32: 3})
 	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
 
 	// 4. REUSE branch only: release the box's OLD pointer-field values
@@ -14623,7 +14685,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__alloc_reuse", Width: ResAddr, I32: 3})
 	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
 
 	// 3b. REUSE branch only: free the box's OLD payload(s) before the new
@@ -14742,13 +14804,13 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		if _, isStr := ty.Elem.(ast.StringType); isStr {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			break
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
 		b.emit(Op{Kind: OpDrop})
 	case ast.StructType, ast.EnumType:
 		// Map loop var: reclaim the whole map structure (value column +
@@ -14793,7 +14855,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// buffer only dec's; an inline-SSO / literal sentinel is a no-op).
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else if b.ptrW == 8 {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -14801,7 +14863,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 			// defer to __fern_rc_dec). The caller gates ownership
 			// (emitVarReinitDropOld: freeEligible/unique/!moved; the call-arg
 			// path: provably-fresh owned temp), so the free is balanced.
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.TupleType:
@@ -14881,7 +14943,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// __fern_str_dec. Reached from the enum payload drop (struct / tuple string
 	// fields are handled inline before reaching here).
 	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14891,7 +14953,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// appendChildDrop emits for this shape in the generated drop fn. arm64 /
 	// wasm two-word ABIs take the two-word str_dec branch above.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14928,7 +14990,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 			}
 			if !elemIsDyn {
 				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_ptr", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_ptr", Width: ResAddr, I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				return
 			}
@@ -14957,7 +15019,7 @@ func (b *builder) dropStructField(t ast.Type) {
 	// (data, len), reclaim via __fern_str_dec. Reached from the enum
 	// variant-plan payload drop (struct / tuple string fields handled inline).
 	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14968,7 +15030,7 @@ func (b *builder) dropStructField(t ast.Type) {
 	// fn. SSO inline-tag low-bit guard + literal sentinel keep all sources
 	// safe.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14978,7 +15040,7 @@ func (b *builder) dropStructField(t ast.Type) {
 		// Both helpers self-guard on the map's own rc==1, so a shared map only
 		// dec's. They return the map ptr, so the stack value chains through.
 		b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -15020,7 +15082,7 @@ func (b *builder) dropStructField(t ast.Type) {
 			helper = "__fern_drop_arr_str"
 		}
 		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-		b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+		b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -15187,7 +15249,7 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType, dupSlot
 	// uniform data size, exactly as the normal enum box-free uses.
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpElse})
 	// Shared / sentinel: the box SURVIVES, so it keeps its own references to
@@ -15294,7 +15356,7 @@ func (b *builder) emitFreshBoxFreeSized(slot int32, size int32) {
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -15384,7 +15446,7 @@ func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupS
 	// counts. Same shape as the `own`-param shallow free.
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpElse})
 	// Shared: dup the counted bindings, then release our box reference.
@@ -15519,7 +15581,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: size})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -15588,7 +15650,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 				}
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: vd.size})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 			}
@@ -15731,7 +15793,7 @@ func (b *builder) emitRetainValueOnStack(t ast.Type) {
 		return
 	}
 	if _, isStr := t.(ast.StringType); isStr && b.twoWordStrings() {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
 		return
 	}
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
@@ -15835,7 +15897,7 @@ func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 		}
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", I32: 1})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -15866,7 +15928,7 @@ func (b *builder) emitMapOverwriteDrop(slot int32, st ast.StructType) {
 		}
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", I32: 1})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -16114,7 +16176,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpConstI32, I32: stride})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpConstI32, I32: 1})
@@ -16196,7 +16258,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				arrDec := func() {
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
 					b.emit(Op{Kind: OpConstI32, I32: stride})
-					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: decHelper, I32: 2})
+					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: decHelper, Width: ResAddr, I32: 2})
 					b.emit(Op{Kind: OpDrop})
 				}
 				if b.isConsumedArrayParam(t.Name) {
@@ -16363,11 +16425,11 @@ func (b *builder) assign(n *ast.Assign) error {
 			// so the two stay balanced and a borrow is never over-released.
 			if b.ptrW == 4 {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		} else if tt, isTup := tupleTypeOfLocal(t.Name, b); isTup && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
@@ -16539,7 +16601,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		if err := b.expr(t.Idx); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+		b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
@@ -17877,7 +17939,7 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	// 8). Matches the stdlib Map runtime's layout exactly.
 	ptrWSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_ptrw_%d", ptrWSlot)] = ptrWSlot
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", I32: 0})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: ptrWSlot})
 
 	strideSlot := b.allocSlot()
@@ -17959,7 +18021,7 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrWSlot})
 	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__load_ptr", I32: 1})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__load_ptr", Width: ResAddr, I32: 1})
 	cellSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_cell_%d", cellSlot)] = cellSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
@@ -17972,7 +18034,7 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 8})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__memcpy", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__memcpy", Width: ResNarrow, I32: 3})
 
 	// i++
 	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
@@ -18048,7 +18110,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	// stride = 2 * __ptr_width()  — runtime, target-agnostic.
 	ptrWSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mk_ptrw_%d", ptrWSlot)] = ptrWSlot
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", I32: 0})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: ptrWSlot})
 
 	strideSlot := b.allocSlot()
@@ -18133,10 +18195,10 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	b.emit(Op{Kind: OpMul})
 	b.emit(Op{Kind: OpAdd})
 	if mapKeyKindTag(kType, b.ptrW) == 2 {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__load_ptr", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__load_ptr", Width: ResAddr, I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: 8})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__memcpy", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__memcpy", Width: ResNarrow, I32: 3})
 
 	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 1})
@@ -18197,14 +18259,14 @@ func (b *builder) emitArrayIndexAssignCoW(arrIdent *ast.Ident, arrSlot int32, t 
 	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_cow_inplace", Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 	// Element address via the per-stride bounds-check helper.
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	if err := b.expr(t.Idx); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	// Element value.
 	if err := b.expr(n.Value); err != nil {
 		return err
@@ -18245,7 +18307,7 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 	b.emit(payloadLoadOpFor(fieldType, b.ptrW))
 	// buf = __fern_arr_cow_inplace(arr, stride)
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_cow_inplace", Width: ResAddr, I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -18254,7 +18316,7 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 	if err := b.expr(t.Idx); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	// Element value.
 	if err := b.expr(n.Value); err != nil {
 		return err
@@ -18300,14 +18362,14 @@ func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, t *ast.Index, 
 	if err := b.expr(outer.Idx); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: outerHelper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: outerHelper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpStoreLocal, I32: outerSlotSlot})
 	// inner = *outerSlotAddr (pointer-width load).
 	b.emit(Op{Kind: OpLoadLocal, I32: outerSlotSlot})
 	b.emit(payloadLoadOpFor(outer.ElemType, b.ptrW))
 	// buf = __fern_arr_cow_inplace(inner, innerStride)
 	b.emit(Op{Kind: OpConstI32, I32: innerStride})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_cow_inplace", Width: ResAddr, I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -18317,7 +18379,7 @@ func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, t *ast.Index, 
 	if err := b.expr(t.Idx); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	// Element value.
 	if err := b.expr(n.Value); err != nil {
 		return err
@@ -18431,7 +18493,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 			cowHelper = "__fern_arr_cow_inplace_str"
 		}
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: cowHelper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: cowHelper, Width: ResAddr, I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -18439,7 +18501,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// bounds-check helper.
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
-	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, Width: ResAddr, I32: 2})
 	if rcTracked {
 		// Stash the element address so we can both read the old element
 		// (to drop it) and write the new one at the same slot.
@@ -18465,7 +18527,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 				// store replaces takes the same release. dropStructField's
 				// native single-word arm would emit __fern_rc_dec, which
 				// stops at rc 0 without freeing and orphans the buffer.
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			} else {
 				b.dropStructField(elemType)
@@ -18574,7 +18636,7 @@ func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 		}
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -18668,7 +18730,7 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 	b.emit(payloadLoadOpFor(elemType, b.ptrW))
 	if _, isStr := elemType.(ast.StringType); isStr {
 		if ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
 		} else if b.ptrW == 8 {
 			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 		}
@@ -18712,7 +18774,7 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		// pair, and native single-word frees the overwritten buffer at rc==1
 		// (deferring to __fern_rc_dec otherwise). A bare __fern_rc_dec never
 		// frees, so each overwrite would strand the old buffer.
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Store the new value (addr, value), retaining an alias-shaped source.
@@ -18983,7 +19045,7 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: growHelper, I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Str: growHelper, Width: ResAddr, I32: 3})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -19087,11 +19149,11 @@ func (b *builder) freeLookupKeyCell(cellSlot int32, keyArg ast.Expr, kType ast.T
 	if _, isStr := kType.(ast.StringType); isStr && !needsRcIncOnAlias(keyArg, b) {
 		b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 		b.emit(Op{Kind: OpLoad, Width: WidthString})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", I32: 1})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -19148,7 +19210,7 @@ func (b *builder) emitMapSetValueRetain(valArg ast.Expr, vType ast.Type) error {
 			if err := b.expr(valArg); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	}
@@ -19192,7 +19254,7 @@ func (b *builder) emitMapSetKeyRetain(keyArg ast.Expr, kType ast.Type) error {
 			if err := b.expr(keyArg); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	}
@@ -19358,11 +19420,11 @@ func (b *builder) freeDiscardedSetKeyCell(cellSlot, preLen int32, kType ast.Type
 	if _, isStr := kType.(ast.StringType); isStr {
 		b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 		b.emit(Op{Kind: OpLoad, Width: WidthString})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", I32: 1})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
@@ -19492,7 +19554,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		// Balanced by the caller's dec of the gotten string and the
 		// map's drop dec.
 		if _, isStr := vType.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 		}
 	} else if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 		// Map[K, string] get retain (native single-word, non-boxed): the
@@ -19739,7 +19801,7 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	// emitMapGetRebox's boxed-V retain — same correctness
 	// rationale, same gating.
 	if _, isStr := vType.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 2})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 	}
 	// get_or doesn't retain the key cell — reclaim the transient (the
 	// loaded result value sits underneath; the free ops are balanced).

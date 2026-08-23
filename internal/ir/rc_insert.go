@@ -675,10 +675,10 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 		// every source safe, and this drop only fires for a provably-fresh
 		// owned temp (sole owner), so the free is exactly balanced.
 		if ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else if b.ptrW == 8 {
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.ArrayType:
@@ -692,7 +692,7 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 			b.emit(Op{Kind: OpDrop})
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.StructType, ast.EnumType:
@@ -813,7 +813,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", Width: ResAddr, I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				return
 			}
@@ -824,7 +824,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", Width: ResAddr, I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				return
 			}
@@ -832,7 +832,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if at, ok := t.(ast.ArrayType); ok && ast.RcFreeEnabled && eligible {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
@@ -855,7 +855,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// literal sentinel + low-address guard all safe).
 			if ast.RcFreeEnabled && eligible && ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes (data, len)
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned data ptr
 			} else if ast.RcFreeEnabled && eligible && b.ptrW == 8 {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes single data ptr
@@ -863,7 +863,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// __fern_str_dec (else defer to __fern_rc_dec). Gated
 				// `eligible` (proven-owned, alias-free), so freeing at exit
 				// is balanced; inline / literal / sentinel short-circuit.
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned ptr
 			}
 			return
@@ -922,7 +922,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 						b.emit(Op{Kind: OpAdd})
 					}
 					b.emit(Op{Kind: OpLoad, Width: WidthString})
-					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
@@ -941,7 +941,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 						b.emit(Op{Kind: OpAdd})
 					}
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
@@ -958,7 +958,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: size})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpElse})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -1062,7 +1062,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthString})
-						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 						b.emit(Op{Kind: OpDrop})
 						continue
 					}
@@ -1082,7 +1082,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 						b.emit(Op{Kind: OpDrop})
 						continue
 					}
@@ -1099,7 +1099,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				}
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: size})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpElse})
 				// rc > 1: just dec the box.
@@ -1184,13 +1184,13 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// Ineligible (borrowed / escaping) closures and flag-off
 		// builds fall through to the plain dec.
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
-			dropFn := "__fern_closure_drop"
+			dropFn, dropWidth := "__fern_closure_drop", ResAddr
 			tgt := b.closureTarget[name]
 			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW, b.dynRcSupported) {
-				dropFn = "__closure_drop_" + tgt
+				dropFn, dropWidth = "__closure_drop_"+tgt, 0
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: dropFn, I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: dropFn, Width: dropWidth, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
@@ -1424,7 +1424,7 @@ func (b *builder) emitAliasInc(e ast.Expr) {
 		// literal strings, whose length is a small integer. Gating on
 		// b.ptrW==4 (wasm-only) missed arm64 and crashed every aliased
 		// string (e.g. generic id[T](x: string) returning its param).
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
 		return
 	}
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
@@ -1582,7 +1582,7 @@ func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpElse})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -1695,7 +1695,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpConstI32, I32: off},
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthString},
-				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 				Op{Kind: OpDrop})
 			off += slot
 			continue
@@ -1713,7 +1713,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpConstI32, I32: off},
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 				Op{Kind: OpDrop})
 			off += slot
 			continue
@@ -1768,7 +1768,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 					}
 					ops = append(ops,
 						Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
-						Op{Kind: OpCallDirect, Str: helper, I32: 2})
+						Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 				}
 			} else if isMapType(c.Type) {
 				// Map capture: reclaim the value column + buf + handle
@@ -1776,7 +1776,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				// the map ptr, which the trailing OpDrop discards).
 				ops = append(ops,
 					Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
-					Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", I32: 1})
+					Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 			} else if drop, ok := dropFnNameFor(c.Type, info, reg, tupleReg, ptrW, false); ok {
 				// Concrete-struct (or boxed generic-enum) capture: free its
 				// box + nested children.
@@ -1794,7 +1794,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 	ops = append(ops,
 		Op{Kind: OpEnd},
 		Op{Kind: OpLoadLocal, I32: 0},
-		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", I32: 1},
+		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", Width: ResAddr, I32: 1},
 		Op{Kind: OpReturn})
 	return &Func{
 		Name:       "__closure_drop_" + name,
@@ -1994,7 +1994,7 @@ func mangleTupleInst(tt ast.TupleType) string {
 func appendMapDrop(ops []Op) []Op {
 	return append(ops,
 		Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
-		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", I32: 1},
+		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1},
 		Op{Kind: OpDrop})
 }
 
@@ -2272,7 +2272,7 @@ func genArrElemDropFn(fnName, elemCallee, paramName string, ptrW int) *Func {
 		// Dec / free the buffer itself (arr_dec re-checks rc==1).
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: stride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
@@ -2358,7 +2358,7 @@ func closureValueReleaseOps(slot int32, ptrW int) []Op {
 		{Kind: OpEnd}, // if is_unique(p)
 		// Free / dec the pair block itself (rc==1 -> box_free, else dec).
 		{Kind: OpLoadLocal, I32: slot},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", I32: 1},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_closure_drop", Width: ResAddr, I32: 1},
 		{Kind: OpDrop},
 	}
 }
@@ -2422,7 +2422,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 		// Dec / free the buffer itself (arr_dec re-checks rc==1).
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: stride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
@@ -2487,7 +2487,7 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpConstI32, I32: innerStride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		// i = i + 1; continue.
 		{Kind: OpLoadLocal, I32: 1},
@@ -2501,7 +2501,7 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 		// Dec / free the outer buffer itself (arr_dec re-checks rc==1).
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: outerStride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
@@ -2552,7 +2552,7 @@ func genArrArrStrDropFn(ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpConstI32, I32: strStride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 1},
 		{Kind: OpConstI32, I32: 1},
@@ -2564,7 +2564,7 @@ func genArrArrStrDropFn(ptrW int) *Func {
 		{Kind: OpEnd}, // if rc==1
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: outerStride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
@@ -2627,7 +2627,7 @@ func genArrOfArrDropFn(perElemDrop string, ptrW int) *Func {
 		{Kind: OpEnd}, // if rc==1
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: outerStride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
@@ -2703,7 +2703,7 @@ func genArrDynDropFn(dynDrop string, ptrW int) *Func {
 		{Kind: OpEnd}, // if rc==1
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: stride},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
@@ -2745,7 +2745,7 @@ func genDynPrimDropFn(prim string, ptrW int) *Func {
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpConstI32, I32: size},
-		{Kind: OpCallDirect, Runtime: true, Str: "__free", I32: 2},
+		{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2},
 	}
 	// The natives model every call as pushing a result (the register
 	// backends push %rax/x0 unconditionally), so the meaningless __free
@@ -2908,10 +2908,10 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 			{Kind: OpIf, I32: BlockTypeVoid},
 			{Kind: OpLoadLocal, I32: 5},
 			{Kind: OpLoad, Width: WidthString},
-			{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+			{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 			{Kind: OpDrop},
 			{Kind: OpLoadLocal, I32: 5},
-			{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", I32: 1},
+			{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1},
 			{Kind: OpDrop},
 			{Kind: OpEnd},
 		}
@@ -3027,7 +3027,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	// inline in genStructDropFn before reaching here).
 	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 		return append(ops,
-			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 			Op{Kind: OpDrop})
 	}
 	// Single-word string value (native single-word, x86_64): the caller
@@ -3037,7 +3037,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	// branch above.
 	if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 		return append(ops,
-			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 			Op{Kind: OpDrop})
 	}
 	if isMapType(t) {
@@ -3083,7 +3083,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		}
 		return append(ops,
 			Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
-			Op{Kind: OpCallDirect, Str: helper, I32: 2},
+			Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2},
 			Op{Kind: OpDrop})
 	}
 	return append(ops,
@@ -3130,7 +3130,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 			}
 			ops = append(ops,
 				Op{Kind: OpLoad, Width: WidthString},
-				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
@@ -3146,7 +3146,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 			}
 			ops = append(ops,
 				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
@@ -3163,7 +3163,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpConstI32, I32: size},
-		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2},
+		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2},
 		Op{Kind: OpDrop},
 		Op{Kind: OpElse},
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -3219,7 +3219,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			// container's own (future) string-aware drop.
 			ops = append(ops, Op{Kind: OpLoad, Width: WidthString})
 			ops = append(ops,
-				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
@@ -3235,7 +3235,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			// exactly balanced. Mirrors the two-word str_dec branch above.
 			ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
 			ops = append(ops,
-				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
@@ -3245,7 +3245,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpConstI32, I32: size},
-		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2},
+		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2},
 		Op{Kind: OpDrop},
 		Op{Kind: OpElse},
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -3337,7 +3337,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 0},
 			Op{Kind: OpConstI32, I32: vd.size},
-			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2},
+			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2},
 			Op{Kind: OpDrop},
 			Op{Kind: OpEnd})
 	}

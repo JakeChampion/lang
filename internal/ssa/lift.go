@@ -22,6 +22,19 @@ func ssaHelperName(name string) string {
 	return name
 }
 
+// applyCallResultWidth transfers an ir call's result classification onto the
+// lifted OpCall. Only a backend-provided callee carries one — a callee the
+// module defines is left to ResolveWidths, which reads the answer off its
+// ssa.Func.
+func applyCallResultWidth(o *Op, stamp int) {
+	switch stamp {
+	case ir.ResAddr:
+		o.Width, o.Addr = 64, true
+	case ir.ResWide:
+		o.Width = 64
+	}
+}
+
 // LiftFromIR converts a legacy ir.Func into SSA form.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes its
@@ -554,7 +567,9 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		a := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		v := l.out.AddOp(l.cur, OpCall, a, b)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_concat"
+		o := l.cur.Ops[len(l.cur.Ops)-1]
+		o.Str = "__str_concat"
+		o.Width, o.Addr = 64, true // the concatenated string's buffer
 		l.stack = append(l.stack, v)
 	case ir.OpStrLen:
 		if len(l.stack) < 1 {
@@ -591,7 +606,18 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]
 		result := l.out.AddOp(l.cur, OpCall, args...)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = ssaHelperName(op.Str)
+		o := l.cur.Ops[len(l.cur.Ops)-1]
+		o.Str = ssaHelperName(op.Str)
+		switch op.Kind {
+		case ir.OpRcInc, ir.OpRcDec:
+			// Each dedicated rc kind names ONE helper, and both hand
+			// back the pointer they were given.
+			o.Width, o.Addr = 64, true
+		case ir.OpRcIsUnique:
+			// A boolean.
+		default:
+			applyCallResultWidth(o, op.Width)
+		}
 		l.stack = append(l.stack, result)
 	case ir.OpCallIndirect:
 		argc := int(op.I32)
