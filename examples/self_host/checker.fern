@@ -5839,6 +5839,34 @@ function digits_fit_i32(text: string): boolean {
   return true;
 }
 
+// dupvar_stmt_own_lambdas checks the blocks inside any lambda sitting in `st`'s
+// own expressions. dupvar_diags walks STATEMENTS and never entered an
+// expression, so a duplicate `var` (E013) or an out-of-range i32 literal (E047)
+// written inside a lambda body went unreported — and a nested named function
+// parses as a StmtVar holding an ExprLambda, so that covered both spellings.
+//
+// A lambda body is its own block, so the recursive call gets a fresh
+// duplicate-set, which is what the per-block rule wants. Pruned at ExprLambda:
+// that call already covers the whole body, nested lambdas included.
+function dupvar_stmt_own_lambdas(st: parser.Stmt): util.Diag[] {
+  function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprLambda(lm) => {
+        return util.append_diags(acc, dupvar_diags(lm.body));
+      },
+      _ => { return acc; }
+    }
+  }
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+}
+
 function dupvar_diags(stmts: parser.Stmt[]): util.Diag[] {
   var out: util.Diag[] = [];
   var declared: string[] = [];
@@ -5894,6 +5922,7 @@ function dupvar_diags(stmts: parser.Stmt[]): util.Diag[] {
       },
       _ => {}
     }
+    out = util.append_diags(out, dupvar_stmt_own_lambdas(stmt));
   }
   return out;
 }

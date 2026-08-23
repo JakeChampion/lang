@@ -217,6 +217,16 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// E026,E028,E028 either way. Only the variant names in the messages
 		// distinguish the inner E028 from the outer one.
 		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    var o = P;\n    var i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"Inner.X\" already covered earlier in this match),E028(variant \"Outer.Q\" already covered earlier in this match)", true},
+		// dupvar_diags reaching into lambda bodies — the last instance of the
+		// same class match_diags had, found by sweeping eight diagnostic triggers
+		// in a top-level and an in-lambda variant and diffing against the Go
+		// checker. Seven of the eight already matched; this one did not. Both
+		// codes the pass emits were affected, and both were measured silent
+		// against a compiler built from the pre-fix commit.
+		{"dup-var-in-block", "function main(): i32 {\n    var x: i32 = 1;\n    var x: i32 = 2;\n    return x;\n}\n", "E013", false},
+		{"dup-var-in-lambda", "function main(): i32 {\n    var f = function(): i32 {\n        var x: i32 = 1;\n        var x: i32 = 2;\n        return x;\n    };\n    return f();\n}\n", "E013", false},
+		{"i32-literal-overflow", "function main(): i32 {\n    var big: i32 = 99999999999;\n    return big;\n}\n", "E047", false},
+		{"i32-literal-overflow-in-lambda", "function main(): i32 {\n    var f = function(): i32 {\n        var big: i32 = 99999999999;\n        return big;\n    };\n    return f();\n}\n", "E047", false},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049", false},
