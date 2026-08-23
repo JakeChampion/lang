@@ -249,11 +249,27 @@ function main(): i32 { var a: i32[] = [4, 5]; return g(a); }`,
 			anchor: map[string]map[string]string{"g": {"aliasBindIncs": "2:2=v"}},
 		},
 		{
-			// STRING alias bind (#7282 string limb): the self-host retains at
-			// the bind (slot_is_reclaimable_str gate) and releases both slots;
-			// native proves the alias a borrowed view and elides the inc/dec
-			// pair (dead-alias cancellation, #4402 opt 1). Both sound — the
-			// table documents the elision gap per site.
+			// MOVE-ON-ALIAS, string limb: at the source's last top-level
+			// mention both sides elide the transfer inc (the self-host's
+			// string clause consults moves_local_at, and the string sweep
+			// loop skips the elided source) — anchored agreement, the second
+			// aliasBindIncs divergence family burned down.
+			name: "move-on-alias-string",
+			src: `function f(): i32 {
+	var s: string = "hi" + "!";
+	var v: string = s;
+	return v.len();
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"movedLocals": "s", "moveSites": "3:2", "aliasBindIncs": ""}},
+		},
+		{
+			// STRING alias bind (#7282 string limb), LIVE source: the
+			// self-host retains at the bind (slot_is_reclaimable_str gate)
+			// and releases both slots; native proves the alias a borrowed
+			// view and elides the inc/dec pair (dead-alias cancellation,
+			// #4402 opt 1). Both sound — the table documents the elision gap
+			// per site.
 			name: "alias-bind-string",
 			src: `function f(): i32 {
 	var s: string = "hi" + "!";
