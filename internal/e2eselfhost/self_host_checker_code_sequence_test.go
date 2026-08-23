@@ -195,6 +195,28 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// which the second row pins.
 		{"e053-lambda-body-array", "fip function f(n: i32): i32 {\n    var g = function(): i32 { var a: i32[] = [1]; return a.len(); };\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal))", true},
 		{"e053-nested-named-fn-array", "fip function f(n: i32): i32 {\n    function inner(): i32 { var a: i32[] = [1]; return a.len(); }\n    return n + inner();\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may only call other `fip` functions, not \"inner\")", true},
+		// match_diags reaching into lambda bodies. It walks STATEMENTS and never
+		// entered an expression, so every `match` inside a lambda escaped E015 /
+		// E026 / E028 — and a nested named function parses as a StmtVar holding an
+		// ExprLambda, so that covered both spellings. Both rows were "" before;
+		// the Go checker reports each. The two top-level twins are the controls
+		// that separate "reached a new node" from "changed what it reports".
+		{"match-wildcard-not-last", "enum Opt { A, B }\nfunction main(): i32 {\n    var x = A;\n    match (x) {\n        _ => { return 1; },\n        Opt.B => { return 2; }\n    }\n}\n", "E026", false},
+		{"match-wildcard-not-last-in-lambda", "enum Opt { A, B }\nfunction main(): i32 {\n    var f = function(): i32 {\n        var x = A;\n        match (x) {\n            _ => { return 1; },\n            Opt.B => { return 2; }\n        }\n    };\n    return f();\n}\n", "E026", false},
+		{"match-duplicate-variant", "enum Opt { A, B }\nfunction main(): i32 {\n    var x = A;\n    match (x) {\n        Opt.A => { return 1; },\n        Opt.A => { return 2; },\n        _ => { return 3; }\n    }\n}\n", "E028", false},
+		{"match-duplicate-variant-in-lambda", "enum Opt { A, B }\nfunction main(): i32 {\n    var f = function(): i32 {\n        var x = A;\n        match (x) {\n            Opt.A => { return 1; },\n            Opt.A => { return 2; },\n            _ => { return 3; }\n        }\n    };\n    return f();\n}\n", "E028", false},
+		// The row that decided match_diags does NOT fold onto astwalk. An outer
+		// arm's body holds a nested match, and a LATER outer arm has its own
+		// diagnostic. Both compilers interleave per arm today, so the inner
+		// variant is reported before the later outer one. A pre-order
+		// fold_stmt_nodes visits the whole match node before any arm BODY, which
+		// would emit every outer arm's diagnostics first and put Outer.Q ahead of
+		// Inner.X — a divergence from the oracle introduced by the conversion.
+		//
+		// withMsg because the codes alone cannot see it: the sequence is
+		// E026,E028,E028 either way. Only the variant names in the messages
+		// distinguish the inner E028 from the outer one.
+		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    var o = P;\n    var i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"Inner.X\" already covered earlier in this match),E028(variant \"Outer.Q\" already covered earlier in this match)", true},
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049", false},

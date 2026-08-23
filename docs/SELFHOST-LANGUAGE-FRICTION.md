@@ -47,7 +47,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **41** — 4 anonymous `function(…)` exprs and 37 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 16 in `checker`'s collectors); 21 of the 41 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **43** — 4 anonymous `function(…)` exprs and 39 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 18 in `checker`'s collectors); 22 of the 43 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **303** in 2 modules — 288 in `checker.fern`, 15 in `visibility.fern`; falling as SH-022 folds collectors onto `astwalk` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |

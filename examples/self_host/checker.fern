@@ -5698,6 +5698,39 @@ function payloadless_binder_diags(pv: parser.PatVariant, structs: StructSig[], u
   return out;
 }
 
+// match_stmt_own_lambdas checks the match statements inside any lambda sitting
+// in `st`'s own expressions. match_diags walks STATEMENTS and never entered an
+// expression, so a `match` written inside a lambda body escaped E015 / E026 /
+// E028 entirely — and since a nested named function parses as a StmtVar holding
+// an ExprLambda, that covered both spellings.
+//
+// Pruned at ExprLambda for the reason e049_stmt_own_lambdas is: the recursive
+// match_diags call already covers the whole body, nested lambdas included, so
+// descending would report each inner one once per enclosing lambda.
+function match_stmt_own_lambdas(st: parser.Stmt, structs: StructSig[], unions: UnionSig[]): util.Diag[] {
+  function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
+    match (n) {
+      parser.ExprLambda(lm) => {
+        return util.append_diags(acc, match_diags(lm.body, structs, unions));
+      },
+      _ => { return acc; }
+    }
+  }
+  function not_into_lambda(n: parser.Expr): boolean {
+    match (n) {
+      parser.ExprLambda(_) => { return false; },
+      _ => { return true; }
+    }
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+}
+
+// match_diags keeps its own statement recursion rather than folding onto
+// astwalk. A pre-order fold visits the whole match node before any arm BODY, so
+// every outer arm's diagnostics would precede a nested match's — measured
+// against the Go checker, which interleaves them per arm as this does. The fold
+// is used for the one thing it is right for here: reaching the lambdas.
 function match_diags(stmts: parser.Stmt[], structs: StructSig[], unions: UnionSig[]): util.Diag[] {
   var out: util.Diag[] = [];
   for stmt in stmts {
@@ -5767,6 +5800,7 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[], unions: UnionSi
       },
       _ => {}
     }
+    out = util.append_diags(out, match_stmt_own_lambdas(stmt, structs, unions));
   }
   return out;
 }

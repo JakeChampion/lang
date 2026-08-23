@@ -367,6 +367,29 @@ findings. Ranked by leverage.
     ordinary type-check traversal and therefore reaches every node by
     construction.
 
+    **A collector can be fold-SHAPED and still be wrong to fold, because the
+    spine's visit ORDER is not the consumer's.** `match_diags` was the strongest
+    remaining candidate — append-only accumulator, node-local `seen`, no scope
+    threading, and the largest hole of any of them (it handles 5 of 12 `Stmt`
+    variants and never enters an expression, so every `match` inside a lambda
+    escaped E015 / E026 / E028, both spellings). It still should not fold. A
+    pre-order `fold_stmt_nodes` visits the whole match node before any arm BODY,
+    so every outer arm's diagnostics would precede a nested match's, where both
+    compilers interleave them per arm today. Measured against the oracle, the
+    conversion would have introduced a divergence.
+
+    So it keeps its own statement recursion and uses the fold for the one thing
+    the fold is right for: reaching the lambdas, via the pruned
+    `e049_stmt_own_lambdas` shape. **Convert the traversal only where the shared
+    order is also the correct order; otherwise borrow the spine for reach and
+    keep the walk.**
+
+    That divergence is invisible to a code-only comparison — the sequence is
+    `E026,E028,E028` either way, and only the variant names in the messages
+    distinguish the inner E028 from the outer. It was catchable solely because
+    the sequence gate had grown a `withMsg` mode two PRs earlier, for an
+    unrelated single-code pass.
+
     **Count only the variants that REACH the pass.** The same wildcard also
     dropped `ExprMapLit` and `ExprFString`, and those cost nothing: both reach
     only the printer, every other parse having desugared them into a
