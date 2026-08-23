@@ -1230,7 +1230,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 166) {  // exit
             // [n] -> sys_exit(n) (#93 on aarch64). Never returns; the pushed dummy
             // keeps the operand-stack shape for the statement-level drop.
-            s = s.write("    ldr x0, [sp], #16\n    mov x8, #93\n    svc #0\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+            if (leak_check_on()) {
+                // Census (#5362): report before the process dies. The exit
+                // code parks in x19 — clobbering a callee-save is fine on a
+                // path that never returns.
+                s = s.write("    ldr x0, [sp], #16\n    mov x19, x0\n    bl __fern_lc_report\n    mov x0, x19\n    mov x8, #93\n    svc #0\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x0, [sp], #16\n    mov x8, #93\n    svc #0\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 165) {  // putchar
             // [byte] IS param[0]; call the Fern-compiled __fn___fern_putchar (#2649)
             // via the stack ABI. Push x0 for the drop.
@@ -2127,6 +2134,13 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    bl __fn_main\n");
+    if (leak_check_on()) {
+        // Census (#5362): the exit() builtin bypasses this epilogue and
+        // reports at its own site; a returning main reports here.
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    bl __fern_lc_report\n");
+        s = s.write("    mov x0, x19\n");
+    }
     s = s.write("    mov x8, #93\n");      // sys_exit (Linux arm64); darwinize remaps the number + svc
     s = s.write("    svc #0\n");
     return s;
@@ -3034,6 +3048,181 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
 // emit_rt_arena_and_alloc emits the arena and the allocator: the lazily-mmap'd 16 GiB region,
 // __fern_alloc and its freelist, the array / string box constructors, and the
 // strbuf accumulator.
+// emit_lc_report emits __fern_lc_report() — the census summary, cribbed from
+// the NATIVE arm64 emitter's body (internal/codegen/arm64 emitLcReportRuntime)
+// with its syscall abstraction replaced by the self-host mov x8 / svc form
+// that darwinize already reskins for Mach-O. One stderr line:
+//
+//     leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// K = alloc_bytes - free_bytes, signed, so an over-free shows negative
+// rather than wrapping. Called from the _start epilogue and the exit()
+// builtin, which park the exit code in x19 across the call — the helper and
+// its two local subroutines touch caller-saved registers only. .globl: the
+// exit op is emitted into ORDINARY generated code, which under
+// -per-module-emit-all lands in a different unit from this (the entry's).
+// Entry-only, alongside the counters it reads.
+function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
+    if (!leak_check_on()) { return s; }
+    // The counters live here rather than in the arena's .bss block: the
+    // exit op calls the report in every program, heap-free ones included
+    // (the x86 hev block's precedent), so nothing here may sit behind the
+    // "heap" need.
+    s = s.write("    .bss\n");
+    s = s.write("    .align 3\n");
+    s = s.write("__fern_lc_alloc_count: .quad 0\n");
+    s = s.write("__fern_lc_alloc_bytes: .quad 0\n");
+    s = s.write("__fern_lc_free_count: .quad 0\n");
+    s = s.write("__fern_lc_free_bytes: .quad 0\n");
+    s = s.write("    .section .rodata\n");
+    s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
+    s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
+    s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
+    s = s.write(".Llc_nl:\n    .ascii \"\\n\"\n");
+    s = s.write("    .text\n");
+    s = s.write("    .globl __fern_lc_report\n");
+    s = s.write("__fern_lc_report:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    adrp x1, .Llc_a\n");
+    s = s.write("    add x1, x1, :lo12:.Llc_a\n");
+    s = s.write("    mov x2, #18\n");
+    s = s.write("    bl .Llc_write\n");
+    s = s.write("    adrp x9, __fern_lc_alloc_count\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_count\n");
+    s = s.write("    ldr x0, [x9]\n");
+    s = s.write("    bl .Llc_wrnum\n");
+    s = s.write("    adrp x1, .Llc_f\n");
+    s = s.write("    add x1, x1, :lo12:.Llc_f\n");
+    s = s.write("    mov x2, #7\n");
+    s = s.write("    bl .Llc_write\n");
+    s = s.write("    adrp x9, __fern_lc_free_count\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_free_count\n");
+    s = s.write("    ldr x0, [x9]\n");
+    s = s.write("    bl .Llc_wrnum\n");
+    s = s.write("    adrp x1, .Llc_l\n");
+    s = s.write("    add x1, x1, :lo12:.Llc_l\n");
+    s = s.write("    mov x2, #12\n");
+    s = s.write("    bl .Llc_write\n");
+    s = s.write("    adrp x9, __fern_lc_alloc_bytes\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_bytes\n");
+    s = s.write("    ldr x0, [x9]\n");
+    s = s.write("    adrp x9, __fern_lc_free_bytes\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_free_bytes\n");
+    s = s.write("    ldr x1, [x9]\n");
+    s = s.write("    sub x0, x0, x1\n");
+    s = s.write("    bl .Llc_wrnum\n");
+    s = s.write("    adrp x1, .Llc_nl\n");
+    s = s.write("    add x1, x1, :lo12:.Llc_nl\n");
+    s = s.write("    mov x2, #1\n");
+    s = s.write("    bl .Llc_write\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    // .Llc_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf — no bl
+    // inside, so x30 (the report's return-into-report address) survives.
+    s = s.write(".Llc_write:\n");
+    s = s.write("    mov x0, #2\n");
+    s = s.write("    mov x8, #64\n");
+    s = s.write("    svc #0\n");
+    s = s.write("    ret\n");
+    // .Llc_wrnum(x0 = signed i64): decimal itoa, digits built backwards from
+    // the end of a 32-byte stack buffer, then one write(2) to stderr. Leaf.
+    s = s.write(".Llc_wrnum:\n");
+    s = s.write("    sub sp, sp, #48\n");
+    s = s.write("    add x3, sp, #32\n");
+    s = s.write("    mov x4, #10\n");
+    s = s.write("    mov x5, #0\n");
+    s = s.write("    cmp x0, #0\n");
+    s = s.write("    b.ge .Llc_wrnum_loop\n");
+    s = s.write("    neg x0, x0\n");
+    s = s.write("    mov x5, #1\n");
+    s = s.write(".Llc_wrnum_loop:\n");
+    s = s.write("    udiv x6, x0, x4\n");
+    s = s.write("    msub x7, x6, x4, x0\n");
+    s = s.write("    add x7, x7, #48\n");
+    s = s.write("    sub x3, x3, #1\n");
+    s = s.write("    strb w7, [x3]\n");
+    s = s.write("    mov x0, x6\n");
+    s = s.write("    cbnz x0, .Llc_wrnum_loop\n");
+    s = s.write("    cbz x5, .Llc_wrnum_emit\n");
+    s = s.write("    mov x7, #45\n");
+    s = s.write("    sub x3, x3, #1\n");
+    s = s.write("    strb w7, [x3]\n");
+    s = s.write(".Llc_wrnum_emit:\n");
+    s = s.write("    add x2, sp, #32\n");
+    s = s.write("    sub x2, x2, x3\n");
+    s = s.write("    mov x1, x3\n");
+    s = s.write("    mov x0, #2\n");
+    s = s.write("    mov x8, #64\n");
+    s = s.write("    svc #0\n");
+    s = s.write("    add sp, sp, #48\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// leak_check_on — FERN_LEAKCHECK read at emit time (the compiler process),
+// the arm64 half of the census (#5362; the x86 self-host precedent). It is
+// deliberately NOT folded with FERN_SANITIZE the way the x86 backend folds
+// it: this backend has no over-release trap and no quarantine, so a
+// "sanitize" build that only printed a census would misreport what it
+// checks. The census counts at 8-byte-word granularity on both sides —
+// __fern_alloc's rounded request and each free site's own class index are
+// the same number for the same block — so a block's alloc and eventual free
+// cancel exactly. The large tier's further capacity round-up is deliberately
+// NOT counted: the free side never sees it.
+function leak_check_on(): boolean {
+    match (env("FERN_LEAKCHECK")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// lc_bump_alloc: count one allocation of x0 (rounded-8) bytes. Emitted at
+// __fern_alloc's entry, after the rounding and BEFORE the large tier
+// re-rounds x0 to its class capacity. x1/x2 are inside __fern_alloc's
+// documented x0..x3 clobber set and dead at that point.
+function lc_bump_alloc(s: asmcore.EmitState): asmcore.EmitState {
+    if (!leak_check_on()) { return s; }
+    s = s.write("    adrp x1, __fern_lc_alloc_count\n");
+    s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_count\n");
+    s = s.write("    ldr x2, [x1]\n");
+    s = s.write("    add x2, x2, #1\n");
+    s = s.write("    str x2, [x1]\n");
+    s = s.write("    adrp x1, __fern_lc_alloc_bytes\n");
+    s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_bytes\n");
+    s = s.write("    ldr x2, [x1]\n");
+    s = s.write("    add x2, x2, x0\n");
+    s = s.write("    str x2, [x1]\n");
+    return s;
+}
+
+// lc_bump_free_add: count one freed block — count += 1, bytes += <addend>.
+// Emitted immediately BEFORE the site's freelist push / large_push handoff,
+// where t1/t2 — the push's own address and head registers — are still dead,
+// so no site widens its documented clobber set. `addend` is the operand tail
+// of the bytes add: a words register with ", lsl #3", a bytes register bare,
+// or a byte literal for the fixed-size boxes.
+function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: string): asmcore.EmitState {
+    if (!leak_check_on()) { return s; }
+    s = s.write("    adrp " + t1 + ", __fern_lc_free_count\n");
+    s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_free_count\n");
+    s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
+    s = s.write("    add " + t2 + ", " + t2 + ", #1\n");
+    s = s.write("    str " + t2 + ", [" + t1 + "]\n");
+    s = s.write("    adrp " + t1 + ", __fern_lc_free_bytes\n");
+    s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_free_bytes\n");
+    s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
+    s = s.write("    add " + t2 + ", " + t2 + ", " + addend + "\n");
+    s = s.write("    str " + t2 + ", [" + t1 + "]\n");
+    return s;
+}
+
+// lc_bump_free_words: the common case — the block size is a class/words
+// register, bytes = words*8.
+function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2: string): asmcore.EmitState {
+    return lc_bump_free_add(s, words + ", lsl #3", t1, t2);
+}
+
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
     // allocation (mirrors the native arm64 emitAllocRuntime) rather than
@@ -3131,6 +3320,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    add x0, x0, #7\n");
     s = s.write("    lsr x3, x0, #3\n");        // idx = roundup8(size)/8
     s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8 (avoids bic, unsupported by the in-process arm64-darwin assembler)
+    s = lc_bump_alloc(s);
     s = s.write("    mov x2, #0x10000\n");      // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
     s = s.write("    cmp x3, x2\n");
     s = s.write("    b.hs .Lalloc_large\n");
@@ -3614,6 +3804,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    bhs .Lsarelo_fresh\n");       // oversize tier: leak
     s = s.write("    stur wzr, [x0, #-8]\n");      // clear rc (freed marker)
     s = s.write("    sub x4, x0, #16\n");          // block base
+    s = lc_bump_free_words(s, "x3", "x2", "x9");
     s = s.write("    adrp x5, __fern_freelist\n");
     s = s.write("    add x5, x5, :lo12:__fern_freelist\n");
     s = s.write("    ldr x6, [x5, x3, lsl #3]\n"); // old head
@@ -3664,6 +3855,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    bhs .Lsd_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    stur wzr, [x1, #-8]\n");      // mark freed (clear rc)
     s = s.write("    sub x5, x1, #16\n");          // base = old - 16
+    s = lc_bump_free_words(s, "x4", "x2", "x3");
     s = s.write("    adrp x6, __fern_freelist\n");
     s = s.write("    add x6, x6, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x6, x4, lsl #3]\n"); // old head
@@ -3699,6 +3891,11 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    lsl x3, x3, #30\n");           // 1 GiB
     s = s.write("    cmp x2, x3\n");
     s = s.write("    b.hi .Llpush_ret\n");          // > 1 GiB: drop (leak, matches alloc)
+    // Census (#5362): the large tier's single choke point — one bump covers
+    // every >=512 KiB free, at the CALLER-passed bytes (the logical size),
+    // before the class rounding below mutates x2. Placed after the >1 GiB
+    // test: that block is dropped, i.e. a leak, not a free.
+    s = lc_bump_free_add(s, "x2", "x3", "x4");
     s = s.write("    mov x3, #1\n");
     s = s.write("    lsl x3, x3, #19\n");           // 512 KiB
     s = s.write("    sub x3, x3, #1\n");            // 512 KiB - 1
@@ -3740,6 +3937,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x1, x9\n");
     s = s.write("    bhs .Larrdec_large\n");
     s = s.write("    sub x2, x0, #16\n");          // base = data - 16
+    s = lc_bump_free_words(s, "x1", "x3", "x9");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
@@ -3805,6 +4003,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    lsr x2, x2, #3\n");
     s = s.write("    cmp x2, x9\n");               // large tier (>=65536) -> leak buffer
     s = s.write("    bhs .Lstrfree_box\n");
+    s = lc_bump_free_words(s, "x2", "x3", "x10");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, x2, lsl #3]\n");   // old head of class `words`
@@ -3815,6 +4014,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // (defensive vs a re-free reading a live rc), then push base onto freelist[3].
     s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0
     s = s.write("    sub x1, x0, #8\n");           // base = box-8
+    s = lc_bump_free_add(s, "#24", "x3", "x10");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #24]\n");       // freelist[3] (24-byte block = 3 words)
@@ -3868,6 +4068,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x1, x12\n");              // base >= heap_end -> not our arena, skip
     s = s.write("    bhs .Lstrvfree_ret\n");
     s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0 (defensive vs a re-free)
+    s = lc_bump_free_add(s, "#24", "x3", "x10");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #24]\n");       // freelist[3] (24-byte block = 3 words)
@@ -3923,6 +4124,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x1, x9\n");
     s = s.write("    bhs .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
+    s = lc_bump_free_words(s, "x1", "x3", "x9");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n");  // old head
@@ -3998,6 +4200,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x1, x9\n");
     s = s.write("    bhs .Laaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    sub x2, x19, #16\n");
+    s = lc_bump_free_words(s, "x1", "x3", "x9");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n");
@@ -4066,6 +4269,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x1, x9\n");
     s = s.write("    bhs .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
     s = s.write("    sub x2, x19, #16\n");
+    s = lc_bump_free_words(s, "x1", "x3", "x9");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n");
@@ -4156,6 +4360,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x1, x9\n");
     s = s.write("    bhs .Loaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    sub x2, x19, #16\n");
+    s = lc_bump_free_words(s, "x1", "x3", "x9");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x9, [x3, x1, lsl #3]\n");
@@ -4247,6 +4452,7 @@ function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_" + vfree + "\n");
     s = s.write("    add sp, sp, #16\n");
+    s = lc_bump_free_add(s, "#16", "x3", "x10");
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
@@ -4831,6 +5037,10 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = emit_rt_subprocess(s, darwin);
         s = emit_rt_net(s, darwin);
     }
+    // Census report (#5362): OUTSIDE the heap gate — the exit op calls
+    // __fern_lc_report in every program under FERN_LEAKCHECK, and a heap-free
+    // program must still link. Emits nothing when the flag is off.
+    s = emit_lc_report(s);
     // Map runtime (string-keyed, 8-byte values). Mirror of asm.fern's
     // x86-64 runtime. A Map is a 16-byte box [keys: string[] @0,
     // values: T[] @8]; linear scan + str_eq; set/get grow via
@@ -5535,6 +5745,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    bhs .Lapo_large\n");          // large tier -> recycle via __fern_large_push
         s = s.write("    stur wzr, [x19, #-8]\n");     // mark freed (clear rc)
         s = s.write("    sub x2, x19, #16\n");         // old box base
+        s = lc_bump_free_words(s, "x1", "x3", "x9");
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
         s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
