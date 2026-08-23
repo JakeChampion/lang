@@ -520,6 +520,17 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_read_file")
+				case "__fern_read_file_bytes":
+					// (path) → Result[u8[], IoError] — read_file's
+					// raw sibling: same pipeline, but the contents
+					// land in an __alloc_u8 box instead of a string.
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
+					needs.add("__alloc_u8")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_read_file_bytes")
 				case "__fern_write_file":
 					// (path, content) → Option[IoError]. Same
 					// __build_io_error / __fern_str_len /
@@ -932,7 +943,7 @@ var unconditionalHelperCalls = map[string][]string{
 // short-circuits on the high bit).
 var helperAllocBoxCallers = []string{
 	"__fern_env", "__fern_read_line", "__build_io_error",
-	"__fern_read_file", "__fern_write_file",
+	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file",
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
@@ -1816,6 +1827,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadFileBody,
+	},
+	"__fern_read_file_bytes": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[u8[], IoError] pointer. Same pipeline and
+		// preopen-fd-3 convention as __fern_read_file; the
+		// contents land in an __alloc_u8 box and the Ok payload
+		// is the array data pointer.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadFileBytesBody,
 	},
 	"__fern_write_file": {
 		// (path_data, path_len, content_data, content_len) →

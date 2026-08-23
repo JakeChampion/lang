@@ -64,6 +64,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "udp_send", capability: "net" },
 
         BuiltinCap { builtin: "read_file", capability: "fs" },
+        BuiltinCap { builtin: "read_file_bytes", capability: "fs" },
         BuiltinCap { builtin: "write_file", capability: "fs" },
         BuiltinCap { builtin: "write_file_exec", capability: "fs" },
         BuiltinCap { builtin: "open_reader", capability: "fs" },

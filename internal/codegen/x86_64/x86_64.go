@@ -811,6 +811,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesReadFile {
 		g.emitReadFileRuntime()
 	}
+	if g.usesReadFileBytes {
+		g.emitReadFileBytesRuntime()
+	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
@@ -1202,11 +1205,12 @@ type generator struct {
 	// __fern_rc_dec. Mirrors __fern_closure_drop, so it pulls in
 	// __fern_box_free / __fern_rc_dec / the freelist BSS.
 	usesStrDec bool
-	// usesReadFile / usesWriteFile pull in the file-I/O
-	// runtimes; usesIoError pulls in the shared
+	// usesReadFile / usesReadFileBytes / usesWriteFile pull in the
+	// file-I/O runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
-	usesReadFile  bool
-	usesWriteFile bool
+	usesReadFile      bool
+	usesReadFileBytes bool
+	usesWriteFile     bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -1526,6 +1530,11 @@ func (g *generator) recordUse(target string) {
 	case "read_file":
 		g.usesReadFile = true
 		g.usesAlloc = true
+		g.usesIoError = true
+	case "read_file_bytes":
+		g.usesReadFileBytes = true
+		g.usesAlloc = true
+		g.usesAllocU8 = true
 		g.usesIoError = true
 	case "write_file":
 		g.usesWriteFile = true
@@ -2962,6 +2971,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_args"
 		case "read_file":
 			target = "__fern_read_file"
+		case "read_file_bytes":
+			target = "__fern_read_file_bytes"
 		case "write_file":
 			target = "__fern_write_file"
 		case "write_file_exec":
@@ -10133,6 +10144,117 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_file, .-__fern_read_file")
+}
+
+// emitReadFileBytesRuntime emits `__fern_read_file_bytes(path) →
+// Result[u8[], IoError]` — read_file's raw sibling: the same
+// openat → fstat → read-loop → close pipeline, but the contents
+// land in a fresh `u8[]` from `__alloc_u8` (cap/rc/len header)
+// rather than a string box. A file that shrinks between fstat
+// and read leaves the trailing bytes zero (from __alloc_u8's
+// zero-fill) with len still st_size, matching read_file's
+// short-read behaviour.
+func (g *generator) emitReadFileBytesRuntime() {
+	g.line("")
+	g.line(".globl __fern_read_file_bytes")
+	g.line(".type __fern_read_file_bytes, @function")
+	g.label("__fern_read_file_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // path byte ptr (materialised below)
+	g.emit("push r12") // fd
+	g.emit("push r13") // buf data ptr / errno on the err path
+	g.emit("push r14") // size
+	g.emit("push r15") // bytes_read
+	// Frame layout matches __fern_read_file: 144-byte stat buf
+	// + scratch slot for emitStrDataPtr + padding.
+	g.emit("sub rsp, 168")
+	g.emit("mov [rbp - 56], rdi")                // save original path string value for the err path
+	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr for openat
+
+	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("xor edx, edx")
+	g.emit("xor r10d, r10d")
+	g.emitSyscall(257)
+	g.emit("test rax, rax")
+	g.emit("js .Lrfb_err_open")
+	g.emit("mov r12, rax") // fd
+
+	// fstat(fd, [rsp]) — statbuf at top of stack.
+	g.emit("mov edi, r12d")
+	g.emit("mov rsi, rsp")
+	g.emitSyscall(5)
+	g.emit("test rax, rax")
+	g.emit("js .Lrfb_err_close")
+	g.emit("mov r14, [rsp + 48]") // st_size
+
+	// Fresh u8[] of st_size bytes; __alloc_u8 owns the header
+	// layout and the size==0 empty sentinel.
+	g.emit("mov edi, r14d")
+	g.emit("call __alloc_u8")
+	g.emit("mov r13, rax") // r13 = data ptr
+
+	g.emit("xor r15, r15") // bytes_read = 0
+	g.label(".Lrfb_loop")
+	g.emit("cmp r15, r14")
+	g.emit("jge .Lrfb_done")
+	g.emit("mov edi, r12d")
+	g.emit("lea rsi, [r13 + r15]")
+	g.emit("mov rdx, r14")
+	g.emit("sub rdx, r15")
+	g.emit("xor eax, eax") // read = 0
+	g.emitSyscallPreloaded(sysRead)
+	g.emit("test rax, rax")
+	g.emit("js .Lrfb_err_close")
+	g.emit("jz .Lrfb_done") // EOF (file shrunk between fstat and read)
+	g.emit("add r15, rax")
+	g.emit("jmp .Lrfb_loop")
+
+	g.label(".Lrfb_done")
+	g.emit("mov edi, r12d")
+	g.emitSyscall(3)
+	// Result.Ok(u8[]): 16-byte box, tag=0 @0, arr_ptr @8.
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .Lrfb_return")
+
+	g.label(".Lrfb_err_close")
+	// errno = -rax, then close fd.
+	g.emit("neg rax")
+	g.emit("mov r13, rax") // r13 = errno (buf no longer needed)
+	g.emit("mov edi, r12d")
+	g.emitSyscall(3)
+	g.emit("jmp .Lrfb_err_dispatch")
+
+	g.label(".Lrfb_err_open")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+
+	g.label(".Lrfb_err_dispatch")
+	// __fern_io_error(errno, path) → rax = IoError box.
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 56]") // original path string value (heap or inline)
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax") // stash IoError box across the next alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_box")
+	g.emit("mov dword ptr [rax], 1") // tag=1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lrfb_return")
+	g.emit("add rsp, 168")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_read_file_bytes, .-__fern_read_file_bytes")
 }
 
 // emitWriteFileRuntime emits `__fern_write_file(path, content)

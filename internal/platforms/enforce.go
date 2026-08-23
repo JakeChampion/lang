@@ -102,6 +102,7 @@ var gatedBuiltins = map[string]string{
 
 	// Filesystem.
 	"read_file":       "fs",
+	"read_file_bytes": "fs",
 	"write_file":      "fs",
 	"write_file_exec": "fs",
 	"open_reader":     "fs",

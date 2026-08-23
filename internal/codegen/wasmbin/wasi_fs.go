@@ -245,6 +245,19 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 //	14: $path_byte_len      decoded byte length of the path
 //	15: $i_path             str-normalize loop counter
 func buildReadFileBody(idxs map[string]uint32) []byte {
+	return buildReadFileBodyCommon(idxs, false)
+}
+
+// buildReadFileBytesBody assembles __fern_read_file_bytes —
+// read_file's raw sibling. Same pipeline and error
+// classification; the contents land in a fresh u8[] from
+// __alloc_u8 (16-byte cap/rc/len header behind the data ptr)
+// and the Ok box carries the array data pointer.
+func buildReadFileBytesBody(idxs map[string]uint32) []byte {
+	return buildReadFileBodyCommon(idxs, true)
+}
+
+func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 	// Reused for path_open scratch / str-normalize temps AND the file
 	// content string buffer → rc1 so the returned string reclaims
 	// (over-headering the temps is harmless carrier-side).
@@ -421,34 +434,61 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, fdClose)
 	body = inst.InstDrop(body)
 
-	// strbuf = alloc(cur); memory.copy(strbuf, buf, cur)
-	body = inst.InstLocalGet(body, 7) // cur
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 11) // $strbuf
-	body = inst.InstLocalGet(body, 5)  // buf
-	body = inst.InstLocalGet(body, 7)  // cur
-	body = memory.InstMemoryCopy(body)
+	if asBytes {
+		// arr = __alloc_u8(cur); memory.copy(arr, buf, cur).
+		// __alloc_u8 owns the cap/rc/len header and the len is
+		// baked in, so no explicit length store here.
+		body = inst.InstLocalGet(body, 7) // cur
+		body = inst.InstCall(body, idxs["__alloc_u8"])
+		body = inst.InstLocalTee(body, 11) // $strbuf (array data ptr)
+		body = inst.InstLocalGet(body, 5)  // buf
+		body = inst.InstLocalGet(body, 7)  // cur
+		body = memory.InstMemoryCopy(body)
 
-	// Build Ok(string) — 16 bytes: tag=0 @ 0, data @ +8, len @ +12.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
-	body = inst.InstLocalTee(body, 12) // $result
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 0) // tag = 0 (Ok)
+		// Build Ok(u8[]) — 8 bytes: tag=0 @ 0, array data ptr
+		// @ +4 (single-word payload, same slot rule as the Err
+		// arm).
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 12) // $result
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 0) // tag = 0 (Ok)
+		body = inst.InstLocalGet(body, 12)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = memory.InstI32Store(body, 2, 0) // arr ptr @ +4
+		body = inst.InstLocalGet(body, 12)
+	} else {
+		// strbuf = alloc(cur); memory.copy(strbuf, buf, cur)
+		body = inst.InstLocalGet(body, 7) // cur
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalTee(body, 11) // $strbuf
+		body = inst.InstLocalGet(body, 5)  // buf
+		body = inst.InstLocalGet(body, 7)  // cur
+		body = memory.InstMemoryCopy(body)
 
-	body = inst.InstLocalGet(body, 12)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 11)
-	body = memory.InstI32Store(body, 2, 0) // data @ +8
+		// Build Ok(string) — 16 bytes: tag=0 @ 0, data @ +8, len @ +12.
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 12) // $result
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 0) // tag = 0 (Ok)
 
-	body = inst.InstLocalGet(body, 12)
-	body = inst.InstI32Const(body, 12)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 7)      // cur
-	body = memory.InstI32Store(body, 2, 0) // len @ +12
+		body = inst.InstLocalGet(body, 12)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = memory.InstI32Store(body, 2, 0) // data @ +8
 
-	body = inst.InstLocalGet(body, 12)
+		body = inst.InstLocalGet(body, 12)
+		body = inst.InstI32Const(body, 12)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 7)      // cur
+		body = memory.InstI32Store(body, 2, 0) // len @ +12
+
+		body = inst.InstLocalGet(body, 12)
+	}
 
 	// Locals declaration: 14 i32 locals (slots 2..15) — the 11
 	// originals plus the path-normalize scratch trio.
@@ -479,6 +519,18 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 // 11=chunk_ptr, 12=chunk_len, 13=box/tmp, 14=strnorm scratch,
 // 15=ioerr.
 func buildReadFileBodyP2(idxs map[string]uint32) []byte {
+	return buildReadFileBodyP2Common(idxs, false)
+}
+
+// buildReadFileBytesBodyP2 is the preview-2 variant of
+// buildReadFileBytesBody: buildReadFileBodyP2's pipeline with the
+// contents in an __alloc_u8 box and the Ok payload the array
+// data pointer.
+func buildReadFileBytesBodyP2(idxs map[string]uint32) []byte {
+	return buildReadFileBodyP2Common(idxs, true)
+}
+
+func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	// Reused for acc/chunk scratch AND the file content string buffer →
 	// rc1 for reclamation (over-headering the temps is harmless).
 	alloc := idxs["__fern_alloc_rc1"]
@@ -629,30 +681,52 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
 
-	// strbuf = alloc(acc_cur); memory.copy(strbuf, acc_buf, acc_cur)
-	body = inst.InstLocalGet(body, 10)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 11) // reuse $chunk_ptr as $strbuf
-	body = inst.InstLocalGet(body, 8)
-	body = inst.InstLocalGet(body, 10)
-	body = memory.InstMemoryCopy(body)
-	// Build Ok(string): box(16) tag=0 @0, data @+8, len @+12.
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, allocBox)
-	body = inst.InstLocalTee(body, 13)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 13)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 11)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 13)
-	body = inst.InstI32Const(body, 12)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 10)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 13)
+	if asBytes {
+		// arr = __alloc_u8(acc_cur); memory.copy(arr, acc_buf, acc_cur)
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstCall(body, idxs["__alloc_u8"])
+		body = inst.InstLocalTee(body, 11) // reuse $chunk_ptr as arr data ptr
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 10)
+		body = memory.InstMemoryCopy(body)
+		// Build Ok(u8[]): box(8) tag=0 @0, array data ptr @+4.
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 13)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 13)
+	} else {
+		// strbuf = alloc(acc_cur); memory.copy(strbuf, acc_buf, acc_cur)
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalTee(body, 11) // reuse $chunk_ptr as $strbuf
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 10)
+		body = memory.InstMemoryCopy(body)
+		// Build Ok(string): box(16) tag=0 @0, data @+8, len @+12.
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 13)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstI32Const(body, 12)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 10)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 13)
+	}
 
 	// 15 i32 locals (2..16): the 14 originals plus local 16 (errno
 	// from the mapped error-code).

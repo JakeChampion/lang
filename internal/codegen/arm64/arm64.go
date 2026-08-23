@@ -467,9 +467,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// box constructor is shared with the Reader/Writer family
 	// above; pulled in here for the programs that use file I/O
 	// without the Reader API.
-	if g.usesReadFile || g.usesWriteFile || g.usesWriteFileExec || g.usesRemoveFile ||
-		g.usesTempDir || g.usesReadDir || g.usesStat || g.usesRemoveDirAll ||
-		g.usesCreateDirAll {
+	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
+		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat ||
+		g.usesRemoveDirAll || g.usesCreateDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -731,6 +731,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReadFile {
 		g.emitReadFileRuntime()
+	}
+	if g.usesReadFileBytes {
+		g.emitReadFileBytesRuntime()
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
@@ -7779,6 +7782,116 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.line(".ltorg")
 }
 
+// emitReadFileBytesRuntime emits
+// `__fern_read_file_bytes(path_data, path_len) →
+// Result[u8[], IoError]` — read_file's raw sibling: the same
+// openat → fstat → read-loop → close pipeline as
+// emitReadFileRuntime2W, but the contents land in a fresh
+// `u8[]` from `__alloc_u8` (cap/rc/len header) and Ok carries
+// the array data pointer. A file that shrinks between fstat
+// and read leaves the trailing bytes zero (from __alloc_u8's
+// zero-fill) with len still st_size, matching read_file's
+// short-read behaviour.
+//
+// Result box layout: 16-byte heap obj `{tag:i32 @0, _:i32 @4,
+// payload:ptr @8}` — tag=0 Ok(u8[] data ptr), tag=1
+// Err(IoError box ptr); same shapes as read_file's Err box.
+func (g *generator) emitReadFileBytesRuntime() {
+	g.line("")
+	g.line(".global __fern_read_file_bytes")
+	g.typeDirective("__fern_read_file_bytes")
+	g.label("__fern_read_file_bytes")
+	// Frame mirrors emitReadFileRuntime2W: 96-byte base (fp/lr
+	// + 6 callee-saves + 16-byte inline spill at [x29+80]) +
+	// 192-byte statbuf at [x29+96] = 288.
+	//
+	// x19 = path_data, x20 = path_len, x21 = fd, x22 = buf data
+	// ptr / errno, x23 = file size, x24 = bytes read,
+	// x25 = path byte ptr.
+	g.emit("stp x29, x30, [sp, #-288]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0") // x19 = path_data
+	g.emit("mov x20, x1") // x20 = path_len
+	// path → byte ptr (inline spill at [x29+80..95]), then
+	// NUL-terminate for openat.
+	g.emitStrDataPtr2W("x25", "x19", "x20", 80)
+	g.emitNulTermPath2W("x25", "x25", "x20")
+	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
+	g.emit("mov x0, #%d", g.atFdCwd())
+	g.emit("mov x1, x25")
+	g.emit("mov x2, #0")
+	g.emit("mov x3, #0")
+	g.syscall("openat")
+	g.emit("tbnz x0, #63, .Lrfb_err_open")
+	g.emit("mov x21, x0") // fd
+	// fstat(fd, statbuf).
+	g.emit("mov x0, x21")
+	g.emit("add x1, x29, #96") // statbuf at [x29+96]
+	g.syscallFstat()
+	g.emit("tbnz x0, #63, .Lrfb_err_close")
+	g.emit("ldr x23, [x29, #%d]", 96+g.statSizeOff()) // st_size
+	// Fresh u8[] of st_size bytes; __alloc_u8 owns the
+	// cap/rc/len header layout and the n==0 empty sentinel.
+	g.emit("mov x0, x23")
+	g.emit("bl __alloc_u8")
+	g.emit("mov x22, x0") // x22 = data ptr
+	// Read loop.
+	g.emit("mov x24, #0")
+	g.label(".Lrfb_loop")
+	g.emit("cmp x24, x23")
+	g.emit("b.ge .Lrfb_done")
+	g.emit("mov x0, x21")
+	g.emit("add x1, x22, x24")
+	g.emit("sub x2, x23, x24")
+	g.syscall("read")
+	g.emit("tbnz x0, #63, .Lrfb_err_close")
+	g.emit("cbz x0, .Lrfb_done") // EOF before end (file shrunk)
+	g.emit("add x24, x24, x0")
+	g.emit("b .Lrfb_loop")
+	g.label(".Lrfb_done")
+	// close(fd).
+	g.emit("mov x0, x21")
+	g.syscall("close")
+	// Build Result.Ok(u8[]): 16-byte box {tag=0 @0, data @8}.
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str x22, [x0, #8]") // payload — array data ptr
+	g.emit("b .Lrfb_return")
+	g.label(".Lrfb_err_close")
+	g.emit("neg x22, x0") // x22 = errno (buf no longer needed)
+	g.emit("mov x0, x21")
+	g.syscall("close")
+	g.emit("b .Lrfb_err_dispatch")
+	g.label(".Lrfb_err_open")
+	g.emit("neg x22, x0")
+	g.label(".Lrfb_err_dispatch")
+	// __fern_io_error(errno, path_data, path_len) → IoError box.
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash IoError box across alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lrfb_return")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #288")
+	g.emit("ret")
+	g.sizeDirective("__fern_read_file_bytes")
+	g.line(".ltorg")
+}
+
 // emitWriteFileRuntime emits `__fern_write_file(path, content)
 // → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
 // O_WRONLY|O_CREAT|O_TRUNC, 0644) → write-loop → close → None.
@@ -9975,13 +10088,15 @@ type generator struct {
 	// non-copying `(data, len)` → slice<u8> view. Depends on
 	// __fern_slice_make.
 	usesAsBytes bool
-	// usesReadFile / usesWriteFile pull in the file-I/O
-	// runtimes `__fern_read_file(path)` /
-	// `__fern_write_file(path, content)`. Both return enum
-	// boxes — see emitReadFileRuntime / emitWriteFileRuntime
-	// for the IR-matching layout.
-	usesReadFile  bool
-	usesWriteFile bool
+	// usesReadFile / usesReadFileBytes / usesWriteFile pull in
+	// the file-I/O runtimes `__fern_read_file(path)` /
+	// `__fern_read_file_bytes(path)` / `__fern_write_file(path,
+	// content)`. All return enum boxes — see emitReadFileRuntime /
+	// emitReadFileBytesRuntime / emitWriteFileRuntime for the
+	// IR-matching layout.
+	usesReadFile      bool
+	usesReadFileBytes bool
+	usesWriteFile     bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -13236,6 +13351,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_read_file"
 			g.usesReadFile = true
 			g.usesAlloc = true
+			g.usesIoError = true
+		case "read_file_bytes":
+			// read_file_bytes(path): Result[u8[], IoError] —
+			// read_file's raw sibling; the contents land in a
+			// u8[] from __alloc_u8 instead of a string.
+			target = "__fern_read_file_bytes"
+			g.usesReadFileBytes = true
+			g.usesAlloc = true
+			g.usesAllocU8 = true
 			g.usesIoError = true
 		case "write_file":
 			// write_file(path, content): Option[IoError] —
