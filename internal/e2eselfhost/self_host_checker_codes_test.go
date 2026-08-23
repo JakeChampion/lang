@@ -432,8 +432,27 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// Self-returning method, neither of which can dispatch through a dyn
 		// vtable. An object-safe trait (all methods take self, non-Self return)
 		// is fine as `dyn T`.
-		{"dyn-unsafe-assoc-fn", "trait T { function make(): Self; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// Object safety (docs/DYN-TRAITS.md §3), one row per condition so each
+		// is pinned by a program that isolates it. The row this replaced —
+		// `trait T { function make(): Self; }` — had NO receiver AND returned
+		// Self, so it was green whichever rule fired and could not see the two
+		// checkers disagreeing about associated functions for as long as they
+		// did (#7264).
 		{"dyn-unsafe-self-return", "trait T { function m(self: Self): Self; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"dyn-unsafe-self-param", "trait T { function m(self: Self, other: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// `Self` NESTED rather than whole: rules 1 and 2 are stated over `Self`
+		// appearing anywhere in the type. A whole-type string compare passes
+		// the two rows above and misses both of these.
+		{"dyn-unsafe-self-array-return", "trait T { function m(self: Self): Self[]; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"dyn-unsafe-self-array-param", "trait T { function m(self: Self, xs: Self[]): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// An associated function is NOT a reason on its own: it takes no vtable
+		// slot, and calling one through a dyn value is separately E021 (#7398).
+		// This is the row the old corpus could not express, and the one that
+		// fails if the self-host goes back to rejecting the trait outright.
+		{"dyn-assoc-fn-alone-is-safe", "trait T { function make(): i32;\n  function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// The plainly object-safe shape, so a rule that rejects everything is
+		// not mistaken for a rule that works.
+		{"dyn-object-safe-plain", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E060 (#4347): `d as? T` on a dyn-annotated local — T must be a
 		// declared struct/enum implementing every trait in the dyn set. A
 		// primitive target draws the target-shape arm; a declared struct

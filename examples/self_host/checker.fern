@@ -10546,23 +10546,68 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
   return (out, keys);
 }
 
+// type_ref_mentions_self reports whether `Self` appears anywhere in a decoded
+// type spelling: as the whole type, under an array suffix (`Self[]`), as a
+// generic argument (`Option[Self]`), or as a tuple member. docs/DYN-TRAITS.md
+// §3 states both object-safety rules over exactly that — `Self` ANYWHERE in a
+// non-receiver parameter or in the result — not `Self` as the whole type.
+//
+// Blind to `Self` inside a function type. parse_type_name coarsens every
+// spelling containing `=>` to the opaque tag "fn" before the checker runs
+// (coarsen_type_seg), so `(Self) => i32` arrives as "fn" and nothing here can
+// see through it. Native's mentionsSelf walks a real ast.FuncType and does
+// catch it; closing that needs the parser to stop coarsening (#7311).
+function type_ref_mentions_self(t: parser.TypeRef): boolean {
+  if (t.base == "Self") {
+    return true;
+  }
+  for a in t.args {
+    if (type_ref_mentions_self(a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function type_mentions_self(type_name: string): boolean {
+  return type_ref_mentions_self(parser.parse_type_ref(type_name));
+}
+
 // e021_object_unsafe_method returns the name of a required method that makes
 // `trait_name` NOT object-safe (so it can't be used as `dyn T`), or "" when the
-// trait is object-safe or unknown. A trait method breaks object-safety when it
-// is an associated function (no leading `self` receiver), returns `Self`, or is
-// generic — a `dyn` value has no statically-known Self, so none of those can
-// dispatch through a vtable. Conservative: only the trait's ABSTRACT methods
-// (trait_reqs.req_sigs) are inspected, so a default method that happens to be
-// object-unsafe is not caught here (never a false positive).
+// trait is object-safe or unknown. Behind `dyn` the concrete type is erased, so
+// a method mentioning `Self` in a non-receiver parameter or in its result has
+// no type the call site could produce or check — docs/DYN-TRAITS.md §3 rules 1
+// and 2. A GENERIC method is rejected for the neighbouring reason: a vtable
+// slot cannot carry an un-monomorphised body.
+//
+// An ASSOCIATED FUNCTION (no leading `self` receiver) is deliberately NOT a
+// reason. It takes no vtable slot to begin with, and calling one through a dyn
+// value is separately E021 (#7398), so rejecting the whole trait buys no safety
+// and costs every trait that pairs a constructor with dispatchable methods.
+// Native's objectSafe has always allowed it; this is the convergent rule.
+//
+// Conservative: only the trait's ABSTRACT methods (trait_reqs.req_sigs) are
+// inspected, so a default method that happens to be object-unsafe is not caught
+// here (never a false positive).
 function e021_object_unsafe_method(mod: parser.Module, trait_name: string): string {
   for trait_req in mod.trait_reqs {
     if (trait_req.trait_name == trait_name) {
       var sigs: parser.FuncDecl[] = trait_req.req_sigs;
       for f in sigs {
-        if (f.params.len() == 0 || f.params[0].name != "self") {
-          return f.name;
+        // Skip the receiver: `Self` is what it is FOR. An associated
+        // function has none, so every one of its params is checked.
+        var i: i32 = 0;
+        if (f.params.len() > 0 && f.params[0].name == "self") {
+          i = 1;
         }
-        if (f.ret_type == "Self") {
+        while (i < f.params.len()) {
+          if (type_mentions_self(f.params[i].type_name)) {
+            return f.name;
+          }
+          i = i + 1;
+        }
+        if (type_mentions_self(f.ret_type)) {
           return f.name;
         }
         if (f.type_params.len() > 0 || f.type_param_count > 0) {

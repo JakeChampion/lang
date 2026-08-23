@@ -203,12 +203,18 @@ usage is gated):
 2. No method returns `Self` (or a type mentioning `Self`).
 
 A trait requirement with no `self` receiver is an **associated function**
-(`trait Zero { function zero(): Self; }`). Whether such a trait may be a
-`dyn` object at all is open (#7264) — native's `objectSafe` allows it and
-the self-host's does not. What is settled either way is the CALL: an
-associated function has no receiver to dispatch on and gets no vtable
-slot, so `d.f(...)` through a `dyn` value is E021 in both compilers
-(#7398). Reach it through a concrete type instead.
+(`trait Zero { function zero(): Self; }`). Such a trait **may** be a `dyn`
+object: the associated function takes no vtable slot, so rejecting the whole
+trait buys no safety and costs every trait that pairs a constructor with
+dispatchable methods. What is gated is the CALL — an associated function has
+no receiver to dispatch on, so `d.f(...)` through a `dyn` value is E021 in
+both compilers (#7398). Reach it through a concrete type instead. Settled in
+#7264, which is also where the self-host stopped rejecting the trait; note
+`Zero` above is still object-unsafe, by rule 2, for returning `Self`.
+
+Object safety is decided per rule 1 and rule 2 only. A GENERIC trait method
+is separately rejected by the self-host (a vtable slot cannot carry an
+un-monomorphised body) and accepted by native; that divergence is open.
 
 A `dyn Trait` whose trait violates these is an error at the use site:
 
