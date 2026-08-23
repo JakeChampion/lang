@@ -32,9 +32,18 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64_rb")
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
 
 	// One program touching every migrated leaf, so a single emit covers them all.
-	prog := "function main(): i32 {\n" +
+	// `reverse` / `concat` come from std/array — an array carries only append /
+	// with / len on its own — so the probe imports it and the driver resolves
+	// that against the stdlib root. Without both the probe is a program native
+	// rejects (E043) and the compile path refuses it too (#7380).
+	prog := "import \"std/array\";\n" +
+		"function main(): i32 {\n" +
 		"    var b: string = random_bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
@@ -94,14 +103,19 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		t.Fatalf("write probe: %v", err)
 	}
 
-	out, err := exec.Command(mmc, srcFile, "-target", "arm64-linux").Output()
+	out, err := exec.Command(mmc, srcFile, stdlibRoot, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("self-host arm64 emit failed: %v", err)
 	}
 	asm := string(out)
 
 	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
-		"arr_reverse", "arr_concat", "arr_slice",
+		// arr_reverse / arr_concat are NOT asserted. Their intercepts fire only
+		// when no `__method_Array_*` helper is in scope, which is exactly the
+		// condition under which the checker raises E043 — so since #7380 no
+		// program the compiler accepts reaches them. #7451 deletes the dead
+		// intercepts; asserting the shape of unreachable code proves nothing.
+		"arr_slice",
 		// The clocks (#2649): now_unix_ms / now_ns are Fern on every native
 		// target. monotonic_ns is NOT in this list — it is Fern on Linux but
 		// hand-asm on Darwin (mrs cntvct_el0 is not a syscall), so the "hand-asm

@@ -867,12 +867,12 @@ function main(): i32 {
 	// the default build — and native, on both settings — refuses.
 	//
 	// The two legs have to AGREE; which exit code they agree on is the second
-	// assertion. Note what this does NOT buy: the rejection is still the
-	// ineligibility refusal rather than the checker's own diagnostic. Both
-	// checkers see the name and say E001, but E001 (with E004 / E009 / E043,
-	// the other codes an ill-typed assert raises) is on
-	// is_partial_checker_gap_code's measured list, so its verdict does not
-	// reach the build here — #4346 is what changes the message.
+	// assertion. Note what this does NOT buy for the undefined-name leg: the
+	// rejection there is still the ineligibility refusal rather than the
+	// checker's own diagnostic, because both checkers say E001 and E001 (with
+	// E009) is on is_partial_checker_gap_code's measured list, so its verdict
+	// does not reach the build — #4346 is what changes the message. The
+	// unknown-field leg is the checker's own E043 since #7380.
 	t.Run("opt-does-not-widen-what-compiles", func(t *testing.T) {
 		for _, tc := range []struct{ name, src string }{
 			{"undefined-name", "function main(): i32 {\n    assert(nosuchname > 1);\n    return 0;\n}\n"},
