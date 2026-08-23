@@ -488,6 +488,14 @@ type Op struct {
 	// precision the source type has.
 	Width int8
 
+	// Addr marks a result that is a machine ADDRESS rather than a scalar —
+	// a heap pointer, or an offset computation standing on one. ResolveWidths
+	// both seeds this (from the op kind, the callee, and the call-site
+	// signature) and propagates it through the arithmetic that derives one
+	// address from another, then widens every marked op so a backend never
+	// sign-extends a pointer from bit 31.
+	Addr bool
+
 	// CaptureSlots is set on OpMakeClosure / OpMakeEnv to the per-capture
 	// env-block slot size in bytes (in capture order), carried from the IR
 	// so the backend packs its env stores at the offsets/widths the capture
@@ -588,6 +596,15 @@ type Func struct {
 	// ReturnFloat: true when the function returns a float. Combined
 	// with ReturnWidth: (true, 64) = f64, (true, 32) = f32.
 	ReturnFloat bool
+
+	// ParamAddrs is parallel to ParamWidths — true at index i when param i
+	// holds a target-pointer-width value (a heap pointer, or `usize`) rather
+	// than a 32-bit scalar. ReturnAddr says the same of the return value.
+	// ResolveWidths turns these into 64-bit op widths on 64-bit targets, so an
+	// address is never sign-extended from bit 31. Empty / false means "no
+	// address", which is what a builder that does not populate them gets.
+	ParamAddrs []bool
+	ReturnAddr bool
 
 	// nextValueID is the counter the Builder uses to mint
 	// fresh Values. Per-Func to keep IDs dense + predictable

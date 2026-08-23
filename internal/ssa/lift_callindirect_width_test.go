@@ -7,13 +7,12 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// An indirect call's result needs the same 64-bit annotation a direct call
-// gets from AnnotateCallWidths, and for the same reason: a backend
-// sign-extends a 32-bit-wide call result back into the register, which
-// truncates an i64 and destroys a float (every float lives in a general
-// register as its f64 BIT PATTERN, so masking to 32 bits keeps the low
-// mantissa half and discards the sign and exponent — it reads back as a
-// denormal ≈ 0).
+// An indirect call's result needs the same 64-bit annotation a direct call gets
+// from ResolveWidths, and for the same reason: a backend sign-extends a
+// 32-bit-wide call result back into the register, which truncates an i64 and
+// destroys a float (every float lives in a general register as its f64 BIT
+// PATTERN, so masking to 32 bits keeps the low mantissa half and discards the
+// sign and exponent — it reads back as a denormal ≈ 0).
 //
 // There is no callee name at an indirect call to look up, so the width comes
 // from the signature the IR op carries. That is what makes this correct for

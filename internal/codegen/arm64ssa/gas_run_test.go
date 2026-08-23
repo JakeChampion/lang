@@ -61,7 +61,6 @@ func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string
 	if err != nil {
 		t.Skip("qemu-aarch64 not available")
 	}
-	ssa.AnnotateCallWidths(funcs) // match the CLI pipeline: 64-bit returns skip the i32 mask
 	asm, err := arm64ssa.EmitAsmModule(funcs, entry, numAlloc, entryArgs)
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
@@ -852,7 +851,7 @@ func TestArmRunFloatNegDemote(t *testing.T) {
 }
 
 // A float-returning cross-function call: mk() = 7.0, main returns mk() as i32 ->
-// 7. Guards the call-result width propagation (ssa.AnnotateCallWidths): without
+// 7. Guards the call-result width propagation (ssa.ResolveWidths): without
 // it the f64 return is sxtw-masked to i32, zeroing its exponent bits -> 0.
 func TestArmRunFloatReturnCall(t *testing.T) {
 	build := func() map[string]*ssa.Func {

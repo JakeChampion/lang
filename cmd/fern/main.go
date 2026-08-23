@@ -1946,10 +1946,6 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	if _, ok := funcs["main"]; !ok {
 		return "", fmt.Errorf("no `main` function in program")
 	}
-	// Resolve each direct call's result width from the callee's signature, so a
-	// 64-bit (i64/f64) return isn't masked back to i32 by the backend. The IR
-	// call op carries no return width, so this needs the whole module.
-	ssa.AnnotateCallWidths(funcs)
 	return arm64ssa.EmitAsmModule(funcs, "main", 12, nil, irProg.Vtables...)
 }
 

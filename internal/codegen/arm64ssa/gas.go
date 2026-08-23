@@ -60,6 +60,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if _, ok := funcs[entry]; !ok {
 		return "", fmt.Errorf("arm64ssa: unknown entry %q", entry)
 	}
+	// Resolve every op's result width across the module before instruction
+	// selection: which results are addresses (and so must never be narrowed to
+	// 32 bits) is a whole-module question, and no caller can be expected to
+	// remember to ask it.
+	ssa.ResolveWidths(funcs)
 	names := make([]string, 0, len(funcs))
 	for name := range funcs {
 		names = append(names, name)
@@ -321,18 +326,16 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 
 // Heap symbols + size backing the arm64 SSA bump allocator: a lazy mmap
 // reservation seeded in _start, mirroring the stack-machine backend's
-// __fern_alloc arena (internal/codegen/arm64) — same MAP_NORESERVE window at
-// hint 0x10000000, same diagnostic and exit status when a bump runs past it.
-// Pages commit only as they are touched, so the window costs nothing until a
-// program grows into it.
+// __fern_alloc arena (internal/codegen/arm64) — same 16 GiB MAP_NORESERVE
+// window, same diagnostic and exit status when a bump runs past it. Pages
+// commit only as they are touched, so the window costs nothing until a program
+// grows into it.
 //
-// The window is 1.75 GiB rather than the native backend's 16 GiB because this
-// backend's address arithmetic is not 64-bit clean: an i32-width add of a base
-// and an offset is sign-extended back through maskFix, so an object above
-// 0x7fffffff is addressed through a truncated (negative) pointer. Ending the
-// reservation exactly at 0x80000000 keeps every address it hands out inside
-// that range; a program that outgrows it gets the exhaustion abort rather than
-// a wild store. Widening the window means widening the addressing first.
+// The window sits at 16 GiB rather than the stack-machine backend's 0x10000000
+// so that EVERY address this backend hands out has bits above 31 set. Address
+// arithmetic that narrows to a w-register is then wrong for the first
+// allocation of the smallest program, instead of being invisible until a
+// program grows past 2 GiB — the failure mode that hid #7329.
 const (
 	heapPtrSym   = "__ssa_heap_ptr"
 	heapEndSym   = "__ssa_heap_end"
@@ -342,9 +345,9 @@ const (
 
 	// The reservation as movz + lsl operands: heapUnits << heapShift bytes at
 	// 1 << heapBaseShift, so _start needs no literal pool to materialise either.
-	heapBaseShift = 28 // 0x1000_0000
+	heapBaseShift = 34 // 0x4_0000_0000 (16 GiB)
 	heapShift     = 28
-	heapUnits     = 7 // 7 << 28 = 1.75 GiB
+	heapUnits     = 64 // 64 << 28 = 16 GiB
 	heapBytes     = heapUnits << heapShift
 
 	// The reservation's last page is not handed out: a bump site writes the
@@ -383,23 +386,19 @@ const (
 	readlineBytes  = 4096
 )
 
-// Where _start resumes once the reservation succeeded (heapOKLabel) and once
-// its address range checks out (heapFitLabel). Both branch to the abort
-// unconditionally (±128 MiB) rather than testing straight to it: the abort sits
-// past every emitted function, far outside a conditional branch's ±1 MiB reach
-// in any non-trivial program.
-const (
-	heapOKLabel  = ".Lssa_heap_ok"
-	heapFitLabel = ".Lssa_heap_fits"
-)
+// Where _start resumes once the reservation succeeded. The failure path
+// branches to the abort unconditionally (±128 MiB) rather than testing straight
+// to it: the abort sits past every emitted function, far outside a conditional
+// branch's ±1 MiB reach in any non-trivial program.
+const heapOKLabel = ".Lssa_heap_ok"
 
 // emitHeapReserve emits _start's heap reservation: one lazy anonymous mmap
 // backing the bump allocator, seeding both the cursor and the limit the guard
 // checks. Mirrors the stack-machine backend's __fern_alloc arena
-// (internal/codegen/arm64) — same 0x1000_0000 hint, same size, MAP_NORESERVE so
-// the window is not charged against the host's commit limit, and the same
-// out-of-memory report when the kernel refuses it. x0..x11 are scratch here:
-// the entry arguments are loaded after this.
+// (internal/codegen/arm64) — same size, MAP_NORESERVE so the window is not
+// charged against the host's commit limit, and the same out-of-memory report
+// when the kernel refuses it. x0..x11 are scratch here: the entry arguments are
+// loaded after this.
 func emitHeapReserve(w func(string, ...any)) {
 	// mmap(1<<heapBaseShift, heapBytes, PROT_READ|PROT_WRITE,
 	//      MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0).
@@ -420,15 +419,6 @@ func emitHeapReserve(w func(string, ...any)) {
 	w("\tlsl x1, x1, #%d", heapShift)
 	w("\tadd x10, x0, x1")
 	w("\tsub x10, x10, #%d", heapSlackBytes) // limit = base + heapBytes - slack
-	// The hint is only a hint: a region the kernel placed elsewhere can sit
-	// above the 0x7fffffff line this backend's address arithmetic is limited to
-	// (see the heapBytes comment), and handing out addresses from it would
-	// truncate every pointer. Report that as out of memory rather than
-	// miscompiling around it.
-	w("\tlsr x12, x10, #31")
-	w("\tcbz x12, %s", heapFitLabel)
-	w("\tb %s", heapOOMLabel)
-	w("%s:", heapFitLabel)
 	w("\tadrp x9, %s", heapPtrSym)
 	w("\tadd x9, x9, #:lo12:%s", heapPtrSym)
 	w("\tstr x0, [x9]") // cursor = region base
@@ -1995,74 +1985,6 @@ var runtimeHelperDeps = map[string][]string{
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 }
 
-// helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
-// heap pointer or an f64 bit pattern — so the direct-call sequence must NOT apply
-// the i32 sign-extend mask to their result (it would truncate an f64's exponent
-// or, for a high heap address, the pointer). i32/void-returning helpers are
-// absent (the mask is correct or harmless for them).
-var helperReturns64 = map[string]bool{
-	"__str_concat":                  true,
-	"__load_ptr":                    true,
-	"__memcpy":                      true,
-	"__fern_map_drop":               true,
-	"__alloc_reuse":                 true,
-	"__alloc":                       true,
-	"__load_i64":                    true,
-	"__fern_box_free":               true,
-	"__fern_arr_push_grow":          true,
-	"__fern_arr_push_grow_ptr":      true,
-	"__fern_arr_push_grow_str":      true,
-	"__fern_arr_push_grow_move_ptr": true,
-	"__fern_arr_push_grow_move_str": true,
-	"__alloc_u8":                    true,
-	"__fern_arr_cow_inplace":        true,
-	"string_from_bytes_unchecked":   true,
-	"__str_slice":                   true,
-	"args":                          true,
-	"strbuf_take":                   true,
-	"env":                           true,
-	"write_file":                    true,
-	"read_file":                     true,
-	"remove_file":                   true,
-	"create_dir_all":                true,
-	"remove_dir_all":                true,
-	"temp_dir":                      true,
-	"read_dir":                      true,
-	"random_bytes":                  true,
-	"tcp_recv":                      true,
-	"open_writer":                   true,
-	"__method_Writer_write":         true,
-	"__method_Writer_close":         true,
-	"open_reader":                   true,
-	"__method_Reader_read_chunk":    true,
-	"__method_Reader_read_line":     true,
-	"__method_Reader_close":         true,
-	"open_appender":                 true,
-	"stdin":                         true,
-	"stdout":                        true,
-	"stderr":                        true,
-	"__str_idx":                     true,
-	"__arr_idx":                     true,
-	"__arr_idx_1":                   true,
-	"__arr_idx_8":                   true,
-	"__arr_idx_16":                  true,
-	"__arr_idx_nc":                  true,
-	"__arr_idx_1_nc":                true,
-	"__arr_idx_8_nc":                true,
-	"__arr_idx_16_nc":               true,
-	"__abs_f64":                     true,
-	"__sqrt_f64":                    true,
-	"__floor_f64":                   true,
-	"__ceil_f64":                    true,
-	"__trunc_f64":                   true,
-	"__round_f64":                   true,
-	"__exp_f64":                     true,
-	"__log_f64":                     true,
-	"__pow_f64":                     true,
-	"__sin_f64":                     true,
-	"__cos_f64":                     true,
-}
-
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
 // arena must be reserved whenever one is referenced even if no program body has
 // a direct heap op.
@@ -2305,9 +2227,9 @@ func emitPtrWidthHelper(w func(string, ...any)) {
 // rather than inlining costs nothing this path does not already pay.
 //
 // Return widths matter here: __load_ptr / __load_i64 hand back a full 8-byte
-// value and are listed in helperReturns64, or the direct-call sequence's i32
-// sign-extend mask would truncate a high heap address. __load_i32 is genuinely
-// 32-bit and wants the mask. The stores are void.
+// value, so ssa.ResolveWidths classifies them wide or the direct-call sequence's
+// i32 sign-extend mask would truncate a high heap address. __load_i32 is
+// genuinely 32-bit and wants the mask. The stores are void.
 
 // emitAllocHelper writes __alloc(n) -> ptr: a raw bump of n 8-aligned bytes with
 // NO rc header, the primitive core/map.fern builds its kv buffer out of (it lays
@@ -4213,7 +4135,8 @@ func emitAllocReuseHelper(w func(string, ...any)) {
 // emitMemcpyHelper writes __memcpy(dst, src, n) -> dst: copy 8 bytes at a time,
 // then the tail one byte at a time. core/map.fern uses it to move a kv buffer's
 // entries into a freshly grown one. Mirrors the stack-machine backend's
-// __fern_memcpy. Returns dst (an 8-byte pointer), so it is in helperReturns64.
+// __fern_memcpy. Returns dst (an 8-byte pointer), so ssa.ResolveWidths classifies
+// it wide.
 func emitMemcpyHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__memcpy"))
@@ -4958,13 +4881,7 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
 	}
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(scratch))) // place tag / result
-	// An i32 return needs the sign-extend mask (the ABI defines only the low 32
-	// bits), but a runtime helper returning a full 8-byte value (an f64 whose high
-	// bits are its exponent, or a heap pointer) must skip it — the SSA lift can't
-	// tag helper return widths (no ssa.Func), so the backend knows them by name.
-	if !helperReturns64[in.Callee] {
-		out = append(out, maskFix(in.Dst, in.W)...)
-	}
+	out = append(out, maskFix(in.Dst, in.W)...)
 	if in.Op == x86.CallPair {
 		// Placed after the tag (whose home may be the payload's capture reg s3) so
 		// the tag is out of s3 before Dst2 (typically s3) is written.

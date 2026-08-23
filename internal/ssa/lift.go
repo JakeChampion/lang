@@ -59,13 +59,16 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	l.slots = make([]Value, totalSlots)
 	l.out.ParamWidths = make([]int8, 0, len(in.Params))
 	l.out.ParamFloats = make([]bool, 0, len(in.Params))
+	l.out.ParamAddrs = make([]bool, 0, len(in.Params))
 	for i, p := range in.Params {
 		l.slots[i] = l.out.AddParam()
 		l.out.ParamWidths = append(l.out.ParamWidths, widthOfAstType(p.Type))
 		l.out.ParamFloats = append(l.out.ParamFloats, isFloatAstType(p.Type))
+		l.out.ParamAddrs = append(l.out.ParamAddrs, isAddressAstType(p.Type))
 	}
 	l.out.ReturnWidth = widthOfAstType(in.ReturnType)
 	l.out.ReturnFloat = isFloatAstType(in.ReturnType)
+	l.out.ReturnAddr = isAddressAstType(in.ReturnType)
 
 	l.cur = l.out.NewBlock()
 
@@ -104,6 +107,30 @@ func isFloatAstType(t ast.Type) bool {
 	return false
 }
 
+// isAddressAstType reports whether a value of `t` occupies a full target
+// pointer in a register, so narrowing it to 32 bits would corrupt it.
+// widthOfAstType reports 32 for these — that is the stack-SLOT width, not the
+// register width.
+//
+// Written as an exclusion list because the safe default is "wide": every type
+// in the language that is not one of the scalars below is heap-pointer-shaped
+// (string, array, slice, tuple, struct, enum, closure, map, stream, dyn), and a
+// type added later that this switch has never heard of must not silently become
+// truncatable. `char`, `str` and `HandleType` never reach here — LowerWith
+// erases them — and `usize` is a NumberType that is pointer-width by width.
+func isAddressAstType(t ast.Type) bool {
+	switch tt := t.(type) {
+	case nil, ast.BoolType, ast.VoidType, ast.NeverType,
+		ast.FloatType, *ast.FloatType:
+		return false
+	case ast.NumberType:
+		return tt.IsPointerWidth()
+	case *ast.NumberType:
+		return tt.IsPointerWidth()
+	}
+	return true
+}
+
 // widthOfAstType returns 32 for i32-shaped types (i32, bool,
 // void return, pointer-shaped — string/array/struct on wasm32),
 // 64 for i64 types. Floats currently report their bit width
@@ -138,46 +165,6 @@ func widthOfAstType(t ast.Type) int8 {
 		return 32
 	default:
 		return 32 // bool / void / pointer-shaped → i32 stack slot
-	}
-}
-
-// AnnotateCallWidths sets each OpCall's result Width from the callee's
-// ReturnWidth, for callees present in funcs. A backend sign-extends an i32-width
-// call result back into the full register (the AArch64/SysV ABI only defines the
-// low 32 bits of an i32 return), but a 64-bit return (i64 or an f64 whose high
-// bits are its exponent) must skip that mask or it is truncated to garbage. The
-// IR call op carries no return width, so this is resolved once per whole module
-// after lifting: look up the callee's ReturnWidth and, when it is 64, mark the
-// call. Callees absent from the map (runtime helpers emitted by the backend) are
-// left unchanged — their i32/pointer returns need no 64-bit annotation. Call
-// this after lifting all functions of a module and before emit.
-//
-// An f32 return needs the same treatment as an f64 one even though its width is
-// 32. The backends hold every float in a general register as its f64 BIT
-// PATTERN — that is the whole convention `fmov d0, x` and OpFPromote rest on —
-// so a float value is 64 bits wide in the register regardless of whether its
-// semantic type is f32. Masking one to 32 bits keeps the low half of the
-// mantissa and throws away the sign and exponent, which reads back as a
-// denormal indistinguishable from zero: before this, EVERY f32 passed to or
-// returned from a call arrived as 0.0 on arm64-ssa, so `idf32(96.55f32) as i32`
-// printed 0 where the interpreter and the native backends print 96. ReturnFloat
-// is therefore checked alongside ReturnWidth.
-//
-// This covers OpCall only. An INDIRECT call has no callee name to look up, so
-// its width is set during the lift instead, from the signature the IR op
-// carries — see the ir.OpCallIndirect case below.
-func AnnotateCallWidths(funcs map[string]*Func) {
-	for _, f := range funcs {
-		for _, b := range f.Blocks {
-			for _, op := range b.Ops {
-				if op.Kind != OpCall {
-					continue
-				}
-				if callee, ok := funcs[op.Str]; ok && (callee.ReturnWidth == 64 || callee.ReturnFloat) {
-					op.Width = 64
-				}
-			}
-		}
 	}
 }
 
@@ -619,7 +606,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-argc-1]
 		all := append([]Value{callee}, args...)
 		result := l.out.AddOp(l.cur, OpCallIndirect, all...)
-		// Result width, for the same reason AnnotateCallWidths sets it on a
+		// Result width, for the same reason ResolveWidths sets it on a
 		// direct call: a 64-bit return (i64, or ANY float, which lives in a
 		// general register as its f64 bit pattern) must not be masked back to
 		// 32 bits. There is no callee name to resolve here, but the IR op
@@ -635,6 +622,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			if widthOfAstType(sig.Result) == 64 || isFloatAstType(sig.Result) {
 				l.cur.Ops[len(l.cur.Ops)-1].Width = 64
 			}
+			l.cur.Ops[len(l.cur.Ops)-1].Addr = isAddressAstType(sig.Result)
 		}
 		l.stack = append(l.stack, result)
 	case ir.OpConstFunc:
@@ -687,6 +675,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		o.Imm = int64(op.I32) // method slot
 		if op.Sig().Result != nil {
 			o.Width = widthOfAstType(op.Sig().Result)
+			o.Addr = isAddressAstType(op.Sig().Result)
 			l.stack = append(l.stack, result)
 		}
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
