@@ -362,6 +362,40 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// A LOOP-scoped dead-alias-cancelled pair (#4402 opt 1): both slots
+		// rebind each iteration, so the alias bind must store WITHOUT the
+		// dec-on-overwrite — the source's own rebind already freed the prior
+		// box at rc 1, and a second cow-guarded free is a use-after-free the
+		// census cannot see (the double free balances it); the sanitize leg
+		// is the instrument that catches it.
+		leakCell{name: "str__loop_local__alias_local", src: `function round(i: i32): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var s: string = "hi" + "!";
+        var v: string = s;
+        t = (t + v.len() + s.len()) % 101;
+        j = j + 1;
+    }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// The array flavor of the same loop-scoped cancelled pair — the
+		// #7455 limb's instance of the identical rebind double free.
+		leakCell{name: "arr_i32__loop_local__alias_local", src: `function round(i: i32): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var s: i32[] = [i, i + 1];
+        var v: i32[] = s;
+        t = (t + v.len() + s.len()) % 101;
+        j = j + 1;
+    }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `})
 	return cells
 }

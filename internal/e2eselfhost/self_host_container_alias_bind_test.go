@@ -459,6 +459,24 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// on its own — it shows up HERE, as the CALLER's box never reaching 0.
 			// frees=0 is the status quo (t escapes into the call), and the failure
 			// this row guards against is the count staying 0 while live_bytes grows.
+			// The CANCELLED path (#4402 opt 1, string limb): the alias is read
+			// but never returned and the source is read after it, so the
+			// inc/dec pair is elided — the counts cannot move (a paired
+			// cancellation changes rc traffic, not allocs/frees), and the
+			// __rc_underflow_count guard is what catches an UNpaired elision
+			// (inc skipped while the sweep dec still fires).
+			name: "string_alias_cancelled",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var t: string = w("ab");
+    var v: string = t;
+    var n: i32 = v.len();
+    return n + t.len() + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 72, allocs: 200, frees: 200,
+		},
+		{
 			name: "string_alias_of_a_parameter_refused",
 			src: `function w(a: string): string { return a + "!"; }
 function plen(p: string): i32 { var v: string = p; return v.len(); }
