@@ -1483,14 +1483,12 @@ function fn_local_spelling_for(v: parser.StmtVar, funcs: parser.FuncDecl[]): str
                 parser.ExprIdent(mkid) => {
                     if (mkid.name.len() <= 8 || mkid.name[0:8] != "__mkclo$") { return ""; }
                     var tgt: string = mkid.name[8 : mkid.name.len()] + "";
-                    var fi: i32 = 0;
-                    while (fi < funcs.len()) {
-                        if (funcs[fi].name == tgt) {
-                            var p: parser.ParamDecl = fn_param_from_func(v.name, funcs[fi], 1);
+                    for fn in funcs {
+                        if (fn.name == tgt) {
+                            var p: parser.ParamDecl = fn_param_from_func(v.name, fn, 1);
                             if (p.type_name != "fn") { return ""; }
                             return fn_spelling_of(p);
                         }
-                        fi = fi + 1;
                     }
                     return "";
                 },
@@ -1514,10 +1512,8 @@ function fn_local_spelling_for(v: parser.StmtVar, funcs: parser.FuncDecl[]): str
 // being dispatched env-first — a raw box pointer used as a table index.
 function stamp_fn_local_types(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
     var out: parser.FuncDecl[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        out = out.append(parser.FuncDecl { ...funcs[i], body: stamp_fn_local_types_stmts(funcs[i].body, funcs) });
-        i = i + 1;
+    for fn in funcs {
+        out = out.append(parser.FuncDecl { ...fn, body: stamp_fn_local_types_stmts(fn.body, funcs) });
     }
     return out;
 }
@@ -18486,7 +18482,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // backends jumped through the box pointer. #4801.
                 //
                 // closure_ret_fns_of registers methods under their BARE name
-                // (it appends funcs[i].name without receiver qualification), so
+                // (it appends each func's name without receiver qualification), so
                 // the method name is the key here — matching how the registry
                 // already stores it, and introducing no collision it does not
                 // already have.
@@ -29123,7 +29119,7 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
 // wrapper like `(s: string) to_upper() { return unicode.to_upper(s); }` returns
 // nothing but a fresh string, and refusing it cost the consuming site its
 // reclaim (43 B/round on `base.to_upper().len()`). Names are the MANGLED
-// whole-program ones on both sides — the registry stores funcs[k].name and the
+// whole-program ones on both sides — the registry stores each func's name and the
 // callee reaches here as a plain ident (`unicode__to_upper`), the same spelling
 // the emitted `__fn_` symbol carries.
 function str_call_ret_is_fresh_reg(e: parser.Expr, reg: string[]): boolean {
@@ -29500,11 +29496,10 @@ pub function str_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 
 function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].ret_type == "string" && funcs[k].receiver_type.len() == 0
-                && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body, funcs[k].params)) {
-            out = out.append(funcs[k].name);
+    for fn in funcs {
+        if (fn.ret_type == "string" && fn.receiver_type.len() == 0
+                && body_has_return(fn.body) && !body_has_nonfresh_str_return_reg(fn.body, reg, fn.body, fn.params)) {
+            out = out.append(fn.name);
         }
         // "SFRRECV:<Recv>.<method>" — a string-shaped METHOD whose every return
         // is fresh, the RECEIVER itself, or a view of the receiver (#6544). That
@@ -29526,13 +29521,12 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
         // Rides the str_fresh_ret_fns list under a prefix (the "ARRF:"
         // convention — ':' can never appear in an identifier), so the bare-name
         // membership checks cannot match it and no registry field is added.
-        if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
-                && funcs[k].ret_type == "string"
-                && body_has_return(funcs[k].body)
-                && !body_has_nonfreshrecv_str_return_reg(funcs[k].body, funcs[k].receiver_name, reg, funcs[k].body, funcs[k].params)) {
-            out = out.append("SFRRECV:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
+        if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0
+                && fn.ret_type == "string"
+                && body_has_return(fn.body)
+                && !body_has_nonfreshrecv_str_return_reg(fn.body, fn.receiver_name, reg, fn.body, fn.params)) {
+            out = out.append("SFRRECV:" + util.base_type_name(fn.receiver_type) + "." + fn.name);
         }
-        k = k + 1;
     }
     return sfrfresh_names_of(funcs, reg, out);
 }
@@ -29556,24 +29550,22 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
 function sfrfresh_names_of(funcs: parser.FuncDecl[], reg: string[], acc: string[]): string[] {
     var cand: string[] = [];
     var bad: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
+    for fn in funcs {
         // A declaration that does not return `string` is not a hazard: the
         // binding this key serves is string-typed, so the checker cannot have
         // resolved it to one. `(c: char) to_upper(): char` sits beside
         // `(s: string) to_upper(): string` in the stdlib, and counting it would
         // cost the string method its credit for a call it can never receive.
-        if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
-                && funcs[k].ret_type == "string") {
-            if (body_has_return(funcs[k].body)
-                    && !body_has_nonfresh_str_return_reg(funcs[k].body, reg, funcs[k].body, funcs[k].params)
-                    && !is_str_builtin_method(funcs[k].name)) {
-                cand = push_str_unique(cand, funcs[k].name);
+        if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0
+                && fn.ret_type == "string") {
+            if (body_has_return(fn.body)
+                    && !body_has_nonfresh_str_return_reg(fn.body, reg, fn.body, fn.params)
+                    && !is_str_builtin_method(fn.name)) {
+                cand = push_str_unique(cand, fn.name);
             } else {
-                bad = push_str_unique(bad, funcs[k].name);
+                bad = push_str_unique(bad, fn.name);
             }
         }
-        k = k + 1;
     }
     var out: string[] = acc;
     var c: i32 = 0;
@@ -29640,22 +29632,20 @@ function body_has_nonfresh_tuple_return(stmts: parser.Stmt[]): boolean {
 // lower_func gets all three credits.
 pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].ret_type.len() > 0 && funcs[k].ret_type[0] == b'('
-                && funcs[k].receiver_type.len() == 0
-                && body_has_return(funcs[k].body) && !body_has_nonfresh_tuple_return(funcs[k].body)) {
-            out = out.append(funcs[k].name);
+    for fn in funcs {
+        if (fn.ret_type.len() > 0 && fn.ret_type[0] == b'('
+                && fn.receiver_type.len() == 0
+                && body_has_return(fn.body) && !body_has_nonfresh_tuple_return(fn.body)) {
+            out = out.append(fn.name);
             // #4365 (discarded rc-field tuple temps): also record the per-position
             // deep-drop flags as an "ARRF:<name>|<flags>" entry riding the same
             // list (a ':' can't appear in an identifier, so these never collide
             // with the bare-name membership checks above). lower_func re-seeds
             // them as "TUPRET:" reclaim entries for callees the body DISCARDS,
             // and the StmtExpr lowering deep-drops flagged positions.
-            var arrf: string = tuple_ret_arrfree_flags(funcs[k]);
-            if (arrf.len() > 0) { out = out.append("ARRF:" + funcs[k].name + "|" + arrf); }
+            var arrf: string = tuple_ret_arrfree_flags(fn);
+            if (arrf.len() > 0) { out = out.append("ARRF:" + fn.name + "|" + arrf); }
         }
-        k = k + 1;
     }
     var mf: string[] = map_fresh_ret_fns_of(funcs);
     var mi: i32 = 0;
@@ -29752,16 +29742,14 @@ function map_builder_body_ok(fn: parser.FuncDecl): boolean {
 // appends these itself so every backend's one threaded list carries them.
 function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() == 0
-                && funcs[k].ret_type.len() >= 5 && funcs[k].ret_type[0:4] == "Map["
-                && map_builder_scalar_kind(map_key_of(funcs[k].ret_type))
-                && map_builder_scalar_kind(map_value_of(funcs[k].ret_type))
-                && map_builder_body_ok(funcs[k])) {
-            out = out.append("MAPF:" + funcs[k].name);
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0
+                && fn.ret_type.len() >= 5 && fn.ret_type[0:4] == "Map["
+                && map_builder_scalar_kind(map_key_of(fn.ret_type))
+                && map_builder_scalar_kind(map_value_of(fn.ret_type))
+                && map_builder_body_ok(fn)) {
+            out = out.append("MAPF:" + fn.name);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -31860,9 +31848,7 @@ function moves_fields_stmt(st: parser.Stmt, name: string, nomove: string[]): boo
 pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
     var out: string[] = [];
     var none: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var fn: parser.FuncDecl = funcs[k];
+    for fn in funcs {
         if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0) {
             var rty: string = util.base_type_name(fn.receiver_type);
             // A STRING receiver earns the plain key on body_unsafe_for alone:
@@ -31905,7 +31891,6 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                 }
             }
         }
-        k = k + 1;
     }
     return out;
 }
@@ -33243,15 +33228,13 @@ function body_has_nonfresh_return(stmts: parser.Stmt[], structs: parser.StructDe
 // snapshot_local_names_of.
 pub function fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
-        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body) && !body_has_nonfresh_return(funcs[k].body, structs)) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+    for fn in funcs {
+        var rt: string = fn.ret_type;
+        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(fn.body) && !body_has_nonfresh_return(fn.body, structs)) {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -34040,15 +34023,13 @@ function decl_has_string_field(structs: parser.StructDecl[], sty: string): boole
 // — so they were looking up a key this producer never wrote.
 pub function arr_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (is_leaksafe_array_field(funcs[k].ret_type)
-                && body_has_return(funcs[k].body)
-                && (!body_has_nonfresh_arrlit_return(funcs[k].body)
-                    || body_returns_local_built_arr(funcs[k].body))) {
-            out = out.append(arr_fresh_ret_key(funcs[k]));
+    for fn in funcs {
+        if (is_leaksafe_array_field(fn.ret_type)
+                && body_has_return(fn.body)
+                && (!body_has_nonfresh_arrlit_return(fn.body)
+                    || body_returns_local_built_arr(fn.body))) {
+            out = out.append(arr_fresh_ret_key(fn));
         }
-        k = k + 1;
     }
     return out;
 }
@@ -34235,10 +34216,9 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     var str_fresh: string[] = [];
     var pk: i32 = 0;
     var want_str_fresh: boolean = false;
-    while (pk < funcs.len()) {
-        if (funcs[pk].ret_type == "string[]") { want_str_fresh = true; }
-        else if (decl_is_struct(structs, funcs[pk].ret_type) && decl_has_string_field(structs, funcs[pk].ret_type)) { want_str_fresh = true; }
-        pk = pk + 1;
+    for fn in funcs {
+        if (fn.ret_type == "string[]") { want_str_fresh = true; }
+        else if (decl_is_struct(structs, fn.ret_type) && decl_has_string_field(structs, fn.ret_type)) { want_str_fresh = true; }
     }
     if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
     var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
@@ -34246,10 +34226,8 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     // walk can ask about either element kind without a second parameter; every
     // other consumer of this list looks up a bare name, which the prefix cannot
     // match. Only walked when the string-fresh registry was worth computing.
-    var saf: i32 = 0;
-    while (saf < funcs.len()) {
-        if (fn_returns_fresh_strarr(funcs[saf], str_fresh)) { arr_fresh = arr_fresh.append("SA:" + funcs[saf].name); }
-        saf = saf + 1;
+    for fn in funcs {
+        if (fn_returns_fresh_strarr(fn, str_fresh)) { arr_fresh = arr_fresh.append("SA:" + fn.name); }
     }
     // The bare-name half is a LEAST FIXPOINT, because a return may now forward
     // to another producer (`return mkp(a, b)`) and so depends on that one's
@@ -34259,21 +34237,20 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     // Free functions only: the forwarding arm resolves a bare-ident callee, so a
     // method key could never be the thing it looks up.
     var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh, sfok);
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
+    for fn in funcs {
+        var rt: string = fn.ret_type;
         // A FREE function's verdict is exactly its membership in the fixpoint
         // above, which asked this question with the same arguments; only a
         // METHOD (never a forwarding-arm callee, so never in that set) still
         // needs the walk here.
-        var strict_fresh_ret: boolean = decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body);
+        var strict_fresh_ret: boolean = decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(fn.body);
         if (strict_fresh_ret) {
-            if (funcs[k].receiver_type.len() == 0) { strict_fresh_ret = util.index_of_str(fwd, funcs[k].name) >= 0; }
-            else { strict_fresh_ret = !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh, fwd, funcs[k].params, sfok); }
+            if (fn.receiver_type.len() == 0) { strict_fresh_ret = util.index_of_str(fwd, fn.name) >= 0; }
+            else { strict_fresh_ret = !body_has_nonstrictfresh_return(fn.body, structs, fn.body, arr_fresh, fwd, fn.params, sfok); }
         }
         if (strict_fresh_ret) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
         // "ARR:<name>" entries (#4365): FREE functions returning a SCALAR-element
@@ -34289,7 +34266,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         //
         // Which functions qualify is arr_fresh_ret_fns_of's question, asked once
         // above so the strict-fresh struct walk can ask the same one.
-        var arrkey: string = arr_fresh_ret_key(funcs[k]);
+        var arrkey: string = arr_fresh_ret_key(fn);
         if (util.index_of_str(arr_fresh, arrkey) >= 0) {
             out = out.append("ARR:" + arrkey);
         }
@@ -34298,7 +34275,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // borrowed buffer or moved a fresh one out. Consumed by the same
         // in-place release sites; the two overlap where a body is all fresh
         // literals, and both spell the same shallow dec there.
-        if (fn_returns_owned_arr(funcs[k], structs)) {
+        if (fn_returns_owned_arr(fn, structs)) {
             out = out.append("ARROWN:" + arrkey);
         }
         // "STRARR:<name>" — the POINTER-element sibling of "ARR:" (#6491): a FREE
@@ -34309,8 +34286,8 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // holding its own single reference. "ARR:" cannot carry this: its
         // consumers release the buffer element-blind, which for a string[] would
         // strand every element it did not extract.
-        if (fn_returns_fresh_strarr(funcs[k], str_fresh)) {
-            out = out.append("STRARR:" + funcs[k].name);
+        if (fn_returns_fresh_strarr(fn, str_fresh)) {
+            out = out.append("STRARR:" + fn.name);
         }
         // "ARRTUPF:<name>" / "ARRSTRUCTF:<name>" — the array-of-BOXES producers
         // (#4353): a FREE function whose every return is a fresh array literal of
@@ -34318,11 +34295,11 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // ARRTUP: / ARRSTRUCT: credit an array literal earns, so the caller's
         // deep free reaches every element box; the callee's returned value
         // escapes its own frame and keeps the shallow dec.
-        if (fn_returns_fresh_arrtup(funcs[k], structs)) {
-            out = out.append("ARRTUPF:" + funcs[k].name);
+        if (fn_returns_fresh_arrtup(fn, structs)) {
+            out = out.append("ARRTUPF:" + fn.name);
         }
-        if (fn_returns_fresh_arrstruct(funcs[k], structs)) {
-            out = out.append("ARRSTRUCTF:" + funcs[k].name);
+        if (fn_returns_fresh_arrstruct(fn, structs)) {
+            out = out.append("ARRSTRUCTF:" + fn.name);
         }
         // "STRFLDF:<name>" / "STRFLDF:<Base>.<method>" — the field-read half: a
         // strict-fresh struct producer whose every `string` field is fresh, and
@@ -34340,9 +34317,9 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && decl_has_string_field(structs, rt) && !struct_has_reclaim_array_field(structs, rt)
                 && strict_fresh_ret
-                && body_strfields_all_fresh(funcs[k].body, structs, str_fresh)) {
-            var skey: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { skey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+                && body_strfields_all_fresh(fn.body, structs, str_fresh)) {
+            var skey: string = fn.name;
+            if (fn.receiver_type.len() > 0) { skey = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append("STRFLDF:" + skey);
         }
         // "FRESHSELF:<Base>.<method>" — the MIXED-path producer: SOME return hands
@@ -34359,13 +34336,12 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // freed; the release is the BARE box dec, since a fresh literal's field
         // values are not proven owned here (`Box { tag: t, … }` takes a
         // parameter's box) and only the box itself is provably this frame's.
-        if (funcs[k].receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
-                && body_has_return(funcs[k].body)
-                && body_returns_bare_ident(funcs[k].body, funcs[k].receiver_name)
-                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name, arr_fresh, fwd, funcs[k].params, sfok)) {
-            out = out.append("FRESHSELF:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
+        if (fn.receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
+                && body_has_return(fn.body)
+                && body_returns_bare_ident(fn.body, fn.receiver_name)
+                && body_returns_fresh_or_self_struct(fn.body, structs, fn.body, fn.receiver_name, arr_fresh, fwd, fn.params, sfok)) {
+            out = out.append("FRESHSELF:" + util.base_type_name(fn.receiver_type) + "." + fn.name);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -46782,16 +46758,14 @@ function str_leaf_is_string(e: parser.Expr, funcs: parser.FuncDecl[], depth: i32
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "random_bytes" || cid.name == "string_from_bytes_unchecked") { return true; }
-                    var ni: i32 = 0;
-                    while (ni < funcs.len()) {
-                        if (funcs[ni].name == cid.name) {
-                            if (funcs[ni].ret_type == "string") { return true; }
-                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_" && funcs[ni].body.len() > 0) {
-                                return str_leaf_is_string(iife_first_return_expr(funcs[ni].body[funcs[ni].body.len() - 1]), funcs, depth + 1);
+                    for fn in funcs {
+                        if (fn.name == cid.name) {
+                            if (fn.ret_type == "string") { return true; }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_" && fn.body.len() > 0) {
+                                return str_leaf_is_string(iife_first_return_expr(fn.body[fn.body.len() - 1]), funcs, depth + 1);
                             }
                             return false;
                         }
-                        ni = ni + 1;
                     }
                 },
                 _ => {}
@@ -46832,19 +46806,17 @@ pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], 
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    var ni: i32 = 0;
-                    while (ni < funcs.len()) {
-                        if (funcs[ni].name == cid.name && funcs[ni].receiver_type.len() == 0) {
+                    for each_fn in funcs {
+                        if (each_fn.name == cid.name && each_fn.receiver_type.len() == 0) {
                             // A nested `__lam_` — recurse into its body.
-                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return lam_leaf_array_elem(funcs[ni], funcs, depth + 1); }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return lam_leaf_array_elem(each_fn, funcs, depth + 1); }
                             // A regular array-returning function in the branch
                             // (`if (c) { mk() } else { … }` where mk returns P[]):
                             // its declared element type is the array element.
-                            var crt: string = funcs[ni].ret_type;
+                            var crt: string = each_fn.ret_type;
                             if (crt.len() >= 3 && crt[crt.len() - 2 : crt.len()] == "[]") { return crt[0 : crt.len() - 2] + ""; }
                             return "";
                         }
-                        ni = ni + 1;
                     }
                 },
                 _ => {}
@@ -46857,9 +46829,8 @@ pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], 
 
 pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].ret_type == "string") {
+    for fn in funcs {
+        if (fn.ret_type == "string") {
             // A METHOD is keyed "<BaseType>.<method>" (like i64_ret_fns_of /
             // f64_ret_fns_of), NOT its bare name — a method name can collide
             // across receiver types with DIFFERENT return types. A bare key
@@ -46868,8 +46839,8 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // `b.to_lower().to_ascii_string()` mis-dispatched to the
             // nonexistent `string.to_ascii_string`. The method
             // str-check (expr_is_str) now looks up the qualified key.
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
         // A lifted if-/match-EXPRESSION (`__lam_N`) whose branch is a string
@@ -46878,8 +46849,8 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // value would mis-dispatch `.len()` to the array path — a silent
         // miscompile. Trust the body: register it as string-returning when its
         // leaf return is statically a string.
-        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && funcs[k].body.len() > 0) {
-            if (str_leaf_is_string(iife_first_return_expr(funcs[k].body[funcs[k].body.len() - 1]), funcs, 0)) { out = out.append(funcs[k].name); }
+        else if (fn.name.len() >= 6 && fn.name[0:6] == "__lam_" && fn.body.len() > 0) {
+            if (str_leaf_is_string(iife_first_return_expr(fn.body[fn.body.len() - 1]), funcs, 0)) { out = out.append(fn.name); }
         }
         // An ERASED-generic free fn whose ret type IS a bare type var bound to
         // a param (`idg[T](x: T): T` — unbounded type params are stripped, so
@@ -46889,16 +46860,15 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // dispatches as a string read — before, the result was untyped and
         // `.len()` silently read 0. The '|' keeps these entries invisible to
         // is_str_ret_fn's exact-name membership scan.
-        else if (funcs[k].receiver_type.len() == 0 && irl_looks_type_var(funcs[k].ret_type)) {
+        else if (fn.receiver_type.len() == 0 && irl_looks_type_var(fn.ret_type)) {
             var gpi: i32 = 0;
-            while (gpi < funcs[k].params.len()) {
-                if (funcs[k].params[gpi].type_name == funcs[k].ret_type) {
-                    out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(gpi));
-                    gpi = funcs[k].params.len();
+            while (gpi < fn.params.len()) {
+                if (fn.params[gpi].type_name == fn.ret_type) {
+                    out = out.append(fn.name + "|$arg" + util.i32_to_string(gpi));
+                    gpi = fn.params.len();
                 } else { gpi = gpi + 1; }
             }
         }
-        k = k + 1;
     }
     return out;
 }
@@ -47287,18 +47257,17 @@ pub function resolve_argref_opt_type(t: string, args: parser.Expr[], s: LowerSta
 // functions (for the call-site element-string tracking).
 pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].ret_type == "string[]") {
-            out = out.append(funcs[k].name);
+    for fn in funcs {
+        if (fn.ret_type == "string[]") {
+            out = out.append(fn.name);
             // A receiver METHOD additionally gets a QUALIFIED
             // "<BaseType>.<method>" entry so a method-call site
             // (`(f.mks(), 3)` — the tuple-element shape) can resolve it via
             // the receiver's struct type; the bare entry stays for the
             // existing consumers. The qualified spelling never collides with
             // a free-fn lookup (free names carry no '.').
-            if (funcs[k].receiver_type.len() > 0) {
-                out = out.append(util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
+            if (fn.receiver_type.len() > 0) {
+                out = out.append(util.base_type_name(fn.receiver_type) + "." + fn.name);
             }
         }
         // An ERASED-generic free fn returning `T[]` for a bare type-var `T`
@@ -47306,19 +47275,18 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // expr_is_strarr re-types the call by the ACTUAL argument — the
         // array sibling of str_ret_fns_of's bare-`T` entries. Invisible to
         // is_strarr_ret_fn's exact-name scan (the '|').
-        else if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type.len() == 3
-                && funcs[k].ret_type[1:3] == "[]" && irl_looks_type_var(funcs[k].ret_type[0:1])) {
+        else if (fn.receiver_type.len() == 0 && fn.ret_type.len() == 3
+                && fn.ret_type[1:3] == "[]" && irl_looks_type_var(fn.ret_type[0:1])) {
             var sgpi: i32 = 0;
-            while (sgpi < funcs[k].params.len()) {
-                if (funcs[k].params[sgpi].type_name == funcs[k].ret_type[0:1]) { out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(sgpi)); sgpi = funcs[k].params.len(); }
+            while (sgpi < fn.params.len()) {
+                if (fn.params[sgpi].type_name == fn.ret_type[0:1]) { out = out.append(fn.name + "|$arg" + util.i32_to_string(sgpi)); sgpi = fn.params.len(); }
                 else { sgpi = sgpi + 1; }
             }
         }
         // A lifted `__lam_` whose branch is a string-array literal carries a
         // default i32 ret_type; register it so `(if (c) { ["a"] } else { … })[i]`
         // reads its elements as strings (8-byte) instead of i32 (#3224).
-        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && lam_leaf_array_elem(funcs[k], funcs, 0) == "string") { out = out.append(funcs[k].name); }
-        k = k + 1;
+        else if (fn.name.len() >= 6 && fn.name[0:6] == "__lam_" && lam_leaf_array_elem(fn, funcs, 0) == "string") { out = out.append(fn.name); }
     }
     return out;
 }
@@ -47331,12 +47299,10 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // distinct / index_of / mode lower instead of bailing.
 pub function arr_method_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() == 0 && util.contains(funcs[k].name, "__method_Array_")) {
-            out = out.append(funcs[k].name);
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0 && util.contains(fn.name, "__method_Array_")) {
+            out = out.append(fn.name);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -47376,15 +47342,13 @@ pub function lam_leaf_opt_type(fn: parser.FuncDecl, funcs: parser.FuncDecl[], de
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    var ni: i32 = 0;
-                    while (ni < funcs.len()) {
-                        if (funcs[ni].name == cid.name && funcs[ni].receiver_type.len() == 0) {
-                            var crt: string = funcs[ni].ret_type;
+                    for each_fn in funcs {
+                        if (each_fn.name == cid.name && each_fn.receiver_type.len() == 0) {
+                            var crt: string = each_fn.ret_type;
                             if (crt.len() >= 8 && (crt[0:7] == "Option[" || crt[0:7] == "Result[")) { return crt; }
-                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return lam_leaf_opt_type(funcs[ni], funcs, depth + 1); }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return lam_leaf_opt_type(each_fn, funcs, depth + 1); }
                             return "";
                         }
-                        ni = ni + 1;
                     }
                 },
                 _ => {}
@@ -47397,16 +47361,15 @@ pub function lam_leaf_opt_type(fn: parser.FuncDecl, funcs: parser.FuncDecl[], de
 
 pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
+    for fn in funcs {
+        var rt: string = fn.ret_type;
         if (rt.len() >= 8 && (rt[0:7] == "Option[" || rt[0:7] == "Result[")) {
             // Methods are keyed by the qualified "<BaseType>.<method>" (see
             // i64arr_ret_fns_of) so a `match (x.get())` on a struct-method's
             // Option/Result result recovers its payload type; free functions
             // stay keyed by bare name.
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             // An ERASED-generic free fn's Option/Result return whose payload
             // mentions a bare type-var bound to a param: rewrite every such var
             // to a positional "$arg<i>" reference (resolved at the call site by
@@ -47416,18 +47379,17 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // left the Some/Ok binder untyped and a string payload's `.len()`
             // silently read 0. Methods can't be erased generics here (only free
             // fns lose their type params), so gate on a free function.
-            if (funcs[k].receiver_type.len() == 0) { rt = rewrite_typevars_to_argrefs(rt, funcs[k].params); }
+            if (fn.receiver_type.len() == 0) { rt = rewrite_typevars_to_argrefs(rt, fn.params); }
             out = out.append(key + "|" + rt);
         }
         // A lifted if-/match-expression `__lam_` whose leaf branch calls an
         // opt-returning fn (`var o = if (c) { mkO(7) } else { None }`): infer its
         // Option/Result type from the body so a later `match (o)` recovers the
         // payload (#3236 sibling for the lambda-lifted shape).
-        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_") {
-            var inf: string = lam_leaf_opt_type(funcs[k], funcs, 0);
-            if (inf.len() > 0) { out = out.append(funcs[k].name + "|" + inf); }
+        else if (fn.name.len() >= 6 && fn.name[0:6] == "__lam_") {
+            var inf: string = lam_leaf_opt_type(fn, funcs, 0);
+            if (inf.len() > 0) { out = out.append(fn.name + "|" + inf); }
         }
-        k = k + 1;
     }
     return out;
 }
@@ -47547,21 +47509,20 @@ function body_has_nonfresh_opt_payload(stmts: parser.Stmt[], err: boolean): bool
 // registry rather than a new field; the old 33-field pin is dead).
 pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
+    for fn in funcs {
+        var rt: string = fn.ret_type;
         if (rt.len() >= 8 && (rt[0:7] == "Option[" || rt[0:7] == "Result[")
-                && funcs[k].receiver_type.len() == 0
-                && body_has_return(funcs[k].body) && !body_has_nonctor_opt_return(funcs[k].body)) {
+                && fn.receiver_type.len() == 0
+                && body_has_return(fn.body) && !body_has_nonctor_opt_return(fn.body)) {
             var flag: string = "a";
-            if (!body_has_nonfresh_opt_success_payload(funcs[k].body)) { flag = "f"; }
-            out = out.append(funcs[k].name + "|" + opt_payload_type(rt, "Ok") + "|" + flag);
+            if (!body_has_nonfresh_opt_success_payload(fn.body)) { flag = "f"; }
+            out = out.append(fn.name + "|" + opt_payload_type(rt, "Ok") + "|" + flag);
             // #6360: a separate tagged row when every Err payload is a fresh string
             // too. The flag above is the SUCCESS verdict and cannot speak for Err,
             // so a drop that releases the Err payload needs its own proof.
             if (opt_payload_type(rt, "Err") == "string"
-                    && !body_has_nonfresh_opt_err_payload(funcs[k].body)) {
-                out = out.append("ERRFRESH:" + funcs[k].name);
+                    && !body_has_nonfresh_opt_err_payload(fn.body)) {
+                out = out.append("ERRFRESH:" + fn.name);
             }
         }
         // #4355 slice 5: fresh rc-ENUM ctor fns, tagged "RCE:<name>|<Enum>" in the
@@ -47575,11 +47536,11 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
         // collect_fresh_rcenum_names then admits `var e: E = mk(i)` call inits
         // exactly like direct-ctor inits, so the RCENUM loop-rebind/exit reclaim
         // fires for factored constructors.
-        else if (funcs[k].receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
+        else if (fn.receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
                 && enum_all_variants_rc_droppable(structs, rt)
-                && body_has_return(funcs[k].body)
-                && !body_has_nonqualifying_rcenum_return(funcs[k].body, structs, rt)) {
-            out = out.append("RCE:" + funcs[k].name + "|" + rt);
+                && body_has_return(fn.body)
+                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt)) {
+            out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
         // in the SAME list (the no-new-threading trick RCE: uses above). A
@@ -47598,27 +47559,26 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
         // (`string[][][]`) may register — its rows are array literals too — but
         // the consuming slot's arrarr_elem is "" for those, so only the lax
         // shallow-row free applies (sound), mirroring the literal-init path.
-        else if (funcs[k].receiver_type.len() == 0
+        else if (fn.receiver_type.len() == 0
                 && rt.len() >= 4 && rt[rt.len() - 4 : rt.len()] == "[][]"
-                && body_has_return(funcs[k].body)
-                && !body_has_nonfresh_arrarr_return(funcs[k].body)) {
+                && body_has_return(fn.body)
+                && !body_has_nonfresh_arrarr_return(fn.body)) {
             var aflag: string = "p";
-            if (!body_has_nonstrfresh_arrarr_return(funcs[k].body)) { aflag = "s"; }
-            out = out.append("AAC:" + funcs[k].name + "|" + aflag);
+            if (!body_has_nonstrfresh_arrarr_return(fn.body)) { aflag = "s"; }
+            out = out.append("AAC:" + fn.name + "|" + aflag);
         }
         // #6102: fresh ROW producers, "ARC:<name>|<flag>" — the single-level
         // sibling of AAC above, consumed by arrarr_self_append_row so an
         // append-built arr-of-arr can take `g = g.append(make_row())`. Return
         // type is one level of `[]` and NOT `[][]` (the AAC arm owns that
         // shape, and this branch is an `else if` behind it anyway).
-        else if (funcs[k].receiver_type.len() == 0
+        else if (fn.receiver_type.len() == 0
                 && rt.len() >= 2 && rt[rt.len() - 2 : rt.len()] == "[]"
-                && row_producer_kind(funcs[k].body) >= 0) {
+                && row_producer_kind(fn.body) >= 0) {
             var rflag: string = "p";
-            if (row_producer_kind(funcs[k].body) == 1) { rflag = "s"; }
-            out = out.append("ARC:" + funcs[k].name + "|" + rflag);
+            if (row_producer_kind(fn.body) == 1) { rflag = "s"; }
+            out = out.append("ARC:" + fn.name + "|" + rflag);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -48253,10 +48213,8 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     // program, then admit each candidate type iff none of its string-field
     // names is in the set.
     var unsafe_names: string[] = [];
-    var ki: i32 = 0;
-    while (ki < funcs.len()) {
-        unsafe_names = strfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names);
-        ki = ki + 1;
+    for fn in funcs {
+        unsafe_names = strfld_collect_unsafe_stmts(fn.body, unsafe_names);
     }
     unsafe_names = strfld_resolve_deferred(unsafe_names, borrowable);
     var out: string[] = [];
@@ -48310,25 +48268,21 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     // Whole-array PRODUCERS the field store gate may accept, on the same terms
     // the "STRARR:" registry admits them.
     var arr_producers: string[] = [];
-    var pk2: i32 = 0;
-    while (pk2 < funcs.len()) {
-        if (fn_returns_fresh_strarr(funcs[pk2], arr_str_fresh)) { arr_producers = arr_producers.append(funcs[pk2].name); }
-        pk2 = pk2 + 1;
+    for fn in funcs {
+        if (fn_returns_fresh_strarr(fn, arr_str_fresh)) { arr_producers = arr_producers.append(fn.name); }
     }
-    var aki: i32 = 0;
-    while (aki < funcs.len()) {
+    for fn in funcs {
         // Drop any producer name THIS frame shadows — a local or parameter of
         // that name holds an unknown body, not the registered declaration.
         var vis: string[] = [];
         var vk: i32 = 0;
         while (vk < arr_producers.len()) {
-            if (!body_declares_name(funcs[aki].body, arr_producers[vk]) && !fn_has_param_named(funcs[aki], arr_producers[vk])) {
+            if (!body_declares_name(fn.body, arr_producers[vk]) && !fn_has_param_named(fn, arr_producers[vk])) {
                 vis = vis.append(arr_producers[vk]);
             }
             vk = vk + 1;
         }
-        arr_unsafe = strarrfld_scan_stmts(funcs[aki].body, structs, strarrfld_fn_binds(funcs[aki], structs), arr_str_fresh, vis, arr_unsafe);
-        aki = aki + 1;
+        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, vis, arr_unsafe);
     }
     var asi: i32 = 0;
     while (asi < structs.len()) {
@@ -48400,10 +48354,8 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     // The k_clo drop arm then shallow-frees the field's closure box
     // (captures leak — the k_struct one-level model).
     var clo_unsafe: string[] = [];
-    var cki: i32 = 0;
-    while (cki < funcs.len()) {
-        clo_unsafe = clofld_scan_stmts(funcs[cki].body, structs, clo_unsafe);
-        cki = cki + 1;
+    for fn in funcs {
+        clo_unsafe = clofld_scan_stmts(fn.body, structs, clo_unsafe);
     }
     var csi: i32 = 0;
     while (csi < structs.len()) {
@@ -48447,10 +48399,8 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
 // the one structural difference between the two scans.
 pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
     var unsafe_names: string[] = [];
-    var ki: i32 = 0;
-    while (ki < funcs.len()) {
-        unsafe_names = structfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names, borrowable);
-        ki = ki + 1;
+    for fn in funcs {
+        unsafe_names = structfld_collect_unsafe_stmts(fn.body, unsafe_names, borrowable);
     }
     var out: string[] = [];
     var si: i32 = 0;
@@ -48907,10 +48857,8 @@ function remove_str(xs: string[], name: string): string[] {
 function fnptr_elem_is_fnval(e: parser.Expr, funcs: parser.FuncDecl[]): boolean {
     match (e) {
         parser.ExprIdent(id) => {
-            var i: i32 = 0;
-            while (i < funcs.len()) {
-                if (funcs[i].name == id.name && funcs[i].receiver_type.len() == 0) { return true; }
-                i = i + 1;
+            for fn in funcs {
+                if (fn.name == id.name && fn.receiver_type.len() == 0) { return true; }
             }
             return false;
         },
@@ -49159,13 +49107,11 @@ function clo_array_lit_all_box(e: parser.Expr): boolean {
 // LIFTED module (all_funcs/all_structs), so lambda elements are already resolved.
 pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var acc: FnptrAcc = FnptrAcc { cand: [], bad: [], fnloc: [], ccand: [], cbad: [], cloc: [] };
-    var i: i32 = 0;
-    while (i < funcs.len()) {
+    for fn in funcs {
         // Local names are per-function: a proof from an earlier function must
         // not credit a same-named local here.
         acc = FnptrAcc { cand: acc.cand, bad: acc.bad, fnloc: [], ccand: acc.ccand, cbad: acc.cbad, cloc: [] };
-        acc = fnptr_scan_stmts(funcs[i].body, funcs, structs, acc, true);
-        i = i + 1;
+        acc = fnptr_scan_stmts(fn.body, funcs, structs, acc, true);
     }
     var out: string[] = [];
     var j: i32 = 0;
@@ -49885,18 +49831,16 @@ function irl_looks_type_var(s: string): boolean {
 // something to approximate here.
 pub function arrtup_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
+    for fn in funcs {
+        var rt: string = fn.ret_type;
         if (rt.len() >= 5 && rt[0] == b'(' && rt[rt.len() - 2 : rt.len()] == "[]") {
             var elem: str = rt[0 : rt.len() - 2];
             if (elem.len() >= 2 && elem[elem.len() - 1] == b')' && !irl_type_has_var(elem)) {
-                var key: string = funcs[k].name;
-                if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+                var key: string = fn.name;
+                if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
                 out = out.append(key + "|" + elem);
             }
         }
-        k = k + 1;
     }
     return out;
 }
@@ -49933,14 +49877,13 @@ pub function (s: LowerState) arrtup_ret_type(name: string): string {
 
 pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
+    for fn in funcs {
+        var rt: string = fn.ret_type;
         if (rt.len() > 0 && rt[0] == b'(') {
             // Free function → bare name; method → qualified "<BaseType>.<method>"
             // (matching the call_direct dispatch label; no "." collision).
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             var tags: string = tuple_elem_tags(rt);
             // Rewrite bare type-var segments to "$arg<i>" param references
             // (top-level split; a nested "(…)" segment is left whole).
@@ -49956,8 +49899,8 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                     var repl: string = seg + "";
                     if (irl_looks_type_var(seg)) {
                         var pi: i32 = 0;
-                        while (pi < funcs[k].params.len()) {
-                            if (funcs[k].params[pi].type_name == seg) { repl = "$arg" + util.i32_to_string(pi); pi = funcs[k].params.len(); }
+                        while (pi < fn.params.len()) {
+                            if (fn.params[pi].type_name == seg) { repl = "$arg" + util.i32_to_string(pi); pi = fn.params.len(); }
                             else { pi = pi + 1; }
                         }
                     }
@@ -49970,7 +49913,6 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             }
             out = out.append(key + "|" + rw);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -50047,15 +49989,13 @@ function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    var ni: i32 = 0;
-                    while (ni < funcs.len()) {
-                        if (funcs[ni].name == cid.name) {
-                            var crt: string = funcs[ni].ret_type;
+                    for each_fn in funcs {
+                        if (each_fn.name == cid.name) {
+                            var crt: string = each_fn.ret_type;
                             if (decl_is_struct(structs, crt) && decl_is_leaksafe(structs, crt)) { return crt; }
-                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return fn_inferred_struct_ret(funcs[ni], structs, funcs, depth + 1); }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return fn_inferred_struct_ret(each_fn, structs, funcs, depth + 1); }
                             return "";
                         }
-                        ni = ni + 1;
                     }
                 },
                 _ => {}
@@ -50068,9 +50008,8 @@ function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[
 
 pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var rt: string = funcs[k].ret_type;
+    for fn in funcs {
+        var rt: string = fn.ret_type;
         var elig: boolean = false;
         var elem_t: string = rt;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
@@ -50092,15 +50031,15 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         // function with a parameter declared at exactly that spelling. A derived
         // `E_default(): E` takes no `E`, so it still records.
         else if (is_enum_like_name(rt, structs)
-                && !(irl_looks_type_var(rt) && funcs[k].receiver_type.len() == 0
-                     && fn_has_param_typed(funcs[k], rt))) { elig = true; }
+                && !(irl_looks_type_var(rt) && fn.receiver_type.len() == 0
+                     && fn_has_param_typed(fn, rt))) { elig = true; }
         // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
         // ret_type from the desugar, not the struct it actually returns — so
         // trust the BODY, not the declaration. Infer a leaf-safe struct return
         // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
         // .. }).x` recover the struct type at the `__lam_N()` call site.
-        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_") {
-            var inf: string = fn_inferred_struct_ret(funcs[k], structs, funcs, 0);
+        else if (fn.name.len() >= 6 && fn.name[0:6] == "__lam_") {
+            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
             if (inf.len() > 0) { elig = true; elem_t = inf; }
             else {
                 // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
@@ -50109,7 +50048,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
                 // via array_ret_fns, so struct_type_of_slot reads as the element
                 // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
                 // fixes.
-                var aelem: string = lam_leaf_array_elem(funcs[k], funcs, 0);
+                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
                 if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
             }
         }
@@ -50139,12 +50078,12 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
             // returns above; the '|' keeps the entry invisible to the exact-name
             // membership scans. Free functions only — a receiver method is never an
             // erased generic — matching the string-side producer.
-            else if (funcs[k].receiver_type.len() == 0 && irl_looks_type_var(et + "")) {
+            else if (fn.receiver_type.len() == 0 && irl_looks_type_var(et + "")) {
                 var api: i32 = 0;
-                while (api < funcs[k].params.len()) {
-                    if (funcs[k].params[api].type_name == rt) {
-                        out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(api));
-                        api = funcs[k].params.len();
+                while (api < fn.params.len()) {
+                    if (fn.params[api].type_name == rt) {
+                        out = out.append(fn.name + "|$arg" + util.i32_to_string(api));
+                        api = fn.params.len();
                     } else { api = api + 1; }
                 }
             }
@@ -50159,11 +50098,10 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         // the coarse "dyn <Trait>" as its ELEMENT type.
         if (!elig && rt.len() > 4 && rt[0:4] == "dyn " && !(rt.len() >= 3 && rt[rt.len() - 2 : rt.len()] == "[]")) { elig = true; elem_t = rt; }
         if (elig) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key + "|" + elem_t);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -50174,17 +50112,15 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
 // keyed bare; methods by "<BaseType>.<method>". #3317.
 pub function map_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
+    for fn in funcs {
         // `Map[K, V][]` prefix-matches is_map_type_name but returns an ARRAY, and
         // a caller that took this registration typed the un-bound `mk().len()`
         // receiver as a map — op_map_len over array memory.
-        if (is_map_type_name(funcs[k].ret_type) && !is_array_type_name(funcs[k].ret_type)) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            out = out.append(key + "|" + funcs[k].ret_type);
+        if (is_map_type_name(fn.ret_type) && !is_array_type_name(fn.ret_type)) {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
+            out = out.append(key + "|" + fn.ret_type);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -50200,14 +50136,12 @@ pub function map_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // dispatches to (a "." never appears in a bare name, so the key spaces agree).
 pub function f64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (is_f64_scalar_type_name(funcs[k].ret_type)) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+    for fn in funcs {
+        if (is_f64_scalar_type_name(fn.ret_type)) {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -50218,19 +50152,17 @@ pub function f64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // don't collide — same convention as f64_ret_fns_of).
 pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (is_float_array_type_name(funcs[k].ret_type)) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+    for fn in funcs {
+        if (is_float_array_type_name(fn.ret_type)) {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
         // A lifted `__lam_` whose branch is an f64-array literal carries a
         // default i32 ret_type; register it so `(if (c) { [1.5] } else { … })[i]`
         // reads its 8-byte f64 elements at the right width (#3224, f64 sibling
         // of the string-array fix).
-        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && lam_leaf_array_elem(funcs[k], funcs, 0) == "f64") { out = out.append(funcs[k].name); }
-        k = k + 1;
+        else if (fn.name.len() >= 6 && fn.name[0:6] == "__lam_" && lam_leaf_array_elem(fn, funcs, 0) == "f64") { out = out.append(fn.name); }
     }
     return out;
 }
@@ -50251,14 +50183,12 @@ pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // case it was not a refusal but a silently wrong value.
 pub function erased_elem_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (is_erased_typevar_array(funcs[k].ret_type, structs)) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+    for fn in funcs {
+        if (is_erased_typevar_array(fn.ret_type, structs)) {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -50268,14 +50198,12 @@ pub function erased_elem_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.St
 // qualified "<BaseType>.<method>" (see f64arr_ret_fns_of).
 pub function i64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (funcs[k].ret_type == "i64[]") {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+    for fn in funcs {
+        if (fn.ret_type == "i64[]") {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -50295,12 +50223,10 @@ pub function i64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // receiver-less -> call; >0-arg -> fn-value.
 pub function const_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var ci: i32 = 0;
-    while (ci < funcs.len()) {
-        if (funcs[ci].receiver_type.len() == 0 && funcs[ci].params.len() == 0) {
-            out = out.append(funcs[ci].name);
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0 && fn.params.len() == 0) {
+            out = out.append(fn.name);
         }
-        ci = ci + 1;
     }
     return out;
 }
@@ -50313,12 +50239,10 @@ pub function const_fns_of(funcs: parser.FuncDecl[]): string[] {
 // (#3710).
 pub function fn_names_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var fi: i32 = 0;
-    while (fi < funcs.len()) {
-        if (funcs[fi].receiver_type.len() == 0) {
-            out = out.append(funcs[fi].name);
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0) {
+            out = out.append(fn.name);
         }
-        fi = fi + 1;
     }
     return out;
 }
@@ -50337,16 +50261,14 @@ pub function fn_names_of(funcs: parser.FuncDecl[]): string[] {
 // set while being perfectly well declared.
 pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
     var sigs: irverify.FnSig[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        var nm: string = funcs[i].name;
-        if (funcs[i].receiver_type.len() > 0) {
-            nm = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
+    for fn in funcs {
+        var nm: string = fn.name;
+        if (fn.receiver_type.len() > 0) {
+            nm = util.base_type_name(fn.receiver_type) + "." + fn.name;
         }
-        var np: i32 = funcs[i].params.len();
-        if (funcs[i].receiver_name.len() > 0) { np = np + 1; }
+        var np: i32 = fn.params.len();
+        if (fn.receiver_name.len() > 0) { np = np + 1; }
         sigs = sigs.append(irverify.FnSig { name: nm, n_params: np });
-        i = i + 1;
     }
     return irverify.sig_index(sigs);
 }
@@ -50571,10 +50493,8 @@ function body_binds_fn_payload_via_match(body: parser.Stmt[], name: string, stru
 
 pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var gfns: string[] = [];
-    var gi: i32 = 0;
-    while (gi < funcs.len()) {
-        if (funcs[gi].receiver_type.len() == 0) { gfns = gfns.append(funcs[gi].name); }
-        gi = gi + 1;
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0) { gfns = gfns.append(fn.name); }
     }
     var out: string[] = [];
     // Two forms produce a closure box the caller must dispatch env-first:
@@ -50590,16 +50510,15 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        var fi: i32 = 0;
-        while (fi < funcs.len()) {
-            if (util.index_of_str(out, funcs[fi].name) < 0) {
-                var b: parser.Stmt[] = funcs[fi].body;
+        for fn in funcs {
+            if (util.index_of_str(out, fn.name) < 0) {
+                var b: parser.Stmt[] = fn.body;
                 // With a declared fn return type, check EVERY return in the
                 // body (branch / loop / match-arm returns included — see
                 // collect_returns); without one, only the last-statement
                 // `return <capturing lambda>` form applies (below), keeping
                 // the no-annotation behaviour untouched.
-                if (funcs[fi].ret_type == "fn") {
+                if (fn.ret_type == "fn") {
                     var rets: parser.Expr[] = collect_returns(b, []);
                     var hit: boolean = false;
                     var ri: i32 = 0;
@@ -50632,8 +50551,8 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                                 // into a SIGSEGV.
                                 if (!hit) {
                                     var pk: i32 = 0;
-                                    while (pk < funcs[fi].params.len()) {
-                                        if (funcs[fi].params[pk].name == nrid.name && funcs[fi].params[pk].type_name == "fn") { hit = true; }
+                                    while (pk < fn.params.len()) {
+                                        if (fn.params[pk].name == nrid.name && fn.params[pk].type_name == "fn") { hit = true; }
                                         pk = pk + 1;
                                     }
                                 }
@@ -50670,7 +50589,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                                 // annotated local (its type resolves to "fn[]"); the
                                 // element is a closure box (#5202 B). Distinct from the
                                 // unannotated-local-literal case above.
-                                if (!arrok && detector_expr_type(nix.array, funcs[fi], structs) == "fn[]") { arrok = true; }
+                                if (!arrok && detector_expr_type(nix.array, fn, structs) == "fn[]") { arrok = true; }
                                 if (arrok) { hit = true; }
                             },
                             // (f) `return kvs[i].f` / `return s.f` — a fn-valued struct
@@ -50678,20 +50597,20 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                             // the field type (#5202 E). A numeric tuple index resolves to
                             // "" (tuples aren't structs), so it can't misfire here.
                             parser.ExprFieldAccess(nfa) => {
-                                var foty: string = detector_expr_type(nfa.obj, funcs[fi], structs);
+                                var foty: string = detector_expr_type(nfa.obj, fn, structs);
                                 if (foty.len() > 0 && decl_field_type(structs, foty, nfa.field) == "fn") { hit = true; }
                             },
                             _ => {}
                         }
                         ri = ri + 1;
                     }
-                    if (hit) { out = out.append(funcs[fi].name); changed = true; }
+                    if (hit) { out = out.append(fn.name); changed = true; }
                 } else if (b.len() > 0) {
                     match (b[b.len() - 1]) {
                         parser.StmtReturn(r) => {
                             match (r.value) {
                                 parser.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, gfns)) { out = out.append(funcs[fi].name); changed = true; }
+                                    if (!lambda_has_no_captures(lam, gfns)) { out = out.append(fn.name); changed = true; }
                                 },
                                 _ => { }
                             }
@@ -50700,7 +50619,6 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                     }
                 }
             }
-            fi = fi + 1;
         }
     }
     // "PASSTHRU:<fn>:<argidx>" markers ride the same list — a marker can never
@@ -50744,18 +50662,16 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.
 // carried to the read side, where the module funcs are no longer in scope.
 function typevar_passthrough_markers_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].receiver_type.len() == 0 && funcs[i].type_param_count > 0) {
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0 && fn.type_param_count > 0) {
             var p: i32 = 0;
-            while (p < funcs[i].params.len()) {
-                if (funcs[i].params[p].type_name.len() > 0 && funcs[i].params[p].type_name == funcs[i].ret_type) {
-                    out = out.append("PASSTHRU:" + funcs[i].name + ":" + util.i32_to_string(p));
+            while (p < fn.params.len()) {
+                if (fn.params[p].type_name.len() > 0 && fn.params[p].type_name == fn.ret_type) {
+                    out = out.append("PASSTHRU:" + fn.name + ":" + util.i32_to_string(p));
                 }
                 p = p + 1;
             }
         }
-        i = i + 1;
     }
     return out;
 }
@@ -50816,17 +50732,16 @@ function body_binding_mkclo_funcval(body: parser.Stmt[], name: string): string {
 pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var closureset: string[] = closure_ret_fns_of(funcs, structs);
     var out: string[] = [];
-    var fi: i32 = 0;
-    while (fi < funcs.len()) {
-        if (funcs[fi].ret_type == "fn") {
-            var rets: parser.Expr[] = collect_returns(funcs[fi].body, []);
+    for fn in funcs {
+        if (fn.ret_type == "fn") {
+            var rets: parser.Expr[] = collect_returns(fn.body, []);
             var hit: boolean = false;
             var ri: i32 = 0;
             while (ri < rets.len()) {
                 var fv: string = "";
                 match (rets[ri]) {
                     // `return $lamret` bound to `__mkclo$<fv>(caps)` (the lifted form).
-                    parser.ExprIdent(rid) => { fv = body_binding_mkclo_funcval(funcs[fi].body, rid.name); },
+                    parser.ExprIdent(rid) => { fv = body_binding_mkclo_funcval(fn.body, rid.name); },
                     // `return __mkclo$<fv>(caps)` directly.
                     parser.ExprCall(rcc) => {
                         match (rcc.callee) {
@@ -50839,9 +50754,8 @@ pub function closure_ret_closure_fns_of(funcs: parser.FuncDecl[], structs: parse
                 if (fv.len() > 0 && util.index_of_str(closureset, fv) >= 0) { hit = true; }
                 ri = ri + 1;
             }
-            if (hit) { out = out.append(funcs[fi].name); }
+            if (hit) { out = out.append(fn.name); }
         }
-        fi = fi + 1;
     }
     return out;
 }
@@ -51049,10 +50963,9 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Str
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        var fi: i32 = 0;
-        while (fi < funcs.len()) {
-            if (funcs[fi].ret_type == "fn[]" && util.index_of_str(out, funcs[fi].name) < 0) {
-                var rets: parser.Expr[] = collect_returns(funcs[fi].body, []);
+        for fn in funcs {
+            if (fn.ret_type == "fn[]" && util.index_of_str(out, fn.name) < 0) {
+                var rets: parser.Expr[] = collect_returns(fn.body, []);
                 var hit: boolean = false;
                 var ri: i32 = 0;
                 while (ri < rets.len()) {
@@ -51061,7 +50974,7 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Str
                             if (array_lit_is_closurearr(rets[ri], closureset)) { hit = true; }
                         },
                         parser.ExprIdent(rid) => {
-                            if (body_binds_closurearr_local(funcs[fi].body, rid.name, closureset, out)) { hit = true; }
+                            if (body_binds_closurearr_local(fn.body, rid.name, closureset, out)) { hit = true; }
                         },
                         parser.ExprCall(rcc) => {
                             match (rcc.callee) {
@@ -51086,15 +50999,14 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Str
                         // "fn[]", so the caller's `var hs = pick()` marks hs
                         // is_closurearr and `hs[i]()` dispatches env-first (#5202 C).
                         parser.ExprFieldAccess(_) => {
-                            if (detector_expr_type(rets[ri], funcs[fi], structs) == "fn[]") { hit = true; }
+                            if (detector_expr_type(rets[ri], fn, structs) == "fn[]") { hit = true; }
                         },
                         _ => {}
                     }
                     ri = ri + 1;
                 }
-                if (hit) { out = out.append(funcs[fi].name); changed = true; }
+                if (hit) { out = out.append(fn.name); changed = true; }
             }
-            fi = fi + 1;
         }
     }
     return out;
@@ -51285,30 +51197,28 @@ function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pid
     var nseen: i32 = 0;
     var nok: i32 = 0;
     var nident: i32 = 0;
-    var fi: i32 = 0;
-    while (fi < funcs.len()) {
+    for fn in funcs {
         // The caller's own already-proven closure-array param NAMES (free
         // functions only — method params are never flagged, and a method
         // sharing a free function's name must not inherit its proof).
         var caller_cparams: string[] = [];
-        if (funcs[fi].receiver_type.len() == 0) {
+        if (fn.receiver_type.len() == 0) {
             var cpj: i32 = 0;
-            while (cpj < funcs[fi].params.len()) {
-                if (util.index_of_str(cparams, funcs[fi].name + "|" + funcs[fi].params[cpj].name) >= 0) {
-                    caller_cparams = caller_cparams.append(funcs[fi].params[cpj].name);
+            while (cpj < fn.params.len()) {
+                if (util.index_of_str(cparams, fn.name + "|" + fn.params[cpj].name) >= 0) {
+                    caller_cparams = caller_cparams.append(fn.params[cpj].name);
                 }
                 cpj = cpj + 1;
             }
         }
-        var (cs, co) = ca_scan_stmts(funcs[fi].body, fname, pidx, funcs[fi].body, closureset, caset, caller_cparams);
+        var (cs, co) = ca_scan_stmts(fn.body, fname, pidx, fn.body, closureset, caset, caller_cparams);
         nseen = nseen + cs;
         nok = nok + co;
         var ids: string[] = [];
         var sj: i32 = 0;
-        while (sj < funcs[fi].body.len()) { ids = astwalk.collect_idents_stmt(funcs[fi].body[sj], ids); sj = sj + 1; }
+        while (sj < fn.body.len()) { ids = astwalk.collect_idents_stmt(fn.body[sj], ids); sj = sj + 1; }
         var ii: i32 = 0;
         while (ii < ids.len()) { if (ids[ii] == fname) { nident = nident + 1; } ii = ii + 1; }
-        fi = fi + 1;
     }
     return nseen > 0 && nok == nseen && nident == nseen;
 }
@@ -51350,16 +51260,14 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
     // "fn[]" param — so the bootstrap self-compile (which has none) pays
     // nothing and its registry stays byte-identical.
     var have_fnarr: boolean = false;
-    var hk: i32 = 0;
-    while (hk < funcs.len()) {
-        if (funcs[hk].receiver_type.len() == 0) {
+    for fn in funcs {
+        if (fn.receiver_type.len() == 0) {
             var hpj: i32 = 0;
-            while (hpj < funcs[hk].params.len()) {
-                if (funcs[hk].params[hpj].type_name == "fn[]") { have_fnarr = true; }
+            while (hpj < fn.params.len()) {
+                if (fn.params[hpj].type_name == "fn[]") { have_fnarr = true; }
                 hpj = hpj + 1;
             }
         }
-        hk = hk + 1;
     }
     var closureset: string[] = [];
     var caset: string[] = [];
@@ -51378,15 +51286,14 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         var ca_changed: boolean = true;
         while (ca_changed) {
             ca_changed = false;
-            var fk: i32 = 0;
-            while (fk < funcs.len()) {
-                if (funcs[fk].receiver_type.len() == 0) {
+            for fn in funcs {
+                if (fn.receiver_type.len() == 0) {
                     var fpj: i32 = 0;
-                    while (fpj < funcs[fk].params.len()) {
-                        if (funcs[fk].params[fpj].type_name == "fn[]") {
-                            var fkey: string = funcs[fk].name + "|" + funcs[fk].params[fpj].name;
+                    while (fpj < fn.params.len()) {
+                        if (fn.params[fpj].type_name == "fn[]") {
+                            var fkey: string = fn.name + "|" + fn.params[fpj].name;
                             if (util.index_of_str(caparams, fkey) < 0
-                                && fnarr_param_all_closurearr(funcs, funcs[fk].name, fpj, closureset, caset, caparams)) {
+                                && fnarr_param_all_closurearr(funcs, fn.name, fpj, closureset, caset, caparams)) {
                                 caparams = caparams.append(fkey);
                                 ca_changed = true;
                             }
@@ -51394,18 +51301,16 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                         fpj = fpj + 1;
                     }
                 }
-                fk = fk + 1;
             }
         }
     }
     // #4873 port: the may-grow array-param masks, merged below as flag '4'.
     var growset: string[] = grow_param_flags_of(funcs);
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
+    for fd in funcs {
         var gmask: string = "";
-        var gkey: string = funcs[k].name;
-        if (funcs[k].receiver_type.len() > 0) { gkey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+        var gkey: string = fd.name;
+        if (fd.receiver_type.len() > 0) { gkey = util.base_type_name(fd.receiver_type) + "." + fd.name; }
         var gi: i32 = 0;
         while (gi < growset.len()) {
             var ge: string = growset[gi];
@@ -51417,15 +51322,15 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         var flags: string = "";
         var any: boolean = false;
         var pj: i32 = 0;
-        while (pj < funcs[k].params.len()) {
-            if (funcs[k].params[pj].type_name == "fn") { flags = flags + "1"; any = true; }
+        while (pj < fd.params.len()) {
+            if (fd.params[pj].type_name == "fn") { flags = flags + "1"; any = true; }
             // A SCALAR `dyn Trait` param: flag '2'. A primitive/string arg passed
             // here is heap-boxed into a `dyn` cell at the call site (op_dyn_box) so
             // the receiver carries a shape pointer (docs/DYN-TRAITS.md §4.2.3).
             // '2' is distinct from the fn flag '1', so callee_param_is_fn is
             // unaffected; callee_param_is_dyn reads '2'.
-            else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
-                     && !is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "2"; any = true; }
+            else if (fd.params[pj].type_name.len() > 4 && fd.params[pj].type_name[0:4] == "dyn "
+                     && !is_array_type_name(fd.params[pj].type_name)) { flags = flags + "2"; any = true; }
             // A `dyn Trait[]` (ARRAY) param: flag '8'. The array pointer itself
             // flows in one word — what needs coercing is each ELEMENT, and only
             // when the argument is an array LITERAL written at the call
@@ -51433,8 +51338,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // already boxed at its `var xs: dyn Trait[] = […]` binding, and any
             // other argument form is an already-built array. callee_param_is_dyn
             // reads '2' only, so the scalar-arg boxing is unaffected.
-            else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
-                     && is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "8"; any = true; }
+            else if (fd.params[pj].type_name.len() > 4 && fd.params[pj].type_name[0:4] == "dyn "
+                     && is_array_type_name(fd.params[pj].type_name)) { flags = flags + "8"; any = true; }
             // An fn-ARRAY param (`((T) => R)[]`, coarsed "fn[]") whose every
             // call site provably passes a closure ARRAY: flag '3' (proven by
             // the caparams fixpoint above). lower_func marks the param slot
@@ -51442,8 +51347,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // elements are boxes). Distinct from '1'/'2' so the existing
             // consumers are unaffected. Free functions only — a method's
             // call sites aren't scanned.
-            else if (have_fnarr && funcs[k].params[pj].type_name == "fn[]" && funcs[k].receiver_type.len() == 0
-                     && util.index_of_str(caparams, funcs[k].name + "|" + funcs[k].params[pj].name) >= 0) { flags = flags + "3"; any = true; }
+            else if (have_fnarr && fd.params[pj].type_name == "fn[]" && fd.receiver_type.len() == 0
+                     && util.index_of_str(caparams, fd.name + "|" + fd.params[pj].name) >= 0) { flags = flags + "3"; any = true; }
             // #4873: an array param the callee may grow in place — flag '4'
             // so the call site brackets a surviving argument. Distinct from
             // '1'/'2'/'3' (an array param is never fn/dyn), so the existing
@@ -51452,7 +51357,7 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // A BARE-TYPEVAR (erased-generic) param (`x: T` — a standalone
             // single-uppercase-letter type spelling, the same convention
             // rewrite_typevars_to_argrefs keys on; unbounded type params are
-            // STRIPPED from the decl, so funcs[k].type_params can't be
+            // STRIPPED from the decl, so fd.type_params can't be
             // consulted): flag '5', or '6' when the fn is a wasm-WIDENABLE
             // pass-through (erased_passthrough_safe — bare-typevar return + the
             // erased value only FLOWS OUT via return; #5464). The call site width-
@@ -51461,8 +51366,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // '5' and '6' (so the register i64-arg path is unchanged), while the
             // wasm-only widening/coercion keys on '6' via callee_param_is_erased_widened.
             // Free functions only (methods are never erased generics).
-            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar(funcs[k].params[pj].type_name, structs)) {
-                if (erased_widenable(funcs[k], structs)) { flags = flags + "6"; } else { flags = flags + "5"; }
+            else if (fd.receiver_type.len() == 0 && is_erased_typevar(fd.params[pj].type_name, structs)) {
+                if (erased_widenable(fd, structs)) { flags = flags + "6"; } else { flags = flags + "5"; }
                 any = true;
             }
             // '7': an erased typevar ARRAY param (`xs: T[]`). Distinct from '5'
@@ -51476,8 +51381,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // A callee that only asks for `.len()` never uses a stride, so the
             // refusal would cost coverage for nothing — `is_empty[T](xs: T[])`
             // at an `f64[]`. The predicate calls everything but `.len()` a read.
-            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar_array(funcs[k].params[pj].type_name, structs)
-                     && elem_read_in_body(funcs[k].body, funcs[k].params[pj].name)) {
+            else if (fd.receiver_type.len() == 0 && is_erased_typevar_array(fd.params[pj].type_name, structs)
+                     && elem_read_in_body(fd.body, fd.params[pj].name)) {
                 flags = flags + "7";
                 any = true;
             }
@@ -51485,11 +51390,10 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             pj = pj + 1;
         }
         if (any) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            var key: string = fd.name;
+            if (fd.receiver_type.len() > 0) { key = util.base_type_name(fd.receiver_type) + "." + fd.name; }
             out = out.append(key + "|" + flags);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -52010,9 +51914,7 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
     while (round < 16) {
         var next: string[] = [];
         var changed: boolean = false;
-        var k: i32 = 0;
-        while (k < funcs.len()) {
-            var fn: parser.FuncDecl = funcs[k];
+        for fn in funcs {
             // ARRAY tier. The result must not BE the argument: the release
             // fires immediately after the call, so a callee handing `d` straight
             // back out would leave the caller reading freed memory. A CONCRETE
@@ -52063,7 +51965,6 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 next = next.append(sent);
                 if (util.index_of_str(reg, sent) < 0) { changed = true; }
             }
-            k = k + 1;
         }
         reg = next;
         if (!changed) { return reg; }
@@ -52075,28 +51976,26 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
 pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     var none: string[] = [];
     var out: string[] = borrow_reg_new();
-    var k: i32 = 0;
-    while (k < funcs.len()) {
+    for fn in funcs {
         var flags: string = "";
         var any: boolean = false;
-        var reasgn: string[] = body_assign_targets(funcs[k].body);
+        var reasgn: string[] = body_assign_targets(fn.body);
         var pj: i32 = 0;
-        while (pj < funcs[k].params.len()) {
-            var pname: string = funcs[k].params[pj].name;
+        while (pj < fn.params.len()) {
+            var pname: string = fn.params[pj].name;
             // A bare-ident `match (pname)` scrutinee is a BORROW, not an escape —
             // #6127's reading, which was applied to the local-reclaim analyses but
             // never to this verdict. A param whose only use is being matched on
             // therefore read as escaping, so `head(b)` refused every caller-side
             // release and a loop-local enum passed to a helper leaked unboundedly
             // (#6606) while the identical match written inline was flat.
-            if (!param_consumed_in_body(funcs[k].body, pname, reasgn)
-                && !body_unsafe_for_match_borrow(funcs[k].body, pname, none, [])
-                && !param_match_binding_escapes(funcs[k].body, pname)) { flags = flags + "1"; any = true; }
+            if (!param_consumed_in_body(fn.body, pname, reasgn)
+                && !body_unsafe_for_match_borrow(fn.body, pname, none, [])
+                && !param_match_binding_escapes(fn.body, pname)) { flags = flags + "1"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
-        if (any) { out = borrow_reg_put(out, borrowable_key(funcs[k]), flags); }
-        k = k + 1;
+        if (any) { out = borrow_reg_put(out, borrowable_key(fn), flags); }
     }
     return out;
 }
@@ -52153,15 +52052,13 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     //
     // Seed: every param of every function optimistically borrowable.
     var reg: string[] = borrow_reg_new();
-    var s0: i32 = 0;
-    while (s0 < funcs.len()) {
-        if (funcs[s0].params.len() > 0) {
+    for fn in funcs {
+        if (fn.params.len() > 0) {
             var seedflags: string = "";
             var sp: i32 = 0;
-            while (sp < funcs[s0].params.len()) { seedflags = seedflags + "1"; sp = sp + 1; }
-            reg = borrow_reg_put(reg, borrowable_key(funcs[s0]), seedflags);
+            while (sp < fn.params.len()) { seedflags = seedflags + "1"; sp = sp + 1; }
+            reg = borrow_reg_put(reg, borrowable_key(fn), seedflags);
         }
-        s0 = s0 + 1;
     }
     var cap: i32 = 64;
     var iter: i32 = 0;
@@ -52169,28 +52066,26 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     while (iter < cap && !regs_equal(reg, prev)) {
         prev = reg;
         var next: string[] = borrow_reg_new();
-        var i: i32 = 0;
-        while (i < funcs.len()) {
-            if (funcs[i].params.len() > 0) {
+        for fn in funcs {
+            if (fn.params.len() > 0) {
                 var flags: string = "";
                 var any: boolean = false;
-                var ip_reasgn: string[] = body_assign_targets(funcs[i].body);
+                var ip_reasgn: string[] = body_assign_targets(fn.body);
                 var pj: i32 = 0;
-                while (pj < funcs[i].params.len()) {
+                while (pj < fn.params.len()) {
                     // The scrutinee of a `match (param)` is a BORROW — see
                     // borrowable_params_of for why, and for what
                     // param_match_binding_escapes has to rule out. Widening the set
                     // keeps this pass monotone-decreasing: it only ever withholds a
                     // 1->0 flip, so the convergence test is unaffected.
-                    if (!param_consumed_in_body(funcs[i].body, funcs[i].params[pj].name, ip_reasgn)
-                        && !body_unsafe_for_match_borrow(funcs[i].body, funcs[i].params[pj].name, reg, [])
-                        && !param_match_binding_escapes(funcs[i].body, funcs[i].params[pj].name)) { flags = flags + "1"; any = true; }
+                    if (!param_consumed_in_body(fn.body, fn.params[pj].name, ip_reasgn)
+                        && !body_unsafe_for_match_borrow(fn.body, fn.params[pj].name, reg, [])
+                        && !param_match_binding_escapes(fn.body, fn.params[pj].name)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
-                if (any) { next = borrow_reg_put(next, borrowable_key(funcs[i]), flags); }
+                if (any) { next = borrow_reg_put(next, borrowable_key(fn), flags); }
             }
-            i = i + 1;
         }
         // Monotone-DECREASING (flags only go 1->0), so the registry strictly
         // shrinks until the fixpoint and the cap can never truncate a still-
@@ -52250,20 +52145,18 @@ pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable:
     while (iter < cap && !regs_equal(reg, prev)) {
         prev = reg;
         var next: string[] = borrow_reg_new();
-        var i: i32 = 0;
-        while (i < funcs.len()) {
-            if (funcs[i].params.len() > 0) {
+        for fn in funcs {
+            if (fn.params.len() > 0) {
                 var flags: string = "";
                 var any: boolean = false;
                 var pj: i32 = 0;
-                while (pj < funcs[i].params.len()) {
-                    if (!body_consume_unsafe_for(funcs[i].body, funcs[i].params[pj].name, borrowable, reg, [])) { flags = flags + "1"; any = true; }
+                while (pj < fn.params.len()) {
+                    if (!body_consume_unsafe_for(fn.body, fn.params[pj].name, borrowable, reg, [])) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
-                if (any) { next = borrow_reg_put(next, borrowable_key(funcs[i]), flags); }
+                if (any) { next = borrow_reg_put(next, borrowable_key(fn), flags); }
             }
-            i = i + 1;
         }
         reg = next;
         iter = iter + 1;
@@ -52272,8 +52165,7 @@ pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable:
 }
 pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
+    for fn in funcs {
         // Free functions are keyed by bare name; methods (lowered now) by the
         // qualified "<BaseType>.<method>" the call site dispatches to (a "." never
         // appears in a bare name, so the key spaces don't collide).
@@ -52291,20 +52183,20 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // width queries (is_i64_ret_fn / param_is_i64) never see it. A pure-u32
         // function (no i64 anywhere) is now registered too — its '3' ret flag is
         // the only thing consulted.
-        var retf: boolean = funcs[k].ret_type == "i64" || funcs[k].ret_type == "u64";
-        var retf32: boolean = funcs[k].ret_type == "u32";
+        var retf: boolean = fn.ret_type == "i64" || fn.ret_type == "u64";
+        var retf32: boolean = fn.ret_type == "u32";
         // A u8 RETURN flags '5'. Like u32 it does not widen anything (u8 is
         // i32-wide in a register), so a u8 PARAM still flags '0' and the width
         // queries never see it; it exists so is_u8_ret_fn can recover the
         // callee's SUB-WORD-ness at a call site. Without it expr_subword_kind
         // had no ExprCall arm to consult, so `f(x) +| g(y)` on u8-returning
         // functions clamped against i32 bounds and did not saturate at all.
-        var retf8: boolean = funcs[k].ret_type == "u8";
+        var retf8: boolean = fn.ret_type == "u8";
         var flags: string = "";
         var any: boolean = retf || retf32 || retf8;
         var pj: i32 = 0;
-        while (pj < funcs[k].params.len()) {
-            if (funcs[k].params[pj].type_name == "i64" || funcs[k].params[pj].type_name == "u64") { flags = flags + "1"; any = true; }
+        while (pj < fn.params.len()) {
+            if (fn.params[pj].type_name == "i64" || fn.params[pj].type_name == "u64") { flags = flags + "1"; any = true; }
             // An f64 PARAM flags '4'. It does not widen anything (f64 rides its
             // own lowering path, not lower_i64), so param_is_i64 — which matches
             // only '1' — never sees it; it exists so param_is_f64 can recover
@@ -52314,21 +52206,20 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // expected f64, found i32" (#4801). Registering the function on
             // this flag alone is why `any` is set here too — a function with an
             // f64 param and no 64-bit integer anywhere still needs an entry.
-            else if (is_f64_scalar_type_name(funcs[k].params[pj].type_name)) { flags = flags + "4"; any = true; }
+            else if (is_f64_scalar_type_name(fn.params[pj].type_name)) { flags = flags + "4"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
         if (any) {
             var rc: string = "0";
-            if (funcs[k].ret_type == "i64") { rc = "1"; }
-            else if (funcs[k].ret_type == "u64") { rc = "2"; }
-            else if (funcs[k].ret_type == "u32") { rc = "3"; }
-            else if (funcs[k].ret_type == "u8") { rc = "5"; }
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            if (fn.ret_type == "i64") { rc = "1"; }
+            else if (fn.ret_type == "u64") { rc = "2"; }
+            else if (fn.ret_type == "u32") { rc = "3"; }
+            else if (fn.ret_type == "u8") { rc = "5"; }
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key + "|" + rc + flags);
         }
-        k = k + 1;
     }
     return out;
 }
@@ -52363,10 +52254,8 @@ pub function fn_sigs_empty(): FnSigs {
 // arr_ret_fns for callers with no wider whole-program view to draw on.
 pub function array_ret_fn_names(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        if (is_array_type_name(funcs[k].ret_type)) { out = out.append(funcs[k].name); }
-        k = k + 1;
+    for fn in funcs {
+        if (is_array_type_name(fn.ret_type)) { out = out.append(fn.name); }
     }
     return out;
 }
@@ -52437,15 +52326,12 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
 // recovering it there would mean re-deriving the match shape per call.
 pub function trmc_consume_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        var fn: parser.FuncDecl = funcs[i];
+    for fn in funcs {
         if (trmc_eligible(fn, structs).len() > 0 && trmc_consume_safe(fn, structs)
                 && !trmc_name_taken_as_value(funcs, fn.name)) {
             var mp: i32 = trmc_matched_param(fn);
             if (mp >= 0) { out = out.append(fn.name + "|" + util.i32_to_string(mp)); }
         }
-        i = i + 1;
     }
     return out;
 }
@@ -52460,10 +52346,8 @@ pub function trmc_consume_fns_of(funcs: parser.FuncDecl[], structs: parser.Struc
 // is therefore refused the verdict outright rather than trusted not to be called
 // that way.
 function trmc_name_taken_as_value(funcs: parser.FuncDecl[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (tv_stmts(funcs[i].body, name)) { return true; }
-        i = i + 1;
+    for fn in funcs {
+        if (tv_stmts(fn.body, name)) { return true; }
     }
     return false;
 }
@@ -52817,10 +52701,8 @@ function rc_fe_is_builtin_enum(t: string): boolean {
 // resolved call type. Generic functions (`id[T](x: T): T`) are skipped — the
 // syntactic mirror can't instantiate the type parameter, so those stay "".
 function rc_fe_call_ret_type(funcs: parser.FuncDecl[], name: string): string {
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].name == name && funcs[i].type_params.len() == 0) { return funcs[i].ret_type; }
-        i = i + 1;
+    for fn in funcs {
+        if (fn.name == name && fn.type_params.len() == 0) { return fn.ret_type; }
     }
     return "";
 }
@@ -55588,9 +55470,8 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     // arena ceiling (#6074).
     var sg: FnSigs = fn_sigs_of(funcs, structs, array_ret_fn_names(funcs));
     var out: ir.LoweredFn[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], structs, sg, false);
+    for fn in funcs {
+        var r: LowerResult = lower_func(fn, structs, sg, false);
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
@@ -55599,12 +55480,11 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
         // bare "getx", so a method call missed and bailed. (The asm backends
         // re-derive the label from the FuncDecl directly, so they're unaffected
         // by this stored name.)
-        var fname: string = funcs[i].name;
-        if (funcs[i].receiver_type.len() > 0) {
-            fname = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
+        var fname: string = fn.name;
+        if (fn.receiver_type.len() > 0) {
+            fname = util.base_type_name(fn.receiver_type) + "." + fn.name;
         }
-        out = out.append(ir.LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots, i64_slots: r.i64_slots, f64_slots: r.f64_slots, str_slots: r.str_slots, ret_type: funcs[i].ret_type, alias_incs: r.alias_incs });
-        i = i + 1;
+        out = out.append(ir.LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots, i64_slots: r.i64_slots, f64_slots: r.f64_slots, str_slots: r.str_slots, ret_type: fn.ret_type, alias_incs: r.alias_incs });
     }
     return out;
 }
@@ -61410,9 +61290,7 @@ pub function move_arr_params_of(funcs: parser.FuncDecl[]): string[] {
     // Candidate function names first, so the scan below can recognise a call
     // to one (and a bare reference to one) in a single walk.
     var fnames: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var fk: parser.FuncDecl = funcs[k];
+    for fk in funcs {
         if (fk.receiver_type.len() == 0) {
             var reassigned: string[] = body_assign_targets(fk.body);
             var pj: i32 = 0;
@@ -61426,21 +61304,16 @@ pub function move_arr_params_of(funcs: parser.FuncDecl[]): string[] {
                 pj = pj + 1;
             }
         }
-        k = k + 1;
     }
     if (fnames.len() == 0) { return []; }
     // One scan of the whole program's statements.
     var marks: string[] = [];
-    var si: i32 = 0;
-    while (si < funcs.len()) {
+    for fn in funcs {
         var bi2: i32 = 0;
-        while (bi2 < funcs[si].body.len()) { marks = mv_scan_stmt(funcs[si].body[bi2], fnames, marks); bi2 = bi2 + 1; }
-        si = si + 1;
+        while (bi2 < fn.body.len()) { marks = mv_scan_stmt(fn.body[bi2], fnames, marks); bi2 = bi2 + 1; }
     }
     var out: string[] = [];
-    var k2: i32 = 0;
-    while (k2 < funcs.len()) {
-        var f2: parser.FuncDecl = funcs[k2];
+    for f2 in funcs {
         if (f2.receiver_type.len() == 0 && util.index_of_str(fnames, f2.name) >= 0) {
             var reassigned2: string[] = body_assign_targets(f2.body);
             var pj2: i32 = 0;
@@ -61458,7 +61331,6 @@ pub function move_arr_params_of(funcs: parser.FuncDecl[]): string[] {
                 pj2 = pj2 + 1;
             }
         }
-        k2 = k2 + 1;
     }
     return out;
 }
@@ -61470,11 +61342,9 @@ pub function move_arr_params_of(funcs: parser.FuncDecl[]): string[] {
 // array-typed params are eligible. Returned as "name|mask" entries for
 // functions with at least one '1'.
 pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
-    // masks[i] parallels funcs[i]: the working per-param mask.
+    // One mask per func, appended in order: the working per-param mask.
     var masks: string[] = [];
-    var k: i32 = 0;
-    while (k < funcs.len()) {
-        var fnk: parser.FuncDecl = funcs[k];
+    for fnk in funcs {
         var recvs: string[] = [];
         var si: i32 = 0;
         while (si < fnk.body.len()) { recvs = collect_append_recvs_stmt(fnk.body[si], recvs); si = si + 1; }
@@ -61487,7 +61357,6 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
             pj = pj + 1;
         }
         masks = masks.append(mask);
-        k = k + 1;
     }
     // Resolve the dying pass-through EDGES once — they are static across
     // fixpoint rounds (only masks change). Each edge says: caller e_fk's
