@@ -1455,6 +1455,96 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 			}
 		})
 	}
+
+	// Every row again, with main's body inside a lambda. See the comment on
+	// wrapMainBodyInLambda: this is the gate that makes "does the class of
+	// lambda-body holes still exist?" a count rather than a judgement.
+	applied := 0
+	for _, tc := range cases {
+		wrapped := wrapMainBodyInLambda(tc.src)
+		if wrapped == "" {
+			continue
+		}
+		applied++
+		t.Run("in-lambda/"+tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(checkerBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(wrapped))
+			got := driverCodes(runCheckerDriver(t, cmd, tc.name))
+			want := goCheckerCodes(t, dir, wrapped)
+			why, listed := lambdaBodyDivergences[tc.name]
+			switch {
+			case equalStrings(got, want) && listed:
+				t.Errorf("%s: listed as a lambda-body divergence (%s) but now AGREES with the Go checker (%v).\n"+
+					"    Remove it from lambdaBodyDivergences — an exception that no longer applies hides the next one.", tc.name, why, got)
+			case !equalStrings(got, want) && !listed:
+				t.Errorf("%s: in a lambda body the self-host reports %v, the Go checker %v.\n"+
+					"    A pass that walks statements and never enters an expression cannot see inside a lambda —\n"+
+					"    and a nested named function is one. Reach the body, or list the row with its owner.", tc.name, got, want)
+			}
+		})
+	}
+	if applied < 600 {
+		t.Errorf("lambda-body parity applied to only %d rows; the transform has stopped matching the corpus "+
+			"and this gate is passing vacuously", applied)
+	}
+}
+
+// ---- lambda-body parity ---------------------------------------------------
+//
+// A checker pass that walks STATEMENTS and never enters an expression cannot
+// see anything written inside a lambda body — and since a nested named function
+// parses as a StmtVar holding an ExprLambda, that means inside any local
+// function too. Six passes have had this hole (#7363, #7387, #7390, #7395,
+// #7410, and stmts_assign_diags here), each found one at a time.
+//
+// Finding them one at a time is the problem this gate solves. It reuses the
+// corpus above — every row whose main returns i32 and contains a return — and
+// re-runs it with main's BODY moved into a lambda. The diagnostics must not
+// change: a lambda is not a place where checks stop applying.
+//
+// Sizing matters. Eight hand-picked triggers put the differing count at 1 and
+// read as a closed class; the same transform over the whole corpus put it at
+// 37. Hand-picked rows cannot answer "is this class closed?" — a corpus can.
+var mainBodyRE = regexp.MustCompile(`(?s)function main\(\):\s*i32\s*\{(.*)\}\s*$`)
+
+// wrapMainBodyInLambda rewrites `function main(): i32 { BODY }` so BODY runs
+// inside a lambda main immediately calls. Returns "" when the row does not fit
+// the shape — a non-i32 main, or a body with no return to give the lambda.
+func wrapMainBodyInLambda(src string) string {
+	m := mainBodyRE.FindStringSubmatchIndex(src)
+	if m == nil {
+		return ""
+	}
+	body := src[m[2]:m[3]]
+	if !strings.Contains(body, "return") {
+		return ""
+	}
+	return src[:m[0]] + "function main(): i32 {\n    var __lam = function(): i32 {\n" +
+		strings.Trim(body, "\n") + "\n    };\n    return __lam();\n}\n"
+}
+
+// lambdaBodyDivergences are the rows whose diagnostics the self-host still
+// drops once the body moves into a lambda. Each is a KNOWN under-report with a
+// named owner, not a row that may quietly differ: the map is exact in both
+// directions, so a listed row that starts agreeing fails too and must be
+// removed. Emptying this map closes the class.
+var lambdaBodyDivergences = map[string]string{
+	"cap-assign-string":       "E049 — the cap-assign family; e049 reaches nested lambdas (#7363) but not a body-level one",
+	"cap-assign-array":        "E049 — same family",
+	"cap-assign-struct":       "E049 — same family",
+	"cap-assign-unann-string": "E049 — same family",
+	"cap-assign-unann-array":  "E049 — same family",
+	"cap-assign-unann-struct": "E049 — same family",
+	"cap-assign-unann-tuple":  "E049 — same family",
+	"own-self-reassign-ok":    "E051 — ow_stmts, the linear/own walk",
+	"own-kept-alive-bad":      "E051 — same pass",
+	"own-second-read-bad":     "E051 — same pass",
+	"e044-capture-void":       "E044 — the under-report already pinned in the sequence gate; needs a scoping decision",
 }
 
 func equalStrings(a, b []string) bool {

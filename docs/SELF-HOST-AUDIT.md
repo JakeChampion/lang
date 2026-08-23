@@ -404,8 +404,26 @@ findings. Ranked by leverage.
     E001 row lands on `vref_stmts`, which this row already lists as blocked for
     scope-threading, so that one is not a transcription either.
 
-    The corpus-wide sweep is the tool for this row: it is cheap, it is already
-    written, and it turns "is this class closed?" from a judgement into a count.
+    The corpus-wide sweep is now a GATE, not a script:
+    `TestSelfHostCheckerCodesX86_64` re-runs every applicable row with `main`'s
+    body inside a lambda and requires the two checkers to agree. The remaining
+    holes are listed by name in `lambdaBodyDivergences` with their owning pass,
+    and the map is exact in BOTH directions — a listed row that starts agreeing
+    fails too, so a stale exception cannot hide the next hole. It also fails if
+    the transform matches fewer than 600 rows, because a gate that quietly stops
+    matching reports success forever.
+
+    `stmts_assign_diags` closed 26 of the 37 (E001, E003, E008, E024) with no
+    new divergences — 618 agreeing rows became 644, and nothing that agreed
+    before stopped. **11 remain**, in three families:
+
+    | code | rows | pass | why it is not a transcription |
+    |---|---:|---|---|
+    | E049 | 7 | the `cap-assign-*` family | #7363 reached NESTED lambdas; a body-level one is a different entry point |
+    | E051 | 3 | `ow_stmts` | flow-sensitive `moved` set, the same blocker as `ru_expr` |
+    | E044 | 1 | `e044_stmts` | the under-report already pinned in the sequence gate; needs a scoping decision |
+
+    Emptying that map closes the class.
 
     **A collector can be fold-SHAPED and still be wrong to fold, because the
     spine's visit ORDER is not the consumer's.** `match_diags` was the strongest
