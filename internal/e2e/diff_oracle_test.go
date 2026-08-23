@@ -334,6 +334,17 @@ type divergence struct {
 var knownDivergences = map[divergence]string{}
 
 func TestDifferential_LangsmithMain(t *testing.T) {
+	// Before any seed: a run where every leg skips would report PASS
+	// having executed nothing (#7310).
+	available := requireDiffOracleBackends(t)
+	t.Logf("differential oracle legs available here: %s", describeLegs(available))
+
+	// And after: what each leg actually EXECUTED. The up-front check sees
+	// only the toolchain; a leg can be installed and still stop running
+	// per-seed, which is the same hollowing-out one step later.
+	tally := newDiffOracleTally(available)
+	t.Cleanup(func() { tally.check(t) })
+
 	shardIdx, shardCount := diffOracleShard(t)
 	seedCount := diffOracleSeeds(t)
 	for seed := uint64(0); seed < seedCount; seed++ {
@@ -345,9 +356,14 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenMain(seed)
 			expected := runInterpByteOrSkip(t, src)
+			// Past the interpreter, so every leg below is expected to run.
+			// Counted here rather than at the top of the loop because an
+			// interp gap skips the whole seed, legs included.
+			tally.seedCompared()
 
 			t.Run("arm64-linux", func(t *testing.T) {
 				d := runArm64Diag(t, src)
+				tally.legRan("arm64-linux")
 				if d.code != expected {
 					art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/arm64", seed), src, d)
 					sig := d.signal
@@ -360,6 +376,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			})
 			t.Run("x86_64", func(t *testing.T) {
 				d := runX86_64Diag(t, src)
+				tally.legRan("x86_64")
 				if d.code != expected {
 					art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/x86_64", seed), src, d)
 					sig := d.signal
@@ -384,6 +401,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 					t.Skipf("known divergence, see %s — remove this entry when it is fixed", issue)
 				}
 				got := compileAndRunWasmbinMain(t, src)
+				tally.legRan("wasmbin")
 				if got != expected {
 					t.Errorf("wasmbin result=%d, interp=%d\nsrc:\n%s", got, expected, src)
 				}
