@@ -3258,9 +3258,17 @@ order being "independently unsound", is superseded. The LEAK half (cause 1,
 the escape taint) is still open, and the load leak this section set out to
 explain is unchanged by the fix.
 
-**Four leak shapes characterised, two causes found, and both fixes proven
-UNSOUND (2026-07-29). The LEAK half is still unfixed — read this before trying
-again; the ORDER half is answered by the header above.**
+**RESOLVED, the LEAK half (2026-08-23, #7345).** `escapeOwned` no longer taints
+a source the sink RETAINS: it taints only what a sink stores uncounted
+(`dyn Trait`, which `needsRcIncOnAlias` declines). A counted source keeps a
+reference of its own, so it stays reclaimable, and the container's deep drop
+releases the dup — the rule `ArrayLit` elements always had. The 2026-07-29
+verdict below ("both fixes proven UNSOUND") was measured against the ORDER half
+landing alongside it and against a tree whose `computeConsumedParams` still
+under-counted enum params; on today's tree the taint half stands alone and is
+green, including the whole-compiler `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`
+and every test in that section's failure signature. Keep the shape table and the
+refuted hypotheses below — they are still the map of this area.
 
 Probing out from this section's probe found four distinct shapes that strand
 elements, measured with `FERN_LEAKCHECK=1` on x86-64:

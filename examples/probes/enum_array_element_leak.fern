@@ -9,30 +9,15 @@
 // allocs should equal frees. Measured on the native x86-64 backend:
 //
 //   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/enum_array_element_leak.fern
-//   /tmp/p    # stderr: leakcheck: allocs=19024 frees=13024 live_bytes=192000
+//   /tmp/p    # stderr: leakcheck: allocs=19024 frees=19024 live_bytes=0
 //
-// 68.5% freed — ~3000 blocks leaked per 5000 elements, per round. Watch the
-// FREED FRACTION, not live_bytes: it is scale-free, so it says immediately
-// whether a change moved anything. RSS hid this class of leak three separate
-// times in the doc's earlier entries.
-//
-// MECHANISM (2026-07-29), and why the obvious fix is WRONG. The leaked
-// reference is the enum payload's: computeFreeEligible taints a direct-Ident
-// source at an INC-ing sink (escapeOwned), on the grounds that
-// markConstructionMoves transfers it instead of inc'ing — but that move only
-// fires under its dominance guards, which never hold inside a loop body, so
-// the payload inc fires and the taint suppresses the source's release.
-//
-// Removing that taint DOES take this probe to 100% freed, passes the whole
-// non-e2e suite — and is UNSOUND: TestSelfHostLoadFixpointX86_64 segfaults
-// with it and passes on main. So does the unrelated-looking drop-ORDER fix for
-// the sibling `var e = out[0]` shape. What the taint and the declaration-order
-// sweep protect beyond the exit sweep is not yet identified. Full bisect table
-// and the refuted hypotheses: docs/SELFHOST-AST-RETIREMENT.md, "Four leak
-// shapes characterised". Do not re-derive the leak; find what breaks.
+// 100% freed (it read 68.5% while the shape was open). Watch the FREED
+// FRACTION, not live_bytes: it is scale-free, so it says immediately whether a
+// change moved anything. RSS hid this class of leak three separate times in the
+// doc's earlier entries.
 //
 // Exit code is 4 either way ((2 rounds x (5000 % 7)) % 5), so it is not the
-// signal. Fixed = allocs equals frees.
+// signal. Clean = allocs equals frees.
 
 enum Tok { Ident(string), Eof }
 

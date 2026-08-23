@@ -5177,6 +5177,38 @@ function main(): i32 {
     return (t - 119) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A container literal built from a bare-ident source that STAYS LIVE
+		// afterwards: the construction retains the buffer, so the box and the
+		// local are co-owners and each release must land exactly once. The
+		// discarded-statement form runs the box's drop first, which is what
+		// separates the two releases; the bound form and the escaping form
+		// exercise the other two orders. 4 rounds × (2i+1) summed = 16.
+		name: "construction_source_stays_live",
+		src: `
+struct Holder { a: i32[], b: i32[] }
+function escaping(i: i32): (i32[], i32[]) {
+    var xs: i32[] = [i, i + 1];
+    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    var guard: i32 = xs[1];
+    if (guard < 0) { return (xs, xs); }
+    return t;
+}
+function round(i: i32): i32 {
+    var xs: i32[] = [i, i + 1];
+    (xs, [i + 2, i + 3]);
+    Holder { a: xs, b: [i + 2, i + 3] };
+    var bound: Holder = Holder { a: xs, b: [i + 2, i + 3] };
+    var esc: (i32[], i32[]) = escaping(i);
+    return xs[0] + xs[1] + bound.a[0] - bound.a[0] + esc.0[0] - esc.0[0];
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { acc = acc + round(i); i = i + 1; }
+    return (acc - 16) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
