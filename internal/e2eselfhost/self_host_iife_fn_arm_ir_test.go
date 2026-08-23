@@ -13,23 +13,22 @@ import (
 // `return (match (e) { A => <lambda>, B => <lambda> })`.
 //
 // A value-position if/match parses as an IIFE (`ExprCall{callee: ExprLambda{
-// params: [], body: [StmtIf|StmtMatch]}}`), and whether its arms are ever
-// reached used to depend on something unrelated to the arms: lift_call_arg
-// hoists a NO-CAPTURE IIFE to a top-level `__lam_N` FuncDecl, and BECOMING a
-// FuncDecl is what gets the body walked by every later pass. A CAPTURING IIFE
-// was left in place, lower_iife lowered its arms inline in the enclosing
-// function, and no lift pass ever saw them — so an arm lambda reached
-// lower_expr bare and asked for a `<cur_fn>$clo` nothing had built. The module
-// bailed with "function value <fn>$clo not defined" (#6256).
+// params: [], body: [StmtIf|StmtMatch]}}`) whose arms are STATEMENTS inside an
+// expression, so no lift pass reached them: an arm lambda arrived at lower_expr
+// bare and asked for a `<cur_fn>$clo` nothing had built, and the module bailed
+// with "function value <fn>$clo not defined" (#6256).
 //
-// The fix hoists the capturing IIFE too, taking its captures as ORDINARY
-// PARAMETERS — an IIFE is applied immediately, so its captures need no env box.
-// The call that replaces it is a plain fn-value-returning call, which is what
-// makes the RESULT usable: boxing only the arms left the destination unmarked,
-// so `w(3)` bare-dispatched a box and SIGSEGV'd.
+// The fix hoists the IIFE to a real top-level function taking its captures as
+// ORDINARY PARAMETERS — an IIFE is applied immediately, so its captures need no
+// env box. The call that replaces it is a plain fn-value-returning call, which
+// is what makes the RESULT usable: boxing only the arms left the destination
+// unmarked, so `w(3)` bare-dispatched a box and SIGSEGV'd.
 //
-// nocapture-iife-unchanged is the regression guard for the other side: a
-// no-capture IIFE must keep taking the `__lam_N` path exactly as before.
+// The hoist runs whether or not the IIFE captures. A no-capture one used to be
+// left to lift_call_arg's `__lam_N` hoist instead, which is NOT equivalent — the
+// worklist drain withholds the `return <lambda>` desugar from lifted bodies
+// (#5281), so the arm never became a boxed closure local and stayed a raw fn
+// pointer (#7438, the nocapture-* cases below).
 var iifeFnArmCases = []struct {
 	name string
 	src  string
@@ -45,9 +44,30 @@ var iifeFnArmCases = []struct {
 	// A match-EXPRESSION with lambda arms RETURNED from a function, the result
 	// bound and called by the caller.
 	{"matchexpr-lambda-arms-returned", "enum Status { Active, Inactive } function gen(p1: Status): (i32) => i32 { return (match (p1) { Active => ((a: i32) => 5), Inactive => ((c: i32) => 72) }); } function main(): i32 { var f: (i32) => i32 = gen(Status.Inactive); return f(7); }", 72},
-	// Regression guard: a NO-CAPTURE IIFE (constant condition, no free vars)
-	// must keep taking the existing `__lam_N` hoist, untouched by the new path.
-	{"nocapture-iife-unchanged", "function main(): i32 { var w: (i32) => i32 = (if (true) { ((a: i32) => 89) } else { ((b: i32) => b) }); return w(3); }", 89},
+	// A NO-CAPTURE IIFE (constant condition, no free vars), bound and called
+	// straight away.
+	{"nocapture-iife-called-directly", "function main(): i32 { var w: (i32) => i32 = (if (true) { ((a: i32) => 89) } else { ((b: i32) => b) }); return w(3); }", 89},
+
+	// #7438 — the no-capture half of the same fork. Such an IIFE used to be
+	// hoisted to a bare `__lam_N` FuncDecl instead, and the worklist drain
+	// withholds the `return <lambda>` desugar from lifted bodies (#5281) — the
+	// very rewrite that turns an arm lambda into a boxed closure local. So the
+	// arm stayed a raw fn POINTER. The case above survived it because main read
+	// that pointer and called it; the crash needed the value to reach a SECOND
+	// closure, which dispatches its captured fn value env-first and so loaded a
+	// "box slot 0" out of the arm function's first code bytes and jumped through
+	// it. Reduced from fernsmith seed 73.
+	{"nocapture-iife-arms-captured-by-closure", "function main(): i32 { var v1: (i32) => i32 = (if (true) { ((a: i32) => 5i32) } else { ((b: i32) => 26i32) }); var v4: (i32) => i32 = ((y: i32) => v1(y)); return v4(3i32) & 63i32; }", 5},
+	{"nocapture-iife-arms-else-branch-captured", "function main(): i32 { var v1: (i32) => i32 = (if (false) { ((a: i32) => 5i32) } else { ((b: i32) => 26i32) }); var v4: (i32) => i32 = ((y: i32) => v1(y)); return v4(3i32) & 63i32; }", 26},
+	// The match-expression spelling, which already boxed; here so the two
+	// spellings stay pinned together.
+	{"nocapture-matchexpr-arms-captured-by-closure", "enum S { A, B } function main(): i32 { var v1: (i32) => i32 = (match (S.A) { A => ((x: i32) => 7i32), B => ((y: i32) => 26i32) }); var v4: (i32) => i32 = ((z: i32) => v1(z)); return v4(3i32) & 63i32; }", 7},
+	// The result reaching its binding through an erased-generic PASSTHROUGH.
+	// Hoisting the IIFE makes the init `id(<closure-returning call>)`, and the
+	// closure-local marking reads the ARGUMENT, so the box has to be recognised
+	// there too — otherwise `v1(3)` bare-calls the box pointer as code.
+	{"nocapture-iife-arms-through-passthrough", "function id[T](x: T): T { return x; } function main(): i32 { var v1: (i32) => i32 = id((if (true) { ((a: i32) => 5i32) } else { ((b: i32) => 26i32) })); return v1(3i32) & 63i32; }", 5},
+	{"nocapture-iife-arms-through-passthrough-captured", "function id[T](x: T): T { return x; } function main(): i32 { var v1: (i32) => i32 = id((if (true) { ((a: i32) => a) } else { ((b: i32) => 26i32) })); var v4: (i32) => i32 = ((y: i32) => v1(v1(y))); return v4(9i32) & 63i32; }", 9},
 
 	// #6323 — the DESTINATION half. The arms above are lambdas, which the
 	// #6256 hoist turns into a call whose result a binding already dispatches
@@ -148,9 +168,11 @@ var iifeFnArmCases = []struct {
 	{"arm-array-iife-element-payload-capture", "function main(): i32 { var v2: Option[i32] = Some(5i32); var xs: ((i32) => i32)[] = [((z: i32) => z), (match (v2) { Some(p) => ((x: i32) => (x + p)), None => ((y: i32) => y) })]; return xs[1i32](2i32) & 63i32; }", 7},
 	{"struct-field-iife-arms", "struct H { f: (i32) => i32 } function main(): i32 { var n: i32 = 4i32; var h: H = H { f: (if (true) { ((x: i32) => (x + n)) } else { ((y: i32) => y) }) }; return h.f(3i32) & 63i32; }", 7},
 	{"call-arg-iife-arms", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { var n: i32 = 6i32; return apply((if (true) { ((x: i32) => (x + n)) } else { ((y: i32) => y) }), 3i32) & 63i32; }", 9},
-	// The guard on the other side: an IIFE element whose arms capture NOTHING
-	// leaves the array on the bare fn-pointer representation, elements and all.
-	{"arm-array-iife-element-nocapture-unchanged", "function main(): i32 { var xs: ((i32) => i32)[] = [((a: i32) => (a + 1i32)), (if (true) { ((x: i32) => (x * 2i32)) } else { ((y: i32) => y) })]; return (xs[0i32](1i32) + xs[1i32](3i32)) & 63i32; }", 8},
+	// An IIFE element whose arms capture NOTHING. The IIFE still yields a box
+	// (the hoist is unconditional), so the array must move to the env-first
+	// representation WITH it — the sibling bare `__lam_N` element beside a boxed
+	// one is #5071 in the other direction, and it exits -1.
+	{"arm-array-iife-element-nocapture", "function main(): i32 { var xs: ((i32) => i32)[] = [((a: i32) => (a + 1i32)), (if (true) { ((x: i32) => (x * 2i32)) } else { ((y: i32) => y) })]; return (xs[0i32](1i32) + xs[1i32](3i32)) & 63i32; }", 8},
 
 	// The lambda-returning-lambda the tail-return hoist owns: the per-entry
 	// desugar must leave it alone (#5281 regressed exactly this shape).

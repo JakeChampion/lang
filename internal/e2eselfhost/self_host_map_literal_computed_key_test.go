@@ -1,7 +1,9 @@
 package e2eselfhost
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,13 +19,20 @@ import (
 // compared the integer keys through `__fern_str_eq`, dereferencing them as
 // pointers. Nothing had to read the map — building it was enough.
 //
-// Two fixes stack here. The syntactic one walks each key down to a decisive
+// Three fixes stack here. The syntactic one walks each key down to a decisive
 // leaf (`(1 + 1)`, a cast's target) and takes the first key that answers.
 // It cannot answer for a call, a field access or an `if` expression — the
 // parser has no types — so the structural one reads the DECLARATION instead:
 // a `var m: Map[i32, i32] = …` annotation reaches parse_map_lit as
 // `Par.map_kind` and picks the constructor outright, and the guess is only
 // consulted where there is no annotation.
+//
+// That annotation describes ONE literal, and plenty of literals have none of
+// their own — a sibling literal in the same initialiser, a `return`, a call
+// argument, a struct-field value. The third fix is in irlower, where the types
+// the parser lacks are in hand: a key argument that is provably an integer
+// overrides the constructor's spelling (#7438). Evidence only — a key it cannot
+// type keeps whatever the constructor said, so a string key is never flipped.
 //
 // The hint reaches a LITERAL only. A hand-written `map_new(8).insert(1, 10)`
 // chain keeps the constructor its author wrote, so asmcore's E038 gate on it
@@ -132,6 +141,63 @@ function main(): i32 {
     var m = Map { (1i32 + 1i32): 7i32 };
     return m.get_or(2i32, 0i32) + m.len();
 }`},
+
+	// #7438 — the declaration reaches ONE literal, so neither of the fixes
+	// above covers a literal with no annotation of its own. irlower resolves
+	// the kind from the key ARGUMENT's type instead, which is the answer the
+	// parser could not give; the constructor spelling is kept wherever no key
+	// carries positive integer evidence, so a string key is never flipped.
+	//
+	// Two literals in ONE initialiser: the first consumes `Par.map_kind` and
+	// the second falls back to `map_new`. Reduced from fernsmith seed 393.
+	// 6 + 4 + 2 = 12.
+	{"sibling_literals_one_initialiser", `import "core/map";
+function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+function main(): i32 {
+    var k0: i32 = 144i32;
+    var k1: i32 = 145i32;
+    var m: Map[i32, i32] = pick(false, Map { k0: 1i32 }, Map { k0: 6i32, k1: 4i32 });
+    return m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len();
+}`},
+	// The three positions that carry no `var` annotation at all. Each builds
+	// string-keyed and SIGSEGV's on the second insert's compare.
+	{"ident_keys_in_return_position", `import "core/map";
+function mk(k0: i32, k1: i32): Map[i32, i32] { return Map { k0: 6i32, k1: 4i32 }; }
+function main(): i32 {
+    var m: Map[i32, i32] = mk(144i32, 145i32);
+    return m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len();
+}`},
+	{"ident_keys_as_call_argument", `import "core/map";
+function take(m: Map[i32, i32]): i32 { return m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len(); }
+function main(): i32 {
+    var k0: i32 = 144i32;
+    var k1: i32 = 145i32;
+    return take(Map { k0: 6i32, k1: 4i32 });
+}`},
+	{"ident_keys_in_struct_field", `import "core/map";
+struct S { m: Map[i32, i32] }
+function main(): i32 {
+    var k0: i32 = 144i32;
+    var k1: i32 = 145i32;
+    var s: S = S { m: Map { k0: 6i32, k1: 4i32 } };
+    return s.m.get_or(144i32, 0i32) + s.m.get_or(145i32, 0i32) + s.m.len();
+}`},
+	// Three entries, so the constructor's own hint is exercised past the first
+	// compare as well. 1 + 2 + 3 + 3 = 9.
+	{"param_keys_read_back_after_grow", `import "core/map";
+function mk(a: i32, b: i32, c: i32): Map[i32, i32] { return Map { a: 1i32, b: 2i32, c: 3i32 }; }
+function main(): i32 {
+    var m: Map[i32, i32] = mk(10i32, 20i32, 30i32);
+    return m.get_or(10i32, 0i32) + m.get_or(20i32, 0i32) + m.get_or(30i32, 0i32) + m.len();
+}`},
+	// The direction the evidence rule must never flip: string-typed ident keys
+	// in the same un-annotated position stay string-keyed.
+	{"ident_string_keys_stay_string", `import "core/map";
+function mk(k0: string, k1: string): Map[string, i32] { return Map { k0: 6i32, k1: 4i32 }; }
+function main(): i32 {
+    var m: Map[string, i32] = mk("ab", "cd");
+    return m.get_or("ab", 0i32) + m.get_or("cd", 0i32) + m.len();
+}`},
 }
 
 // TestSelfHostMapLiteralComputedKeyIR_X86_64 pins the desugared constructor's
@@ -168,6 +234,54 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle) — a map literal with a "+
 					"computed key built itself with the wrong key kind", tc.name, code, want)
+			}
+		})
+	}
+}
+
+// TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus.
+// Not a duplicate of the x86-64 one: the key kind rides op_map_new as well as
+// op_map_set, and on wasm that op picks between two DIFFERENT map
+// representations ($__fern_map_new vs $__fern_map_new_str), where the register
+// backends share one constructor and read the kind only at the compare. A
+// constructor that disagrees with its inserts is invisible on x86-64 and fatal
+// here.
+func TestSelfHostMapLiteralComputedKeyWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range mapLiteralComputedKeyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := interpExit(t, interpBin, tc.src)
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.name, err)
+			}
+			watFile := filepath.Join(dir, "maplitkey_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			rcmd := exec.Command("wasmtime", "run", watFile)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != want {
+				t.Errorf("%s exited %d, want %d (interp oracle) — a map literal built "+
+					"itself with the wrong key kind", tc.name, got, want)
 			}
 		})
 	}
