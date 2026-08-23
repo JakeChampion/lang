@@ -153,6 +153,17 @@ fall-through.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **No differential emits a float math call at all** — `pow`, `log`, `exp`,
+  `sin`, `cos` and `sqrt` each appear ZERO times in both
+  `internal/e2e/numeric_property_test.go` and
+  `internal/fernsmith/fernsmith.go`, so the numeric-property
+  sweep — the one built for "float arithmetic and float↔int conversions" —
+  cannot express a call to any of them, and neither can the fernsmith corpus.
+  #6405 is what that costs: compiled `2.0.pow(65.0)` disagrees with the
+  interpreter by several ULP on an exactly-representable value, on all three
+  backends, and had to be found by hand. Anything you want gated about a
+  transcendental needs a written case; a green sweep says nothing about them.
+
 - **The ORDER of the self-host checker's diagnostics, and how many times it
   reports the same code.** Every gate over checker output reduces to a set
   before comparing: the codes differential
