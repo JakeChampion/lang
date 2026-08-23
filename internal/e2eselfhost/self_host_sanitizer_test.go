@@ -13,12 +13,12 @@ import (
 // FERN_LEAKCHECK / FERN_RC_TRACE precedent), so the flag goes to the
 // driver process, not to the program it produces.
 //
-// This backend's half of the mode is the leak census plus the rc
-// over-release report. Two deliberate gaps versus native, both honest
-// subsets rather than silently-different behaviour: no use-after-free
-// quarantine (the free sites would each need poisoning), and no
-// backtrace under the report (there is no __fern_report equivalent
-// here, so the message is the whole diagnostic). Both are recorded on
+// This backend's half of the mode is the leak census, the rc
+// over-release report, and the use-after-free quarantine (the
+// RcFreeDebug port — self_host_uaf_quarantine_test.go). One deliberate
+// gap versus native, an honest subset rather than silently-different
+// behaviour: no backtrace under the report (there is no __fern_report
+// equivalent here, so the message is the whole diagnostic). Recorded on
 // sanitize_on in asm_ir.fern.
 //
 // What must NOT differ is the text and the exit status: a
@@ -62,11 +62,16 @@ const sanSelfHostLeakSrc = `function main(): i32 {
 }`
 
 // sanSelfHostDoubleFreeSrc over-releases deliberately: __alloc_u8 hands
-// back an rc==1 buffer, the first __rc_dec takes it to 0, and the second
-// sees a non-positive count — the shape __rc_underflow_count() and
-// util.rc_underflow_guard already watch for. Under the sanitizer that
-// stops being a counter read after the fact and becomes a fatal report
-// at the offending dec.
+// back an rc==1 buffer and __rc_dec is dec'd twice. In THIS runtime
+// __rc_dec maps to the freeing __fn___fern_arr_dec, so the first dec
+// reclaims the block and — under the quarantine the sanitizer implies —
+// poisons its rc word; the second dec then touches a quarantined block
+// and dies with the use-after-free report. (Native's plain __fern_rc_dec
+// never frees, so the same source there leaves rc at 0 and reports the
+// over-release text instead — an intrinsic-semantics difference like the
+// __free-is-a-no-op one above, not a diagnostic divergence: both texts
+// are byte-identical across backends, and each fires for the mechanism
+// that actually happened in its runtime.)
 const sanSelfHostDoubleFreeSrc = `function main(): i32 {
     var a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -154,8 +159,11 @@ func TestSelfHostSanitizeDoubleFreeReportedX86_64(t *testing.T) {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, sanExitStatus)
 	}
 	// Byte-for-byte the native backends' text — this is the assertion
-	// that keeps "build it with -sanitize" meaning one thing.
-	if !strings.Contains(stderr, "fern-sanitizer: rc over-release (double free)\n") {
+	// that keeps "build it with -sanitize" meaning one thing. The
+	// quarantine (the RcFreeDebug port) catches the re-free at the
+	// poison it left, one instruction before the underflow test would
+	// have seen a zero that no longer exists.
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 		t.Errorf("stderr does not carry the diagnostic: %q", stderr)
 	}
 }
