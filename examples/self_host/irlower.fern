@@ -713,6 +713,20 @@ pub function (s: LowerState) note_moved_elided(slot: i32): LowerState {
     return LowerState { ...s, moved_elided: s.moved_elided.append(slot) };
 }
 
+// drop_reclaim_row removes one exact credit row. Used by the move-on-alias
+// struct clause: a move transfers the SOURCE's whole release role to the
+// alias, so the alias's box-only "NODEEP:" marker is dropped and its exit
+// drop takes the deep field walk the source would have run.
+pub function (s: LowerState) drop_reclaim_row(row: string): LowerState {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        if (s.reclaimable_names[i] != row) { out = out.append(s.reclaimable_names[i]); }
+        i = i + 1;
+    }
+    return LowerState { ...s, reclaimable_names: out };
+}
+
 // with_selfrebind marks (or clears, with "") the local whose self-rebind literal
 // is being lowered. See the field's comment on LowerState.
 pub function (s: LowerState) with_selfrebind(name: string): LowerState {
@@ -19136,7 +19150,25 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // exactly the one that costs the most to find later. Constants are
             // already safe by a different mechanism: a static box carries a
             // NEGATIVE rc sentinel, which rc_inc's `js` test declines.
-            else if (slot_is_reclaimable_struct(se, aid_slot)) { alias_inc = true; }
+            else if (slot_is_reclaimable_struct(se, aid_slot)) {
+                // Move-on-alias, struct limb: at the source's last top-level
+                // mention the bind transfers the reference. Structs are the
+                // class whose release is NOT just the box dec — under
+                // duplication the alias holds box-only "NODEEP:" and the
+                // source keeps the deep field walk. A move elides the
+                // source's release entirely (note_moved_elided; the struct
+                // sweep loop skips it), so the alias INHERITS the source's
+                // release role: its "NODEEP:" row is dropped and its exit
+                // drop runs the one field walk — unless the source itself
+                // was box-only (its fields moved out), in which case the
+                // alias stays box-only too.
+                if (se.moves_local_at(id.name, v.line, v.col)) {
+                    if (!reclaim_has(se.reclaimable_names, "NODEEP:", se.reclaim_site_key(aid_slot))) {
+                        se = se.drop_reclaim_row("NODEEP:" + reclaim_site_key_of(v.name, v.line, v.col));
+                    }
+                    se = se.note_moved_elided(aid_slot);
+                } else { alias_inc = true; }
+            }
         },
         parser.ExprFieldAccess(sfa) => {
             // An ARRAY-OF-ARRAY field read (`var rows = a.xs`, xs: i32[][]): the
@@ -24917,7 +24949,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         // A scoped slot deep-drops only when the move scan could type-check it.
         var scoped_deep_ok: boolean = scoped_credit
             && reclaim_has(st.reclaimable_names, "FLDCHECKED:", st.reclaim_site_key(j));
-        if (!slot_list_has(keeps, j) && (live_credit || scoped_credit)) {
+        if (!slot_list_has(keeps, j) && !slot_list_has(st.moved_elided, j) && (live_credit || scoped_credit)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
             // A BLOCK-SCOPED slot (credit reached only through the retired name) takes
