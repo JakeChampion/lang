@@ -1528,8 +1528,22 @@ from a parameter typed as the struct. Native scopes the same lookup (#6118).
 `type_from_name_erasing_tparams` is the fix: a spelling written inside a
 function that declares type parameters resolves those names to unknown — the
 partial type system's erasure of a type variable — rather than to a declared
-type sharing the name. It feeds the three places a function's own spellings are
-resolved: `collect_func_sigs`, `collect_method_sigs`, and `build_func_scope`.
+type sharing the name. It feeds the signature tables (`collect_func_sigs`,
+`collect_method_sigs`), the body scope (`build_func_scope`), and `Scope`'s own
+`resolve_type`, which is what every spelling read while walking a body goes
+through: a `var` annotation, a lambda's parameter or return, a cast. Three sites
+were not enough — `var acc: T = T.zero()` inside `sum[T: Add + Zero]` recaptured
+the parameter one statement inside the body it had been erased out of.
+
+Call-site return inference had the same defect from the other end.
+`gc_is_typevar_name` asked "does this name resolve to nothing", which is exactly
+the question a same-named struct answers wrongly, and the substitution then fell
+back to resolving an unbound `T` by name — handing `sort_by(arr, cmp)` a
+concrete `T[]` result and an E002 against its `string[]` destination. `FuncSig`
+now carries the callee's declared parameters, so a name is a variable because
+the callee declared it, and one no argument bound stays unknown. The
+resolves-to-nothing test survives as the fallback for the unbounded parameters
+`parse_func_decl` drops from a decl (it keeps the bounded and promoted ones).
 
 ### Measured outcome
 
