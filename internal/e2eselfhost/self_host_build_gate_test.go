@@ -109,11 +109,55 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 		},
 		{
 			// A valid i64 program compiles. This drew a spurious E043 when the
-			// checker ignored integer width, which is why E043 was excluded;
-			// #7011 closed that, and both checkers are now silent here. The
-			// case stays as the regression guard for the width rule.
+			// checker ignored integer width; #7011 closed that, and both
+			// checkers are now silent here. The case stays as the regression
+			// guard for the width rule.
 			name:     "i64-program-compiles",
 			src:      "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 9i64; var b: i64 = 3i64; return (a / b) as i32; }\n",
+			wantDiag: "",
+		},
+		{
+			// #7380: a stdlib method called without the import that makes it
+			// visible. There is no prelude injector (docs/PRELUDE-TO-MODULES.md)
+			// — a program sees only what it imports — and native says so with
+			// E043 naming the import to add. The self-host checker said it too;
+			// only the gate did not, so the missing import compiled into a
+			// working binary and the mistake surfaced somewhere else entirely.
+			// One case per receiver kind, because the three take different
+			// resolution arms: scalar, array, string.
+			name:     "unimported-i32-method-E043",
+			src:      "function main(): i32 { var t: string = 7.to_string(); return t.len(); }\n",
+			wantDiag: "error[E043]",
+		},
+		{
+			name:     "unimported-array-method-E043",
+			src:      "function main(): i32 { var xs: string[] = [\"ab\", \"cd\"]; var t: string = xs.join(\",\"); return t.len(); }\n",
+			wantDiag: "error[E043]",
+		},
+		{
+			name:     "unimported-string-method-E043",
+			src:      "function main(): i32 { var s: string = \"aXb\"; var t: string = s.replace(\"X\", \"Y\"); return t.len(); }\n",
+			wantDiag: "error[E043]",
+		},
+		{
+			// The negative control for the three rows above, and the reason
+			// they are not a spelling check: with the import the same calls are
+			// valid, so a rule that rejected on the method NAME rather than on
+			// what is in scope would fail here.
+			name:     "imported-stdlib-methods-compile",
+			src:      "import \"std/i32\";\nimport \"std/array\";\nimport \"std/string\";\nfunction main(): i32 { var t: string = 7.to_string(); var xs: string[] = [\"ab\", \"cd\"]; var j: string = xs.join(\",\"); var r: string = \"aXb\".replace(\"X\", \"Y\"); return t.len() + j.len() + r.len(); }\n",
+			wantDiag: "",
+		},
+		{
+			// A user type sharing a name with a stdlib generic's type PARAMETER.
+			// Modules are merged into one program before checking, so `struct T`
+			// otherwise captured every `[T]` in the stdlib and its bodies read
+			// `a.cmp(b)` as a field of that struct — 46 spurious E043s on this
+			// program alone, which is what kept E043 off the gate. Native scopes
+			// the lookup (#6118); the self-host now erases a function's own type
+			// parameters when it resolves a spelling.
+			name:     "type-param-name-collision-compiles",
+			src:      "import \"std/array\";\nstruct T { z: i32 }\nstruct K { a: i32 }\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; var t: T = T { z: xs.sum() }; var k: K = K { a: xs.len() }; return t.z + k.a; }\n",
 			wantDiag: "",
 		},
 		{

@@ -1498,6 +1498,67 @@ back to their single pre-existing E064.
 
 E043's false positives drop from nine files to one — width was the cause of the
 other eight. The one that remains (`type_param_name_collision`) is a
-generic-parameter problem unrelated to width, so **E043 stays in
-`is_partial_checker_gap_code`**; deleting that line needs the collision case
-fixed first.
+generic-parameter problem unrelated to width; the section below is where it and
+E043's exclusion end.
+
+## 2026-08-23 — a type parameter stops being captured by a same-named type, and E043 gates (#7380)
+
+Three stdlib methods called WITHOUT the import that makes them visible —
+`7.to_string()` (std/i32), `xs.join(",")` (std/array), `s.replace("X", "Y")`
+(std/string) — compiled to a working binary on the self-host while native and
+interp both reported E043. There is no prelude injector
+(`docs/PRELUDE-TO-MODULES.md`): a program sees only what it imports.
+
+The self-host CHECKER was not the divergence. It reports E043 on all three, at
+`-check`, and has for as long as the method-existence arms have existed. What
+diverged is the BUILD gate: E043 sat in `is_partial_checker_gap_code`, so the
+verdict never reached `-target`. Every self-host exit was CORRECT — `"7".len()`
+is 1 — which is why nothing that compares outputs could see it.
+
+### What kept E043 off the gate
+
+One false-positive class, and it is not about methods at all. Modules are merged
+into one program before checking, so a user `struct T` — or an enum variant `T`,
+which registers as one — collided with the type PARAMETER `T` that stdlib
+generics declare. `min[T: Ord](a: T, b: T)` bound `a` to that struct, and
+`b.cmp(a)` became a field read on it: 46 spurious E043s on
+`conformance/cases/type_param_name_collision` alone, plus the E038s that follow
+from a parameter typed as the struct. Native scopes the same lookup (#6118).
+
+`type_from_name_erasing_tparams` is the fix: a spelling written inside a
+function that declares type parameters resolves those names to unknown — the
+partial type system's erasure of a type variable — rather than to a declared
+type sharing the name. It feeds the three places a function's own spellings are
+resolved: `collect_func_sigs`, `collect_method_sigs`, and `build_func_scope`.
+
+### Measured outcome
+
+Same four-corpus sweep as #6961, run before and after:
+
+| corpus | E043 false-positive files before | after |
+|---|---|---|
+| `conformance/cases` | 2 (`type_param_name_collision`, `tuple_variant_payload_subpattern`) | 0 |
+| `examples/` + `internal/stdlib` + `spec/` | 0 | 0 |
+| the 512 fernsmith differential seeds | 0 | 0 |
+| `examples/self_host` (checked as `fern.fern`, the way `make check-sources` does) | 0 | 0 |
+
+The compiler's own sources draw exactly one diagnostic from their own checker —
+the pre-existing E064 — so the bootstrap never depended on the laxity and
+nothing in the tree needed an import added.
+
+Checking a self-host or stdlib module FILE on its own is not the same
+measurement and does not belong in this sweep: it draws E006 for the missing
+`main` and resolves nothing its entry point would have imported. `fern.fern`
+and `tools/stdlib_check.sh` are the entry points those two corpora are checked
+through.
+
+The exclusion list is now eighteen codes:
+
+```
+E001 E009 E013 E018 E019 E021 E024 E031 E034 E036
+E038 E040 E041 E042 E044 E051 E052 E064
+```
+
+E038's count also drops with the same fix (the collision typed a generic
+parameter as the struct, so every call against it mismatched), but it still
+false-positives elsewhere and stays excluded.

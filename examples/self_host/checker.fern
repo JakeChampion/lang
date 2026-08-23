@@ -3099,11 +3099,11 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
     var pbnd: string[] = [];
     var ptn: string[] = [];
     for param in fd.params {
-      pts = pts.append(type_from_name_with_structs_unions(param.type_name, structs, unions));
+      pts = pts.append(type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(param.type_name);
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions), type_param_count: fd.type_param_count, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), type_param_count: fd.type_param_count, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -3119,9 +3119,9 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
     if (fd.receiver_name.len() > 0) {
       var pts: Type[] = [];
       for param in fd.params {
-        pts = pts.append(type_from_name_with_structs_unions(param.type_name, structs, unions));
+        pts = pts.append(type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions), ret_type_name: fd.ret_type });
+      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), ret_type_name: fd.ret_type });
     }
   }
   return out;
@@ -3510,6 +3510,32 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: Type[]
   return type_from_ref_su(r, structs, unions);
 }
 
+// type_from_name_erasing_tparams resolves a type spelling written INSIDE a
+// function that declares `tparams`. A type parameter is a type VARIABLE there,
+// never a reference to a declared type sharing its name: in
+// `min[T: Ord](a: T, b: T)`, `a` is the variable T however many `struct T`
+// declarations the program holds. Modules are merged into one program before
+// checking, so without the erasure a user `struct T` — or an enum variant `T`,
+// which registers as one — captures the T of every stdlib generic and its body
+// reads `a.cmp(b)` as a field of that struct. Native scopes the same lookup
+// (#6118).
+//
+// A type variable erases to unknown in this partial type system, so each
+// parameter substitutes to unknown; a spelling naming none of them resolves
+// unchanged.
+function type_from_name_erasing_tparams(name: string, tparams: string[], structs: StructSig[], unions: UnionSig[]): Type {
+  // `dyn Trait` is not a TypeRef spelling, and a trait name is never a type
+  // parameter — leave it to the resolver that models the `dyn ` prefix.
+  if (tparams.len() == 0 || name.len() == 0 || (name.len() >= 5 && name[0:4] == "dyn ")) {
+    return type_from_name_with_structs_unions(name, structs, unions);
+  }
+  var erased: Type[] = [];
+  for tp in tparams {
+    erased = erased.append(t_unknown("type parameter " + tp));
+  }
+  return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased, structs, unions);
+}
+
 // gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE rather
 // than a declared type — i.e. it resolves to nothing. `T` resolves to unknown,
 // `f64` and a declared `Box` do not, so a concrete spelling can never be
@@ -3692,13 +3718,13 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[
   var s: Scope = new_scope_full(st, structs, unions, methods);
   s = s.with_tparams(fd.type_params, fd.bound_traits);
   if (fd.ret_type.len() > 0) {
-    s = s.with_ret_type(type_from_name_with_structs_unions(fd.ret_type, structs, unions));
+    s = s.with_ret_type(type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions));
   }
   if (fd.receiver_name.len() > 0) {
-    s = s.bind(fd.receiver_name, type_from_name_with_structs_unions(fd.receiver_type, structs, unions));
+    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, fd.type_params, structs, unions));
   }
   for param in fd.params {
-    s = s.bind(param.name, type_from_name_with_structs_unions(param.type_name, structs, unions));
+    s = s.bind(param.name, type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
     if (util.index_of_str(fd.type_params, param.type_name) >= 0) {
       s = s.bind_tpvar(param.name, param.type_name);
     }
@@ -7979,7 +8005,7 @@ function is_partial_checker_gap_code(code: string): boolean {
   return code == "E001" || code == "E009" || code == "E013"
       || code == "E018" || code == "E019" || code == "E021" || code == "E024"
       || code == "E031" || code == "E034" || code == "E036" || code == "E038"
-      || code == "E040" || code == "E041" || code == "E042" || code == "E043"
+      || code == "E040" || code == "E041" || code == "E042"
       || code == "E044" || code == "E051" || code == "E052" || code == "E064";
 }
 
