@@ -342,7 +342,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 	// And after: what each leg actually EXECUTED. The up-front check sees
 	// only the toolchain; a leg can be installed and still stop running
 	// per-seed, which is the same hollowing-out one step later.
-	tally := newDiffOracleTally(available)
+	tally := newLegTally(available, diffOracleMinRunRatio)
 	t.Cleanup(func() { tally.check(t) })
 
 	shardIdx, shardCount := diffOracleShard(t)

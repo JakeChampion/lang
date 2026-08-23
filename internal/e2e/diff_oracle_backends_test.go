@@ -3,9 +3,7 @@ package e2e
 import (
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
@@ -34,12 +32,7 @@ import (
 // wasm while arm64 skips, the aarch64 runner the reverse — so "all three
 // everywhere" is the wrong requirement and the env var names each lane's own
 // expectation instead.
-type diffOracleLeg struct {
-	name      string
-	available func() bool
-}
-
-var diffOracleLegs = []diffOracleLeg{
+var diffOracleLegs = []backendLeg{
 	{name: "arm64-linux", available: func() bool {
 		_, _, ok := e2eharness.LookupArm64Tooling()
 		return ok
@@ -62,14 +55,7 @@ var diffOracleLegs = []diffOracleLeg{
 func requireDiffOracleBackends(t *testing.T) []string {
 	t.Helper()
 
-	var have, missing []string
-	for _, leg := range diffOracleLegs {
-		if leg.available() {
-			have = append(have, leg.name)
-		} else {
-			missing = append(missing, leg.name)
-		}
-	}
+	have, missing := availableLegs(diffOracleLegs)
 
 	if want := os.Getenv("FERN_REQUIRE_DIFF_BACKENDS"); want != "" {
 		var unmet []string
@@ -118,15 +104,6 @@ func diffOracleLegNames() []string {
 	return out
 }
 
-func describeLegs(names []string) string {
-	if len(names) == 0 {
-		return "none"
-	}
-	sorted := append([]string(nil), names...)
-	sort.Strings(sorted)
-	return strings.Join(sorted, ", ")
-}
-
 // TestDiffOracleHasABackend states the invariant on its own, so a host that
 // cannot run the oracle says so in one line rather than as 1024 skipped
 // subtests under a passing parent.
@@ -159,8 +136,9 @@ func TestDiffOracleRequireEnvIsHonoured(t *testing.T) {
 	}
 }
 
-// diffOracleMinRunRatio is the floor on seeds a leg must actually execute,
-// as a fraction of the seeds that got past the interpreter.
+// diffOracleMinRunRatio is this oracle's floor on seeds a leg must actually
+// execute, as a fraction of the seeds that got past the interpreter. The
+// instrument is legTally; the number is this oracle's.
 //
 // The two register legs have no per-seed skip: a toolchain is present or it
 // is not, and that is settled before the first seed, so anything under 1.00
@@ -169,68 +147,10 @@ func TestDiffOracleRequireEnvIsHonoured(t *testing.T) {
 // or emit gap, and a `knownDivergences` row parks one while its bug is open
 // — so the floor is set for it and the register legs clear it trivially.
 //
-// Measured 2026-08-23 over the full 2048-seed corpus: arm64-linux and
-// x86_64 both 2048/2048, wasmbin 2040/2048 (0.996 — eight emit gaps). The
-// floor leaves wasmbin ~90 further gaps of headroom, so a generator change
-// that reopens a few does not turn the lane red, while still sitting far
-// above "the leg has hollowed out" — the same balance
-// selfHostDiffMinRunRatio strikes for compile bails. Every leg logs its
-// ratio on each run whether or not it passes, so drift toward the floor is
-// readable before it fails.
-//
-// Same instrument and the same reasoning as selfHostDiffMinRunRatio, which
-// exists because a widened compile-bail set would otherwise turn that lane
-// green while testing almost nothing.
+// Measured 2026-08-23 over the full 2048-seed corpus: arm64-linux and x86_64
+// both 2048/2048, wasmbin 2040/2048 (0.996 — eight emit gaps). The floor
+// leaves wasmbin ~90 further gaps of headroom, so a generator change that
+// reopens a few does not turn the lane red, while still sitting far above
+// "the leg has hollowed out" — the same balance selfHostDiffMinRunRatio
+// strikes for compile bails.
 const diffOracleMinRunRatio = 0.95
-
-// diffOracleTally counts what each leg executed, against the seeds that
-// reached the legs at all.
-type diffOracleTally struct {
-	expected []string
-	compared int64
-	ran      map[string]*int64
-}
-
-func newDiffOracleTally(expected []string) *diffOracleTally {
-	ran := make(map[string]*int64, len(expected))
-	for _, name := range expected {
-		ran[name] = new(int64)
-	}
-	return &diffOracleTally{expected: expected, ran: ran}
-}
-
-func (d *diffOracleTally) seedCompared() { atomic.AddInt64(&d.compared, 1) }
-
-func (d *diffOracleTally) legRan(name string) {
-	if c, ok := d.ran[name]; ok {
-		atomic.AddInt64(c, 1)
-	}
-}
-
-// check reports a leg that was available but did not run, which is the
-// failure the up-front toolchain check cannot see.
-func (d *diffOracleTally) check(t *testing.T) {
-	t.Helper()
-	compared := atomic.LoadInt64(&d.compared)
-	if compared == 0 {
-		// Every seed skipped on the interpreter side. Not a leg problem,
-		// but still not a run anyone should read as coverage.
-		t.Errorf("no seed reached a backend — all %d sampled seeds skipped on the "+
-			"interpreter side, so the oracle compared nothing", compared)
-		return
-	}
-	for _, name := range d.expected {
-		got := atomic.LoadInt64(d.ran[name])
-		ratio := float64(got) / float64(compared)
-		// Logged whether or not it passes: rule 11 in docs/TEST-GATES.md —
-		// most lanes cannot tell you whether a given test ran, and a gate
-		// whose whole point is establishing that should say so out loud.
-		t.Logf("leg %q ran %d of %d compared seeds (%.3f)", name, got, compared, ratio)
-		if ratio < diffOracleMinRunRatio {
-			t.Errorf("leg %q has its toolchain but ran only %d of %d compared seeds (%.3f), "+
-				"below the %.2f floor — a leg that is installed and not running is the same "+
-				"hollowed-out lane as a missing one",
-				name, got, compared, ratio, diffOracleMinRunRatio)
-		}
-	}
-}

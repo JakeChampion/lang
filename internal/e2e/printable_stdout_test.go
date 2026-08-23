@@ -80,6 +80,20 @@ func printableSeeds(t *testing.T) uint64 {
 var printableKnownDivergences = map[uint64]map[string]string{}
 
 func TestDifferential_PrintableStdout(t *testing.T) {
+	// This sweep had no floor of any kind: every leg is its own sub-test, so a
+	// host with no toolchain reported every seed green having compiled nothing
+	// (#7400). The neighbouring numeric sweep's floor did not cover it either
+	// — that one counts seeds reaching the INTERPRETER.
+	have, missing := availableLegs(numBackendLegs)
+	if len(have) == 0 {
+		t.Fatalf("no backend can run here (missing: %s) — every seed would compare "+
+			"the interpreter against nothing and the sweep would still report PASS",
+			describeLegs(missing))
+	}
+	t.Logf("backend legs available here: %s", describeLegs(have))
+	tally := newLegTally(have, numMinRunRatio)
+	t.Cleanup(func() { tally.check(t) })
+
 	shardIdx, shardCount := diffOracleShard(t)
 	seedCount := printableSeeds(t)
 	for seed := uint64(0); seed < seedCount; seed++ {
@@ -89,7 +103,8 @@ func TestDifferential_PrintableStdout(t *testing.T) {
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
-			assertNumProgramAgreesSkipping(t, fernsmith.GenPrintableMain(seed), printableKnownDivergences[seed])
+			tally.seedCompared()
+			assertNumProgramAgreesSkipping(t, fernsmith.GenPrintableMain(seed), printableKnownDivergences[seed], tally)
 		})
 	}
 }
