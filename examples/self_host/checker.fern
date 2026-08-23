@@ -9664,51 +9664,56 @@ function e053_stringish(e: parser.Expr, cur: Scope): boolean {
 // allowance. The checker never counts n — the count is the IR's.
 struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[], variants: string[], own: string[] }
 
-function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): util.Diag[] {
-  var out: util.Diag[] = [];
-  match (e) {
-    parser.ExprArray(a) => {
-      out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", 0, 0));
-      for element in a.elements {
-        out = util.append_diags(out, e053_expr(element, fx, cur));
-      }
+// e053_at_node flags, at ONE expression node, the constructs a `fip` / `fbip`
+// function may not contain: array / tuple / struct literals and payload-carrying
+// enum construction, string concatenation, a method call outside the
+// non-allocating whitelist, a call to a callee outside the claim set, and any
+// indirect call. It is native's checkFipFunctions switch (checker.go), which
+// runs over ast.Walk — the same shape, on the same spine.
+//
+// No ExprLambda arm on purpose: native has none either. A lambda is not itself
+// the violation; what it CONTAINS is, and the fold reaches that. The hand walk
+// this replaced pruned there and so excused a whole closure body — and since the
+// self-host has no FuncDecl statement (a nested named function parses as a
+// StmtVar holding an ExprLambda), that one hole covered both spellings.
+//
+// No ExprMapLit / ExprFString arm for the opposite reason: neither reaches this
+// pass. Both are printer-only nodes, every other parse having desugared them
+// (parser.fern), and the desugared forms are already flagged as concatenation
+// and `.to_string()` calls.
+function e053_at_node(n: parser.Expr, fx: E053Ctx, cur: Scope, out: util.Diag[]): util.Diag[] {
+  match (n) {
+    parser.ExprArray(_) => {
+      // 0,0 because parser.ExprArray carries NO position — alone among the
+      // literal nodes (ExprTuple, ExprStructLit and ExprMapLit all have
+      // line/col). Native reports a real one here, so this is a live parity
+      // gap; closing it means adding the field and threading it from the parse
+      // site, which is an AST change and not this walk's to make.
+      return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", 0, 0));
     },
     parser.ExprTuple(t) => {
       if (!fx.ctor_ok) {
-        out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (tuple literal)", t.line, t.col));
+        return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (tuple literal)", t.line, t.col));
       }
-      for element in t.elements {
-        out = util.append_diags(out, e053_expr(element, fx, cur));
-      }
+      return out;
     },
     parser.ExprStructLit(sl) => {
       if (!fx.ctor_ok) {
-        out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (struct literal \"" + sl.type_name + "\")", sl.line, sl.col));
+        return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (struct literal \"" + sl.type_name + "\")", sl.line, sl.col));
       }
-      if (sl.has_base) {
-        out = util.append_diags(out, e053_expr(sl.base, fx, cur));
-      }
-      for field_value in sl.field_values {
-        out = util.append_diags(out, e053_expr(field_value, fx, cur));
-      }
+      return out;
     },
     parser.ExprBinary(b) => {
       if (b.op == "+" && (e053_stringish(b.left, cur) || e053_stringish(b.right, cur))) {
-        out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (string concatenation)", b.line, b.col));
+        return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (string concatenation)", b.line, b.col));
       }
-      out = util.append_diags(out, e053_expr(b.left, fx, cur));
-      out = util.append_diags(out, e053_expr(b.right, fx, cur));
-    },
-    parser.ExprUnary(u) => {
-      out = util.append_diags(out, e053_expr(u.operand, fx, cur));
+      return out;
     },
     parser.ExprCall(c) => {
-      var args_checked: boolean = false;
       match (c.callee) {
         parser.ExprFieldAccess(fa) => {
-          // Method call. `recv.with(i, v)` on an `own` receiver is
-          // the in-place element set; `len` is the whitelisted
-          // non-allocating read. Everything else is unproven.
+          // Method call. `recv.with(i, v)` on an `own` receiver is the in-place
+          // element set; `len` is the whitelisted non-allocating read.
           var recv_root: string = "";
           match (fa.obj) {
             parser.ExprIdent(ro) => {
@@ -9722,12 +9727,13 @@ function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): util.Diag[] {
               root_own = true;
             }
           }
-          if (fa.field == "with" && root_own) {} else if (fa.field == "len") {} else {
-            // allowed
-            // allowed
-            out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not call method \"" + fa.field + "\" (not proven allocation-free)", fa.line, fa.col));
+          if (fa.field == "with" && root_own) {
+            return out;
           }
-          out = util.append_diags(out, e053_expr(fa.obj, fx, cur));
+          if (fa.field == "len") {
+            return out;
+          }
+          return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not call method \"" + fa.field + "\" (not proven allocation-free)", fa.line, fa.col));
         },
         parser.ExprIdent(id) => {
           var is_variant: boolean = false;
@@ -9738,67 +9744,67 @@ function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): util.Diag[] {
           }
           if (is_variant) {
             if (c.args.len() > 0 && !fx.ctor_ok) {
-              out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (enum variant construction)", c.line, c.col));
+              return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (enum variant construction)", c.line, c.col));
             }
-          } else {
-            // `fip` is the stronger claim and may only lean on
-            // other `fip` callees; `fbip` may also call `fbip`,
-            // whose own construction sites E068 verifies in turn.
-            var callable: boolean = false;
-            for elem in fx.callable {
-              if (elem == id.name) {
-                callable = true;
-              }
-            }
-            if (!callable) {
-              var only: string = "may only call other `fip` functions, not \"";
-              if (fx.kw == "fbip") {
-                only = "may only call `fip` or `fbip` functions, not \"";
-              }
-              out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" " + only + id.name + "\"", c.line, c.col));
+            return out;
+          }
+          // `fip` is the stronger claim and may only lean on other `fip`
+          // callees; `fbip` may also call `fbip`, whose own construction sites
+          // E068 verifies in turn.
+          var callable: boolean = false;
+          for elem in fx.callable {
+            if (elem == id.name) {
+              callable = true;
             }
           }
+          if (!callable) {
+            var only: string = "may only call other `fip` functions, not \"";
+            if (fx.kw == "fbip") {
+              only = "may only call `fip` or `fbip` functions, not \"";
+            }
+            return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" " + only + id.name + "\"", c.line, c.col));
+          }
+          return out;
         },
         _ => {
-          out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
-          out = util.append_diags(out, e053_expr(c.callee, fx, cur));
+          return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
         }
       }
-      for arg in c.args {
-        out = util.append_diags(out, e053_expr(arg, fx, cur));
-      }
+      return out;
     },
-    parser.ExprIndex(ix) => {
-      out = util.append_diags(out, e053_expr(ix.array, fx, cur));
-      out = util.append_diags(out, e053_expr(ix.index, fx, cur));
-    },
-    parser.ExprSlice(sl) => {
-      out = util.append_diags(out, e053_expr(sl.array, fx, cur));
-      out = util.append_diags(out, e053_expr(sl.start, fx, cur));
-      out = util.append_diags(out, e053_expr(sl.end, fx, cur));
-    },
-    parser.ExprFieldAccess(fa) => {
-      out = util.append_diags(out, e053_expr(fa.obj, fx, cur));
-    },
-    _ => {}
+    _ => {
+      return out;
+    }
   }
   return out;
 }
 
+// e053_own_exprs folds e053_at_node over the expressions `stmt` itself owns.
+// `fx` and `cur` arrive as PARAMETERS rather than being read from the caller's
+// loop: `cur` is reassigned once per statement there, and a visitor closing over
+// a loop-mutated binding is a different question from one closing over a
+// parameter.
+function e053_own_exprs(stmt: parser.Stmt, fx: E053Ctx, cur: Scope): util.Diag[] {
+  function at_node(n: parser.Expr, out: util.Diag[]): util.Diag[] {
+    return e053_at_node(n, fx, cur, out);
+  }
+  var none: util.Diag[] = [];
+  return astwalk.fold_stmt_own(stmt, none, at_node);
+}
+
+// e053_stmts keeps its own statement loop rather than folding: `cur` advances
+// once per statement (check_stmt threads the scope), and each nested block is
+// entered with the scope as of the statement that encloses it. A whole-subtree
+// fold has one accumulator and cannot carry that.
+//
+// Order per statement is (1) the statement-shaped check, (2) the expressions the
+// statement OWNS, (3) the blocks it encloses — which is the order the
+// hand-written walk emitted in, arm for arm.
 function e053_stmts(stmts: parser.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   var cur: Scope = s;
   for stmt in stmts {
     match (stmt) {
-      parser.StmtVar(v) => {
-        out = util.append_diags(out, e053_expr(v.init, fx, cur));
-      },
-      parser.StmtReturn(r) => {
-        out = util.append_diags(out, e053_expr(r.value, fx, cur));
-      },
-      parser.StmtExpr(e) => {
-        out = util.append_diags(out, e053_expr(e.value, fx, cur));
-      },
       parser.StmtAssign(a) => {
         // (Re)binding a local slot allocates nothing; an index/field
         // write is in-place only when rooted at an `own` parameter —
@@ -9807,23 +9813,22 @@ function e053_stmts(stmts: parser.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
         if (trl >= 0 && !e053_root_is_own(a.target, trl, fx.own)) {
           out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not write to a non-`own` heap value (triggers a copy-on-write)", a.line, a.col));
         }
-        out = util.append_diags(out, e053_expr(a.value, fx, cur));
       },
+      _ => {}
+    }
+    out = util.append_diags(out, e053_own_exprs(stmt, fx, cur));
+    match (stmt) {
       parser.StmtIf(f) => {
-        out = util.append_diags(out, e053_expr(f.cond, fx, cur));
         out = util.append_diags(out, e053_stmts(f.then_body, fx, cur));
         out = util.append_diags(out, e053_stmts(f.else_body, fx, cur));
       },
       parser.StmtWhile(w) => {
-        out = util.append_diags(out, e053_expr(w.cond, fx, cur));
         out = util.append_diags(out, e053_stmts(w.body, fx, cur));
       },
       parser.StmtFor(fr) => {
-        out = util.append_diags(out, e053_expr(fr.iter, fx, cur));
         out = util.append_diags(out, e053_stmts(fr.body, fx, cur));
       },
       parser.StmtMatch(m) => {
-        out = util.append_diags(out, e053_expr(m.scrutinee, fx, cur));
         for arm in m.arms {
           out = util.append_diags(out, e053_stmts(arm.body, fx, cur));
         }
