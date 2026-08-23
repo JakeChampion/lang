@@ -61,7 +61,7 @@ function main(): i32 {
         "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
         "map_hash_seed", "raw_addr", "raw_arr_box", "memchr",
         "write_file_exec", "ascii_run", "syscall5", "heap_mark",
-        "heap_release_to", "create_dir_all", "isatty"
+        "heap_release_to", "create_dir_all", "isatty", "read_file_bytes"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
