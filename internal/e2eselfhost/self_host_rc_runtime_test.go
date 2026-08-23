@@ -153,13 +153,26 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 		})
 	}
 
-	// Emission: the `var ys = xs` alias must emit a retain on the array
-	// buffer. A fresh literal binding (`var xs = [...]`) must NOT.
+	// Emission: a `var ys = xs` alias with xs still LIVE afterwards must
+	// emit a retain on the array buffer. A fresh literal binding
+	// (`var xs = [...]`) must NOT.
 	t.Run("emits-retain-at-alias", func(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin,
-			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
+			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0] + xs[1]; }"))
 		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
-			t.Errorf("expected a retain (__fern_rc_inc) at the array alias; not found in emitted asm")
+			t.Errorf("expected a retain (__fern_rc_inc) at the live-source array alias; not found in emitted asm")
+		}
+	})
+
+	// At xs's LAST mention the same binding is a MOVE instead: the retain
+	// is elided and xs's exit dec elided with it (moves_local_at +
+	// note_moved_elided), the pair cancellation native performs at this
+	// site — so the moved shape must emit no inc at all.
+	t.Run("elides-retain-at-move-alias", func(t *testing.T) {
+		asm := runCapture(t, gcc, runner, driverBin,
+			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
+		if strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+			t.Errorf("expected NO retain at the move-alias (the source's last mention transfers); found __fern_rc_inc in emitted asm")
 		}
 	})
 
