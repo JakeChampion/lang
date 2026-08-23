@@ -8860,6 +8860,23 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       return OwnWalk { moved: m, diags: d };
     },
+    parser.ExprLambda(lm) => {
+      // A closure body is analysed the way ow_loop analyses a loop body: from
+      // the state at the point the closure is CREATED, with the out-state
+      // DISCARDED. It may run zero times or many, and at an unknown later
+      // point, so its moves cannot flow back into the enclosing sequence — but
+      // a capture already consumed before the closure exists is a use-after-
+      // move whenever it does run, which is the E050 native reports here.
+      //
+      // Unlike ow_loop this adds no "consumed inside something that may
+      // repeat" diagnostic: native does not report one for a closure, only for
+      // a loop. Measured, not assumed.
+      //
+      // The IIFE form is handled in ow_stmt's ExprCall arm instead, where the
+      // body DOES belong to the enclosing flow because it runs in place.
+      var inner: OwnWalk = ow_stmts(lm.body, moved, ctx);
+      return OwnWalk { moved: moved, diags: inner.diags };
+    },
     _ => {
       return OwnWalk { moved: moved, diags: [] };
     }
