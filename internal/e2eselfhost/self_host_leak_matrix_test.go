@@ -46,14 +46,17 @@ import (
 // x86-64 only, deliberately: the comparison is between compilers, not targets
 // (the alloc differential states the same rule).
 //
-// KNOWN AXIS GAP, next to add: binding ORIGIN. Every cell today binds `x` from
-// a fresh construction — a local-var origin. #7253's probe-set audit shows the
-// defects of 2026-08-22 sat on the origin axis (a parameter alias reaching the
-// stdlib, a for-in binder no collector credits, a reuse recipient bound outside
-// bind_var_slot), so a v2 column should bind the same kinds from a parameter,
-// a field read, a container element and a for-in binder. The underflow guard
-// and exit-match already make such cells able to go red, which is the half a
-// leak census cannot do.
+// THE SANITIZE LEG (#7409's second companion instrument): each cell whose
+// census leg compiled is compiled AGAIN under FERN_SANITIZE — the quarantine
+// plus the over-release trap — and must exit IDENTICALLY with no
+// `fern-sanitizer:` finding. The census sees only the leak direction; of the
+// three defect shapes (fault / latent / denial) the LATENT class — a stray
+// dec into an unclaimed box, a retain on a non-box, a premature free whose
+// block is then read — makes the census read the SAME or BETTER. Under the
+// quarantine nothing is recycled and a touched freed block is fatal, so that
+// class goes red at the cell instead of after its leak is fixed. An exit that
+// merely CHANGES under quarantine is the same signal: the un-quarantined run
+// was reading recycled bytes.
 
 // A leakKind is one value shape: decls it needs, an initializer for `var x`,
 // an optional second initializer (the rebind scope), a borrow-read expression
@@ -459,6 +462,29 @@ func selfHostLeakVerdict(t *testing.T, gcc string, runner []string, driverBin, d
 	return verdictFromLeakcheck(t, name+" (self-host)", stderr), exit
 }
 
+// selfHostSanitizeCell compiles src through the same driver under
+// FERN_SANITIZE and runs the result. The census leg already proved this cell
+// compiles, so a refusal here is a flag-dependent frontend divergence and
+// fails hard rather than downgrading to an `error` verdict.
+func selfHostSanitizeCell(t *testing.T, gcc string, runner []string, driverBin, dir, name, src string) (int, string) {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+	}
+	cmd.Stdin = strings.NewReader(src)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "FERN_SANITIZE=1"}
+	asm, err := cmd.Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("%s: sanitize compile refused what the census leg compiled: %v", name, err)
+	}
+	bin := buildBin(t, gcc, dir, "leakmxsan_"+name, string(asm))
+	stderr, exit := hevRun(t, runner, bin)
+	return exit, stderr
+}
+
 func verdictFromLeakcheck(t *testing.T, label, stderr string) leakVerdict {
 	t.Helper()
 	summary := leakSummaryLine(stderr)
@@ -536,6 +562,30 @@ func TestSelfHostLeakMatrixX86_64(t *testing.T) {
 					"native=%s selfhost=%s. A leak→clean move is progress — update the "+
 					"row (and its note) in the same change that caused it; clean→leak "+
 					"is a regression", rec[0], rec[1], natV, shV)
+			}
+
+			// The sanitize leg: same cell under the quarantine + trap. The
+			// exit must not move — 124 is a finding (the message below says
+			// which), any other change means the census run was reading
+			// recycled bytes — and no `fern-sanitizer:` line but the leak
+			// verdict may appear.
+			if shV == verdictError || shV == verdictCrash {
+				return
+			}
+			sanExit, sanStderr := selfHostSanitizeCell(t, gcc, runner, driverBin, dir, cell.name, cell.src)
+			for _, finding := range []string{
+				"fern-sanitizer: rc over-release (double free)",
+				"fern-sanitizer: use-after-free (touched a quarantined block)",
+			} {
+				if strings.Contains(sanStderr, finding) {
+					t.Errorf("sanitize leg raised %q — a latent defect the census "+
+						"could not see; fix it, never pin it", finding)
+				}
+			}
+			if sanExit != shExit {
+				t.Errorf("sanitize leg exited %d where the census leg exited %d — "+
+					"with no recycling the answers may not move; the un-quarantined "+
+					"run was reading freed memory (stderr: %q)", sanExit, shExit, sanStderr)
 			}
 		})
 	}

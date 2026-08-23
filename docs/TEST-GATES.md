@@ -339,10 +339,14 @@ Worth knowing so you do not assume coverage you do not have:
   native *and* the self-host x86-64 compilers), but neither runs as part of
   any gate — you have to go looking. Partial exception:
   `TestSelfHostLeakMatrixX86_64` runs the leakcheck differential over a
-  GENERATED kind × scope × consumption grid and pins each cell's verdict pair
-  in `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` — that file is
-  the live gap list for the shapes the generator covers, and a shape outside
-  the grid is still ungated.
+  GENERATED kind × scope × consumption × origin grid and pins each cell's
+  verdict pair in `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` —
+  that file is the live gap list for the shapes the generator covers, and a
+  shape outside the grid is still ungated. Each compiling cell also re-runs
+  under `FERN_SANITIZE` (the quarantine + trap), where any exit movement or
+  `fern-sanitizer:` finding is a hard failure — the latent class (a stray
+  dec, a premature free whose block is then read) that the census reads as
+  the same-or-better.
 - **A syntactic form native accepts and the self-host does not.** Nothing
   enumerates the language's surface, so parity is only ever tested at the
   shapes some case happens to use. `conformance/cases/` is the one corpus that
