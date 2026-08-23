@@ -110,8 +110,11 @@ Returns accumulated diagnostics (`""` = clean). For each `FuncDecl`:
   - `StmtMatch` arms: for `PatVariant(Some|Ok, binding)`, bind `binding`
     to `match_payload_type(scrutinee, s2)` so arm-body returns resolve.
 
-Diagnostics are message-only (no positions): include the function name and
-both tags, e.g.
+Diagnostics carry a position where the node they are reported at has one:
+`dg_at(code, msg, line, col)` renders `line:col: error[E0XX]: …` exactly as the
+Go checker does, and `dg` is the positionless fallback for a fact derived from
+the decl tables rather than a node (7 sites against 167 positioned ones).
+Messages include the function name and both tags, e.g.
 `error[E002]: in fn 'main': returns i32 but expression has type Option[i32]`.
 Tags are rendered back to friendly names for the message
 (`option:i32` → `Option[i32]`).
@@ -151,7 +154,6 @@ policy.
 
 ## Known limitations (documented, not bugs)
 
-- Message-only diagnostics — the AST has no positions.
 - Only the wrapper-vs-concrete class is caught; scalar-vs-scalar and
   arity/field errors remain the Go checker's job.
 - Inference is coarse (`struct`/`tuple`/`map` lose their parameters), so

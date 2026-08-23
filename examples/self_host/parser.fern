@@ -66,7 +66,7 @@ pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc
 // lowering — the first element's expression shape is only the fallback for an
 // unstamped literal. Native carries the same fact as ast.ArrayLit.ElemType and
 // sizes elements from it via ast.ElemSizeBytesFor.
-pub struct ExprArray { elements: Expr[], elem_ty: string }
+pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 // ExprLambda is a function-valued expression: `function (a: T,
 // b: T): U { body }` — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
@@ -604,7 +604,8 @@ function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, o
 function e_unary_at(op: string, operand: Expr, line: i32, col: i32): Expr { return ExprUnary { op: op, operand: operand, line: line, col: col }; }
 function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0, type_argc: 0, ty: "" }; }
 function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col, type_argc: 0, ty: "" }; }
-function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements, elem_ty: "" }; }
+function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements, elem_ty: "", line: 0, col: 0 }; }
+function e_array_at(elements: Expr[], line: i32, col: i32): Expr { return ExprArray { elements: elements, elem_ty: "", line: line, col: col }; }
 function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements, line: 0, col: 0 }; }
 function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index, unchecked: false, ty: "" }; }
@@ -2578,7 +2579,7 @@ function parse_primary(p: Par): (Expr, Par) {
                     return (e_unknown("missing ] in array literal"), p);
                 }
                 p = p.advance();
-                return parse_postfix(p, e_array(elems));
+                return parse_postfix(p, e_array_at(elems, x.line, x.col));
             }
             if (x.text == "{" && !p.no_struct) {
                 // General value-position block-expression (#4521) — the
@@ -17392,7 +17393,7 @@ function settle_to_type(e: Expr, t: TypeRef): Expr {
                 // the first element's expression shape mis-sized `[1, 2]` in an
                 // i64[] destination to a 4-byte stride on wasm (#4366). Native
                 // stamps the same fact as ast.ArrayLit.ElemType.
-                return ExprArray { elements: els, elem_ty: render_type_ref(inner) };
+                return ExprArray { ...a, elements: els, elem_ty: render_type_ref(inner) };
             },
             _ => { return e; }
         }

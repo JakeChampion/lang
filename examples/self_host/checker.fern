@@ -9683,13 +9683,8 @@ struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[]
 // and `.to_string()` calls.
 function e053_at_node(n: parser.Expr, fx: E053Ctx, cur: Scope, out: util.Diag[]): util.Diag[] {
   match (n) {
-    parser.ExprArray(_) => {
-      // 0,0 because parser.ExprArray carries NO position — alone among the
-      // literal nodes (ExprTuple, ExprStructLit and ExprMapLit all have
-      // line/col). Native reports a real one here, so this is a live parity
-      // gap; closing it means adding the field and threading it from the parse
-      // site, which is an AST change and not this walk's to make.
-      return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", 0, 0));
+    parser.ExprArray(a) => {
+      return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", a.line, a.col));
     },
     parser.ExprTuple(t) => {
       if (!fx.ctor_ok) {
