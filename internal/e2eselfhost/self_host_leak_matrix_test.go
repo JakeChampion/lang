@@ -65,13 +65,21 @@ type leakKind struct {
 	init2 string // uses `i`; distinct shape guts, same type
 	read  string // expression over x yielding i32; "" = kind has no bare read
 	match string // full match statement consuming x into t; "" = no match form
+	// Origin-axis metadata (#7253's probe-audit requirement): ptype is the
+	// type spelling for a param of this kind, fixedInit a constant-only
+	// `var keep: T = …;` main can build ONCE and keep live across every call
+	// — the two conditions an origin probe must meet (the source outlives the
+	// callee and is genuinely released elsewhere). Kinds without a bare read
+	// leave these empty and get hand cells instead.
+	ptype     string
+	fixedInit string
 }
 
 var leakKinds = []leakKind{
 	{
 		name: "arr_i32",
 		init: "var x: i32[] = [i, i + 1];", init2: "x = [i + 2, i + 3, i + 4];",
-		read: "x.len()",
+		read: "x.len()", ptype: "i32[]", fixedInit: "var keep: i32[] = [7, 8, 9];",
 	},
 	{
 		// mkstr is the importless fresh producer both pipelines accept: string
@@ -81,19 +89,19 @@ var leakKinds = []leakKind{
 		name:  "str",
 		decls: "function mkstr(a: string): string { return a + \"!\"; }",
 		init:  "var x: string = mkstr(\"x\");", init2: "x = mkstr(\"yz\");",
-		read: "x.len()",
+		read: "x.len()", ptype: "string", fixedInit: "var keep: string = mkstr(\"kk\");",
 	},
 	{
 		name:  "str_arr",
 		decls: "function mkstr(a: string): string { return a + \"!\"; }",
 		init:  "var x: string[] = [mkstr(\"x\")];", init2: "x = [mkstr(\"y\"), mkstr(\"z\")];",
-		read: "x.len()",
+		read: "x.len()", ptype: "string[]", fixedInit: "var keep: string[] = [mkstr(\"k\")];",
 	},
 	{
 		name:  "struct_arr_field",
 		decls: "struct P { xs: i32[], k: i32 }",
 		init:  "var x: P = P { xs: [i, i + 1], k: i };", init2: "x = P { xs: [i + 2], k: i + 1 };",
-		read: "x.xs.len()",
+		read: "x.xs.len()", ptype: "P", fixedInit: "var keep: P = P { xs: [7, 8], k: 3 };",
 	},
 	{
 		name:  "enum_rc_payload",
@@ -116,7 +124,7 @@ var leakKinds = []leakKind{
 	{
 		name: "tuple_mixed",
 		init: "var x: (i32, i32[]) = (i, [i + 1, i + 2]);", init2: "x = (i + 1, [i + 3]);",
-		read: "x.0 + x.1.len()",
+		read: "x.0 + x.1.len()", ptype: "(i32, i32[])", fixedInit: "var keep: (i32, i32[]) = (5, [6, 7]);",
 	},
 	{
 		name: "opt_arr",
@@ -229,6 +237,129 @@ func leakMatrixCells() []leakCell {
 			}
 		}
 	}
+	// --- The binding-origin axis (v2, #7253's probe-audit requirement) ------
+	//
+	// Every v1 cell binds x from a fresh construction — a local-var origin.
+	// The 2026-08-22 defects sat on the ORIGIN axis (a parameter alias
+	// reaching the stdlib, a for-in binder no collector credits), so these
+	// cells bind the same kinds from an aliased LOCAL (the source read again
+	// after the alias) and from a PARAMETER whose value main builds once,
+	// keeps live across every call, and reads after the loop — the two probe
+	// conditions the #7253 thread establishes. The underflow guard and the
+	// exit-match are what let an over-crediting collision go RED here rather
+	// than measure as a smaller leak.
+	for _, k := range leakKinds {
+		if k.ptype == "" || k.read == "" {
+			continue
+		}
+		srcInit := strings.Replace(k.init, "var x:", "var src:", 1)
+		readX := "t = (t + " + k.read + ") % 101;"
+		readSrc := "t = (t + " + strings.ReplaceAll(k.read, "x.", "src.") + ") % 101;"
+		readKeep := strings.ReplaceAll(k.read, "x.", "keep.")
+		decls := ""
+		if k.decls != "" {
+			decls = k.decls + "\n"
+		}
+		mainTail := "function main(): i32 {\n" +
+			"    var acc: i32 = 0;\n    var i: i32 = 0;\n" +
+			"    while (i < 100) { acc = acc + round(i); i = i + 1; }\n" +
+			"    if (__rc_underflow_count() != 0) { return 99; }\n" +
+			"    return acc % 83;\n}\n"
+		for _, sc := range []struct{ name, body string }{
+			{"fnscope", "    var x: " + k.ptype + " = src;\n    " + readX},
+			{"if_block", "    if (i % 2 == 0) {\n        var x: " + k.ptype + " = src;\n        " + readX + "\n        t = t + 1;\n    }"},
+		} {
+			src := decls +
+				"function round(i: i32): i32 {\n" +
+				"    " + srcInit + "\n" +
+				"    var t: i32 = 0;\n" +
+				sc.body + "\n" +
+				"    " + readSrc + "\n" +
+				"    return t;\n}\n" + mainTail
+			cells = append(cells, leakCell{name: k.name + "__" + sc.name + "__alias_local", src: src})
+		}
+		for _, sc := range []struct{ name, body string }{
+			{"fnscope", "    var x: " + k.ptype + " = src;\n    " + readX},
+			{"if_block", "    if (i % 2 == 0) {\n        var x: " + k.ptype + " = src;\n        " + readX + "\n        t = t + 1;\n    }"},
+		} {
+			src := decls +
+				"function round(src: " + k.ptype + ", i: i32): i32 {\n" +
+				"    var t: i32 = 0;\n" +
+				sc.body + "\n" +
+				"    return t;\n}\n" +
+				"function main(): i32 {\n" +
+				"    " + k.fixedInit + "\n" +
+				"    var acc: i32 = 0;\n    var i: i32 = 0;\n" +
+				"    while (i < 100) { acc = acc + round(keep, i); i = i + 1; }\n" +
+				"    acc = (acc + " + readKeep + ") % 83;\n" +
+				"    if (__rc_underflow_count() != 0) { return 99; }\n" +
+				"    return acc % 83;\n}\n"
+			cells = append(cells, leakCell{name: k.name + "__" + sc.name + "__alias_param", src: src})
+		}
+	}
+	// Hand cells for origins the kind table cannot express uniformly.
+	cells = append(cells,
+		// The for-in element binder — #7356's finding: not a StmtVar, so no
+		// collector ever credited it; each iteration aliases a live element.
+		leakCell{name: "for_in_str_elem__loop__read", src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var names: string[] = [mkstr("a"), mkstr("b")];
+    var t: i32 = 0;
+    for s in names { t = (t + s.len()) % 101; }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// A FIELD READ as the origin — the #7343 "stolen" shape: a second
+		// reference to a buffer the owner's deep drop also releases.
+		leakCell{name: "field_read_arr__fnscope__read", src: `struct P { xs: i32[], k: i32 }
+function round(i: i32): i32 {
+    var src: P = P { xs: [i, i + 1], k: i };
+    var x: i32[] = src.xs;
+    var t: i32 = (x.len() + src.k) % 101;
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// A field read from a PARAM the caller keeps — over-release direction.
+		leakCell{name: "field_read_arr__fnscope__alias_param", src: `struct P { xs: i32[], k: i32 }
+function round(src: P, i: i32): i32 {
+    var x: i32[] = src.xs;
+    return (x.len() + i) % 101;
+}
+function main(): i32 {
+    var keep: P = P { xs: [7, 8], k: 3 };
+    var acc: i32 = 0; var i: i32 = 0;
+    while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
+    acc = (acc + keep.xs.len()) % 83;
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		// An enum ALIAS consumed by a match while the source lives on — the
+		// #7253 thread's collision shape, in its admissible form.
+		leakCell{name: "enum_rc_payload__fnscope__alias_match", src: `enum E { Full(i32[]), None }
+function round(i: i32): i32 {
+    var src: E = E.Full([i, i + 1]);
+    var x: E = src;
+    var t: i32 = 0;
+    match (x) { E.Full(xs) => { t = t + xs.len(); }, E.None => {} }
+    match (src) { E.Full(ys) => { t = (t + ys.len()) % 101; }, E.None => {} }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// The Option sibling of the same alias-then-consume shape.
+		leakCell{name: "opt_arr__fnscope__alias_match", src: `function round(i: i32): i32 {
+    var src: Option[i32[]] = Some([i, i + 1]);
+    var x: Option[i32[]] = src;
+    var t: i32 = 0;
+    match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
+    match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`})
 	return cells
 }
 

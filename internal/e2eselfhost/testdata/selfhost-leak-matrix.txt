@@ -98,3 +98,28 @@ opt_arr__rebind__unused                       clean  leak   rebound Option[i32[]
 opt_arr__rebind__match                        clean  clean  clean on both sides
 opt_arr__shadow_siblings__unused              clean  clean  clean on both sides
 opt_arr__shadow_siblings__match               clean  clean  clean on both sides
+arr_i32__fnscope__alias_local                 clean  clean  clean on both sides
+arr_i32__if_block__alias_local                clean  clean  clean on both sides
+arr_i32__fnscope__alias_param                 clean  clean  clean on both sides
+arr_i32__if_block__alias_param                clean  clean  clean on both sides
+str__fnscope__alias_local                     clean  clean  clean on both sides
+str__if_block__alias_local                    clean  clean  clean on both sides
+str__fnscope__alias_param                     clean  leak   call-arg escape taints main's keep; constant-size (keep never swept), not per-round
+str__if_block__alias_param                    clean  leak   same constant keep-sweep refusal as the fnscope cell
+str_arr__fnscope__alias_local                 clean  leak   string[] sibling of the #7282 alias-credit family, not yet granted; per-round
+str_arr__if_block__alias_local                clean  leak   same missing string[] alias credit
+str_arr__fnscope__alias_param                 clean  leak   constant keep-sweep refusal, string[] flavor
+str_arr__if_block__alias_param                clean  leak   same as fnscope
+struct_arr_field__fnscope__alias_local        clean  clean  clean on both sides
+struct_arr_field__if_block__alias_local       clean  clean  clean on both sides
+struct_arr_field__fnscope__alias_param        clean  leak   constant keep-sweep refusal, struct flavor
+struct_arr_field__if_block__alias_param       clean  leak   same as fnscope
+tuple_mixed__fnscope__alias_local             clean  clean  clean on both sides
+tuple_mixed__if_block__alias_local            clean  clean  clean on both sides
+tuple_mixed__fnscope__alias_param             clean  leak   constant keep-sweep refusal, tuple flavor
+tuple_mixed__if_block__alias_param            clean  leak   same as fnscope
+for_in_str_elem__loop__read                   clean  leak   for-in binder is not a StmtVar, no collector credits it; the fresh string[] and its elements survive (#7292/#7356 family)
+field_read_arr__fnscope__read                 clean  clean  clean on both sides
+field_read_arr__fnscope__alias_param          clean  clean  clean on both sides
+enum_rc_payload__fnscope__alias_match         clean  leak   alias consumed by match while source lives: credit denied (sound), both boxes leak
+opt_arr__fnscope__alias_match                 clean  leak   Option sibling of the enum alias_match denial
