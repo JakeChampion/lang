@@ -182,12 +182,49 @@ func TestVerifyAllowsClosureEnvArity(t *testing.T) {
 // not the program, so a call to one is not an unresolved callee.
 func TestVerifyAllowsBuiltinsAndRuntimeHelpers(t *testing.T) {
 	f := fn("f", 0,
-		Op{Kind: OpCallDirect, Str: "print", I32: 1},
-		Op{Kind: OpCallDirect, Str: "now_ns", I32: 0},
-		Op{Kind: OpCallDirect, Str: "__fern_alloc", I32: 1},
+		Op{Kind: OpCallDirect, Str: "print", I32: 1, Width: ResNarrow},
+		Op{Kind: OpCallDirect, Str: "now_ns", I32: 0, Width: ResWide},
+		Op{Kind: OpCallDirect, Str: "__fern_alloc", I32: 1, Width: ResAddr},
 	)
 	if got := verifyOne(f); len(got) > 0 {
 		t.Errorf("builtin / runtime-helper calls reported problems:%s", FormatProblems(got, 10))
+	}
+}
+
+// internal/ssa reads a call's result width off the callee's ssa.Func, and a
+// backend-provided callee has none — an unclassified result then defaults to
+// the narrow i32 mask, which sign-extends a heap pointer from 32 bits and
+// destroys an f64 bit pattern. Nothing downstream can notice, so the demand
+// for a stamp is made here, over the IR the compiler really produced.
+//
+// This replaces a completeness test that only asked whether a NAME appeared in
+// a hand-written table; a name nobody had added — the `_ptr` and `_str`
+// variants of __fern_arr_cow_inplace among them — was simply absent from both,
+// and the calls were being truncated.
+func TestVerifyDemandsAResultWidthOnAProvidedCallee(t *testing.T) {
+	f := fn("f", 0,
+		Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace_ptr", I32: 2},
+	)
+	got := verifyOne(f)
+	if len(got) != 1 || !strings.Contains(got[0].Msg, "without a result width") {
+		t.Fatalf("an unclassified runtime-helper call was not reported:%s",
+			FormatProblems(got, 10))
+	}
+}
+
+// A call the width pass CAN resolve needs no stamp: one the program defines,
+// and one reached through CodegenAlias — `map_new` is emitted by the lowering
+// but answered by the `map_new_impl` the stdlib defines.
+func TestVerifyDoesNotDemandAWidthWhereTheCalleeIsResolvable(t *testing.T) {
+	impl := fn("map_new_impl", 0, Op{Kind: OpReturnVoid})
+	impl.Params = []ast.Param{
+		{Name: "a", Type: ast.NumberType{Width: 32}},
+		{Name: "b", Type: ast.NumberType{Width: 32}},
+		{Name: "c", Type: ast.NumberType{Width: 32}},
+	}
+	f := fn("f", 0, Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
+	if got := verifyOne(f, impl); len(got) > 0 {
+		t.Errorf("an aliased call reported problems:%s", FormatProblems(got, 10))
 	}
 }
 

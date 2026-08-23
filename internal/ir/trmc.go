@@ -498,7 +498,7 @@ func (b *builder) emitTrmcConsumeScrut() {
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
 	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
 	//   else { dec(scrut); stillFreeing = 0 }
 	b.emit(Op{Kind: OpElse})

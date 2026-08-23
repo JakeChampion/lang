@@ -342,6 +342,7 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 		n := fn.Ops[i+1]
 		if n.Kind == OpCallDirect && strings.HasPrefix(n.Str, "__closure_drop_") {
 			fn.Ops[i+1].Str = "__fern_closure_drop"
+			fn.Ops[i+1].Width = ResAddr
 		}
 	}
 

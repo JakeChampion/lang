@@ -40,6 +40,23 @@ func callOp(f *ssa.Func, b *ssa.Block, callee string, args ...ssa.Value) ssa.Val
 	return v
 }
 
+// wideCallOp and addrCallOp are callOp for a callee whose result fills the
+// whole register — an f64 bit pattern, and a heap pointer. ssa.ResolveWidths
+// reads that off the callee's ssa.Func, which a runtime helper does not have:
+// internal/ir stamps it onto the call instead, so a module built by hand has
+// to say it here or the result comes back i32-masked.
+func wideCallOp(f *ssa.Func, b *ssa.Block, callee string, args ...ssa.Value) ssa.Value {
+	v := callOp(f, b, callee, args...)
+	b.Ops[len(b.Ops)-1].Width = 64
+	return v
+}
+
+func addrCallOp(f *ssa.Func, b *ssa.Block, callee string, args ...ssa.Value) ssa.Value {
+	v := callOp(f, b, callee, args...)
+	b.Ops[len(b.Ops)-1].Width, b.Ops[len(b.Ops)-1].Addr = 64, true
+	return v
+}
+
 // loadOp / storeOp add a full-word heap load / store at base+offset.
 func loadOp(f *ssa.Func, b *ssa.Block, base ssa.Value, offset int64) ssa.Value {
 	v := f.AddOp(b, ssa.OpLoad, base)
@@ -662,7 +679,7 @@ func TestArmRunStrConcatHelper(t *testing.T) {
 	concatLen := func(a, b string) int {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
-		c := callOp(f, e, "__str_concat", constStr(f, e, a), constStr(f, e, b))
+		c := addrCallOp(f, e, "__str_concat", constStr(f, e, a), constStr(f, e, b))
 		f.SetRet(e, callOp(f, e, "__str_len", c))
 		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
 	}
@@ -672,7 +689,7 @@ func TestArmRunStrConcatHelper(t *testing.T) {
 	// Byte 2 of "ABCD" is 'C' = 67.
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()
-	c := callOp(f, e, "__str_concat", constStr(f, e, "AB"), constStr(f, e, "CD"))
+	c := addrCallOp(f, e, "__str_concat", constStr(f, e, "AB"), constStr(f, e, "CD"))
 	f.SetRet(e, load8u(f, e, c, 2))
 	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 67 {
 		t.Errorf("concat(AB,CD)[2] = %d, want 67 ('C')", got)
@@ -1246,7 +1263,7 @@ func TestArmRunFloatMathHelpers(t *testing.T) {
 	for _, tc := range cases {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
-		r := callOp(f, e, tc.helper, constFloat(f, e, tc.in))
+		r := wideCallOp(f, e, tc.helper, constFloat(f, e, tc.in))
 		f.SetRet(e, f.AddOp(e, ssa.OpFToIS, r))
 		got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
 		if got != tc.want {

@@ -39,6 +39,25 @@ func isBuiltin(name string) bool {
 	return caps.Ungated[name]
 }
 
+// needsResultWidth reports whether a call to `name` has to carry a result
+// width. Only a callee internal/ssa cannot resolve does: one the program
+// defines answers for itself, and so does one reached through
+// CodegenAlias — a `map_new` call site resolves to the `map_new_impl` the
+// stdlib defines, which the width pass follows through the same alias.
+func needsResultWidth(name string, known map[string]*Func, externs map[string]bool) bool {
+	if !isBuiltin(name) && !strings.HasPrefix(name, "__") {
+		return false
+	}
+	if externs[name] {
+		return false
+	}
+	if _, ok := known[name]; ok {
+		return false
+	}
+	_, aliased := known[CodegenAlias(name)]
+	return !aliased
+}
+
 // Problem is one violation, located precisely enough to fix.
 type Problem struct {
 	Func string // function the op belongs to
@@ -183,6 +202,17 @@ func verifyFunc(f *Func, known map[string]*Func, externs map[string]bool) []Prob
 			default:
 				report(i, op.Kind, "calls %q, which is not a defined function, an extern, a builtin, or a __-prefixed runtime helper",
 					op.Str)
+			}
+			// The 64-bit backends sign-extend an i32 result into its whole
+			// register, which destroys a machine address and an f64 bit
+			// pattern alike. internal/ssa reads the callee's result width off
+			// its ssa.Func — but a callee this program does not define has no
+			// such Func, and an unclassified result defaults to the narrow
+			// mask, silently. Nothing downstream can notice, so the demand
+			// for a classification is made here.
+			if op.Kind == OpCallDirect && op.Width == 0 && needsResultWidth(op.Str, known, externs) {
+				report(i, op.Kind, "calls the backend-provided %s without a result width — "+
+					"stamp Width: ResNarrow / ResWide / ResAddr on the call", op.Str)
 			}
 
 		case OpCallIndirect, OpCallDyn, OpCallClosureDirect:
