@@ -80,7 +80,7 @@ requested length and the i32 is a "return area" pointer where the
 host writes a `(ptr, len)` pair. The host calls our exported
 `cabi_realloc` to allocate the buffer in our linear memory; we
 memcpy the bytes into a length-prefixed + NUL-terminated string
-(matching the existing `random_bytes` shape) before returning.
+before returning.
 
 The same lift/lower pattern is reused in later steps. Other
 WASI imports (`fd_write`, `fd_read`, args, env, …) still go

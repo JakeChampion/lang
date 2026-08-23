@@ -6833,9 +6833,8 @@ func (g *generator) emitStdinRuntime() {
 }
 
 // emitRandomBytesRuntime emits `__fern_random_bytes(n)` —
-// allocates a fresh length-prefixed lang string of n bytes
-// and fills it with kernel CSPRNG output. Returns the data
-// pointer.
+// allocates a fresh `u8[]` of n bytes and fills it with
+// kernel CSPRNG output. Returns the data pointer.
 //
 // Linux: single getrandom(buf, n, 0) syscall (#278). Blocking
 // /dev/urandom; flags=0.
@@ -6844,11 +6843,12 @@ func (g *generator) emitStdinRuntime() {
 // call. We loop in 256-byte chunks for n > 256. getentropy
 // has no flags arg.
 //
-// Both fill the buffer in-place; both append a trailing NUL
-// past the end so libc-shaped consumers don't read garbage.
+// Both fill the buffer in-place. The buffer is a `u8[]` from
+// `__alloc_u8`, which owns the cap/rc/len header layout and
+// the n==0 empty sentinel.
 //
-// Frame uses callee-save x19 (data ptr base, used for the
-// trailing NUL + return) and x20 (n / write cursor).
+// Frame uses callee-save x19 (data ptr, used for the return)
+// and x20 (n / write cursor).
 func (g *generator) emitRandomBytesRuntime() {
 	g.line("")
 	g.line(".global __fern_random_bytes")
@@ -6861,22 +6861,10 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
-	g.emit("mov x20, x0") // x20 = n (saved for trailing NUL + length prefix)
-	twoWord := ast.UseTwoWordStrings(8)
-	if twoWord {
-		// Two-word heap form: no length prefix in the data
-		// segment; len lives on the operand stack as the
-		// second return word. Alloc exactly n bytes.
-		g.emit("mov w0, w20")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x19, x0") // x19 = data ptr
-	} else {
-		// L2 rc-header layout — see __fern_strcat. Payload = n + 1 NUL.
-		g.emit("add x0, x20, #1")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x19, x0")          // x19 = data ptr (= base+8)
-		g.emit("stur w20, [x19, #-4]") // length prefix at data-4
-	}
+	g.emit("mov x20, x0") // x20 = n
+	g.emit("mov w0, w20")
+	g.emit("bl __alloc_u8")
+	g.emit("mov x19, x0") // x19 = data ptr
 	if g.darwin {
 		// Darwin getentropy(buf, len), syscall 500. Max 256
 		// bytes per call. Walk the buffer in 256-byte chunks
@@ -6913,17 +6901,7 @@ func (g *generator) emitRandomBytesRuntime() {
 		g.emit("mov x2, #0")
 		g.syscall("getrandom")
 	}
-	if !twoWord {
-		// Trailing NUL at data + n (only for legacy heap
-		// form — two-word heap form has no NUL padding,
-		// length is on the operand stack).
-		g.emit("add x1, x19, x20")
-		g.emit("strb wzr, [x1]")
-	}
 	g.emit("mov x0, x19") // return data ptr
-	if twoWord {
-		g.emit("mov w1, w20") // return len = n
-	}
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
@@ -9981,7 +9959,7 @@ type generator struct {
 	// just returns a sentinel.
 	usesStdin bool
 	// usesRandomBytes pulls in `__fern_random_bytes(n)` —
-	// allocates an n-byte string and fills it with kernel
+	// allocates an n-byte u8[] and fills it with kernel
 	// CSPRNG output via `getrandom(2)` on Linux or chunked
 	// `getentropy(2)` on Darwin. Suitable for session IDs,
 	// tokens, etc.
@@ -10966,7 +10944,7 @@ func returnIsString(g *generator, name string) bool {
 		// (e.g. for OpReturn of an aliased string). __fern_str_dec
 		// is deliberately absent — it returns only `data` (x0).
 		return true
-	case "random_bytes", "tcp_recv", "string_from_bytes_unchecked", "__str_slice", "strbuf_take":
+	case "tcp_recv", "string_from_bytes_unchecked", "__str_slice", "strbuf_take":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
 		// `__method_Reader_read_line` / etc — those return
@@ -13304,13 +13282,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_remove_dir_all"
 			g.usesRemoveDirAll = true
 		case "random_bytes":
-			// random_bytes(n): allocates an n-byte string and
+			// random_bytes(n): allocates an n-byte u8[] and
 			// fills it with kernel CSPRNG output. Linux uses
 			// getrandom (syscall 278); Darwin uses chunked
 			// getentropy (syscall 500, max 256 bytes/call).
 			target = "__fern_random_bytes"
 			g.usesRandomBytes = true
 			g.usesAlloc = true
+			g.usesAllocU8 = true
 		case "random_i32":
 			// random_i32(): a single CSPRNG i32. Linux reads 4
 			// bytes via getrandom (syscall 278); Darwin via

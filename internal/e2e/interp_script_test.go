@@ -218,8 +218,8 @@ function main(): i32 {
 //
 //   - random_i32() is callable and varies across draws.
 //   - random_bytes(n).len() == n even when the random payload
-//     contains embedded NUL bytes (the interp String is length-
-//     prefixed, not NUL-terminated).
+//     contains embedded NUL bytes (the value is a u8[], whose
+//     length is exact).
 //   - s.as_bytes().len() / indexing match the source string.
 func TestInterpScriptRandomAndBytes(t *testing.T) {
 	bin := buildLangBinForInterp(t)

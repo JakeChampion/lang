@@ -2402,23 +2402,25 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 // buildRandomBytesBodyP2 is the preview-2 variant of
 // buildRandomBytesBody.
 //
-// Signature: (n) → (data, len)
+// Signature: (n) → data
 //
 // Body:
 //
-//	if n == 0: return inline empty (0, 0x80000000)
 //	padded = (n + 7) & ~7    -- round up to a multiple of 8
-//	buf    = __fern_alloc(padded)
+//	buf    = __alloc_u8(padded)
 //	i      = 0
 //	loop:
 //	  if i >= padded: break
 //	  i64.store(buf + i, get-random-u64())
 //	  i += 8
-//	return (buf, n)
+//	mem[buf - 4] = n         -- len = n (cap stays padded)
+//	return buf
 //
-// Allocates `padded` bytes (≤7 extra) so the trailing u64 store
-// never spills past the allocation. The returned length is the
-// original n — readers see exactly n bytes.
+// Allocates `padded` bytes (≤7 extra capacity) so the trailing
+// u64 store never spills past the allocation; the length prefix
+// is then corrected to the original n, so readers see exactly n
+// bytes. n == 0 yields the header-only empty box, zero loop
+// iterations, len 0.
 //
 // Locals (after the n param):
 //
@@ -2426,16 +2428,9 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 //	2: $padded
 //	3: $i
 func buildRandomBytesBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	allocU8 := idxs["__alloc_u8"]
 	randomU64 := idxs["wasi_random_get_u64_p2"]
 	var body []byte
-	body = inst.InstLocalGet(body, 0)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, int32(-0x80000000))
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 7)
 	body = numeric.InstI32Add(body)
@@ -2443,7 +2438,7 @@ func buildRandomBytesBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32And(body)
 	body = inst.InstLocalSet(body, 2)
 	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocU8)
 	body = inst.InstLocalSet(body, 1)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 3)
@@ -2465,8 +2460,13 @@ func buildRandomBytesBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstBr(body, 0)
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
+	// mem[$buf - 4] = n (len prefix corrected from padded to n)
 	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
 	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
@@ -3350,39 +3350,33 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// random bytes via wasi_random_get. Returns the (data, len)
-// pair in heap form (top bit of len clear).
+// random bytes via wasi_random_get. Returns a fresh u8[]
+// data pointer in the __alloc_u8 box shape (16-byte header;
+// cap/rc/len behind the data pointer).
 //
-//	n == 0:  return inline empty (0, 0x80000000).
-//	n > 0:   data = alloc(n); random_get(data, n); return (data, n).
+//	buf = __alloc_u8(n); random_get(buf, n); return buf.
+//
+// n == 0 yields __alloc_u8's header-only empty box; the
+// random_get on it is a zero-length read.
 //
 // Locals (after the one param):
 //
 //	1: $buf
 func buildRandomBytesBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	allocU8 := idxs["__alloc_u8"]
 	randomGet := idxs["wasi_random_get"]
 	var body []byte
-	// if n == 0: return inline empty (0, 0x80000000)
+	// $buf = __alloc_u8(n)
 	body = inst.InstLocalGet(body, 0)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, int32(-0x80000000))
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
-	// $buf = __fern_alloc(n)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocU8)
 	body = inst.InstLocalSet(body, 1)
 	// wasi_random_get($buf, n); drop errno.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, randomGet)
 	body = inst.InstDrop(body)
-	// Return ($buf, n)
+	// Return $buf
 	body = inst.InstLocalGet(body, 1)
-	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

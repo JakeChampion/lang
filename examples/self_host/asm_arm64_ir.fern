@@ -821,11 +821,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 185) {  // random_bytes
             // [n] IS param[0]; call the Fern-compiled __fn___fern_random_bytes
             // (asmcore.rt_src_random_bytes, #2649) via the stack ABI, mirroring
-            // asm_ir's handler. The body fills the buffer through the __syscall3
-            // sub-floor and boxes it with __raw_string (so, unlike the hand-asm
-            // this replaced, the result carries the rc header __fern_str_box
-            // writes — an unheadered box made every dec of a random_bytes string
-            // read its refcount out of the preceding allocation).
+            // asm_ir's handler. The body fills a scratch buffer through the
+            // __syscall3 sub-floor and spreads the bytes into a fresh u8[] box
+            // (__raw_arr_box — so the result carries the rc header
+            // __fern_arr_box writes).
             s = s.mark_heap();
             s = s.need("random_bytes");
             s = s.write("    bl __fn___fern_random_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -5850,7 +5849,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // is baked into the source here instead.
     var tgt: string = "arm64-linux";
     if (darwin) { tgt = "arm64-darwin"; }
-    // random_bytes: fill the buffer through __syscall3, box it with __raw_string.
+    // random_bytes: fill a scratch buffer through __syscall3, spread the bytes
+    // into a fresh u8[] box (__raw_arr_box).
     if (s.has_need("random_bytes")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s.struct_decls, s);
     }
