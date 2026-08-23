@@ -99,7 +99,7 @@ outside a bare `.len()` borrow, and `return h.xs` is such a read; the deep drop
 is then withheld for the whole type and the reader need never run. Closing it
 means following the forwarded field through call sites — an interprocedural
 widening of the credit whose documented failure mode is a gen1 self-compile
-segfault. Filed separately.
+segfault. Filed as #7417.
 
 ## Gates
 
