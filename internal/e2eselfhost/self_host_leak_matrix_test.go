@@ -382,6 +382,38 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
+		// A cancelled pair with a LATER same-type construction while the
+		// alias is live: the reuse donor gate must refuse the source (its
+		// bare-ident alias mention is an escape), else the in-place-reuse
+		// arm frees the box the alias still reads — the sanitize leg is the
+		// witness that the donor vetting holds under cancellation (rc==1).
+		leakCell{name: "struct_arr_field__fnscope__alias_reuse", src: `struct P { xs: i32[], k: i32 }
+function round(i: i32): i32 {
+    var p: P = P { xs: [i, i + 1], k: i };
+    var v: P = p;
+    var t: i32 = v.k + p.xs.len();
+    var q: P = P { xs: [i, i + 2], k: t };
+    return q.k + p.k;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// The struct flavor of the same loop-scoped cancelled pair — the
+		// alias's box-only "NODEEP:" release is what the cancellation
+		// elides; the rebind store must not fire the box dec either.
+		leakCell{name: "struct_arr_field__loop_local__alias_local", src: `struct P { xs: i32[], k: i32 }
+function round(i: i32): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var p: P = P { xs: [i, j], k: j };
+        var v: P = p;
+        t = (t + v.k + p.xs.len()) % 101;
+        j = j + 1;
+    }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
 		// The array flavor of the same loop-scoped cancelled pair — the
 		// #7455 limb's instance of the identical rebind double free.
 		leakCell{name: "arr_i32__loop_local__alias_local", src: `function round(i: i32): i32 {

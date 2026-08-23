@@ -113,7 +113,9 @@ str_arr__if_block__alias_local                clean  clean  same #7391 alias cre
 str_arr__fnscope__alias_param                 clean  leak   constant keep-sweep refusal, string[] flavor
 str_arr__if_block__alias_param                clean  leak   same as fnscope
 struct_arr_field__fnscope__alias_local        clean  clean  clean on both sides
+struct_arr_field__fnscope__alias_reuse        clean  clean  clean on both sides
 struct_arr_field__if_block__alias_local       clean  clean  clean on both sides
+struct_arr_field__loop_local__alias_local     clean  clean  clean on both sides
 struct_arr_field__fnscope__alias_param        clean  leak   constant keep-sweep refusal, struct flavor
 struct_arr_field__if_block__alias_param       clean  leak   same as fnscope
 tuple_mixed__fnscope__alias_local             clean  clean  clean on both sides
