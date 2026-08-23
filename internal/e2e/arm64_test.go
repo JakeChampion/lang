@@ -11015,6 +11015,52 @@ func TestArm64ReadFileNotFound(t *testing.T) {
 	}
 }
 
+// read_file_bytes returns Ok(u8[]) with the raw bytes — content
+// that is not valid UTF-8 round-trips exactly (D9, #5714).
+func TestArm64ReadFileBytesOk(t *testing.T) {
+	src := `function main(): i32 {
+    match (read_file_bytes("blob.bin")) {
+        Ok(b) => {
+            if (b.len() != 4) { return 1; }
+            if ((b[0] as i32) != 0) { return 2; }
+            if ((b[1] as i32) != 255) { return 3; }
+            if ((b[2] as i32) != 128) { return 4; }
+            if ((b[3] as i32) != 10) { return 5; }
+            return 0;
+        },
+        Err(_) => { return 6; }
+    }
+    return 7;
+}`
+	_, code, _ := compileArm64InDir(t, src, map[string]string{
+		"blob.bin": "\x00\xff\x80\n",
+	})
+	if code != 0 {
+		t.Errorf("got %d, want 0 (1-5=byte mismatch, 6=err path)", code)
+	}
+}
+
+// read_file_bytes classifies errors identically to read_file.
+func TestArm64ReadFileBytesNotFound(t *testing.T) {
+	src := `function main(): i32 {
+    match (read_file_bytes("does_not_exist.bin")) {
+        Ok(_) => { return 0; },
+        Err(err) => {
+            match (err) {
+                NotFound(p) => { return p.len(); },
+                _ => { return 99; }
+            }
+        }
+    }
+    return 0 - 1;
+}`
+	_, code, _ := compileArm64InDir(t, src, nil)
+	// len("does_not_exist.bin") = 18
+	if code != 18 {
+		t.Errorf("got %d, want 18 (len of missing-file path via NotFound payload)", code)
+	}
+}
+
 // write_file truncates the target and writes `content`. Verify
 // by reading the file back from the host side after the program
 // returns.

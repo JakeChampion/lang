@@ -1473,6 +1473,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// read_file_bytes(path): Result[u8[], IoError] — reads the entire
+	// file into a fresh byte buffer, no text interpretation. The raw
+	// sibling of read_file for content that is not UTF-8 text (D9,
+	// #5714). Same preopen note as read_file on WASM.
+	c.info.FuncSigs["read_file_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// write_file(path, content): Result[void, IoError] — writes the
 	// content to the named file, truncating it first. `Ok(())` on
 	// success, `Err(e)` on failure.

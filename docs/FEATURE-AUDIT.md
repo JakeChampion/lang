@@ -156,7 +156,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `env(name): Option[string]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | unset → `None` |
 | `exit(code)` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | native interp/x86/arm + self-host; wasm proc_exit vs result-line harness |
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
-| `read_file` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile tests; self-host: fs tests + probe |
+| `read_file` / `read_file_bytes` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile + ReadFileBytes tests; self-host: fs tests + probe; `read_file_bytes(path): Result[u8[], IoError]` is the raw sibling (#5714) |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
 | Reader `.read_line()/.read_chunk(n)/.close()` | | | | | | ⬜ | |
 | Writer `.write(s)/.close()` | | | | | | ⬜ | |

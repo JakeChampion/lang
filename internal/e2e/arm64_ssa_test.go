@@ -1161,6 +1161,32 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			want: 10,
 		},
 		{
+			// read_file_bytes round-trip: write "abcde" then read it back as a u8[].
+			// Ok(b).len() + b[0] = 5 + 'a' (97) = 102. Exercises the __alloc_u8
+			// buffer and the Result[u8[], IoError] Ok box carrying the array data
+			// pointer.
+			name: "read_file_bytes_roundtrip",
+			src: `function main(): i32 {
+  var w = write_file("/tmp/fern_ssa_e2e_rfb.txt", "abcde");
+  return match (read_file_bytes("/tmp/fern_ssa_e2e_rfb.txt")) {
+    Ok(b) => b.len() + (b[0] as i32),
+    Err(e) => 0
+  };
+}`,
+			want: 102,
+		},
+		{
+			// read_file_bytes failure: classifies errors identically to read_file.
+			name: "read_file_bytes_err",
+			src: `function main(): i32 {
+  return match (read_file_bytes("/no_such_file_ssa_9137")) {
+    Ok(b) => 1,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
+		{
 			// remove_file success: write a file, remove it (None), then confirm it's
 			// gone by re-reading (Err(NotFound)). Exercises the unlinkat syscall and
 			// the None (tag 1) path of the Option[IoError] box.

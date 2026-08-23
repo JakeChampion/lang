@@ -243,6 +243,7 @@ pub function gated_builtins(): Gate[] {
 
         // Filesystem.
         Gate { builtin: "read_file", capability: "fs" },
+        Gate { builtin: "read_file_bytes", capability: "fs" },
         Gate { builtin: "write_file", capability: "fs" },
         Gate { builtin: "write_file_exec", capability: "fs" },
         Gate { builtin: "open_reader", capability: "fs" },

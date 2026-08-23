@@ -513,6 +513,7 @@ func New() *Interp {
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
+	i.Builtins["read_file_bytes"] = &Builtin{Fn: builtinReadFileBytes}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
 	i.Builtins["write_file_exec"] = &Builtin{Fn: builtinWriteFileExec}
 	i.Builtins["open_reader"] = &Builtin{Fn: builtinOpenReader}
@@ -1749,6 +1750,27 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(String(string(data))), nil
+}
+
+// builtinReadFileBytes is read_file's raw sibling: the whole file
+// as a Result[u8[], IoError], no text interpretation.
+func builtinReadFileBytes(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("read_file_bytes: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("read_file_bytes: expected string arg, got %T", args[0])
+	}
+	data, err := os.ReadFile(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	out := make(Array, len(data))
+	for i, b := range data {
+		out[i] = Number(b)
+	}
+	return resultOk(out), nil
 }
 
 // builtinWriteFile mirrors $write_file / __fern_write_file:
