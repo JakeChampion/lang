@@ -9085,16 +9085,24 @@ function e049_scope(stmts: parser.Stmt[]): NameTy[] {
   return out;
 }
 
-// e049_lambda_locals collects a lambda's own bound names (params + body
-// var decls, not descending into nested lambdas) — names that shadow an
-// enclosing capture.
-function e049_lambda_locals(lm: parser.ExprLambda): string[] {
-  var out: string[] = [];
+// e049_lambda_locals_nt collects a lambda's own bound names WITH their types —
+// params plus body `var` decls, not descending into nested lambdas. Typed
+// because the set serves twice: as the shadowing set for assignments in this
+// body, and, once the walk descends, as part of the ENCLOSING set for a lambda
+// nested inside it, where e049_ref_capture reads the type to decide whether the
+// capture is reference-shaped. Built the way e049_diags builds a function's.
+function e049_lambda_locals_nt(lm: parser.ExprLambda): NameTy[] {
+  var out: NameTy[] = [];
   for param in lm.params {
-    out = out.append(param.name);
+    out = out.append(NameTy { nm: param.name, ty: param.type_name });
   }
-  var sv: NameTy[] = e049_scope(lm.body);
-  for elem in sv {
+  return e049_append_nt(out, e049_scope(lm.body));
+}
+
+// e049_nt_names projects the name half of a NameTy set.
+function e049_nt_names(nts: NameTy[]): string[] {
+  var out: string[] = [];
+  for elem in nts {
     out = out.append(elem.nm);
   }
   return out;
@@ -9119,7 +9127,7 @@ function e049_stmt_own_lambdas(st: parser.Stmt, enclosing: NameTy[]): util.Diag[
   function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
     match (n) {
       parser.ExprLambda(lm) => {
-        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm)));
+        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
       },
       _ => { return acc; }
     }
@@ -9134,12 +9142,19 @@ function e049_stmt_own_lambdas(st: parser.Stmt, enclosing: NameTy[]): util.Diag[
   return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
 }
 
-function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: string[]): util.Diag[] {
+function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: NameTy[]): util.Diag[] {
   var out: util.Diag[] = [];
+  // A lambda NESTED in this body captures this body's own names as well as
+  // what this body captured, so the enclosing set grows as the walk descends.
+  // Passing the enclosing FUNCTION's set all the way down leaves a variable
+  // declared in an intervening lambda in neither set — neither enclosing nor
+  // local — and nothing flags an assignment to it.
+  var nested_encl: NameTy[] = e049_append_nt(enclosing, locals);
+  var local_names: string[] = e049_nt_names(locals);
   for stmt in stmts {
     match (stmt) {
       parser.StmtAssign(a) => {
-        if (!util.has_str(locals, a.target) && e049_ref_capture(enclosing, a.target)) {
+        if (!util.has_str(local_names, a.target) && e049_ref_capture(enclosing, a.target)) {
           out = out.append(dg_at("E049", "cannot assign to captured \"" + a.target + "\": a reference-typed closure capture is read-only (return the new value from the closure instead)", a.target_line, a.target_col));
         }
       },
@@ -9164,7 +9179,7 @@ function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: s
       },
       _ => {}
     }
-    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, enclosing));
+    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, nested_encl));
   }
   return out;
 }
@@ -9179,7 +9194,7 @@ function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): util.Diag[] {
   function at_lambda(n: parser.Expr, acc: util.Diag[]): util.Diag[] {
     match (n) {
       parser.ExprLambda(lm) => {
-        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm)));
+        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
       },
       _ => { return acc; }
     }
