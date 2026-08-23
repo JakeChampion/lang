@@ -1206,25 +1206,26 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			}
 		}
 	}
-	// escapeOwned is the variant for the INC-ing sinks (StructLit /
-	// TupleLit construction dups every stored pointer value), so only a
-	// direct-Ident source can strand an uncounted alias — a projection
-	// (`Holder { items: p.items }`) is inc'd into the box, so its
-	// container stays reclaimable, and tainting it would needlessly
-	// defeat constructor reuse (TestStructReuseFiresForPointerField).
+	// escapeOwned is the variant for the INC-ing sinks (StructLit / TupleLit
+	// construction, rc-eligible enum payloads, the array element stores).
+	// Each of those dups a `needsRcIncOnAlias` source into the container
+	// under exactly that predicate, and the container's deep drop releases
+	// the dup, so a counted source keeps a reference of its OWN and stays
+	// reclaimable — the same rule ArrayLit elements have always had (no
+	// taint arm at all) and escapeCountedYield applies to arm yields.
+	// Tainting a counted source strands precisely that reference, because
+	// the sweep then falls back to the non-freeing flat `__fern_rc_dec`
+	// (#7345); it also needlessly defeats constructor reuse
+	// (TestStructReuseFiresForPointerField). A last-use source takes the
+	// move instead (markConstructionMoves), which skips the dup and drops
+	// the name from the sweep, so that path is balanced too.
+	//
+	// What remains is the source a sink stores UNCOUNTED: `dyn Trait`, which
+	// needsRcIncOnAlias declines (dyn cells carry no rc header, so
+	// construction must not inc them). Freeing such a local at scope exit
+	// would reclaim the cell the container still holds.
 	escapeOwned := func(e ast.Expr) {
-		if id, ok := e.(*ast.Ident); ok {
-			// A consuming-match binding (#4400) is a COUNTED owner: every
-			// inc-ing sink dups it (needsRcIncOnAlias fires — bindings are
-			// never moveSites, those cover declared locals only) and the
-			// exit-sweep dec balances, so there is no uncounted alias to
-			// strand. Tainting it would skip the sweep and leak the dup —
-			// the shape `Cons(h, t) => return Cons(h + 1, t)` would leak
-			// the whole tail per call. The UNCOUNTED sinks (escape) still
-			// taint these names.
-			if _, owned := b.rc.consumingBindings[id.Name]; owned {
-				return
-			}
+		if id, ok := e.(*ast.Ident); ok && !needsRcIncOnAlias(id, b) {
 			tainted[id.Name] = true
 		}
 	}
@@ -1347,13 +1348,10 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					// store (#4399 sink 1): emitArrayPush emits the
 					// needsRcIncOnAlias element inc (the same Ident /
 					// FieldAccess / Index shapes `escape` walks), and the
-					// buffer's deep drop decs elements — so a PROJECTION
-					// source (`out.push(rows[i])`) is co-owned by the
-					// buffer and its container stays reclaimable; only a
-					// direct-Ident element keeps the taint (the moveSites
-					// shapes transfer instead of inc'ing — same rule as
-					// StructLit / TupleLit / rc-eligible enum payloads,
-					// escapeOwned).
+					// buffer's deep drop decs elements — so the source is
+					// co-owned by the buffer and stays reclaimable
+					// (escapeOwned, the same rule StructLit / TupleLit /
+					// rc-eligible enum payloads take).
 					if len(s.Args) == 2 {
 						escapeOwned(s.Args[1])
 					}
@@ -1368,9 +1366,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					// an aliased element (the same Ident / FieldAccess /
 					// Index shapes `escape` walks), drops the OLD element it
 					// overwrites, and the CoW copy path retains via
-					// __fern_arr_cow_inplace_ptr — so a projection source
-					// stays reclaimable and only a direct-Ident element
-					// keeps the taint (escapeOwned, the Array_push rule).
+					// __fern_arr_cow_inplace_ptr — so the source stays
+					// reclaimable (escapeOwned, the Array_push rule).
 					//
 					// A scalar element can't alias but also can't strand
 					// anything, so the escape walk's pointer gate already
@@ -1386,9 +1383,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					// Variant constructor (`Arr(xs)`): under the move model
 					// emitEnumNew stores the payload without an inc, so a local
 					// passed as a payload escapes into the box (full escape). Under
-					// EnumRcPayloads it inc's like StructLit, so only a direct-Ident
-					// source can strand an uncounted alias — escapeOwned (a
-					// projection is inc'd, so its container stays reclaimable).
+					// EnumRcPayloads it inc's like StructLit, so the payload is
+					// co-owned and its source stays reclaimable — escapeOwned.
 					if _, isLocal := b.locals[id.Name]; !isLocal {
 						if en, _, _, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
 							rc := b.enumRcPayloadsEligible(en)
@@ -2262,12 +2258,8 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 				// `xs.append(v)` / `xs.with(i, v)` store the element into the
 				// buffer under the same `needsRcIncOnAlias && !moveSites` gate as
 				// an array literal's elements, and the buffer's deep drop dec's it
-				// — so a moved last-use owned local balances there too.
-				// computeFreeEligible's Array_push / Array_set arms already assume
-				// this: escapeOwned taints only a direct Ident, on the stated
-				// grounds that the moveSites shapes transfer instead of inc'ing.
-				// Without the mark the element took BOTH the inc and the taint,
-				// and the taint suppressed the release that would have balanced it.
+				// — so a moved last-use owned local balances there too, and
+				// saves the inc/dec pair the unmoved form pays.
 				if el, ok := b.storedArrayElemOperand(lit, id.Name); ok {
 					mark(el)
 					visit(el)

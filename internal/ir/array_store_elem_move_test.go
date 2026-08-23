@@ -3,25 +3,16 @@ package ir
 import "testing"
 
 // `xs.append(v)` / `xs.with(i, v)` store their element under the same
-// `needsRcIncOnAlias && !moveSites` retain the container literals use, and
-// computeFreeEligible's Array_push / Array_set arms taint a direct-Ident
-// element on the stated grounds that "the moveSites shapes transfer instead of
-// inc'ing". markConstructionMoves never marked those elements, so the
-// assumption did not hold: the element took BOTH the retain and the taint, and
-// the taint suppressed the release (emitVarReinitDropOld / the exit sweep)
-// that would have balanced it.
+// `needsRcIncOnAlias && !moveSites` retain the container literals use, and a
+// LAST-USE element is moved into the buffer instead (markConstructionMoves):
+// the retain is skipped and the source's own release goes with it, so the
+// buffer's deep drop releases the value exactly once.
 //
-// Bound-vs-inline was the discriminator. Inline (`xs.append(Val { … })`) names
-// no local, takes no retain, and was already flat; hoisting the identical value
-// into a local first leaked one box per push — 320 B a round with no plateau in
-// a loop, and 16 B a round from straight-line code where the array happened to
-// be declared BEFORE the element (declaration order alone flipped it, because
-// the exit sweep runs in declaration order and the element's flat dec landing
-// after the buffer's deep drop never reaches zero).
-//
-// The assertions compare the bound form's retain count against the inline
-// form's: the move is exactly the claim that the two lower to the same rc
-// traffic.
+// Bound-vs-inline is the discriminator. Inline (`xs.append(Val { … })`) names
+// no local and takes no retain, so hoisting the identical value into a local
+// first must lower to the same rc traffic — which is exactly what the move
+// claims. The assertions compare the bound form's retain count against the
+// inline form's.
 
 const boundPushSrc = `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
