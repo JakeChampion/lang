@@ -45,7 +45,7 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 
 	// The tables diffed per function; ALL NINE dumped tables are diffed as
 	// of the consumingMatchReuse port (#4482 complete).
-	diffedTables := []string{"aliasBindIncs", "arraySetInc", "consumedParams", "consumingMatchReuse", "freeEligible", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
+	diffedTables := []string{"aliasBindIncs", "arraySetInc", "consumedParams", "consumingMatchReuse", "freeEligible", "lastUses", "movedLocals", "moveSites", "preciseDrops", "reuseConsumed", "reuseSources"}
 
 	type divergence struct {
 		native   string // native's line value ("" = no line)
@@ -59,8 +59,14 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	// MOVES (a moved name is never swept, and both sides agree on
 	// movedLocals); a real reclaim where the move declines. These rows leave
 	// with the port.
-	countedSinkSource := func(native, selfhost string) map[string]divergence {
-		return map[string]divergence{"freeEligible": {native: native, selfhost: selfhost}}
+	// The lastUses table is computed over each side's OWN freeEligible set,
+	// so every one of these rows carries the same divergence one projection
+	// over: the natively-eligible-only name has a native-only last-use entry.
+	countedSinkSource := func(native, selfhost, luNative, luSelf string) map[string]divergence {
+		return map[string]divergence{
+			"freeEligible": {native: native, selfhost: selfhost},
+			"lastUses":     {native: luNative, selfhost: luSelf},
+		}
 	}
 	cases := []struct {
 		name string
@@ -81,7 +87,7 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 	return s + 1;
 }
 function main(): i32 { return dropper(); }`,
-			anchor: map[string]map[string]string{"dropper": {"preciseDrops": "1=big", "freeEligible": "big"}},
+			anchor: map[string]map[string]string{"dropper": {"preciseDrops": "1=big", "freeEligible": "big", "lastUses": "big=1"}},
 		},
 		{
 			// Two disjoint literal locals, dropped at their own last uses.
@@ -94,7 +100,7 @@ function main(): i32 { return dropper(); }`,
 	return x + y;
 }
 function main(): i32 { return two(); }`,
-			anchor: map[string]map[string]string{"two": {"preciseDrops": "1=a,3=b", "freeEligible": "a,b"}},
+			anchor: map[string]map[string]string{"two": {"preciseDrops": "1=a,3=b", "freeEligible": "a,b", "lastUses": "a=1,b=3"}},
 		},
 		{
 			// Both locals last-used in ONE statement: a shared index group,
@@ -153,7 +159,7 @@ function thread(c: Ctx): i32 {
 	return c.n;
 }
 function main(): i32 { return thread(Ctx { name: "a", n: 1 }); }`,
-			anchor: map[string]map[string]string{"thread": {"consumedParams": "c", "freeEligible": "c"}},
+			anchor: map[string]map[string]string{"thread": {"consumedParams": "c", "freeEligible": "c", "lastUses": "c=1"}},
 		},
 		{
 			// A string/array-FREE struct param that is reassigned and does
@@ -314,7 +320,7 @@ function w(): i32 {
 function main(): i32 { return w(); }`,
 			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}}, // moveSites agreement-checked (ident col)
 			diverge: map[string]map[string]divergence{
-				"w": countedSinkSource("s,x", "s"),
+				"w": countedSinkSource("s,x", "s", "s=2,x=1", "s=2"),
 			},
 		},
 		{
@@ -334,7 +340,7 @@ function w(): i32 {
 function main(): i32 { return w(); }`,
 			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}}, // moveSites agreement-checked (ident col)
 			diverge: map[string]map[string]divergence{
-				"w": countedSinkSource("v,xs", "xs"),
+				"w": countedSinkSource("v,xs", "xs", "v=2,xs=3", "xs=3"),
 			},
 		},
 		{
@@ -355,7 +361,7 @@ function w(): i32 {
 function main(): i32 { return w(); }`,
 			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}},
 			diverge: map[string]map[string]divergence{
-				"w": countedSinkSource("d,v", "d"),
+				"w": countedSinkSource("d,v", "d", "d=3,v=2", "d=3"),
 			},
 		},
 		{
@@ -377,7 +383,7 @@ function build(n: i32): i32 {
 function main(): i32 { return build(3); }`,
 			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
 			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals"),
+				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
 			},
 		},
 		{
@@ -400,7 +406,7 @@ function build(n: i32): i32 {
 function main(): i32 { return build(3); }`,
 			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
 			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals"),
+				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
 			},
 		},
 		{
@@ -422,7 +428,7 @@ function build(n: i32): i32 {
 function main(): i32 { return build(3); }`,
 			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
 			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals"),
+				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
 			},
 		},
 		{
@@ -456,7 +462,7 @@ function main(): i32 { match (build(3)) { Some(v) => { return v; }, None => { re
 			// per-iteration reclaim the self-host still misses, not an inert
 			// bookkeeping difference.
 			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals"),
+				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
 			},
 		},
 		{
@@ -838,7 +844,7 @@ function main(): i32 { return f(); }`,
 			src: `function f(): i32 { var xs = [1, 2, 3]; var s = 0; for x in xs { s = s + x; } return s; }
 function main(): i32 { return f(); }`,
 			diverge: map[string]map[string]divergence{
-				"f": {"freeEligible": {native: "__foreach_iter_1,xs", selfhost: "xs"}, "preciseDrops": {native: "", selfhost: "2=xs"}},
+				"f": {"freeEligible": {native: "__foreach_iter_1,xs", selfhost: "xs"}, "lastUses": {native: "__foreach_iter_1=2,xs=2", selfhost: "xs=2"}, "preciseDrops": {native: "", selfhost: "2=xs"}},
 			},
 		},
 		{
@@ -874,7 +880,7 @@ function main(): i32 { return f(); }`,
 function f(): i32 { var a = [1, 2, 3]; var b = id(a); return b[0]; }
 function main(): i32 { return f(); }`,
 			diverge: map[string]map[string]divergence{
-				"f": {"freeEligible": {native: "a,b", selfhost: "a"}},
+				"f": {"freeEligible": {native: "a,b", selfhost: "a"}, "lastUses": {native: "a=1,b=2", selfhost: "a=1"}},
 			},
 		},
 		{

@@ -105,6 +105,32 @@ func (b *builder) dumpRcPlan() string {
 	sort.Strings(c2)
 	line("consumingMatchReuse", strings.Join(c2, ","))
 
+	// lastUses: for each freeEligible name, the LAST top-level statement
+	// index that mentions it (ident reads and assign targets, via the same
+	// ident walk identCounts uses) — the raw fact behind a release
+	// placement, dumped regardless of precise-drop eligibility. A name the
+	// body never mentions after its declaration is omitted.
+	if b.fn != nil && b.fn.Body != nil {
+		lu := map[string]int{}
+		for i, st := range b.fn.Body.Stmts {
+			for name := range identCounts(st) {
+				if b.rc.freeEligible[name] {
+					lu[name] = i
+				}
+			}
+		}
+		names := make([]string, 0, len(lu))
+		for n := range lu {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		uses := make([]string, 0, len(names))
+		for _, n := range names {
+			uses = append(uses, fmt.Sprintf("%s=%d", n, lu[n]))
+		}
+		line("lastUses", strings.Join(uses, ","))
+	}
+
 	drops := make([]string, 0, len(b.rc.preciseDrops))
 	for idx, names := range b.rc.preciseDrops {
 		ns := append([]string(nil), names...)

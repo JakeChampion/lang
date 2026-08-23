@@ -88,8 +88,9 @@ function aliaser(): i32 {
 	// aliasBindIncs (the retain-plan table the self-host diffs against).
 	check("aliaser", "aliasBindIncs: 42:2=b")
 	// dropper: big's last use is `big[0]` at top-level statement 1 — the
-	// precise drop lands right after it.
-	check("dropper", "freeEligible: big", "preciseDrops: 1=big")
+	// precise drop lands right after it, and the raw last-use fact is dumped
+	// as lastUses regardless of drop eligibility.
+	check("dropper", "freeEligible: big", "preciseDrops: 1=big", "lastUses: big=1")
 	// nester: `row` is declared in the loop BODY, so it is not a top-level
 	// candidate at all — it lands in nestedDrops instead, keyed by the position
 	// of the statement to drop after (`s = s + row[0]`).
