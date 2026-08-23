@@ -1225,7 +1225,20 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// construction must not inc them). Freeing such a local at scope exit
 	// would reclaim the cell the container still holds.
 	escapeOwned := func(e ast.Expr) {
-		if id, ok := e.(*ast.Ident); ok && !needsRcIncOnAlias(id, b) {
+		id, ok := e.(*ast.Ident)
+		if !ok {
+			return
+		}
+		// A consuming-match binding (#4400) is a counted owner the same way,
+		// but by NAME rather than by type: it is not a declared local, so
+		// `exprType` has nothing to classify and needsRcIncOnAlias reads
+		// false for it. Tainting it would skip the sweep and leak the dup —
+		// `Cons(h, t) => return Cons(h + 1, t)` would leak the whole tail per
+		// call. The UNCOUNTED sinks (escape) still taint these names.
+		if _, owned := b.rc.consumingBindings[id.Name]; owned {
+			return
+		}
+		if !needsRcIncOnAlias(id, b) {
 			tainted[id.Name] = true
 		}
 	}
