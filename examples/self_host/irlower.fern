@@ -41739,23 +41739,18 @@ function emit_structarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     return st.emit(ir.op_store_local(slot));
 }
 
-// strarr_free_helper / strarr_elem_free_helper: which element-walking release a
-// reclaimable string[] slot gets. The SARRB class — a builtin `s.split(sep)` /
-// `s.lines()` result — is the one whose elements are zero-copy VIEWS on the
-// register backends: a 24-byte box over the source's bytes carrying the immortal
-// rc sentinel, which __fern_str_free skips BY CONTRACT so a view cannot free
-// bytes it does not own. The view-aware siblings free that box alone.
-//
-// Only this class may take them. The immortal rc makes a second holder uncounted
-// and undetectable, so the warrant has to come from the classification: the
-// runtime helper made these boxes and stored them into this array and nowhere
-// else, and the slot is proven non-escaping.
+// strarr_free_helper / strarr_elem_free_helper: the element-walking release a
+// reclaimable string[] slot gets. One route since #7230: split/lines segments
+// are OWNED COPIES now (rt_src_str_split / rt_src_str_lines append
+// `slice + ""`), so the SARRB class takes the same rc-aware full free as every
+// other string[] — the view-aware siblings (__fern_str_arr_view_free freeing
+// boxes alone) would strand each element's data buffer. The strarr_builtin
+// flag still gates the SARRB credit (slot_is_reclaimable_strarr): it is the
+// binding-site type confirmation, no longer a release selector.
 function strarr_free_helper(s: LowerState, i: i32): string {
-    if (s.is_strarr_builtin_slot(i)) { return "__fern_str_arr_view_free"; }
     return "__fern_str_arr_free";
 }
 function strarr_elem_free_helper(s: LowerState, i: i32): string {
-    if (s.is_strarr_builtin_slot(i)) { return "__fern_str_view_free"; }
     return "__fern_str_free";
 }
 
