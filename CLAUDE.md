@@ -148,6 +148,15 @@ If you only notice after committing, reset onto main and replay the new commits
 hand-resolving conflict markers between a file and its own already-merged copy —
 then force-with-lease push.
 
+**GitHub can silently delete a span from a PR body or comment.** Naming both
+checked shifts on one line — `<<?` then `>>?` — has already destroyed the
+sentence between them, inside backticks and inside a fenced code block alike,
+leaving an unterminated clause with nothing marking the loss. A lone `<` came
+through escaped and intact, so the trigger is narrower than "any angle bracket"
+— but do not go hunting for the boundary. Split the two operators across lines,
+and read the body back after posting whenever it quotes operators or asm. A
+posted comment cannot be edited afterwards; only a follow-up can correct it.
+
 ## Project goal / roadmap (what "the next task" means)
 
 1. **DONE — full IR implementation for the entire language in the self-hosted
