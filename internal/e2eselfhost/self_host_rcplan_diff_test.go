@@ -284,10 +284,12 @@ function main(): i32 { return f(); }`,
 			},
 		},
 		{
-			// STRING[] alias bind — the #7391 limb, at the retain level: the
-			// bind-site retain FIRES on the self-host (this row is what moves
-			// when the deep-retain fix lands: the site stays, the depth
-			// changes); native elides the pair as above.
+			// STRING[] alias bind, LIVE source: a closed divergence, twice
+			// over — #7420's buffer-rc-gated element walk made shallow
+			// ownership sound for string[], and the dead-alias cancellation
+			// (the array clause covers every is_arr slot) then elides the
+			// borrowed view's inc/dec pair exactly as native does. Anchored
+			// agreement.
 			name: "alias-bind-strarr",
 			src: `function f(): i32 {
 	var xs: string[] = ["a", "bb"];
@@ -296,9 +298,63 @@ function main(): i32 { return f(); }`,
 	return n;
 }
 function main(): i32 { return f(); }`,
-			anchor: map[string]map[string]string{"f": {"freeEligible": "v,xs"}},
+			anchor: map[string]map[string]string{"f": {"freeEligible": "v,xs", "aliasBindIncs": ""}},
+		},
+		{
+			// DEAD-ALIAS CANCELLATION (#4402 opt 1), array limb: the alias is
+			// a pure borrowed view (reads only, never returned), so BOTH
+			// sides elide the transfer inc — and neither precise-drops the
+			// source, which releases only at the exit sweep (an early free
+			// would dangle the borrow). Anchored agreement.
+			name: "dead-alias-borrow-only",
+			src: `function f(): i32 {
+	var a: i32[] = [1, 2];
+	var b: i32[] = a;
+	var n: i32 = b.len() + a.len();
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "", "preciseDrops": "", "freeEligible": "a,b"}},
+		},
+		{
+			// The exclusion the live-source array anchor already pins from
+			// the other side: an alias mentioned in a RETURN expression is
+			// not cancelled (native's returned[y] gate) — the retain stays
+			// on both sides. Source-reassigned is the same family: pinned
+			// preciseDrops divergence only (native drops the retained alias
+			// at its last use; the self-host leaves aliases to the sweep).
+			name: "dead-alias-source-reassigned-excluded",
+			src: `function f(): i32 {
+	var a: i32[] = [1, 2];
+	var b: i32[] = a;
+	var n: i32 = b.len();
+	a = [3, 4, 5];
+	return n + a.len();
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "3:2=b"}},
 			diverge: map[string]map[string]divergence{
-				"f": {"aliasBindIncs": {native: "", selfhost: "3:2=v"}},
+				"f": {"preciseDrops": {native: "2=b", selfhost: ""}},
+			},
+		},
+		{
+			// CHAIN refusal: b borrows a (cancelled), and c aliasing b is
+			// refused on both sides (a cancelled alias sources nothing) —
+			// c keeps its retain. Native precise-drops the retained c at its
+			// last use; the self-host leaves it to the sweep (the known
+			// placement class).
+			name: "dead-alias-chain-refused",
+			src: `function f(): i32 {
+	var a: i32[] = [1, 2];
+	var b: i32[] = a;
+	var c: i32[] = b;
+	var n: i32 = c.len() + b.len() + a.len();
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "4:2=c"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "3=c", selfhost: ""}},
 			},
 		},
 		{
