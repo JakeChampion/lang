@@ -5333,7 +5333,10 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 		holder = fmt.Sprintf("__ptuple_%d_%d", pos.Line, pos.Col)
 	}
 	d.Init = &ast.Ident{P: pos, Name: holder}
-	return ast.Param{Name: holder, NamePos: pos, Type: ptype}, d, nil
+	// Retain the written pattern so the formatter can put it back; without it
+	// an arrow lambda reprints as a `function(…)` whose return type has to be
+	// invented, and the holder + prelude `let` leak into the output (#7338).
+	return ast.Param{Name: holder, NamePos: pos, Type: ptype, Pattern: d}, d, nil
 }
 
 // irrefutableDestructure converts a pattern into the equivalent

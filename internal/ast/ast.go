@@ -3268,6 +3268,16 @@ type Param struct {
 	// Default may not be followed by a required (Default == nil)
 	// parameter — the parser rejects that.
 	Default Expr
+	// Pattern retains the DESTRUCTURING pattern a parameter was written with
+	// — `((p, q): (i32, i32)) => …`, `f(Point { x: a, y }: Point)`. The parser
+	// desugars such a parameter into a holder param plus a leading `let` in the
+	// body, which loses the written form; only the formatter reads this, to put
+	// it back (#7338).
+	//
+	// Nil for an ordinary parameter. Its Init and TempName belong to the
+	// lowering, not the source: the pattern is Names / Fields / StructName /
+	// Nested.
+	Pattern *Destructure
 }
 
 // InlineHint is a source-level inlining directive on a function decl

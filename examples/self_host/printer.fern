@@ -108,17 +108,39 @@ function print_expr(e: parser.Expr): string {
 // print_lambda_params renders a lambda's `(p: T, …)` list — shared by the
 // `function` and arrow spellings, which differ only in what follows it.
 function print_lambda_params(lm: parser.ExprLambda): string {
+    var (pats, _) = param_patterns_for(lm.params, lm.body);
+    return print_params_with(lm.params, pats);
+}
+
+// print_params_with renders a parameter list, spelling a destructuring
+// parameter as the pattern it was written with rather than the holder the
+// desugar minted (#7338).
+function print_params_with(params: parser.ParamDecl[], pats: string[]): string {
     var out: string = "(";
     var pi: i32 = 0;
-    while (pi < lm.params.len()) {
+    while (pi < params.len()) {
         if (pi > 0) { out = out + ", "; }
-        out = out + lm.params[pi].name;
-        if (lm.params[pi].type_name.len() > 0) {
-            out = out + ": " + lm.params[pi].type_name;
+        if (pi < pats.len() && pats[pi].len() > 0) {
+            out = out + pats[pi];
+        } else {
+            out = out + params[pi].name;
+        }
+        if (params[pi].type_name.len() > 0) {
+            out = out + ": " + params[pi].type_name;
         }
         pi = pi + 1;
     }
     return out + ")";
+}
+
+// drop_prelude returns body with its first `n` statements removed — the `let`s
+// the parameter desugar minted, now spelled in the parameter list.
+function drop_prelude(body: parser.Stmt[], n: i32): parser.Stmt[] {
+    if (n <= 0) { return body; }
+    var out: parser.Stmt[] = [];
+    var i: i32 = n;
+    while (i < body.len()) { out = out.append(body[i]); i = i + 1; }
+    return out;
 }
 
 // print_return_only prints the expression of a body that is exactly one
@@ -503,22 +525,31 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             // then refuses (19 corpus files). An annotated `function` form
             // already prints valid source and is left as written.
             if (lm.ret_type.len() == 0) {
-                var av: string = print_return_only(lm.body);
+                // Past the desugar's prelude, an arrow lambda with a
+                // destructuring parameter is the same one-`return` body the
+                // arrow spelling needs. Without this it fell to `function(…)`,
+                // which must state a return type the arrow never wrote —
+                // #7338, where both compilers emitted a program that no longer
+                // compiles.
+                var (_, npre) = param_patterns_for(lm.params, lm.body);
+                var av: string = print_return_only(drop_prelude(lm.body, npre));
                 if (av.len() > 0) { return params + " => " + av; }
             }
             // `function(` with no space, matching native — the spaced form
             // re-parses but is not the canonical spelling.
             var out: string = "function" + params;
             if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
+            var (_, vpre) = param_patterns_for(lm.params, lm.body);
+            var vbody: parser.Stmt[] = drop_prelude(lm.body, vpre);
             // A one-statement body renders inline, so a short predicate lambda
             // stays on the line that passes it. A lambda is an EXPRESSION, so
             // the multi-line form indents against a depth this walk does not
             // carry — it lands at column 0 mid-line, which is why matching
             // native's inline rule matters beyond style.
-            if (lm.body.len() == 1 && stmt_is_single_line(lm.body[0])) {
-                return out + " { " + print_stmt_inline(lm.body[0]) + " }";
+            if (vbody.len() == 1 && stmt_is_single_line(vbody[0])) {
+                return out + " { " + print_stmt_inline(vbody[0]) + " }";
             }
-            var (lam_body, _) = print_block(lm.body, 0, empty_fmt());
+            var (lam_body, _) = print_block(vbody, 0, empty_fmt());
             return out + " " + lam_body;
         },
         parser.ExprFString(fs) => {
@@ -1399,6 +1430,14 @@ function is_struct_destructure(type_name: string): boolean {
 // with the bound names comma-joined in `name`). A field renamed on binding
 // prints as `field: binding`, which is also how it was written.
 function print_struct_destructure(v: parser.StmtVar): string {
+    return "let " + struct_destr_pattern(v) + " = " + print_expr(v.init) + ";";
+}
+
+// struct_destr_pattern is print_struct_destructure's PATTERN — `Point { x, y }`
+// — without the `let` and the initialiser. A destructuring PARAMETER prints the
+// same pattern in its parameter position, so the two share this rather than
+// each spelling the marker decode (#7338).
+function struct_destr_pattern(v: parser.StmtVar): string {
     var rest: str = v.type_name[4 : v.type_name.len()];
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
@@ -1406,11 +1445,11 @@ function print_struct_destructure(v: parser.StmtVar): string {
         if (rest[ri] == b':' && colon < 0) { colon = ri; }
         ri = ri + 1;
     }
-    if (colon < 0) { return "var " + v.name + " = " + print_expr(v.init) + ";"; }
+    if (colon < 0) { return ""; }
     var struct_name: str = rest[0 : colon];
     var fields: string[] = split_commas(rest[colon + 1 : rest.len()]);
     var binds: string[] = split_commas(v.name);
-    var out: string = "let " + struct_name + " { ";
+    var out: string = struct_name + " { ";
     var i: i32 = 0;
     while (i < fields.len()) {
         if (i > 0) { out = out + ", "; }
@@ -1418,7 +1457,80 @@ function print_struct_destructure(v: parser.StmtVar): string {
         if (i < binds.len() && binds[i] != fields[i]) { out = out + ": " + binds[i]; }
         i = i + 1;
     }
-    return out + " } = " + print_expr(v.init) + ";";
+    return out + " }";
+}
+
+// param_pattern_from renders the pattern a destructuring parameter was written
+// with, recovered from the prelude `let` the parser minted for `holder` —
+// `(a, b)` for a tuple, `P { x, y }` for a struct. "" when st is not that
+// prelude, which is what stops a body's OWN destructuring being mistaken for
+// the desugar's and swallowed into a parameter list.
+//
+// Recovered rather than retained, unlike native, which carries the written
+// pattern on ast.Param. ParamDecl is spelled at 41 sites across the self-host
+// and the printer already decodes structure from these markers, so reading the
+// prelude is both smaller and idiomatic here. The two compilers have to agree
+// on OUTPUT, which the fmt parity gate checks; they need not agree on where the
+// pattern is kept.
+function param_pattern_from(st: parser.Stmt, holder: string): string {
+    match (st) {
+        parser.StmtVar(v) => {
+            var from_holder: boolean = false;
+            match (v.init) {
+                parser.ExprIdent(id) => { if (id.name == holder) { from_holder = true; } },
+                _ => { }
+            }
+            if (!from_holder) { return ""; }
+            // An `@` binding names the WHOLE value beside the pattern —
+            // `v @ P { x, y }` — and the parser uses that name as the holder
+            // instead of minting a `__ptuple_` one. It is a real binding the
+            // body may read, so the pattern alone would drop it.
+            var at: string = "";
+            if (holder.len() < 9 || holder[0:9] != "__ptuple_") { at = holder + " @ "; }
+            if (is_struct_destructure(v.type_name)) { return at + struct_destr_pattern(v); }
+            if (util.contains(v.name, ",")) { return at + "(" + join_csv(v.name) + ")"; }
+            return "";
+        },
+        _ => { }
+    }
+    return "";
+}
+
+// param_patterns_for returns the written pattern for each parameter ("" for an
+// ordinary one) and how many leading body statements are the desugar's prelude.
+// The count is 0 unless EVERY pattern found is accounted for, so a caller either
+// skips the whole prelude or prints the desugared form — never drops a binding.
+function param_patterns_for(params: parser.ParamDecl[], body: parser.Stmt[]): (string[], i32) {
+    var pats: string[] = [];
+    var pi: i32 = 0;
+    while (pi < params.len()) { pats = pats.append(""); pi = pi + 1; }
+
+    var n: i32 = 0;
+    while (n < body.len()) {
+        var matched: boolean = false;
+        var k: i32 = 0;
+        while (k < params.len()) {
+            if (pats[k].len() == 0) {
+                var pat: string = param_pattern_from(body[n], params[k].name);
+                if (pat.len() > 0) {
+                    pats = pats.with(k, pat);
+                    matched = true;
+                    k = params.len();
+                }
+            }
+            k = k + 1;
+        }
+        if (!matched) { n = body.len(); } else { n = n + 1; }
+    }
+    // Recount: the loop above exits by jumping n to body.len(), so derive the
+    // prelude length from how many patterns were recovered instead.
+    var found: i32 = 0;
+    var j: i32 = 0;
+    while (j < pats.len()) {
+        if (pats[j].len() > 0) { found = found + 1; }
+        j = j + 1;
+    }
+    return (pats, found);
 }
 
 // print_nested_func_decl respells a nested `function name(…): T { … }` from the
@@ -1612,6 +1724,7 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     } else {
         out = out + fd.name + tps;
     }
+    var (dpats, dpre) = param_patterns_for(fd.params, fd.body);
     out = out + "(";
     var i: i32 = 0;
     while (i < fd.params.len()) {
@@ -1620,7 +1733,13 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
         // formatted `fip` sort helpers, which pass their array `own` precisely
         // so `with` is in-place.
         if (fd.params[i].own) { out = out + "own "; }
-        out = out + fd.params[i].name;
+        // A destructuring parameter prints the pattern it was written with,
+        // not the holder the desugar minted (#7338).
+        if (i < dpats.len() && dpats[i].len() > 0) {
+            out = out + dpats[i];
+        } else {
+            out = out + fd.params[i].name;
+        }
         if (fd.params[i].type_name.len() > 0) {
             out = out + ": " + fd.params[i].type_name;
         }
@@ -1631,7 +1750,9 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     if (fd.import_iface.len() > 0) {
         return (out + ";\n", f);
     }
-    var (body_text, g) = print_block(fd.body, 0, f);
+    // The parameter list carries the patterns now, so the prelude `let`s would
+    // be a second, redundant binding of the same names.
+    var (body_text, g) = print_block(drop_prelude(fd.body, dpre), 0, f);
     return (out + " " + body_text + "\n", g);
 }
 
