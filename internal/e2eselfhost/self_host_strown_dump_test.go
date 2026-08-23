@@ -80,7 +80,7 @@ v lit: static
 v fresh: owned
 v up: owned
 v view: view
-v trimmed: view
+v trimmed: owned
 v alias: borrowed
 v viewalias: view
 v litalias: static

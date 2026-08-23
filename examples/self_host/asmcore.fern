@@ -1627,15 +1627,16 @@ pub function rt_src_arr_i32_max(): string {
     return "function __fern_arr_i32_max(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return m; }";
 }
 
-// rt_src_str_trim backs `s.trim()` (#2649). str_trim is a ZERO-COPY view: it
-// finds the first/last non-whitespace byte (space/tab/'\n'/'\r' = 32/9/10/13)
-// and returns the sub-slice `s[start:end]`, which lowers to the str_slice op — a
-// fresh 16-byte box reusing s's data, no byte copy. So it's Tier-1 (composite /
-// borrowed): it allocates only the slice box (heap dep), needs no string-builder
-// primitive, and calls no other helper. Style mirrors rt_src_str_search — sentinel
-// `go` flag + nested if/else instead of `&&`/`||` to stay in the proven subset.
-// Empty / all-whitespace input → start==end → a zero-length slice, matching the
-// hand-asm it replaces.
+// rt_src_str_trim backs `s.trim()` (#2649). It finds the first/last
+// non-whitespace byte (space/tab/'\n'/'\r' = 32/9/10/13) and returns an OWNED
+// COPY of `s[start:end]` — the `+ ""` concat allocates the fresh box, matching
+// native and interp, whose trim always copies. It USED to return the bare
+// slice: a zero-copy view whose backing buffer the producer's exit sweep frees,
+// which was a deterministic wrong-answer UAF whenever the result crossed a
+// frame (#7393); the slice temp's 16/24-byte box is the cost of the idiom
+// until anonymous slice temps get a view-box reclaim. Style mirrors
+// rt_src_str_search — sentinel `go` flag + nested if/else to stay in the
+// proven subset. Empty / all-whitespace input → start==end → "".
 // rt_src_str_split backs `str_split(s, sep)` / `s.split(sep)` (#2649) — a string[]
 // of the substrings between each non-overlapping occurrence of `sep`. Composite /
 // Tier-1: scans for `sep` (inline byte-compare, like str_replace) and appends each
@@ -1676,7 +1677,7 @@ pub function rt_src_str_lines(): string {
 }
 
 pub function rt_src_str_trim(): string {
-    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32) { start = start + 1; } else { if (c == 9) { start = start + 1; } else { if (c == 10) { start = start + 1; } else { if (c == 13) { start = start + 1; } else { go = 0; } } } } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32) { end = end - 1; } else { if (c2 == 9) { end = end - 1; } else { if (c2 == 10) { end = end - 1; } else { if (c2 == 13) { end = end - 1; } else { go2 = 0; } } } } } } return s[start:end]; }";
+    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32) { start = start + 1; } else { if (c == 9) { start = start + 1; } else { if (c == 10) { start = start + 1; } else { if (c == 13) { start = start + 1; } else { go = 0; } } } } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32) { end = end - 1; } else { if (c2 == 9) { end = end - 1; } else { if (c2 == 10) { end = end - 1; } else { if (c2 == 13) { end = end - 1; } else { go2 = 0; } } } } } } return s[start:end] + \"\"; }";
 }
 
 pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
