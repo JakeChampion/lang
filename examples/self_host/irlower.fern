@@ -404,6 +404,11 @@ pub struct FnSigs {
     // is a function type. Drives type-directed function-VALUE detection: a bare
     // function-name ARGUMENT at a "fn" param lowers to const_func, not a call.
     fn_param_sigs: SigReg,
+    // ret_type_fns: "name|ret_type" rows for every non-generic function, in
+    // declaration order — the rc-plan cluster's call-return typing
+    // (rc_fe_call_ret_type) reads it instead of scanning the funcs list per
+    // binding (#6074: derive module-scale facts once per module).
+    ret_type_fns: SigReg,
     // closure_fns: functions whose body returns a closure box (a hoisted
     // escaping lambda). `var f = <call to one>` marks f a closure local.
     closure_fns: string[],
@@ -52666,13 +52671,25 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { arr_ret_fns: r, str_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e,
+    return FnSigs { arr_ret_fns: r, str_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
         tuple_fresh_ret_fns: e, move_arr_params: e, param_counted: e, trmc_consume_fns: e };
+}
+
+// ret_type_fns_of: "name|ret_type" rows for every non-generic function, in
+// declaration order (first row wins on a name collision, matching a linear
+// scan). Generic functions are skipped — the syntactic mirror can't
+// instantiate the type parameter.
+pub function ret_type_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.type_params.len() == 0) { out = out.append(fn.name + "|" + fn.ret_type); }
+    }
+    return out;
 }
 
 // array_ret_fn_names is the plain "return type is an array" scan — the default
@@ -52712,6 +52729,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
     var sfok: string[] = strfld_reclaim_ok_types_of(funcs, structs, bparams);
     return FnSigs {
         arr_ret_fns: sig_reg_of(arr_ret_fns),
+        ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
         str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)),
         strarr_ret_fns: sig_reg_of(strarr_ret_fns_of(funcs)),
         arr_method_fns: arr_method_fns_of(funcs),
@@ -53123,13 +53141,10 @@ function rc_fe_is_builtin_enum(t: string): boolean {
 // function `name`, or "" (unknown / generic / not found). Lets an unannotated
 // `var x = f(...)` local pick up f's heap return type so it reaches the
 // eligibility gate, mirroring native computeFreeEligible reading the checker's
-// resolved call type. Generic functions (`id[T](x: T): T`) are skipped — the
-// syntactic mirror can't instantiate the type parameter, so those stay "".
-function rc_fe_call_ret_type(funcs: parser.FuncDecl[], name: string): string {
-    for fn in funcs {
-        if (fn.name == name && fn.type_params.len() == 0) { return fn.ret_type; }
-    }
-    return "";
+// resolved call type. Reads the FnSigs ret_type_fns registry (generic
+// functions carry no row, so those stay "").
+function rc_fe_call_ret_type(retreg: SigReg, name: string): string {
+    return sig_reg_value_of(retreg, name);
 }
 
 // rc_fe_is_enum_name: `t` names an enum (some variant decl carries it as its
@@ -53265,7 +53280,7 @@ struct FeState { tainted: string[], an: string[], av: parser.Expr[], types_n: st
 // rc_fe_collect_types: record every declared local's (name, type) pair,
 // recursively. A destructure `var (a, b) = t` types each binding by splitting
 // t's tuple annotation positionally (best-effort: bare-ident RHS only).
-function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): FeState {
+function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[], retreg: SigReg): FeState {
     var st: FeState = s;
     for stmt in stmts {
         match (stmt) {
@@ -53305,7 +53320,7 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                                             // non-generic function — the local takes
                                             // that function's declared return type
                                             // (native reads the checker's call type).
-                                            t = rc_fe_call_ret_type(funcs, cid.name);
+                                            t = rc_fe_call_ret_type(retreg, cid.name);
                                         }
                                     },
                                     parser.ExprLambda(_) => {
@@ -53349,11 +53364,11 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                     st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t) };
                 }
             },
-            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs, funcs); st = rc_fe_collect_types(f.else_body, st, structs, funcs); },
-            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs, funcs); },
-            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs, funcs); },
+            parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs, retreg); st = rc_fe_collect_types(f.else_body, st, structs, retreg); },
+            parser.StmtWhile(w) => { st = rc_fe_collect_types(w.body, st, structs, retreg); },
+            parser.StmtFor(fr) => { st = rc_fe_collect_types(fr.body, st, structs, retreg); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { st = rc_fe_collect_types(arm.body, st, structs, funcs); }
+                for arm in m.arms { st = rc_fe_collect_types(arm.body, st, structs, retreg); }
             },
             _ => {}
         }
@@ -53637,7 +53652,7 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
 
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
-pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
+pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg): string[] {
     var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
@@ -53653,7 +53668,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
         }
         pi = pi + 1;
     }
-    st = rc_fe_collect_types(fn.body, st, structs, funcs);
+    st = rc_fe_collect_types(fn.body, st, structs, retreg);
     st = rc_fe_walk_stmts(fn.body, st, structs);
     // fixpoint: forward taint via rhs, backward via bare-ident aliasing.
     var changed: boolean = true;
@@ -54245,7 +54260,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: parser.StructDecl[
     // movedLocals does not need call-return typing (it moves already-typed
     // locals), so an empty function table is passed — this keeps rc_ml_compute
     // free of the module funcs thread without changing its behaviour.
-    st = rc_fe_collect_types(fn.body, st, structs, []);
+    st = rc_fe_collect_types(fn.body, st, structs, sig_reg_empty());
     var saw_return: boolean = false;
     var k: i32 = 0;
     while (k < fn.body.len()) {
@@ -54298,7 +54313,7 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
         st2 = FeState { tainted: st2.tainted, an: st2.an, av: st2.av, types_n: st2.types_n.append(fn.params[pj].name), types_t: st2.types_t.append(fn.params[pj].type_name) };
         pj = pj + 1;
     }
-    st2 = rc_fe_collect_types(fn.body, st2, structs, []);
+    st2 = rc_fe_collect_types(fn.body, st2, structs, sig_reg_empty());
     return rc_ml_loop_body_moves(fn.body, fn, st2.types_n, st2.types_t, structs, rc_ml_compute_toplevel(fn, structs));
 }
 
@@ -55194,7 +55209,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
     }
     // freeEligible (#4482 — between consumedParams and preciseDrops, matching
     // native dumpRcPlan's line order): name-sorted, comma-joined.
-    var fe: string[] = free_eligible_of(fn, structs, funcs);
+    var fe: string[] = free_eligible_of(fn, structs, sig_reg_of(ret_type_fns_of(funcs)));
     if (fe.len() > 0) {
         var fes: string[] = [];
         var fi: i32 = 0;
