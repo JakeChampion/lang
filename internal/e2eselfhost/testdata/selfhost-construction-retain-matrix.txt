@@ -11,6 +11,15 @@
 # local = bare ident of a fresh local, both claims live; param = bare ident
 # of a param the caller keeps; fieldread = q.f off a live sibling holder
 # (the flatten__RewriteCtx class); call = producer result.
+#
+# READ THE `local` ROWS AS COMPOUND. That shape ends with a second holder
+# aliased to a third name (`var q: P = P { f: mkv(..) }; var p: P = q;`), so a
+# row stays `leak` while EITHER the field share or the struct alias-bind is
+# uncounted. `enum__local` is the measured example: its enum-source half is
+# clean (250/250 — self_host_enum_field_share_test.go pins that shape
+# directly), and the whole cell still reads leak on the alias half's 300
+# allocs / 0 frees. A `local` row therefore flips only when the struct
+# alias-bind floor (struct__local) goes with it.
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
 str__local          clean leak   bare string local: retain gated on slit_reclaim + ownership; P not strfldok-admitted here
 str__param          clean leak   same gate, param origin
