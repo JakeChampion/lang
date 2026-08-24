@@ -2146,6 +2146,25 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
   if (!is_method && name == "cell_new") {
     return t_struct("Cell");
   }
+  // slice_unchecked(s, a, b) builtin — the byte slice s[a:b] under its
+  // honest name (#5634). The self-host has no str view type, so it types
+  // as string, same as ExprSlice on a string source.
+  if (!is_method && name == "slice_unchecked") {
+    if (c.args.len() != 3) {
+      return t_unknown("slice_unchecked takes 3 arguments");
+    }
+    var sut: Type = check_expr(c.args[0], s);
+    if (!is_integer(check_expr(c.args[1], s)) || !is_integer(check_expr(c.args[2], s))) {
+      return t_unknown("slice_unchecked bounds must be i32");
+    }
+    match (sut) {
+      TypeString(_) => {
+        return t_string();
+      },
+      _ => {}
+    }
+    return t_unknown("slice_unchecked: first argument must be a string");
+  }
   // Built-in VMap method dispatch — handled ahead of
   // the user MethodSig lookup.
   if (is_method) {
