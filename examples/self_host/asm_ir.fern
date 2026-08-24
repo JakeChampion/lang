@@ -7929,7 +7929,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
-        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64"); }
+        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64"); }
         if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64"); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86_64"); }

@@ -769,15 +769,15 @@ checker and all four backends. `random_bytes` has moved: it returns
 `u8[]` on every backend, in the same box shape as `__alloc_u8`.
 `read_file` keeps its text signature, has its raw sibling
 (`read_file_bytes(path): Result[u8[], IoError]` on every backend), and
-the NATIVE compilers now validate: interp, x86-64, arm64 (both string
-ABIs, Linux + Darwin), arm64ssa and wasm (preview-1 and -2) return
-`Err(InvalidUtf8(path))` on malformed content, via a per-backend
-`__fern_utf8_valid` and a synthetic EILSEQ through the existing
-errno→IoError classifiers. The SELF-HOST compiler's own `read_file`
-does not validate yet — that mirror is the remaining `read_file` work.
-`tcp_recv` remains entirely. Slice 4 (the "no stdlib operation
-produces an invalid `string`" property test) must still hold `tcp_recv`
-and the self-host `read_file` out until they move.
+BOTH compilers now validate: interp, x86-64, arm64 (both string ABIs,
+Linux + Darwin), arm64ssa and wasm (preview-1 and -2) on the native
+side, and the self-host's register lanes (`asmcore.rt_src_utf8_valid`,
+plain Fern) plus its wasm p1/p2 lanes, all return
+`Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
+and nothing emitted is now real on every lane. `tcp_recv` is the last
+byte-carrying builtin still typed `string`, and the only remaining
+holdout for slice 4 (the "no stdlib operation produces an invalid
+`string`" property test).
 
 Costs, stated honestly:
 
