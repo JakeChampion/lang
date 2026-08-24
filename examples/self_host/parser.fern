@@ -9060,6 +9060,61 @@ function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: MFns, i
     return mono_expr(e, env, funcs, ins);
 }
 
+// mono_ty_mentions_var reports whether a type spelling contains a bare
+// single-uppercase type-var leaf ("T", "Option[T]", "T[]", "(T, i32)") — the
+// composite sibling of looks_type_var. A payload carrying one is not a usable
+// concrete type: binding it would key a clone named after the variable
+// (`assert_eq__T`) whose trait calls can't resolve, bailing the module.
+function mono_ty_mentions_var(t: string): boolean {
+    var i: i32 = 0;
+    var n: i32 = t.len();
+    while (i < n) {
+        var c: i32 = t[i] as i32;
+        if (c >= 65 && c <= 90) {
+            var prev_id: boolean = false;
+            if (i > 0) {
+                var p: i32 = t[i - 1] as i32;
+                prev_id = (p >= 65 && p <= 90) || (p >= 97 && p <= 122) || (p >= 48 && p <= 57) || p == 95;
+            }
+            var next_id: boolean = false;
+            if (i + 1 < n) {
+                var q: i32 = t[i + 1] as i32;
+                next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95;
+            }
+            if (!prev_id && !next_id) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// mono_variant_payload_ty: the type a match arm's payload binding carries when
+// the scrutinee's inferred type `sty` is `Option[T]` / `Result[T, E]` — T for
+// Some/Ok, E for Err. "" (unknown) for any other scrutinee or variant, and for
+// a payload that still mentions a type variable. A qualified pattern
+// (`Result.Ok`) is stripped to its bare variant name first.
+function mono_variant_payload_ty(sty: string, vname: string): string {
+    if (mono_ty_mentions_var(sty)) { return ""; }
+    var bare: string = vname;
+    var di: i32 = 0;
+    while (di < vname.len()) {
+        if (vname[di] == b'.') { bare = vname[di + 1 : vname.len()] + ""; }
+        di = di + 1;
+    }
+    var n: i32 = sty.len();
+    if (n >= 8 && sty[0:7] == "Option[" && sty[n - 1] == b']') {
+        if (bare == "Some") { return strip_ws(sty[7 : n - 1] + ""); }
+        return "";
+    }
+    if (n >= 8 && sty[0:7] == "Result[" && sty[n - 1] == b']') {
+        var parts: string[] = split_top_commas(sty[7 : n - 1] + "");
+        if (parts.len() != 2) { return ""; }
+        if (bare == "Ok") { return strip_ws(parts[0]); }
+        if (bare == "Err") { return strip_ws(parts[1]); }
+    }
+    return "";
+}
+
 function mono_stmt(st: Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
@@ -9102,11 +9157,35 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: string)
         },
         StmtMatch(m) => {
             var sv: RExpr = mono_expr(m.scrutinee, env, funcs, ins);
+            // The arm-body env binds the pattern's payload names: an
+            // Option/Result scrutinee's Some/Ok payload carries T, Err
+            // carries E; any other payload binds unknown so it still
+            // SHADOWS an outer local of the same name.
+            var sty: string = mono_infer(m.scrutinee, env, funcs);
             var arms: MatchArm[] = [];
             var cur: Insts = sv.rins;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur, ret_ty);
+                var aenv: MEnv = env;
+                match (m.arms[i].pattern) {
+                    PatVariant(pv) => {
+                        if (pv.binding.len() > 0 && pv.binding != "_") {
+                            aenv = aenv.ebind(pv.binding, mono_variant_payload_ty(sty, pv.type_name));
+                        }
+                        var xbi: i32 = 0;
+                        while (xbi < pv.extra_bindings.len()) {
+                            if (pv.extra_bindings[xbi].len() > 0 && pv.extra_bindings[xbi] != "_") { aenv = aenv.ebind(pv.extra_bindings[xbi], ""); }
+                            xbi = xbi + 1;
+                        }
+                        if (pv.at_binding.len() > 0) {
+                            var aty: string = sty;
+                            if (mono_ty_mentions_var(aty)) { aty = ""; }
+                            aenv = aenv.ebind(pv.at_binding, aty);
+                        }
+                    },
+                    _ => {}
+                }
+                var ab: RStmts = mono_stmts(m.arms[i].body, aenv, funcs, cur, ret_ty);
                 cur = ab.rins3;
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;

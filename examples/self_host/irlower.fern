@@ -3669,6 +3669,28 @@ pub function arrarr_elem_kind_of_type(t: string): string {
 // the field answer identically: while the field half was missing, `h.m[0][0]`
 // over an `f64[][]` field read four bytes of a double and every consumer of the
 // result then treated it as an integer.
+// index_read_is_arr reports whether index expression `e` (`xs[i]`) yields an
+// ARRAY value — its container is an array-of-arrays: a T[][] local/param slot,
+// a nested-array struct field (`h.m[i]`), or an element of a 3-deep array
+// (`m[i][j]` over T[][][], whose recorded inner kind is "arr"). The element
+// KIND is irrelevant here (arrarr_elem records "" for the flat scalar kinds);
+// this asks only whether the read hands back an rc-counted array pointer.
+function index_read_is_arr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(aid) => { return s.is_arrarr_slot(s.slot_of(aid.name)); },
+                parser.ExprFieldAccess(_) => { return nested_arr_field_read_type(ix.array, s) != ""; },
+                parser.ExprIndex(_) => { return arrarr_index_elem_kind(ix.array, s) == "arr"; },
+                _ => { return false; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function arrarr_index_elem_kind(arr: parser.Expr, s: LowerState): string {
     match (arr) {
         parser.ExprIndex(ix) => {
@@ -16784,6 +16806,20 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             // An enum-array field still bails: aliasing it out needs deep-drop
             // recursion (a later slice).
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
+            // Returning an ELEMENT of an array-of-arrays (`return seeds[i]`)
+            // aliases the element out to the caller while the container keeps
+            // its reference — the same escape as the struct-field returns
+            // above, so it takes the same Perceus dup (native:
+            // needsRcIncOnAlias's Index arm). Without the retain the caller's
+            // exit sweep decs a count the container still owns, freeing the
+            // element under the live container.
+            if (index_read_is_arr(r.value, s)) {
+                var ris: LowerState = lower_expr(r.value, s);   // element ptr on stack
+                if (!ris.ok) { return ris; }
+                ris = ris.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+                ris = emit_dec_sweep_except(ris, 0 - 1);   // element NOT moved out of the container
+                return ris.emit(ir.op_return());
+            }
             // Returning a bare PARAM array (`return a`, a a borrowed param) —
             // the native return-transfer inc, ported (#4357 probe). The CALLER
             // binds the result as an owned move (its slot is exit-swept), but
@@ -21606,6 +21642,19 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
                             || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "string[]"
                             || is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag);
+                        // A NESTED-array payload (`Ok(seeds)` where the payload
+                        // is a `T[][]` — the fuzz-corpus shape). The outer
+                        // buffer is a heap pointer at offset 8 exactly like the
+                        // flat array payloads (its elements are array POINTERS,
+                        // riding the 4-byte-slot layout — see
+                        // is_nested_array_field_type); the bound slot
+                        // additionally carries is_arrarr + the inner element
+                        // kind so a nested read `seeds[i][j]` / `var row =
+                        // seeds[i]` types the inner level like a var binding.
+                        // Borrowed from the box like every array payload
+                        // (mark_borrowed_arr below keeps it out of the exit
+                        // dec-sweep), and nothing frees rows the box shares.
+                        var ptag_is_arrarr: boolean = is_nested_array_field_type(ms.structs, ptag) || ptag == "string[][]";
                         // A `dyn Trait` error payload (`Err(e)` where e: dyn Error):
                         // stored by pointer at offset 8 (same as a struct), read via
                         // op_opt_payload and marked with the dyn type so `e.method()`
@@ -21638,7 +21687,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // so it also matches `Map[K, V][]` — the array branch owns
                         // that spelling.
                         var ptag_is_map: boolean = is_map_type_name(ptag) && !is_array_type_name(ptag);
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
+                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
                     }
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -21727,6 +21776,14 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         else if (is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag)) {
                             ms = ms.mark_arr(pbslot, true);
                             ms = ms.mark_struct_type(pbslot, ptag[0 : ptag.len() - 2]);
+                        }
+                        // A NESTED-array payload: mark is_arr like the flat
+                        // arrays plus is_arrarr + the inner element kind, the
+                        // same marks a `var m: T[][]` binding records.
+                        else if (is_nested_array_field_type(ms.structs, ptag) || ptag == "string[][]") {
+                            ms = ms.mark_arr(pbslot, true);
+                            ms = ms.mark_arrarr(pbslot, true);
+                            ms = ms.mark_arrarr_elem(pbslot, arrarr_elem_kind_of_type(ptag));
                         }
                         // A `dyn Trait` payload: tag the bound slot with the dyn
                         // type so `e.method()` at the call site is recognised as
