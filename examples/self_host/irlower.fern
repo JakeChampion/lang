@@ -53597,7 +53597,7 @@ function rc_fe_escape_owned(e: parser.Expr, tainted: string[], types_n: string[]
 
 // FeState threads the taint set + the assigns table (parallel an/av arrays —
 // a name may repeat) + the name->type table through the recursive sink walk.
-struct FeState { tainted: string[], an: string[], av: parser.Expr[], av_en: string[][], av_es: string[][], types_n: string[], types_t: string[], decl_s: string[], site_mode: boolean }
+struct FeState { tainted: string[], an: string[], av: parser.Expr[], av_env: string[], types_n: string[], types_t: string[], decl_s: string[], site_mode: boolean }
 
 // The fe engine keys taint by BINDING-SITE id. In name mode (the dump path,
 // native parity) the id IS the bare name, so every resolution falls back to
@@ -53616,6 +53616,33 @@ function rc_fe_resolve(env_n: string[], env_s: string[], name: string): string {
     var i: i32 = env_n.len() - 1;
     while (i >= 0) { if (env_n[i] == name) { return env_s[i]; } i = i - 1; }
     return name;
+}
+
+// Per-assign env snapshots are stored FLAT ("name\tsite\n" rows) so FeState
+// carries only string[] fields — a string[][] field is outside the IR-eligible
+// struct shapes and bailed the whole-module arm64 emit.
+function rc_fe_env_encode(env_n: string[], env_s: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < env_n.len()) { out = out + env_n[i] + "\t" + env_s[i] + "\n"; i = i + 1; }
+    return out;
+}
+
+function rc_fe_env_resolve(env: string, name: string): string {
+    // last entry wins (shadowing): scan rows from the end.
+    var last: string = name;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < env.len()) {
+        if (env[i] == b'\n') {
+            var t: i32 = start;
+            while (t < i && env[t] != b'\t') { t = t + 1; }
+            if (t < i && env[start:t] == name) { last = env[t + 1:i] + ""; }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return last;
 }
 
 // rc_fe_collect_types: record every declared local's (name, type) pair,
@@ -53866,7 +53893,7 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
                 if (!rc_fe_is_destructure(v.name)) {
                     var vsid: string = rc_fe_bind_site(st.site_mode, v.name, v.line, v.col);
                     // the init is evaluated in the env BEFORE this binding.
-                    st = FeState { ...st, an: st.an.append(vsid), av: st.av.append(v.init), av_en: st.av_en.append(en), av_es: st.av_es.append(es) };
+                    st = FeState { ...st, an: st.an.append(vsid), av: st.av.append(v.init), av_env: st.av_env.append(rc_fe_env_encode(en, es)) };
                     st = rc_fe_walk_expr(v.init, st, structs, en, es);
                     en = en.append(v.name);
                     es = es.append(vsid);
@@ -53882,7 +53909,7 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
                 }
             },
             parser.StmtAssign(a) => {
-                st = FeState { ...st, an: st.an.append(rc_fe_resolve(en, es, a.target)), av: st.av.append(a.value), av_en: st.av_en.append(en), av_es: st.av_es.append(es) };
+                st = FeState { ...st, an: st.an.append(rc_fe_resolve(en, es, a.target)), av: st.av.append(a.value), av_env: st.av_env.append(rc_fe_env_encode(en, es)) };
                 st = rc_fe_walk_expr(a.value, st, structs, en, es);
             },
             parser.StmtIf(f) => {
@@ -53957,13 +53984,13 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
 // string slices are owned; ident reads the taint set; projections and array
 // slices are tainted; calls are owned unless the receiver or any arg is
 // tainted; unknown shapes default tainted.
-function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg, env_n: string[], env_s: string[]): boolean {
+function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg, env: string): boolean {
     match (e) {
         parser.ExprArray(_) => { return false; },
         parser.ExprStructLit(_) => { return false; },
         parser.ExprTuple(_) => { return false; },
         parser.ExprLambda(_) => { return false; },   // a fresh closure is owned (native MakeClosure arm)
-        parser.ExprIdent(id) => { return util.index_of_str(tainted, rc_fe_resolve(env_n, env_s, id.name)) >= 0; },
+        parser.ExprIdent(id) => { return util.index_of_str(tainted, rc_fe_env_resolve(env, id.name)) >= 0; },
         parser.ExprNumber(_) => { return false; },
         parser.ExprBool(_) => { return false; },
         parser.ExprString(_) => { return false; },
@@ -54025,12 +54052,12 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
-                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, env_n, env_s);
+                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, env);
                 },
                 _ => {}
             }
             for arg in c.args {
-                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, env_n, env_s)) { return true; }
+                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, env)) { return true; }
             }
             return false;
         },
@@ -54054,7 +54081,7 @@ pub function free_eligible_sites_of(fn: parser.FuncDecl, structs: parser.StructD
 }
 
 function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg, site_mode: boolean): string[] {
-    var st: FeState = FeState { tainted: [], an: [], av: [], av_en: [], av_es: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode };
+    var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
     var pi: i32 = 0;
@@ -54083,14 +54110,14 @@ function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: Si
         var i: i32 = 0;
         while (i < st.an.len()) {
             var name: string = st.an[i];
-            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, st.av_en[i], st.av_es[i])) {
+            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, st.av_env[i])) {
                 st = FeState { ...st, tainted: st.tainted.append(name) };
                 changed = true;
             }
             if (util.index_of_str(st.tainted, name) >= 0) {
                 match (st.av[i]) {
                     parser.ExprIdent(src) => {
-                        var srcid: string = rc_fe_resolve(st.av_en[i], st.av_es[i], src.name);
+                        var srcid: string = rc_fe_env_resolve(st.av_env[i], src.name);
                         if (util.index_of_str(st.tainted, srcid) < 0) {
                             st = FeState { ...st, tainted: st.tainted.append(srcid) };
                             changed = true;
@@ -54658,7 +54685,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: parser.StructDecl[
     var moved: MlOut = MlOut { names: [], sites: [] };
     // local name->type table, reusing the freeEligible collector (params
     // recorded first so destructure typing can read them, then locals).
-    var st: FeState = FeState { tainted: [], an: [], av: [], av_en: [], av_es: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
+    var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         st = FeState { ...st, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name), decl_s: st.decl_s.append(fn.params[pi].name) };
@@ -54714,7 +54741,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: parser.StructDecl[
 
 // rc_ml_compute is rc_ml_compute_toplevel plus the loop-body moves.
 function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut {
-    var st2: FeState = FeState { tainted: [], an: [], av: [], av_en: [], av_es: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
+    var st2: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
         st2 = FeState { ...st2, types_n: st2.types_n.append(fn.params[pj].name), types_t: st2.types_t.append(fn.params[pj].type_name), decl_s: st2.decl_s.append(fn.params[pj].name) };

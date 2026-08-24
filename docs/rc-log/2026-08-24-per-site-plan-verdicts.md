@@ -33,6 +33,20 @@ does not model the consuming-match release channel) and
 `name_is_alias_bound` (the Option kinds carry no alias-bind retain) —
 each retires with its own port, not with keying.
 
+## CI-caught: the env snapshots were outside the IR-eligible shapes
+
+stage2-fixpoint-arm64 bailed the whole-module emit:
+`rc_fe_collect_types` returns `FeState`, whose per-assign env-snapshot
+fields were `string[][]` — a struct field needing RC, so the module is
+IR-ineligible and the driver could not emit its own source. The x86-64
+battery never sees this because those suites lower single fixtures, not
+the compiler module. Fix: the snapshots flattened to ONE `string[]`
+column of encoded rows (`name\tsite\n`, resolved last-match-wins), so
+FeState carries only IR-eligible fields. The flat resolve also has to
+slice-and-own carefully — the native checker refuses binding a borrowed
+slice to an owned local, which the self-host checker accepted; the round
+trip is the gate that catches that divergence.
+
 ## Measured
 
 Name-mode parity: rcplan diff zero movement. Site mode: the full battery
