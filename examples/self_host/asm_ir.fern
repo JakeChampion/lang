@@ -7524,6 +7524,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = ioePre4.state;
         var ioePre5: ShapeRefOut = shape_ref(s, "Other");
         s = ioePre5.state;
+        // InvalidUtf8 is constructed by rt_src_read_file's D9 validation
+        // (#5714) — the one IoError variant no compiler user-code names, so
+        // without this pre-intern its weak shape def is recorded only AFTER
+        // the flush below and the per-module link dangles.
+        var ioePre6: ShapeRefOut = shape_ref(s, "InvalidUtf8");
+        s = ioePre6.state;
     }
     // .rodata: each interned string literal as a labelled `.ascii` directive
     // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
