@@ -26,39 +26,42 @@ import "./util";
 // surrounding `"`s — they store decoded bytes — so we re-encode
 // on emit.
 function quote_string(s: string): string {
-    var out: string = "\"";
+    // Byte-level rebuild: the escapes are ASCII and every other byte
+    // (multibyte sequences included) passes through byte-exact.
+    var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var b: i32 = s[i] as i32;
-        if (b == 34) { out = out + "\\\""; }
-        else if (b == 92) { out = out + "\\\\"; }
-        else if (b == 10) { out = out + "\\n"; }
-        else if (b == 9) { out = out + "\\t"; }
-        else if (b == 13) { out = out + "\\r"; }
-        else { out = out + slice_unchecked(s, i, i + 1); }
+        if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }        // \"
+        else if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }   // \\
+        else if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }  // \n
+        else if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }   // \t
+        else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }  // \r
+        else { out = out.append(s[i]); }
         i = i + 1;
     }
-    return out + "\"";
+    return "\"" + string_from_bytes_unchecked(out) + "\"";
 }
 
 // escape_fstring_lit re-escapes an f-string's literal segment: the plain string
 // rules plus `{` / `}` doubled, so the body re-lexes into the same parts.
 function escape_fstring_lit(s: string): string {
-    var out: string = "";
+    // Same byte-level rebuild as quote_string, plus the doubled braces.
+    var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var b: i32 = s[i] as i32;
-        if (b == 34) { out = out + "\\\""; }
-        else if (b == 92) { out = out + "\\\\"; }
-        else if (b == 10) { out = out + "\\n"; }
-        else if (b == 9) { out = out + "\\t"; }
-        else if (b == 13) { out = out + "\\r"; }
-        else if (b == 123) { out = out + "{{"; }
-        else if (b == 125) { out = out + "}}"; }
-        else { out = out + slice_unchecked(s, i, i + 1); }
+        if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }         // \"
+        else if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }    // \\
+        else if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }   // \n
+        else if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }    // \t
+        else if (b == 13) { out = out.append(92 as u8); out = out.append(114 as u8); }   // \r
+        else if (b == 123) { out = out.append(123 as u8); out = out.append(123 as u8); } // {{
+        else if (b == 125) { out = out.append(125 as u8); out = out.append(125 as u8); } // }}
+        else { out = out.append(s[i]); }
         i = i + 1;
     }
-    return out;
+    return string_from_bytes_unchecked(out);
 }
 
 // =================== PRECEDENCE ====================
@@ -426,7 +429,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             // `as_i32s[i + 1]` for `s[i + 1] as i32`, which re-parses as a call
             // to an undefined name. It binds at its own level, above every
             // binary operator and below the postfix positions.
-            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+            if (u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
                 var cinner: string = print_expr_prec(u.operand, prec_cast()) + " as " + slice_unchecked(u.op, 3, u.op.len());
                 if (parent_prec >= prec_cast()) { return "(" + cinner + ")"; }
                 return cinner;
@@ -1067,7 +1070,7 @@ function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) 
 // `return;`, whose value is the unknown-token placeholder for the `;`.
 function expr_is_missing(e: parser.Expr): boolean {
     match (e) {
-        parser.ExprUnknown(u) => { return u.kind.len() == 0 || slice_unchecked(u.kind, 0, 6) == "punct:"; },
+        parser.ExprUnknown(u) => { return u.kind.len() == 0 || util.str_has_prefix(u.kind, "punct:"); },
         _ => { return false; }
     }
     return false;
@@ -1255,7 +1258,7 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
 
 // is_forc_name reports the synthesised first-iteration flag `__forc_<l>_<c>`.
 function is_forc_name(name: string): boolean {
-    return name.len() > 7 && slice_unchecked(name, 0, 7) == "__forc_";
+    return name.len() > 7 && util.str_has_prefix(name, "__forc_");
 }
 
 function expr_is_true(e: parser.Expr): boolean {
@@ -1422,7 +1425,7 @@ function join_csv(csv: string): string {
 }
 
 function is_struct_destructure(type_name: string): boolean {
-    return type_name.len() >= 4 && slice_unchecked(type_name, 0, 4) == "@sd:";
+    return util.str_has_prefix(type_name, "@sd:");
 }
 
 // print_struct_destructure respells `let Point { x, y } = E;` from the marker
@@ -1486,7 +1489,7 @@ function param_pattern_from(st: parser.Stmt, holder: string): string {
             // instead of minting a `__ptuple_` one. It is a real binding the
             // body may read, so the pattern alone would drop it.
             var at: string = "";
-            if (holder.len() < 9 || slice_unchecked(holder, 0, 9) != "__ptuple_") { at = holder + " @ "; }
+            if (!util.str_has_prefix(holder, "__ptuple_")) { at = holder + " @ "; }
             if (is_struct_destructure(v.type_name)) { return at + struct_destr_pattern(v); }
             if (util.contains(v.name, ",")) { return at + "(" + join_csv(v.name) + ")"; }
             return "";
@@ -2997,6 +3000,25 @@ function main(): i32 {
     var outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
     if (!util.contains(outOor, "var x: f64 = 1e309;")) { return 331; }
 
+    // Multibyte string content must pass through the byte-level escape
+    // rebuilds byte-exact (no per-byte slicing of split code points).
+    if (quote_string("héllo\nwörld") != "\"héllo\\nwörld\"") { return 340; }
+    if (escape_fstring_lit("pré{x}é") != "pré{{x}}é") { return 341; }
+    // And survive a full format → re-lex round-trip: the verbatim parse
+    // keeps the f-string form, so its literal parts go through
+    // escape_fstring_lit.
+    var srcMb: string = "function main(): i32 { var s: string = \"héllo\"; var f: string = f\"pré {s}\"; return 0; }";
+    var pfMb: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcMb));
+    var outMb: string = format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
+    var rtMb: parser.Module = parser.parse_module(lexer.tokenize(outMb));
+    if (rtMb.funcs.len() != 1) { return 342; }
+    if (!util.contains(outMb, "\"héllo\"")) { return 343; }
+    if (!util.contains(outMb, "f\"pré {s}\"")) { return 344; }
+    // diff_split_lines byte-scans for '\n'; multibyte lines split intact.
+    var dl: string[] = diff_split_lines("é\nü");
+    if (dl.len() != 2) { return 345; }
+    if (dl[0] != "é\n" || dl[1] != "ü") { return 346; }
+
     return 0;
 }
 
@@ -3034,7 +3056,7 @@ function diff_split_lines(s: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        if (slice_unchecked(s, i, i + 1) == "\n") {
+        if (s[i] == b'\n') {
             out = out.append(slice_unchecked(s, start, i + 1));
             start = i + 1;
         }
@@ -3170,7 +3192,7 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
             out = out + mark + line;
             // A final line with no newline still has to leave the diff itself
             // well-formed.
-            if (line.len() == 0 || slice_unchecked(line, line.len() - 1, line.len()) != "\n") { out = out + "\n"; }
+            if (line.len() == 0 || line[line.len() - 1] != b'\n') { out = out + "\n"; }
             k = k + 1;
         }
         h = h + 1;

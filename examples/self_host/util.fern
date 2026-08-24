@@ -336,15 +336,35 @@ pub function index_of_str(xs: string[], s: string): i32 {
     return 0 - 1;
 }
 
+// str_has_prefix reports whether `s` begins with `prefix`, compared
+// byte-wise — no slice, so a probe at a multibyte character can never
+// materialise a split code point.
+pub function str_has_prefix(s: string, prefix: string): boolean {
+    if (s.len() < prefix.len()) { return false; }
+    var i: i32 = 0;
+    while (i < prefix.len()) {
+        if (s[i] != prefix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // contains reports whether `needle` occurs in `haystack` (substring
 // search; empty needle matches). literate.fern keeps its own copy — it
-// is a standalone module not staged through util.
+// is a standalone module not staged through util. Byte-wise compare at
+// each offset, for the same reason as str_has_prefix.
 pub function contains(haystack: string, needle: string): boolean {
     if (needle.len() == 0) { return true; }
     if (haystack.len() < needle.len()) { return false; }
     var i: i32 = 0;
     while (i <= haystack.len() - needle.len()) {
-        if (slice_unchecked(haystack, i, i + needle.len()) == needle) { return true; }
+        var j: i32 = 0;
+        var hit: boolean = true;
+        while (hit && j < needle.len()) {
+            if (haystack[i + j] != needle[j]) { hit = false; }
+            j = j + 1;
+        }
+        if (hit) { return true; }
         i = i + 1;
     }
     return false;
@@ -543,9 +563,7 @@ function f64_lit_reaches_1e309(s: string): boolean {
 function f64_range_prefix(): string { return "float literal out of range: "; }
 pub function f64_range_kind(text: string): string { return f64_range_prefix() + text; }
 pub function is_f64_range_kind(kind: string): boolean {
-    var pre: string = f64_range_prefix();
-    if (kind.len() < pre.len()) { return false; }
-    return slice_unchecked(kind, 0, pre.len()) == pre;
+    return str_has_prefix(kind, f64_range_prefix());
 }
 pub function f64_range_message(kind: string): string {
     var pre: string = f64_range_prefix();
@@ -749,7 +767,7 @@ pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
 pub function dunder_at(name: string): i32 {
   var i: i32 = 1;
   while (i + 1 < name.len()) {
-    if (slice_unchecked(name, i, i + 2) == "__") { return i; }
+    if (name[i] == b'_' && name[i + 1] == b'_') { return i; }
     i = i + 1;
   }
   return 0 - 1;
