@@ -25901,6 +25901,20 @@ pub function reuse_layer_disabled(): boolean {
     return false;
 }
 
+// rc_plan_disabled: FERN_SELFHOST_RC_PLAN=0 reverts the routed release
+// families to their credit-table escape gates (SELFHOST-RC-PLAN-PROMOTION
+// step 2). Unset = the plan's free_eligible_of verdict drives them. Unlike
+// the reuse switch, on-vs-off changes which frees are emitted, so the
+// fallback is a migration aid gated by the leak matrix + underflow trap,
+// never a byte-identity contract.
+pub function rc_plan_disabled(): boolean {
+    match (env("FERN_SELFHOST_RC_PLAN")) {
+        Some(v) => { return v == "0"; },
+        None => { return false; }
+    }
+    return false;
+}
+
 // xblock_without returns `pending` with any entry for recipient `recip` removed.
 function xblock_without(pending: string[], recip: string): string[] {
     var out: string[] = [];
@@ -28191,7 +28205,7 @@ function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string,
 // and crediting it here would be a second claim on a released box), a rebind
 // that always rebuilds a fresh all-scalar enum, and body_unsafe_for to prove the
 // name never escapes.
-function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], acc: string[]): string[] {
+function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
@@ -28200,16 +28214,32 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
                 var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
                     || all_assigns_fresh_scalar_enum(stmts, v.name, structs);
-                if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0
-                        && !body_unsafe_for(stmts, v.name, borrowable, [])) {
+                // The escape gate is the routed half (promotion step 2): the
+                // plan's free_eligible_of verdict replaces body_unsafe_for.
+                // The other three conjuncts stay family knowledge the
+                // name-level plan cannot supply: the fresh-ctor init
+                // identifies the kind, the rebind check keeps a non-fresh
+                // reassign out, and the no-consuming-match check keeps this
+                // credit disjoint from consumed_scalar_enum_frees' release.
+                // The plan is deliberately no stricter than native here: like
+                // native's computeFreeEligible, it does not taint a plain
+                // call arg — a callee that KEEPS its arg retains it through
+                // its own counted construction stores, so the caller's sweep
+                // stays balanced (leak-at-worst on the shapes native also
+                // leaks; the enum_scalar__callarg matrix cells pin all
+                // three).
+                var esc_ok: boolean = false;
+                if (plan_on) { esc_ok = util.index_of_str(plan_fe, v.name) >= 0; }
+                else { esc_ok = !body_unsafe_for(stmts, v.name, borrowable, []); }
+                if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0 && esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            parser.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, structs, borrowable, a); a = collect_fresh_scenum_names(iff.else_body, structs, borrowable, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, structs, borrowable, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, structs, borrowable, a); },
+            parser.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, structs, borrowable, plan_on, plan_fe, a); a = collect_fresh_scenum_names(iff.else_body, structs, borrowable, plan_on, plan_fe, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, structs, borrowable, plan_on, plan_fe, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, structs, borrowable, plan_on, plan_fe, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_scenum_names(arm.body, structs, borrowable, a); }
+                for arm in m.arms { a = collect_fresh_scenum_names(arm.body, structs, borrowable, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -32589,7 +32619,7 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[], plan_on: boolean, plan_fe: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -32893,7 +32923,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // All-scalar ENUM locals with no consuming match ("SCENUMS:"): the shallow
     // sibling of the "RCENUMS:" credit above. Both the loop rebind and the
     // scope-exit sweep release the box with a plain rc-dec.
-    var scenums: string[] = collect_fresh_scenum_names(body, structs, borrowable, []);
+    var scenums: string[] = collect_fresh_scenum_names(body, structs, borrowable, plan_on, plan_fe, []);
     var sei: i32 = 0;
     while (sei < scenums.len()) {
         out = out.append("SCENUMS:" + scenums[sei]);
@@ -46332,7 +46362,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // now dump-only. The append-built ARRSTRUCT credit consults it to decide
     // whether a BOUND element may be admitted: a moved local hands its single
     // reference to the buffer, so the buffer's deep walk is the one release.
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params);
+    // The rc-plan verdict for the routed release families (step 2): one
+    // fn-level analysis per function (the harmless pre-walk shape — the
+    // per-BLOCK variant is the quadratic trap the performance audit records).
+    var plan_on: boolean = !rc_plan_disabled();
+    var plan_fe: string[] = [];
+    if (plan_on) { plan_fe = free_eligible_of(fn, structs, sg.ret_type_fns); }
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
