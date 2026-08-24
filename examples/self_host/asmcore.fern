@@ -840,15 +840,12 @@ pub function rt_src_tcp_send(t: string): string {
     return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall3(" + sysno(t, "write") + ", fd, __raw_data(s), s.len()); }";
 }
 
-// rt_src_tcp_recv backs `tcp_recv(fd, max)` (#2649, syscall-leaf) → a string of
-// up to `max` bytes. A short read, EOF and -errno all come back as the empty
-// string: the op has no error channel, so the hand-asm clamped a negative to
-// len 0 and this keeps that.
-//
-// It runs WITH the direction of the floor: `__raw_string` builds a string over a
-// buffer we already own, so nothing is copied.
+// rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
+// `u8[]` of up to `max` bytes, spread one-per-slot like rt_src_random_bytes. A
+// short read, EOF and -errno all come back as the empty array: the op has no
+// error channel, so a negative read result clamps to len 0.
 pub function rt_src_tcp_recv(t: string): string {
-    return "function __fern_tcp_recv(fd: i32, max: i32): string { var p: i32 = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, max); if (n < 0) { n = 0; } return __raw_string(p, n); }";
+    return "function __fern_tcp_recv(fd: i32, max: i32): i32[] { var p: i32 = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, max); if (n < 0) { n = 0; } var b: i32 = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i)); i = i + 1; } return __raw_array(b); }";
 }
 
 // The stdout/stderr leaves (#2649). All four are plain write(2) calls, so unlike
@@ -968,8 +965,7 @@ pub function rt_src_read_all_stdin(t: string): string {
 // test did: the op has no error channel to tell them apart.
 //
 // The buffer is allocated at n and boxed at the SHORT length, so the block is
-// wider than the string thinks it is — the same shape rt_src_tcp_recv has, and
-// what the hand-asm did.
+// wider than the string thinks it is — what the hand-asm did.
 pub function rt_src_reader_read_chunk(t: string): string {
     return "function __fern_reader_read_chunk(fd: i32, n: i32): Option[string] { var p: i32 = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, n); if (r <= 0) { return None; } return Some(__raw_string(p, r)); }";
 }
@@ -1735,7 +1731,7 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                         return infer_expr_type(c.args[0], s);
                     }
                     if (id.name == "read_file" || id.name == "read_all_stdin") { return ty_string(); }
-                    if (id.name == "tcp_recv") { return ty_string(); }
+                    if (id.name == "tcp_recv") { return ty_array_i32(); }
                     if (id.name == "temp_dir") { return ty_string(); }
                     if (id.name == "read_dir") { return ty_array_string(); }
                     // Arbitrary free / module function returning
@@ -2874,9 +2870,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "wasm_block") { return ty_i32(); }
                     // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
                     if (id.name == "wasm_poll") { return ty_i32(); }
-                    // tcp_recv(fd, max) -> string box; the rest -> i32 (fd /
+                    // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
                     // byte count / pollable token / -errno).
-                    if (id.name == "tcp_recv") { return ty_string(); }
+                    if (id.name == "tcp_recv") { return ty_array_i32(); }
                     if (id.name == "tcp_connect") { return ty_i32(); }
                     // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
                     // connection fd / -errno. The server half of the edge-handler

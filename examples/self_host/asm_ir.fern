@@ -454,7 +454,7 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_tcp_close is a Fern runtime function (#2649): asmcore.rt_src_tcp_close — close(2).
 
 // __fern_tcp_recv is a Fern runtime function (#2649): asmcore.rt_src_tcp_recv
-// — read(2) into a fresh buffer, boxed by __raw_string.
+// — read(2) into a scratch buffer, spread into a fresh u8[] box (#5714).
 
 // __fern_tcp_send is a Fern runtime function (#2649): asmcore.rt_src_tcp_send
 // — write(2) straight out of the string's own buffer, via __raw_data.
