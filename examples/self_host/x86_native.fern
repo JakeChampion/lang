@@ -1780,14 +1780,14 @@ function x86_str_split(s: string, sep: string): string[] {
             else { j = j + 1; }
         }
         if (hit) {
-            out = out.append(s[start:i]);
+            out = out.append(slice_unchecked(s, start, i));
             i = i + m;
             start = i;
         } else {
             i = i + 1;
         }
     }
-    out = out.append(s[start:n]);
+    out = out.append(slice_unchecked(s, start, n));
     return out;
 }
 
@@ -1843,14 +1843,14 @@ function x86_gas_trim(s: string): string {
     while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
         b = b - 1;
     }
-    return s[a:b] + "";
+    return slice_unchecked(s, a, b) + "";
 }
 
 // x86_gas_reg maps a register token (`%rax` or `rax`) to its number, or -1.
 function x86_gas_reg(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == b'%') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     if (s == "rax") { return 0; }
     if (s == "rcx") { return 1; }
@@ -1897,7 +1897,7 @@ function x86_gas_reg(tok: string): i32 {
 function x86_gas_reg8(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == b'%') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     if (s == "al") { return 0; }
     if (s == "cl") { return 1; }
@@ -1923,7 +1923,7 @@ function x86_gas_reg8(tok: string): i32 {
 function x86_gas_reg32(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == b'%') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     if (s == "eax") { return 0; }
     if (s == "ecx") { return 1; }
@@ -2006,7 +2006,7 @@ function x86_gas_is_xmm(tok: string): boolean {
 function x86_gas_xmm(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == b'%') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     if (s.len() < 4) {
         return 0 - 1;
@@ -2270,7 +2270,7 @@ function x86_gas_ascii(buf: i32[], line: string): i32[] {
 function x86_gas_atoi(tok: string): i32 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == b'$') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     var neg: boolean = false;
     var i: i32 = 0;
@@ -2316,7 +2316,7 @@ function x86_gas_atoi(tok: string): i32 {
 function x86_gas_atoi64(tok: string): i64 {
     var s: string = tok;
     if (s.len() > 0 && s[0] == b'$') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     var neg: boolean = false;
     var i: i32 = 0;
@@ -2358,8 +2358,8 @@ function x86_gas_parse_mem(op: string): GasMem {
         // corrupt slice); callers gate on `.contains("(")` so this is rare.
         return GasMem { is_rip: false, label: "", base: x86_gas_reg(op), disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
     }
-    var disp_str: str = op[0:lp];
-    var inner: str = op[lp + 1:op.len() - 1]; // between ( and )
+    var disp_str: str = slice_unchecked(op, 0, lp);
+    var inner: str = slice_unchecked(op, lp + 1, op.len() - 1); // between ( and )
     if (inner == "%rip") {
         return GasMem { is_rip: true, label: disp_str + "", base: 0, disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
     }
@@ -2610,7 +2610,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // a branch to a label of that name.
     if (mnem == "call" || mnem == "jmp") {
         if (rest.len() > 0 && rest[0] == b'*') {
-            var ind: string = x86_gas_trim(rest[1:rest.len()]);
+            var ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
             if (x86_str_contains(ind, "(")) {
                 var cm: GasMem = x86_gas_parse_mem(ind);
                 if (cm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + ind) }; }
@@ -2672,12 +2672,12 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // imulq: 3-operand `$imm, %src, %dst` or 2-operand `%src, %dst`.
     if (mnem == "imulq") {
         var c1: i32 = x86_gas_top_comma(rest);
-        var op0: string = x86_gas_trim(rest[0:c1]);
-        var remn: str = rest[c1 + 1:rest.len()];
+        var op0: string = x86_gas_trim(slice_unchecked(rest, 0, c1));
+        var remn: str = slice_unchecked(rest, c1 + 1, rest.len());
         var c2: i32 = x86_gas_top_comma(remn);
         if (c2 >= 0) {
-            var rs: string = x86_gas_trim(remn[0:c2]);       // %src
-            var rd: string = x86_gas_trim(remn[c2 + 1:remn.len()]); // %dst
+            var rs: string = x86_gas_trim(slice_unchecked(remn, 0, c2));       // %src
+            var rd: string = x86_gas_trim(slice_unchecked(remn, c2 + 1, remn.len())); // %dst
             a = X86Asm { ...a, code: x86_imul_r64_r64_imm32(a.code, x86_gas_reg(rd), x86_gas_reg(rs), x86_gas_atoi(op0)) };
         } else {
             a = X86Asm { ...a, code: x86_imul_r64_r64(a.code, x86_gas_reg(x86_gas_trim(remn)), x86_gas_reg(op0)) };
@@ -2687,11 +2687,11 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // roundsd $mode, %src, %dst — three operands (imm, xmm, xmm).
     if (mnem == "roundsd") {
         var rc1: i32 = x86_gas_top_comma(rest);
-        var rmode: string = x86_gas_trim(rest[0:rc1]);
-        var rrem: str = rest[rc1 + 1:rest.len()];
+        var rmode: string = x86_gas_trim(slice_unchecked(rest, 0, rc1));
+        var rrem: str = slice_unchecked(rest, rc1 + 1, rest.len());
         var rc2: i32 = x86_gas_top_comma(rrem);
-        var rsrc: string = x86_gas_trim(rrem[0:rc2]);
-        var rdst: string = x86_gas_trim(rrem[rc2 + 1:rrem.len()]);
+        var rsrc: string = x86_gas_trim(slice_unchecked(rrem, 0, rc2));
+        var rdst: string = x86_gas_trim(slice_unchecked(rrem, rc2 + 1, rrem.len()));
         a = X86Asm { ...a, code: x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode)) };
         return a;
     }
@@ -2726,8 +2726,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         // with no diagnostic; drivers check `a.unknown` after assembly.
         return X86Asm { ...a, unknown: a.unknown.append(mnem) };
     }
-    var src: string = x86_gas_trim(rest[0:ci]);
-    var dst: string = x86_gas_trim(rest[ci + 1:rest.len()]);
+    var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
+    var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
     if (mnem == "leaq") {
         var m: GasMem = x86_gas_parse_mem(src);
         if (m.is_rip) { // `leaq sym(%rip), %reg`
@@ -2885,8 +2885,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // writes both spellings (`cmovneq` at asm_ir.fern:5293), so strip a
     // trailing `q` before matching. Every operand here is 64-bit.
     var cmv: string = mnem;
-    if (cmv.len() > 5 && cmv[0:4] == "cmov" && cmv[cmv.len() - 1] == b'q') {
-        cmv = cmv[0:cmv.len() - 1] + "";
+    if (cmv.len() > 5 && slice_unchecked(cmv, 0, 4) == "cmov" && cmv[cmv.len() - 1] == b'q') {
+        cmv = slice_unchecked(cmv, 0, cmv.len() - 1) + "";
     }
     if (cmv == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
     if (cmv == "cmovle") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
@@ -2980,7 +2980,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
         li = li + 1;
         var hash: i32 = x86_gas_comment_start(raw);
         if (hash >= 0) {
-            raw = raw[0:hash] + "";
+            raw = slice_unchecked(raw, 0, hash) + "";
         }
         var line: string = x86_gas_trim(raw);
         if (line.len() == 0) {
@@ -2991,7 +2991,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
         // token (no space / paren / comma) before the first ':'.
         var colon: i32 = x86_str_indexof(line, ":");
         if (colon > 0) {
-            var before: str = line[0:colon];
+            var before: str = slice_unchecked(line, 0, colon);
             if (x86_str_indexof(before, " ") < 0 && x86_str_indexof(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
                 if (section == 1) {
                     a = x86_rodata_label(a, before);
@@ -3000,7 +3000,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
                 } else {
                     a = x86_label(a, before);
                 }
-                line = x86_gas_trim(line[colon + 1:line.len()]);
+                line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
                 if (line.len() == 0) {
                     continue;
                 }
@@ -3026,7 +3026,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
             } else if (line == ".data") {
                 section = 1;
             } else if (x86_str_starts_with(line, ".quad")) {
-                var qop: string = x86_gas_trim(line[6:line.len()]);
+                var qop: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
                 if (section == 2) {
                     a = x86_bss_skip(a, 8); // zero-init quad reserves 8 bytes
                 } else if (x86_gas_is_symbol(qop)) {
@@ -3050,7 +3050,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
                 // labelled directive; ignoring it (the pre-#5434 behaviour)
                 // silently dropped the 8 rodata bytes and shifted everything
                 // after — the SH-005 hazard class.
-                var lrest: string = x86_gas_trim(line[6:line.len()]);
+                var lrest: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
                 var ltok: string = "";
                 var lci: i32 = 0;
                 while (lci < lrest.len()) {
@@ -3058,7 +3058,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
                         a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
                         ltok = "";
                     } else {
-                        ltok = ltok + lrest[lci:lci + 1];
+                        ltok = ltok + slice_unchecked(lrest, lci, lci + 1);
                     }
                     lci = lci + 1;
                 }
@@ -3066,14 +3066,14 @@ pub function x86_gas_assemble(src: string): X86Asm {
                     a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
                 }
             } else if (x86_str_starts_with(line, ".double")) {
-                a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(line[8:line.len()])))) };
+                a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(slice_unchecked(line, 8, line.len()))))) };
             } else if (x86_str_starts_with(line, ".ascii")) {
                 a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
             } else if (x86_str_starts_with(line, ".skip") || x86_str_starts_with(line, ".zero") || x86_str_starts_with(line, ".space")) {
                 // Reserve N zero bytes; `.zero` / `.space` are the SSA
                 // backend's spellings. In an initialised section the bytes
                 // must be laid down, or every later symbol shifts.
-                var zn: i32 = x86_gas_atoi(x86_gas_trim(line[x86_str_indexof(line, " "):line.len()]));
+                var zn: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
                 if (section == 2) {
                     a = x86_bss_skip(a, zn);
                 } else if (section == 1) {
@@ -3083,9 +3083,9 @@ pub function x86_gas_assemble(src: string): X86Asm {
             } else if (x86_str_starts_with(line, ".byte")) {
                 // A single byte of initialised data; dropping it shifts
                 // every later .rodata symbol (SH-005).
-                a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(line[5:line.len()])) & 255) };
+                a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(slice_unchecked(line, 5, line.len()))) & 255) };
             } else if (x86_str_starts_with(line, ".align")) {
-                var an: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
+                var an: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, 6, line.len())));
                 if (an > 0) {
                     if (section == 2) {
                         while ((a.bss_size % an) != 0) { a = x86_bss_skip(a, 1); }
@@ -3106,8 +3106,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
         var mnem: string = line;
         var rest: string = "";
         if (sp >= 0) {
-            mnem = line[0:sp] + "";
-            rest = x86_gas_trim(line[sp + 1:line.len()]);
+            mnem = slice_unchecked(line, 0, sp) + "";
+            rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
         }
         a = x86_gas_emit(a, mnem, rest);
     }

@@ -367,7 +367,7 @@ function main(): i32 {
             var ci: i32 = 0;
             while (ci < rng.len() && rng[ci] != b':') { ci = ci + 1; }
             pm_lo = util.digits_to_i32(rng);
-            if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(rng[ci + 1:rng.len()]); }
+            if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(slice_unchecked(rng, ci + 1, rng.len())); }
             ai = ai + 1;
         }
         else if (entry_path == "") { entry_path = a[ai]; }

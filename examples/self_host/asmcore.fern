@@ -20,7 +20,7 @@ pub function sanitize_label(name: string): string {
     while (i < name.len()) {
         var b: i32 = name[i] as i32;
         if (b == 46) { out = out + "__"; }
-        else { out = out + name[i:i + 1]; }
+        else { out = out + slice_unchecked(name, i, i + 1); }
         i = i + 1;
     }
     return out;
@@ -1740,11 +1740,11 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                     while (fi < s.funcs.len()) {
                         if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
                             var rt: string = s.funcs[fi].ret_type;
-                            if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == b']') {
-                                return ty_from_name(rt[7 : rt.len() - 1]);
+                            if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[" && rt[rt.len() - 1] == b']') {
+                                return ty_from_name(slice_unchecked(rt, 7, rt.len() - 1));
                             }
-                            if (rt.len() >= 8 && rt[0:7] == "Result[") {
-                                var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
+                            if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Result[") {
+                                var inner: string = "(" + slice_unchecked(rt, 7, rt.len() - 1) + ")";
                                 return split_tuple_ret(inner).a;
                             }
                             return ty_unknown();
@@ -1771,11 +1771,11 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                         while (fi < s.funcs.len()) {
                             if (s.funcs[fi].name == fa.field && ty_eq(ty_from_name(s.funcs[fi].receiver_type), rcv)) {
                                 var rt: string = s.funcs[fi].ret_type;
-                                if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == b']') {
-                                    return ty_from_name(rt[7 : rt.len() - 1]);
+                                if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[" && rt[rt.len() - 1] == b']') {
+                                    return ty_from_name(slice_unchecked(rt, 7, rt.len() - 1));
                                 }
-                                if (rt.len() >= 8 && rt[0:7] == "Result[") {
-                                    var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
+                                if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Result[") {
+                                    var inner: string = "(" + slice_unchecked(rt, 7, rt.len() - 1) + ")";
                                     return split_tuple_ret(inner).a;
                                 }
                                 return ty_unknown();
@@ -1867,7 +1867,7 @@ pub function is_enum_recv(name: string, s: EmitState): boolean {
 pub function recv_is_array(rt: string): boolean {
     var n: i32 = rt.len();
     if (n < 2) { return false; }
-    return rt[n - 2 : n] == "[]";
+    return slice_unchecked(rt, n - 2, n) == "[]";
 }
 
 // find_array_method_func returns the exact in-scope name of the std/array
@@ -1886,7 +1886,7 @@ pub function find_array_method_func(field: string, s: EmitState): string {
         var nm: string = s.funcs[i].name;
         if (s.funcs[i].receiver_type.len() == 0) {
             if (nm == target) { return nm; }
-            if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return nm; }
+            if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) { return nm; }
         }
         i = i + 1;
     }
@@ -2522,11 +2522,11 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
 
 pub function generic_value_ty(name: string, start: i32): Ty {
     if (name.len() <= start + 1) { return ty_unknown(); }
-    var inner: str = name[start : name.len() - 1];
+    var inner: str = slice_unchecked(name, start, name.len() - 1);
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
         if (inner[i] == b',' && inner[i + 1] == b' ') {
-            return ty_from_name(inner[i + 2 : inner.len()]);
+            return ty_from_name(slice_unchecked(inner, i + 2, inner.len()));
         }
         i = i + 1;
     }
@@ -2535,11 +2535,11 @@ pub function generic_value_ty(name: string, start: i32): Ty {
 
 pub function generic_key_is_i32(name: string, start: i32): boolean {
     if (name.len() <= start + 1) { return false; }
-    var inner: str = name[start : name.len() - 1];
+    var inner: str = slice_unchecked(name, start, name.len() - 1);
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
         if (inner[i] == b',' && inner[i + 1] == b' ') {
-            return ty_is_i32(ty_from_name(inner[0 : i]));
+            return ty_is_i32(ty_from_name(slice_unchecked(inner, 0, i)));
         }
         i = i + 1;
     }
@@ -2618,7 +2618,7 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     if (t.base == "string") { return ty_string(); }
     // A bare name beginning with "Map" (Map / MapConfig / …) → coarse
     // ty_map_str(unknown), reproducing ty_from_name's prefix match.
-    if (t.base.len() >= 3 && t.base[0:3] == "Map") { return ty_map_str(ty_unknown()); }
+    if (t.base.len() >= 3 && slice_unchecked(t.base, 0, 3) == "Map") { return ty_map_str(ty_unknown()); }
     return ty_unknown();
 }
 
@@ -2797,8 +2797,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
         parser.ExprUnary(u) => {
             if (u.op == "!") { return ty_bool(); }
             if (u.op == "-") { return infer_expr_type(u.operand, s); }
-            if (u.op.len() >= 3 && u.op[0:3] == "as_") {
-                var ct: str = u.op[3:u.op.len()];
+            if (u.op.len() >= 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+                var ct: str = slice_unchecked(u.op, 3, u.op.len());
                 if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
                 // A cast HAS the named type. u32/i64/u64 used to erase to
                 // i32 here (all ints ride 64-bit slots, so arithmetic is
@@ -4030,7 +4030,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             // defer return slot holds the return expression). Bind them
             // unknown so the pre-codegen gate doesn't false-positive on
             // desugared bodies (#4327).
-            if (v.name.len() >= 2 && v.name[0:2] == "__") {
+            if (v.name.len() >= 2 && slice_unchecked(v.name, 0, 2) == "__") {
                 return CheckCtx { st: ctx.st.bind_local_typed(v.name, ty_unknown()), diags: ctx.diags };
             }
             var got: Ty = infer_expr_type(v.init, ctx.st);
@@ -4423,7 +4423,7 @@ function callgate_module_ns(name: string, names: string[], known: string[]): str
         if (name[i] == b'_' && name[i + 1] == b'_') {
             // `+ ""` materialises the slice as a string — a bare slice is the
             // `str` view type (the idiom astwalk's binder split uses).
-            var ns: string = name[0:i] + "";
+            var ns: string = slice_unchecked(name, 0, i) + "";
             var pfx: string = ns + "__";
             if (callgate_ns_present(pfx, names) || callgate_ns_present(pfx, known)) { return ""; }
             return ns;
@@ -4437,7 +4437,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
     var i: i32 = 0;
     while (i < names.len()) {
         var nm: string = names[i];
-        if (nm.len() > pfx.len() && nm[0:pfx.len()] == pfx) { return true; }
+        if (nm.len() > pfx.len() && slice_unchecked(nm, 0, pfx.len()) == pfx) { return true; }
         i = i + 1;
     }
     return false;
@@ -4553,7 +4553,7 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
 // `__range`, `__env`, …), which no list could track.
 function callgate_known_callee(name: string, known: string[]): boolean {
     if (name.len() == 0) { return true; }
-    if (name.len() >= 2 && name[0:2] == "__") { return true; }
+    if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") { return true; }
     return callgate_name_in(known, name);
 }
 

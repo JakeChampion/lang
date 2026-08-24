@@ -104,7 +104,7 @@ pub function trim_space(s: string): string {
     var b: i32 = s.len();
     while (a < b && is_space(s[a] as i32)) { a = a + 1; }
     while (b > a && is_space(s[b - 1] as i32)) { b = b - 1; }
-    return own(s[a:b]);
+    return own(slice_unchecked(s, a, b));
 }
 
 // ---- the walk ----------------------------------------------------------
@@ -380,12 +380,12 @@ function split_commas(s: string): string[] {
     var i: i32 = 0;
     while (i < s.len()) {
         if ((s[i] as i32) == 44) {
-            out = out.append(own(s[start:i]));
+            out = out.append(own(slice_unchecked(s, start, i)));
             start = i + 1;
         }
         i = i + 1;
     }
-    return out.append(own(s[start:s.len()]));
+    return out.append(own(slice_unchecked(s, start, s.len())));
 }
 
 // join_type_params renders `[A, B]`, or nothing when the declaration is not

@@ -51,7 +51,7 @@ function base_name_of(path: string): string {
         if (path[i] == b'/') { start = i + 1; }
         i = i + 1;
     }
-    return path[start:path.len()] + "";
+    return slice_unchecked(path, start, path.len()) + "";
 }
 
 // module_named finds a loaded module by its namespace name.
@@ -188,15 +188,15 @@ function qual_type_parts(tn: string): (string, string) {
         i = i + 1;
     }
     if (dot < 0) { return ("", ""); }
-    var q: string = tn[0:dot] + "";
-    var rest: string = tn[dot + 1:tn.len()] + "";
+    var q: string = slice_unchecked(tn, 0, dot) + "";
+    var rest: string = slice_unchecked(tn, dot + 1, tn.len()) + "";
     var cut: i32 = rest.len();
     var j: i32 = 0;
     while (j < rest.len()) {
         if (rest[j] == b'[') { cut = j; j = rest.len(); }
         j = j + 1;
     }
-    return (q, rest[0:cut] + "");
+    return (q, slice_unchecked(rest, 0, cut) + "");
 }
 
 // declares_private_type reports whether `mod` declares `name` as a NON-pub

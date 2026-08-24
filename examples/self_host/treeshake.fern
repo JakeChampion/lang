@@ -204,7 +204,7 @@ function ts_array_method_canon(name: string): string {
     if (name.len() < marker.len()) { return ""; }
     var i: i32 = 0;
     while (i <= name.len() - marker.len()) {
-        if (name[i : i + marker.len()] == marker) { return name[i : name.len()] + ""; }
+        if (slice_unchecked(name, i, i + marker.len()) == marker) { return slice_unchecked(name, i, name.len()) + ""; }
         i = i + 1;
     }
     return "";

@@ -35,7 +35,7 @@ function quote_string(s: string): string {
         else if (b == 10) { out = out + "\\n"; }
         else if (b == 9) { out = out + "\\t"; }
         else if (b == 13) { out = out + "\\r"; }
-        else { out = out + s[i:i + 1]; }
+        else { out = out + slice_unchecked(s, i, i + 1); }
         i = i + 1;
     }
     return out + "\"";
@@ -55,7 +55,7 @@ function escape_fstring_lit(s: string): string {
         else if (b == 13) { out = out + "\\r"; }
         else if (b == 123) { out = out + "{{"; }
         else if (b == 125) { out = out + "}}"; }
-        else { out = out + s[i:i + 1]; }
+        else { out = out + slice_unchecked(s, i, i + 1); }
         i = i + 1;
     }
     return out;
@@ -426,8 +426,8 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             // `as_i32s[i + 1]` for `s[i + 1] as i32`, which re-parses as a call
             // to an undefined name. It binds at its own level, above every
             // binary operator and below the postfix positions.
-            if (u.op.len() > 3 && u.op[0:3] == "as_") {
-                var cinner: string = print_expr_prec(u.operand, prec_cast()) + " as " + u.op[3:u.op.len()];
+            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+                var cinner: string = print_expr_prec(u.operand, prec_cast()) + " as " + slice_unchecked(u.op, 3, u.op.len());
                 if (parent_prec >= prec_cast()) { return "(" + cinner + ")"; }
                 return cinner;
             }
@@ -1067,7 +1067,7 @@ function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) 
 // `return;`, whose value is the unknown-token placeholder for the `;`.
 function expr_is_missing(e: parser.Expr): boolean {
     match (e) {
-        parser.ExprUnknown(u) => { return u.kind.len() == 0 || u.kind[0:6] == "punct:"; },
+        parser.ExprUnknown(u) => { return u.kind.len() == 0 || slice_unchecked(u.kind, 0, 6) == "punct:"; },
         _ => { return false; }
     }
     return false;
@@ -1255,7 +1255,7 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
 
 // is_forc_name reports the synthesised first-iteration flag `__forc_<l>_<c>`.
 function is_forc_name(name: string): boolean {
-    return name.len() > 7 && name[0:7] == "__forc_";
+    return name.len() > 7 && slice_unchecked(name, 0, 7) == "__forc_";
 }
 
 function expr_is_true(e: parser.Expr): boolean {
@@ -1302,7 +1302,7 @@ function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function strip_semi(s: string): string {
-    if (s.len() > 0 && s[s.len() - 1] == b';') { return s[0:s.len() - 1] + ""; }
+    if (s.len() > 0 && s[s.len() - 1] == b';') { return slice_unchecked(s, 0, s.len() - 1) + ""; }
     return s;
 }
 
@@ -1400,7 +1400,7 @@ function split_commas(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || csv[i] == b',') {
-            out = out.append(csv[start : i]);
+            out = out.append(slice_unchecked(csv, start, i));
             start = i + 1;
         }
         i = i + 1;
@@ -1422,7 +1422,7 @@ function join_csv(csv: string): string {
 }
 
 function is_struct_destructure(type_name: string): boolean {
-    return type_name.len() >= 4 && type_name[0:4] == "@sd:";
+    return type_name.len() >= 4 && slice_unchecked(type_name, 0, 4) == "@sd:";
 }
 
 // print_struct_destructure respells `let Point { x, y } = E;` from the marker
@@ -1438,7 +1438,7 @@ function print_struct_destructure(v: parser.StmtVar): string {
 // same pattern in its parameter position, so the two share this rather than
 // each spelling the marker decode (#7338).
 function struct_destr_pattern(v: parser.StmtVar): string {
-    var rest: str = v.type_name[4 : v.type_name.len()];
+    var rest: str = slice_unchecked(v.type_name, 4, v.type_name.len());
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
     while (ri < rest.len()) {
@@ -1446,8 +1446,8 @@ function struct_destr_pattern(v: parser.StmtVar): string {
         ri = ri + 1;
     }
     if (colon < 0) { return ""; }
-    var struct_name: str = rest[0 : colon];
-    var fields: string[] = split_commas(rest[colon + 1 : rest.len()]);
+    var struct_name: str = slice_unchecked(rest, 0, colon);
+    var fields: string[] = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
     var binds: string[] = split_commas(v.name);
     var out: string = struct_name + " { ";
     var i: i32 = 0;
@@ -1486,7 +1486,7 @@ function param_pattern_from(st: parser.Stmt, holder: string): string {
             // instead of minting a `__ptuple_` one. It is a real binding the
             // body may read, so the pattern alone would drop it.
             var at: string = "";
-            if (holder.len() < 9 || holder[0:9] != "__ptuple_") { at = holder + " @ "; }
+            if (holder.len() < 9 || slice_unchecked(holder, 0, 9) != "__ptuple_") { at = holder + " @ "; }
             if (is_struct_destructure(v.type_name)) { return at + struct_destr_pattern(v); }
             if (util.contains(v.name, ",")) { return at + "(" + join_csv(v.name) + ")"; }
             return "";
@@ -1676,7 +1676,7 @@ function join_plus(bounds: string): string {
     while (i <= bounds.len()) {
         if (i == bounds.len() || bounds[i] == b'+') {
             if (out.len() > 0) { out = out + " + "; }
-            out = out + bounds[start : i];
+            out = out + slice_unchecked(bounds, start, i);
             start = i + 1;
         }
         i = i + 1;
@@ -3034,13 +3034,13 @@ function diff_split_lines(s: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        if (s[i:i + 1] == "\n") {
-            out = out.append(s[start:i + 1]);
+        if (slice_unchecked(s, i, i + 1) == "\n") {
+            out = out.append(slice_unchecked(s, start, i + 1));
             start = i + 1;
         }
         i = i + 1;
     }
-    if (start < s.len()) { out = out.append(s[start:s.len()]); }
+    if (start < s.len()) { out = out.append(slice_unchecked(s, start, s.len())); }
     return out;
 }
 
@@ -3170,7 +3170,7 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
             out = out + mark + line;
             // A final line with no newline still has to leave the diff itself
             // well-formed.
-            if (line.len() == 0 || line[line.len() - 1:line.len()] != "\n") { out = out + "\n"; }
+            if (line.len() == 0 || slice_unchecked(line, line.len() - 1, line.len()) != "\n") { out = out + "\n"; }
             k = k + 1;
         }
         h = h + 1;

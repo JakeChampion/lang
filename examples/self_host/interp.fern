@@ -210,7 +210,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
         match (val) {
             VArr(a) => {
                 if (a.elements.len() == 0 && a.elem.len() == 0) {
-                    return v_arr_of(a.elements, type_name[0 : type_name.len() - 2] + "");
+                    return v_arr_of(a.elements, slice_unchecked(type_name, 0, type_name.len() - 2) + "");
                 }
             },
             _ => { return val; }
@@ -261,7 +261,7 @@ function split_binding_names(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || csv[i] == b',') {
-            out = out.append(csv[start : i]);
+            out = out.append(slice_unchecked(csv, start, i));
             start = i + 1;
         }
         i = i + 1;
@@ -544,7 +544,7 @@ function (e: Env) static_type_of(x: parser.Expr): string {
         parser.ExprIdent(id) => { return e.decl_type(id.name); },
         parser.ExprIndex(ix) => {
             var at: string = e.static_type_of(ix.array);
-            if (name_ends_with(at, "[]")) { return at[0 : at.len() - 2] + ""; }
+            if (name_ends_with(at, "[]")) { return slice_unchecked(at, 0, at.len() - 2) + ""; }
             return "";
         },
         parser.ExprFieldAccess(fa) => {
@@ -1486,7 +1486,7 @@ function eval_unary(op: string, ov: Value): Value {
     // …) is a zero-cost type ascription — identity on the runtime value.
     // Pass the operand through unchanged (matching the AST/IR emitters, which
     // treat every non-numeric `as_<T>` as a no-op).
-    if (op.len() > 3 && op[0:3] == "as_") { return ov; }
+    if (op.len() > 3 && slice_unchecked(op, 0, 3) == "as_") { return ov; }
     return v_err("unknown unary op: " + op);
 }
 
@@ -1827,7 +1827,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     if (sb < 0 || eb > s.v.len() || sb > eb) {
                         return v_err("string slice out of range");
                     }
-                    return v_string(s.v[sb:eb]);
+                    return v_string(slice_unchecked(s.v, sb, eb));
                 },
                 VArr(a) => {
                     if (sb < 0 || eb > a.elements.len() || sb > eb) {
@@ -2019,7 +2019,7 @@ function is_array_recv_type(t: string): boolean {
 function name_ends_with(nm: string, suffix: string): boolean {
     if (nm == suffix) { return true; }
     if (nm.len() <= suffix.len()) { return false; }
-    return nm[nm.len() - suffix.len() : nm.len()] == suffix;
+    return slice_unchecked(nm, nm.len() - suffix.len(), nm.len()) == suffix;
 }
 
 // variant_simple_name returns the final `.`-separated segment of a
@@ -2034,7 +2034,7 @@ function variant_simple_name(name: string): string {
         if (name[i] == b'.') { last_dot = i; }
         i = i + 1;
     }
-    if (last_dot >= 0) { return name[last_dot + 1 : name.len()] + ""; }
+    if (last_dot >= 0) { return slice_unchecked(name, last_dot + 1, name.len()) + ""; }
     return name;
 }
 
@@ -2545,7 +2545,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
                 if (sua < 0 || sub > s.v.len() || sua > sub) {
                     return v_err("string slice out of range");
                 }
-                return v_string(s.v[sua:sub]);
+                return v_string(slice_unchecked(s.v, sua, sub));
             },
             _ => { return v_err("slice_unchecked: arg must be a string"); }
         }
@@ -3086,7 +3086,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // makes each `x` a `dyn Shape`.
             var elem_ty: string = "";
             var iter_ty: string = env.static_type_of(f.iter);
-            if (name_ends_with(iter_ty, "[]")) { elem_ty = iter_ty[0 : iter_ty.len() - 2] + ""; }
+            if (name_ends_with(iter_ty, "[]")) { elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + ""; }
             var base: i32 = env.names.len();
             var cur: Env = env;
             var i: i32 = 0;
