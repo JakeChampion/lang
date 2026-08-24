@@ -32424,9 +32424,14 @@ function struct_lit_unretained_borrow_field(stmts: parser.Stmt[], key: string, s
                         parser.ExprStructLit(sl) => {
                             var i: i32 = 0;
                             while (i < sl.field_values.len()) {
+                                // A bare IDENT value is NOT marked: the
+                                // construction's fallback retain admits bare
+                                // idents (the strfld admission — the
+                                // BorrowedFieldRetain contract), so the deep
+                                // drop stays balanced there. Only the READ
+                                // shapes reach the box uncounted.
                                 var borrow: boolean = false;
                                 match (sl.field_values[i]) {
-                                    parser.ExprIdent(_) => { borrow = true; },
                                     parser.ExprFieldAccess(_) => { borrow = true; },
                                     parser.ExprIndex(_) => { borrow = true; },
                                     parser.ExprSlice(_) => { borrow = true; },
@@ -53170,37 +53175,56 @@ pub function ret_type_fns_of(funcs: parser.FuncDecl[]): string[] {
 // native's version additionally admits fresh locals and cow chains, so every
 // name this admits, native admits too: the dump gate can only converge, never
 // newly diverge. Rows are "name|" for sig_reg_has_name.
-function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[]): boolean {
+function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[], builders: string[]): boolean {
     match (e) {
         parser.ExprNumber(_) => { return true; },
         parser.ExprBool(_) => { return true; },
         parser.ExprString(_) => { return true; },
         parser.ExprIdent(id) => {
             // a nullary variant ctor (`None`, `Nil`) is a fresh (or static)
-            // box aliasing nothing; every other ident must be a scalar param.
+            // box aliasing nothing; a BUILDER local (fresh container init,
+            // append-only growth of admitted values — native's fresh-locals
+            // recursion) holds no param pointer; every other ident must be a
+            // scalar param.
             if (id.name == "None") { return true; }
+            if (util.index_of_str(builders, id.name) >= 0) { return true; }
             return util.index_of_str(scalars, id.name) >= 0 || util.index_of_str(q, "0:" + id.name) >= 0;
         },
-        parser.ExprUnary(u) => { return noesc_ret_expr_ok(u.operand, scalars, q); },
-        parser.ExprBinary(b) => { return noesc_ret_expr_ok(b.left, scalars, q) && noesc_ret_expr_ok(b.right, scalars, q); },
+        parser.ExprUnary(u) => { return noesc_ret_expr_ok(u.operand, scalars, q, builders); },
+        parser.ExprBinary(b) => {
+            // A `+` tree witnessed by a string LITERAL anywhere in it is a
+            // CONCAT — the result is a fresh owned buffer whatever the other
+            // operands are (they are read and copied, never aliased), which
+            // is rc_fe_rhs_tainted's own concat rule and native's
+            // fresh-construction admission. Bare idents of any type are
+            // admissible leaves there — the checker makes them strings.
+            if (b.op == "+" && noesc_concat_witness(e)) { return noesc_concat_leaves_ok(e, scalars, q, builders); }
+            return noesc_ret_expr_ok(b.left, scalars, q, builders) && noesc_ret_expr_ok(b.right, scalars, q, builders);
+        },
         parser.ExprArray(ar) => {
-            for el in ar.elements { if (!noesc_ret_expr_ok(el, scalars, q)) { return false; } }
+            for el in ar.elements { if (!noesc_ret_expr_ok(el, scalars, q, builders)) { return false; } }
             return true;
         },
         parser.ExprTuple(tu) => {
-            for el in tu.elements { if (!noesc_ret_expr_ok(el, scalars, q)) { return false; } }
+            for el in tu.elements { if (!noesc_ret_expr_ok(el, scalars, q, builders)) { return false; } }
             return true;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { return false; }
-            for fv in sl.field_values { if (!noesc_ret_expr_ok(fv, scalars, q)) { return false; } }
+            for fv in sl.field_values { if (!noesc_ret_expr_ok(fv, scalars, q, builders)) { return false; } }
             return true;
         },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     if (util.index_of_str(q, cid.name) < 0) { return false; }
-                    for arg in c.args { if (!noesc_ret_expr_ok(arg, scalars, q)) { return false; } }
+                    // A still-qualified FUNCTION's result aliases none of its
+                    // arguments — that is the property being tracked — so the
+                    // args are irrelevant (native composes the oracle the same
+                    // way). A variant CTOR's box CONTAINS its payload args, so
+                    // those stay strictly checked.
+                    if (util.index_of_str(q, "fn:" + cid.name) >= 0) { return true; }
+                    for arg in c.args { if (!noesc_ret_expr_ok(arg, scalars, q, builders)) { return false; } }
                     return true;
                 },
                 _ => { return false; }
@@ -53208,6 +53232,32 @@ function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[]): bool
             return false;
         },
         _ => { return false; }
+    }
+    return false;
+}
+
+// noesc_concat_witness: some leaf of this `+` tree is a string literal, which
+// is the syntactic proof the whole tree is string concatenation.
+function noesc_concat_witness(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        parser.ExprBinary(b) => {
+            if (b.op != "+") { return false; }
+            return noesc_concat_witness(b.left) || noesc_concat_witness(b.right);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function noesc_concat_leaves_ok(e: parser.Expr, scalars: string[], q: string[], builders: string[]): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op != "+") { return noesc_ret_expr_ok(e, scalars, q, builders); }
+            return noesc_concat_leaves_ok(b.left, scalars, q, builders) && noesc_concat_leaves_ok(b.right, scalars, q, builders);
+        },
+        parser.ExprIdent(_) => { return true; },
+        _ => { return noesc_ret_expr_ok(e, scalars, q, builders); }
     }
     return false;
 }
@@ -53237,6 +53287,94 @@ function noesc_decl_names(stmts: parser.Stmt[], acc: string[]): string[] {
     return a;
 }
 
+// noesc_builder_locals: the fn's BUILDER locals — declared exactly once, from
+// a fresh container literal with admitted contents, and grown only by
+// `x = x.append(<admitted>)` or replaced by another admitted fresh literal.
+// No param pointer can reach such a local, so a `return x` of one aliases no
+// param — native's fresh-locals recursion, subset form. Recomputed per
+// fixpoint iteration: q only shrinks, so builders only shrink with it.
+function noesc_builder_cands(stmts: parser.Stmt[], scalars: string[], q: string[], declared: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var none: string[] = [];
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                var fresh_lit: boolean = false;
+                match (v.init) {
+                    parser.ExprArray(_) => { fresh_lit = true; },
+                    parser.ExprTuple(_) => { fresh_lit = true; },
+                    parser.ExprStructLit(_) => { fresh_lit = true; },
+                    _ => {}
+                }
+                if (fresh_lit && noesc_ret_expr_ok(v.init, scalars, q, none)) {
+                    var dc: i32 = 0;
+                    for dn in declared { if (dn == v.name) { dc = dc + 1; } }
+                    if (dc == 1) { a = a.append(v.name); }
+                }
+            },
+            parser.StmtIf(f) => { a = noesc_builder_cands(f.then_body, scalars, q, declared, a); a = noesc_builder_cands(f.else_body, scalars, q, declared, a); },
+            parser.StmtWhile(w) => { a = noesc_builder_cands(w.body, scalars, q, declared, a); },
+            parser.StmtFor(fo) => { a = noesc_builder_cands(fo.body, scalars, q, declared, a); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { a = noesc_builder_cands(arm.body, scalars, q, declared, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+function noesc_builder_assign_ok(stmts: parser.Stmt[], cands: string[], scalars: string[], q: string[], bad: string[]): string[] {
+    var b: string[] = bad;
+    var none: string[] = [];
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(a) => {
+                if (util.index_of_str(cands, a.target) >= 0) {
+                    var ok: boolean = false;
+                    match (a.value) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprFieldAccess(fa) => {
+                                    match (fa.obj) {
+                                        parser.ExprIdent(oid) => {
+                                            if (oid.name == a.target && fa.field == "append" && c.args.len() == 1
+                                                && noesc_ret_expr_ok(c.args[0], scalars, q, none)) { ok = true; }
+                                        },
+                                        _ => {}
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        parser.ExprArray(_) => { ok = noesc_ret_expr_ok(a.value, scalars, q, none); },
+                        parser.ExprTuple(_) => { ok = noesc_ret_expr_ok(a.value, scalars, q, none); },
+                        parser.ExprStructLit(_) => { ok = noesc_ret_expr_ok(a.value, scalars, q, none); },
+                        _ => {}
+                    }
+                    if (!ok) { b = b.append(a.target); }
+                }
+            },
+            parser.StmtIf(f) => { b = noesc_builder_assign_ok(f.then_body, cands, scalars, q, b); b = noesc_builder_assign_ok(f.else_body, cands, scalars, q, b); },
+            parser.StmtWhile(w) => { b = noesc_builder_assign_ok(w.body, cands, scalars, q, b); },
+            parser.StmtFor(fo) => { b = noesc_builder_assign_ok(fo.body, cands, scalars, q, b); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { b = noesc_builder_assign_ok(arm.body, cands, scalars, q, b); }
+            },
+            _ => {}
+        }
+    }
+    return b;
+}
+
+function noesc_builder_locals(fn: parser.FuncDecl, scalars: string[], q: string[], declared: string[]): string[] {
+    var cands: string[] = noesc_builder_cands(fn.body, scalars, q, declared, []);
+    var bad: string[] = noesc_builder_assign_ok(fn.body, cands, scalars, q, []);
+    var out: string[] = [];
+    for c in cands { if (util.index_of_str(bad, c) < 0) { out = out.append(c); } }
+    return out;
+}
+
 function noesc_collect_rets(stmts: parser.Stmt[], acc: parser.Expr[]): parser.Expr[] {
     var a: parser.Expr[] = acc;
     for stmt in stmts {
@@ -53258,7 +53396,11 @@ pub function noesc_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDe
     // Variant ctor names count as qualified callees (a ctor is a fresh box
     // whose qualifying args cannot alias a param), seeded permanently.
     var q: string[] = ["Some", "Ok", "Err"];
-    for fn in funcs { q = q.append(fn.name); }
+    // "fn:" rows mark FUNCTION callees (as opposed to variant ctors): a
+    // still-qualified function's result aliases none of its arguments, so
+    // the Call arm skips the per-arg admission for them — native's
+    // composition — while a ctor's payload args stay strictly checked.
+    for fn in funcs { q = q.append(fn.name); q = q.append("fn:" + fn.name); }
     for sd in structs {
         if (sd.enum_owner.len() > 0) {
             q = q.append(sd.name);
@@ -53278,12 +53420,13 @@ pub function noesc_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                     && util.index_of_str(declared, fn.params[pi].name) < 0) { scalars = scalars.append(fn.params[pi].name); }
                 pi = pi + 1;
             }
+            var builders: string[] = noesc_builder_locals(fn, scalars, q, declared);
             var rets: parser.Expr[] = noesc_collect_rets(fn.body, []);
             var ok: boolean = true;
-            for r in rets { if (!noesc_ret_expr_ok(r, scalars, q)) { ok = false; } }
+            for r in rets { if (!noesc_ret_expr_ok(r, scalars, q, builders)) { ok = false; } }
             if (!ok) {
                 var nq: string[] = [];
-                for nm in q { if (nm != fn.name) { nq = nq.append(nm); } }
+                for nm in q { if (nm != fn.name && nm != "fn:" + fn.name) { nq = nq.append(nm); } }
                 q = nq;
                 changed = true;
             }
