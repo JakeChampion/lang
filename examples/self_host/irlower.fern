@@ -197,7 +197,7 @@ pub struct LocalInfo {
     // position, so the second call freed the parse tree's child array and the
     // freelist handed the block straight back to the next allocation.
     // A CONSUMING match still reclaims the payload — it reads it back out of the
-    // box's own slot (emit_enum_variant_drops_moved), never through this binding.
+    // box's own slot (emit_enum_variant_drops_gated), never through this binding.
     borrowed_arr: boolean,
 }
 
@@ -23734,7 +23734,8 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("ne", 0, false));                 // old != 0
     st = st.emit(ir.op_if(0));
-    st = emit_enum_variant_drops(st, slot, enum_name);       // deep-drop old payload + box (zeroes slot)
+    var no_moved: string[] = [];
+    st = emit_enum_variant_drops_gated(st, slot, enum_name, no_moved, true);   // deep-drop old payload + box (zeroes slot)
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));                     // new
     return st.emit(ir.op_store_local(slot));
@@ -25117,7 +25118,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 var emoved: string[] = [];
                 var emi: i32 = 1;
                 while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
-                st = emit_enum_variant_drops_moved(st, opslot, eparts[0], emoved);
+                st = emit_enum_variant_drops_gated(st, opslot, eparts[0], emoved, true);
             } else if (oph + 1 < ope.len() && ope[oph + 1] == b's') {
                 st = emit_opt_payload_drop_via(st, opslot, "__fern_str_free");
             } else if (oph + 1 < ope.len() && ope[oph + 1] == b'S') {
@@ -25415,14 +25416,23 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // the slot, so a second sweep on another return edge routes here to the null
     // guard — which is load-bearing (#7360): op_variant_is DEREFERENCES the box for
     // its tag, so an entry-zeroed slot whose branch never ran faults without it.
+    //
+    // moved_elided is excluded for the reason the rc-tuple sweep above excludes
+    // it: a construction that MOVED this local (#6726) took over its reference
+    // and dropped the retain, so the box carries one claim and the destination's
+    // own release is it. Sweeping here too would dec a claim that was never
+    // taken. Nothing reached this loop while the enum credits refused every
+    // name a construction could move; the counted-field carve-out admits
+    // exactly those names, which is what made the missing conjunct reachable.
     var rej: i32 = st.n_params;
     while (rej < st.locals.len()) {
-        if (!slot_list_has(keeps, rej) && slot_is_reclaimable_rcenum_sweep(st, rej)) {
+        if (!slot_list_has(keeps, rej) && !slot_list_has(st.moved_elided, rej) && slot_is_reclaimable_rcenum_sweep(st, rej)) {
             st = st.emit(ir.op_load_local(rej));
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_bin("ne", 0, false));
             st = st.emit(ir.op_if(0));
-            st = emit_enum_variant_drops(st, rej, st.struct_type_of_slot(rej));
+            var rej_moved: string[] = [];
+            st = emit_enum_variant_drops_gated(st, rej, st.struct_type_of_slot(rej), rej_moved, true);
             st = st.emit(ir.op_end());
         }
         rej = rej + 1;
@@ -26259,7 +26269,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             sef = sef + 1;
         }
         // Consumed rc-payload enum free: same placement and the same reason as the
-        // scalar loop above, but the release is emit_enum_variant_drops_moved —
+        // scalar loop above, but the release is emit_enum_variant_drops_gated —
         // a runtime variant_is dispatch that decs the live variant's rc payload and
         // then frees the box, skipping any field whose arm binding escaped
         // (match_moved_rc_payloads, #4400). The slot-zero inside that helper is
@@ -26270,8 +26280,11 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         while (ref2 < rcenfrees.idxs.len()) {
             if (rcenfrees.idxs[ref2] == i) {
                 var rslot2: i32 = st.slot_of(rcenfrees.names[ref2]);
-                if (rslot2 >= st.n_params) {
-                    st = emit_enum_variant_drops_moved(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.structs));
+                // moved_elided: a construction took over this local's reference and
+                // dropped the retain, so its release belongs to the destination —
+                // see the RCENUMS sweep's note.
+                if (rslot2 >= st.n_params && !slot_list_has(st.moved_elided, rslot2)) {
+                    st = emit_enum_variant_drops_gated(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.structs), true);
                 }
             }
             ref2 = ref2 + 1;
@@ -28365,9 +28378,9 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                         && !match_arms_use_name(stmts[match_idx], v.name)
                         && !match_arm_binds_rc_payload(stmts[match_idx], structs)
                         && !name_used_after(stmts, v.name, match_idx)
-                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        && !name_escapes_outside_stmt_enumfield(stmts, v.name, match_idx, structs)) {
                         a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                    } else if (match_idx < 0 && !body_unsafe_for(stmts, v.name, borrowable, [])) {
+                    } else if (match_idx < 0 && !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs)) {
                         // NO consuming match in this block. Every gate above exists to
                         // prove the match neither retains the box nor hands out its
                         // payload; with no match there is nothing to prove but that
@@ -36597,7 +36610,7 @@ function binding_escapes_arm_scrut(arm: parser.MatchArm, name: string): boolean 
 // whose rc-droppable payload field is BOUND (non-`_`) by an arm to a name that
 // ESCAPES its arm (binding_escapes_arm — stored to an outer var, returned,
 // passed to a call). The binding inherits the box's counted reference, so the
-// post-match deep-drop must SKIP that field's dec (emit_enum_variant_drops_moved)
+// post-match deep-drop must SKIP that field's dec (emit_enum_variant_drops_gated)
 // — the dup the Koka transform would insert and the drop's dec cancel
 // statically. Borrow-only bindings stay OUT of the set: their arm is done with
 // the payload by the time the free runs, so the dec both reclaims it and keeps
@@ -36678,7 +36691,7 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // and an ESCAPING rc binding puts its (variant, field) into the MOVED set
 // (match_moved_rc_payloads) so the free site skips that field's dec —
 // ownership transferred to the escapee. Each such x's box is deep-dropped +
-// freed right after its match (emit_enum_variant_drops_moved). Same shape as
+// freed right after its match (emit_enum_variant_drops_gated). Same shape as
 // the scalar pass.
 function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], str_fresh: string[]): RcEnumFrees {
     var idxs: i32[] = [];
@@ -36702,11 +36715,15 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
                     if (match_idx > vi) {
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
-                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        // The counted-enum-field carve-out (ef_escape_names): a bare
+                        // `name` handed to an enum-typed struct-literal field is
+                        // retained there, and this release is is_unique-gated, so the
+                        // share is safe — see emit_enum_variant_drops_gated.
+                        var escapes: boolean = name_escapes_outside_stmt_enumfield(body, v.name, match_idx, structs);
                         // An arm binding an ESCAPING rc payload no longer rejects
                         // the candidate (#4400): the free site skips the dec of
                         // each moved (variant, field) pair instead — see
-                        // match_moved_rc_payloads / emit_enum_variant_drops_moved.
+                        // match_moved_rc_payloads / emit_enum_variant_drops_gated.
                         // (The nested precise-drop path keeps its reject via
                         // enum_body_binds_rc_payload.) EXCEPT when the match also
                         // has a GUARDED arm: a guard could divert execution to an
@@ -36746,21 +36763,47 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
 // and exactly once.
 function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
     var no_moved: string[] = [];
-    return emit_enum_variant_drops_moved(s, slot, enum_name, no_moved);
+    return emit_enum_variant_drops_gated(s, slot, enum_name, no_moved, false);
 }
 
-// emit_enum_variant_drops_moved is emit_enum_variant_drops with a MOVED-field
-// set (#4400, the Koka consuming-match dup/dec cancellation): each entry is
-// "<Variant>#<field index>" for an rc payload field whose arm binding ESCAPES
-// its arm (match_moved_rc_payloads). Ownership of that payload moved to the
-// escapee (the binding was the box's counted reference, handed on), so the
-// deep-drop SKIPS its dec — dropping it would free a value the escapee still
-// holds; the box itself is still freed below either way. The skip is exact:
-// admission rejects guard/move mixes (consumed_rcpayload_enum_frees'
-// guarded_move gate), so a non-empty `moved` set implies every arm is
-// unguarded and exactly the escaping arm ran.
-function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
-    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name, moved);
+// emit_enum_variant_drops_gated is the release above with two additions.
+//
+// `moved` is the MOVED-field set (#4400, the Koka consuming-match dup/dec
+// cancellation): each entry is "<Variant>#<field index>" for an rc payload
+// field whose arm binding ESCAPES its arm (match_moved_rc_payloads). Ownership
+// of that payload moved to the escapee (the binding was the box's counted
+// reference, handed on), so the deep-drop SKIPS its dec — dropping it would
+// free a value the escapee still holds; the box itself is still freed either
+// way. The skip is exact: admission rejects guard/move mixes
+// (consumed_rcpayload_enum_frees' guarded_move gate), so a non-empty set
+// implies every arm is unguarded and exactly the escaping arm ran.
+//
+// `shared` guards the payload walk with __fern_rc_is_unique — the local-side
+// twin of the gate emit_struct_enum_field_payload_drops already applies from
+// the struct side.
+//
+// `shared` is true wherever the released name may be a COUNTED SHARE: a bare
+// enum ident handed to a struct-literal field is retained there, so at this
+// release the box carries two claims and its payload is still reachable
+// through the struct. Deep-dropping under that dup would free a live payload;
+// the guard takes the shallow path instead (box dec only), and the OTHER
+// owner — itself is_unique-gated — finds rc 1 and does the deep work. Whichever
+// of the two releases runs last frees the payload, in either order, and neither
+// order double-frees.
+//
+// The box dec stays unconditional: it is the claim this release owns, rc-guarded
+// in the runtime, and it is what lets the surviving owner reach 1.
+function emit_enum_variant_drops_gated(s: LowerState, slot: i32, enum_name: string, moved: string[], shared: boolean): LowerState {
+    var st: LowerState = s;
+    if (shared) {
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));   // sole owner (and null-safe)
+        st = st.emit(ir.op_if(0));
+        st = emit_enum_variant_payload_drops(st, slot, enum_name, moved);
+        st = st.emit(ir.op_end());
+    } else {
+        st = emit_enum_variant_payload_drops(st, slot, enum_name, moved);
+    }
     // free the box itself and zero the slot.
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -36778,7 +36821,7 @@ function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: stri
 //     to the new variant rather than freeing it;
 //   - emit_struct_enum_field_payload_drops, where __struct_drop_<T>'s k_enum arm frees
 //     the box afterwards and a second dec here would over-release it;
-//   - emit_enum_variant_drops_moved, which appends the free itself.
+//   - emit_enum_variant_drops_gated, which appends the free itself.
 function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
     var vi: i32 = 0;
@@ -43530,6 +43573,165 @@ function sa_escape_stmt(st: parser.Stmt, name: string, tyname: string, acc: stri
     }
 }
 
+// ef_escape_names is walk_stmts_escapes with ONE carve-out: a bare enum-typed
+// value at a struct-literal FIELD position is a COUNTED share, not an escape.
+// The ExprStructLit lowering retains such a value (the k_enum arm's dec is what
+// it balances), so the field holds its own claim and the source still owns the
+// one it was bound with — the #7282 alias-bind arithmetic, one kind over.
+// Refusing the name left NOTHING releasing the source's claim, so the box and
+// its payload stranded once per construction.
+//
+// Both owners release under __fern_rc_is_unique (emit_enum_variant_drops_gated
+// here, emit_struct_enum_field_payload_drops on the struct side), so whichever
+// runs last finds rc 1 and does the deep drop; neither order double-frees.
+// That gate is what licenses this carve-out, and only the credits that take
+// the gated release may use this walk.
+//
+// A bare `name` anywhere else — a call argument, a container element, a return,
+// a lambda capture, a literal's spread base — still escapes: none of those
+// takes the field retain.
+function ef_escape_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts { a = ef_escape_stmt(stmt, structs, a); }
+    return a;
+}
+
+// ef_counted_enum_field: override `i` of `slit` is a bare ident at a field whose
+// DECLARED type is an enum — the position the construction retain covers.
+function ef_counted_enum_field(slit: parser.ExprStructLit, i: i32, structs: parser.StructDecl[]): boolean {
+    if (i >= slit.field_names.len()) { return false; }
+    match (slit.field_values[i]) {
+        parser.ExprIdent(_) => {},
+        _ => { return false; }
+    }
+    return decl_is_enum(structs, decl_field_type(structs, slit.type_name, slit.field_names[i]));
+}
+
+function ef_escape_expr(e: parser.Expr, structs: parser.StructDecl[], acc: string[]): string[] {
+    match (e) {
+        parser.ExprStructLit(slit) => {
+            var a: string[] = acc;
+            if (slit.has_base) { a = walk_expr_escapes(slit.base, a); }
+            var i: i32 = 0;
+            while (i < slit.field_values.len()) {
+                if (!ef_counted_enum_field(slit, i, structs)) { a = ef_escape_expr(slit.field_values[i], structs, a); }
+                i = i + 1;
+            }
+            return a;
+        },
+        _ => { return walk_expr_escapes(e, acc); },
+    }
+    return acc;
+}
+
+function ef_escape_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => { return ef_escape_expr(v.init, structs, acc); },
+        parser.StmtReturn(r) => { return ef_escape_expr(r.value, structs, acc); },
+        parser.StmtExpr(ex) => { return ef_escape_expr(ex.value, structs, acc); },
+        parser.StmtAssign(asn) => { return ef_escape_expr(asn.value, structs, acc); },
+        parser.StmtIf(iff) => {
+            var a: string[] = ef_escape_expr(iff.cond, structs, acc);
+            a = ef_escape_names(iff.then_body, structs, a);
+            return ef_escape_names(iff.else_body, structs, a);
+        },
+        parser.StmtWhile(w) => { return ef_escape_names(w.body, structs, ef_escape_expr(w.cond, structs, acc)); },
+        parser.StmtFor(f) => { return ef_escape_names(f.body, structs, ef_escape_expr(f.iter, structs, acc)); },
+        parser.StmtMatch(m) => {
+            var a: string[] = ef_escape_expr(m.scrutinee, structs, acc);
+            for arm in m.arms {
+                if (arm.has_guard) { a = ef_escape_expr(arm.guard, structs, a); }
+                a = ef_escape_names(arm.body, structs, a);
+            }
+            return a;
+        },
+        parser.StmtDefer(d) => { return ef_escape_stmt(d.action, structs, acc); },
+        _ => { return walk_stmt_escapes(st, acc); },
+    }
+}
+
+// name_escapes_outside_stmt_enumfield: name_escapes_outside_stmt under the
+// counted-enum-field carve-out above.
+function name_escapes_outside_stmt_enumfield(body: parser.Stmt[], name: string, skip: i32, structs: parser.StructDecl[]): boolean {
+    var esc: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (i != skip) { esc = ef_escape_stmt(body[i], structs, esc); }
+        i = i + 1;
+    }
+    return util.index_of_str(esc, name) >= 0;
+}
+
+// body_unsafe_for_enumfield / ef_unsafe_stmt / ef_unsafe_expr: body_unsafe_for
+// under the same carve-out. Only the struct-literal arm forks; every other
+// expression delegates to the strict walker, so each of its refusals still
+// stands and an admitted name is one whose every OTHER use was already safe.
+function body_unsafe_for_enumfield(stmts: parser.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    for stmt in stmts { if (ef_unsafe_stmt(stmt, name, borrowable, structs)) { return true; } }
+    return false;
+}
+
+function ef_unsafe_expr(e: parser.Expr, name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    var none: string[] = [];
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) {
+                match (sl.base) {
+                    parser.ExprIdent(_) => {},
+                    _ => { if (expr_unsafe_for(sl.base, name, borrowable, none)) { return true; } }
+                }
+            }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (!ef_counted_enum_field(sl, i, structs)
+                        && ef_unsafe_expr(sl.field_values[i], name, borrowable, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return expr_unsafe_for(e, name, borrowable, none); }
+    }
+    return false;
+}
+
+function ef_unsafe_stmt(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    var none: string[] = [];
+    match (st) {
+        parser.StmtVar(v) => { return ef_unsafe_expr(v.init, name, borrowable, structs); },
+        parser.StmtReturn(r) => { return ef_unsafe_expr(r.value, name, borrowable, structs); },
+        parser.StmtExpr(e) => { return ef_unsafe_expr(e.value, name, borrowable, structs); },
+        parser.StmtAssign(a) => { return ef_unsafe_expr(a.value, name, borrowable, structs); },
+        parser.StmtIf(f) => {
+            if (ef_unsafe_expr(f.cond, name, borrowable, structs)) { return true; }
+            return body_unsafe_for_enumfield(f.then_body, name, borrowable, structs)
+                || body_unsafe_for_enumfield(f.else_body, name, borrowable, structs);
+        },
+        parser.StmtWhile(w) => {
+            if (ef_unsafe_expr(w.cond, name, borrowable, structs)) { return true; }
+            return body_unsafe_for_enumfield(w.body, name, borrowable, structs);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                _ => { iter_unsafe = ef_unsafe_expr(fo.iter, name, borrowable, structs); }
+            }
+            if (iter_unsafe) { return true; }
+            return body_unsafe_for_enumfield(fo.body, name, borrowable, structs);
+        },
+        parser.StmtMatch(m) => {
+            if (ef_unsafe_expr(m.scrutinee, name, borrowable, structs)) { return true; }
+            for arm in m.arms {
+                if (arm.has_guard && ef_unsafe_expr(arm.guard, name, borrowable, structs)) { return true; }
+                if (body_unsafe_for_enumfield(arm.body, name, borrowable, structs)) { return true; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // sa_rebound_below reports whether `name` is bound a SECOND time anywhere under
 // `stmts` — a nested `var name`, a `for name in …` element binding, or a
 // match-arm pattern binder. A shadowing binding is not covered by the top-level
@@ -47847,10 +48049,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             // then freed exactly once via the recipient c.
             if (rcenumfrees.idxs[rei] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rei]) < 0) {
                 var rxslot: i32 = s.slot_of(rcenumfrees.names[rei]);
-                if (rxslot >= s.n_params) {
+                // moved_elided: a construction took over this local's reference, so
+                // its release belongs to the destination (see the RCENUMS sweep).
+                if (rxslot >= s.n_params && !slot_list_has(s.moved_elided, rxslot)) {
                     // Skip the dec of payload fields whose arm binding escaped —
                     // ownership moved to the escapee (#4400).
-                    s = emit_enum_variant_drops_moved(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.structs));
+                    s = emit_enum_variant_drops_gated(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.structs), true);
                 }
             }
             rei = rei + 1;
