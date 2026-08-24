@@ -14,7 +14,7 @@
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
 str__local          clean leak   bare string local: retain gated on slit_reclaim + ownership; P not strfldok-admitted here
 str__param          clean leak   same gate, param origin
-str__fieldread      clean leak   string field read: uncounted borrow, holder goes box-only
+str__fieldread      clean leak   string field read: retain gated on strfldok admission, not granted here
 str__call           clean clean  producer result is Owned
 str_arr__fresh      clean clean  fresh string[] literal owned by the holder
 str_arr__local      clean leak   bare string[] local into the field: uncounted (the documented hole)
@@ -24,12 +24,12 @@ str_arr__call       clean clean  producer result owned
 arr_i32__fresh      clean clean  fresh scalar-array literal
 arr_i32__local      clean clean  the #3292 dup: bare scalar-array ident is retained and balanced
 arr_i32__param      clean clean  same dup, param origin
-arr_i32__fieldread  clean leak   q.f scalar-array read: no field-access retain fires here
+arr_i32__fieldread  clean clean  counted: the literal retains the read and the source keeps its deep drop
 arr_i32__call       clean clean  producer result owned
 struct__fresh       clean clean  fresh Inner literal
 struct__local       clean leak   bare Inner ident: retained (nested-struct arm) but source strands its own claim
 struct__param       clean clean  param bare ident retained, param owns nothing to strand
-struct__fieldread   clean leak   q.f nested-struct read: retained conservatively, one side strands
+struct__fieldread   clean clean  counted: unconditional nested-struct retain + kept source drop
 struct__call        clean clean  strict-fresh call result owned outright
 enum__fresh         clean clean  fresh variant ctor owned
 enum__local         clean leak   bare enum local: retained (enum arm), source claim strands
@@ -44,5 +44,5 @@ enum_arr__call      clean leak   enum-array producer result
 struct_arr__fresh   clean clean  fresh [Inner{..}] literal owned, deep-dropped
 struct_arr__local   clean leak   bare Inner[] ident
 struct_arr__param   clean leak   param Inner[]
-struct_arr__fieldread clean leak q.f Inner[] read
+struct_arr__fieldread clean clean counted: array-of-struct retain + kept source drop
 struct_arr__call    clean clean  producer result owned
