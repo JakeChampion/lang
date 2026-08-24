@@ -133,24 +133,40 @@ function is_valid_numeric_suffix(s: string): boolean {
 // `.` (scan_number's guard), and `.field` / `.0` stay single-dot, so
 // `..` never clashes with field access or fractions.
 function match_multipunct(src: string, i: i32, n: i32): string {
+    // Probe by BYTE, not by slice: slicing before matching would
+    // manufacture a split-code-point str when src[i] or a following
+    // byte starts a multibyte character. The slices below are taken
+    // only after every byte in range matched an ASCII punctuator.
+    if (i >= n) { return ""; }
+    var b0: i32 = src[i] as i32;
+    var b1: i32 = 0 - 1;
+    if (i + 1 < n) { b1 = src[i + 1] as i32; }
+    var b2: i32 = 0 - 1;
+    if (i + 2 < n) { b2 = src[i + 2] as i32; }
     if (i + 3 <= n) {
-        var s3: str = slice_unchecked(src, i, i + 3);
-        if (s3 == "<<=" || s3 == ">>=" || s3 == "<<|"
-            || s3 == "<<?" || s3 == ">>?"
-            || s3 == "..." || s3 == "..=") { return s3 + ""; }
+        var hit3: boolean = false;
+        if (b0 == 60 && b1 == 60 && (b2 == 61 || b2 == 124 || b2 == 63)) { hit3 = true; }   // <<= <<| <<?
+        else if (b0 == 62 && b1 == 62 && (b2 == 61 || b2 == 63)) { hit3 = true; }           // >>= >>?
+        else if (b0 == 46 && b1 == 46 && (b2 == 46 || b2 == 61)) { hit3 = true; }           // ... ..=
+        if (hit3) { return slice_unchecked(src, i, i + 3) + ""; }
     }
     if (i + 2 <= n) {
-        var s2: str = slice_unchecked(src, i, i + 2);
-        if (s2 == "==" || s2 == "!=" || s2 == "<=" || s2 == ">="
-            || s2 == "&&" || s2 == "||" || s2 == "<<" || s2 == ">>"
-            || s2 == "=>" || s2 == "|>" || s2 == ".." || s2 == "::"
-            || s2 == "+=" || s2 == "-=" || s2 == "*=" || s2 == "/="
-            || s2 == "%=" || s2 == "&=" || s2 == "|=" || s2 == "^="
-            || s2 == "+|" || s2 == "-|" || s2 == "*|"
-            || s2 == "+?" || s2 == "-?" || s2 == "*?"
-            || s2 == "/?" || s2 == "%?") {
-            return s2 + "";
+        var hit2: boolean = false;
+        if (b1 == 61) {         // == != <= >= += -= *= /= %= &= |= ^=
+            hit2 = b0 == 61 || b0 == 33 || b0 == 60 || b0 == 62
+                || b0 == 43 || b0 == 45 || b0 == 42 || b0 == 47
+                || b0 == 37 || b0 == 38 || b0 == 124 || b0 == 94;
+        } else if (b1 == 124) { // +| -| *| ||
+            hit2 = b0 == 43 || b0 == 45 || b0 == 42 || b0 == 124;
+        } else if (b1 == 63) {  // +? -? *? /? %?
+            hit2 = b0 == 43 || b0 == 45 || b0 == 42 || b0 == 47 || b0 == 37;
+        } else if (b1 == 62) {  // => |> >>
+            hit2 = b0 == 61 || b0 == 124 || b0 == 62;
+        } else {                // << .. :: &&
+            hit2 = (b0 == 60 && b1 == 60) || (b0 == 46 && b1 == 46)
+                || (b0 == 58 && b1 == 58) || (b0 == 38 && b1 == 38);
         }
+        if (hit2) { return slice_unchecked(src, i, i + 2) + ""; }
     }
     return "";
 }
@@ -751,8 +767,14 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
             out = out + er.frag;
             continue;
         }
-        out = out + slice_unchecked(l.src, l.i, l.i + 1);
-        l = l.advance();
+        // Copy the run of plain bytes up to the next `"` / `\` / newline
+        // whole — a per-byte slice would split multibyte characters.
+        var re: i32 = l.i;
+        while (re < l.n && l.src[re] != b'"' && l.src[re] != 92 && l.src[re] != b'\n') {
+            re = re + 1;
+        }
+        out = out + slice_unchecked(l.src, l.i, re);
+        l = l.advance_to(re);
     }
     if (l.at_end()) {
         return NumResult { lex: l, tok: error_tok("unterminated string literal", start_line, start_col) };
@@ -882,9 +904,16 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             }
             return NumResult { lex: l, tok: error_tok("unmatched `}` in f-string (use `}}` for a literal `}`)", start_line, start_col) };
         }
-        lit = lit + slice_unchecked(l.src, l.i, l.i + 1);
+        // Copy the run of plain bytes up to the next `"` / `\` / newline /
+        // brace whole — a per-byte slice would split multibyte characters.
+        var le: i32 = l.i;
+        while (le < l.n && l.src[le] != b'"' && l.src[le] != 92 && l.src[le] != b'\n'
+            && l.src[le] != b'{' && l.src[le] != b'}') {
+            le = le + 1;
+        }
+        lit = lit + slice_unchecked(l.src, l.i, le);
         have_lit = true;
-        l = l.advance();
+        l = l.advance_to(le);
     }
     return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
 }
@@ -1529,6 +1558,49 @@ function test_comments(): i32 {
     return 0;
 }
 
+// test_multibyte — multibyte UTF-8 in string literals, f-string literal
+// parts, and comments adjacent to the operator probes, plus a probe whose
+// lookahead byte is a multibyte lead. The probes must match by byte, and
+// the accumulated values must carry the multibyte content byte-exact.
+function test_multibyte(): i32 {
+    var src: string = "var s: string = \"héllo wörld\"; s <<= 1; // cömment é\nvar f = f\"pré {s} pöst\";\n";
+    var r: LexResult = tokenize_full(src);
+    var toks: Token[] = r.tokens;
+    if (toks.len() != 17) { return 2200; }
+    match (toks[5]) {
+        TokString(t) => { if (t.value != "héllo wörld") { return 2201; } },
+        _ => { return 2202; }
+    }
+    match (toks[8]) {
+        TokPunct(t) => { if (t.text != "<<=") { return 2203; } },
+        _ => { return 2204; }
+    }
+    match (toks[14]) {
+        TokFString(t) => {
+            if (t.parts.len() != 3) { return 2205; }
+            if (t.parts[0].lit != "pré ") { return 2206; }
+            if (t.parts[1].expr != "s") { return 2207; }
+            if (t.parts[2].lit != " pöst") { return 2208; }
+        },
+        _ => { return 2209; }
+    }
+    if (r.comments.len() != 1) { return 2210; }
+    if (r.comments[0].text != " cömment é") { return 2211; }
+    // A 2-byte operator probe whose lookahead byte is a multibyte lead
+    // falls back to the single `<`; the é itself is not a token.
+    var t2: Token[] = tokenize("a<é");
+    if (t2.len() != 3) { return 2212; }
+    match (t2[1]) {
+        TokPunct(t) => { if (t.text != "<") { return 2213; } },
+        _ => { return 2214; }
+    }
+    match (t2[2]) {
+        TokError(t) => { if (t.msg != "unexpected character") { return 2215; } },
+        _ => { return 2216; }
+    }
+    return 0;
+}
+
 function main(): i32 {
     var c: i32 = 0;
     c = test_mixed();              if (c != 0) { return c; }
@@ -1545,5 +1617,6 @@ function main(): i32 {
     c = test_fstring();            if (c != 0) { return c; }
     c = test_fstring_positions();  if (c != 0) { return c; }
     c = test_comments();           if (c != 0) { return c; }
+    c = test_multibyte();          if (c != 0) { return c; }
     return 0;
 }
