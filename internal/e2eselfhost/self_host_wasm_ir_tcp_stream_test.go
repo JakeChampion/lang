@@ -28,7 +28,7 @@ import (
 //     actually exercises it: 10000 bytes is three chunks, and an off-by-one in
 //     the loop shows up as a short write rather than a crash.
 //   - blocking-read's returned list lives in host memory that is only valid
-//     until the next canonical-ABI call, so tcp_recv COPIES into a fresh string
+//     until the next canonical-ABI call, so tcp_recv COPIES into a fresh u8[]
 //     block. It also needs the exported cabi_realloc (the canonical ABI
 //     materialises the list<u8> in guest memory) — shared with wasm_poll's
 //     list<u32> through a single gate, since a second definition is a
@@ -158,7 +158,7 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
     if (c < 0) { write("connect-failed\n"); return 1; }
     var n: i32 = tcp_send(c, "hello");
     write("sent="); print_int(n);
-    var r: string = tcp_recv(c, 64);
+    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write(" got="); write(r); write("\n");
     tcp_close(c);
     return 0;
@@ -205,7 +205,7 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
     var payload: string = "x".repeat(%d);
     var n: i32 = tcp_send(c, payload);
     write("sent="); print_int(n);
-    var r: string = tcp_recv(c, 64);
+    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write(" server-received="); write(r); write("\n");
     tcp_close(c);
     return 0;

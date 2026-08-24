@@ -1920,11 +1920,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// `buf as usize` pointer, and by the escape / move analysis
 				// whenever it flows into a container or out through a return.
 				return false
-			case "random_bytes":
+			case "random_bytes", "tcp_recv":
 				// A fresh rc=1 u8[] in the __alloc_u8 box shape on every
-				// backend, filled with CSPRNG bytes. Same argument as
-				// __alloc_u8 above: the only argument is a scalar byte
-				// count, so the result cannot alias it.
+				// backend (CSPRNG bytes / one socket read). Same argument
+				// as __alloc_u8 above: every argument is a scalar (byte
+				// count, fd), so the result cannot alias one.
 				return false
 			}
 		}

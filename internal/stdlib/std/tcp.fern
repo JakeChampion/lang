@@ -103,7 +103,8 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[stri
     var dtimer: i32 = wasm_pollable_drop(timer);
     var dtok: i32 = wasm_pollable_drop(tok);
     if (ready == 0) {
-        return Some(tcp_recv(fd, max));
+        // PR2 (#5714) makes this path byte-based.
+        return Some(string_from_bytes_unchecked(tcp_recv(fd, max)));
     }
     if (ready == 1) {
         // The timer pollable fired first (wasm) — deadline.
@@ -116,7 +117,7 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[stri
     if (waited_ns * 2 >= (wait_ms as i64) * ns_per_ms) {
         return None;
     }
-    return Some(tcp_recv(fd, max));
+    return Some(string_from_bytes_unchecked(tcp_recv(fd, max)));
 }
 
 // __serve_loop — the HTTP/1.1 accept loop factored out of
