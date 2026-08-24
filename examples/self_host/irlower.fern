@@ -1068,7 +1068,7 @@ pub function (s: LowerState) retire_locals(from: i32): LowerState {
 
 // slot_name_retired: `n` already carries the retire sentinel.
 function slot_name_retired(n: string): boolean {
-    return n.len() > 9 && n[0:9] == "!retired!";
+    return n.len() > 9 && slice_unchecked(n, 0, 9) == "!retired!";
 }
 
 // is_defer_flag_name: `n` is one of lower_defers_func's per-defer arming flags
@@ -1077,7 +1077,7 @@ function slot_name_retired(n: string): boolean {
 // the inner `if (__dfa<i>)` is what identifies which defer is being replayed.
 function is_defer_flag_name(n: string): boolean {
     if (n.len() <= 5) { return false; }
-    if (n[0:5] != "__dfa") { return false; }
+    if (slice_unchecked(n, 0, 5) != "__dfa") { return false; }
     var c: u8 = n[5];
     return c >= b'0' && c <= b'9';
 }
@@ -1177,7 +1177,7 @@ function defer_alias_find(entries: string[], key: string): i32 {
     var i: i32 = 0;
     while (i < entries.len()) {
         var e: string = entries[i];
-        if (e.len() > key.len() && e[0 : key.len()] == key) { return i; }
+        if (e.len() > key.len() && slice_unchecked(e, 0, key.len()) == key) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -1196,7 +1196,7 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
     var at: i32 = defer_alias_find(s.defer_slots, key);
     if (at < 0) { return 0 - 1; }
     var e: string = s.defer_slots[at];
-    return util.digits_to_i32(e[key.len() : e.len()] + "");
+    return util.digits_to_i32(slice_unchecked(e, key.len(), e.len()) + "");
 }
 
 // RECLAIM CREDITS ARE KEYED ON THE BINDING SITE, NOT THE NAME (#7253).
@@ -1340,8 +1340,8 @@ pub function (s: LowerState) closure_opt_ret(name: string): string {
     var i: i32 = 0;
     while (i < s.closure_opt_rets.len()) {
         var e: string = s.closure_opt_rets[i];
-        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
-            return e[pfx.len() : e.len()] + "";
+        if (e.len() > pfx.len() && slice_unchecked(e, 0, pfx.len()) + "" == pfx) {
+            return slice_unchecked(e, pfx.len(), e.len()) + "";
         }
         i = i + 1;
     }
@@ -1360,7 +1360,7 @@ function split_type_list(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || (csv[i] == b',' && depth == 0)) {
-            out = out.append(csv[start : i]);
+            out = out.append(slice_unchecked(csv, start, i));
             start = i + 1;
         } else if (csv[i] == b'(' || csv[i] == b'[') {
             depth = depth + 1;
@@ -1429,7 +1429,7 @@ function fn_params_sidecars(tys: string[]): string[] {
         if (tys[i].len() == 0) { return []; }
         if (i > 0) { ptys = ptys + ","; }
         ptys = ptys + tys[i];
-        if (tys[i].len() > 4 && tys[i][0:4] == "dyn ") {
+        if (tys[i].len() > 4 && slice_unchecked(tys[i], 0, 4) == "dyn ") {
             if (dyns.len() > 0) { dyns = dyns + ","; }
             dyns = dyns + util.i32_to_string(i);
         }
@@ -1493,8 +1493,8 @@ function fn_local_spelling_for(v: parser.StmtVar, funcs: parser.FuncDecl[]): str
         parser.ExprCall(mk) => {
             match (mk.callee) {
                 parser.ExprIdent(mkid) => {
-                    if (mkid.name.len() <= 8 || mkid.name[0:8] != "__mkclo$") { return ""; }
-                    var tgt: string = mkid.name[8 : mkid.name.len()] + "";
+                    if (mkid.name.len() <= 8 || slice_unchecked(mkid.name, 0, 8) != "__mkclo$") { return ""; }
+                    var tgt: string = slice_unchecked(mkid.name, 8, mkid.name.len()) + "";
                     for fn in funcs {
                         if (fn.name == tgt) {
                             var p: parser.ParamDecl = fn_param_from_func(v.name, fn, 1);
@@ -1587,13 +1587,13 @@ pub function fn_param_from_spelling(name: string, sp: string): parser.ParamDecl 
     // it on bare commas and matches each part against a type spelling, so a
     // leading space would read `(i64, i32)`'s second position as a pointer.
     var tys: string[] = [];
-    var inner: string = trim_spaces(sp[1 : close]);
+    var inner: string = trim_spaces(slice_unchecked(sp, 1, close));
     if (inner.len() > 0) {
         var parts: string[] = split_type_list(inner);
         var k: i32 = 0;
         while (k < parts.len()) { tys = tys.append(trim_spaces(parts[k])); k = k + 1; }
     }
-    return fn_param_decl(name, tys, trim_spaces(sp[j + 2 : n]));
+    return fn_param_decl(name, tys, trim_spaces(slice_unchecked(sp, j + 2, n)));
 }
 
 // bytes_at: `e` carries the bytes of `s` starting at index `at`.
@@ -1646,7 +1646,7 @@ function tagged_value_of(names: string[], pfx: string, name: string): string {
     while (i < names.len()) {
         var e: string = names[i];
         var st: i32 = tagged_value_start(e, pfx, name);
-        if (st >= 0 && st < e.len()) { return e[st : e.len()] + ""; }
+        if (st >= 0 && st < e.len()) { return slice_unchecked(e, st, e.len()) + ""; }
         i = i + 1;
     }
     return "";
@@ -1757,7 +1757,7 @@ pub function sig_reg_value_of(r: SigReg, name: string): string {
     while (i >= 0) {
         var e: string = r.rows[i];
         var st: i32 = tagged_value_start(e, "", name);
-        if (st >= 0) { return e[st : e.len()] + ""; }
+        if (st >= 0) { return slice_unchecked(e, st, e.len()) + ""; }
         i = r.next[i];
     }
     return "";
@@ -1770,7 +1770,7 @@ pub function sig_reg_value_last(r: SigReg, name: string): string {
     while (i >= 0) {
         var e: string = r.rows[i];
         var st: i32 = tagged_value_start(e, "", name);
-        if (st >= 0) { out = e[st : e.len()] + ""; }
+        if (st >= 0) { out = slice_unchecked(e, st, e.len()) + ""; }
         i = r.next[i];
     }
     return out;
@@ -1809,7 +1809,7 @@ pub function sig_reg_tagged_value_of(r: SigReg, pfx: string, name: string): stri
     while (i >= 0) {
         var e: string = r.rows[i];
         var st: i32 = tagged_value_start(e, pfx, name);
-        if (st >= 0 && st < e.len()) { return e[st : e.len()] + ""; }
+        if (st >= 0 && st < e.len()) { return slice_unchecked(e, st, e.len()) + ""; }
         i = r.next[i];
     }
     return "";
@@ -1837,7 +1837,7 @@ pub function sig_reg_argref(r: SigReg, name: string): i32 {
     while (i >= 0) {
         var e: string = r.rows[i];
         if (e.len() > nl + 5 && bytes_at(e, 0, name) && bytes_at(e, nl, "|$arg")) {
-            return util.digits_to_i32(e[nl + 5 : e.len()]);
+            return util.digits_to_i32(slice_unchecked(e, nl + 5, e.len()));
         }
         i = r.next[i];
     }
@@ -1915,7 +1915,7 @@ pub function (s: LowerState) fn_arg_width_char(name: string, ai: i32): string {
     var us: i32 = 0;
     while (us < tag.len() && tag[us] != b'_') { us = us + 1; }
     if (ai >= us) { return ""; }
-    var c: string = tag[ai : ai + 1] + "";
+    var c: string = slice_unchecked(tag, ai, ai + 1) + "";
     if (c == "w") { return ""; }
     return c;
 }
@@ -1983,7 +1983,7 @@ pub function (s: LowerState) mark_closure_opt_ret(name: string, ty: string): Low
 function closure_init_opt_ret(init: parser.Expr, s: LowerState): string {
     match (init) {
         parser.ExprLambda(lam) => {
-            if (lam.ret_type.len() >= 8 && (lam.ret_type[0:7] == "Option[" || lam.ret_type[0:7] == "Result[")) { return lam.ret_type + ""; }
+            if (lam.ret_type.len() >= 8 && (slice_unchecked(lam.ret_type, 0, 7) == "Option[" || slice_unchecked(lam.ret_type, 0, 7) == "Result[")) { return lam.ret_type + ""; }
             return "";
         },
         parser.ExprIdent(iid) => {
@@ -1994,8 +1994,8 @@ function closure_init_opt_ret(init: parser.Expr, s: LowerState): string {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") {
-                        return s.opt_ret_type(cid.name[8 : cid.name.len()] + "");
+                    if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") {
+                        return s.opt_ret_type(slice_unchecked(cid.name, 8, cid.name.len()) + "");
                     }
                     return s.opt_ret_type(cid.name);
                 },
@@ -2269,7 +2269,7 @@ pub function (s: LowerState) tuple_elem_tag(i: i32, n: i32): string {
     var k: i32 = 0;
     while (k <= enc.len()) {
         if (k == enc.len() || (depth == 0 && enc[k] == b',')) {   // end, or top-level ','
-            if (idx == n) { return enc[start : k] + ""; }
+            if (idx == n) { return slice_unchecked(enc, start, k) + ""; }
             idx = idx + 1;
             start = k + 1;
         } else {
@@ -2294,7 +2294,7 @@ pub function csv_nth(enc: string, n: i32): string {
     var k: i32 = 0;
     while (k <= enc.len()) {
         if (k == enc.len() || (depth == 0 && enc[k] == b',')) {   // end, or top-level ','
-            if (idx == n) { return enc[start : k] + ""; }
+            if (idx == n) { return slice_unchecked(enc, start, k) + ""; }
             idx = idx + 1;
             start = k + 1;
         } else {
@@ -2337,7 +2337,7 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
                     var asl: i32 = s.slot_of(aid.name);
                     if (asl >= 0 && s.is_arr_slot(asl)) {
                         var et: string = s.arrarr_elem_of_slot(asl);
-                        if (et.len() >= 2 && et[0:1] == "(") { return tuple_type_elem_tag(et, n); }
+                        if (et.len() >= 2 && slice_unchecked(et, 0, 1) == "(") { return tuple_type_elem_tag(et, n); }
                     }
                 },
                 _ => {}
@@ -2350,7 +2350,7 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
             // carries the checker's type for this very node, and a tuple stamps
             // its canonical "(f64, i32)" spelling, so the same tuple_type_elem_tag
             // decoder reads element n out of it. Walk first, tag fills the hole.
-            if (ix.ty.len() >= 2 && ix.ty[0:1] == "(") { return tuple_type_elem_tag(ix.ty, n); }
+            if (ix.ty.len() >= 2 && slice_unchecked(ix.ty, 0, 1) == "(") { return tuple_type_elem_tag(ix.ty, n); }
             return "";
         },
         parser.ExprCall(tc) => {
@@ -2379,7 +2379,7 @@ pub function expr_is_tuple(e: parser.Expr, s: LowerState): boolean {
         parser.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
                 var ot: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                return ot.len() >= 2 && ot[0:1] == "(";
+                return ot.len() >= 2 && slice_unchecked(ot, 0, 1) == "(";
             }
             return false;
         },
@@ -2403,7 +2403,7 @@ pub function expr_is_result(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprIdent(id) => {
             var ot: string = s.opt_type_of_slot(s.slot_of(id.name));
-            return ot.len() >= 7 && ot[0:7] == "Result[";
+            return ot.len() >= 7 && slice_unchecked(ot, 0, 7) == "Result[";
         },
         _ => { return false; }
     }
@@ -2557,7 +2557,7 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
                         return "";
                     }
                     var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);
-                    if (rt.len() >= 8 && rt[0:7] == "Option[") { return rt; }
+                    if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[") { return rt; }
                     return "";
                 },
                 _ => { return ""; }
@@ -2565,7 +2565,7 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
         },
         parser.ExprIdent(id) => {
             var ot: string = s.opt_type_of_slot(s.slot_of(id.name));
-            if (ot.len() >= 8 && ot[0:7] == "Option[") { return ot; }
+            if (ot.len() >= 8 && slice_unchecked(ot, 0, 7) == "Option[") { return ot; }
             return "";
         },
         _ => { return ""; }
@@ -2606,7 +2606,7 @@ pub function some_opt_type(e: parser.Expr, s: LowerState): string {
                         if (innr.len() > 0) { return "Option[" + innr + "]"; }
                         var pt: string = elem_type_tag(c.args[0], s);
                         if (pt == "fn") { return ""; }
-                        if (pt.len() >= 7 && pt[0:7] == "Result[") { return ""; }
+                        if (pt.len() >= 7 && slice_unchecked(pt, 0, 7) == "Result[") { return ""; }
                         // An ARRAY payload tagged as a single MAP (`Some(ms)`
                         // where ms: Map[K, V][]): a map-array slot records the
                         // ELEMENT map type in the map column so `ms[i].get(k)`
@@ -2649,12 +2649,12 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
         parser.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
                 var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                if (tt.len() >= 8 && (tt[0:7] == "Option[" || tt[0:7] == "Result[")) { t = tt; }
+                if (tt.len() >= 8 && (slice_unchecked(tt, 0, 7) == "Option[" || slice_unchecked(tt, 0, 7) == "Result[")) { t = tt; }
             } else {
                 var foty: string = expr_struct_type(fa.obj, s);
                 if (foty != "") {
                     var fft: string = decl_field_type(s.structs, foty, fa.field);
-                    if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { t = fft; }
+                    if (fft.len() >= 8 && (slice_unchecked(fft, 0, 7) == "Option[" || slice_unchecked(fft, 0, 7) == "Result[")) { t = fft; }
                 }
             }
         },
@@ -2712,8 +2712,8 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
         },
         _ => {}
     }
-    if (t.len() >= 7 && t[0:7] == "Option[") { return "Option"; }
-    if (t.len() >= 7 && t[0:7] == "Result[") { return "Result"; }
+    if (t.len() >= 7 && slice_unchecked(t, 0, 7) == "Option[") { return "Option"; }
+    if (t.len() >= 7 && slice_unchecked(t, 0, 7) == "Result[") { return "Result"; }
     return "";
 }
 
@@ -2737,7 +2737,7 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
         parser.ExprCall(cloc) => {
             match (cloc.callee) {
                 parser.ExprIdent(clocid) => {
-                    if (clocid.name.len() > 8 && clocid.name[0:8] == "__mkclo$") { return "clo"; }
+                    if (clocid.name.len() > 8 && slice_unchecked(clocid.name, 0, 8) == "__mkclo$") { return "clo"; }
                     if (util.index_of_str(s.sigs.closure_fns, clocid.name) >= 0) { return "clo"; }
                 },
                 _ => {}
@@ -2827,8 +2827,8 @@ pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
 // the shared reader behind both the local-annotation marking and the param
 // column, so a Cell PARAM tracks exactly like a Cell local.
 pub function cell_elem_of_type_name(t: string): string {
-    if (t.len() > 6 && t[0:5] == "Cell[" && t[t.len() - 1 : t.len()] == "]") {
-        return t[5 : t.len() - 1] + "";
+    if (t.len() > 6 && slice_unchecked(t, 0, 5) == "Cell[" && slice_unchecked(t, t.len() - 1, t.len()) == "]") {
+        return slice_unchecked(t, 5, t.len() - 1) + "";
     }
     return "";
 }
@@ -3202,7 +3202,7 @@ function map_insert_value_retains(e: parser.Expr, vtype: string, s: LowerState):
 // its inserts on the historical unretained store.
 function map_value_type_is_arr(vtype: string): boolean {
     if (vtype.len() < 2) { return false; }
-    return vtype[vtype.len() - 2 : vtype.len()] == "[]";
+    return slice_unchecked(vtype, vtype.len() - 2, vtype.len()) == "[]";
 }
 
 // map_insert_val_is_i64: should a map insert/set VALUE (or a get_or DEFAULT) be
@@ -3582,7 +3582,7 @@ pub function is_subword_array_type(t: string): boolean {
 // field into a `var m: Map[K, V] = c.m` local re-marks the map type from the
 // annotation, so the map's get/insert/has/... dispatch keeps working.
 pub function is_map_type_name(t: string): boolean {
-    return t.len() >= 5 && t[0:4] == "Map[";
+    return t.len() >= 5 && slice_unchecked(t, 0, 4) == "Map[";
 }
 
 // map_elem_of_array_type: the `Map[K, V]` element of a `Map[K, V][]` spelling,
@@ -3590,7 +3590,7 @@ pub function is_map_type_name(t: string): boolean {
 // and so has no element.
 pub function map_elem_of_array_type(t: string): string {
     if (!is_array_type_name(t)) { return ""; }
-    var el: str = t[0 : t.len() - 2];
+    var el: str = slice_unchecked(t, 0, t.len() - 2);
     if (is_map_type_name(el) && !is_array_type_name(el)) { return el + ""; }
     return "";
 }
@@ -3608,11 +3608,11 @@ pub function map_elem_of_array_type(t: string): string {
 pub function is_struct_array_field_type(structs: parser.StructDecl[], t: string): boolean {
     var n: i32 = t.len();
     if (n < 3) { return false; }
-    if (t[n - 2 : n] != "[]") { return false; }
+    if (slice_unchecked(t, n - 2, n) != "[]") { return false; }
     // Element leaf-safety is guaranteed by the leaksafe gate (decl_is_leaksafe_d,
     // depth-bounded) before any struct admitting this field reaches the IR path, so
     // this only needs to recognise the struct-array shape (no recursion → no cycle).
-    return decl_is_struct(structs, t[0 : n - 2]);
+    return decl_is_struct(structs, slice_unchecked(t, 0, n - 2));
 }
 
 // is_enum_array_field_type: a `C[]` where C is a (nominal) enum (array-of-enum
@@ -3623,8 +3623,8 @@ pub function is_struct_array_field_type(structs: parser.StructDecl[], t: string)
 pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): boolean {
     var n: i32 = t.len();
     if (n < 3) { return false; }
-    if (t[n - 2 : n] != "[]") { return false; }
-    return is_enum_like_name(t[0 : n - 2], structs);
+    if (slice_unchecked(t, n - 2, n) != "[]") { return false; }
+    return is_enum_like_name(slice_unchecked(t, 0, n - 2), structs);
 }
 
 // is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
@@ -3642,8 +3642,8 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
 pub function is_nested_array_field_type(structs: parser.StructDecl[], t: string): boolean {
     var n: i32 = t.len();
     if (n < 5) { return false; }
-    if (t[n - 2 : n] != "[]") { return false; }
-    var elt: str = t[0 : n - 2];
+    if (slice_unchecked(t, n - 2, n) != "[]") { return false; }
+    var elt: str = slice_unchecked(t, 0, n - 2);
     return is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt)
         || is_enum_array_field_type(structs, elt);
 }
@@ -3655,8 +3655,8 @@ pub function is_nested_array_field_type(structs: parser.StructDecl[], t: string)
 // shr_u / lt_u (#5206). Anything that is not a depth-2 array spelling answers "".
 pub function arrarr_elem_kind_of_type(t: string): string {
     if (!is_array_type_name(t) || t.len() < 4) { return ""; }
-    if (!is_array_type_name(t[0 : t.len() - 2])) { return ""; }
-    var innr: str = t[0 : t.len() - 4];
+    if (!is_array_type_name(slice_unchecked(t, 0, t.len() - 2))) { return ""; }
+    var innr: str = slice_unchecked(t, 0, t.len() - 4);
     if (innr == "i64") { return "i64"; }
     if (innr == "u64") { return "u64"; }
     if (innr == "f64") { return "f64"; }
@@ -3739,8 +3739,8 @@ function is_leaksafe_payload(p: string): boolean {
 pub function is_leaksafe_opt_field(t: string): boolean {
     var n: i32 = t.len();
     if (n < 9) { return false; }
-    if (t[0:7] == "Option[") { return is_leaksafe_payload(opt_payload_type(t, "Some")); }
-    if (t[0:7] == "Result[") {
+    if (slice_unchecked(t, 0, 7) == "Option[") { return is_leaksafe_payload(opt_payload_type(t, "Some")); }
+    if (slice_unchecked(t, 0, 7) == "Result[") {
         return is_leaksafe_payload(opt_payload_type(t, "Ok")) && is_leaksafe_payload(opt_payload_type(t, "Err"));
     }
     return false;
@@ -3776,7 +3776,7 @@ function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, 
     // nested Option payload (`Option[Option[P]]`) recurses through the same
     // predicate. (visiting-threaded for recursion safety.)
     if (is_leaksafe_tuple_field_dv(structs, p, depth, visiting)) { return true; }
-    if (p.len() >= 8 && (p[0:7] == "Option[" || p[0:7] == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
+    if (p.len() >= 8 && (slice_unchecked(p, 0, 7) == "Option[" || slice_unchecked(p, 0, 7) == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
     // An `Option[<enum>]` payload is NOT admitted here, deliberately. The shape
     // looks exactly like the struct payload above — one enum-variant pointer in
     // the box, leak-only, and decl_is_leaksafe_d admits a bare `c: Color` FIELD on
@@ -3806,8 +3806,8 @@ pub function is_leaksafe_opt_field_d(structs: parser.StructDecl[], t: string): b
 pub function is_leaksafe_opt_field_dv(structs: parser.StructDecl[], t: string, depth: i32, visiting: string[]): boolean {
     var n: i32 = t.len();
     if (n < 9) { return false; }
-    if (t[0:7] == "Option[") { return opt_payload_ok_dv(structs, opt_payload_type(t, "Some"), depth, visiting); }
-    if (t[0:7] == "Result[") {
+    if (slice_unchecked(t, 0, 7) == "Option[") { return opt_payload_ok_dv(structs, opt_payload_type(t, "Some"), depth, visiting); }
+    if (slice_unchecked(t, 0, 7) == "Result[") {
         return opt_payload_ok_dv(structs, opt_payload_type(t, "Ok"), depth, visiting) && opt_payload_ok_dv(structs, opt_payload_type(t, "Err"), depth, visiting);
     }
     return false;
@@ -3841,7 +3841,7 @@ pub function tuple_type_elem_tag(t: string, n: i32): string {
 // them), so such a field leaks with the struct — no RC, no aliasing bail.
 pub function is_leaksafe_tuple_field(t: string): boolean {
     var len: i32 = t.len();
-    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return false; }
+    if (len < 3 || slice_unchecked(t, 0, 1) != "(" || slice_unchecked(t, len - 1, len) != ")") { return false; }
     var any: boolean = false;
     var i: i32 = 0;
     while (i < 64) {
@@ -3858,7 +3858,7 @@ pub function is_leaksafe_tuple_field(t: string): boolean {
         // bails — rarer, a later increment.)
         if (!elem_ok && (tag == "string[]" || tag == "f64[]" || tag == "i64[]" || is_leaksafe_array_field(tag))) { elem_ok = true; }
         // A NESTED tuple element is itself a leak-only heap-tuple pointer; recurse.
-        if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field(tag); }
+        if (!elem_ok && tag.len() >= 2 && slice_unchecked(tag, 0, 1) == "(") { elem_ok = is_leaksafe_tuple_field(tag); }
         if (!elem_ok) { return false; }
         any = true;
         i = i + 1;
@@ -3885,7 +3885,7 @@ pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string):
 // self-referential Option / tuple element does not spin the same cycle.
 pub function is_leaksafe_tuple_field_dv(structs: parser.StructDecl[], t: string, depth: i32, visiting: string[]): boolean {
     var len: i32 = t.len();
-    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return false; }
+    if (len < 3 || slice_unchecked(t, 0, 1) != "(" || slice_unchecked(t, len - 1, len) != ")") { return false; }
     var any: boolean = false;
     var i: i32 = 0;
     while (i < 64) {
@@ -3919,7 +3919,7 @@ pub function is_leaksafe_tuple_field_dv(structs: parser.StructDecl[], t: string,
         if (!elem_ok && is_enum_like_name(tag, structs)) { elem_ok = true; }
         // A NESTED tuple element recurses through THIS predicate so an inner
         // struct-/enum-array element is admitted at any depth.
-        if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_dv(structs, tag, depth, visiting); }
+        if (!elem_ok && tag.len() >= 2 && slice_unchecked(tag, 0, 1) == "(") { elem_ok = is_leaksafe_tuple_field_dv(structs, tag, depth, visiting); }
         if (!elem_ok) { return false; }
         any = true;
         i = i + 1;
@@ -4221,7 +4221,7 @@ function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, de
         // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
         // back-edge check then short-circuits the cycle instead of recursing
         // forever (was a SIGSEGV on any linked list / tree).
-        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && t[0:5] == "Cell[")) {
+        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
             fi = fi + 1;
             continue;
         }
@@ -4246,8 +4246,8 @@ function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, de
         // recursive-drop follow-up frees them). The element's leaf-safety
         // rides the SAME depth-bounded recursion so a cyclic `X[]` graph
         // hits the cap and bails.
-        if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
-            var elt: str = t[0 : t.len() - 2];
+        if (t.len() >= 3 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") {
+            var elt: str = slice_unchecked(t, 0, t.len() - 2);
             if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1, nv)) {
                 fi = fi + 1;
                 continue;
@@ -4305,7 +4305,7 @@ pub function is_enum_like_name(t: string, structs: parser.StructDecl[]): boolean
         if (t[ci] == b'[') { return false; }
         ci = ci + 1;
     }
-    if (t[0:1] == "(") { return false; }
+    if (slice_unchecked(t, 0, 1) == "(") { return false; }
     return true;
 }
 
@@ -4498,7 +4498,7 @@ pub function variant_pattern_bare_name(type_name: string): string {
     var bare: string = type_name;
     var i: i32 = 0;
     while (i < type_name.len()) {
-        if (type_name[i] == b'.') { bare = type_name[i + 1 : type_name.len()] + ""; }
+        if (type_name[i] == b'.') { bare = slice_unchecked(type_name, i + 1, type_name.len()) + ""; }
         i = i + 1;
     }
     return bare;
@@ -4508,7 +4508,7 @@ pub function variant_pattern_qualifier(type_name: string): string {
     var q: string = "";
     var i: i32 = 0;
     while (i < type_name.len()) {
-        if (type_name[i] == b'.') { q = type_name[0 : i] + ""; }
+        if (type_name[i] == b'.') { q = slice_unchecked(type_name, 0, i) + ""; }
         i = i + 1;
     }
     return q;
@@ -4733,8 +4733,8 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                     // below. #3353.
                     if (util.is_all_digits(fa.field)) {
                         var ttag: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                        if (ttag.len() >= 3 && ttag[ttag.len() - 2 : ttag.len()] == "[]") {
-                            var telt: str = ttag[0 : ttag.len() - 2];
+                        if (ttag.len() >= 3 && slice_unchecked(ttag, ttag.len() - 2, ttag.len()) == "[]") {
+                            var telt: str = slice_unchecked(ttag, 0, ttag.len() - 2);
                             if (decl_is_struct(s.structs, telt) || is_enum_like_name(telt, s.structs)) { return telt + ""; }
                         }
                         return "";
@@ -4742,8 +4742,8 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                     var oty: string = expr_struct_type(fa.obj, s);
                     if (oty != "") {
                         var ft: string = decl_field_type(s.structs, oty, fa.field);
-                        if (ft.len() >= 3 && ft[ft.len() - 2 : ft.len()] == "[]") {
-                            var elt: str = ft[0 : ft.len() - 2];
+                        if (ft.len() >= 3 && slice_unchecked(ft, ft.len() - 2, ft.len()) == "[]") {
+                            var elt: str = slice_unchecked(ft, 0, ft.len() - 2);
                             if (decl_is_struct(s.structs, elt) || is_enum_like_name(elt, s.structs)) { return elt + ""; }
                         }
                     }
@@ -4773,10 +4773,10 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                                 var foty: string = expr_struct_type(ffa.obj, s);
                                 if (foty != "") {
                                     var fft: string = decl_field_type(s.structs, foty, ffa.field);
-                                    if (fft.len() >= 4 && fft[fft.len() - 2 : fft.len()] == "[]") {
-                                        var inner1: str = fft[0 : fft.len() - 2];
-                                        if (inner1.len() >= 3 && inner1[inner1.len() - 2 : inner1.len()] == "[]") {
-                                            var elt2: str = inner1[0 : inner1.len() - 2];
+                                    if (fft.len() >= 4 && slice_unchecked(fft, fft.len() - 2, fft.len()) == "[]") {
+                                        var inner1: str = slice_unchecked(fft, 0, fft.len() - 2);
+                                        if (inner1.len() >= 3 && slice_unchecked(inner1, inner1.len() - 2, inner1.len()) == "[]") {
+                                            var elt2: str = slice_unchecked(inner1, 0, inner1.len() - 2);
                                             if (decl_is_struct(s.structs, elt2) || is_enum_like_name(elt2, s.structs)) { return elt2 + ""; }
                                         }
                                     }
@@ -4992,7 +4992,7 @@ function arr_tag_of(e: parser.Expr, s: LowerState): string {
 // strip_arr_suffix removes one trailing "[]" from a type tag; "" when the tag
 // is not an array type.
 function strip_arr_suffix(tag: string): string {
-    if (tag.len() >= 2 && tag[tag.len() - 2 : tag.len()] == "[]") { return tag[0 : tag.len() - 2] + ""; }
+    if (tag.len() >= 2 && slice_unchecked(tag, tag.len() - 2, tag.len()) == "[]") { return slice_unchecked(tag, 0, tag.len() - 2) + ""; }
     return "";
 }
 
@@ -5000,7 +5000,7 @@ function strip_arr_suffix(tag: string): string {
 // Option/Result, else "".
 function opt_elem_of(tag: string): string {
     var elt: string = strip_arr_suffix(tag);
-    if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { return elt + ""; }
+    if (elt.len() >= 8 && (slice_unchecked(elt, 0, 7) == "Option[" || slice_unchecked(elt, 0, 7) == "Result[")) { return elt + ""; }
     return "";
 }
 
@@ -5016,10 +5016,10 @@ function opt_elem_of(tag: string): string {
 // through an annotation that carries the payload type; this one is the
 // value-position match, where the cast is the only place the type is written.
 function unary_opt_type(op: string): string {
-    if (op.len() > 4 && op[0:4] == "as?_") { return "Option[" + op[4 : op.len()] + "]"; }
-    if (op.len() > 3 && op[0:3] == "as_") {
-        var at: str = op[3 : op.len()];
-        if (at.len() >= 8 && (at[0:7] == "Option[" || at[0:7] == "Result[")) { return at + ""; }
+    if (op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_") { return "Option[" + slice_unchecked(op, 4, op.len()) + "]"; }
+    if (op.len() > 3 && slice_unchecked(op, 0, 3) == "as_") {
+        var at: str = slice_unchecked(op, 3, op.len());
+        if (at.len() >= 8 && (slice_unchecked(at, 0, 7) == "Option[" || slice_unchecked(at, 0, 7) == "Result[")) { return at + ""; }
     }
     return "";
 }
@@ -5445,7 +5445,7 @@ pub function cell_elem_type(e: parser.Expr, s: LowerState): string {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return ""; }
             var ft: string = decl_field_type(s.structs, oty, fa.field);
-            if (ft.len() > 5 && ft[0:5] == "Cell[") { return ft[5 : ft.len() - 1] + ""; }
+            if (ft.len() > 5 && slice_unchecked(ft, 0, 5) == "Cell[") { return slice_unchecked(ft, 5, ft.len() - 1) + ""; }
             return "";
         },
         _ => { return ""; }
@@ -5516,7 +5516,7 @@ pub function expr_is_cell(e: parser.Expr, s: LowerState): boolean {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
             var ft: string = decl_field_type(s.structs, oty, fa.field);
-            return ft.len() > 5 && ft[0:5] == "Cell[";
+            return ft.len() > 5 && slice_unchecked(ft, 0, 5) == "Cell[";
         },
         _ => { return false; }
     }
@@ -6088,8 +6088,8 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
         parser.ExprUnary(tu) => {
             if (tu.op == "try_") {
                 var tot: string = try_opt_type(tu.operand, s);
-                if (tot.len() >= 8 && tot[0:7] == "Option[") { return opt_payload_type(tot, "Some") == "string"; }
-                if (tot.len() >= 8 && tot[0:7] == "Result[") { return opt_payload_type(tot, "Ok") == "string"; }
+                if (tot.len() >= 8 && slice_unchecked(tot, 0, 7) == "Option[") { return opt_payload_type(tot, "Some") == "string"; }
+                if (tot.len() >= 8 && slice_unchecked(tot, 0, 7) == "Result[") { return opt_payload_type(tot, "Ok") == "string"; }
             }
             return false;
         },
@@ -6478,8 +6478,8 @@ function tostring_recv_is_scalar(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprNumber(_) => { return true; },
         parser.ExprUnary(u) => {
-            if (u.op.len() > 3 && u.op[0:3] == "as_") {
-                var tgt: string = u.op[3:u.op.len()] + "";
+            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+                var tgt: string = slice_unchecked(u.op, 3, u.op.len()) + "";
                 return tgt == "i32" || tgt == "i64" || tgt == "u32" || tgt == "u64"
                     || tgt == "f64" || tgt == "f32" || tgt == "u8" || tgt == "usize";
             }
@@ -7276,8 +7276,8 @@ pub function for_iter_is_range_incl(iter: parser.Expr): boolean {
 // ascription_rebind firing and the module stops lowering at all — measured:
 // every std/map-importing fixture went IR-ineligible.
 pub function is_numeric_cast_op(op: string): boolean {
-    if (op.len() <= 3 || op[0:3] != "as_") { return false; }
-    var t: string = op[3:op.len()] + "";
+    if (op.len() <= 3 || slice_unchecked(op, 0, 3) != "as_") { return false; }
+    var t: string = slice_unchecked(op, 3, op.len()) + "";
     return t == "i32" || t == "u32" || t == "u8" || t == "i64" || t == "u64"
         || t == "f64" || t == "f32" || t == "float";
 }
@@ -7289,8 +7289,8 @@ pub function is_numeric_cast_op(op: string): boolean {
 pub function ascription_target(init: parser.Expr): string {
     match (init) {
         parser.ExprUnary(u) => {
-            if (u.op.len() > 3 && u.op[0:3] == "as_" && !is_numeric_cast_op(u.op)) {
-                return u.op[3:u.op.len()] + "";
+            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_" && !is_numeric_cast_op(u.op)) {
+                return slice_unchecked(u.op, 3, u.op.len()) + "";
             }
             return "";
         },
@@ -9052,6 +9052,7 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
         if (!rtake) {
             match (recv) {
                 parser.ExprSlice(_) => { rtake = true; rview = true; },
+                parser.ExprCall(_) => { if (slice_unchecked_call(recv)) { rtake = true; rview = true; } },
                 _ => {}
             }
         }
@@ -9241,8 +9242,8 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // its own `$cloN`). `<cloname>` exists in the module (appended
     // by the lift), so const_funcs_only_known keeps the module IR-
     // eligible. The capture args are plain idents → load_local.
-    if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") {
-        var clonm: str = cid.name[8 : cid.name.len()];
+    if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") {
+        var clonm: str = slice_unchecked(cid.name, 8, cid.name.len());
         var mks: LowerState = s.emit(ir.op_const_func(0, clonm));
         for arg in c.args {
             mks = lower_expr(arg, mks);
@@ -12223,7 +12224,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // reloading the argc locals per arm. Spilling to locals (vs
     // leaving them on the stack) lets wasm — which can't index a
     // deep operand-stack slot — reload them.
-    if (rty.len() > 4 && rty[0:4] == "dyn ") {
+    if (rty.len() > 4 && slice_unchecked(rty, 0, 4) == "dyn ") {
         var dbase: i32 = s.locals.len();
         var dargc: i32 = 1 + c.args.len();
         var dm: LowerState = s;
@@ -13689,7 +13690,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // f64 (truncate toward zero via f64_to_i32, THEN mask), an i64
             // (narrow via int_wrap, THEN mask), or a 32-bit int (mask directly).
             if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8") {
-                var cty: str = u.op[3 : u.op.len()];
+                var cty: str = slice_unchecked(u.op, 3, u.op.len());
                 if (expr_is_f64(u.operand, s)) {
                     var fc: LowerState = lower_expr(u.operand, s);
                     if (!fc.ok) { return fc; }
@@ -13730,12 +13731,12 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // ordinary Option box a downstream `match` reads normally. The
             // self-host checker is permissive here (the Go checker is the strict
             // §9 gate), so we don't re-validate the dyn/impl relationship.
-            if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+            if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
                 var dcs: LowerState = lower_expr(u.operand, s);
                 if (!dcs.ok) { return dcs; }
-                return dcs.emit(ir.op_dyn_downcast(u.op[4 : u.op.len()]));
+                return dcs.emit(ir.op_dyn_downcast(slice_unchecked(u.op, 4, u.op.len())));
             }
-            if (u.op.len() > 3 && u.op[0:3] == "as_" && !is_numeric_cast_op(u.op)) {
+            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_" && !is_numeric_cast_op(u.op)) {
                 return lower_expr(u.operand, s);
             }
             return s.fail();
@@ -14248,8 +14249,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
 function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     var ot: string = try_opt_type(inner, s);
     if (ot.len() < 8) { return s.fail(); }
-    var is_result: boolean = ot[0:7] == "Result[";
-    var is_option: boolean = ot[0:7] == "Option[";
+    var is_result: boolean = slice_unchecked(ot, 0, 7) == "Result[";
+    var is_option: boolean = slice_unchecked(ot, 0, 7) == "Option[";
     if (!is_result && !is_option) { return s.fail(); }
     // Success payload type. Every payload shape now lowers; what varies is HOW
     // the value is read out of the box, and what types the `var x = inner?`
@@ -14291,7 +14292,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
     var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
     var pt_is_tuple: boolean = pt.len() > 1 && pt[0] == b'(' && tuple_elems_lowerable(pt, s.structs);
-    var pt_is_optgen: boolean = pt.len() >= 8 && (pt[0:7] == "Option[" || pt[0:7] == "Result[");
+    var pt_is_optgen: boolean = pt.len() >= 8 && (slice_unchecked(pt, 0, 7) == "Option[" || slice_unchecked(pt, 0, 7) == "Result[");
     if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64" && !pt_is_tuple && !pt_is_optgen) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.locals.len());
@@ -14382,7 +14383,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         // != "dyn Error") wrongly entered the From branch and bailed the whole
         // module to AST at the struct gate below (dyn Error isn't a struct),
         // regressing the `Result[_, dyn Error]` propagation pattern off IR.
-        var ret_err_is_dyn: boolean = ret_err.len() > 4 && ret_err[0:4] == "dyn ";
+        var ret_err_is_dyn: boolean = ret_err.len() > 4 && slice_unchecked(ret_err, 0, 4) == "dyn ";
         if (ret_err != "" && src_err != ret_err && !ret_err_is_dyn) {
             if (!decl_is_struct(s.structs, ret_err) || !decl_is_leaksafe(s.structs, ret_err)) { return s.fail(); }
             if (src_err == "i64" || src_err == "u64" || src_err == "f64" || src_err == "f32") { return s.fail(); }
@@ -14495,7 +14496,7 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
     // structural walk below.
     match (inner) {
         parser.ExprCall(oc0) => {
-            if (oc0.ty.len() >= 7 && (oc0.ty[0:7] == "Option[" || oc0.ty[0:7] == "Result[")) { return oc0.ty; }
+            if (oc0.ty.len() >= 7 && (slice_unchecked(oc0.ty, 0, 7) == "Option[" || slice_unchecked(oc0.ty, 0, 7) == "Result[")) { return oc0.ty; }
         },
         // `(a +? b)?` — a checked arithmetic operand (#5542) is Option[T].
         parser.ExprBinary(ob) => {
@@ -14591,13 +14592,13 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
             // path so `match (t.0) { … }` in value position lowers).
             if (util.is_all_digits(sfa.field)) {
                 var ttg: string = expr_tuple_elem_tag(sfa.obj, util.digits_to_i32(sfa.field), s);
-                if (ttg.len() >= 8 && (ttg[0:7] == "Option[" || ttg[0:7] == "Result[")) { return ttg; }
+                if (ttg.len() >= 8 && (slice_unchecked(ttg, 0, 7) == "Option[" || slice_unchecked(ttg, 0, 7) == "Result[")) { return ttg; }
                 return "";
             }
             var foty: string = expr_struct_type(sfa.obj, s);
             if (foty != "") {
                 var fft: string = decl_field_type(s.structs, foty, sfa.field);
-                if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { return fft; }
+                if (fft.len() >= 8 && (slice_unchecked(fft, 0, 7) == "Option[" || slice_unchecked(fft, 0, 7) == "Result[")) { return fft; }
             }
             return "";
         },
@@ -15659,7 +15660,7 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
         // A `dyn Trait` error payload (`Err(e)` where e: dyn Error) is admitted
         // into an i32-result temp: the underlying StmtMatch path marks the slot
         // with the dyn type so `e.method()` dispatches via op_dyn_dispatch.
-        if (temp_is_i32 && pt.len() > 4 && pt[0:4] == "dyn ") { return true; }
+        if (temp_is_i32 && pt.len() > 4 && slice_unchecked(pt, 0, 4) == "dyn ") { return true; }
         // A nested Option / RESULT payload (`Some(b)` where b: Option[T] or
         // Result[T, E]) into an i32 temp from an IDENT scrutinee. The argument is
         // the one the Option half already rested on: arms share a result type in
@@ -15671,7 +15672,7 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
         // Result was simply missing from the spelling test, so `Some(r)` /
         // `Some(Ok(n))` over an Option[Result[…]] bailed the module while the
         // identical STATEMENT-form match lowered.
-        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && (pt[0:7] == "Option[" || pt[0:7] == "Result[")) { return true; }
+        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && (slice_unchecked(pt, 0, 7) == "Option[" || slice_unchecked(pt, 0, 7) == "Result[")) { return true; }
         // A STRING / STRUCT / TUPLE / ENUM Some/Ok/Err payload BORROW-read into the
         // result (`Some(s) => s.len()`, `Some(p) => p.x`, `Err(s) => s.len()`):
         // admit via the SAME leak-safe borrow machinery the user-enum branch below
@@ -16734,7 +16735,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                         parser.ExprIdent(rcid) => {
                             if (rc.args.len() == 1 && (rcid.name == "Ok" || rcid.name == "Some" || rcid.name == "Err")) {
                                 var rrt: string = s.opt_ret_type(s.cur_fn);
-                                if (rrt.len() >= 8 && (rrt[0:7] == "Result[" || rrt[0:7] == "Option[")) {
+                                if (rrt.len() >= 8 && (slice_unchecked(rrt, 0, 7) == "Result[" || slice_unchecked(rrt, 0, 7) == "Option[")) {
                                     var rvar: string = "Ok";
                                     var rtag: i32 = 0;
                                     if (rcid.name == "Err") { rvar = "Err"; rtag = 1; }
@@ -17322,7 +17323,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
 function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState {
     // Decode "@sd:<StructName>:<f0,f1,…>" — the struct name runs to the first
     // ':' after the "@sd:" prefix, the rest is the comma-joined field list.
-    var rest: str = v.type_name[4 : v.type_name.len()];
+    var rest: str = slice_unchecked(v.type_name, 4, v.type_name.len());
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
     while (ri < rest.len()) {
@@ -17330,8 +17331,8 @@ function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState 
         ri = ri + 1;
     }
     if (colon < 0) { return s.fail(); }
-    var struct_name: str = rest[0 : colon];
-    var fields_csv: str = rest[colon + 1 : rest.len()];
+    var struct_name: str = slice_unchecked(rest, 0, colon);
+    var fields_csv: str = slice_unchecked(rest, colon + 1, rest.len());
     var fields: string[] = split_commas(fields_csv);
     var bindings: string[] = split_commas(v.name);
     // Lower E once into a fresh struct-typed temp, so a call-valued init isn't
@@ -17362,7 +17363,7 @@ function split_commas(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || csv[i] == b',') {
-            out = out.append(csv[start : i]);
+            out = out.append(slice_unchecked(csv, start, i));
             start = i + 1;
         }
         i = i + 1;
@@ -17396,6 +17397,24 @@ pub struct VarTypes {
     opt_ty: string,
 }
 
+// slice_unchecked_call reports whether `e` is the builtin call
+// `slice_unchecked(src, a, b)` — the ExprSlice string arm under its honest
+// name (#5634), source/start/end in args[0]/[1]/[2]. The frame path and the
+// borrow scans admit the two spellings identically so a migrated site keeps
+// its frame box and its source's reclaim credit.
+pub function slice_unchecked_call(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return cid.name == "slice_unchecked" && c.args.len() == 3; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // view_frame_binding_ok decides whether `var <name> = <expr>` may take the
 // frame-allocated form of the string view its initialiser builds (#6713):
 // a STRING slice (an array slice copies, so it has no view box), a name the
@@ -17406,6 +17425,10 @@ function view_frame_binding_ok(v: parser.StmtVar, s: LowerState): boolean {
     if (!s.is_view_frame_name(v.name)) { return false; }
     match (v.init) {
         parser.ExprSlice(slc) => { return expr_is_str(slc.array, s); },
+        parser.ExprCall(c) => {
+            if (slice_unchecked_call(v.init)) { return expr_is_str(c.args[0], s); }
+            return false;
+        },
         _ => { return false; }
     }
     return false;
@@ -17423,6 +17446,10 @@ function view_frame_temp_ok(e: parser.Expr, s: LowerState): boolean {
     if (s.for_wasm()) { return false; }
     match (e) {
         parser.ExprSlice(slc) => { return expr_is_str(slc.array, s); },
+        parser.ExprCall(c) => {
+            if (slice_unchecked_call(e)) { return expr_is_str(c.args[0], s); }
+            return false;
+        },
         _ => { return false; }
     }
     return false;
@@ -17462,6 +17489,7 @@ function lower_view_borrowed_parked(e: parser.Expr, s: LowerState): ArgStash {
     var is_str_slice: boolean = false;
     match (e) {
         parser.ExprSlice(vsl) => { is_str_slice = expr_is_str(vsl.array, s); },
+        parser.ExprCall(vc) => { if (slice_unchecked_call(e)) { is_str_slice = expr_is_str(vc.args[0], s); } },
         _ => {}
     }
     if (!is_str_slice) { return ArgStash { state: p, slot: 0 - 1 }; }
@@ -17519,6 +17547,20 @@ function lower_str_slice_frame(e: parser.Expr, s: LowerState): LowerState {
             fvs = fvs.add_local(view_frame_slot_name());
             fvs = fvs.add_local(view_frame_slot_name());
             return fvs.emit(ir.op_str_slice_frame(fvbase));
+        },
+        parser.ExprCall(fc) => {
+            if (!slice_unchecked_call(e)) { return s.fail(); }
+            var fcs: LowerState = lower_view_borrowed(fc.args[0], s);
+            if (!fcs.ok) { return fcs; }
+            fcs = lower_expr(fc.args[1], fcs);
+            if (!fcs.ok) { return fcs; }
+            fcs = lower_expr(fc.args[2], fcs);
+            if (!fcs.ok) { return fcs; }
+            var fcbase: i32 = fcs.locals.len();
+            fcs = fcs.add_local(view_frame_slot_name());
+            fcs = fcs.add_local(view_frame_slot_name());
+            fcs = fcs.add_local(view_frame_slot_name());
+            return fcs.emit(ir.op_str_slice_frame(fcbase));
         },
         _ => { return s.fail(); }
     }
@@ -17666,8 +17708,8 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // struct-array elements). #3317.
     if (vt.is_arr) {
         var map_elem_ty: string = "";
-        if (is_array_type_name(v.type_name) && is_map_type_name(v.type_name[0 : v.type_name.len() - 2])) {
-            map_elem_ty = v.type_name[0 : v.type_name.len() - 2] + "";
+        if (is_array_type_name(v.type_name) && is_map_type_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 2))) {
+            map_elem_ty = slice_unchecked(v.type_name, 0, v.type_name.len() - 2) + "";
         } else {
             match (v.init) {
                 parser.ExprArray(marr) => {
@@ -17703,12 +17745,12 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     else if (v.type_name.len() == 0 && mapiter_type_of_iter_call(v.init, sb).len() > 0) {
         sb = sb.mark_map_type(slot, mapiter_type_of_iter_call(v.init, sb));
     }
-    else if (v.type_name.len() > 5 && v.type_name[0:5] == "Cell[") {
+    else if (v.type_name.len() > 5 && slice_unchecked(v.type_name, 0, 5) == "Cell[") {
         // Cell[T] is a 1-element array of T. mark_cell records is_cell (+is_arr);
         // ALSO mark the element-KIND array flag so c[0] (the get desugar) reads
         // the right type — without is_strarr a Cell[string] element loads as an
         // i32, breaking `c.get()[0]` / `.len()`.
-        var celt: string = v.type_name[5 : v.type_name.len() - 1] + "";
+        var celt: string = slice_unchecked(v.type_name, 5, v.type_name.len() - 1) + "";
         sb = sb.mark_cell(slot, celt);
         if (celt == "string") { sb = sb.mark_strarr(slot, true); }
         else if (celt == "i64" || celt == "u64") { sb = sb.mark_i64arr(slot, true); }
@@ -17839,7 +17881,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
             if (util.is_all_digits(ctfa.field)) {
                 var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
                 if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
-                else if (ctet.len() >= 2 && ctet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
+                else if (ctet.len() >= 2 && slice_unchecked(ctet, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
             } else {
                 // `var t = s.p` where struct field `p` is a TUPLE type: transfer the
                 // field's tuple element tags onto t (the struct-field sibling of the
@@ -17849,7 +17891,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                 var sfoty: string = expr_struct_type(ctfa.obj, sb);
                 if (sfoty != "") {
                     var sfft: string = decl_field_type(sb.structs, sfoty, ctfa.field);
-                    if (sfft.len() >= 2 && sfft[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
+                    if (sfft.len() >= 2 && slice_unchecked(sfft, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
                 }
             }
         },
@@ -17865,7 +17907,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                     var ctasl: i32 = sb.slot_of(ctaid.name);
                     if (ctasl >= 0 && sb.is_arr_slot(ctasl)) {
                         var ctaet: string = sb.arrarr_elem_of_slot(ctasl);
-                        if (ctaet.len() >= 2 && ctaet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
+                        if (ctaet.len() >= 2 && slice_unchecked(ctaet, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
                     }
                 },
                 // `var p = r.pairs[0]` — indexing a tuple-ARRAY struct FIELD
@@ -17878,9 +17920,9 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                         var ctaoty: string = expr_struct_type(ctafa.obj, sb);
                         if (ctaoty != "") {
                             var ctaft: string = decl_field_type(sb.structs, ctaoty, ctafa.field);
-                            if (ctaft.len() >= 4 && ctaft[ctaft.len() - 2 : ctaft.len()] == "[]") {
-                                var ctael: str = ctaft[0 : ctaft.len() - 2];
-                                if (ctael.len() >= 2 && ctael[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
+                            if (ctaft.len() >= 4 && slice_unchecked(ctaft, ctaft.len() - 2, ctaft.len()) == "[]") {
+                                var ctael: str = slice_unchecked(ctaft, 0, ctaft.len() - 2);
+                                if (ctael.len() >= 2 && slice_unchecked(ctael, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
                             }
                         }
                     }
@@ -17896,10 +17938,10 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
         parser.ExprCall(mc) => {
             match (mc.callee) {
                 parser.ExprIdent(mcid) => {
-                    if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
-                        var inner: str = v.type_name[4 : v.type_name.len()];
-                        if (inner.len() >= 4 && inner[0:4] == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
-                        else if (inner.len() >= 7 && inner[0:7] == "string,") { sb = sb.mark_map_type(slot, "string"); }
+                    if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                        var inner: str = slice_unchecked(v.type_name, 4, v.type_name.len());
+                        if (inner.len() >= 4 && slice_unchecked(inner, 0, 4) == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
+                        else if (inner.len() >= 7 && slice_unchecked(inner, 0, 7) == "string,") { sb = sb.mark_map_type(slot, "string"); }
                     }
                     // `var t = f()` where f returns a tuple: record its
                     // element tags so a later `t.N` recovers each type. An
@@ -17925,7 +17967,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                 // (`var t: (i32, string) = …`) when present — it names a
                 // Result[T,E] element's E that a bare construction can't.
                 parser.ExprLambda(mlam) => {
-                    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                    if (v.type_name.len() >= 2 && slice_unchecked(v.type_name, 0, 1) == "(") {
                         sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
                     } else {
                         var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
@@ -17944,7 +17986,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
             // inferred tags for an un-annotated binding. (For scalar /
             // struct / Option / nested-tuple elements the two agree, so
             // this is strictly more accurate.)
-            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+            if (v.type_name.len() >= 2 && slice_unchecked(v.type_name, 0, 1) == "(") {
                 var tti: i32 = 0;
                 while (tti < tlit.elements.len()) {
                     if (tti > 0) { enc = enc + ","; }
@@ -17968,7 +18010,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
         // tuple TYPE annotation (authoritative — it names each element,
         // including a Result[T,E] element's E) so a later `t.N` resolves.
         parser.ExprUnary(tuv) => {
-            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+            if (v.type_name.len() >= 2 && slice_unchecked(v.type_name, 0, 1) == "(") {
                 sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
             } else if (tuv.op == "try_") {
                 // UNANNOTATED `var t = f()?` whose success payload is a tuple
@@ -17980,9 +18022,9 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                 // element's `.len()` read 0.
                 var tuot: string = try_opt_type(tuv.operand, sb);
                 var tupay: string = "";
-                if (tuot.len() >= 8 && tuot[0:7] == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
-                else if (tuot.len() >= 8 && tuot[0:7] == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
-                if (tupay.len() >= 2 && tupay[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
+                if (tuot.len() >= 8 && slice_unchecked(tuot, 0, 7) == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
+                else if (tuot.len() >= 8 && slice_unchecked(tuot, 0, 7) == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
+                if (tupay.len() >= 2 && slice_unchecked(tupay, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
                 // A STRUCT (or nominal ENUM) success payload: `var u = f()?` where
                 // f returns `Result[User, E]` / `Option[User]`. Without the type
                 // annotation the slot was left untyped, so `u.field` / `u.method()`
@@ -17997,7 +18039,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                 // annotation records at the mark_opt_type above. Without it the
                 // slot is untyped and the following `match (o)` bails the module
                 // to AST (never a miscompile, but off the IR path).
-                else if (tupay.len() >= 8 && (tupay[0:7] == "Option[" || tupay[0:7] == "Result[")) { sb = sb.mark_opt_type(slot, tupay); }
+                else if (tupay.len() >= 8 && (slice_unchecked(tupay, 0, 7) == "Option[" || slice_unchecked(tupay, 0, 7) == "Result[")) { sb = sb.mark_opt_type(slot, tupay); }
             }
         },
         _ => {}
@@ -18013,7 +18055,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // Placed AFTER the match, and gated on the slot still being untagged, so
     // every binding that types itself today keeps its exact tags: this only
     // fills a hole, never overrides an inference.
-    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(" && sb.tuple_elem_tag(slot, 0).len() == 0) {
+    if (v.type_name.len() >= 2 && slice_unchecked(v.type_name, 0, 1) == "(" && sb.tuple_elem_tag(slot, 0).len() == 0) {
         sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
     }
     // Per-element rc kinds for a tuple built from bare idents (#7226). The
@@ -18331,7 +18373,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
     // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
     // whose name is the comma-joined bindings. Expand it into per-field binds.
-    if (v.type_name.len() >= 4 && v.type_name[0:4] == "@sd:") {
+    if (v.type_name.len() >= 4 && slice_unchecked(v.type_name, 0, 4) == "@sd:") {
         return lower_struct_destructure(v, s);
     }
     // Binding a SCALAR-element array struct field (`var y = h.items`,
@@ -18408,7 +18450,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // closure-array spelling so a fn-pointer field wins.
         if (field_access_is_fnarr(v.init, s)) { sab = sab.mark_fnarr(saslot, true); }
         else if (vsaft == "fn[]") { sab = sab.mark_closurearr(saslot, true); }
-        else { sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]); }   // element struct/enum name (strip "[]")
+        else { sab = sab.mark_struct_type(saslot, slice_unchecked(vsaft, 0, vsaft.len() - 2)); }   // element struct/enum name (strip "[]")
         return sab.emit(ir.op_store_local(saslot));
     }
     if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
@@ -18420,7 +18462,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // boxed pointers then ride one array slot each, and the slot is bound
     // is_arr with NO element struct type so `for x in xs` reads the loop
     // var as "unknown" → runtime shape dispatch (the §4.3 array tag fix).
-    if (v.type_name.len() > 6 && v.type_name[0:4] == "dyn " && is_array_type_name(v.type_name)) {
+    if (v.type_name.len() > 6 && slice_unchecked(v.type_name, 0, 4) == "dyn " && is_array_type_name(v.type_name)) {
         var dab_ok: boolean = false;
         match (v.init) { parser.ExprArray(_) => { dab_ok = true; }, _ => {} }
         if (dab_ok) {
@@ -18439,7 +18481,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // `dyn Trait` and dispatch through op_dyn_dispatch.
                     // Without it the local lost its trait and every element
                     // method call bailed.
-                    dab = dab.mark_struct_type(daslot, v.type_name[0 : v.type_name.len() - 2]);
+                    dab = dab.mark_struct_type(daslot, slice_unchecked(v.type_name, 0, v.type_name.len() - 2));
                     return dab.emit(ir.op_store_local(daslot));
                 },
                 _ => {}
@@ -18456,7 +18498,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // expr_struct_type as `"dyn …"` and routes through op_dyn_dispatch
     // (runtime shape dispatch) — matching the interpreter — rather than
     // static-dispatching to the concrete impl.
-    if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn " && !is_array_type_name(v.type_name)) {
+    if (v.type_name.len() > 4 && slice_unchecked(v.type_name, 0, 4) == "dyn " && !is_array_type_name(v.type_name)) {
         var dvprim: string = expr_recv_prim_type(v.init, s);
         var dvs: LowerState = lower_dyn_arg(v.init, s);
         if (!dvs.ok) { return dvs; }
@@ -18553,7 +18595,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // __mkclo$ arm) builds the env box, so bind g a closure
                 // local: `g(args)` / passing g dispatch env-first.
                 parser.ExprIdent(cid) => {
-                    if ((cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") || util.index_of_str(s.sigs.closure_fns, cid.name) >= 0) { clo_init = true; }
+                    if ((cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") || util.index_of_str(s.sigs.closure_fns, cid.name) >= 0) { clo_init = true; }
                     // `var inner = outer()` where `outer` is itself a closure
                     // LOCAL whose return type is a fn (a closure factory
                     // returning a closure): the returned value is a closure BOX,
@@ -18848,7 +18890,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var ddepth: i32 = 0;
         while (dp <= v.name.len()) {
             if (dp == v.name.len() || (v.name[dp] == b',' && ddepth == 0)) {
-                dnames = dnames.append(v.name[dstart : dp]);
+                dnames = dnames.append(slice_unchecked(v.name, dstart, dp));
                 dstart = dp + 1;
             } else if (v.name[dp] == b'(') { ddepth = ddepth + 1; }
             else if (v.name[dp] == b')') { ddepth = ddepth - 1; }
@@ -18869,8 +18911,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // over a tuple-tagged local).
             var dbind: string = dnames[dk];
             var dnest: string = "";
-            if (dbind.len() >= 2 && dbind[0:1] == "(") {
-                dnest = dbind[1 : dbind.len() - 1] + "";
+            if (dbind.len() >= 2 && slice_unchecked(dbind, 0, 1) == "(") {
+                dnest = slice_unchecked(dbind, 1, dbind.len() - 1) + "";
                 dbind = "$dnest" + util.i32_to_string(dt.locals.len());
             }
             dt = dt.add_local(dbind);
@@ -18897,7 +18939,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             var dasl: i32 = s.slot_of(daid.name);
                             if (dasl >= 0 && s.is_arr_slot(dasl)) {
                                 var det: string = s.arrarr_elem_of_slot(dasl);
-                                if (det.len() >= 2 && det[0:1] == "(") { dtag = tuple_type_elem_tag(det, dk); }
+                                if (det.len() >= 2 && slice_unchecked(det, 0, 1) == "(") { dtag = tuple_type_elem_tag(det, dk); }
                             }
                         },
                         _ => {}
@@ -18910,7 +18952,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // is the same walk-first/tag-fills-the-hole fallback
                     // expr_tuple_elem_tag's ExprIndex arm has, which is why
                     // `ps[0].1` was right while `var (i, v) = ps[0]` was not.
-                    if (dtag == "" && dix.ty.len() >= 2 && dix.ty[0:1] == "(") { dtag = tuple_type_elem_tag(dix.ty, dk); }
+                    if (dtag == "" && dix.ty.len() >= 2 && slice_unchecked(dix.ty, 0, 1) == "(") { dtag = tuple_type_elem_tag(dix.ty, dk); }
                 },
                 parser.ExprCall(dcl) => {
                     // `var (a, b, …) = f()` / `= obj.f()` — recover element
@@ -18959,7 +19001,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
             else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
             else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
-            else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
+            else if (dtag.len() >= 8 && (slice_unchecked(dtag, 0, 7) == "Option[" || slice_unchecked(dtag, 0, 7) == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
             // A TUPLE element (`var (p, c) = t` over ((string, i32), i32): p's
             // tag is the nested tuple's spelling): record p's element tags so a
             // SECOND-level destructure `var (s, b) = p` (and `p.N` reads)
@@ -18967,7 +19009,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // untyped and its STRING element read as an unmarked i32 — empty
             // (#5306 gap 1; the all-i32 shape only worked because the untyped
             // fallback happens to be i32).
-            else if (dtag.len() >= 2 && dtag[0:1] == "(") { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
+            else if (dtag.len() >= 2 && slice_unchecked(dtag, 0, 1) == "(") { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
             // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
             // slot as an array (the op_tuple_get above read its pointer) so
             // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
@@ -18991,7 +19033,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // in tuple_elems_lowerable, mirroring the #3292 field-read bind.
             else if (is_struct_array_field_type(dt.structs, dtag) || is_enum_array_field_type(dt.structs, dtag)) {
                 dt = dt.mark_arr(dkslot, true);
-                dt = dt.mark_struct_type(dkslot, dtag[0 : dtag.len() - 2]);
+                dt = dt.mark_struct_type(dkslot, slice_unchecked(dtag, 0, dtag.len() - 2));
             }
             else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
             // A nominal-enum element carries its enum name in local_struct_
@@ -19017,12 +19059,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprCall(mnc) => {
             match (mnc.callee) {
                 parser.ExprIdent(mnid) => {
-                    if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
-                        var inner2: str = v.type_name[4 : v.type_name.len()];
+                    if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                        var inner2: str = slice_unchecked(v.type_name, 4, v.type_name.len());
                         var kkind: i32 = 0 - 1;
                         var ktag: string = "";
-                        if (inner2.len() >= 4 && inner2[0:4] == "i32,") { kkind = 1; ktag = "i32"; }
-                        else if (inner2.len() >= 7 && inner2[0:7] == "string,") { kkind = 0; ktag = "string"; }
+                        if (inner2.len() >= 4 && slice_unchecked(inner2, 0, 4) == "i32,") { kkind = 1; ktag = "i32"; }
+                        else if (inner2.len() >= 7 && slice_unchecked(inner2, 0, 7) == "string,") { kkind = 0; ktag = "string"; }
                         else if (map_key_eqfn(v.type_name) != "") {
                             // Struct/enum key: kind 2, dispatched by the key's
                             // derived hash/eq (the wasm hash map threads their
@@ -19074,7 +19116,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprCall(vc) => {
             match (vc.callee) {
                 parser.ExprIdent(vcid) => {
-                    if (vc.args.len() == 1 && (vcid.name == "Ok" || vcid.name == "Some" || vcid.name == "Err") && v.type_name.len() >= 8 && (v.type_name[0:7] == "Result[" || v.type_name[0:7] == "Option[")) {
+                    if (vc.args.len() == 1 && (vcid.name == "Ok" || vcid.name == "Some" || vcid.name == "Err") && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Result[" || slice_unchecked(v.type_name, 0, 7) == "Option[")) {
                         var vvar: string = "Ok";
                         var vtag: i32 = 0;
                         if (vcid.name == "Err") { vvar = "Err"; vtag = 1; }
@@ -19538,9 +19580,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // An enum element type lets `cs[i].method()` dispatch to
     // `<Enum>.<method>` (the array-element analog of #2947, #2954 item 2).
     else if (struct_ty == "" && is_array_type_name(v.type_name)
-             && (decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 2])
-                 || is_enum_like_name(v.type_name[0 : v.type_name.len() - 2], se.structs))) {
-        struct_ty = v.type_name[0 : v.type_name.len() - 2] + "";
+             && (decl_is_struct(se.structs, slice_unchecked(v.type_name, 0, v.type_name.len() - 2))
+                 || is_enum_like_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 2), se.structs))) {
+        struct_ty = slice_unchecked(v.type_name, 0, v.type_name.len() - 2) + "";
     }
     // A 2D struct-/enum-ARRAY annotation (`var a: P[][]`): the INNERMOST
     // element is the struct/enum (strip both `[]`). The slot is is_arrarr;
@@ -19548,10 +19590,10 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // inner array) to its struct element, so `for row in a { for p in row
     // { p.field } }` resolves (#3059, the depth-2 sibling of the P[] case).
     else if (struct_ty == "" && is_array_type_name(v.type_name)
-             && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])
-             && (decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 4])
-                 || is_enum_like_name(v.type_name[0 : v.type_name.len() - 4], se.structs))) {
-        struct_ty = v.type_name[0 : v.type_name.len() - 4] + "";
+             && v.type_name.len() >= 4 && is_array_type_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 2))
+             && (decl_is_struct(se.structs, slice_unchecked(v.type_name, 0, v.type_name.len() - 4))
+                 || is_enum_like_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 4), se.structs))) {
+        struct_ty = slice_unchecked(v.type_name, 0, v.type_name.len() - 4) + "";
     }
     // A struct-array LITERAL without annotation (`var ps = [P { .. }, ..]`):
     // infer the ELEMENT struct type from the first element, matching the
@@ -19610,7 +19652,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (struct_ty == "") {
         var nfrt: string = nested_arr_field_read_type(v.init, se);
         if (nfrt != "") {
-            var nfel: str = nfrt[0 : nfrt.len() - 4];
+            var nfel: str = slice_unchecked(nfrt, 0, nfrt.len() - 4);
             if (decl_is_struct(se.structs, nfel) || is_enum_like_name(nfel, se.structs)) { struct_ty = nfel + ""; }
         }
     }
@@ -19824,7 +19866,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprIdent(oaid) => { opt_ty = se.opt_type_of_slot(se.slot_of(oaid.name)); },
         _ => {}
     }
-    if (opt_ty == "" && v.type_name.len() >= 8 && (v.type_name[0:7] == "Option[" || v.type_name[0:7] == "Result[")) { opt_ty = v.type_name; }
+    if (opt_ty == "" && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Option[" || slice_unchecked(v.type_name, 0, 7) == "Result[")) { opt_ty = v.type_name; }
     // An UNANNOTATED array literal of Option values (`var a = [Some(1),
     // Some(2), None]`): infer the element opt-type from the first Some
     // element and record the slot's "Option[T][]" (the array form — the
@@ -19906,9 +19948,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 match (oix.array) {
                     parser.ExprIdent(oaid) => {
                         var oaot: string = se.opt_type_of_slot(se.slot_of(oaid.name));
-                        if (oaot.len() >= 2 && oaot[oaot.len() - 2 : oaot.len()] == "[]") {
-                            var oelt: str = oaot[0 : oaot.len() - 2];
-                            if (oelt.len() >= 8 && (oelt[0:7] == "Option[" || oelt[0:7] == "Result[")) { opt_ty = oelt + ""; }
+                        if (oaot.len() >= 2 && slice_unchecked(oaot, oaot.len() - 2, oaot.len()) == "[]") {
+                            var oelt: str = slice_unchecked(oaot, 0, oaot.len() - 2);
+                            if (oelt.len() >= 8 && (slice_unchecked(oelt, 0, 7) == "Option[" || slice_unchecked(oelt, 0, 7) == "Result[")) { opt_ty = oelt + ""; }
                         }
                     },
                     _ => {}
@@ -19918,7 +19960,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 var oasl: i32 = se.slot_of(oaid2.name);
                 if (se.is_arr_slot(oasl)) {
                     var oaot2: string = se.opt_type_of_slot(oasl);
-                    if (oaot2.len() >= 2 && oaot2[oaot2.len() - 2 : oaot2.len()] == "[]") { opt_ty = oaot2; }
+                    if (oaot2.len() >= 2 && slice_unchecked(oaot2, oaot2.len() - 2, oaot2.len()) == "[]") { opt_ty = oaot2; }
                 }
             },
             _ => {}
@@ -19991,7 +20033,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // later `var row = a[i]` / `for row in a` type the inner element as an
     // array (so `for x in row` flows). One nesting level (depth 2).
     var is_arrarr: boolean = false;
-    if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])) { is_arrarr = true; }
+    if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 2))) { is_arrarr = true; }
     match (v.init) {
         parser.ExprArray(aarr) => {
             // Type-driven (#5326): the first element is an array by ANY
@@ -20062,9 +20104,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // arrtup also requires, and the array stays leak-only.
     if (is_arr && !is_arrarr && arrarr_e == "") {
         var tan: string = v.type_name;
-        if (tan.len() >= 4 && tan[tan.len() - 2 : tan.len()] == "[]") {
-            var tin: str = tan[0 : tan.len() - 2];
-            if (tin.len() >= 2 && tin[0:1] == "(") { arrarr_e = tin + ""; }
+        if (tan.len() >= 4 && slice_unchecked(tan, tan.len() - 2, tan.len()) == "[]") {
+            var tin: str = slice_unchecked(tan, 0, tan.len() - 2);
+            if (tin.len() >= 2 && slice_unchecked(tin, 0, 1) == "(") { arrarr_e = tin + ""; }
         }
     }
     // UNANNOTATED array-of-tuples literal (`var a = [(e0, e1), …]`): infer the
@@ -20081,7 +20123,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     match (atl2.elements[0]) {
                         parser.ExprTuple(_) => {
                             var att2: string = elem_type_tag(atl2.elements[0], se);
-                            if (att2.len() >= 2 && att2[0:1] == "(") { arrarr_e = att2; }
+                            if (att2.len() >= 2 && slice_unchecked(att2, 0, 1) == "(") { arrarr_e = att2; }
                         },
                         _ => {}
                     }
@@ -20210,7 +20252,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // [shape, array] and storing THAT into ds (which mis-typed ds and made
     // every later `ds[i].method()` read a garbage self → 0 / SIGSEGV).
     var asg_dty: string = s.struct_type_of_slot(slot);
-    if (asg_dty.len() > 4 && asg_dty[0:4] == "dyn " && !is_array_type_name(asg_dty) && !s.is_arr_slot(slot)) {
+    if (asg_dty.len() > 4 && slice_unchecked(asg_dty, 0, 4) == "dyn " && !is_array_type_name(asg_dty) && !s.is_arr_slot(slot)) {
         var das: LowerState = lower_dyn_arg(a.value, s);
         if (!das.ok) { return das; }
         return das.emit(ir.op_store_local(slot));
@@ -20427,7 +20469,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                 parser.ExprCall(apc) => {
                                     match (apc.callee) {
                                         parser.ExprIdent(apcid) => {
-                                            if (apcid.name.len() > 8 && apcid.name[0:8] == "__mkclo$") { ap_clo = true; }
+                                            if (apcid.name.len() > 8 && slice_unchecked(apcid.name, 0, 8) == "__mkclo$") { ap_clo = true; }
                                             if (util.index_of_str(s.sigs.closure_fns, apcid.name) >= 0) { ap_clo = true; }
                                         },
                                         _ => {}
@@ -20980,15 +21022,15 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             if (fft == "string[]") { fld_elem_kind = 1; }
             else if (is_struct_array_field_type(s.structs, fft) || is_enum_array_field_type(s.structs, fft)) {
                 fld_elem_kind = 2;
-                fld_elem_ty = fft[0 : fft.len() - 2] + "";
+                fld_elem_ty = slice_unchecked(fft, 0, fft.len() - 2) + "";
             }
             // An Option/Result-array field (`xs: Option[i32][]`): the element is a
             // leak-only opt box — carry its Option/Result type so `match (o)` in
             // the body recovers the payload (#3054, the field-foreach analog of the
             // Option-array local case).
-            else if (fft.len() >= 5 && fft[fft.len() - 2 : fft.len()] == "[]") {
-                var fel: str = fft[0 : fft.len() - 2];
-                if (fel.len() >= 8 && (fel[0:7] == "Option[" || fel[0:7] == "Result[")) {
+            else if (fft.len() >= 5 && slice_unchecked(fft, fft.len() - 2, fft.len()) == "[]") {
+                var fel: str = slice_unchecked(fft, 0, fft.len() - 2);
+                if (fel.len() >= 8 && (slice_unchecked(fel, 0, 7) == "Option[" || slice_unchecked(fel, 0, 7) == "Result[")) {
                     fld_elem_kind = 3;
                     fld_elem_ty = fel + "";
                 }
@@ -20998,7 +21040,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
                 // without it a pointer element (`p.1` of a `(i32, string)`) has no
                 // tag, so the body's `p.1.len()` fails to lower and the whole module
                 // bails.
-                else if (fel.len() >= 2 && fel[0:1] == "(") {
+                else if (fel.len() >= 2 && slice_unchecked(fel, 0, 1) == "(") {
                     fld_elem_kind = 4;
                     fld_elem_ty = fel + "";
                 }
@@ -21084,11 +21126,11 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         // binds a hidden temp the destructure reads, the same shape the
         // element path takes.
         var vdes: string = "";
-        if (vname.len() > 2 && vname[0:1] == "(") {
-            vdes = "" + vname[1 : vname.len() - 1];
+        if (vname.len() > 2 && slice_unchecked(vname, 0, 1) == "(") {
+            vdes = "" + slice_unchecked(vname, 1, vname.len() - 1);
             vname = "$forvd" + util.i32_to_string(s.locals.len());
         }
-        if (kname.len() > 0 && kname[0:1] == "(") { return s.fail(); }
+        if (kname.len() > 0 && slice_unchecked(kname, 0, 1) == "(") { return s.fail(); }
         // keys column -> hidden local
         var mkv_kflag: i32 = map_kv_elem_flag(mty, "keys");
         var mkv_vflag: i32 = map_kv_elem_flag(mty, "values");
@@ -21126,7 +21168,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         else if (vty == "f64") { fm = fm.mark_f64(vslot, true); }
         // A tuple value carries its element tags so a `v.N` read — and the
         // nested destructure below — resolve the element types.
-        else if (vty.len() >= 2 && vty[0:1] == "(") { fm = fm.mark_tuple_elems(vslot, tuple_elem_tags(vty)); }
+        else if (vty.len() >= 2 && slice_unchecked(vty, 0, 1) == "(") { fm = fm.mark_tuple_elems(vslot, tuple_elem_tags(vty)); }
         // loop: idx++ (top) ; idx < keys.len() ; bind k/v ; body ; back-edge.
         // The increment is at the top so a `continue` (br-to-header)
         // re-runs it instead of skipping it (#2788).
@@ -21279,9 +21321,9 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // recovers the payload. The foreach binds the element here directly
     // (not via StmtVar), so it needs its own opt-type marking.
     var elem_opt: string = s.opt_type_of_slot(aslot);
-    if (elem_opt.len() >= 2 && elem_opt[elem_opt.len() - 2 : elem_opt.len()] == "[]") {
-        var eopt: str = elem_opt[0 : elem_opt.len() - 2];
-        if (eopt.len() >= 8 && (eopt[0:7] == "Option[" || eopt[0:7] == "Result[")) { ff = ff.mark_opt_type(xslot, eopt); }
+    if (elem_opt.len() >= 2 && slice_unchecked(elem_opt, elem_opt.len() - 2, elem_opt.len()) == "[]") {
+        var eopt: str = slice_unchecked(elem_opt, 0, elem_opt.len() - 2);
+        if (eopt.len() >= 8 && (slice_unchecked(eopt, 0, 7) == "Option[" || slice_unchecked(eopt, 0, 7) == "Result[")) { ff = ff.mark_opt_type(xslot, eopt); }
     }
     // `for p in <(tuple)[]>`: each element is a tuple, so carry the element
     // tuple's tags on the loop var (mark_tuple_elems) so `p.N` resolves its
@@ -21292,7 +21334,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // = p.1` typed it wrong and `s.len()` mis-read the string — a silent
     // miscompile (`p.1` printed fine, but its length came out wrong).
     var elem_tup: string = s.arrarr_elem_of_slot(aslot);
-    if (elem_tup.len() >= 2 && elem_tup[0:1] == "(") { ff = ff.mark_tuple_elems(xslot, tuple_elem_tags(elem_tup)); }
+    if (elem_tup.len() >= 2 && slice_unchecked(elem_tup, 0, 1) == "(") { ff = ff.mark_tuple_elems(xslot, tuple_elem_tags(elem_tup)); }
     // `for m in <Map[K, V][]>`: each element is a map, so carry the element
     // Map[K, V] on the loop var (mark_map_type) or a map op in the body has no
     // receiver type and mis-dispatches as `i32.<op>`. It reads the array slot's
@@ -21543,12 +21585,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             parser.ExprFieldAccess(sfa) => {
                                 if (util.is_all_digits(sfa.field)) {
                                     var ttg: string = expr_tuple_elem_tag(sfa.obj, util.digits_to_i32(sfa.field), ms);
-                                    if (ttg.len() >= 8 && (ttg[0:7] == "Option[" || ttg[0:7] == "Result[")) { srt = ttg; }
+                                    if (ttg.len() >= 8 && (slice_unchecked(ttg, 0, 7) == "Option[" || slice_unchecked(ttg, 0, 7) == "Result[")) { srt = ttg; }
                                 } else {
                                     var foty: string = expr_struct_type(sfa.obj, ms);
                                     if (foty != "") {
                                         var fft: string = decl_field_type(ms.structs, foty, sfa.field);
-                                        if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { srt = fft; }
+                                        if (fft.len() >= 8 && (slice_unchecked(fft, 0, 7) == "Option[" || slice_unchecked(fft, 0, 7) == "Result[")) { srt = fft; }
                                     }
                                 }
                             },
@@ -21583,7 +21625,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // too — read via op_opt_payload and bound with its
                         // Option/Result type so the inner `match (inner)`
                         // recovers the payload via opt_type_of_slot.
-                        var ptag_is_opt: boolean = ptag.len() >= 8 && (ptag[0:7] == "Option[" || ptag[0:7] == "Result[");
+                        var ptag_is_opt: boolean = ptag.len() >= 8 && (slice_unchecked(ptag, 0, 7) == "Option[" || slice_unchecked(ptag, 0, 7) == "Result[");
                         // A leak-safe tuple payload (`Some(p)` where p is a
                         // tuple of scalar/string/leaf-safe-struct/Option
                         // elements — e.g. split_once's (string, string)) is a
@@ -21628,7 +21670,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // stored by pointer at offset 8 (same as a struct), read via
                         // op_opt_payload and marked with the dyn type so `e.method()`
                         // routes through op_dyn_dispatch at the call site.
-                        var ptag_is_dyn: boolean = ptag.len() > 4 && ptag[0:4] == "dyn ";
+                        var ptag_is_dyn: boolean = ptag.len() > 4 && slice_unchecked(ptag, 0, 4) == "dyn ";
                         // A fn-typed payload (`Some(f)` where the Option's
                         // T is `() => i32` / `(i32) => i32`, slice #3445
                         // match-fn): stored by pointer at offset 8 — the
@@ -21723,7 +21765,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // A nested Option/Result payload: record the bound
                         // slot's Option/Result type so the inner match (or a
                         // `?`) recovers its payload.
-                        else if (ptag.len() >= 8 && (ptag[0:7] == "Option[" || ptag[0:7] == "Result[")) { ms = ms.mark_opt_type(pbslot, ptag); }
+                        else if (ptag.len() >= 8 && (slice_unchecked(ptag, 0, 7) == "Option[" || slice_unchecked(ptag, 0, 7) == "Result[")) { ms = ms.mark_opt_type(pbslot, ptag); }
                         // A tuple payload: tag the bound slot's element types
                         // so `p.0` / `p.1` read the right element width / type.
                         else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)); }
@@ -21744,7 +21786,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         else if (ptag == "string[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_strarr(pbslot, true); }
                         else if (is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag)) {
                             ms = ms.mark_arr(pbslot, true);
-                            ms = ms.mark_struct_type(pbslot, ptag[0 : ptag.len() - 2]);
+                            ms = ms.mark_struct_type(pbslot, slice_unchecked(ptag, 0, ptag.len() - 2));
                         }
                         // A NESTED-array payload: mark is_arr like the flat
                         // arrays plus is_arrarr + the inner element kind, the
@@ -21757,7 +21799,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // A `dyn Trait` payload: tag the bound slot with the dyn
                         // type so `e.method()` at the call site is recognised as
                         // a dyn receiver and routes through op_dyn_dispatch.
-                        else if (ptag.len() > 4 && ptag[0:4] == "dyn ") { ms = ms.mark_struct_type(pbslot, ptag); }
+                        else if (ptag.len() > 4 && slice_unchecked(ptag, 0, 4) == "dyn ") { ms = ms.mark_struct_type(pbslot, ptag); }
                         // A MAP payload: carry the full Map[K, V] so `v.get(k)` /
                         // `v.len()` / `v.iter()` dispatch as map ops (v.get recovers
                         // Option[V] from map_type_of). BORROWED from the
@@ -21796,7 +21838,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 var vdot: i32 = 0 - 1;
                 var vld: i32 = 0;
                 while (vld < pv.type_name.len()) {
-                    if (pv.type_name[vld] == b'.') { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; vdot = vld; }
+                    if (pv.type_name[vld] == b'.') { vname = slice_unchecked(pv.type_name, vld + 1, pv.type_name.len()) + ""; vdot = vld; }
                     vld = vld + 1;
                 }
                 // A QUALIFIED pattern on an imported UNION member
@@ -21817,7 +21859,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 // sharding (asm_modload_run -func-range). Enum variants are
                 // unaffected: their mangled candidate is not a declared struct.
                 if (!decl_is_struct(ms.structs, vname) && vdot >= 0) {
-                    var vmangled: string = pv.type_name[0 : vdot] + "__" + pv.type_name[vdot + 1 : pv.type_name.len()];
+                    var vmangled: string = slice_unchecked(pv.type_name, 0, vdot) + "__" + slice_unchecked(pv.type_name, vdot + 1, pv.type_name.len());
                     if (decl_is_struct(ms.structs, vmangled)) { vname = vmangled; }
                 }
                 // Resolve WHICH decl named `vname` this arm is about. Variant
@@ -21967,7 +22009,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // `m.get(k)` / `m.len()` / `m.iter()` dispatch as
                             // map ops (m.get recovers Option[V] from map_type_of).
                             ms = ms.mark_map_type(bslot, ev_ty);
-                        } else if (ev_ty.len() >= 8 && (ev_ty[0:7] == "Option[" || ev_ty[0:7] == "Result[")) {
+                        } else if (ev_ty.len() >= 8 && (slice_unchecked(ev_ty, 0, 7) == "Option[" || slice_unchecked(ev_ty, 0, 7) == "Result[")) {
                             // An Option/Result payload (`Maybe(Option[i32])`): the box
                             // pointer reads via struct_get like a struct; carry the
                             // Option/Result type so a nested `match (o)` on the bound
@@ -21979,14 +22021,14 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         } else if (ev_ty == "string[]") {
                             ms = ms.mark_arr(bslot, true);
                             ms = ms.mark_strarr(bslot, true);
-                        } else if (ev_ty.len() >= 3 && ev_ty[ev_ty.len() - 2 : ev_ty.len()] == "[]"
-                                   && (decl_is_struct(ms.structs, ev_ty[0 : ev_ty.len() - 2]) || is_enum_like_name(ev_ty[0 : ev_ty.len() - 2], ms.structs))) {
+                        } else if (ev_ty.len() >= 3 && slice_unchecked(ev_ty, ev_ty.len() - 2, ev_ty.len()) == "[]"
+                                   && (decl_is_struct(ms.structs, slice_unchecked(ev_ty, 0, ev_ty.len() - 2)) || is_enum_like_name(slice_unchecked(ev_ty, 0, ev_ty.len() - 2), ms.structs))) {
                             // A struct- / enum-array payload (`Items(P[])`):
                             // mark the slot is_arr and carry the ELEMENT type
                             // so `ps[i].field` / `for p in ps` resolve (the
                             // array-element analog of the struct payload case).
                             ms = ms.mark_arr(bslot, true);
-                            ms = ms.mark_struct_type(bslot, ev_ty[0 : ev_ty.len() - 2]);
+                            ms = ms.mark_struct_type(bslot, slice_unchecked(ev_ty, 0, ev_ty.len() - 2));
                         }
                         // The binding BORROWS the enum box's buffer — the box owns
                         // it and is never swept — so keep the exit dec-sweep off it
@@ -23479,7 +23521,7 @@ function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], tty
             s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
             s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
             s = s.emit(ir.op_drop());
-        } else if (tag.len() >= 2 && tag[0:1] == "(") {
+        } else if (tag.len() >= 2 && slice_unchecked(tag, 0, 1) == "(") {
             var cpt: i32[] = path_child(path, k);
             s = emit_tuple_type_child_drops(s, slot, cpt, tag);      // inner children first
             s = emit_load_tuple_path(s, slot, cpt);                  // inner box ptr
@@ -23515,14 +23557,14 @@ function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], tty
 // emit_tuple_type_child_drops + a box dec. String / struct / enum / option / map
 // elements are excluded (first cut).
 function tuple_field_deep_droppable(t: string, structs: parser.StructDecl[]): boolean {
-    if (t.len() < 2 || t[0:1] != "(") { return false; }
+    if (t.len() < 2 || slice_unchecked(t, 0, 1) != "(") { return false; }
     var any_arr: boolean = false;
     var k: i32 = 0;
     while (k < 64) {
         var tag: string = tuple_type_elem_tag(t, k);
         if (tag == "") { break; }
         if (is_leaksafe_array_field(tag)) { any_arr = true; }
-        else if (tag.len() >= 2 && tag[0:1] == "(") {
+        else if (tag.len() >= 2 && slice_unchecked(tag, 0, 1) == "(") {
             if (!tuple_field_deep_droppable(tag, structs)) { return false; }
             any_arr = true;
         } else if (decl_is_struct(structs, tag)) {
@@ -23608,7 +23650,7 @@ function tuple_arg_payload_droppable(ttype: string, arg: parser.Expr, structs: p
                         _ => { isfs = tuple_str_elem_fresh(tl.elements[k]); }
                     }
                     if (!isfs) { return false; }
-                } else if (tag.len() >= 2 && tag[0:1] == "(") {
+                } else if (tag.len() >= 2 && slice_unchecked(tag, 0, 1) == "(") {
                     if (!tuple_arg_payload_droppable(tag, tl.elements[k], structs, ident_arr_ok)) { return false; }
                 } else if (decl_is_struct(structs, tag)) {
                     // A reclaim-STRUCT position must be a FRESH struct literal so the
@@ -23908,6 +23950,21 @@ function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: stri
             }
             return src_unsafe || expr_unsafe_for(sl.start, name, borrowable, recv_borrow)
                 || expr_unsafe_for(sl.end, name, borrowable, recv_borrow);
+        },
+        parser.ExprCall(c) => {
+            // slice_unchecked(src, a, b) (#5634): the ExprSlice arm's builtin
+            // spelling — the same frame-boxed view, so an ident source there
+            // is the same borrow read.
+            if (slice_unchecked_call(e)) {
+                var su_unsafe: boolean = false;
+                match (c.args[0]) {
+                    parser.ExprIdent(_) => {},
+                    _ => { su_unsafe = expr_unsafe_for_view_pos(c.args[0], name, borrowable, recv_borrow); }
+                }
+                return su_unsafe || expr_unsafe_for(c.args[1], name, borrowable, recv_borrow)
+                    || expr_unsafe_for(c.args[2], name, borrowable, recv_borrow);
+            }
+            return expr_unsafe_for(e, name, borrowable, recv_borrow);
         },
         _ => { return expr_unsafe_for(e, name, borrowable, recv_borrow); }
     }
@@ -24791,7 +24848,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     // (the drop zeroes the slot, so the walk never runs).
                     parser.ExprArray(arrl) => {
                         is_lit = (all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements))
-                            && !(v.type_name.len() > 4 && v.type_name[0:4] == "dyn ");
+                            && !(v.type_name.len() > 4 && slice_unchecked(v.type_name, 0, 4) == "dyn ");
                     },
                     parser.ExprCall(c) => {
                         match (c.callee) {
@@ -24986,12 +25043,12 @@ function split_semi(s: string): string[] {
     var i: i32 = 0;
     while (i < s.len()) {
         if (s[i] == b';') {
-            out = out.append(s[start:i] + "");
+            out = out.append(slice_unchecked(s, start, i) + "");
             start = i + 1;
         }
         i = i + 1;
     }
-    return out.append(s[start:s.len()] + "");
+    return out.append(slice_unchecked(s, start, s.len()) + "");
 }
 
 // slot_list_has reports whether slot index `v` is in `xs` — the keep-set
@@ -25042,12 +25099,12 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         var ope: string = st.optret_pending[opi];
         var oph: i32 = 0;
         while (oph < ope.len() && ope[oph] != b'#') { oph = oph + 1; }
-        var opslot: i32 = util.digits_to_i32(ope[0:oph] + "");
+        var opslot: i32 = util.digits_to_i32(slice_unchecked(ope, 0, oph) + "");
         if (opslot >= st.n_params) {
             if (oph + 1 < ope.len() && ope[oph + 1] == b'b') {
                 st = emit_scalar_enum_box_free(st, opslot);
             } else if (oph + 1 < ope.len() && ope[oph + 1] == b'e') {
-                var eparts: string[] = split_semi(ope[oph + 2 : ope.len()] + "");
+                var eparts: string[] = split_semi(slice_unchecked(ope, oph + 2, ope.len()) + "");
                 var emoved: string[] = [];
                 var emi: i32 = 1;
                 while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
@@ -25781,9 +25838,9 @@ function cross_recipient_fields_fresh(slit: parser.ExprStructLit, structs: parse
             // alias a live buffer the donor-release side would deep-free).
             if (!strarr_lit_all_elems_fresh(slit.field_values[fk])) { return false; }
         } else if (is_struct_array_field_type(structs, fkt)) {
-            if (!boxarr_lit_all_elems_fresh(slit.field_values[fk], structs, fkt[0 : fkt.len() - 2], false)) { return false; }
+            if (!boxarr_lit_all_elems_fresh(slit.field_values[fk], structs, slice_unchecked(fkt, 0, fkt.len() - 2), false)) { return false; }
         } else if (is_enum_array_field_type(structs, fkt)) {
-            if (!boxarr_lit_all_elems_fresh(slit.field_values[fk], structs, fkt[0 : fkt.len() - 2], true)) { return false; }
+            if (!boxarr_lit_all_elems_fresh(slit.field_values[fk], structs, slice_unchecked(fkt, 0, fkt.len() - 2), true)) { return false; }
         }
         fk = fk + 1;
     }
@@ -25843,7 +25900,7 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                                 var xbar: i32 = 0;
                                 while (xbar < donor.len() && donor[xbar] != b'|') { xbar = xbar + 1; }
                                 pairs = pairs.append(rv.name + "|" + donor);
-                                cons = cons.append(donor[0 : xbar]);
+                                cons = cons.append(slice_unchecked(donor, 0, xbar));
                             }
                         }
                     },
@@ -25892,7 +25949,7 @@ function xblock_donor_for(pending: string[], recip: string): string {
         var e: string = pending[i];
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != b'|') { bar = bar + 1; }
-        if (bar < e.len() && e[0 : bar] == recip) { return e[bar + 1 : e.len()] + ""; }
+        if (bar < e.len() && slice_unchecked(e, 0, bar) == recip) { return slice_unchecked(e, bar + 1, e.len()) + ""; }
         i = i + 1;
     }
     return "";
@@ -25939,7 +25996,7 @@ function xblock_without(pending: string[], recip: string): string[] {
         var e: string = pending[i];
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != b'|') { bar = bar + 1; }
-        if (!(bar < e.len() && e[0 : bar] == recip)) { out = out.append(e); }
+        if (!(bar < e.len() && slice_unchecked(e, 0, bar) == recip)) { out = out.append(e); }
         i = i + 1;
     }
     return out;
@@ -26116,9 +26173,9 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 // or "dname|" (tuple donor). Split before dispatching.
                 var xdbar: i32 = 0;
                 while (xdbar < xbd.len() && xbd[xdbar] != b'|') { xdbar = xdbar + 1; }
-                var xbd_name: str = xbd[0 : xdbar];
+                var xbd_name: str = slice_unchecked(xbd, 0, xdbar);
                 var xbd_type: string = "";
-                if (xdbar < xbd.len()) { xbd_type = xbd[xdbar + 1 : xbd.len()] + ""; }
+                if (xdbar < xbd.len()) { xbd_type = slice_unchecked(xbd, xdbar + 1, xbd.len()) + ""; }
                 // Reuse the donor's box in place (release_prior, reclaimable-gated in
                 // the emitter). Dispatch by the recipient's construction kind; a tuple
                 // whose elements aren't ctor-eligible falls back to normal lowering.
@@ -26334,7 +26391,7 @@ function str_slots_of(s: LowerState): i32[] {
 function is_array_type_name(t: string): boolean {
     var n: i32 = t.len();
     if (n < 2) { return false; }
-    return t[n - 2 : n] == "[]";
+    return slice_unchecked(t, n - 2, n) == "[]";
 }
 
 // is_u32_type_name reports whether a declared type is u32 (scalar) or u32[]
@@ -26358,7 +26415,7 @@ function is_u64_type_name(t: string): boolean {
 // is the only width whose arithmetic can exceed the slot and must wrap.
 function subword_kind_of_name(t: string): string {
     var b: string = t;
-    if (b.len() >= 2 && b[b.len() - 2 : b.len()] == "[]") { b = b[0 : b.len() - 2] + ""; }
+    if (b.len() >= 2 && slice_unchecked(b, b.len() - 2, b.len()) == "[]") { b = slice_unchecked(b, 0, b.len() - 2) + ""; }
     if (b == "u8") { return "u8"; }
     return "";
 }
@@ -26423,7 +26480,7 @@ function reclaim_site_key_of(name: string, line: i32, col: i32): string {
 function reclaim_site_name(key: string): string {
     var i: i32 = 0;
     while (i < key.len() && key[i] != b'@') { i = i + 1; }
-    return key[0:i] + "";
+    return slice_unchecked(key, 0, i) + "";
 }
 
 // walk_fieldread_obj walks the OBJECT of a field-read chain (p.x, p.a.b): a bare
@@ -26595,6 +26652,13 @@ function expr_view_borrow_only(e: parser.Expr, name: string): boolean {
             return expr_view_borrow_only(b.left, name) && expr_view_borrow_only(b.right, name);
         },
         parser.ExprCall(c) => {
+            // slice_unchecked(src, a, b) (#5634): like the ExprSlice arm, the
+            // source may be the view name itself — a further slice's data
+            // pointer aims at the SOURCE buffer, not at this box.
+            if (slice_unchecked_call(e)) {
+                var su_ok: boolean = ident_named_is(c.args[0], name) || expr_view_borrow_only(c.args[0], name);
+                return su_ok && expr_view_borrow_only(c.args[1], name) && expr_view_borrow_only(c.args[2], name);
+            }
             var args_ok: boolean = true;
             for arg in c.args {
                 if (!expr_view_borrow_only(arg, name)) { args_ok = false; }
@@ -26635,7 +26699,7 @@ function stmt_view_borrow_only(st: parser.Stmt, name: string): boolean {
             // merely STARTS with it is a write through the view, which the
             // whitelist has no model for.
             if (asn.target != name && asn.target.len() > name.len()
-                    && asn.target[0 : name.len()] == name) { return false; }
+                    && slice_unchecked(asn.target, 0, name.len()) == name) { return false; }
             return expr_view_borrow_only(asn.value, name);
         },
         parser.StmtIf(iff) => {
@@ -26678,6 +26742,10 @@ function view_slice_binding_names_stmt(st: parser.Stmt, acc: string[]): string[]
         parser.StmtVar(v) => {
             match (v.init) {
                 parser.ExprSlice(_) => { return push_str_unique(acc, v.name); },
+                parser.ExprCall(_) => {
+                    if (slice_unchecked_call(v.init)) { return push_str_unique(acc, v.name); }
+                    return acc;
+                },
                 _ => { return acc; }
             }
         },
@@ -27506,7 +27574,7 @@ function tuple_lit_has_rc_child(tup: parser.ExprTuple, ttype: string, structs: p
 // no declaration at all) answers false, so those sites keep their prior
 // admission unchanged.
 function tuple_elem_tag_is_union(tag: string, structs: parser.StructDecl[]): boolean {
-    if (tag.len() >= 7 && tag[0:7] == "Option[") { return true; }
+    if (tag.len() >= 7 && slice_unchecked(tag, 0, 7) == "Option[") { return true; }
     if (tag.len() >= 7 && tag[0:7] == "Result[") { return true; }
     if (tag == "") { return false; }
     return decl_is_enum(structs, tag);
