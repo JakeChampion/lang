@@ -12991,14 +12991,17 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // box-dropped on the struct's reclamation (the k_enum arm of
                     // __struct_drop → arr_dec of the enum box, one level). To balance
                     // that dec, retain UNLESS the value is a FRESH variant ctor
-                    // (`V(args)` / bare `V`, variant_ctor_enum_owner != ""), which is
-                    // sole-owned rc=1 and freed with no inc; every other source (a bare
-                    // enum local/param, a field copy, an enum-returning call) is inc'd —
-                    // conservative and SOUND: a genuinely-fresh non-ctor source then just
-                    // LEAKS (rc never 0), never double-frees. Enum boxes are rc-headered
+                    // (`V(args)` / bare `V`, variant_ctor_enum_owner != "") or a call
+                    // to a strict-fresh enum producer ("ENUM:" registry — every return
+                    // a fresh ctor), both sole-owned rc=1 and freed with no inc; every
+                    // other source (a bare enum local/param, a field copy, an
+                    // unregistered enum-returning call) is inc'd — conservative and
+                    // SOUND: a genuinely-fresh non-ctor source then just LEAKS (rc
+                    // never 0), never double-frees. Enum boxes are rc-headered
                     // (op_struct_make), so the inc is sound (unlike a header-less string).
                     if (!fav_alias_inc && decl_is_enum(s.structs, cfft)) {
-                        if (variant_ctor_enum_owner(slit.field_values[found], s.structs).len() == 0) {
+                        if (variant_ctor_enum_owner(slit.field_values[found], s.structs).len() == 0
+                                && !enum_fresh_ret_call(slit.field_values[found], s.sigs.return_fresh_struct_ret_fns)) {
                             fav_alias_inc = true;
                         }
                     }
@@ -35098,6 +35101,97 @@ pub function fn_returns_owned_arr(fn: parser.FuncDecl, structs: parser.StructDec
         && !body_has_non_arrown_return(fn.body, fn, structs);
 }
 
+// fresh_enum_ret_value: `e` is a return value of an enum-returning fn that the
+// caller owns outright: a fresh variant ctor (the ctor's own payload counting
+// is position-independent — a bare-ident array payload is dup'd, a literal is
+// owned — so the box hands over sole-owned exactly like a ctor written at the
+// use site), or a forwarding call to a free function already credited in `acc`.
+function fresh_enum_ret_value(e: parser.Expr, structs: parser.StructDecl[], acc: string[]): boolean {
+    if (variant_ctor_enum_owner(e, structs).len() > 0) { return true; }
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return util.index_of_str(acc, cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// body_has_nonfreshenum_return: some return in `stmts` hands back an enum value
+// the caller cannot be told it owns — anything but a fresh variant ctor or an
+// admitted forwarding call. All-or-nothing, like the struct walk beneath.
+function body_has_nonfreshenum_return(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => { if (!fresh_enum_ret_value(r.value, structs, acc)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfreshenum_return(f.then_body, structs, acc) || body_has_nonfreshenum_return(f.else_body, structs, acc)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfreshenum_return(w.body, structs, acc)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfreshenum_return(fo.body, structs, acc)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshenum_return(m.arms[a].body, structs, acc)) { return true; } a = a + 1; } },
+            parser.StmtDefer(_) => {},
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// fresh_enum_fwd_fixpoint: the bare names of FREE functions whose every return
+// is a fresh variant ctor or a forwarding call to another member — the "ENUM:"
+// half of the strict-fresh registry, iterated like the struct fixpoint below so
+// forwarding chains ground out; mutual recursion with no grounding stays
+// uncredited (conservative).
+function fresh_enum_fwd_fixpoint(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var pending: i32[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (funcs[k].receiver_type.len() == 0 && decl_is_enum(structs, funcs[k].ret_type)
+                && body_has_return(funcs[k].body)) {
+            pending = pending.append(k);
+        }
+        k = k + 1;
+    }
+    var acc: string[] = [];
+    var round: i32 = 0;
+    while (round < 8) {
+        var still: i32[] = [];
+        var added: boolean = false;
+        var p: i32 = 0;
+        while (p < pending.len()) {
+            var fi: i32 = pending[p];
+            if (!body_has_nonfreshenum_return(funcs[fi].body, structs, acc)) {
+                acc = acc.append(funcs[fi].name);
+                added = true;
+            } else {
+                still = still.append(fi);
+            }
+            p = p + 1;
+        }
+        pending = still;
+        if (!added || pending.len() == 0) { return acc; }
+        round = round + 1;
+    }
+    return acc;
+}
+
+// enum_fresh_ret_call: `e` is a call to a free function in the "ENUM:" half of
+// the strict-fresh registry, so its result is an rc=1 variant box this caller
+// owns outright.
+pub function enum_fresh_ret_call(e: parser.Expr, reg: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return util.index_of_str(reg, "ENUM:" + cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // fresh_struct_fwd_fixpoint: the bare NAMES of free functions whose every return
 // is a strict-fresh struct — the set the forwarding arm of
 // return_value_is_strictfresh_struct resolves a callee against. Iterated to a
@@ -35174,6 +35268,17 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     // Free functions only: the forwarding arm resolves a bare-ident callee, so a
     // method key could never be the thing it looks up.
     var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh, sfok);
+    // "ENUM:<name>" — FREE functions whose every return is a fresh variant ctor
+    // (or a forwarding call to another member). A call result from one is an
+    // rc=1 variant box the caller owns outright, so the ExprStructLit enum arm
+    // hands it over with no alias-inc, the same class as a ctor written at the
+    // field position.
+    var enum_fresh: string[] = fresh_enum_fwd_fixpoint(funcs, structs);
+    var efi: i32 = 0;
+    while (efi < enum_fresh.len()) {
+        out = out.append("ENUM:" + enum_fresh[efi]);
+        efi = efi + 1;
+    }
     for fn in funcs {
         var rt: string = fn.ret_type;
         // A FREE function's verdict is exactly its membership in the fixpoint

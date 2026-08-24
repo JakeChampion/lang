@@ -34,8 +34,8 @@ struct__call        clean clean  strict-fresh call result owned outright
 enum__fresh         clean clean  fresh variant ctor owned
 enum__local         clean leak   bare enum local: retained (enum arm), source claim strands
 enum__param         clean leak   param enum bare ident
-enum__fieldread     clean leak   q.f enum read
-enum__call          clean leak   enum-returning call: not in the fresh-ctor class, retained, strands
+enum__fieldread     clean clean  q.f read retained; the holder's own ctor-call is ENUM:-owned, both decs balance
+enum__call          clean clean  strict-fresh enum call result ("ENUM:" registry) owned outright
 enum_arr__fresh     clean clean  fresh [E.A(..)] literal: __enum_arr_elems_drop walks the payloads
 enum_arr__local     clean leak   bare enum-array ident: handover uncounted, source claim strands
 enum_arr__param     clean leak   param enum-array, same uncounted handover
