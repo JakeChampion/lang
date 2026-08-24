@@ -41,7 +41,8 @@ pub function fetch_raw(host_be: i32, port: i32, request: string): string {
     }
     var resp: string = "";
     while (true) {
-        var chunk: string = tcp_recv(c, 4096);
+        // PR2 (#5714) makes this path byte-based.
+        var chunk: string = string_from_bytes_unchecked(tcp_recv(c, 4096));
         if (chunk.len() == 0) {
             break;
         }
@@ -166,7 +167,7 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[s
 function __fetch_drain(c: i32, acc: string): async.Future[string] {
     function resume(woken: i32): async.Future[string] {
         var dropped: i32 = wasm_pollable_drop(woken);
-        var chunk: string = tcp_recv(c, 4096);
+        var chunk: string = string_from_bytes_unchecked(tcp_recv(c, 4096));
         if (chunk.len() == 0) {
             tcp_close(c);
             return Ready(http_body(acc) + "");

@@ -176,7 +176,7 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     write("listening\n");
     var c: i32 = tcp_accept(l);
     if (c < 0) { write("accept-failed\n"); return 1; }
-    var r: string = tcp_recv(c, 64);
+    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write("recv="); write(r);
     var n: i32 = tcp_send(c, "pong");
     write(" sent="); print_int(n); write("\n");
@@ -211,7 +211,7 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     var ps: i32[] = [p];
     var i: i32 = wasm_poll(ps);
     write("polled="); print_int(i);
-    var r: string = tcp_recv(c, 64);
+    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write(" recv="); write(r); write("\n");
     wasm_pollable_drop(p);
     tcp_close(c);

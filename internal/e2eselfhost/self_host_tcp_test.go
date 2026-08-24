@@ -25,7 +25,7 @@ const tcpServerProgram = `function main(): i32 {
     if (fd < 0) { return 91; }
     var c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    var req: string = tcp_recv(c, 4096);
+    var req: u8[] = tcp_recv(c, 4096);
     if (req.len() == 0) { return 93; }
     var n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello-world");
     tcp_close(c);

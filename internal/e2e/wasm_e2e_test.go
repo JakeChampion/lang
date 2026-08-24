@@ -9528,7 +9528,7 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	echo := build("tcpecho", `function main(): i32 {
     var s: i32 = tcp_listen(8080);
     var c: i32 = tcp_accept(s);
-    var d: string = tcp_recv(c, 1024);
+    var d: string = string_from_bytes_unchecked(tcp_recv(c, 1024));
     tcp_send(c, d);
     tcp_close(c);
     tcp_close(s);
@@ -9618,7 +9618,7 @@ function main(): i32 {
     if (sock < 0) { return 1; }
     var conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg = tcp_recv(conn, 1024);
+    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
     var sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
     tcp_close(conn);

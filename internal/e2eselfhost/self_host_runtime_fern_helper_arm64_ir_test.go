@@ -153,7 +153,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// this fixed arm64-darwin, which had been issuing Linux connect (203)
 		// through the Linux trap because darwin_sysno has no row for it.
 		"tcp_connect",
-		// read(2) into a fresh buffer, boxed by __raw_string — the floor goes
+		// read(2) into a fresh buffer, boxed as a u8[] — the floor goes
 		// this direction, which is why recv migrates and send cannot.
 		"tcp_recv",
 		// execve over an argv built from the args array. The one leaf whose

@@ -635,7 +635,7 @@ function main(): i32 {
 		},
 		{
 			// tcp_recv on a bad fd → read(2) returns -EBADF, which the helper clamps to
-			// a zero-length string. Exercises the recv alloc + read + len-clamp path.
+			// an empty u8[]. Exercises the recv alloc + read + len-clamp path.
 			name: "tcp_recv_badfd",
 			src:  `function main(): i32 { var s = tcp_recv(999, 10); return s.len(); }`,
 			want: 0,

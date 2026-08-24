@@ -47,7 +47,7 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
     if (c < 0) { return 92; }
     var cfds: i32[] = [c];
     if (poll(cfds, 10000) < 0) { return 96; }
-    var req: string = tcp_recv(c, 4096);
+    var req: u8[] = tcp_recv(c, 4096);
     if (req.len() == 0) { return 93; }
     var n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
     tcp_close(c);

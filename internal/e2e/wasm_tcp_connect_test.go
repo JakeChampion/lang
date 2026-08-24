@@ -68,7 +68,7 @@ function main(): i32 {
     var c: i32 = tcp_connect(host, port_from_env());
     if (c < 0) { return 1; }
     if (tcp_send(c, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 2; }
-    var resp: string = tcp_recv(c, 4096);
+    var resp: string = string_from_bytes_unchecked(tcp_recv(c, 4096));
     print(resp);
     tcp_close(c);
     return 0;
