@@ -65,3 +65,24 @@ The rcplan diff's `dead-alias-struct-loop-body-moved-source-excluded`
 aliasBindIncs pin converged to an anchor (`8:3=v` both sides) — the
 routing closed exactly the "retain-plan port gap" its comment recorded.
 nestedDrops stays the placement divergence.
+
+## CI-caught: the borrowed-field literal — a second sole-owner assumption
+
+The wasm whole-compiler leg faulted in `flatten__lookup_ivar` at address
+0x6661656c — string bytes ("leaf") read as a pointer. The shape:
+`rewrite_module_bodies` rebuilds `RewriteCtx { ivar_names: ctx.ivar_names,
+… }` per loop iteration; the plan grants the fresh literal (its call-arg
+uses don't taint), and the deep walk then decs the caller's arrays every
+iteration — the construction retain arms cover nested-struct / enum /
+scalar-array / struct-array field kinds, but a string / string[] /
+enum-array field READ reaches the new box uncounted. Loud on wasm's
+recycling allocator, latent on the x86 freelist (the stage-2 x86 fixpoint
+passed over the same code), and — the probe's finding — already latent
+plan-OFF for a borrowable callee, where the old gate granted the same
+literal. Fix in the same NODEEP pass, both switch positions: a candidate
+whose literal carries a borrow-shaped value in an un-retained rc field
+kind (`struct_lit_unretained_borrow_field`, the qualification list
+mirrored from fieldmove_selfrebind_alias) takes box-only releases. The
+wasm whole-compiler link and the full battery are green with it; the
+probe census is unchanged (the census cannot see the removed
+free-under-caller — the wasm run is the discriminator).

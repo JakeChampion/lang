@@ -32389,6 +32389,64 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
     return false;
 }
 
+// struct_lit_unretained_borrow_field: the credited candidate's own struct
+// literal (found by its binding-site key) carries a BORROW-shaped value —
+// a bare ident, field access, index or slice — in an rc field kind the
+// construction does NOT retain. The retain arms cover nested-struct, enum,
+// leak-safe scalar-array and struct-array fields (the
+// fieldmove_selfrebind_alias qualification list); string, string[],
+// enum-array and every other rc kind reach the new box UNCOUNTED, so the
+// deep field walk frees a buffer the SOURCE still owns — the
+// flatten__RewriteCtx wasm fault: `RewriteCtx { ivar_names: ctx.ivar_names,
+// … }` rebuilt per loop iteration deep-dropped ctx's arrays out from under
+// the caller. Box-only is the sound release role for such a box; a fresh
+// value (literal / ctor / call) transfers ownership and keeps the deep drop.
+function struct_lit_unretained_borrow_field(stmts: parser.Stmt[], key: string, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                if (reclaim_site_key_of(v.name, v.line, v.col) == key) {
+                    match (v.init) {
+                        parser.ExprStructLit(sl) => {
+                            var i: i32 = 0;
+                            while (i < sl.field_values.len()) {
+                                var borrow: boolean = false;
+                                match (sl.field_values[i]) {
+                                    parser.ExprIdent(_) => { borrow = true; },
+                                    parser.ExprFieldAccess(_) => { borrow = true; },
+                                    parser.ExprIndex(_) => { borrow = true; },
+                                    parser.ExprSlice(_) => { borrow = true; },
+                                    _ => {}
+                                }
+                                if (borrow && i < sl.field_names.len()) {
+                                    var ft: string = decl_field_type(structs, sl.type_name, sl.field_names[i]);
+                                    if (!is_scalar_type_name(ft) && !decl_is_struct(structs, ft) && !decl_is_enum(structs, ft)
+                                        && !is_leaksafe_array_field(ft) && !is_struct_array_field_type(structs, ft)) {
+                                        return true;
+                                    }
+                                }
+                                i = i + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                if (struct_lit_unretained_borrow_field(f.then_body, key, structs)) { return true; }
+                if (struct_lit_unretained_borrow_field(f.else_body, key, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (struct_lit_unretained_borrow_field(w.body, key, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (struct_lit_unretained_borrow_field(fo.body, key, structs)) { return true; } },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { if (struct_lit_unretained_borrow_field(arm.body, key, structs)) { return true; } }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
 function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
     for stmt in stmts {
         match (stmt) {
@@ -32995,6 +33053,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // the container co-owns the box, so this slot's release role is
         // box-only — see struct_box_sink_stored's header.
         if (!mv_moves && struct_box_sink_stored_stmts(body, mvnmk, structs)) { mv_moves = true; }
+        // A literal whose rc fields BORROW un-retained kinds (string /
+        // string[] / enum-array reads of another value): the deep walk would
+        // free the source's buffers — see struct_lit_unretained_borrow_field.
+        if (!mv_moves && struct_lit_unretained_borrow_field(body, out[mvi], structs)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
         // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
         // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
