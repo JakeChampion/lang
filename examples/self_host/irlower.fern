@@ -53158,10 +53158,24 @@ function rc_fe_escape(e: parser.Expr, tainted: string[], types_n: string[], type
 }
 
 // rc_fe_escape_owned: the COUNTED-sink variant (native `escapeOwned`) — the
-// sink dups projections, so only a direct ident can strand an uncounted alias.
-function rc_fe_escape_owned(e: parser.Expr, tainted: string[]): string[] {
+// sink dups a needsRcIncOnAlias source and the container's deep drop releases
+// that dup, so a COUNTED source keeps a reference of its own and stays
+// reclaimable (#7345). Only a source the sink stores UNCOUNTED taints: an
+// ident whose type the alias-inc trigger declines (unknown "" stays the
+// conservative taint — match bindings and unannotated inits land here, where
+// native reads the checker; native's consuming-binding exemption is part of
+// the same "" bucket until the consuming-bindings port). Projections were
+// never tainted here — the sink dups those too.
+function rc_fe_escape_owned(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return rc_fe_taint(tainted, id.name); },
+        parser.ExprIdent(id) => {
+            // the counted set mirrors needsRcIncOnAlias's type switch: arrays,
+            // strings, tuples/closures ("("-led), Map, user structs and enums
+            // (rc_fe_ptr_type), builtin Option/Result, inferred lambda "fn".
+            var t: string = rc_fe_expr_type(e, types_n, types_t, structs);
+            if (rc_fe_ptr_type(t, structs) || rc_fe_is_builtin_enum(t) || t == "fn") { return tainted; }
+            return rc_fe_taint(tainted, id.name);
+        },
         _ => { return tainted; }
     }
     return tainted;
@@ -53322,7 +53336,7 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
         parser.ExprStructLit(sl) => {
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                st = FeState { tainted: rc_fe_escape_owned(sl.field_values[i], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                st = FeState { tainted: rc_fe_escape_owned(sl.field_values[i], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
                 st = rc_fe_walk_expr(sl.field_values[i], st, structs);
                 i = i + 1;
             }
@@ -53331,7 +53345,7 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
         parser.ExprTuple(tu) => {
             var i: i32 = 0;
             while (i < tu.elements.len()) {
-                st = FeState { tainted: rc_fe_escape_owned(tu.elements[i], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                st = FeState { tainted: rc_fe_escape_owned(tu.elements[i], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
                 st = rc_fe_walk_expr(tu.elements[i], st, structs);
                 i = i + 1;
             }
@@ -53346,7 +53360,7 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                         var en: string = variant_enum_owner(structs, id.name);
                         var rcp: boolean = enum_all_variants_array_payload(structs, en);
                         for arg in c.args {
-                            if (rcp) { st = FeState { tainted: rc_fe_escape_owned(arg, st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            if (rcp) { st = FeState { tainted: rc_fe_escape_owned(arg, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
                             else { st = FeState { tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
                         }
                     }
@@ -53362,7 +53376,7 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                         st = FeState { tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
                     }
                     if ((fa.field == "append" || fa.field == "push") && c.args.len() == 1) {
-                        st = FeState { tainted: rc_fe_escape_owned(c.args[0], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                        st = FeState { tainted: rc_fe_escape_owned(c.args[0], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
                     }
                     if (fa.field == "with" && c.args.len() == 2) {
                         // element-type gate (native: rc-tracked pointer elements
@@ -53372,7 +53386,7 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                         var et: string = "";
                         if (is_array_type_name(rt)) { et = rt[0:rt.len() - 2] + ""; }
                         if (et == "string") { st = FeState { tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
-                        else { st = FeState { tainted: rc_fe_escape_owned(c.args[1], st.tainted), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                        else { st = FeState { tainted: rc_fe_escape_owned(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
                     }
                 },
                 _ => {}
