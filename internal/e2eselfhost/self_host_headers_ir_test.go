@@ -33,8 +33,8 @@ function lower(s: string): string {
     var i: i32 = 0;
     while (i < s.len()) {
         var c: i32 = s[i] as i32;
-        if (c >= 65 && c <= 90) { out = out + alpha[c - 65 : c - 65 + 1]; }
-        else { out = out + s[i:i+1]; }
+        if (c >= 65 && c <= 90) { out = out + slice_unchecked(alpha, c - 65, c - 65 + 1); }
+        else { out = out + slice_unchecked(s, i, i+1); }
         i = i + 1;
     }
     return out;

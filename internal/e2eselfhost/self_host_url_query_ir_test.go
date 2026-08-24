@@ -38,7 +38,7 @@ function url_decode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i] as i32;
-        var emit: string = s[i:i+1];
+        var emit: string = slice_unchecked(s, i, i+1);
         var consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
             var h1: i32 = url_hex_val(s[i+1] as i32);
@@ -71,8 +71,8 @@ function query_parse(s: string): Map[string, string[]] {
                 var eq: i32 = -1;
                 var j: i32 = pair_start;
                 while (j < i) { if (s[j] == 61) { eq = j; break; } j = j + 1; }
-                if (eq >= 0) { m = append_pair(m, url_decode(s[pair_start:eq]), url_decode(s[eq+1:i])); }
-                else { m = append_pair(m, url_decode(s[pair_start:i]), ""); }
+                if (eq >= 0) { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, eq)), url_decode(slice_unchecked(s, eq+1, i))); }
+                else { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, i)), ""); }
             }
             pair_start = i + 1;
         }

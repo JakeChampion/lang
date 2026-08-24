@@ -66,7 +66,7 @@ function main(): i32 {
     var s: string = "";
     var j: i32 = 0;
     while (j < xs.len()) { s = s + "ab"; j = j + 1; }
-    var mid: string = s[2:6] + "";
+    var mid: string = slice_unchecked(s, 2, 6) + "";
     if (mid.len() != 4 || mid == "zzzz") { return 2; }
     var f: f64 = 3.0;
     var g: f64 = f * f + 4.0;

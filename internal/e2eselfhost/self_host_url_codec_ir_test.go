@@ -33,7 +33,7 @@ function url_encode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i] as i32;
-        if (url_unreserved(b)) { out = out + s[i:i+1]; }
+        if (url_unreserved(b)) { out = out + slice_unchecked(s, i, i+1); }
         else {
             var hi: i32 = (b >> 4) & 15;
             var lo: i32 = b & 15;
@@ -56,7 +56,7 @@ function url_decode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i] as i32;
-        var emit: string = s[i:i+1];
+        var emit: string = slice_unchecked(s, i, i+1);
         var consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
             var h1: i32 = url_hex_val(s[i+1] as i32);

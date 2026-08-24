@@ -12,11 +12,11 @@ import (
 // formatSpecIRCases exercise std/format's Rust-style
 // `{:[fill]align[sign][0]width.precision}` format specs (issue #2684) through the
 // self-host IR path on x86-64 + wasm — including the `+` sign and sign-aware `0`
-// zero-pad flags (the latter slices a leading sign off with `val[1:val.len()]`).
+// zero-pad flags (the latter slices a leading sign off with `slice_unchecked`).
 // (TestSelfHostFormatStringIR* already covers the bare `{}` substitution.) The
 // single-program driver resolves no imports, so the whole format + spec machinery
 // is inlined as `fmt_format` and helpers; this verifies the constructs the spec
-// path lowers to compile on the IR path: forward `}`-scan with `s[a:b]` slices,
+// path lowers to compile on the IR path: forward `}`-scan with `slice_unchecked`,
 // byte compares on `spec[p]`, `boolean`-returning helpers with `||`, an int-coded
 // align switch, and the fill-repeat concat loop. Each program returns the rendered
 // string's length (kept <= 126) and is oracle-checked against the reference
@@ -42,7 +42,7 @@ function fmt_apply_spec(s: string, spec: string): string {
     var fill: str = " ";
     var align: i32 = 1;
     if (p + 1 < m && fmt_is_align(spec[p + 1] as i32)) {
-        fill = spec[p:p + 1];
+        fill = slice_unchecked(spec, p, p + 1);
         align = fmt_align_code(spec[p + 1] as i32);
         p = p + 2;
     } else if (p < m && fmt_is_align(spec[p] as i32)) {
@@ -67,7 +67,7 @@ function fmt_apply_spec(s: string, spec: string): string {
             prec = prec * 10 + ((spec[p] as i32) - 48);
             p = p + 1;
         }
-        if (val.len() > prec) { val = val[0:prec] + ""; }
+        if (val.len() > prec) { val = slice_unchecked(val, 0, prec) + ""; }
     }
     if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
         val = "+" + val;
@@ -77,7 +77,7 @@ function fmt_apply_spec(s: string, spec: string): string {
     var pad: i32 = width - vlen;
     if (zero) {
         if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
-            return val[0:1] + fmt_repeat("0", pad) + val[1:val.len()];
+            return slice_unchecked(val, 0, 1) + fmt_repeat("0", pad) + slice_unchecked(val, 1, val.len());
         }
         return fmt_repeat("0", pad) + val;
     }
@@ -106,7 +106,7 @@ function fmt_format(fmt: string, args: string[]): string {
             var isPlaceholder: boolean = false;
             var spec: str = "";
             if (j < n) {
-                spec = fmt[i + 1:j];
+                spec = slice_unchecked(fmt, i + 1, j);
                 if (spec.len() == 0) { isPlaceholder = true; }
                 else if (spec[0] == 58) { isPlaceholder = true; }
             }
@@ -119,11 +119,11 @@ function fmt_format(fmt: string, args: string[]): string {
                 }
                 i = j + 1;
             } else {
-                out = out + fmt[i:i + 1];
+                out = out + slice_unchecked(fmt, i, i + 1);
                 i = i + 1;
             }
         } else {
-            out = out + fmt[i:i + 1];
+            out = out + slice_unchecked(fmt, i, i + 1);
             i = i + 1;
         }
     }

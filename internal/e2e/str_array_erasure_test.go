@@ -43,7 +43,7 @@ function main(): i32 {
     // Slicing a string yields str views; holding several is the shape
     // std/unicode's segmentation wanted and could not have.
     var src: string = "hello";
-    var parts: str[] = [src[0 : 2], src[2 : 5]];
+    var parts: str[] = [slice_unchecked(src, 0, 2), slice_unchecked(src, 2, 5)];
     if (parts.len() != 2) { return 8; }
     if (parts[0].len() != 2) { return 9; }
     if (parts[1].len() != 3) { return 10; }

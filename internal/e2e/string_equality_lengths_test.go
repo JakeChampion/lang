@@ -38,10 +38,10 @@ function main(): i32 {
     var alpha: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDE";
     var n: i32 = 0;
     while (n <= 41) {
-        var a: string = alpha[0:n].to_owned();
+        var a: string = slice_unchecked(alpha, 0, n).to_owned();
         var b: string = "";
         var i: i32 = 0;
-        while (i < n) { b = b + alpha[i:i + 1].to_owned(); i = i + 1; }
+        while (i < n) { b = b + slice_unchecked(alpha, i, i + 1).to_owned(); i = i + 1; }
         if (a.len() != n) { return 1; }
         if (b.len() != n) { return 2; }
         if (!ref_eq(a, b)) { return 3; }
@@ -52,7 +52,7 @@ function main(): i32 {
         // overlapping tail in turn.
         var p: i32 = 0;
         while (p < n) {
-            var c: string = alpha[0:p].to_owned() + "!" + alpha[p + 1:n].to_owned();
+            var c: string = slice_unchecked(alpha, 0, p).to_owned() + "!" + slice_unchecked(alpha, p + 1, n).to_owned();
             if (c.len() != n) { return 6; }
             if (ref_eq(a, c)) { return 7; }
             if (a == c) { return 8; }
@@ -61,7 +61,7 @@ function main(): i32 {
         }
         // Length mismatch, both operand orders.
         if (n > 0) {
-            var shorter: string = alpha[0:n - 1].to_owned();
+            var shorter: string = slice_unchecked(alpha, 0, n - 1).to_owned();
             if (a == shorter) { return 10; }
             if (shorter == a) { return 11; }
         }

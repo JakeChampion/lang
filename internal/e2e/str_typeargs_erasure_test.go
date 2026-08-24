@@ -30,8 +30,8 @@ import "core/map";
 // A str[] built by append and returned across a function boundary.
 function split2(s: string): str[] {
     var o: str[] = [];
-    o = o.append(s[0 : 1]);
-    o = o.append(s[1 : 3]);
+    o = o.append(slice_unchecked(s, 0, 1));
+    o = o.append(slice_unchecked(s, 1, 3));
     return o;
 }
 
@@ -65,7 +65,7 @@ function main(): i32 {
     var many: str[] = [];
     var i: i32 = 0;
     while (i < 5) {
-        many = many.append(src[i : i + 2]);
+        many = many.append(slice_unchecked(src, i, i + 2));
         i = i + 1;
     }
     var total: i32 = 0;

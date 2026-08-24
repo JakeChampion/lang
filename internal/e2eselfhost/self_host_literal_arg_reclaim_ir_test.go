@@ -297,7 +297,7 @@ function main(): i32 {
     while (i < 3000) {
         var r: string = pick(mks(i));
         if (r.len() < 41) { bad = 1; }
-        if (r[0:1] != "a") { bad = 1; }
+        if (slice_unchecked(r, 0, 1) != "a") { bad = 1; }
         i = i + 1;
     }
     if (__rc_underflow() != 0) { return 99; }

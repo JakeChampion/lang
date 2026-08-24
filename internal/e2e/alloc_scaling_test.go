@@ -817,7 +817,7 @@ function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function churn(n: i32): i32 {
     var t: i32 = 0;

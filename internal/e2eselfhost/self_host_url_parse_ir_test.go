@@ -32,15 +32,15 @@ function uri_parse(s: string): Option[Uri] {
         i = i + 1;
     }
     var rest_start: i32 = 0;
-    if (scheme_end >= 0) { u = Uri { ...u, scheme: s[0:scheme_end] }; rest_start = scheme_end + 3; }
+    if (scheme_end >= 0) { u = Uri { ...u, scheme: slice_unchecked(s, 0, scheme_end) }; rest_start = scheme_end + 3; }
     var frag_start: i32 = n;
     i = rest_start;
     while (i < n) { if (s[i] == 35) { frag_start = i; break; } i = i + 1; }
-    if (frag_start < n) { u = Uri { ...u, fragment: s[frag_start+1:n] }; }
+    if (frag_start < n) { u = Uri { ...u, fragment: slice_unchecked(s, frag_start+1, n) }; }
     var query_start: i32 = frag_start;
     i = rest_start;
     while (i < frag_start) { if (s[i] == 63) { query_start = i; break; } i = i + 1; }
-    if (query_start < frag_start) { u = Uri { ...u, query: s[query_start+1:frag_start] }; }
+    if (query_start < frag_start) { u = Uri { ...u, query: slice_unchecked(s, query_start+1, frag_start) }; }
     var authority_end: i32 = query_start;
     if (scheme_end >= 0) {
         i = rest_start;
@@ -54,10 +54,10 @@ function uri_parse(s: string): Option[Uri] {
             var port: i32 = 0;
             i = colon + 1;
             while (i < authority_end) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { port = 0; break; } port = port * 10 + (b - 48); i = i + 1; }
-            u = Uri { ...u, host: s[rest_start:colon], port: port };
-        } else { u = Uri { ...u, host: s[rest_start:authority_end] }; }
+            u = Uri { ...u, host: slice_unchecked(s, rest_start, colon), port: port };
+        } else { u = Uri { ...u, host: slice_unchecked(s, rest_start, authority_end) }; }
     }
-    u = Uri { ...u, path: s[authority_end:query_start] };
+    u = Uri { ...u, path: slice_unchecked(s, authority_end, query_start) };
     return Some(u);
 }
 function field(s: string, which: i32): i32 {

@@ -45,7 +45,7 @@ function main(): i32 {
             // Pad a counter out to exactly want_len bytes.
             var k: string = i.to_string();
             while (k.len() < want_len) { k = k + "x"; }
-            k = k[0:want_len].to_owned();
+            k = slice_unchecked(k, 0, want_len).to_owned();
             if (!m.has(k)) {
                 m = m.insert(k, i);
                 made = made.append(k);

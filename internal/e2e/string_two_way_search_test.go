@@ -126,15 +126,15 @@ function main(): i32 {
                     if (hay.replacen(nee, "XY", 100) != rep) { return 12; }
                     if (want.len() > 0) {
                         var one: string = hay.replace_n(nee, "XY", 1);
-                        if (one != hay[0:want[0]] + "XY" + hay[want[0] + nlen:hay.len()]) { return 13; }
+                        if (one != slice_unchecked(hay, 0, want[0]) + "XY" + slice_unchecked(hay, want[0] + nlen, hay.len())) { return 13; }
                     }
 
                     // splitn(2) is split_once's array form.
                     var s2: string[] = hay.splitn(nee, 2);
                     if (first >= 0) {
                         if (s2.len() != 2) { return 14; }
-                        if (s2[0] != hay[0:first]) { return 15; }
-                        if (s2[1] != hay[first + nlen:hay.len()]) { return 16; }
+                        if (s2[0] != slice_unchecked(hay, 0, first)) { return 15; }
+                        if (s2[1] != slice_unchecked(hay, first + nlen, hay.len())) { return 16; }
                     } else {
                         if (s2.len() != 1 || s2[0] != hay) { return 17; }
                     }

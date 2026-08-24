@@ -696,7 +696,7 @@ function main(): i32 {
         var j: i32 = 0;
         while (j < 26) {
             g.code = g.code.append(0);
-            g = x86_label(g, alpha[i:i + 1] + alpha[j:j + 1]);
+            g = x86_label(g, slice_unchecked(alpha, i, i + 1) + slice_unchecked(alpha, j, j + 1));
             j = j + 1;
         }
         i = i + 1;
