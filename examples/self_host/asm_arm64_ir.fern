@@ -5014,6 +5014,11 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = ioe4.state;
         var ioe5: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Other");
         s = ioe5.state;
+        // InvalidUtf8 is constructed by rt_src_read_file's D9 validation
+        // (#5714) — the one IoError variant no compiler user-code names, so
+        // it needs the same early intern as the rest.
+        var ioe6: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "InvalidUtf8");
+        s = ioe6.state;
     }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
