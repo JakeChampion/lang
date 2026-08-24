@@ -9067,7 +9067,70 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
         parts = parts.append(emit_wasm_struct_arr_elems_drop_body(aet[aeti], mod.structs, mr_types));
         aeti = aeti + 1;
     }
+    // Per-element-type ENUM-array walk helpers ($__enum_arr_elems_drop_<E>):
+    // derived from the struct_drop types' enum-array fields right here — the
+    // admission (enum_arr_elems_walk_ok) is a pure decl predicate, so no
+    // cache-driven reachability list is needed.
+    var eadone: string[] = [];
+    var easdti: i32 = 0;
+    while (easdti < sdt.len()) {
+        var eafc: i32 = irlower.decl_field_count(mod.structs, sdt[easdti]);
+        var eak: i32 = 0;
+        while (eak < eafc) {
+            var eaft: string = irlower.decl_field_type_at(mod.structs, sdt[easdti], eak);
+            if (irlower.is_enum_array_field_type(mod.structs, eaft)) {
+                var eae: str = slice_unchecked(eaft, 0, eaft.len() - 2);
+                if (irlower.enum_arr_elems_walk_ok(mod.structs, eae) && util.index_of_str(eadone, eae) < 0) {
+                    eadone = eadone.append(eae + "");
+                    parts = parts.append(emit_wasm_enum_arr_elems_drop_body(eae + "", mod.structs));
+                }
+            }
+            eak = eak + 1;
+        }
+        easdti = easdti + 1;
+    }
     return util.str_join_chunks(parts);
+}
+
+// emit_wasm_enum_arr_elems_drop_body returns the WAT for
+// $__enum_arr_elems_drop_<E>(buf) -> buf — the enum-array sibling of the
+// struct element walk above: per uniquely-owned element, dispatch on the type
+// id at box@0 (the same $__tid_<V> global variant_is compares) and dec the
+// matched variant's leak-safe-array payload fields (offset (k+1)*8) via the
+// rc-guarded $__fern_arr_dec. Admission (enum_arr_elems_walk_ok, at the type
+// derivation) keeps every other payload kind out. Frees neither the element
+// boxes nor the buffer — the caller's arr_dec_ptr still does that.
+pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: parser.StructDecl[]): string {
+    var o: string = "  (func $__enum_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
+    o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
+    o = o + "      (local.set $n (i32.load (local.get $buf)))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $eaed_done (loop $eaed_lp\n";
+    o = o + "        (br_if $eaed_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
+    var vi: i32 = 0;
+    while (vi < structs.len()) {
+        if (structs[vi].enum_owner == e) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs[vi].name);
+            if (offs.len() > 0) {
+                o = o + "          (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs[vi].name) + ")) (then\n";
+                var oi: i32 = 0;
+                while (oi < offs.len()) {
+                    o = o + "            (drop (call $__fern_arr_dec (i32.load offset=" + util.i32_to_string(offs[oi]) + " (local.get $e))))\n";
+                    oi = oi + 1;
+                }
+                o = o + "          ))\n";
+            }
+        }
+        vi = vi + 1;
+    }
+    o = o + "        ))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $eaed_lp))))) \n";
+    o = o + "    (local.get $buf))\n";
+    return o;
 }
 
 // emit_ir_rc_bodies is the single-unit case: derive the three type lists from
@@ -9130,12 +9193,18 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
                     // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field
                     // `X[]` whose element struct X is deep-drop-ok releases each element's
                     // OWN rc fields via $__struct_arr_elems_drop_X BEFORE arr_dec_ptr frees
-                    // the element boxes + buffer. Enum-array elements have no $__struct_drop,
-                    // so they keep the plain arr_dec_ptr (one level).
+                    // the element boxes + buffer. An ENUM-array field whose every variant
+                    // payload is scalar-or-leaksafe-array walks each variant box's array
+                    // payloads via $__enum_arr_elems_drop_<E> the same way.
                     if (irlower.is_struct_array_field_type(structs, ft)) {
                         var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
                         if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
                             o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
+                        }
+                    } else if (irlower.is_enum_array_field_type(structs, ft)) {
+                        var eelem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
+                        if (irlower.enum_arr_elems_walk_ok(structs, eelem_ty)) {
+                            o = o + "    (drop (call $__enum_arr_elems_drop_" + eelem_ty + " " + load + "))\n";
                         }
                     }
                     if (array_field_elem_is_ptr(ft, structs, mr_types)) {
