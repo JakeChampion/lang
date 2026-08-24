@@ -79,6 +79,9 @@ enum_scalar__rebind__unused                   clean  clean  clean on both sides
 enum_scalar__rebind__match                    clean  clean  clean on both sides
 enum_scalar__shadow_siblings__unused          clean  clean  clean on both sides
 enum_scalar__shadow_siblings__match           clean  clean  clean on both sides
+enum_scalar__callarg__read                    clean  clean  the plan-routed escape gate no longer refuses a plain call arg (native parity: computeFreeEligible does not taint call args)
+enum_scalar__callarg__stored_struct           leak   leak   callee keeps the arg in a returned struct field: both sides leak by design (leak-at-worst, never a dangle — native 200/0, selfhost 200/101)
+enum_scalar__callarg__stored_arr              clean  clean  callee keeps the arg in a returned array: the counted element store retains it, the buffer deep-drop and the caller sweep balance
 tuple_mixed__fnscope__read                    clean  clean  clean on both sides
 tuple_mixed__fnscope__unused                  clean  clean  clean on both sides
 tuple_mixed__if_block__read                   clean  clean  clean on both sides
