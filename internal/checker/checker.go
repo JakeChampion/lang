@@ -1369,9 +1369,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_recv(fd, max): u8[] — one blocking read of at most max
+	// bytes; socket data is raw bytes (D9, #5714). The empty array
+	// signals EOF / error / closed alike.
 	c.info.FuncSigs["tcp_recv"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
-		Result: ast.StringType{},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
 	c.info.FuncSigs["tcp_send"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.StringType{}},
