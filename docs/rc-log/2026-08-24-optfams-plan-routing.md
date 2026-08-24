@@ -33,3 +33,24 @@ Pinned as the three `opt_*__callarg__read` matrix cells (the nested-match
 shape duplicates generated coverage). The opt_str floor: the plan grants
 but the family's fresh-init registry path refuses the `Some(mk(..))` call
 form's sweep elsewhere — a bounded leak, recorded, not a hazard.
+
+## CI-caught: the plan is not yet >= the credit gate on call provenance
+
+Shard 7 failed two want-exact-balance suites in the LEAK direction:
+`optarr_from_call_no_match` and `unmatched_err_string_is_released` — a
+`var v: Result[i32[], string] = mk(r)` local the credit gate granted (no
+bare mention anywhere) turned plan-refused: `rc_fe_rhs_tainted`'s user-call
+arm taints on ANY tainted argument, every non-own param is taint-seeded
+regardless of type, so the scalar `r` tainted `v` through its own init.
+Native unt aints this exact shape through `returnsNoParamEscape` (every
+return built from scalars and fresh constructions, a call-graph fixpoint
+with `paramCountedRetain` as its sibling) — an oracle the rc_fe port does
+not carry yet.
+
+The staged fix is the UNION of the two individually-sound grants: the
+credit-side escape proof keeps every pre-routing grant, the plan adds the
+call-arg grants it alone can see (still refusing matched locals). The
+credit half of the union retires when the returnsNoParamEscape port lands
+— that port is the named next burn-down, and it converges rhs-taint
+divergences well beyond these two suites (the self-compile RSS driver's
+"real leak" class rides the same oracle natively).
