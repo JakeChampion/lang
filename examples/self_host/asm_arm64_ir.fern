@@ -2255,6 +2255,8 @@ pub function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitS
         // absorbed as they are appended, regardless of discovery order.
         if (sdnd.len() > 22 && slice_unchecked(sdnd, 0, 22) == "struct_arr_elems_drop:") {
             s = emit_arm64_struct_arr_elems_drop_one(s, slice_unchecked(sdnd, 22, sdnd.len()));
+        } else if (sdnd.len() > 20 && slice_unchecked(sdnd, 0, 20) == "enum_arr_elems_drop:") {
+            s = emit_arm64_enum_arr_elems_drop_one(s, slice_unchecked(sdnd, 20, sdnd.len()));
         } else if (sdnd.len() > 12 && slice_unchecked(sdnd, 0, 12) == "struct_drop:") {
             s = emit_arm64_struct_drop_one(s, slice_unchecked(sdnd, 12, sdnd.len()));
         }
@@ -2511,7 +2513,8 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             // below frees the boxes. The helper calls __struct_drop_X, clobbering
             // x10/x11/x12, so reload box from the frame-relative stack arg [sp, #16]
             // (entry pushed one stp frame), mirroring the k_struct deep-drop arm.
-            // Enum-array elements have no __struct_drop, so they stay shallow.
+            // Enum-array elements take the __enum_arr_elems_drop_<E> walk when
+            // enum_arr_elems_walk_ok admits the element enum.
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
                 var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
@@ -2520,6 +2523,20 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
                     s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
+                    s = s.write("    add sp, sp, #16\n");
+                    s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
+                }
+            } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+                // The ENUM-array sibling (see asm_ir's twin): shape-dispatch
+                // each element and dec its leak-safe-array payloads before the
+                // box decs below, gated on enum_arr_elems_walk_ok.
+                var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+                    var easan: string = asmcore.sanitize_label(eaty);
+                    s = s.need("enum_arr_elems_drop:" + eaty);
+                    s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    bl __fn___enum_arr_elems_drop_" + easan + "\n");
                     s = s.write("    add sp, sp, #16\n");
                     s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
                 }
@@ -2666,6 +2683,80 @@ function emit_arm64_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string)
     s = s.write("    b .Lsaed_" + san + "_loop\n");
     s = s.write(".Lsaed_" + san + "_ret:\n");
     s = s.write("    mov x0, x19\n");                           // return buffer (caller dec's it)
+    s = s.write("    ldp x19, x20, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_arm64_enum_arr_elems_drop_one is the arm64 transcription of
+// asm_ir.emit_ir_enum_arr_elems_drop_one: __enum_arr_elems_drop_<E>(buffer)
+// walks a uniquely-owned enum-array buffer, shape-dispatches each uniquely-
+// owned element (box@0 against the interned variant labels) and decs the
+// matched variant's leak-safe-array payload fields via the rc-guarded
+// __fern_arr_dec. x19=buffer, x20=index, x21=element survive the calls.
+function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(ety);
+    s = s.write(".weak __fn___enum_arr_elems_drop_" + san + "\n");
+    s = s.write("__fn___enum_arr_elems_drop_" + san + ":\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    stp x19, x20, [sp, #-16]!\n");
+    s = s.write("    stp x21, x22, [sp, #-16]!\n");
+    s = s.write("    ldr x19, [sp, #48]\n");                    // buffer (arg + 48 for three stp saves)
+    s = s.write("    cmp x19, #16, lsl #12\n");
+    s = s.write("    blo .Leaed_" + san + "_ret\n");
+    s = s.write("    str x19, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_is_unique\n");           // shared buffer -> elements shared -> skip
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    cbz x0, .Leaed_" + san + "_ret\n");
+    s = s.write("    mov x20, #0\n");                           // i = 0
+    s = s.write(".Leaed_" + san + "_loop:\n");
+    s = s.write("    ldr x0, [x19]\n");                         // len = buffer[0]
+    s = s.write("    cmp x20, x0\n");
+    s = s.write("    bge .Leaed_" + san + "_ret\n");
+    s = s.write("    add x1, x20, #1\n");
+    s = s.write("    ldr x21, [x19, x1, lsl #3]\n");            // elem = buffer[(i+1)*8]
+    s = s.write("    cmp x21, #16, lsl #12\n");
+    s = s.write("    blo .Leaed_" + san + "_next\n");
+    s = s.write("    str x21, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_is_unique\n");           // shared element (aliased out) -> skip
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    cbz x0, .Leaed_" + san + "_next\n");
+    var vi: i32 = 0;
+    var vlabel: i32 = 0;
+    while (vi < s.struct_decls.len()) {
+        if (s.struct_decls[vi].enum_owner == ety) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls[vi].name);
+            if (offs.len() > 0) {
+                var vlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, s.struct_decls[vi].name);
+                s = vlo.state;
+                var vls: string = util.i32_to_string(vlabel);
+                s = s.write("    ldr x0, [x21]\n");             // shape ptr @0
+                s = s.write("    adrp x1, " + vlo.label + "\n");
+                s = s.write("    add x1, x1, :lo12:" + vlo.label + "\n");
+                s = s.write("    cmp x0, x1\n");
+                s = s.write("    bne .Leaed_" + san + "_v" + vls + "\n");
+                var oi: i32 = 0;
+                while (oi < offs.len()) {
+                    s = s.write("    ldr x0, [x21, #" + util.i32_to_string(offs[oi]) + "]\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    bl __fn___fern_arr_dec\n");
+                    s = s.write("    add sp, sp, #16\n");
+                    oi = oi + 1;
+                }
+                s = s.write("    b .Leaed_" + san + "_next\n");
+                s = s.write(".Leaed_" + san + "_v" + vls + ":\n");
+                vlabel = vlabel + 1;
+            }
+        }
+        vi = vi + 1;
+    }
+    s = s.write(".Leaed_" + san + "_next:\n");
+    s = s.write("    add x20, x20, #1\n");
+    s = s.write("    b .Leaed_" + san + "_loop\n");
+    s = s.write(".Leaed_" + san + "_ret:\n");
+    s = s.write("    mov x0, x19\n");                           // return buffer (caller decs it)
+    s = s.write("    ldp x21, x22, [sp], #16\n");
     s = s.write("    ldp x19, x20, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");

@@ -6463,6 +6463,8 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
         // driven loop.
         if (nd.len() > 22 && slice_unchecked(nd, 0, 22) == "struct_arr_elems_drop:") {
             s = emit_ir_struct_arr_elems_drop_one(s, slice_unchecked(nd, 22, nd.len()));
+        } else if (nd.len() > 20 && slice_unchecked(nd, 0, 20) == "enum_arr_elems_drop:") {
+            s = emit_ir_enum_arr_elems_drop_one(s, slice_unchecked(nd, 20, nd.len()));
         } else if (nd.len() > 12 && slice_unchecked(nd, 0, 12) == "struct_drop:") {
             s = emit_ir_struct_drop_one(s, slice_unchecked(nd, 12, nd.len()));
         }
@@ -6591,8 +6593,9 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             // existing element/buffer arr_dec below still frees the boxes — the helper
             // only ADDS the field release the shallow walk used to leak. The helper
             // calls __struct_drop_X, clobbering r9/r10/r11, so reload box from the
-            // frameless stack arg 8(%rsp) afterwards. Enum-array elements have no
-            // __struct_drop (enums aren't structs), so they stay shallow.
+            // frameless stack arg 8(%rsp) afterwards. Enum-array elements take the
+            // __enum_arr_elems_drop_<E> walk when enum_arr_elems_walk_ok admits
+            // the element enum.
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
                 var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
@@ -6601,6 +6604,25 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
                     s = s.write("    movq " + off + "(%r11), %rdi\n");      // buffer
                     s = s.write("    pushq %rdi\n");
                     s = s.write("    call __fn___struct_arr_elems_drop_" + esan + "\n");
+                    s = s.write("    addq $8, %rsp\n");
+                    s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
+                }
+            } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+                // The ENUM-array sibling: shape-dispatch each element and dec
+                // its leak-safe-array payloads before the box decs below —
+                // enum_arr_elems_walk_ok admits only enums whose every payload
+                // is a scalar or a leak-safe array (the one kind whose
+                // construction counting is guaranteed), so the walk's
+                // rc-guarded decs balance. The elements used to stay shallow
+                // and every payload buffer stranded (the construction-retain
+                // matrix's enum_arr__fresh cell).
+                var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+                    var easan: string = asmcore.sanitize_label(eaty);
+                    s = s.need("enum_arr_elems_drop:" + eaty);
+                    s = s.write("    movq " + off + "(%r11), %rdi\n");      // buffer
+                    s = s.write("    pushq %rdi\n");
+                    s = s.write("    call __fn___enum_arr_elems_drop_" + easan + "\n");
                     s = s.write("    addq $8, %rsp\n");
                     s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
                 }
@@ -6749,6 +6771,88 @@ function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): a
     s = s.write("    jmp .Lsaed_" + san + "_loop\n");
     s = s.write(".Lsaed_" + san + "_ret:\n");
     s = s.write("    movq %rbx, %rax\n");                        // return buffer (caller dec's it)
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_enum_arr_elems_drop_one emits one __enum_arr_elems_drop_<E>(buffer)
+// body — the enum-array sibling of the struct element walk above: for each
+// uniquely-owned element, dispatch on the variant SHAPE pointer (box@0, the
+// same interned .S label struct_make writes and variant_is compares) and dec
+// the matched variant's leak-safe-array payload fields ((k+1)*8) via the
+// rc-guarded __fern_arr_dec. Admission (enum_arr_elems_walk_ok, checked at
+// the call site) keeps every other payload kind out, so each dec is balanced
+// by the ctor's counting: a fresh literal payload is sole-owned (freed), a
+// bare-ident payload was dup'd at construction (dec'd back). The element and
+// buffer boxes themselves are still freed by the caller's existing walk.
+// %rbx=buffer, %r12=index, %r13=element survive the calls (callees clobber
+// only rax/rcx/rdx/rsi/rdi/r8).
+function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(ety);
+    s = s.write(".weak __fn___enum_arr_elems_drop_" + san + "\n");
+    s = s.write("__fn___enum_arr_elems_drop_" + san + ":\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    movq 32(%rsp), %rbx\n");                    // buffer (arg 8 + 24 for three pushes)
+    s = s.write("    cmpq $0x10000, %rbx\n");
+    s = s.write("    jb .Leaed_" + san + "_ret\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    call __fn___fern_rc_is_unique\n");          // shared buffer -> elements shared -> skip
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Leaed_" + san + "_ret\n");
+    s = s.write("    xorq %r12, %r12\n");                        // i = 0
+    s = s.write(".Leaed_" + san + "_loop:\n");
+    s = s.write("    movq (%rbx), %rax\n");                      // len = buffer[0]
+    s = s.write("    cmpq %rax, %r12\n");
+    s = s.write("    jge .Leaed_" + san + "_ret\n");
+    s = s.write("    movq %r12, %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq (%rbx,%rcx,8), %r13\n");               // elem = buffer[(i+1)*8]
+    s = s.write("    cmpq $0x10000, %r13\n");
+    s = s.write("    jb .Leaed_" + san + "_next\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    call __fn___fern_rc_is_unique\n");          // shared element (aliased out) -> skip payload release
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Leaed_" + san + "_next\n");
+    var vi: i32 = 0;
+    var vlabel: i32 = 0;
+    while (vi < s.struct_decls.len()) {
+        if (s.struct_decls[vi].enum_owner == ety) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls[vi].name);
+            if (offs.len() > 0) {
+                var vlo: ShapeRefOut = shape_ref(s, s.struct_decls[vi].name);
+                s = vlo.state;
+                var vls: string = util.i32_to_string(vlabel);
+                s = s.write("    movq (%r13), %rax\n");          // shape ptr @0
+                s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
+                s = s.write("    cmpq %rcx, %rax\n");
+                s = s.write("    jne .Leaed_" + san + "_v" + vls + "\n");
+                var oi: i32 = 0;
+                while (oi < offs.len()) {
+                    s = s.write("    movq " + util.i32_to_string(offs[oi]) + "(%r13), %rdi\n");
+                    s = s.write("    pushq %rdi\n");
+                    s = s.write("    call __fn___fern_arr_dec\n");
+                    s = s.write("    addq $8, %rsp\n");
+                    oi = oi + 1;
+                }
+                s = s.write("    jmp .Leaed_" + san + "_next\n");
+                s = s.write(".Leaed_" + san + "_v" + vls + ":\n");
+                vlabel = vlabel + 1;
+            }
+        }
+        vi = vi + 1;
+    }
+    s = s.write(".Leaed_" + san + "_next:\n");
+    s = s.write("    incq %r12\n");
+    s = s.write("    jmp .Leaed_" + san + "_loop\n");
+    s = s.write(".Leaed_" + san + "_ret:\n");
+    s = s.write("    movq %rbx, %rax\n");                        // return buffer (caller decs it)
+    s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
     s = s.write("    popq %rbx\n");
     s = s.write("    ret\n");

@@ -36,11 +36,11 @@ enum__local         clean leak   bare enum local: retained (enum arm), source cl
 enum__param         clean leak   param enum bare ident
 enum__fieldread     clean leak   q.f enum read
 enum__call          clean leak   enum-returning call: not in the fresh-ctor class, retained, strands
-enum_arr__fresh     clean leak   fresh [E.A(..)] literal: enum-array field admission missing even for fresh
-enum_arr__local     clean leak   bare enum-array ident
-enum_arr__param     clean leak   param enum-array
-enum_arr__fieldread clean leak   q.f enum-array read
-enum_arr__call      clean leak   enum-array producer result
+enum_arr__fresh     clean clean  fresh [E.A(..)] literal: __enum_arr_elems_drop walks the payloads
+enum_arr__local     clean leak   bare enum-array ident: handover uncounted, source claim strands
+enum_arr__param     clean leak   param enum-array, same uncounted handover
+enum_arr__fieldread clean leak   q.f enum-array read: no construction retain granted yet
+enum_arr__call      clean clean  producer result owned, payload walk releases it
 struct_arr__fresh   clean clean  fresh [Inner{..}] literal owned, deep-dropped
 struct_arr__local   clean leak   bare Inner[] ident
 struct_arr__param   clean leak   param Inner[]

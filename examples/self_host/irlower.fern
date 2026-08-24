@@ -36193,6 +36193,49 @@ function enum_variant_has_rc_payload(structs: parser.StructDecl[], vname: string
     return false;
 }
 
+// enum_arr_elems_walk_ok: the enum-ARRAY element walk (__enum_arr_elems_drop_<E>)
+// may release payloads for enum E — every variant's payload fields are scalars
+// or LEAK-SAFE scalar arrays, and some variant actually carries one. Only that
+// payload kind's counting is guaranteed at construction (the variant ctor incs
+// a bare-ident array payload — the #3720 dup — and a fresh literal is owned),
+// so the walk's rc-guarded arr_dec balances either way; a string / nested-box
+// payload can reach the box uncounted and keeps the enum outside the walk.
+pub function enum_arr_elems_walk_ok(structs: parser.StructDecl[], ename: string): boolean {
+    if (!decl_is_enum(structs, ename)) { return false; }
+    var any_arr: boolean = false;
+    var vi: i32 = 0;
+    while (vi < structs.len()) {
+        if (structs[vi].enum_owner == ename) {
+            var n: i32 = decl_field_count(structs, structs[vi].name);
+            var fi: i32 = 0;
+            while (fi < n) {
+                var ft: string = decl_field_type_at(structs, structs[vi].name, fi);
+                if (is_leaksafe_array_field(ft)) { any_arr = true; }
+                else if (!is_scalar_type_name(ft)) { return false; }
+                fi = fi + 1;
+            }
+        }
+        vi = vi + 1;
+    }
+    return any_arr;
+}
+
+// enum_walk_payload_offsets: for one variant, the byte offsets of its
+// leak-safe-array payload fields ((k+1)*8 — shape@0, fields@8+), for the
+// element-walk emitters.
+pub function enum_walk_payload_offsets(structs: parser.StructDecl[], vname: string): i32[] {
+    var out: i32[] = [];
+    var n: i32 = decl_field_count(structs, vname);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (is_leaksafe_array_field(decl_field_type_at(structs, vname, fi))) {
+            out = out.append((fi + 1) * 8);
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
 // enum_all_variants_rc_droppable: every variant of `enum_name` is rc-droppable AND
 // at least one variant actually carries an rc payload. The second clause keeps this
 // set DISJOINT from the all-scalar set (enum_all_variants_scalar) — a pure-scalar
