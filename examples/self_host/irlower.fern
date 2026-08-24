@@ -5864,6 +5864,9 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "arg_at" && c.args.len() == 1) { return true; }
                     // string_from_bytes_unchecked(arr) packs bytes into a fresh string box.
                     if (cid.name == "string_from_bytes_unchecked") { return true; }
+                    // slice_unchecked(s, a, b) yields the string slice s[a:b]
+                    // (the ExprSlice string arm as a builtin, #5634).
+                    if (cid.name == "slice_unchecked" && c.args.len() == 3) { return true; }
                     // read_line() returns Option[string] now (#4369), opt-tracked via
                     // the asmcore Option type + opt_ret_type, not str-tracked here.
                     // The string-returning str_* free builtins (transform family) —
@@ -6135,6 +6138,9 @@ pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                             || cid.name == "str_repeat") { return 0; }
                     if (cid.name == "chr" || cid.name == "string_from_bytes_unchecked") { return 0; }
+                    // slice_unchecked is the builtin spelling of `s[a:b]` —
+                    // the same zero-copy view as the ExprSlice arm above.
+                    if (cid.name == "slice_unchecked" && c.args.len() == 3) { return 2; }
                     // __raw_string boxes a freshly-__raw_alloc'd buffer → a fresh
                     // owned string (#2649 Tier-2 floor).
                     if (cid.name == "__raw_string" && c.args.len() == 2) { return 0; }
@@ -9498,6 +9504,19 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         var sfb: LowerState = lower_expr(c.args[0], s);
         if (!sfb.ok) { return sfb; }
         return sfb.emit(ir.op_str_from_bytes());
+    }
+    // slice_unchecked(s, a, b) — `s[a:b]` under its honest name (#5634):
+    // the same [src, start, end] + str_slice ops as the ExprSlice string
+    // arm, parked-view drain included, so the two forms cannot drift.
+    if (cid.name == "slice_unchecked" && c.args.len() == 3) {
+        var sust: ArgStash = lower_view_borrowed_parked(c.args[0], s);
+        var sus: LowerState = sust.state;
+        if (!sus.ok) { return sus; }
+        sus = lower_expr(c.args[1], sus);
+        if (!sus.ok) { return sus; }
+        sus = lower_expr(c.args[2], sus);
+        if (!sus.ok) { return sus; }
+        return free_parked_view_after(sus.emit(ir.op_str_slice()), sust.slot);
     }
     // random_bytes(n): a fresh u8[] of n CSPRNG bytes (arr_get
     // reads the slots); the IR backends emit the
@@ -53505,6 +53524,9 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                     // tcp_recv(fd, max): a fresh rc=1 u8[] box; both
                     // arguments are scalars (fd, byte count).
                     if (cid.name == "tcp_recv") { return false; }
+                    // slice_unchecked(s, a, b): the ExprSlice string arm
+                    // spelled as a builtin — same untainted result.
+                    if (cid.name == "slice_unchecked" && c.args.len() == 3) { return false; }
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.

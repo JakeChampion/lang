@@ -7565,7 +7565,7 @@ pub function builtin_function_names(): string[] {
         // reports E001 on `len(a)`, so this is a deliberate leniency vs Go,
         // like the `bool`/`boolean` one; not differentially tested.)
         "map_new", "map_new_i32", "strbuf_append", "strbuf_reset",
-        "strbuf_take", "string_from_bytes_unchecked", "chr", "len",
+        "strbuf_take", "string_from_bytes_unchecked", "slice_unchecked", "chr", "len",
         // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
         // front-end builtin (like map_new); get/set are method calls, not
         // bare names, so only the constructor needs the E001 suppression.

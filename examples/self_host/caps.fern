@@ -109,6 +109,7 @@ pub function ungated(): string[] {
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
             "map_new", "cell_new", "string_from_bytes_unchecked",
+            "slice_unchecked",
             "int_to_string"];
 }
 
