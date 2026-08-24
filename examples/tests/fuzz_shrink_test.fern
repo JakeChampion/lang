@@ -1,5 +1,7 @@
 import "std/fuzz";
 import "std/test";
+import "std/string";
+import "std/array";
 // examples/tests/fuzz_shrink_test.fern — `r.fuzz_shrink`
 // walkthrough. Same shape as the base `r.fuzz` but on a
 // failure the harness minimises the offending input before
@@ -11,30 +13,31 @@ import "std/test";
 // (`TestRunnerFuzzShrinkSurfacesMinimisedInput`) and in
 // the dedicated reducer probes below.
 
-// Property that holds: every input that arrives is a string,
-// `len(input) >= 0` always. This shouldn't ever fire — the
-// shrinker still runs the mutation pass but never gets to
-// minimise anything.
-function check_len_nonneg(input: string): test.TestOutcome {
+// Property that holds: `input.len() >= 0` for every byte
+// array. This shouldn't ever fire — the shrinker still runs
+// the mutation pass but never gets to minimise anything.
+function check_len_nonneg(input: u8[]): test.TestOutcome {
     if (input.len() >= 0) { return test.pass(); }
     return test.fail("len returned negative");
 }
 
-// Property that holds: `s.reverse_bytes().reverse_bytes() == s`
-// — the round-trip identity. The fuzz_default_iterations
-// loop puts the byte-level mutator through its paces; if
-// the round-trip ever broke, the shrinker would localise
-// the trigger to a minimal byte sequence.
-function check_reverse_idempotent(input: string): test.TestOutcome {
-    var twice: string = input.reverse_bytes().reverse_bytes();
-    if (twice == input) { return test.pass(); }
-    return test.fail("reverse_bytes is not idempotent");
+// Property that holds: reversing the bytes twice is the
+// identity — checked directly on the `u8[]` input, no text
+// bridge needed. The fuzz_default_iterations loop puts the
+// byte-level mutator through its paces; if the round-trip
+// ever broke, the shrinker would localise the trigger to a
+// minimal byte sequence.
+function check_reverse_idempotent(input: u8[]): test.TestOutcome {
+    return test.assert_eq_array(input.reverse().reverse(), input);
 }
 
 // Property that holds: every byte in `to_lower(s)` is
-// outside the uppercase range [65, 90].
-function check_to_lower_no_upper(input: string): test.TestOutcome {
-    var lowered: string = input.to_lower();
+// outside the uppercase range [65, 90]. The scan is
+// byte-level and holds for invalid UTF-8 too, so the bridge
+// is `string_from_bytes_unchecked`.
+function check_to_lower_no_upper(input: u8[]): test.TestOutcome {
+    var s: string = string_from_bytes_unchecked(input);
+    var lowered: string = s.to_lower();
     var i: i32 = 0;
     while (i < lowered.len()) {
         var b: i32 = lowered[i] as i32;
@@ -51,16 +54,16 @@ function main(): i32 {
     var r: test.TestRunner = test.test_new("fuzz shrink");
 
     r = r.fuzz_shrink("len non-negative",
-                      ["", "x", "abc"], 50,
+                      ["".bytes(), "x".bytes(), "abc".bytes()], 50,
                       check_len_nonneg);
 
     r = r.fuzz_shrink("reverse_bytes idempotent",
-                      ["", "a", "abc", "hello world"],
+                      ["".bytes(), "a".bytes(), "abc".bytes(), "hello world".bytes()],
                       fuzz.fuzz_default_iterations(),
                       check_reverse_idempotent);
 
     r = r.fuzz_shrink("to_lower has no uppercase",
-                      ["", "Hello", "MIXED", "ALLCAPS"],
+                      ["".bytes(), "Hello".bytes(), "MIXED".bytes(), "ALLCAPS".bytes()],
                       100,
                       check_to_lower_no_upper);
 
