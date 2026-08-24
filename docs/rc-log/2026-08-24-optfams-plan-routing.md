@@ -42,7 +42,7 @@ Shard 7 failed two want-exact-balance suites in the LEAK direction:
 bare mention anywhere) turned plan-refused: `rc_fe_rhs_tainted`'s user-call
 arm taints on ANY tainted argument, every non-own param is taint-seeded
 regardless of type, so the scalar `r` tainted `v` through its own init.
-Native unt aints this exact shape through `returnsNoParamEscape` (every
+Native untaints this exact shape through `returnsNoParamEscape` (every
 return built from scalars and fresh constructions, a call-graph fixpoint
 with `paramCountedRetain` as its sibling) — an oracle the rc_fe port does
 not carry yet.
@@ -54,3 +54,18 @@ credit half of the union retires when the returnsNoParamEscape port lands
 — that port is the named next burn-down, and it converges rhs-taint
 divergences well beyond these two suites (the self-compile RSS driver's
 "real leak" class rides the same oracle natively).
+
+## CI-caught twice more: the alias polarity and the shadow collision
+
+The old-head run also failed the site-key collision suite: `var xs = keep`
+is a bare-ident ALIAS bind, and the plan's fixpoint deliberately forgives an
+alias whose own binding is untainted — #7282's arithmetic, sound only where
+the alias bind RETAINS, which the arr/str/struct/tuple kinds do and the
+Option kinds do not. Granting the aliased source its deep credit re-armed
+the collision over-release (`optaarr_collide` measured frees=450 for
+want=300). The plan halves now carry two more explicit family conjuncts:
+`name_is_alias_bound` refuses any alias-bound source, and OPTAARR's
+name-level grant applies only to a name with ONE binding site (a
+shadow-sibling pair shares the name; granting both is the #7272 class).
+These conjuncts retire when the Option kinds grow alias-bind retains —
+the same co-extensive-retain sequencing as everything else in this step.

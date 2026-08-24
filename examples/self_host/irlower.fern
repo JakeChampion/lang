@@ -33354,7 +33354,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // and the plan adds the call-arg/counted-sink grants the credit gate
         // cannot see. The credit half retires with that oracle's port.
         var oa_esc_ok: boolean = !body_unsafe_for(body, oanm, borrowable, recv_borrow);
-        if (!oa_esc_ok && plan_on) { oa_esc_ok = util.index_of_str(plan_fe, oanm) >= 0; }
+        if (!oa_esc_ok && plan_on) {
+            // The plan verdict is NAME-level, so its half of the union only
+            // applies to a name with ONE binding site — a shadow-sibling pair
+            // shares the name, and granting both re-arms the #7272 collision
+            // over-release the site-keying exists to refuse (the
+            // optaarr_collide suite measures exactly that).
+            var oa_sites: i32 = 0;
+            var oa_sj: i32 = 0;
+            while (oa_sj < oaas.len()) {
+                if (reclaim_site_name(oaas[oa_sj]) == oanm) { oa_sites = oa_sites + 1; }
+                oa_sj = oa_sj + 1;
+            }
+            if (oa_sites == 1 && !name_is_alias_bound(body, oanm)) { oa_esc_ok = util.index_of_str(plan_fe, oanm) >= 0; }
+        }
         if (oa_esc_ok
             && util.index_of_str(reassigned, oanm) < 0
             && !arrarr_row_escapes(body, oanm)
@@ -35330,6 +35343,34 @@ function name_is_match_scrutinee(stmts: parser.Stmt[], name: string): boolean {
             parser.StmtIf(f) => { if (name_is_match_scrutinee(f.then_body, name) || name_is_match_scrutinee(f.else_body, name)) { return true; } },
             parser.StmtWhile(w) => { if (name_is_match_scrutinee(w.body, name)) { return true; } },
             parser.StmtFor(fo) => { if (name_is_match_scrutinee(fo.body, name)) { return true; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// name_is_alias_bound: some `var other = name` bare-ident bind (any nesting)
+// aliases the local `name`. The plan's fixpoint deliberately forgives a
+// bare-ident alias whose own binding is untainted (#7282's arithmetic — the
+// alias bind RETAINS for the arr/str/struct/tuple kinds), but the Option
+// families have no alias-bind retain, so an aliased source must not carry
+// their deep credit: the plan-routed gates keep this as an explicit conjunct
+// (the optaarr_collide suite measures the over-release otherwise).
+function name_is_alias_bound(stmts: parser.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprIdent(id) => { if (id.name == name) { return true; } },
+                    _ => {}
+                }
+            },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { if (name_is_alias_bound(arm.body, name)) { return true; } }
+            },
+            parser.StmtIf(f) => { if (name_is_alias_bound(f.then_body, name) || name_is_alias_bound(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (name_is_alias_bound(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (name_is_alias_bound(fo.body, name)) { return true; } },
             _ => {}
         }
     }
@@ -40247,7 +40288,7 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
                 // yet type through returnsNoParamEscape; the plan adds the
                 // call-arg grants, still refusing any matched local.
                 var os_esc_ok: boolean = !body_unsafe_for(stmts, v.name, [], []);
-                if (!os_esc_ok && plan_on) { os_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
+                if (!os_esc_ok && plan_on) { os_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -40274,7 +40315,7 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
         match (stmt) {
             parser.StmtVar(v) => {
                 var oa_esc_ok: boolean = !body_unsafe_for(stmts, v.name, [], []);
-                if (!oa_esc_ok && plan_on) { oa_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
+                if (!oa_esc_ok && plan_on) { oa_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
