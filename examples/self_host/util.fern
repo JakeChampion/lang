@@ -281,7 +281,7 @@ pub function has_str(xs: string[], s: string): boolean {
 pub function base_type_name(t: string): string {
     var i: i32 = 0;
     while (i < t.len()) {
-        if (t[i] == b'[') { return t[0:i] + ""; }
+        if (t[i] == b'[') { return slice_unchecked(t, 0, i) + ""; }
         i = i + 1;
     }
     return t;
@@ -293,7 +293,7 @@ pub function base_type_name(t: string): string {
 pub function mangled_module(name: string): string {
     var i: i32 = 1;
     while (i + 1 < name.len()) {
-        if (name[i] == b'_' && name[i + 1] == b'_') { return name[0:i] + ""; }
+        if (name[i] == b'_' && name[i + 1] == b'_') { return slice_unchecked(name, 0, i) + ""; }
         i = i + 1;
     }
     return "";
@@ -304,7 +304,7 @@ pub function mangled_module(name: string): string {
 pub function mangled_name(name: string): string {
     var i: i32 = 1;
     while (i + 1 < name.len()) {
-        if (name[i] == b'_' && name[i + 1] == b'_') { return name[i + 2 : name.len()] + ""; }
+        if (name[i] == b'_' && name[i + 1] == b'_') { return slice_unchecked(name, i + 2, name.len()) + ""; }
         i = i + 1;
     }
     return name;
@@ -344,7 +344,7 @@ pub function contains(haystack: string, needle: string): boolean {
     if (haystack.len() < needle.len()) { return false; }
     var i: i32 = 0;
     while (i <= haystack.len() - needle.len()) {
-        if (haystack[i:i + needle.len()] == needle) { return true; }
+        if (slice_unchecked(haystack, i, i + needle.len()) == needle) { return true; }
         i = i + 1;
     }
     return false;
@@ -545,11 +545,11 @@ pub function f64_range_kind(text: string): string { return f64_range_prefix() + 
 pub function is_f64_range_kind(kind: string): boolean {
     var pre: string = f64_range_prefix();
     if (kind.len() < pre.len()) { return false; }
-    return kind[0:pre.len()] == pre;
+    return slice_unchecked(kind, 0, pre.len()) == pre;
 }
 pub function f64_range_message(kind: string): string {
     var pre: string = f64_range_prefix();
-    return "invalid float literal \"" + kind[pre.len():kind.len()] + "\": value out of range";
+    return "invalid float literal \"" + slice_unchecked(kind, pre.len(), kind.len()) + "\": value out of range";
 }
 
 // pf64_div2 halves the fraction buffer 0.B (grade-school left-to-right).
@@ -749,7 +749,7 @@ pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
 pub function dunder_at(name: string): i32 {
   var i: i32 = 1;
   while (i + 1 < name.len()) {
-    if (name[i:i + 2] == "__") { return i; }
+    if (slice_unchecked(name, i, i + 2) == "__") { return i; }
     i = i + 1;
   }
   return 0 - 1;
@@ -761,7 +761,7 @@ pub function dunder_at(name: string): i32 {
 pub function demangle(name: string): string {
   var cut: i32 = dunder_at(name);
   if (cut < 0) { return name; }
-  return name[0:cut] + "." + name[cut + 2:name.len()];
+  return slice_unchecked(name, 0, cut) + "." + slice_unchecked(name, cut + 2, name.len());
 }
 
 // derive_hint renders the "add `@derive(…)` (or `impl … for T`)" clause
@@ -785,10 +785,10 @@ pub function derive_hint(tn: string, derive: string, trait_name: string): string
   }
   var orphan: string = "";
   if (trait_name.len() > 0) {
-    routes = routes + " (or `impl " + trait_name + " for " + tn[cut + 2:tn.len()] + "`)";
+    routes = routes + " (or `impl " + trait_name + " for " + slice_unchecked(tn, cut + 2, tn.len()) + "`)";
     orphan = " (an impl written here instead would be an orphan impl)";
   }
-  return "add " + routes + " in module `" + tn[0:cut] + "`, which declares it and needs `import \"core/cmp\";` there" + orphan;
+  return "add " + routes + " in module `" + slice_unchecked(tn, 0, cut) + "`, which declares it and needs `import \"core/cmp\";` there" + orphan;
 }
 
 // --- import-path resolution -------------------------------------------------
@@ -819,14 +819,14 @@ pub function last_slash(p: string): i32 {
 pub function dir_of(p: string): string {
   var ls: i32 = last_slash(p);
   if (ls < 0) { return ""; }
-  return p[0:ls] + "";
+  return slice_unchecked(p, 0, ls) + "";
 }
 
 // module_name maps an import path to its bundle name: the final path
 // segment (`./a/lexer` → `lexer`, `./parser` → `parser`).
 pub function module_name(import_path: string): string {
   var ls: i32 = last_slash(import_path);
-  if (ls >= 0) { return import_path[ls + 1:import_path.len()] + ""; }
+  if (ls >= 0) { return slice_unchecked(import_path, ls + 1, import_path.len()) + ""; }
   return import_path;
 }
 
@@ -880,5 +880,5 @@ pub function trim(s: string): string {
   var b: i32 = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) { a = a + 1; }
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) { b = b - 1; }
-  return s[a:b] + "";
+  return slice_unchecked(s, a, b) + "";
 }

@@ -49,7 +49,7 @@ pub function ir_eligible(fd: parser.FuncDecl, mod: parser.Module): boolean {
 function is_array_type(t: string): boolean {
     var n: i32 = t.len();
     if (n < 2) { return false; }
-    return t[n - 2 : n] == "[]";
+    return slice_unchecked(t, n - 2, n) == "[]";
 }
 
 // array_ret_fns collects the names of functions whose return type is an array,
@@ -69,7 +69,7 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // carries a default i32 ret_type, so `var xs = if (c) { [..] } else { .. }`
         // was mis-treated as a scalar. Register it (a fresh owned-array move, like
         // any array-returning fn) so the binding tracks as an array (#3224).
-        else if (funcs[i].name.len() >= 6 && funcs[i].name[0:6] == "__lam_" && irlower.lam_leaf_array_elem(funcs[i], funcs, 0) != "") { out = out.append(funcs[i].name); }
+        else if (funcs[i].name.len() >= 6 && slice_unchecked(funcs[i].name, 0, 6) == "__lam_" && irlower.lam_leaf_array_elem(funcs[i], funcs, 0) != "") { out = out.append(funcs[i].name); }
         i = i + 1;
     }
     return out;
@@ -227,23 +227,23 @@ pub function is_fern_helper(name: string): boolean {
 // is_struct_drop_name reports whether a call_direct callee is a per-type
 // __struct_drop_<T> helper (the suffix is the struct type name).
 pub function is_struct_drop_name(name: string): boolean {
-    return name.len() > 14 && name[0:14] == "__struct_drop_";
+    return name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_";
 }
 
 // struct_drop_type returns the struct type T from a "__struct_drop_<T>" name.
 pub function struct_drop_type(name: string): string {
-    return name[14 : name.len()] + "";
+    return slice_unchecked(name, 14, name.len()) + "";
 }
 
 // is_field_reclaim_name reports whether a call_direct callee is a per-type
 // __field_reclaim_<T> helper (the suffix is the struct type name).
 pub function is_field_reclaim_name(name: string): boolean {
-    return name.len() > 16 && name[0:16] == "__field_reclaim_";
+    return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
 }
 
 // field_reclaim_type returns the struct type T from a "__field_reclaim_<T>" name.
 pub function field_reclaim_type(name: string): string {
-    return name[16 : name.len()] + "";
+    return slice_unchecked(name, 16, name.len()) + "";
 }
 
 // is_c_call reports whether a call_direct callee is an FFI shim of the
@@ -257,10 +257,10 @@ pub function field_reclaim_type(name: string): string {
 // wasm has no __c_call either).
 pub function is_c_call(name: string): boolean {
     if (name.len() < 9) { return false; }
-    if (name[0:8] != "__c_call") { return false; }
-    var d: str = name[8:9];
+    if (slice_unchecked(name, 0, 8) != "__c_call") { return false; }
+    var d: str = slice_unchecked(name, 8, 9);
     if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
-    var rest: str = name[9 : name.len()];
+    var rest: str = slice_unchecked(name, 9, name.len());
     return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
@@ -268,7 +268,7 @@ pub function is_c_call(name: string): boolean {
 // callee name (the digit at index 8). The shim body depends only on n, not on
 // the return-type suffix.
 pub function c_call_arity(name: string): i32 {
-    var d: str = name[8:9];
+    var d: str = slice_unchecked(name, 8, 9);
     if (d == "1") { return 1; }
     if (d == "2") { return 2; }
     if (d == "3") { return 3; }
@@ -4301,7 +4301,7 @@ pub function emit_const_agg_data_from(s: asmcore.EmitState, first: i32): asmcore
         var e: string = st.const_aggs[i];
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        var shp: string = e[0 : bar] + "";
+        var shp: string = slice_unchecked(e, 0, bar) + "";
         var vals: string[] = ir.const_struct_values(e);
         st = st.write("    .quad " + util.i32_to_string(vals.len() + 1) + "\n");   // cap @ data-16
         st = st.write("    .quad -1\n");                                            // rc  @ data-8 (immortal)
@@ -6242,8 +6242,8 @@ function emit_ir_field_reclaims(s: asmcore.EmitState): asmcore.EmitState {
     var ni: i32 = 0;
     while (ni < s.needed.len()) {
         var nd: string = s.needed[ni];
-        if (nd.len() > 14 && nd[0:14] == "field_reclaim:") {
-            s = emit_ir_field_reclaim_one(s, nd[14 : nd.len()]);
+        if (nd.len() > 14 && slice_unchecked(nd, 0, 14) == "field_reclaim:") {
+            s = emit_ir_field_reclaim_one(s, slice_unchecked(nd, 14, nd.len()));
         }
         ni = ni + 1;
     }
@@ -6372,7 +6372,7 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
                 // calls __struct_drop_<E>, clobbering r11/r10/r9, so reload all
                 // three from the (frameless, balanced) stack args after it.
                 if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                    var elem_ty: str = fdt[0 : fdt.len() - 2];
+                    var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                     if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                         var esan: string = asmcore.sanitize_label(elem_ty);
                         s = s.need("struct_arr_elems_drop:" + elem_ty);
@@ -6461,10 +6461,10 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
         // yet keep the more specific longer key first for clarity). Each emitter records
         // its own transitive needs (arr_elems -> struct_drop), absorbed by this index-
         // driven loop.
-        if (nd.len() > 22 && nd[0:22] == "struct_arr_elems_drop:") {
-            s = emit_ir_struct_arr_elems_drop_one(s, nd[22 : nd.len()]);
-        } else if (nd.len() > 12 && nd[0:12] == "struct_drop:") {
-            s = emit_ir_struct_drop_one(s, nd[12 : nd.len()]);
+        if (nd.len() > 22 && slice_unchecked(nd, 0, 22) == "struct_arr_elems_drop:") {
+            s = emit_ir_struct_arr_elems_drop_one(s, slice_unchecked(nd, 22, nd.len()));
+        } else if (nd.len() > 12 && slice_unchecked(nd, 0, 12) == "struct_drop:") {
+            s = emit_ir_struct_drop_one(s, slice_unchecked(nd, 12, nd.len()));
         }
         ni = ni + 1;
     }
@@ -6594,7 +6594,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             // frameless stack arg 8(%rsp) afterwards. Enum-array elements have no
             // __struct_drop (enums aren't structs), so they stay shallow.
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                var elem_ty: str = fdt[0 : fdt.len() - 2];
+                var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                     var esan: string = asmcore.sanitize_label(elem_ty);
                     s = s.need("struct_arr_elems_drop:" + elem_ty);
@@ -7309,12 +7309,12 @@ function peephole_push_pop(asm: string): string {
             var folded: boolean = false;
             if (push_at >= 0 && pp_at(asm, bs, i, "popq %")) {
                 var dlo: i32 = bs + 5;
-                if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
                 if (!pp_eq_bytes(asm, src_lo, src_hi, dlo, i)) {
                     strbuf_append("    movq ");
-                    strbuf_append(asm[src_lo:src_hi]);
+                    strbuf_append(slice_unchecked(asm, src_lo, src_hi));
                     strbuf_append(", ");
-                    strbuf_append(asm[dlo:i]);
+                    strbuf_append(slice_unchecked(asm, dlo, i));
                     strbuf_append("\n");
                 }
                 run_start = i + 1;
@@ -7324,7 +7324,7 @@ function peephole_push_pop(asm: string): string {
                     && !pp_has_mem(asm, src_lo, src_hi)) {
                 // The push is dead: this line discards exactly what it wrote.
                 // Both lines go, and nothing is emitted in their place.
-                if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
                 run_start = i + 1;
                 push_at = 0 - 1;
                 folded = true;
@@ -7344,7 +7344,7 @@ function peephole_push_pop(asm: string): string {
         }
         i = i + 1;
     }
-    if (run_start < n) { strbuf_append(asm[run_start:n]); }
+    if (run_start < n) { strbuf_append(slice_unchecked(asm, run_start, n)); }
     return strbuf_take();
 }
 

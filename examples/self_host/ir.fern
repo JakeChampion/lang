@@ -1115,7 +1115,7 @@ pub function op_const_struct(type_name: string, nfields: i32, values: string): O
 pub function const_struct_type(packed: string): string {
     var i: i32 = 0;
     while (i < packed.len() && packed[i] != 124) { i = i + 1; }   // 124 = '|'
-    return packed[0 : i] + "";
+    return slice_unchecked(packed, 0, i) + "";
 }
 
 pub function const_struct_values(packed: string): string[] {
@@ -1126,12 +1126,12 @@ pub function const_struct_values(packed: string): string[] {
     var start: i32 = i;
     while (i < packed.len()) {
         if (packed[i] == 44) {                                    // 44 = ','
-            out = out.append(packed[start : i] + "");
+            out = out.append(slice_unchecked(packed, start, i) + "");
             start = i + 1;
         }
         i = i + 1;
     }
-    if (start < packed.len()) { out = out.append(packed[start : packed.len()] + ""); }
+    if (start < packed.len()) { out = out.append(slice_unchecked(packed, start, packed.len()) + ""); }
     return out;
 }
 // struct_copy pops [src box] and pushes a FRESH box that is a shallow, word-for-
@@ -1273,7 +1273,7 @@ pub function op_dyn_dispatch(method: string, traits: string[], base_slot: i32, a
 pub function dyn_dispatch_method(tag: string): string {
     var i: i32 = 0;
     while (i < tag.len()) {
-        if (tag[i] == 124) { return tag[0:i] + ""; }   // '|'
+        if (tag[i] == 124) { return slice_unchecked(tag, 0, i) + ""; }   // '|'
         i = i + 1;
     }
     return tag;
@@ -1292,7 +1292,7 @@ pub function dyn_dispatch_traits(tag: string): string[] {
     var k: i32 = start;
     while (k <= tag.len()) {
         if (k == tag.len() || tag[k] == 44) {          // ','
-            if (k > start) { out = out.append(tag[start:k] + ""); }
+            if (k > start) { out = out.append(slice_unchecked(tag, start, k) + ""); }
             start = k + 1;
         }
         k = k + 1;

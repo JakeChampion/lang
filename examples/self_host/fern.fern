@@ -777,14 +777,14 @@ function run_add(pos: string[]): i32 {
     var line: string = "";
     if (spec == "workspace") {
         line = name + " = { workspace = true }";
-    } else if (spec.len() >= 5 && spec[0:5] == "path:") {
-        var p: string = spec[5:spec.len()] + "";
+    } else if (spec.len() >= 5 && slice_unchecked(spec, 0, 5) == "path:") {
+        var p: string = slice_unchecked(spec, 5, spec.len()) + "";
         if (p.len() == 0) {
             eprint("add: empty path in " + mvs.quoted(spec));
             return 1;
         }
         line = name + " = { path = " + mvs.quoted(p) + " }";
-    } else if (spec.len() >= 4 && spec[0:4] == "url:") {
+    } else if (spec.len() >= 4 && slice_unchecked(spec, 0, 4) == "url:") {
         eprint("add: a url dependency records the archive's sha256, which means fetching it — use the native `fern -add` (this driver has no fetcher)");
         return 1;
     } else {
@@ -1064,8 +1064,8 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
 // else $HOME/.cache — with $HOME/Library/Caches tried as the darwin sibling.
 // Read-only: the store is populated and sha256-verified by `fern -fetch`.
 function store_dir(hash: string): string {
-    if (hash.len() < 8 || hash[0:7] != "sha256:") { return ""; }
-    var hex: string = hash[7:hash.len()] + "";
+    if (hash.len() < 8 || slice_unchecked(hash, 0, 7) != "sha256:") { return ""; }
+    var hex: string = slice_unchecked(hash, 7, hash.len()) + "";
     match (env("FERN_CACHE_DIR")) {
         Some(d) => { return dir_or_empty(d + "/pkgs/" + hex); },
         None => { },
@@ -1164,8 +1164,8 @@ function copy_package(src: string, dst: string): string {
 // manifest and its Fern sources, literate documents included.
 function is_vendorable(name: string): boolean {
     if (name == "fern.toml") { return true; }
-    if (name.len() >= 8 && name[name.len() - 8:name.len()] == ".fern.md") { return true; }
-    if (name.len() >= 5 && name[name.len() - 5:name.len()] == ".fern") { return true; }
+    if (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == ".fern.md") { return true; }
+    if (name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == ".fern") { return true; }
     return false;
 }
 
@@ -1209,7 +1209,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
         if (!util.has_str(done, ipath)) {
             done = done.append(ipath);
             var from_dir: string = from;
-            if (from_dir.len() > 1) { from_dir = from_dir[0:from_dir.len() - 1] + ""; }
+            if (from_dir.len() > 1) { from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + ""; }
             var mpath: string = util.resolve_path(ipath, from_dir, root);
             var msrc: string = "";
             var mok: boolean = false;
@@ -1593,14 +1593,14 @@ function doc_tree(dir: string, out_dir: string): i32 {
 // modules, minus the `_test_` stubs, which are fixtures rather than API.
 // `.fern.md` is excluded by the same suffix test that admits `.fern`.
 function is_doc_module(name: string): boolean {
-    if (name.len() < 6 || name[name.len() - 5:name.len()] != ".fern") { return false; }
-    return !(name.len() >= 6 && name[0:6] == "_test_");
+    if (name.len() < 6 || slice_unchecked(name, name.len() - 5, name.len()) != ".fern") { return false; }
+    return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
 }
 
 // doc_stem drops a trailing `.fern`, leaving the module's path relative to its
 // namespace.
 function doc_stem(p: string): string {
-    if (p.len() >= 5 && p[p.len() - 5:p.len()] == ".fern") { return p[0:p.len() - 5] + ""; }
+    if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") { return slice_unchecked(p, 0, p.len() - 5) + ""; }
     return p;
 }
 
@@ -1619,7 +1619,7 @@ function path_base(p: string): string {
     while (end > 0 && p[end - 1] == b'/') { end = end - 1; }
     var start: i32 = end;
     while (start > 0 && p[start - 1] != b'/') { start = start - 1; }
-    return p[start:end] + "";
+    return slice_unchecked(p, start, end) + "";
 }
 
 // flatten_path replaces `/` with `_` so a nested module's page is a single
@@ -1628,7 +1628,7 @@ function flatten_path(p: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < p.len()) {
-        if (p[i] == b'/') { out = out + "_"; } else { out = out + p[i:i + 1]; }
+        if (p[i] == b'/') { out = out + "_"; } else { out = out + slice_unchecked(p, i, i + 1); }
         i = i + 1;
     }
     return out;

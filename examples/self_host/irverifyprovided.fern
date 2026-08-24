@@ -110,8 +110,8 @@ pub function provided_names(): string[] {
 // body per instantiated type for. They cannot be listed: the suffix is a type
 // name the program supplies, so the rule is a prefix and not an inventory.
 pub function is_generated_helper(name: string): boolean {
-    if (name.len() > 14 && name[0:14] == "__struct_drop_") { return true; }
-    return name.len() > 16 && name[0:16] == "__field_reclaim_";
+    if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_") { return true; }
+    return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
 }
 
 // is_c_call_shim reports the `__c_call<n>` FFI family — `__c_call0`..`_4` with
@@ -119,10 +119,10 @@ pub function is_generated_helper(name: string): boolean {
 // from asm_ir for the same reason the inventory is: a second record.
 pub function is_c_call_shim(name: string): boolean {
     if (name.len() < 9) { return false; }
-    if (name[0:8] != "__c_call") { return false; }
-    var d: str = name[8:9];
+    if (slice_unchecked(name, 0, 8) != "__c_call") { return false; }
+    var d: str = slice_unchecked(name, 8, 9);
     if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
-    var rest: str = name[9 : name.len()];
+    var rest: str = slice_unchecked(name, 9, name.len());
     return rest == "" || rest == "_f32" || rest == "_f64";
 }
 

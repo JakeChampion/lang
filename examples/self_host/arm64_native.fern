@@ -1550,14 +1550,14 @@ function arm64_str_split(s: string, sep: string): string[] {
             else { j = j + 1; }
         }
         if (hit) {
-            out = out.append(s[start:i]);
+            out = out.append(slice_unchecked(s, start, i));
             i = i + m;
             start = i;
         } else {
             i = i + 1;
         }
     }
-    out = out.append(s[start:n]);
+    out = out.append(slice_unchecked(s, start, n));
     return out;
 }
 
@@ -1571,7 +1571,7 @@ function arm64_gas_trim(s: string): string {
     while (j > i && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
         j = j - 1;
     }
-    return s[i:j] + "";
+    return slice_unchecked(s, i, j) + "";
 }
 
 // arm64_gas_atoi parses a signed integer token: optional '-', decimal or
@@ -1614,7 +1614,7 @@ function arm64_gas_atoi(tok: string): i32 {
 function arm64_gas_imm(tok: string): i32 {
     var s: string = arm64_gas_trim(tok);
     if (s.len() > 0 && s[0] == b'#') {
-        s = s[1:s.len()] + "";
+        s = slice_unchecked(s, 1, s.len()) + "";
     }
     return arm64_gas_atoi(s);
 }
@@ -1665,7 +1665,7 @@ function arm64_gas_bad_reg_token(rest: string): string {
         if (t.len() > 0 && t[0] == b'[') {           // memory operand
             var rb: i32 = arm64_str_indexof(t, "]");
             if (rb > 1) {
-                var inner: string[] = arm64_gas_operands(t[1:rb]);
+                var inner: string[] = arm64_gas_operands(slice_unchecked(t, 1, rb));
                 var k: i32 = 0;
                 while (k < inner.len()) {
                     var it: string = arm64_gas_trim(inner[k]);
@@ -1752,7 +1752,7 @@ function arm64_gas_vreg_arr(tok: string): i32 {
         i = i + 1;
     }
     if (n > 31) { return 0 - 1; }
-    var arr: string = s[dot:s.len()] + "";
+    var arr: string = slice_unchecked(s, dot, s.len()) + "";
     if (arr == ".8b" || arr == ".16b") { return n; }
     return 0 - 1;
 }
@@ -1762,7 +1762,7 @@ function arm64_gas_vreg_arr_q(tok: string): boolean {
     var s: string = arm64_gas_trim(tok);
     var dot: i32 = arm64_str_indexof(s, ".");
     if (dot < 0) { return false; }
-    return (s[dot:s.len()] + "") == ".16b";
+    return (slice_unchecked(s, dot, s.len()) + "") == ".16b";
 }
 
 // arm64_gas_breg decodes a `bN` scalar byte register — the destination shape
@@ -1813,12 +1813,12 @@ function arm64_gas_operands(rest: string): string[] {
         if (c == 91) { depth = depth + 1; }        // '['
         else if (c == 93) { depth = depth - 1; }   // ']'
         else if (c == 44 && depth == 0) {           // ','
-            out = out.append(arm64_gas_trim(rest[start:i]));
+            out = out.append(arm64_gas_trim(slice_unchecked(rest, start, i)));
             start = i + 1;
         }
         i = i + 1;
     }
-    var last: string = arm64_gas_trim(rest[start:rest.len()]);
+    var last: string = arm64_gas_trim(slice_unchecked(rest, start, rest.len()));
     if (last.len() > 0) {
         out = out.append(last);
     }
@@ -1854,7 +1854,7 @@ function arm64_gas_mem(op: string): Arm64Mem {
     var rb: i32 = arm64_str_indexof(s, "]");
     var inner: string = s;
     if (lb >= 0 && rb > lb) {
-        inner = s[lb + 1:rb] + "";
+        inner = slice_unchecked(s, lb + 1, rb) + "";
     }
     var parts: string[] = arm64_gas_operands(inner);
     var base: i32 = arm64_gas_reg(parts[0]);
@@ -1965,7 +1965,7 @@ function arm64_gas_lsl_amount(tok: string): i32 {
     if (h < 0) {
         return 0;
     }
-    return arm64_gas_atoi(arm64_gas_trim(s[h + 1:s.len()]));
+    return arm64_gas_atoi(arm64_gas_trim(slice_unchecked(s, h + 1, s.len())));
 }
 
 // arm64_gas_shift_type maps the shift keyword of a `<shift> #N` operand to
@@ -2016,13 +2016,13 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, rest: string): boole
 // arm64_gas_bcond_suffix returns the condition part of such a mnemonic.
 function arm64_gas_is_bcond(mnem: string): boolean {
     if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') { return true; }
-    return mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(mnem[1:3]);
+    return mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(slice_unchecked(mnem, 1, 3));
 }
 function arm64_gas_bcond_suffix(mnem: string): str {
     if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') {
-        return mnem[2:mnem.len()];
+        return slice_unchecked(mnem, 2, mnem.len());
     }
-    return mnem[1:3];
+    return slice_unchecked(mnem, 1, 3);
 }
 
 // arm64_gas_emit assembles one mnemonic + operand string into a.code (or
@@ -2191,7 +2191,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var lb0: i32 = arm64_str_indexof(ops[1], "[");
         var rb0: i32 = arm64_str_indexof(ops[1], "]");
         if (lb0 >= 0 && rb0 > lb0) {
-            var mparts: string[] = arm64_gas_operands(ops[1][lb0 + 1:rb0]);
+            var mparts: string[] = arm64_gas_operands(slice_unchecked(ops[1], lb0 + 1, rb0));
             if (mparts.len() >= 2 && mparts[1].len() > 0 && (mparts[1][0] == b'x' || mparts[1][0] == b'w')) {
                 var shifted: boolean = (mparts.len() >= 3 && arm64_str_indexof(mparts[2], "lsl") >= 0);
                 return Arm64Asm { ...a, code: arm64_ldr_str_reg(a.code, mnem == "ldr", rt, arm64_gas_reg(mparts[0]), arm64_gas_reg(mparts[1]), shifted) };
@@ -2533,7 +2533,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz" || mnem == "frintn") { return true; }
     if (arm64_funary_d_base(mnem) >= 0) { return true; }
     if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') { return true; } // b.<cond>
-    if (mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
+    if (mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(slice_unchecked(mnem, 1, 3))) { return true; } // b<cond>
     return false;
 }
 
@@ -2637,7 +2637,7 @@ function arm64_gas_numref_dir(s: string): i32 {
     if (last != 102 && last != 98) { // 'f' / 'b'
         return 0 - 1;
     }
-    if (!arm64_gas_is_digits(s[0:s.len() - 1] + "")) {
+    if (!arm64_gas_is_digits(slice_unchecked(s, 0, s.len() - 1) + "")) {
         return 0 - 1;
     }
     if (last == 102) {
@@ -2657,7 +2657,7 @@ function arm64_gas_dec(n: i32): string {
     var v: i32 = n;
     while (v > 0) {
         var d: i32 = v % 10;
-        out = ("0123456789"[d:d + 1] + "") + out;
+        out = (slice_unchecked("0123456789", d, d + 1) + "") + out;
         v = v / 10;
     }
     return out;
@@ -2688,7 +2688,7 @@ function arm64_gas_nl_ref(cnt: i32[], tok: string): string {
     if (dir < 0) {
         return s;
     }
-    var n: i32 = arm64_gas_atoi(s[0:s.len() - 1] + "");
+    var n: i32 = arm64_gas_atoi(slice_unchecked(s, 0, s.len() - 1) + "");
     var k: i32 = 0;
     if (n < cnt.len()) {
         k = cnt[n];
@@ -2727,7 +2727,7 @@ function arm64_gas_strip_at(tok: string): string {
     var s: string = arm64_gas_trim(tok);
     var at: i32 = arm64_str_indexof(s, "@");
     if (at >= 0) {
-        s = s[0:at] + "";
+        s = slice_unchecked(s, 0, at) + "";
     }
     return arm64_gas_trim(s);
 }
@@ -2739,7 +2739,7 @@ function arm64_gas_strip_lo12(tok: string): string {
     var s: string = arm64_gas_trim(tok);
     var at: i32 = arm64_str_indexof(s, ":lo12:");
     if (at >= 0) {
-        s = s[at + 6 : s.len()] + "";
+        s = slice_unchecked(s, at + 6, s.len()) + "";
     }
     return arm64_gas_trim(s);
 }
@@ -2804,7 +2804,7 @@ function arm64_gas_strip_comment(raw: string): string {
                 i = i + 1;
             }
         } else if (c == 34) { inq = true; i = i + 1; }
-        else if (c == 47 && i + 1 < n && raw[i + 1] == 47) { return raw[0:i] + ""; }
+        else if (c == 47 && i + 1 < n && raw[i + 1] == 47) { return slice_unchecked(raw, 0, i) + ""; }
         else { i = i + 1; }
     }
     return raw;
@@ -3079,7 +3079,7 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     if (arm64_str_starts_with(line, ".skip") || arm64_str_starts_with(line, ".zero") || arm64_str_starts_with(line, ".space")) {
         var sp: i32 = arm64_str_indexof(line, " ");
         if (sp >= 0) {
-            return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_atoi(arm64_gas_trim(line[sp + 1:line.len()])) };
+            return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()))) };
         }
         return p;
     }
@@ -3089,7 +3089,7 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
         var sp2: i32 = arm64_str_indexof(line, " ");
         if (sp2 >= 0) {
-            var n: i32 = arm64_gas_atoi(arm64_gas_trim(line[sp2 + 1:line.len()]));
+            var n: i32 = arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp2 + 1, line.len())));
             var a: i32 = 1;
             var k: i32 = 0;
             while (k < n) { a = a * 2; k = k + 1; }
@@ -3116,7 +3116,7 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
 function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
     if (arm64_str_starts_with(line, ".quad")) {
-        var qtok: string = arm64_gas_trim(line[5:line.len()]);
+        var qtok: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
         // A SYMBOLIC operand (`.quad .S0`) is another symbol's absolute address,
         // not a number: reserve the 8-byte slot and queue a relocation for
         // arm64_gas_link, which is the only point the segment addresses exist.
@@ -3133,14 +3133,14 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
     if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
         var off: i32 = 6;
         if (arm64_str_starts_with(line, ".word")) { off = 5; }
-        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[off:line.len()])), 4);
+        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(line, off, line.len()))), 4);
     }
     if (arm64_str_starts_with(line, ".long")) {
         // `.long a, b, …`: each comma-separated value as 4 little-endian bytes.
         // The IR emitters lay an f64 constant down as two `.long` halves (exact
         // bits, assembler-independent — see const_f64). Ignoring it (the
         // pre-#5434 behaviour) silently dropped the 8 rodata bytes.
-        var lrest: string = arm64_gas_trim(line[5:line.len()]);
+        var lrest: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
         var ltok: string = "";
         var lci: i32 = 0;
         var lp: Arm64GasProg = p;
@@ -3149,7 +3149,7 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
                 lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
                 ltok = "";
             } else {
-                ltok = ltok + lrest[lci:lci + 1];
+                ltok = ltok + slice_unchecked(lrest, lci, lci + 1);
             }
             lci = lci + 1;
         }
@@ -3159,7 +3159,7 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
         return lp;
     }
     if (arm64_str_starts_with(line, ".byte")) {
-        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[5:line.len()])), 1);
+        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(line, 5, line.len()))), 1);
     }
     if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
         return arm64_gas_data_asciz(p, line);
@@ -3168,12 +3168,12 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
         return arm64_gas_data_ascii(p, line);
     }
     if (arm64_str_starts_with(line, ".double")) {
-        return arm64_gas_data_le(p, f64_bits(arm64_parse_f64(arm64_gas_trim(line[7:line.len()]))), 8);
+        return arm64_gas_data_le(p, f64_bits(arm64_parse_f64(arm64_gas_trim(slice_unchecked(line, 7, line.len())))), 8);
     }
     if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
         var sp: i32 = arm64_str_indexof(line, " ");
         if (sp >= 0) {
-            return arm64_gas_data_align(p, arm64_gas_atoi(arm64_gas_trim(line[sp + 1:line.len()])));
+            return arm64_gas_data_align(p, arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()))));
         }
     }
     return p; // other directives ignored
@@ -3279,7 +3279,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // label prefix `name:`
         var colon: i32 = arm64_str_indexof(line, ":");
         if (colon > 0) {
-            var before: str = line[0:colon];
+            var before: str = slice_unchecked(line, 0, colon);
             if (arm64_str_indexof(before, " ") < 0 && arm64_str_indexof(before, ",") < 0) {
                 if (section == 1) {
                     p = Arm64GasProg { ...p, dlab_names: p.dlab_names.append(before) };
@@ -3295,7 +3295,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 } else {
                     a = arm64_asm_label(a, before);
                 }
-                line = arm64_gas_trim(line[colon + 1:line.len()]);
+                line = arm64_gas_trim(slice_unchecked(line, colon + 1, line.len()));
                 if (line.len() == 0) {
                     continue;
                 }
@@ -3335,8 +3335,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         var mnem: string = line;
         var rest: string = "";
         if (sp >= 0) {
-            mnem = line[0:sp] + "";
-            rest = arm64_gas_trim(line[sp + 1:line.len()]);
+            mnem = slice_unchecked(line, 0, sp) + "";
+            rest = arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()));
         }
         // A register-shaped operand that fails the strict decode (SH-006 —
         // `x1a`, `x31`, `d40`) is recorded like an unknown mnemonic: the
@@ -3388,7 +3388,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (mnem == "ldr" && arm64_str_indexof(rest, "=") >= 0) {
             var rops: string[] = arm64_gas_operands(rest);
             var litok: string = arm64_gas_trim(rops[1]);
-            var nval: i64 = arm64_gas_atoi64(arm64_gas_trim(litok[1:litok.len()]));
+            var nval: i64 = arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(litok, 1, litok.len())));
             a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(rops[0]), 0) };
             p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
@@ -3411,7 +3411,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var linner: string = lops[1];
             var lb: i32 = arm64_str_indexof(linner, "[");
             var rb: i32 = arm64_str_indexof(linner, "]");
-            var lparts: string[] = arm64_gas_operands(linner[lb + 1:rb]);
+            var lparts: string[] = arm64_gas_operands(slice_unchecked(linner, lb + 1, rb));
             a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(lops[0]), lm.base, 0, arm64_gas_is_w(lops[0])) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(lparts[1])) };

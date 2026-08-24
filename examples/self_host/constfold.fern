@@ -51,7 +51,7 @@ import "./astwalk";
 function lit_int(v: i64, suffix: string): parser.Expr {
     var s: string = util.i64_to_string(v);
     if (v >= 0) { return num_lit(s, suffix); }
-    return parser.ExprUnary { op: "-", operand: num_lit(s[1:s.len()], suffix), line: 0, col: 0 };
+    return parser.ExprUnary { op: "-", operand: num_lit(slice_unchecked(s, 1, s.len()), suffix), line: 0, col: 0 };
 }
 
 function num_lit(text: string, suffix: string): parser.Expr {

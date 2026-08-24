@@ -76,7 +76,7 @@ pub function magic(): string { return "FERNWU3\n"; }
 // is_current reports whether `s` was written by this format version.
 pub function is_current(s: string): boolean {
     if (s.len() < magic().len()) { return false; }
-    return s[0:magic().len()] + "" == magic();
+    return slice_unchecked(s, 0, magic().len()) + "" == magic();
 }
 
 pub function encode(u: UnitObj): string {
@@ -116,7 +116,7 @@ function dec_strs(s: string, pos: i32): StrsAt {
     while (i < n) {
         var lh: IntsAt = scan_int(s, p);
         var len: i32 = lh.items[0];
-        out = out.append(s[lh.pos:lh.pos + len] + "");
+        out = out.append(slice_unchecked(s, lh.pos, lh.pos + len) + "");
         p = lh.pos + len;
         i = i + 1;
     }
@@ -147,6 +147,6 @@ pub function decode(s: string): UnitObj {
         frt: r.items,
         sdt: d.items,
         aet: e.items,
-        text: s[tl.pos:tl.pos + tl.items[0]] + "",
+        text: slice_unchecked(s, tl.pos, tl.pos + tl.items[0]) + "",
     };
 }
