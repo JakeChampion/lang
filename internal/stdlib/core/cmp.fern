@@ -333,19 +333,21 @@ impl Debug for boolean {
 }
 impl Debug for string {
     function to_debug(self: Self): string {
-        var out: string = "\"";
+        // Byte-level rebuild: the escapes are ASCII and every other
+        // byte (multibyte sequences included) passes through byte-exact.
+        var out: u8[] = [];
         var i: i32 = 0;
         var n: i32 = self.len();
         while (i < n) {
             var b: i32 = self[i] as i32;
-            if (b == 34) { out = out + "\\\""; }        // "
-            else { if (b == 92) { out = out + "\\\\"; }  // backslash
-            else { if (b == 10) { out = out + "\\n"; }
-            else { if (b == 9) { out = out + "\\t"; }
-            else { out = out + self[i : i + 1]; } } } }
+            if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }        // "
+            else { if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }  // backslash
+            else { if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }  // \n
+            else { if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }   // \t
+            else { out = out.append(self[i]); } } } }
             i = i + 1;
         }
-        return out + "\"";
+        return "\"" + string_from_bytes_unchecked(out) + "\"";
     }
 }
 

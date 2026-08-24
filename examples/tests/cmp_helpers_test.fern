@@ -52,6 +52,13 @@ function test_string_sort(): test.TestOutcome {
     return test.assert_true(s[0] == "a" && s[2] == "c");
 }
 
+// Debug for string escapes the ASCII specials and passes multibyte
+// content through byte-exact.
+function test_string_debug_multibyte(): test.TestOutcome {
+    var s: string = "a\"é\nb";
+    return test.assert_eq(s.to_debug(), "\"a\\\"é\\nb\"");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("core/cmp helpers");
     r = r.it("min",                 test_min);
@@ -72,5 +79,6 @@ function main(): i32 {
     r = r.it("eq_arrays",           test_eq_arrays);
     r = r.it("eq_arrays false",     test_eq_arrays_false);
     r = r.it("string sort",         test_string_sort);
+    r = r.it("string debug multibyte", test_string_debug_multibyte);
     return r.finish();
 }

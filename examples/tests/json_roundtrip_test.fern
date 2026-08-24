@@ -211,6 +211,21 @@ function test_parse_invalid(): test.TestOutcome {
     }
 }
 
+// The parse-error message renders an ASCII byte quoted, and a non-ASCII
+// byte as hex — quoting it alone could split a multibyte code point.
+function test_parse_error_byte_render(): test.TestOutcome {
+    match (json.json_parse_result("é")) {
+        Ok(v) => { return test.fail("expected a parse error"); },
+        Err(e) => {
+            if (e.message != "unexpected byte '\\xc3'") { return test.fail("got: " + e.message); }
+        }
+    }
+    match (json.json_parse_result("x")) {
+        Ok(v) => { return test.fail("expected a parse error"); },
+        Err(e) => { return test.assert_eq(e.message, "unexpected byte 'x'"); }
+    }
+}
+
 // nest(n) builds n open brackets followed by n close brackets —
 // an n-deep JSON array `[[[…]]]`. Used by the recursion-depth tests.
 function nest(n: i32): string {
@@ -393,6 +408,7 @@ function main(): i32 {
     r = r.it("parse string decode paths", test_parse_string_decode_paths);
     r = r.it("encode nested round trip", test_encode_nested_round_trip);
     r = r.it("parse invalid",     test_parse_invalid);
+    r = r.it("parse error byte render", test_parse_error_byte_render);
     r = r.it("depth ok",          test_depth_ok);
     r = r.it("depth limit",       test_depth_limit);
     r = r.it("get_f64",           test_get_f64);

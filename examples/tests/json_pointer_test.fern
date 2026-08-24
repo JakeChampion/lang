@@ -96,6 +96,13 @@ function test_empty_key(): test.TestOutcome {
     return test.assert_eq(ptr_num(d, "/"), "7");
 }
 
+function test_multibyte_key_with_escape(): test.TestOutcome {
+    // Multibyte bytes around a ~1 escape pass through the byte-level
+    // unescape intact: token "é~1ü" decodes to the key "é/ü".
+    var d: JsonValue = json.json_parse("{\"é/ü\":3}").unwrap_or(JNull);
+    return test.assert_eq(ptr_num(d, "/é~1ü"), "3");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/json pointer");
     r = r.it("whole doc (empty pointer)", test_whole_doc);
@@ -108,5 +115,6 @@ function main(): i32 {
     r = r.it("must start with slash",    test_must_start_with_slash);
     r = r.it("escaped keys ~1 ~0",       test_escaped_keys);
     r = r.it("empty key",                test_empty_key);
+    r = r.it("multibyte key with escape", test_multibyte_key_with_escape);
     return r.finish();
 }

@@ -269,8 +269,7 @@ pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 
 pub function get_url(url: string): string {
     // Require and strip the http:// scheme.
     var prefix: string = "http://";
-    if (url.len() < prefix.len()) { return ""; }
-    if (url[0 : prefix.len()] != prefix) { return ""; }
+    if (!url.starts_with(prefix)) { return ""; }
     var rest: str = slice_unchecked(url, prefix.len(), url.len());
     // authority is up to the first '/'; the rest (incl. the '/') is the path.
     var slash: i32 = rest.index_of("/");

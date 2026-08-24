@@ -25,6 +25,7 @@
 // bundle ending in a valued option (`-vn5` == `-v -n 5`).
 
 import "std/string";
+import "std/utf8" as utf8;
 import "core/map";
 
 // A single declared flag. `takes_value` distinguishes a valued
@@ -91,14 +92,26 @@ function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
     return None;
 }
 
-// Find a declared flag by its (non-empty) short alias.
-function __cli_find_short(s: CliSpec, name: string): Option[CliFlag] {
+// Find a declared flag by its (single-byte) short alias.
+function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
     var i: i32 = 0;
     while (i < s.flags.len()) {
-        if (s.flags[i].short.len() > 0 && s.flags[i].short == name) { return Some(s.flags[i]); }
+        if (s.flags[i].short.len() == 1 && (s.flags[i].short[0] as i32) == b) { return Some(s.flags[i]); }
         i = i + 1;
     }
     return None;
+}
+
+// Render the flag name at cluster[j] for an error message: the ASCII
+// byte itself, the whole code point when the byte starts a multibyte
+// character, or U+FFFD for an invalid byte.
+function __cli_short_name_at(cluster: string, j: i32): string {
+    var b: i32 = cluster[j] as i32;
+    if (b < 128) { return string_from_bytes_unchecked([cluster[j]]); }
+    match (utf8.utf8_decode_at(cluster, j)) {
+        Some(pair) => { return slice_unchecked(cluster, j, j + pair.1) + ""; },
+        None => { return "\xef\xbf\xbd"; }
+    }
 }
 
 // Build a failed CliArgs, preserving the operands parsed so far.
@@ -169,8 +182,7 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
             var cluster: str = slice_unchecked(a, 1, a.len());
             var j: i32 = 0;
             while (j < cluster.len()) {
-                var cname: str = cluster[j:j + 1];
-                match (__cli_find_short(s, cname)) {
+                match (__cli_find_short_byte(s, cluster[j] as i32)) {
                     Some(f) => {
                         if (f.takes_value) {
                             var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
@@ -180,7 +192,7 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
                                 opts = opts.insert(f.long, argv[i + 1]);
                                 i = i + 1;
                             } else {
-                                return __cli_err(positionals, "option -" + cname + " requires a value");
+                                return __cli_err(positionals, "option -" + f.short + " requires a value");
                             }
                             // A valued option swallows the token tail; end the cluster.
                             j = cluster.len();
@@ -190,7 +202,7 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
                         }
                     },
                     None => {
-                        return __cli_err(positionals, "unknown option -" + cname);
+                        return __cli_err(positionals, "unknown option -" + __cli_short_name_at(cluster, j));
                     }
                 }
             }

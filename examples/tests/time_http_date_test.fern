@@ -58,6 +58,15 @@ function test_parse_bad_month(): test.TestOutcome {
     }
 }
 
+function test_parse_multibyte_month(): test.TestOutcome {
+    // A 3-byte multibyte char filling the month field keeps the string
+    // 29 bytes; it matches no month name and must parse to None.
+    match (time.http_date_parse("Sun, 06 € 1994 08:49:37 GMT")) {
+        Some(i) => { return test.fail("expected None for multibyte month"); },
+        None => { return test.pass(); }
+    }
+}
+
 function test_parse_bad_zone(): test.TestOutcome {
     // Anything but a "GMT" suffix is rejected.
     match (time.http_date_parse("Sun, 06 Nov 1994 08:49:37 UTC")) {
@@ -96,6 +105,7 @@ function main(): i32 {
     r = r.it("round trip",             test_round_trip);
     r = r.it("parse bad len",          test_parse_bad_len);
     r = r.it("parse bad month",        test_parse_bad_month);
+    r = r.it("parse multibyte month",  test_parse_multibyte_month);
     r = r.it("parse bad zone",         test_parse_bad_zone);
     r = r.it("parse bad sep",          test_parse_bad_sep);
     r = r.it("month_name",             test_month_name);

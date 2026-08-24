@@ -747,7 +747,12 @@ function __json_message(s: string, off: i32): string {
     if (b < 32) {
         return "unexpected control byte in input";
     }
-    return "unexpected byte '" + s[off:off + 1] + "'";
+    if (b < 128) {
+        return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
+    }
+    // A non-ASCII byte renders as hex — quoting it alone could split a
+    // multibyte code point.
+    return "unexpected byte '\\x" + b.to_hex().pad_start(2, "0") + "'";
 }
 
 // json_parse_result is json_parse plus the position of the failure.
@@ -1026,21 +1031,23 @@ function __json_ptr_unescape(tok: string): string {
         if (tok[i] == 126) { has = true; i = n; } else { i = i + 1; }   // '~' = 126
     }
     if (!has) { return tok; }
-    var out: string = "";
+    // Byte-level rebuild: pass-through bytes of a valid string stay
+    // valid, and the ~0/~1 escapes are ASCII.
+    var out: u8[] = [];
     i = 0;
     while (i < n) {
         var c: i32 = tok[i] as i32;
         if (c == 126 && i + 1 < n) {
             var d: i32 = tok[i + 1] as i32;
-            if (d == 49)      { out = out + "/"; i = i + 2; }   // ~1 -> /
-            else if (d == 48) { out = out + "~"; i = i + 2; }   // ~0 -> ~
-            else              { out = out + tok[i : i + 1]; i = i + 1; }
+            if (d == 49)      { out = out.append(47 as u8); i = i + 2; }    // ~1 -> /
+            else if (d == 48) { out = out.append(126 as u8); i = i + 2; }   // ~0 -> ~
+            else              { out = out.append(tok[i]); i = i + 1; }
         } else {
-            out = out + tok[i : i + 1];
+            out = out.append(tok[i]);
             i = i + 1;
         }
     }
-    return out;
+    return string_from_bytes_unchecked(out);
 }
 
 // `__json_ptr_index(tok)` — parse an RFC 6901 array-index token to a
