@@ -2767,39 +2767,42 @@ pub function tcp_send_func(): string {
     return o;
 }
 
-// $__fern_tcp_recv(conn, max) -> string: up to `max` bytes as a fresh string
-// block, or the EMPTY string on a stream error / clean EOF.
+// $__fern_tcp_recv(conn, max) -> u8[]: up to `max` bytes as a fresh
+// `[len][cap][elems]` array block (one byte per 4-byte slot, like
+// random_bytes_ir_func), or the EMPTY array on a stream error / clean EOF.
 //
 // The input-stream is mem[conn+4]. blocking-read's retptr is 12 bytes: disc@+0,
 // then the returned list as data-ptr@+4 and length@+8. The bytes are copied
-// into a `[len][bytes]` block rather than aliased, because the host buffer is
-// only valid until the next canonical-ABI call. The copy is a byte loop — the
+// into the array block rather than aliased, because the host buffer is only
+// valid until the next canonical-ABI call. The copy is a byte loop — the
 // self-host wasm backend does not emit bulk-memory (`memory.copy`), so using it
 // here would silently raise the module's required feature set.
 pub function tcp_recv_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_recv (param $c i32) (param $max i32) (result i32)\n";
-    o = o + "    (local $st i32) (local $ret i32) (local $n i32) (local $src i32) (local $box i32) (local $i i32)\n";
+    o = o + "    (local $st i32) (local $ret i32) (local $n i32) (local $src i32) (local $arr i32) (local $i i32)\n";
     o = o + "    (local.set $st (i32.load offset=4 (local.get $c)))\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 12)))\n";
     o = o + "    (call $__fern_wasi_stream_read (local.get $st)\n";
     o = o + "      (i64.extend_i32_u (local.get $max)) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-    o = o + "      (local.set $box (call $__fern_str_box (i32.const 0)))\n";
-    o = o + "      (i32.store (local.get $box) (i32.const 0))\n";
-    o = o + "      (return (local.get $box))))\n";
+    o = o + "      (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
+    o = o + "      (i32.store (local.get $arr) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $arr) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (return (local.get $arr))))\n";
     o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (local.set $n (i32.load offset=8 (local.get $ret)))\n";
-    o = o + "    (local.set $box (call $__fern_str_box (local.get $n)))\n";
-    o = o + "    (i32.store (local.get $box) (local.get $n))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
     o = o + "    (block $done\n";
     o = o + "      (loop $more\n";
     o = o + "        (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "        (i32.store8 (i32.add (i32.add (local.get $box) (i32.const 4)) (local.get $i))\n";
+    o = o + "        (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))\n";
     o = o + "          (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
     o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "        (br $more)))\n";
-    o = o + "    (local.get $box))\n";
+    o = o + "    (local.get $arr))\n";
     return o;
 }
 
@@ -3798,7 +3801,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
         parts = parts.append("    call $__fern_tcp_send\n");
     } else if (o.kind_tag == 195) {  // tcp_recv
-        // tcp_recv(conn, max) -> a fresh string block (empty on error/EOF).
+        // tcp_recv(conn, max) -> a fresh u8[] array block (empty on error/EOF).
         parts = parts.append("    call $__fern_tcp_recv\n");
     } else if (o.kind_tag == 196) {  // tcp_close
         // tcp_close(conn) -> 0. Drops the streams then the socket.

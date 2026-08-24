@@ -1024,8 +1024,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_udp_send\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 195) {  // tcp_recv
-            // [fd, max] -> __fern_tcp_recv(fd, max) -> string box. Allocates
-            // (calls __fern_alloc), so the heap runtime must be present.
+            // [fd, max] -> __fern_tcp_recv(fd, max) -> fresh u8[] box (#5714).
+            // Allocates (calls __fern_alloc), so the heap runtime must be present.
             s = s.need("heap");
             s = s.need("tcp_recv");
             // max is on top but param[0] is fd, so swap before the call.
@@ -5973,7 +5973,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("tcp_connect")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);
     }
-    // tcp_recv: read(2) into a fresh buffer, boxed by __raw_string.
+    // tcp_recv: read(2) into a scratch buffer, spread into a fresh u8[] box.
     if (s.has_need("tcp_recv")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
     }
