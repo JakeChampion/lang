@@ -886,7 +886,7 @@ function am_key_at(name: string): i32 {
   var pn: i32 = pre.len();
   var i: i32 = name.len() - pn;
   while (i >= 0) {
-    if (name[i:i + pn] == pre) {
+    if (slice_unchecked(name, i, i + pn) == pre) {
       return i;
     }
     i = i - 1;
@@ -1066,7 +1066,7 @@ function bind_names(s: Scope, name: string): Scope {
   while (i <= name.len()) {
     if (i == name.len() || name[i] == b',') {
       if (i > start) {
-        out = out.bind(name[start:i], t_unknown("binding"));
+        out = out.bind(slice_unchecked(name, start, i), t_unknown("binding"));
       }
       start = i + 1;
     }
@@ -1166,7 +1166,7 @@ function is_resolvable_value(name: string, s: Scope): boolean {
   // lookup_struct either.
   // A function — user or builtin — may also be referenced as a bare
   // value (e.g. `var w = write;` or passing a function by name).
-  if (name.len() >= 2 && name[0:2] == "__") {
+  if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") {
     return true;
   }
   if (parser.is_builtin_function(name)) {
@@ -1192,7 +1192,7 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
   if (is_builtin_variant(name)) {
     return true;
   }
-  if (name.len() >= 2 && name[0:2] == "__") {
+  if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") {
     return true;
   }
   if (parser.is_builtin_function(name)) {
@@ -1426,7 +1426,7 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
   while (i <= pbound.len()) {
     if (i == pbound.len() || pbound[i] == b'+') {
       if (i > start) {
-        var tr: str = pbound[start:i];
+        var tr: str = slice_unchecked(pbound, start, i);
         var tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
         if (tidx >= 0 && !e021_conforms(s, tr, tidx, cty)) {
           out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
@@ -1452,7 +1452,7 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
 function (s: Scope) array_recv_method(field: string): MethodSig {
   for method in s.methods {
     var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && rt[0:1] != "[" && rt[rt.len() - 2:rt.len()] == "[]") {
+    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
       return method;
     }
   }
@@ -1479,7 +1479,7 @@ function (s: Scope) has_array_method(field: string): boolean {
     if (nm == target) {
       return true;
     }
-    if (nm.len() > tn && nm[nm.len() - tn:nm.len()] == target) {
+    if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
       return true;
     }
     i = s.sigs.am_next[i];
@@ -1513,7 +1513,7 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
         if (nm == target) {
           return s.sigs.sigs[i].ret_type;
         }
-        if (nm.len() > tn && nm[nm.len() - tn:nm.len()] == target) {
+        if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
           return s.sigs.sigs[i].ret_type;
         }
         i = s.sigs.am_next[i];
@@ -1551,7 +1551,7 @@ function (s: Scope) arr_recv_ret_type(recv_ty: Type, arm: MethodSig): Type {
   }
   var rt: string = arm.receiver_type;
   if (rt.len() <= 2) { return arm.ret_type; }
-  var elem_param: string = rt[0:rt.len() - 2] + "";
+  var elem_param: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
   match (recv_ty) {
     TypeArray(ra) => {
       var tps: string[] = [elem_param];
@@ -1768,7 +1768,7 @@ function (s: Scope) has_sig(name: string): boolean {
 function (s: Scope) has_array_recv_method(field: string): boolean {
   for method in s.methods {
     var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && rt[0:1] != "[" && rt[rt.len() - 2:rt.len()] == "[]") {
+    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
       return true;
     }
   }
@@ -2571,8 +2571,8 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       // n.Target even when the cast is invalid). Unrecognised target
       // names (wider ints u32 / i64 / …) resolve to unknown, which is
       // conservatively accepted downstream.
-      if (u.op.len() > 3 && u.op[0:3] == "as_") {
-        return type_from_name(u.op[3:u.op.len()]);
+      if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+        return type_from_name(slice_unchecked(u.op, 3, u.op.len()));
       }
       return t_unknown("unknown unary op:" + u.op);
     },
@@ -3324,11 +3324,11 @@ pub function type_from_name_with_structs_unions(name: string, structs: StructSig
   // without this the annotation collapsed to unknown and over-rejected every
   // `var d: dyn Greet = …` (#4346 piece 2). Trailing `[]` peels to an array
   // of dyn so `dyn Greet[]` is TypeArray<TypeDyn>.
-  if (name.len() >= 5 && name[0:4] == "dyn ") {
-    var tail: str = name[4:name.len()];
+  if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
+    var tail: str = slice_unchecked(name, 4, name.len());
     var depth: i32 = 0;
     while (tail.len() >= 2 && tail[tail.len() - 2] == b'[' && tail[tail.len() - 1] == b']') {
-      tail = tail[0:tail.len() - 2];
+      tail = slice_unchecked(tail, 0, tail.len() - 2);
       depth = depth + 1;
     }
     var dt: Type = t_dyn(tail + "");
@@ -3564,7 +3564,7 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: Type[]
 function type_from_name_erasing_tparams(name: string, tparams: string[], structs: StructSig[], unions: UnionSig[]): Type {
   // `dyn Trait` is not a TypeRef spelling, and a trait name is never a type
   // parameter — leave it to the resolver that models the `dyn ` prefix.
-  if (tparams.len() == 0 || name.len() == 0 || (name.len() >= 5 && name[0:4] == "dyn ")) {
+  if (tparams.len() == 0 || name.len() == 0 || (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ")) {
     return type_from_name_with_structs_unions(name, structs, unions);
   }
   var erased: Type[] = [];
@@ -5667,7 +5667,7 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
         var c: i32 = 0;
         for field_name in sd.field_names {
           var fn: string = field_name;
-          if (fn.len() >= 4 && fn[0:4] == "__ev") {
+          if (fn.len() >= 4 && slice_unchecked(fn, 0, 4) == "__ev") {
             c = c + 1;
           }
         }
@@ -6324,7 +6324,7 @@ function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
   while (i <= bound.len()) {
     if (i == bound.len() || bound[i] == b'+') {
       if (i > start) {
-        var tr: str = bound[start:i];
+        var tr: str = slice_unchecked(bound, start, i);
         var h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, 0);
         if (h.found) {
           return h;
@@ -6990,7 +6990,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
       // are left to the Go checker — no false positives. Positioned
       // at the `as` keyword to match the Go checker (whose CastExpr
       // position is the `as` token).
-      if (u.op.len() > 3 && u.op[0:3] == "as_") {
+      if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
         // E071 (#5629 slice 5): a LITERAL cast to `char` must name a
         // Unicode scalar value. Keyed on the op text, not the target
         // Type, because this port resolves `char` to i32 and so cannot
@@ -7008,7 +7008,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
             _ => {}
           }
         }
-        var tgt: Type = type_from_name(u.op[3:u.op.len()]);
+        var tgt: Type = type_from_name(slice_unchecked(u.op, 3, u.op.len()));
         var cot: Type = check_expr(u.operand, s);
         if (is_primitive_type(tgt) && is_primitive_type(cot)) {
           // E069 (#5053): reinterpreting a 32-bit-only value (i32 /
@@ -7037,7 +7037,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
       // (i32 / f64 / bool / string) can never be a dyn value and is
       // flagged, while an unknown (possibly-dyn) operand is left alone.
       // Same sound, zero-false-positive conservatism as E033 / E042.
-      if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+      if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
         var aot: Type = check_expr(u.operand, s);
         if (is_primitive_type(aot)) {
           out = out.append(dg_at("E059", "`as?` downcast requires a `dyn Trait` value on the left, got " + type_label(aot), u.line, u.col));
@@ -7601,8 +7601,8 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): util.Diag[] {
                       var cdp: i32 = dot_index(cpv.type_name);
                       if (cdp >= 0) {
                         // Qualified pattern `Qual.Variant`.
-                        var cqual: str = cpv.type_name[0:cdp];
-                        var cbare: str = cpv.type_name[cdp + 1:cpv.type_name.len()];
+                        var cqual: str = slice_unchecked(cpv.type_name, 0, cdp);
+                        var cbare: str = slice_unchecked(cpv.type_name, cdp + 1, cpv.type_name.len());
                         if (cqual == mun.name) {
                           // Correctly qualified — an UNGUARDED arm covers
                           // the bare variant. A guarded arm may fall
@@ -8217,7 +8217,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
       return true;  // generic/Map/array
     }
   }
-  if (rt.len() >= 4 && rt[0:4] == "dyn ") {
+  if (rt.len() >= 4 && slice_unchecked(rt, 0, 4) == "dyn ") {
     return true;
   }
   var base: string = util.base_type_name(rt);
@@ -8395,7 +8395,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var sn2: i32 = 0;
   while (sn2 < mod.structs.len()) {
     var s2: parser.StructDecl = mod.structs[sn2];
-    var user_struct: boolean = s2.enum_owner.len() == 0 && !(s2.name.len() >= 2 && s2.name[0:2] == "__");
+    var user_struct: boolean = s2.enum_owner.len() == 0 && !(s2.name.len() >= 2 && slice_unchecked(s2.name, 0, 2) == "__");
     if (user_struct) {
       var sdup: boolean = false;
       var sj2: i32 = 0;
@@ -10798,12 +10798,12 @@ function e021_object_unsafe_method(mod: parser.Module, trait_name: string): stri
 // after the `dyn ` prefix), or "" for any non-dyn type. A trailing `[]` (a
 // `dyn T[]` array) is stripped so the element trait is classified.
 function e021_dyn_target(type_name: string): string {
-  if (type_name.len() < 5 || type_name[0:4] != "dyn ") {
+  if (type_name.len() < 5 || slice_unchecked(type_name, 0, 4) != "dyn ") {
     return "";
   }
-  var t: str = type_name[4:type_name.len()];
+  var t: str = slice_unchecked(type_name, 4, type_name.len());
   while (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
-    t = t[0:t.len() - 2];
+    t = slice_unchecked(t, 0, t.len() - 2);
   }
   return t + "";
 }
@@ -10849,10 +10849,10 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
 // for any non-dyn type (a `dyn T[]` ARRAY is excluded — its element, not the
 // ident, is the dyn value; neither check applies to the array ident).
 function e060_dyn_set_of(type_name: string): string {
-  if (type_name.len() < 5 || type_name[0:4] != "dyn ") {
+  if (type_name.len() < 5 || slice_unchecked(type_name, 0, 4) != "dyn ") {
     return "";
   }
-  var t: str = type_name[4:type_name.len()];
+  var t: str = slice_unchecked(type_name, 4, type_name.len());
   if (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
     return "";
   }
@@ -10866,15 +10866,15 @@ function e060_split_traits(set: string): string[] {
   var start: i32 = 0;
   var i: i32 = 0;
   while (i + 3 <= set.len()) {
-    if (set[i:i + 3] == " + ") {
-      out = out.append(set[start:i]);
+    if (slice_unchecked(set, i, i + 3) == " + ") {
+      out = out.append(slice_unchecked(set, start, i));
       start = i + 3;
       i = i + 3;
     } else {
       i = i + 1;
     }
   }
-  return out.append(set[start:set.len()]);
+  return out.append(slice_unchecked(set, start, set.len()));
 }
 
 // e060_trait_known: the trait appears in trait_reqs (declared in the merged
@@ -10924,7 +10924,7 @@ function e060_collect_dyn_locals(stmts: parser.Stmt[], acc: string[]): string[] 
           while (bar < e.len() && e[bar] != b'|') {
             bar = bar + 1;
           }
-          if (e[0:bar] == v.name) {
+          if (slice_unchecked(e, 0, bar) == v.name) {
             out = out.with(k, v.name + "|");
             seen = 1;
           }
@@ -10953,8 +10953,8 @@ function e060_set_of_name(dyns: string[], name: string): string {
     while (bar < e.len() && e[bar] != b'|') {
       bar = bar + 1;
     }
-    if (e[0:bar] == name) {
-      return e[bar + 1:e.len()] + "";
+    if (slice_unchecked(e, 0, bar) == name) {
+      return slice_unchecked(e, bar + 1, e.len()) + "";
     }
   }
   return "";
@@ -10990,12 +10990,12 @@ function e060_e062_stmts(stmts: parser.Stmt[], dyns: string[], mod: parser.Modul
   function at_node(n: parser.Expr, out: util.Diag[]): util.Diag[] {
     match (n) {
       parser.ExprUnary(u) => {
-        if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+        if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
           match (u.operand) {
             parser.ExprIdent(id) => {
               var set: string = e060_set_of_name(dyns, id.name);
               if (set.len() > 0) {
-                var tgt: str = u.op[4:u.op.len()];
+                var tgt: str = slice_unchecked(u.op, 4, u.op.len());
                 if (e060_is_primitive_name(tgt)) {
                   return out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
                 }
@@ -12451,8 +12451,8 @@ function annotate_variant_struct(name: string, s: Scope): string {
   if (d < 0) {
     return "";
   }
-  var bare: string = name[d + 1:name.len()] + "";
-  if (!is_variant_of(bare, name[0:d] + "", s.unions)) {
+  var bare: string = slice_unchecked(name, d + 1, name.len()) + "";
+  if (!is_variant_of(bare, slice_unchecked(name, 0, d) + "", s.unions)) {
     return "";
   }
   if (s.lookup_struct(bare).name.len() > 0) {
