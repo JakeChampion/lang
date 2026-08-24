@@ -4089,6 +4089,13 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		if id.Name == "string_from_bytes_unchecked" {
 			return true
 		}
+		// `slice_unchecked(s, a, b)` copies bytes OUT of `s` into a
+		// fresh string (the __str_slice contract), so the result
+		// aliases none of its arguments — the SliceExpr string arm
+		// above, spelled as a builtin.
+		if id.Name == "slice_unchecked" {
+			return true
+		}
 		// `xs.append(v)` returns the receiver's OWN buffer (the rc==1 in-place
 		// path) or a fresh copy of it — never anything derived from the element
 		// argument's heap. So the result is param-free exactly when the
@@ -13194,6 +13201,28 @@ func (b *builder) callBody(n *ast.Call) error {
 	// Arrays keep the inline sub-4 / load shape because their
 	// layout may diverge from strings later.
 	switch id.Name {
+	case "slice_unchecked":
+		// `slice_unchecked(s, a, b)` is `s[a:b]` under its honest name
+		// (#5634, D9): lower it onto the identical __str_slice path as
+		// the SliceExpr arm so the two forms cannot drift — including
+		// the owned-temp source stash, without which the
+		// `slice_unchecked(f(x), a, b)` shape leaks one buffer per call.
+		if len(n.Args) != 3 {
+			break
+		}
+		slSrc, err := b.stashOwnedStringOperand(n.Args[0])
+		if err != nil {
+			return err
+		}
+		if err := b.expr(n.Args[1]); err != nil {
+			return err
+		}
+		if err := b.expr(n.Args[2]); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_slice", Width: ResAddr, I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+		b.decStashedStringTemps(slSrc)
+		return nil
 	case "__method_string_len", "__method_Array_len", "__method_slice_len":
 		if len(n.Args) != 1 {
 			break

@@ -565,6 +565,7 @@ func New() *Interp {
 	// model, so Map operations stay codegen-only for now.
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
+	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
 	// `s.bytes()` and `s.as_bytes()` round-trip bytes through
 	// raw memory in the stdlib / wat-emitted helper (the
 	// former does `__memcpy(out as i32, s.as_bytes() as i32, n)`,
@@ -1675,6 +1676,33 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 		buf[i] = byte(int64(n) & 0xff)
 	}
 	return String(buf), nil
+}
+
+// `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
+// same bounds contract as the SliceExpr eval above (error on
+// `a < 0 || b > len || a > b`, the interp's stand-in for the
+// codegen trap), no char-boundary check (#5634, D9).
+func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("slice_unchecked: expected 3 args (s, a, b), got %d", len(args))
+	}
+	s, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("slice_unchecked: arg must be string, got %T", args[0])
+	}
+	a, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("slice_unchecked: low bound must be number, got %T", args[1])
+	}
+	b, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("slice_unchecked: high bound must be number, got %T", args[2])
+	}
+	low, high, slen := int64(a), int64(b), int64(len(s))
+	if low < 0 || high > slen || low > high {
+		return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
+	}
+	return String(string(s)[low:high]), nil
 }
 
 // `__method_string_bytes` / `__method_string_as_bytes` —

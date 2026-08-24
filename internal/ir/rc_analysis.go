@@ -667,6 +667,12 @@ func pureReadReceiverBuiltin(name string) bool {
 	switch name {
 	case "__method_string_len", "__method_Array_len", "__method_slice_len":
 		return true
+	case "slice_unchecked":
+		// Copies bytes OUT of its string receiver into a fresh buffer
+		// (the __str_slice contract) — the builtin spelling of the
+		// string SliceExpr credit, so migrating `s[a:b]` to it cannot
+		// flip a param out of counted-retain (#5634).
+		return true
 	}
 	return false
 }
@@ -1925,6 +1931,12 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// backend (CSPRNG bytes / one socket read). Same argument
 				// as __alloc_u8 above: every argument is a scalar (byte
 				// count, fd), so the result cannot alias one.
+				return false
+			case "slice_unchecked":
+				// Copies bytes OUT of its source into a fresh owned
+				// buffer (the __str_slice contract) — the string
+				// SliceExpr arm above, spelled as a builtin, so the
+				// source's taint says nothing about the result.
 				return false
 			}
 		}

@@ -5874,6 +5874,42 @@ func TestRetiredNameSuggestsReplacement(t *testing.T) {
 	}
 }
 
+// `slice_unchecked(s: string, a: i32, b: i32): str` (#5634, slice 3) is an
+// ordinary FuncSigs builtin, so misuse must fall out of the normal call
+// checks: wrong arity is E004, a wrong argument type is E038 naming the
+// position, and the result is `str` — not `string` — so it cannot be bound
+// to an owning sink without materialising.
+func TestSliceUncheckedMisuseRejected(t *testing.T) {
+	bad := []struct{ src, want string }{
+		{`function f(s: string): str { return slice_unchecked(s, 0); }`,
+			"expects 3 arguments, got 2"},
+		{`function f(s: string): str { return slice_unchecked(s, 0, 1, 2); }`,
+			"expects 3 arguments, got 4"},
+		{`function f(): str { return slice_unchecked(7, 0, 1); }`,
+			"argument 1: expected string"},
+		{`function f(s: string): str { return slice_unchecked(s, "a", 1); }`,
+			"argument 2: expected i32"},
+		{`function f(s: string): str { return slice_unchecked(s, 0, "b"); }`,
+			"argument 3: expected i32"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error for %s, got none", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q\nsrc: %s", err.Error(), c.want, c.src)
+		}
+	}
+
+	// The correct call shape type-checks, into a `str` sink.
+	if err := checkSource(t, `function f(s: string): str { return slice_unchecked(s, 0, 1); }
+function main(): i32 { var s: string = "hey"; return f(s).len(); }`); err != nil {
+		t.Errorf("well-typed slice_unchecked call rejected: %v", err)
+	}
+}
+
 // A generic call whose argument is an ARGLESS enum — `Ok(8)` leaves the error
 // type free, unlike `Some(8)` which pins `Option[i32]` — must type-check the
 // same in every position. It did not: as a METHOD-CALL RECEIVER it was

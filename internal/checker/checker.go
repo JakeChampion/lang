@@ -2029,6 +2029,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.StringType{},
 	}
 
+	// `slice_unchecked(s: string, a: i32, b: i32): str` — the byte
+	// slice `s[a:b]` under its honest name: half-open, byte-indexed,
+	// traps (exit 134) on `a < 0 || b > s.len() || a > b`, and does
+	// NOT check UTF-8 char boundaries, so it can cut a code point in
+	// half. Callers guarantee both indices are boundaries — indices
+	// from `index_of`/scan results, ASCII-only data, or the
+	// `std/utf8` boundary helpers. `std/string.slice_snap` is the
+	// total sibling that clamps and snaps instead (#5634, D9).
+	c.info.FuncSigs["slice_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.StrType{},
+	}
+
 	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
 	// thin lang-callable wrappers around wasm's bulk-memory
 	// `memory.copy` / `memory.fill`. The doc-roadmap calls
