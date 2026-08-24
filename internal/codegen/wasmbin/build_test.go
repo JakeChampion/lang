@@ -633,11 +633,11 @@ function main(): i32 {
         tcp_close(srv);
         return -2;
     }
-    var data: string = tcp_recv(conn, 4096i32);
-    var sent: i32 = tcp_send(conn, data);
+    var data: u8[] = tcp_recv(conn, 4096i32);
+    var sent: i32 = tcp_send(conn, "ok");
     tcp_close(conn);
     tcp_close(srv);
-    return sent;
+    return sent + data.len();
 }
 `
 	bin, err := buildFromSource(t, src)

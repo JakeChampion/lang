@@ -640,14 +640,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// pollable for reactor fan-out.
 					needs.add("__fern_tcp_pollable")
 				case "__fern_tcp_recv":
-					// (conn, max) → (data, len) — heap-form
-					// string with the bytes read. Empty on
-					// stream-error / EOF. The result string is
-					// rc-headered (alloc_rc1) so __fern_str_dec
-					// reclaims it correctly (#2817 class); the
-					// retptr scratch uses plain alloc.
+					// (conn, max) → i32 — u8[] box with the bytes
+					// read (D9, #5714). Empty box on stream-error /
+					// EOF / max <= 0. The result carries the
+					// cap/rc/len header via __alloc_u8; the retptr
+					// scratch uses plain alloc.
 					needs.add("__fern_alloc")
-					needs.add("__fern_alloc_rc1")
+					needs.add("__alloc_u8")
 					needs.add("__fern_tcp_recv")
 				case "__fern_tcp_send":
 					// (conn, data) → i32 — bytes sent, -1 on
@@ -2146,10 +2145,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildTcpPollableBody,
 	},
 	"__fern_tcp_recv": {
-		// (conn: i32, max: i32) → (data, len) heap-form
-		// string. Empty pair (0, 0) on stream-error / EOF.
+		// (conn: i32, max: i32) → i32 — u8[] data pointer in
+		// the __alloc_u8 box shape (D9, #5714). Empty box on
+		// stream-error / EOF / max <= 0.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
 		body:    buildTcpRecvBody,
 	},
 	"__fern_tcp_send": {

@@ -517,14 +517,17 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 
 // buildTcpRecvBody assembles __fern_tcp_recv.
 //
-// Signature: (conn: i32, max: i32) → (data: i32, len: i32) — a
-// two-word heap-form string. On stream-error or EOF returns the
-// empty heap pair (0, 0), matching the WAT contract.
+// Signature: (conn: i32, max: i32) → i32 — a u8[] data pointer
+// in the __alloc_u8 box shape (16-byte cap/rc/len header behind
+// the data pointer; D9, #5714). Stream-error, EOF, and max <= 0
+// all return the empty box __alloc_u8(0), the same sentinel the
+// empty string was when this returned a (data, len) pair.
 //
 // Pipeline: load the input-stream handle from the connection
 // struct (`mem[$conn + 4]`), call blocking-read(stream, max,
 // retptr=12B), copy the host's list<u8> payload into a fresh
-// heap buffer, return (buffer, length).
+// __alloc_u8 box, return the box's data pointer. __alloc_u8(n)
+// writes the length prefix, so the copy is all that remains.
 //
 // Locals (after the two params):
 //
@@ -532,20 +535,26 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 //	3: $retptr   — 12-byte retptr scratch
 //	4: $list_ptr — list<u8> data pointer (Ok payload slot 0)
 //	5: $n        — list<u8> length (Ok payload slot 1)
-//	6: $strbuf   — fresh heap buffer holding the read bytes
+//	6: $arr      — __alloc_u8 box holding the read bytes
 func buildTcpRecvBody(idxs map[string]uint32) []byte {
+	// The u8[] result carries the cap/rc/len header only when it comes from
+	// __alloc_u8; the 12-byte retptr scratch is not an array, so it stays on
+	// plain __fern_alloc.
 	alloc := idxs["__fern_alloc"]
-	// The returned (data, len) is an owned string reclaimed by the two-word
-	// __fern_str_dec, which reads the rc at data-8 and the payload size at
-	// data-4 — present only when the buffer comes from __fern_alloc_rc1. A plain
-	// __fern_alloc buffer has no header, so the drop reads garbage and recycles a
-	// still-live cell (the #2817 heap-corruption class; arm64 tcp_recv had the
-	// identical bug). The 12-byte retptr scratch below is not a string, so it
-	// stays on plain alloc.
-	allocRc1 := idxs["__fern_alloc_rc1"]
+	allocU8 := idxs["__alloc_u8"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 
 	var body []byte
+
+	// max <= 0 → empty box.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstCall(body, allocU8)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
 
 	// $stream = mem[$conn + 4]
 	body = inst.InstLocalGet(body, 0)
@@ -566,12 +575,12 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, blockingRead)
 
-	// On Err, return empty (0, 0).
+	// On Err (stream-error or closed/EOF), return the empty box.
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
+	body = inst.InstCall(body, allocU8)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
@@ -587,19 +596,16 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 5)
 
-	// $strbuf = alloc_rc1($n); memory.copy(strbuf, list_ptr, n).
+	// $arr = __alloc_u8($n); memory.copy(arr, list_ptr, n).
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstCall(body, allocRc1)
+	body = inst.InstCall(body, allocU8)
 	body = inst.InstLocalTee(body, 6)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstMemoryCopy(body)
 
-	// Return ($strbuf, $n) as a heap-form string pair (top bit of
-	// len clear, since $n is bounded by max which is a positive
-	// i32 caller-controlled value).
+	// Return the box's data pointer.
 	body = inst.InstLocalGet(body, 6)
-	body = inst.InstLocalGet(body, 5)
 
 	// 5 i32 locals after the 2 params.
 	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
