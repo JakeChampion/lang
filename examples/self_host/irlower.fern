@@ -27739,7 +27739,7 @@ function rctuple_type_of_decl(stmts: parser.Stmt[], name: string): string {
 // `name`; a bare POINTER element `name.<i>` (array / struct box); a bare struct array-field
 // `name.<i>.<f>`. Erring toward escape is a safe leak, never an over-release. Mirrors
 // arrtup_elem_esc_expr, rooted at a bare-local tuple (`name.<i>`) instead of `name[k].<i>`.
-function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },   // bare whole tuple escapes
         parser.ExprNumber(_) => { return false; },
@@ -27778,9 +27778,9 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                         },
                         _ => {}
                     }
-                    return rctuple_esc_expr(fa.obj, name, ttype, structs);
+                    return rctuple_esc_expr(fa.obj, name, ttype, structs, borrowable);
                 },
-                _ => { return rctuple_esc_expr(fa.obj, name, ttype, structs); }
+                _ => { return rctuple_esc_expr(fa.obj, name, ttype, structs, borrowable); }
             }
         },
         parser.ExprIndex(ix) => {
@@ -27790,7 +27790,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                         parser.ExprIdent(bid) => {
                             // name.<i>[j] : indexed array-element read — safe; check the index.
                             if (bid.name == name && util.is_all_digits(bfa.field)) {
-                                return rctuple_esc_expr(ix.index, name, ttype, structs);
+                                return rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
                             }
                         },
                         parser.ExprFieldAccess(ppfa) => {
@@ -27798,7 +27798,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                             match (ppfa.obj) {
                                 parser.ExprIdent(ppid) => {
                                     if (ppid.name == name && util.is_all_digits(ppfa.field)) {
-                                        return rctuple_esc_expr(ix.index, name, ttype, structs);
+                                        return rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
                                     }
                                 },
                                 _ => {}
@@ -27810,7 +27810,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                 parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },   // bare name[..]
                 _ => {}
             }
-            return rctuple_esc_expr(ix.array, name, ttype, structs) || rctuple_esc_expr(ix.index, name, ttype, structs);
+            return rctuple_esc_expr(ix.array, name, ttype, structs, borrowable) || rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -27822,7 +27822,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                                     parser.ExprIdent(oid) => {
                                         // name.<i>.len() : array-element length borrow.
                                         if (oid.name == name && util.is_all_digits(ofa.field)) {
-                                            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs)) { return true; } }
+                                            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs, borrowable)) { return true; } }
                                             return false;
                                         }
                                     },
@@ -27831,7 +27831,7 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                                         match (o2.obj) {
                                             parser.ExprIdent(o2id) => {
                                                 if (o2id.name == name && util.is_all_digits(o2.field)) {
-                                                    for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs)) { return true; } }
+                                                    for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs, borrowable)) { return true; } }
                                                     return false;
                                                 }
                                             },
@@ -27847,27 +27847,55 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
                 },
                 _ => {}
             }
-            if (rctuple_esc_expr(c.callee, name, ttype, structs)) { return true; }
-            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs)) { return true; } }
+            if (rctuple_esc_expr(c.callee, name, ttype, structs, borrowable)) { return true; }
+            // A DIRECT bare-ident `name` at a PAYLOAD-borrowable param
+            // position of a known free function is a BORROW, not a payload
+            // escape. The key is the "TUPB:" tier, NOT the plain box flag:
+            // box borrowability only proves the callee never keeps the box,
+            // and a callee returning src.1 keys box-borrowable while this
+            // scan's deep reclaim would free the handed-out element under it
+            // (sanitizer-confirmed UAF). TUPB additionally proves no payload
+            // of the param escapes the callee — the question a TUPRCS deep
+            // free actually asks. Without any forgiveness, `round(keep, i)`
+            // with a purely-reading callee cost the caller's rc-tuple its
+            // whole deep reclaim.
+            var resc_callee: string = "";
+            match (c.callee) {
+                parser.ExprIdent(rcid) => { resc_callee = rcid.name; },
+                _ => {}
+            }
+            var rai: i32 = 0;
+            while (rai < c.args.len()) {
+                var rarg_borrow: boolean = false;
+                match (c.args[rai]) {
+                    parser.ExprIdent(raid) => {
+                        if (raid.name == name && resc_callee.len() > 0
+                            && param_is_borrowable(borrowable, "TUPB:" + resc_callee, rai)) { rarg_borrow = true; }
+                    },
+                    _ => {}
+                }
+                if (!rarg_borrow && rctuple_esc_expr(c.args[rai], name, ttype, structs, borrowable)) { return true; }
+                rai = rai + 1;
+            }
             return false;
         },
-        parser.ExprBinary(b) => { return rctuple_esc_expr(b.left, name, ttype, structs) || rctuple_esc_expr(b.right, name, ttype, structs); },
-        parser.ExprUnary(u) => { return rctuple_esc_expr(u.operand, name, ttype, structs); },
-        parser.ExprSlice(sl) => { return rctuple_esc_expr(sl.array, name, ttype, structs) || rctuple_esc_expr(sl.start, name, ttype, structs) || rctuple_esc_expr(sl.end, name, ttype, structs); },
+        parser.ExprBinary(b) => { return rctuple_esc_expr(b.left, name, ttype, structs, borrowable) || rctuple_esc_expr(b.right, name, ttype, structs, borrowable); },
+        parser.ExprUnary(u) => { return rctuple_esc_expr(u.operand, name, ttype, structs, borrowable); },
+        parser.ExprSlice(sl) => { return rctuple_esc_expr(sl.array, name, ttype, structs, borrowable) || rctuple_esc_expr(sl.start, name, ttype, structs, borrowable) || rctuple_esc_expr(sl.end, name, ttype, structs, borrowable); },
         parser.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { if (rctuple_esc_expr(ar.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
+            while (i < ar.elements.len()) { if (rctuple_esc_expr(ar.elements[i], name, ttype, structs, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (rctuple_esc_expr(t.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (rctuple_esc_expr(t.elements[i], name, ttype, structs, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs)) { return true; }
+            if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (rctuple_esc_expr(sl.field_values[i], name, ttype, structs)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (rctuple_esc_expr(sl.field_values[i], name, ttype, structs, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         _ => { return false; }
@@ -27891,11 +27919,6 @@ function rctuple_scrutinee_is_elem_read(e: parser.Expr, name: string): boolean {
     return false;
 }
 
-function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    var no_alias: string[] = [];
-    return rctuple_esc_stmt_alias(st, name, ttype, structs, no_alias);
-}
-
 // rctuple_esc_stmt_alias carries the #7282 alias forgiveness THROUGH the
 // recursion, which is the whole point: a first version checked the forgiven
 // bind only at the top level of the statement list and fell into the plain
@@ -27903,7 +27926,7 @@ function rctuple_esc_stmt(st: parser.Stmt, name: string, ttype: string, structs:
 // the credit. The function-scope sibling measured clean while the block-scoped
 // one sat at exactly its unfixed number — two dec sites missing from the emitted
 // asm, and nothing else to see.
-function rctuple_esc_stmt_alias(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[]): boolean {
+function rctuple_esc_stmt_alias(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => {
             if (alias_ok.len() > 0) {
@@ -27915,29 +27938,29 @@ function rctuple_esc_stmt_alias(st: parser.Stmt, name: string, ttype: string, st
                     _ => {}
                 }
             }
-            return rctuple_esc_expr(v.init, name, ttype, structs);
+            return rctuple_esc_expr(v.init, name, ttype, structs, borrowable);
         },
-        parser.StmtReturn(r) => { return rctuple_esc_expr(r.value, name, ttype, structs); },
-        parser.StmtExpr(e) => { return rctuple_esc_expr(e.value, name, ttype, structs); },
-        parser.StmtAssign(a) => { return rctuple_esc_expr(a.value, name, ttype, structs); },
+        parser.StmtReturn(r) => { return rctuple_esc_expr(r.value, name, ttype, structs, borrowable); },
+        parser.StmtExpr(e) => { return rctuple_esc_expr(e.value, name, ttype, structs, borrowable); },
+        parser.StmtAssign(a) => { return rctuple_esc_expr(a.value, name, ttype, structs, borrowable); },
         parser.StmtIf(f) => {
-            if (rctuple_esc_expr(f.cond, name, ttype, structs)) { return true; }
+            if (rctuple_esc_expr(f.cond, name, ttype, structs, borrowable)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, alias_ok)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, borrowable, alias_ok)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, alias_ok)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, borrowable, alias_ok)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
-            if (rctuple_esc_expr(w.cond, name, ttype, structs)) { return true; }
+            if (rctuple_esc_expr(w.cond, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, alias_ok)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, borrowable, alias_ok)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
-            if (rctuple_esc_expr(fo.iter, name, ttype, structs)) { return true; }
+            if (rctuple_esc_expr(fo.iter, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, alias_ok)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, borrowable, alias_ok)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
@@ -27952,28 +27975,19 @@ function rctuple_esc_stmt_alias(st: parser.Stmt, name: string, ttype: string, st
             // element handed through a call, still walks as an escape — those
             // hand the pointer somewhere the reclaim cannot see.
             if (!rctuple_scrutinee_is_elem_read(m.scrutinee, name)
-                    && rctuple_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
+                    && rctuple_esc_expr(m.scrutinee, name, ttype, structs, borrowable)) { return true; }
             for arm in m.arms {
-                if (arm.has_guard && rctuple_esc_expr(arm.guard, name, ttype, structs)) { return true; }
+                if (arm.has_guard && rctuple_esc_expr(arm.guard, name, ttype, structs, borrowable)) { return true; }
                 var bi: i32 = 0;
-                while (bi < arm.body.len()) { if (rctuple_esc_stmt_alias(arm.body[bi], name, ttype, structs, alias_ok)) { return true; } bi = bi + 1; }
+                while (bi < arm.body.len()) { if (rctuple_esc_stmt_alias(arm.body[bi], name, ttype, structs, borrowable, alias_ok)) { return true; } bi = bi + 1; }
             }
             return false;
         },
-        parser.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, alias_ok); },
+        parser.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, borrowable, alias_ok); },
         _ => { return false; }
     }
     return false;
 }
-// rctuple_payload_escapes: any statement in `stmts` uses the rc-tuple local `name`
-// (tuple type `ttype`) in an escaping way per rctuple_esc_stmt. Only meaningful with a
-// tuple type annotation in hand; the credit site skips it when the type is unknown
-// (un-annotated bindings keep their prior behaviour).
-function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    var no_alias: string[] = [];
-    return rctuple_payload_escapes_alias(stmts, name, ttype, structs, no_alias);
-}
-
 // rctuple_payload_escapes_alias is the same scan with the #7282 forgiveness: a
 // plain `var v = name` bind listed in `alias_ok` is not a payload escape,
 // because the bind retained the box and the alias carries the source's own
@@ -27984,9 +27998,9 @@ function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: stri
 // and forgiving only the first left "TUPRC:" denied and the shape measuring
 // exactly its unfixed 8000 while the scalar-tuple sibling went to 0. Enumerate
 // the scans a class consults, not just the shared one.
-function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[]): boolean {
+function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[]): boolean {
     for stmt in stmts {
-        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, alias_ok)) { return true; }
+        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok)) { return true; }
     }
     return false;
 }
@@ -27999,8 +28013,8 @@ function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype
 // gate (body_unsafe_for_alias_ret_ok) already learned — the trap the comment
 // above names. Compound statements recurse HERE so a nested return in an
 // if-arm is forgiven too.
-function rctuple_payload_escapes_alias_ret_ok(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[], bare_ret_ok: boolean): boolean {
-    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, alias_ok); }
+function rctuple_payload_escapes_alias_ret_ok(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], bare_ret_ok: boolean): boolean {
+    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, borrowable, alias_ok); }
     for stmt in stmts {
         match (stmt) {
             parser.StmtReturn(r) => {
@@ -28009,30 +28023,30 @@ function rctuple_payload_escapes_alias_ret_ok(stmts: parser.Stmt[], name: string
                     parser.ExprIdent(rid) => { bare = rid.name == name; },
                     _ => {}
                 }
-                if (!bare && rctuple_esc_expr(r.value, name, ttype, structs)) { return true; }
+                if (!bare && rctuple_esc_expr(r.value, name, ttype, structs, borrowable)) { return true; }
             },
             parser.StmtIf(f) => {
-                if (rctuple_esc_expr(f.cond, name, ttype, structs)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, alias_ok, true)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, alias_ok, true)) { return true; }
+                if (rctuple_esc_expr(f.cond, name, ttype, structs, borrowable)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
             },
             parser.StmtWhile(w) => {
-                if (rctuple_esc_expr(w.cond, name, ttype, structs)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, alias_ok, true)) { return true; }
+                if (rctuple_esc_expr(w.cond, name, ttype, structs, borrowable)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
             },
             parser.StmtFor(fo) => {
-                if (rctuple_esc_expr(fo.iter, name, ttype, structs)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, alias_ok, true)) { return true; }
+                if (rctuple_esc_expr(fo.iter, name, ttype, structs, borrowable)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
             },
             parser.StmtMatch(m) => {
-                if (rctuple_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
+                if (rctuple_esc_expr(m.scrutinee, name, ttype, structs, borrowable)) { return true; }
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
-                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, alias_ok, true)) { return true; }
+                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
                     mi = mi + 1;
                 }
             },
-            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, alias_ok)) { return true; } }
+            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok)) { return true; } }
         }
     }
     return false;
@@ -32711,7 +32725,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // extraction, and the wrong guess here is an over-release. An un-annotated
             // tuple keeps "TUP:" and simply does not earn the element release.
             var tupelemty: string = rctuple_type_of_decl(body, tnm);
-            if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, tal)) {
+            if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal)) {
                 out = out.append("TUPELEMOK:" + tups[ti]);
             }
         }
@@ -32738,7 +32752,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
         if (!body_unsafe_for_alias_ret_ok(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0)) {
             var rctty: string = rctuple_type_of_decl(body, rnm);
-            if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, ral, util.index_of_str(tretn, rnm) >= 0)) {
+            if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0)) {
                 out = out.append("TUPRC:" + rctups[rti]);
                 // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
                 // this is the general rule the struct case taught: only the BOX
@@ -52367,10 +52381,49 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
-        if (any) { out = borrow_reg_put(out, borrowable_key(fn), flags); }
+        if (any) {
+            out = borrow_reg_put(out, borrowable_key(fn), flags);
+            // The payload-aware "TUPB:" tier rides the same bucketed registry
+            // under a prefixed key (exact-length key match keeps it disjoint
+            // from the bare names) — param_is_borrowable("TUPB:<callee>", i)
+            // reads it.
+            var tupb: string = tuple_payload_borrow_flags(fn, flags);
+            if (tupb.len() > 0) { out = borrow_reg_put(out, "TUPB:" + borrowable_key(fn), tupb); }
+        }
     }
     return out;
 }
+// tuple_payload_borrow_flags: the "TUPB:" tier for one function — per-param
+// flag '1' iff the box flag is '1', the param is tuple-typed, and the rc-tuple
+// payload walker proves no PAYLOAD of the param escapes the callee's body.
+// The box flag proves the callee never keeps the BOX and licenses box-only
+// releases; a TUPRCS deep free (every rc position, then the box) must ask this
+// stronger question — a callee returning src.1 keys box-borrowable while its
+// caller's deep free would dangle the handed-out element (native's
+// taintedReachesSlot draws the same payload line). Registry-independent (empty
+// borrowable inside — an onward pass of the param is an escape) and
+// structs-blind (a struct-element field read is a conservative escape), so
+// the interproc fixpoint cannot oscillate and both builders share it.
+function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): string {
+    var no_structs: parser.StructDecl[] = [];
+    var no_strs: string[] = [];
+    var tupb: string = "";
+    var any1: boolean = false;
+    var pj: i32 = 0;
+    while (pj < fn.params.len()) {
+        var pty: string = fn.params[pj].type_name;
+        if (pj < boxflags.len() && boxflags[pj] == b'1'
+            && pty.len() >= 2 && pty[0:1] == "(" && !util.contains(pty, "=>")
+            && !rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, no_strs)) {
+            tupb = tupb + "1";
+            any1 = true;
+        } else { tupb = tupb + "0"; }
+        pj = pj + 1;
+    }
+    if (!any1) { return ""; }
+    return tupb;
+}
+
 // borrowable_key is the registry key for a function's borrowability entry: the
 // bare name for a free function, "<Type>.<method>" for a receiver method.
 function borrowable_key(fn: parser.FuncDecl): string {
@@ -52456,7 +52509,15 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
-                if (any) { next = borrow_reg_put(next, borrowable_key(fn), flags); }
+                if (any) {
+                    next = borrow_reg_put(next, borrowable_key(fn), flags);
+                    // The "TUPB:" payload tier — registry-independent flags
+                    // (tuple_payload_borrow_flags walks with empty registries),
+                    // so re-putting them per iteration cannot perturb the
+                    // monotone-decreasing convergence argument below.
+                    var ip_tupb: string = tuple_payload_borrow_flags(fn, flags);
+                    if (ip_tupb.len() > 0) { next = borrow_reg_put(next, "TUPB:" + borrowable_key(fn), ip_tupb); }
+                }
             }
         }
         // Monotone-DECREASING (flags only go 1->0), so the registry strictly

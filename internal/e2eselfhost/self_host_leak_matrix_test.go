@@ -422,6 +422,65 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
+		// THE PAYLOAD-TIER REFUSAL, literal-init flavor: get's param is
+		// box-borrowable (a field read walks as a borrow in the shared gate)
+		// but its "TUPB:" payload flag is 0 — it hands src.1 out — so the
+		// caller's TUPRCS deep reclaim is refused and keep leaks (the safe
+		// direction; granting it was a sanitizer-confirmed UAF, freeing the
+		// element under the callee's returned reference). Native is clean via
+		// its dup-at-extract convention — a recorded floor, not a hazard.
+		leakCell{name: "tuple_mixed__elemret__payload_refused", src: `function get(src: (i32, i32[])): i32[] { return src.1; }
+function make(): i32[] {
+    var keep: (i32, i32[]) = (5, [6, 7]);
+    return get(keep);
+}
+function main(): i32 {
+    var r: i32[] = make();
+    var acc: i32 = r.len();
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		// The same element-returning callee with a CALL-producer tuple: the
+		// payload tier refuses the ELEMENT kinds while the box tier still
+		// grants the shallow "TUP:" box free — box freed once by the caller,
+		// element ownership rides out to main's is_arr sweep. Clean on both
+		// sides, and the layering (box flag licenses box-only, TUPB licenses
+		// deep) is exactly what this cell pins.
+		leakCell{name: "tuple_mixed__elemret__box_tier_only", src: `function maketup(): (i32, i32[]) { return (5, [6, 7]); }
+function get(src: (i32, i32[])): i32[] { return src.1; }
+function make(): i32[] {
+    var t: (i32, i32[]) = maketup();
+    return get(t);
+}
+function main(): i32 {
+    var r: i32[] = make();
+    var acc: i32 = r.len();
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		// An rc-tuple passed to a BORROWING callee (reads src directly, so
+		// its param is payload-borrowable): the rc-tuple escape scan's call
+		// arm applies the "TUPB:" payload-tier borrow rule, so keep's TUPRCS
+		// deep reclaim survives the call — the alias-param audit's "tuple
+		// control leaks identically" finding, closed. The rcplan tables agree
+		// either way, so this cell is the instrument.
+		leakCell{name: "tuple_mixed__fnscope__borrowed_arg", src: `function round(src: (i32, i32[]), i: i32): i32 {
+    var t: i32 = 0;
+    t = (t + src.0 + src.1.len()) % 101;
+    return t;
+}
+function main(): i32 {
+    var keep: (i32, i32[]) = (5, [6, 7]);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
+    acc = (acc + keep.0 + keep.1.len()) % 83;
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
 		// A CALL-producer tuple source: the owned-return admission credits
 		// the bound result ("TUP:" + the ARRF-flagged element kinds behind
 		// "TUPELEMOK:"), so box and element both release and the alias pair
