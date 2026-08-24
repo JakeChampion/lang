@@ -205,6 +205,7 @@ function is_rc_noop(name: string): boolean {
     if (name == "__fern_arr_share_inc") { return true; }
     if (name == "__fern_arr_share_dec") { return true; }
     if (name == "__fern_str_free") { return true; }
+    if (name == "__fern_str_view_free") { return true; }
     if (name == "__fern_str_arr_free") { return true; }
     // Per-type reclamation helpers irlower emits at scope exit (deep-drop of a
     // struct's rc-tracked fields / a consume-rebind field reclaim). The type
