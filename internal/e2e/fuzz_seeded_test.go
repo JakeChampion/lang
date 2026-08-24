@@ -25,7 +25,7 @@ import "std/string";
 
 // Fails only on inputs containing 0xFF, so the mutation engine has to
 // actually find one (mode 6 writes 0xFF; mode 0 can too).
-function target(input: string): test.TestOutcome {
+function target(input: u8[]): test.TestOutcome {
     var i: i32 = 0;
     while (i < input.len()) {
         if ((input[i] as i32) == 255) { return test.fail("found 0xFF"); }
@@ -34,7 +34,7 @@ function target(input: string): test.TestOutcome {
     return test.pass();
 }
 
-function always_pass(input: string): test.TestOutcome { return test.pass(); }
+function always_pass(input: u8[]): test.TestOutcome { return test.pass(); }
 
 function outcome_failed(o: test.TestOutcome): boolean {
     match (o) { Fail(m) => { return true; }, Pass => { return false; } }
@@ -45,7 +45,7 @@ function outcome_msg(o: test.TestOutcome): string {
 }
 
 function main(): i32 {
-    var seeds: string[] = ["abc", "hello", "xyzzy"];
+    var seeds: u8[][] = ["abc".bytes(), "hello".bytes(), "xyzzy".bytes()];
 
     // Equal seeds replay identically -- same outcome AND same diagnostic.
     var a = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
@@ -68,7 +68,7 @@ function main(): i32 {
 
     // Guard rails preserved.
     if (!outcome_failed(fuzz.fuzz_run_seeded(seeds, 0, 1 as i64, always_pass))) { return 7; }
-    var empty: string[] = [];
+    var empty: u8[][] = [];
     if (!outcome_failed(fuzz.fuzz_run_seeded(empty, 10, 1 as i64, always_pass))) { return 8; }
 
     // The unseeded entry point still works. NOTE: this specific call is what

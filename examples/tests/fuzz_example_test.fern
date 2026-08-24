@@ -1,46 +1,63 @@
 import "std/fuzz";
 import "std/test";
+import "std/string";
+import "std/utf8" as utf8;
 // examples/tests/fuzz_example_test.fern — `std/fuzz` walkthrough.
 //
-// Each fuzz target is a `(string) => test.TestOutcome` function:
-//   None       — the property held for this input
-//   Some(msg)  — the property was violated; the runner records
+// Each fuzz target is a `(u8[]) => test.TestOutcome` function:
+//   Pass       — the property held for this input
+//   Fail(msg)  — the property was violated; the runner records
 //                the offending input alongside the message
 //
 // Inputs come from a seed corpus plus byte-level mutations
 // (flip / drop / insert / unchanged). The harness runs every
 // seed verbatim first, then iterates `iterations` mutated
 // variants. Failures stop the loop and report a reproducer.
+//
+// Mutated inputs are raw bytes and routinely NOT valid UTF-8.
+// A target that needs text bridges at its own edge:
+// `utf8.from_bytes` (validated, Option) when the property is
+// about text, or `string_from_bytes_unchecked` when the
+// property holds for any byte sequence.
 
 // Trivial "always passes" target — exercises the loop machinery
 // without flagging any input. Use this to confirm a fuzz target
 // doesn't crash on the supplied corpus before adding property
 // checks.
-function check_always_ok(input: string): test.TestOutcome {
+function check_always_ok(input: u8[]): test.TestOutcome {
     return test.pass();
 }
 
 // Property: len(input) is non-negative — always true, but
 // useful as a smoke test of the integer-comparison path.
-function check_len_nonneg(input: string): test.TestOutcome {
+function check_len_nonneg(input: u8[]): test.TestOutcome {
     if (input.len() >= 0) { return test.pass(); }
     return test.fail("len returned negative for input of " + input.len().to_string() + " bytes");
 }
 
 // Property: an idempotent transform — `to_upper(to_upper(s))`
-// equals `to_upper(s)`. Pure-Fern invariant, no external state.
-function check_to_upper_idempotent(input: string): test.TestOutcome {
-    var once: string = input.to_upper();
-    var twice: string = once.to_upper();
-    if (once == twice) { return test.pass(); }
-    return test.fail("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
+// equals `to_upper(s)`. Unicode case mapping is a text
+// property, so the target bridges through `utf8.from_bytes`
+// and passes invalid inputs through.
+function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
+    match (utf8.from_bytes(input)) {
+        Some(s) => {
+            var once: string = s.to_upper();
+            var twice: string = once.to_upper();
+            if (once == twice) { return test.pass(); }
+            return test.fail("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
+        },
+        None => { return test.pass(); },
+    }
 }
 
 // Property: trim() output never starts or ends with a space.
-// The corpus seeds whitespace at both ends so the mutation
-// path is exercising both sides.
-function check_trim_strips_spaces(input: string): test.TestOutcome {
-    var trimmed: str = input.trim();
+// Byte-level, holds for invalid UTF-8 too, so the bridge is
+// `string_from_bytes_unchecked`. The corpus seeds whitespace
+// at both ends so the mutation path is exercising both sides.
+function check_trim_strips_spaces(input: u8[]): test.TestOutcome {
+    var s: string = string_from_bytes_unchecked(input);
+    var trimmed: str = s.trim();
     if (trimmed.len() == 0) { return test.pass(); }
     if (trimmed[0] == 32) {
         return test.fail("trim left a leading space: \"" + trimmed + "\"");
@@ -55,22 +72,22 @@ function main(): i32 {
     var r: test.TestRunner = test.test_new("fuzz examples");
 
     r = r.fuzz("trivial",
-               ["", "a", "hello world"],
+               ["".bytes(), "a".bytes(), "hello world".bytes()],
                fuzz.fuzz_default_iterations(),
                check_always_ok);
 
     r = r.fuzz("len is non-negative",
-               ["", "x", "abc"],
+               ["".bytes(), "x".bytes(), "abc".bytes()],
                50,
                check_len_nonneg);
 
     r = r.fuzz("to_upper idempotent",
-               ["", "abc", "Hello World", "MIXED case 123"],
+               ["".bytes(), "abc".bytes(), "Hello World".bytes(), "MIXED case 123".bytes()],
                100,
                check_to_upper_idempotent);
 
     r = r.fuzz("trim strips edge spaces",
-               ["   leading", "trailing   ", "  both  ", "no_space"],
+               ["   leading".bytes(), "trailing   ".bytes(), "  both  ".bytes(), "no_space".bytes()],
                100,
                check_trim_strips_spaces);
 

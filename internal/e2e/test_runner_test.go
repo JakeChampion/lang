@@ -1462,15 +1462,16 @@ func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 import "std/fuzz";
 import "std/test";
+import "std/string";
 
-function detect_bad(input: string): test.TestOutcome {
-    if (input.contains("BAD")) { return test.fail("forbidden pattern"); }
+function detect_bad(input: u8[]): test.TestOutcome {
+    if (string_from_bytes_unchecked(input).contains("BAD")) { return test.fail("forbidden pattern"); }
     return test.pass();
 }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("fuzz-failure");
-    r = r.fuzz("detect", ["good", "BAD seed", "another"], 5, detect_bad);
+    r = r.fuzz("detect", ["good".bytes(), "BAD seed".bytes(), "another".bytes()], 5, detect_bad);
     return r.finish();
 }
 `)
@@ -1854,7 +1855,7 @@ func TestRunnerFuzzShrinkExample(t *testing.T) {
 // fuzz target fails on a wild input, the harness MUST
 // minimise the input to a small reproducer before reporting.
 // We give it a target that fails on "BAD" anywhere in the
-// input, seed it with a long string containing "BAD" buried
+// input, seed it with a long byte seed containing "BAD" buried
 // in padding, and check that the failure message reports
 // the minimised form ("BAD") alongside the raw failing
 // input (the padded original).
@@ -1869,16 +1870,17 @@ func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 import "std/fuzz";
 import "std/test";
+import "std/string";
 
-function detect_bad(input: string): test.TestOutcome {
-    if (input.contains("BAD")) { return test.fail("forbidden"); }
+function detect_bad(input: u8[]): test.TestOutcome {
+    if (string_from_bytes_unchecked(input).contains("BAD")) { return test.fail("forbidden"); }
     return test.pass();
 }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("shrink-failure");
     r = r.fuzz_shrink("detect",
-                      ["lots of padding here BAD lots more padding"],
+                      ["lots of padding here BAD lots more padding".bytes()],
                       5, detect_bad);
     return r.finish();
 }

@@ -1,27 +1,28 @@
 import "std/fuzz";
 import "std/test";
+import "std/string";
 // examples/tests/fuzz_corpus_test.fern — exercises the
 // `fuzz_corpus_from_dir` + `fuzz_corpus_from_dir_or` helpers
-// that load fuzz seed corpora from a directory on disk.
-// Pair these with `r.fuzz_shrink(...)` to drive larger
+// that load fuzz seed corpora (`u8[][]`) from a directory on
+// disk. Pair these with `r.fuzz_shrink(...)` to drive larger
 // long-running fuzz campaigns where the interesting inputs
 // found over time live in `testdata/<target>_corpus/` rather
 // than inline arrays.
 
-function check_no_x(input: string): test.TestOutcome {
+function check_no_x(input: u8[]): test.TestOutcome {
     // Trivially-true property. We use this purely to exercise
     // the corpus-loading / mutation / shrinking plumbing — the
-    // property itself is "len(input) >= 0", which holds for
-    // every byte string the mutator can produce. A real fuzz
+    // property itself is "input.len() >= 0", which holds for
+    // every byte array the mutator can produce. A real fuzz
     // target would assert something genuinely interesting
     // about the input.
     //
-    // (An earlier draft used `!input.contains("x")` here. That
-    // breaks under bit-flip mutation: `'h' XOR 0x10 == 'x'`,
+    // (An earlier draft used a "contains no 'x'" check here.
+    // That breaks under bit-flip mutation: `'h' XOR 0x10 == 'x'`,
     // so the mutator stochastically produces an 'x' from
     // "hello". Property-based fuzz targets must be falsifiable
     // ONLY by genuine bugs, not by the mutation strategy
-    // landing in an unrelated character class — otherwise the
+    // landing in an unrelated byte class — otherwise the
     // run is flaky.)
     if (input.len() < 0) { return test.fail("len negative"); }
     return test.pass();
@@ -41,12 +42,12 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
     match (fuzz.fuzz_corpus_from_dir(dir)) {
         Ok(seeds) => {
             rr = rr.it("loads three seeds (skips _-prefixed)",
-                       () => test.assert_len_string(seeds, 3));
+                       () => test.assert_eq(seeds.len(), 3));
             // Seeds should arrive in name-sorted order — the
             // helper sorts them so the verbatim pass is
             // deterministic across OS readdir orderings.
             rr = rr.it("first seed is 01.bin's content",
-                       () => test.assert_eq(seeds[0], "hello"));
+                       () => test.assert_eq_array(seeds[0], "hello".bytes()));
             // Use the loaded corpus to drive a fuzz target.
             rr = rr.fuzz_shrink("corpus-loaded fuzz harness",
                                 seeds, 50, check_no_x);
@@ -57,18 +58,18 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
 }
 
 function test_corpus_dir_missing_uses_fallback(): test.TestOutcome {
-    var seeds: string[] = fuzz.fuzz_corpus_from_dir_or(
+    var seeds: u8[][] = fuzz.fuzz_corpus_from_dir_or(
         "/tmp/lang-corpus-definitely-does-not-exist-83472",
-        ["one", "two", "three"]);
-    return test.assert_len_string(seeds, 3);
+        ["one".bytes(), "two".bytes(), "three".bytes()]);
+    return test.assert_eq(seeds.len(), 3);
 }
 
 function test_corpus_dir_empty_uses_fallback(r: test.TestRunner): test.TestRunner {
     var (dir, rr) = test.must_temp_dir(r, "corpus-empty");
     if (dir == "") { return rr; }
     // Empty directory — should fall back to the inline seeds.
-    var seeds: string[] = fuzz.fuzz_corpus_from_dir_or(dir, ["fallback"]);
-    return rr.it("empty corpus falls back", () => test.assert_len_string(seeds, 1));
+    var seeds: u8[][] = fuzz.fuzz_corpus_from_dir_or(dir, ["fallback".bytes()]);
+    return rr.it("empty corpus falls back", () => test.assert_eq(seeds.len(), 1));
 }
 
 function test_new_mutators_dont_crash(): test.TestOutcome {
@@ -78,7 +79,7 @@ function test_new_mutators_dont_crash(): test.TestOutcome {
     // of the new mutators (bit flip / byte duplicate / byte
     // zero / byte max) would surface as an unexpected
     // failure here.
-    return fuzz.fuzz_run(["", "abc", "Hello World"],
+    return fuzz.fuzz_run(["".bytes(), "abc".bytes(), "Hello World".bytes()],
                     fuzz.fuzz_default_iterations(),
                     check_no_x);
 }
