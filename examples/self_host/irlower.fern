@@ -17511,6 +17511,41 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // (#7272). Two `var t` in sibling blocks are two slots under one name; the
     // tuple class credits are keyed on this instead, so each resolves its own.
     sb = sb.mark_reclaim_site(slot, reclaim_site_key_of(v.name, v.line, v.col));
+    // A tuple-fresh-ret CALL binding whose callee carries "ARRF:" flags:
+    // record the flagged positions as element kinds, so the "TUP:" sweep's
+    // give-back (and the loop-rebind reclaim store) frees the arrays the
+    // returned box sole-owns before the box dec — the bound-result half of
+    // the #4365 discarded-call deep drop. Flag '1' is a fresh scalar-element
+    // array on every return path, the arr-box __fern_rc_dec shape ('a');
+    // everything else stays '.' (leak-mode floor).
+    //
+    // Gated on "TUPELEMOK:" exactly like the literal-init kinds below: an
+    // element extracted to a NEW owner in THIS body (`return r.1`,
+    // `var u = r.1`) makes the release here an over-release of a reference
+    // someone else now holds — witnessed as a sanitizer use-after-free on
+    // `return r.1` with the census silent. No credit, no kinds: the box-only
+    // leak floor, never a second free.
+    match (v.init) {
+        parser.ExprCall(tfc) => {
+            match (tfc.callee) {
+                parser.ExprIdent(tfcid) => {
+                    var tff: string = tuple_ret_flags_of(sb.sigs.tuple_fresh_ret_fns, tfcid.name);
+                    if (util.contains(tff, "1")
+                        && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
+                        var tfk: string = "";
+                        var tfi: i32 = 0;
+                        while (tfi < tff.len()) {
+                            if (tff[tfi] == b'1') { tfk = tfk + "a"; } else { tfk = tfk + "."; }
+                            tfi = tfi + 1;
+                        }
+                        sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + tfk);
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
     sb = sb.mark_arr(slot, vt.is_arr);
     sb = sb.mark_str(slot, vt.is_str);
     // #4297 CS4: record the ownership class this BINDING acquires on the
@@ -24146,6 +24181,56 @@ function body_unsafe_for_alias(stmts: parser.Stmt[], name: string, borrowable: s
     for stmt in stmts { if (stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; } }
     return false;
 }
+
+// body_unsafe_for_alias_ret_ok: body_unsafe_for_alias with the one exemption
+// the tuple owned-return admission needs — a bare top-level `return <name>`
+// is the move-out the local exists for, not an escape (the ret_ok family's
+// rule, alias-aware). Compound statements recurse HERE so a nested return in
+// an if-arm is forgiven too; every other statement delegates to the strict
+// walker.
+function body_unsafe_for_alias_ret_ok(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[], bare_ret_ok: boolean): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => {
+                var bare: boolean = false;
+                match (r.value) {
+                    parser.ExprIdent(rid) => { bare = bare_ret_ok && rid.name == name; },
+                    _ => {}
+                }
+                if (!bare && expr_unsafe_for(r.value, name, borrowable, recv_borrow)) { return true; }
+            },
+            parser.StmtIf(f) => {
+                if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for_alias_ret_ok(f.then_body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+                if (body_unsafe_for_alias_ret_ok(f.else_body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for_alias_ret_ok(w.body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                var fiter: boolean = true;
+                match (fo.iter) {
+                    parser.ExprIdent(_) => { fiter = false; },
+                    _ => { fiter = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
+                }
+                if (fiter) { return true; }
+                if (body_unsafe_for_alias_ret_ok(fo.body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (m.arms[mi].has_guard && expr_unsafe_for(m.arms[mi].guard, name, borrowable, recv_borrow)) { return true; }
+                    if (body_unsafe_for_alias_ret_ok(m.arms[mi].body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => { if (stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; } }
+        }
+    }
+    return false;
+}
 function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     var no_alias: string[] = [];
     return stmt_unsafe_for_alias(st, name, borrowable, recv_borrow, no_alias);
@@ -25366,6 +25451,14 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
             // true only for an admitted accumulator (str_accum_unsafe_for now allows
             // the bare `return name` move), so a non-accumulator string is untouched.
             if (slot_is_reclaimable_str(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+            // Tuple move-on-return (the owned-return admission): a returned
+            // credited tuple LOCAL — shallow "TUP:" or deep "TUPRCS:" — is
+            // moved out to the caller; keep it from this return path's tuple
+            // sweeps, which would otherwise free the box just handed back.
+            // A credit exists for a returned tuple name only via the
+            // ret-forgiving gate, so a non-admitted tuple is untouched. The
+            // caller's fresh-ret credit releases what it received.
+            if ((slot_is_reclaimable_tuple(s, sl) || slot_is_reclaimable_rctuple_sweep(s, sl)) && !slot_list_has(out, sl)) { out = out.append(sl); }
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -27868,6 +27961,53 @@ function rctuple_payload_escapes_alias(stmts: parser.Stmt[], name: string, ttype
     return false;
 }
 
+// rctuple_payload_escapes_alias_ret_ok: the same scan with the owned-return
+// admission's one exemption — a bare top-level `return <name>` of the WHOLE
+// tuple is the move-out, not a payload escape (an ELEMENT return, `return
+// name.1`, stays refused: that hands the element's reference to a new owner).
+// This is the rc-tuple class's second escape scan being told what the shared
+// gate (body_unsafe_for_alias_ret_ok) already learned — the trap the comment
+// above names. Compound statements recurse HERE so a nested return in an
+// if-arm is forgiven too.
+function rctuple_payload_escapes_alias_ret_ok(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], alias_ok: string[], bare_ret_ok: boolean): boolean {
+    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, alias_ok); }
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => {
+                var bare: boolean = false;
+                match (r.value) {
+                    parser.ExprIdent(rid) => { bare = rid.name == name; },
+                    _ => {}
+                }
+                if (!bare && rctuple_esc_expr(r.value, name, ttype, structs)) { return true; }
+            },
+            parser.StmtIf(f) => {
+                if (rctuple_esc_expr(f.cond, name, ttype, structs)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, alias_ok, true)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, alias_ok, true)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (rctuple_esc_expr(w.cond, name, ttype, structs)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, alias_ok, true)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (rctuple_esc_expr(fo.iter, name, ttype, structs)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, alias_ok, true)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (rctuple_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, alias_ok, true)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, alias_ok)) { return true; } }
+        }
+    }
+    return false;
+}
+
 // collect_fresh_rcenum_names gathers LOCAL names bound from a FRESH rc-payload
 // enum variant ctor (`var b = Full([i, i+1])`, fresh_rcpayload_enum_init) that is
 // SINGLE-OWNER and either consumed by exactly one `match (b)` IN THE SAME BLOCK —
@@ -29647,22 +29787,140 @@ function tuple_return_is_fresh(e: parser.Expr): boolean {
 }
 
 // body_has_nonfresh_tuple_return: any return whose value is NOT a direct
-// tuple literal (tuple_return_is_fresh). A bare `return t` of a tuple
-// LOCAL is conservatively not admitted (t could be aliased); a non-tuple
-// return in a tuple-typed fn (unreachable in checked code) declines the
-// same way.
-function body_has_nonfresh_tuple_return(stmts: parser.Stmt[]): boolean {
+// tuple literal (tuple_return_is_fresh) or a bare `return t` of a
+// FRAME-FRESH tuple local (tuple_ret_local_is_frame_fresh — declared once
+// from a direct tuple literal, never reassigned, escaping only through the
+// return itself, so the caller receives the sole reference exactly as it
+// would from a return-position literal). Any other return declines the
+// whole function.
+function body_has_nonfresh_tuple_return(stmts: parser.Stmt[], body: parser.Stmt[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtReturn(r) => { if (!tuple_return_is_fresh(r.value)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonfresh_tuple_return(f.then_body) || body_has_nonfresh_tuple_return(f.else_body)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfresh_tuple_return(w.body)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfresh_tuple_return(fo.body)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_tuple_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => {
+                if (!tuple_return_is_fresh(r.value)) {
+                    var lret_ok: boolean = false;
+                    match (r.value) {
+                        parser.ExprIdent(rid) => { lret_ok = tuple_ret_local_is_frame_fresh(body, rid.name); },
+                        _ => {}
+                    }
+                    if (!lret_ok) { return true; }
+                }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfresh_tuple_return(f.then_body, body) || body_has_nonfresh_tuple_return(f.else_body, body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_tuple_return(w.body, body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_tuple_return(fo.body, body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_tuple_return(m.arms[a].body, body)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
     return false;
+}
+
+// tuple_ret_local_is_frame_fresh: `name` is a tuple local the function may
+// hand to the caller as an owned box — declared exactly once, from a DIRECT
+// tuple literal (the same fresh-box proof as a return-position literal),
+// never reassigned, and touched by nothing but reads and the bare return
+// itself (the ret-forgiving escape walk; empty borrow lists keep it
+// conservative — any call-arg use refuses). The tuple sibling of
+// struct_ret_local_is_frame_fresh (#7343) and of "ARROWN:"'s moved-literal
+// arm: every admitted return path leaves the caller owning exactly one
+// reference either way.
+function tuple_ret_local_is_frame_fresh(body: parser.Stmt[], name: string): boolean {
+    if (local_decl_count(body, name) != 1) { return false; }
+    if (util.index_of_str(body_assign_targets(body), name) >= 0) { return false; }
+    if (tuple_ret_local_init_shape(body, name) == "") { return false; }
+    var no_strs: string[] = [];
+    return !body_unsafe_for_alias_ret_ok(body, name, no_strs, no_strs, no_strs, true);
+}
+
+// tuple_ret_local_names_of: the frame-fresh tuple locals this body hands to
+// the caller through a bare return — the names the credit gates treat with
+// the ret-forgiving walker.
+pub function tuple_ret_local_names_of(body: parser.Stmt[]): string[] {
+    return tuple_ret_local_scan(body, body, []);
+}
+function tuple_ret_local_scan(stmts: parser.Stmt[], body: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(rid) => {
+                        if (tuple_ret_local_is_frame_fresh(body, rid.name)) { a = push_str_unique(a, rid.name); }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = tuple_ret_local_scan(f.then_body, body, a); a = tuple_ret_local_scan(f.else_body, body, a); },
+            parser.StmtWhile(w) => { a = tuple_ret_local_scan(w.body, body, a); },
+            parser.StmtFor(fo) => { a = tuple_ret_local_scan(fo.body, body, a); },
+            parser.StmtMatch(m) => { var mi: i32 = 0; while (mi < m.arms.len()) { a = tuple_ret_local_scan(m.arms[mi].body, body, a); mi = mi + 1; } },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// tuple_ret_flags_of: the "ARRF:<name>|<flags>" entry's flags for `name` in
+// the shared fresh-ret registry — "" when absent.
+pub function tuple_ret_flags_of(entries: string[], name: string): string {
+    var want: string = "ARRF:" + name + "|";
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        var e: string = entries[i];
+        if (e.len() > want.len() && e[0:want.len()] == want) { return e[want.len():e.len()] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// tuple_ret_local_init_shape: the collect_tuple_ret_shapes-style shape string
+// of `name`'s declaration literal ('a' for a direct array element, 's'
+// otherwise) — "" when the declaration is missing or not a direct tuple
+// literal. Feeds both the frame-fresh admission and the ARRF: flags for a
+// `return t` path.
+function tuple_ret_local_init_shape(stmts: parser.Stmt[], name: string): string {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprTuple(tl) => {
+                            var sh: string = "";
+                            var k: i32 = 0;
+                            while (k < tl.elements.len()) {
+                                match (tl.elements[k]) {
+                                    parser.ExprArray(_) => { sh = sh + "a"; },
+                                    _ => { sh = sh + "s"; }
+                                }
+                                k = k + 1;
+                            }
+                            return sh;
+                        },
+                        _ => { return ""; }
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                var t1: string = tuple_ret_local_init_shape(f.then_body, name);
+                if (t1 != "") { return t1; }
+                var t2: string = tuple_ret_local_init_shape(f.else_body, name);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var tw: string = tuple_ret_local_init_shape(w.body, name); if (tw != "") { return tw; } },
+            parser.StmtFor(fo) => { var tf: string = tuple_ret_local_init_shape(fo.body, name); if (tf != "") { return tf; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    var tm: string = tuple_ret_local_init_shape(m.arms[mi].body, name);
+                    if (tm != "") { return tm; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    return "";
 }
 
 // tuple_fresh_ret_fns_of: bare NAMES of FREE functions whose return type is a
@@ -29688,7 +29946,7 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     for fn in funcs {
         if (fn.ret_type.len() > 0 && fn.ret_type[0] == b'('
                 && fn.receiver_type.len() == 0
-                && body_has_return(fn.body) && !body_has_nonfresh_tuple_return(fn.body)) {
+                && body_has_return(fn.body) && !body_has_nonfresh_tuple_return(fn.body, fn.body)) {
             out = out.append(fn.name);
             // #4365 (discarded rc-field tuple temps): also record the per-position
             // deep-drop flags as an "ARRF:<name>|<flags>" entry riding the same
@@ -29807,10 +30065,12 @@ function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
-// collect_tuple_ret_shapes: one shape string per `return (…)` tuple literal in
-// the body — 'a' at position k for a direct ExprArray element (a fresh buffer
-// the returned box sole-owns), 's' for anything else. Feeds the ARRF: flags.
-function collect_tuple_ret_shapes(stmts: parser.Stmt[], acc: string[]): string[] {
+// collect_tuple_ret_shapes: one shape string per admitted return in the body
+// — 'a' at position k for a direct ExprArray element (a fresh buffer the
+// returned box sole-owns), 's' for anything else. A bare `return t` of a
+// frame-fresh local contributes the shape of t's DECLARATION literal (the
+// same freshness proof, one binding removed). Feeds the ARRF: flags.
+function collect_tuple_ret_shapes(stmts: parser.Stmt[], body: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -29828,13 +30088,18 @@ function collect_tuple_ret_shapes(stmts: parser.Stmt[], acc: string[]): string[]
                         }
                         a = a.append(sh);
                     },
+                    parser.ExprIdent(rid) => {
+                        if (tuple_ret_local_is_frame_fresh(body, rid.name)) {
+                            a = a.append(tuple_ret_local_init_shape(body, rid.name));
+                        }
+                    },
                     _ => {}
                 }
             },
-            parser.StmtIf(f) => { a = collect_tuple_ret_shapes(f.then_body, a); a = collect_tuple_ret_shapes(f.else_body, a); },
-            parser.StmtWhile(w) => { a = collect_tuple_ret_shapes(w.body, a); },
-            parser.StmtFor(fo) => { a = collect_tuple_ret_shapes(fo.body, a); },
-            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_tuple_ret_shapes(m.arms[ai].body, a); ai = ai + 1; } },
+            parser.StmtIf(f) => { a = collect_tuple_ret_shapes(f.then_body, body, a); a = collect_tuple_ret_shapes(f.else_body, body, a); },
+            parser.StmtWhile(w) => { a = collect_tuple_ret_shapes(w.body, body, a); },
+            parser.StmtFor(fo) => { a = collect_tuple_ret_shapes(fo.body, body, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_tuple_ret_shapes(m.arms[ai].body, body, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -29864,7 +30129,7 @@ function tag_is_scalar_elem_array(tag: string): boolean {
 // they are safe as '0' (leak-mode) positions — only their own boxes leak,
 // exactly today's floor.
 function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
-    var shapes: string[] = collect_tuple_ret_shapes(fn.body, []);
+    var shapes: string[] = collect_tuple_ret_shapes(fn.body, fn.body, []);
     if (shapes.len() == 0) { return ""; }
     var n: i32 = shapes[0].len();
     var si: i32 = 1;
@@ -32349,6 +32614,13 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // name or "SNAP:<name>") never match them — only slot_is_reclaimable_tuple
     // does. The same body_unsafe_for escape gate proves non-escape before the
     // shallow box free is emitted at scope exit.
+    // Frame-fresh RETURNED tuple locals (the owned-return admission): for
+    // these names a bare `return <name>` is the move-out, not an escape, so
+    // the credit gates below consult the ret-forgiving walker — the returned
+    // slot is KEPT from that return path's sweep (returned_moved_arr_slots)
+    // and swept on every other path, and the caller's fresh-ret credit
+    // releases the box it received.
+    var tretn: string[] = tuple_ret_local_names_of(body);
     var tups: string[] = collect_fresh_scalar_tuple_names(body, []);
     // Widen with tuple-fresh-ret CALL locals (`var t = mk(k)`, mk returning a
     // direct scalar tuple literal on every path — tuple_fresh_ret_fns_of): the
@@ -32365,7 +32637,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // slots sweep, and the refcount arbitrates.
         var tal: string[] = [];
         tal = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
-        if (!body_unsafe_for_alias(body, tnm, borrowable, recv_borrow, tal)) {
+        if (!body_unsafe_for_alias_ret_ok(body, tnm, borrowable, recv_borrow, tal, util.index_of_str(tretn, tnm) >= 0)) {
             out = out.append("TUP:" + tups[ti]);
             out = credit_alias_sites(out, "TUP:", tal);
             // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
@@ -32417,9 +32689,9 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var rnm: string = reclaim_site_name(rctups[rti]);
         var ral: string[] = [];
         ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
-        if (!body_unsafe_for_alias(body, rnm, borrowable, recv_borrow, ral)) {
+        if (!body_unsafe_for_alias_ret_ok(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0)) {
             var rctty: string = rctuple_type_of_decl(body, rnm);
-            if (rctty == "" || !rctuple_payload_escapes_alias(body, rnm, rctty, structs, ral)) {
+            if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, ral, util.index_of_str(tretn, rnm) >= 0)) {
                 out = out.append("TUPRC:" + rctups[rti]);
                 // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
                 // this is the general rule the struct case taught: only the BOX
