@@ -9110,7 +9110,7 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     match (arg) {
         parser.ExprIdent(paid) => {
             if (so.slot_is_rc_container(so.slot_of(paid.name))) {
-                so = so.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                so = so.retain_tos("opt-make-payload");
             }
         },
         _ => {}
@@ -9789,7 +9789,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                 match (c.args[vi]) {
                     parser.ExprIdent(paid) => {
                         if (vctor.is_arr_slot(vctor.slot_of(paid.name))) {
-                            vctor = vctor.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                            vctor = vctor.retain_tos("variant-arr-payload");
                         }
                     },
                     _ => {}
@@ -10662,9 +10662,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                 parser.ExprIdent(tcid) => {
                     var tcs: i32 = sc.slot_of(tcid.name);
                     if (tcs >= 0) {
-                        sc = sc.emit(ir.op_load_local(tcs));
-                        sc = sc.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                        sc = sc.emit(ir.op_drop());
+                        sc = sc.retain(tcs, "trmc-consume-arg");
                     }
                 },
                 _ => {}
@@ -13113,7 +13111,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // only the newly-reclaimed nested-struct kind needs the retain.
                     var cpft: string = decl_field_type_at(s.structs, slit.type_name, di);
                     if (decl_is_struct(s.structs, cpft)) {
-                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        sm = sm.retain_tos("base-copy-struct-field");
                     }
                     // A DIRECT enum field COPIED from the base (`R { ...base, other: v }`,
                     // enum field un-overridden) ALIASES base.<enum> — both boxes point at
@@ -13123,7 +13121,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // enum field is always reclaimable (struct_has_reclaim_array_field), so
                     // the __struct_drop and this inc always pair.
                     if (decl_is_enum(s.structs, cpft)) {
-                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        sm = sm.retain_tos("base-copy-enum-field");
                     }
                     // A `string` field COPIED from the base (`R { ...base, other: v }`,
                     // `name` un-overridden) ALIASES base.name — both boxes now point at
@@ -13134,7 +13132,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // __struct_drop, so incing would only inflate the shared rc and leak —
                     // leave it as-is there (no drop, no over-release either way).
                     if (cpft == "string" && slit_reclaim) {
-                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        sm = sm.retain_tos("base-copy-str-field");
                     }
                 } else if (!slit.has_base) {
                     // a non-update literal must set every field
@@ -13788,7 +13786,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     parser.ExprIdent(eid) => {
                         if (sa.slot_is_rc_container(sa.slot_of(eid.name))
                             || sa.is_enum_field_alias(eid.name)) {
-                            sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                            sa = sa.retain_tos("arrlit-elem");
                         }
                     },
                     // A DIRECT ENUM field read (`[first.node]`) aliases the source
@@ -13796,7 +13794,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // reclamation — retain it so that dec only releases the dup (#6049).
                     _ => {
                         if (enum_field_read_type(arr.elements[i], sa) != "") {
-                            sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                            sa = sa.retain_tos("arrlit-enum-field");
                         }
                     }
                 }
@@ -13857,7 +13855,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 match (tup.elements[tj]) {
                     parser.ExprIdent(teid) => {
                         if (ts.slot_is_rc_container(ts.slot_of(teid.name))) {
-                            ts = ts.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                            ts = ts.retain_tos("tuplit-elem");
                         }
                     },
                     _ => {}
@@ -16758,7 +16756,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             if (rfft != "") {
                 var rfs: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
                 if (!rfs.ok) { return rfs; }
-                rfs = rfs.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (escape, bare inc)
+                rfs = rfs.retain_tos("ret-field");
                 rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
                 return rfs.emit(ir.op_return());
             }
@@ -16777,7 +16775,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             if (rsaft != "") {
                 var rss: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
                 if (!rss.ok) { return rss; }
-                rss = rss.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (escape, bare inc)
+                rss = rss.retain_tos("ret-field");
                 rss = emit_dec_sweep_except(rss, 0 - 1);   // field NOT moved out; struct keeps its ref
                 return rss.emit(ir.op_return());
             }
@@ -16821,7 +16819,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                     var rpl: LowerState = lower_expr(r.value, s);
                     if (!rpl.ok) { return rpl; }
                     if (!s.is_own_param(rpid)) {
-                        rpl = rpl.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+                        rpl = rpl.retain_tos("ret-borrowed-param");
                     }
                     rpl = emit_dec_sweep_except(rpl, 0 - 1);
                     return rpl.emit(ir.op_return());
@@ -16999,7 +16997,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                     match (c.args[2]) {
                                         parser.ExprIdent(svid) => {
                                             if (sf.is_arr_slot(sf.slot_of(svid.name))) {
-                                                sf = sf.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                                sf = sf.retain_tos("struct-set-value");
                                             }
                                         },
                                         _ => {}
@@ -18331,7 +18329,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (vfft != "") {
         var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
         if (!vfs.ok) { return vfs; }
-        vfs = vfs.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
+        vfs = vfs.retain_tos(reclaim_site_key_of(v.name, v.line, v.col));   // Perceus dup (bare inc)
         var vfb: LowerState = vfs.add_local(v.name);
         vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var vfslot: i32 = vfb.slot_of(v.name);
@@ -18362,7 +18360,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (vsaft != "") {
         var sas: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
         if (!sas.ok) { return sas; }
-        sas = sas.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
+        sas = sas.retain_tos(reclaim_site_key_of(v.name, v.line, v.col));   // Perceus dup (bare inc)
         var sab: LowerState = sas.add_local(v.name);
         sab = sab.mark_reclaim_site(sab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var saslot: i32 = sab.slot_of(v.name);
@@ -18661,9 +18659,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // (fresh lambda / __mkclo$ / element inits are already owned).
         match (v.init) {
             parser.ExprIdent(_) => {
-                cvb = cvb.emit(ir.op_load_local(cslot));
-                cvb = cvb.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                cvb = cvb.emit(ir.op_drop());
+                cvb = cvb.retain(cslot, reclaim_site_key_of(v.name, v.line, v.col));
             },
             _ => {}
         }
@@ -20321,17 +20317,13 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                 parser.ExprIdent(apel) => {
                                     var apelslot: i32 = s.slot_of(apel.name);
                                     if (apelslot >= 0 && s.is_arr_slot(apelslot)) {
-                                        aps = aps.emit(ir.op_load_local(apelslot));
-                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                                        aps = aps.emit(ir.op_drop());
+                                        aps = aps.retain(apelslot, "append-owned-arg");
                                     }
                                     // The enum-field alias routed through a local
                                     // (#6121) — same escape, same dup as the direct
                                     // `xs.append(nxt.node)` read below.
                                     else if (apelslot >= 0 && s.is_enum_field_alias(apel.name)) {
-                                        aps = aps.emit(ir.op_load_local(apelslot));
-                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                                        aps = aps.emit(ir.op_drop());
+                                        aps = aps.retain(apelslot, "append-enum-alias-arg");
                                     }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
@@ -20341,7 +20333,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                 // stack (__fern_rc_inc returns its arg), so no reload.
                                 _ => {
                                     if (enum_field_read_type(wc.args[0], aps) != "") {
-                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                        aps = aps.retain_tos("append-enum-field");
                                     }
                                 }
                             }
@@ -22200,7 +22192,7 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     // which __struct_drop_<T>'s k_enum arm decs on reclamation — retain it so that
     // dec only releases the dup, exactly as the in-place append path does (#6049).
     if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
-        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+        st = st.retain_tos("clone-append-elem");
     }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
     // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
@@ -22377,6 +22369,32 @@ function append_inplace_recvs(stmts: parser.Stmt[], esc: string[], acc: string[]
     return a;
 }
 
+// THE retain choke points (SELFHOST-RC-PLAN-PROMOTION step 1): every Perceus
+// alias/escape retain lowers through one of these two, so the emission step 2
+// must gate on the plan lives in one place. `site` names the producer — a
+// binding's reclaim_site_key or a class tag — required and never derived
+// inside, so adding a producer is a visible signature decision (#7349); the
+// emitters do not read it yet. retain covers the slot idiom (load / inc /
+// drop, stack-neutral); retain_tos covers the stack-top idiom (__fern_rc_inc
+// returns its argument, so the operand the consuming op expects stays on
+// top). Deliberately NOT routed here: the manual __rc_inc passthrough, the
+// reuse emitters' runtime-conditional and donor-field retains, the enum
+// ctor-payload dup and its move exemptions, the struct-lit field-override
+// retain paired with move-elision bookkeeping, the closure-env capture loop,
+// the element-outlives-buffer interleave, and the per-backend map_set
+// vretain — each is entangled with its surrounding emission and moves in a
+// later slice.
+pub function (s: LowerState) retain(slot: i32, site: string): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    return st.emit(ir.op_drop());
+}
+
+pub function (s: LowerState) retain_tos(site: string): LowerState {
+    return s.emit(ir.op_call_direct("__fern_rc_inc", 1));
+}
+
+
 // emit_arr_store stores the new value (on top of the operand stack) into
 // `slot` with Perceus accounting, mirroring asm.fern's StmtVar / StmtAssign:
 //   1. retain the new reference (rc_inc) when it ALIASES an rc-tracked array
@@ -22400,9 +22418,7 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
     if (alias_inc) {
-        st = st.emit(ir.op_load_local(tmp));
-        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
-        st = st.emit(ir.op_drop());
+        st = st.retain(tmp, "arr-store-alias");
     }
     if (do_dec) {
         st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
@@ -22438,9 +22454,7 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32, alias_inc: boolea
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
     if (alias_inc) {
-        st = st.emit(ir.op_load_local(tmp));
-        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
-        st = st.emit(ir.op_drop());
+        st = st.retain(tmp, "str-store-alias");
     }
     st = st.emit(ir.op_load_local(slot));       // OLD value the slot holds
     st = st.emit(ir.op_load_local(tmp));         // new value
@@ -22564,9 +22578,7 @@ function emit_strarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
     if (alias_inc) {
-        st = st.emit(ir.op_load_local(tmp));
-        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
-        st = st.emit(ir.op_drop());
+        st = st.retain(tmp, "strarr-store-alias");
     }
     st = st.emit(ir.op_load_local(slot));        // OLD value the slot holds
     st = st.emit(ir.op_load_local(tmp));         // new value
@@ -22602,7 +22614,7 @@ function lower_strarr_with_store(idx: parser.Expr, val: parser.Expr, slot: i32, 
     var val_fresh: boolean = is_fresh_str_temp(val, st);
     st = lower_expr(val, st);
     if (!st.ok) { return st; }
-    if (!val_fresh) { st = st.emit(ir.op_call_direct("__fern_rc_inc", 1)); }
+    if (!val_fresh) { st = st.retain_tos("strarr-with-elem"); }
     st = st.emit(ir.op_store_local(vslot));
 
     // release the superseded element unless the store is a self-store
