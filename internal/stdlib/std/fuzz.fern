@@ -1,43 +1,51 @@
-// std/fuzz — byte-stream fuzzing harness layered on `std/test`.
+// std/fuzz — byte-buffer fuzzing harness layered on `std/test`.
 //
-// A fuzz target is a function that takes a string of bytes
-// (the fuzz input) and returns test.TestOutcome — same shape as
-// a regular test:
+// A fuzz target is a function that takes a raw byte buffer
+// (`u8[]`, the fuzz input) and returns test.TestOutcome —
+// same shape as a regular test:
 //   Pass       — the input passed all the property checks
 //   Fail(msg)  — a counter-example: `msg` describes the
 //                violation, the runner records both the
-//                message + the offending input (escaped) so
+//                message + the offending bytes (escaped) so
 //                the failure log doubles as a reproducer.
 //
+// Inputs are bytes, not strings: the mutators routinely
+// produce invalid UTF-8, which a `string` must never hold.
+// A target that parses text bridges at its own edge —
+// `utf8.from_bytes(input)` for a validated Option[string],
+// or `string_from_bytes_unchecked(input)` when the property
+// doesn't care about validity.
+//
 // Inputs are drawn from a seed corpus the caller supplies,
-// plus mutated variants of each seed (byte flip / byte
-// insert / byte delete). Iteration count is fixed per call
-// (`iterations` arg) — lang has no panic-recovery yet, so
-// a fuzz target that genuinely crashes (out-of-bounds index,
-// division by zero) aborts the whole run; that's the trade
-// for not needing a coroutine / fiber primitive. Real fuzzing
-// frameworks add coverage feedback (libFuzzer / AFL) — we
-// don't, but the API is shaped so coverage can layer in
-// later without a breaking change.
+// plus mutated variants of each seed. Iteration count is
+// fixed per call (`iterations` arg) — Fern has no
+// panic-recovery yet, so a fuzz target that genuinely
+// crashes (out-of-bounds index, division by zero) aborts the
+// whole run; that's the trade for not needing a coroutine /
+// fiber primitive. Real fuzzing frameworks add coverage
+// feedback (libFuzzer / AFL) — we don't, but the API is
+// shaped so coverage can layer in later without a breaking
+// change.
 //
 // Usage:
 //
-//   function check_no_panic(input: string): test.TestOutcome {
+//   function check_no_panic(input: u8[]): test.TestOutcome {
 //       // try to parse `input`; return Fail(msg) if a property
 //       // we care about doesn't hold.
 //       return test.pass();
 //   }
 //
 //   function main(): i32 {
-//       var r: TestRunner = test_new("parser fuzz");
-//       r = r.fuzz("parse", ["function main(): i32 { return 0; }", ""],
+//       var r: test.TestRunner = test.test_new("parser fuzz");
+//       r = r.fuzz("parse",
+//                  ["function main(): i32 { return 0; }".bytes(), "".bytes()],
 //                  100, check_no_panic);
 //       return r.finish();
 //   }
 //
 // `r.fuzz(name, seeds, iterations, target)` reports as one
 // TAP case ("ok N - <name>" or "not ok N - <name>"). The
-// counter-example input is included in the failure
+// counter-example bytes are included in the failure
 // diagnostics so CI logs preserve enough state to reproduce
 // locally without re-running the whole loop.
 
@@ -46,35 +54,90 @@ import "std/string";
 import "std/array";
 import "std/math";
 import "std/rand";
+import "core/cmp";
 // std/fuzz hangs fuzz()/fuzz_shrink() methods off std/test's
 // TestRunner; import it so the receiver type resolves under no-prelude.
 import "std/test";
 
 // fuzz_default_iterations — used by callers that want the
 // default loop count without pulling in a config constant
-// per call site. Tuned to land sub-second runs on the small
-// targets the migration uses; bigger property tests can pass
-// a larger explicit count.
+// per call site. Tuned for sub-second runs on small targets;
+// bigger property tests can pass a larger explicit count.
 pub function fuzz_default_iterations(): i32 { return 200; }
 
 // __fuzz_pick_seed — round-robin a seed from the corpus.
 // Uses the iteration index modulo corpus length rather than
-// `random_int` so every seed gets touched at least once even
+// a random draw so every seed gets touched at least once even
 // on small iteration counts. Random mutation is layered on
 // top by __fuzz_mutate.
-function __fuzz_pick_seed(seeds: string[], iter: i32): string {
+function __fuzz_pick_seed(seeds: u8[][], iter: i32): u8[] {
     var n: i32 = seeds.len();
-    if (n == 0) { return ""; }
+    if (n == 0) {
+        var empty: u8[] = [];
+        return empty;
+    }
     return seeds[iter % n];
+}
+
+// Owned-copy byte builders for the mutators and the shrinker.
+// A slice expression (`xs[a:b]`) lends a view of `xs`; every
+// mutation result must own its bytes, so these build fresh
+// arrays instead.
+
+// __fuzz_bytes_slice — owned copy of `xs[lo:hi)`.
+function __fuzz_bytes_slice(xs: u8[], lo: i32, hi: i32): u8[] {
+    var out: u8[] = [];
+    var i: i32 = lo;
+    while (i < hi) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// __fuzz_bytes_replace — owned copy with `xs[at]` replaced by `b`.
+function __fuzz_bytes_replace(xs: u8[], at: i32, b: u8): u8[] {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i == at) { out = out.append(b); } else { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// __fuzz_bytes_drop — owned copy with `xs[at]` removed.
+function __fuzz_bytes_drop(xs: u8[], at: i32): u8[] {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i != at) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// __fuzz_bytes_insert — owned copy with `b` inserted before
+// `xs[at]`; `at == len` appends.
+function __fuzz_bytes_insert(xs: u8[], at: i32, b: u8): u8[] {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i == at) { out = out.append(b); }
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    if (at >= xs.len()) { out = out.append(b); }
+    return out;
 }
 
 // __fuzz_mutate — produce a mutated copy of `seed`. Eight
 // strategies, sampled uniformly:
 //   0 byte flip      replace seed[i] with a random byte
-//   1 byte drop      concatenate seed[:i] + seed[i+1:]
-//   2 byte insert    seed[:i] + random byte + seed[i:]
+//   1 byte drop      remove seed[i]
+//   2 byte insert    insert a random byte at position i
 //   3 bit flip       toggle one bit at a random byte
-//   4 byte duplicate seed[:i] + seed[i] + seed[i] + seed[i+1:]
+//   4 byte duplicate insert a copy of seed[i] at position i
 //   5 byte zero      replace seed[i] with 0x00
 //   6 byte max       replace seed[i] with 0xFF
 //   7 leave unchanged (run the seed verbatim)
@@ -92,7 +155,7 @@ function __fuzz_pick_seed(seeds: string[], iter: i32): string {
 // `state` in, `(state', mutated)` out. That is what makes a fuzz run
 // reproducible from its seed — and it drops the syscall count from one
 // per draw (up to two per mutation) to zero.
-function __fuzz_mutate(seed: string, mode: i32, state: i64): (i64, string) {
+function __fuzz_mutate(seed: u8[], mode: i32, state: i64): (i64, u8[]) {
     var n: i32 = seed.len();
     // Insert is the only strategy that can grow an empty
     // seed; every other strategy needs at least one byte.
@@ -100,65 +163,63 @@ function __fuzz_mutate(seed: string, mode: i32, state: i64): (i64, string) {
     if (mode == 0) {
         var pi = rand.rng_below(state, n);
         var pb = rand.rng_below(pi.0, 256);
-        return (pb.0, seed[0:pi.1] + (pb.1 as u8).to_ascii_string() + seed[pi.1 + 1:n]);
+        return (pb.0, __fuzz_bytes_replace(seed, pi.1, pb.1 as u8));
     }
     if (mode == 1) {
         var p1 = rand.rng_below(state, n);
-        return (p1.0, seed[0:p1.1] + seed[p1.1 + 1:n]);
+        return (p1.0, __fuzz_bytes_drop(seed, p1.1));
     }
     if (mode == 2) {
         var p2 = rand.rng_below(state, n + 1);
         var b2 = rand.rng_below(p2.0, 256);
-        return (b2.0, seed[0:p2.1] + (b2.1 as u8).to_ascii_string() + seed[p2.1:n]);
+        return (b2.0, __fuzz_bytes_insert(seed, p2.1, b2.1 as u8));
     }
     if (mode == 3) {
         // bit flip — pick a byte, XOR with a single-bit mask.
         var p3 = rand.rng_below(state, n);
         var bit = rand.rng_below(p3.0, 8);
-        var orig: i32 = seed[p3.1] as i32;
-        var flipped: i32 = orig ^ (1 << bit.1);
-        return (bit.0, seed[0:p3.1] + (flipped as u8).to_ascii_string() + seed[p3.1 + 1:n]);
+        var flipped: i32 = (seed[p3.1] as i32) ^ (1 << bit.1);
+        return (bit.0, __fuzz_bytes_replace(seed, p3.1, flipped as u8));
     }
     if (mode == 4) {
         // byte duplicate
         var p4 = rand.rng_below(state, n);
-        return (p4.0, seed[0:p4.1] + seed[p4.1:p4.1 + 1] + seed[p4.1:n]);
+        return (p4.0, __fuzz_bytes_insert(seed, p4.1, seed[p4.1]));
     }
     if (mode == 5) {
         // byte zero
         var p5 = rand.rng_below(state, n);
-        return (p5.0, seed[0:p5.1] + (0 as u8).to_ascii_string() + seed[p5.1 + 1:n]);
+        return (p5.0, __fuzz_bytes_replace(seed, p5.1, 0 as u8));
     }
     if (mode == 6) {
         // byte max (0xFF)
         var p6 = rand.rng_below(state, n);
-        return (p6.0, seed[0:p6.1] + (255 as u8).to_ascii_string() + seed[p6.1 + 1:n]);
+        return (p6.0, __fuzz_bytes_replace(seed, p6.1, 255 as u8));
     }
     // verbatim (mode 7 or higher)
     return (state, seed);
 }
 
-// __fuzz_mutator_count is the upper bound passed to
-// `random_int` when picking a mutation strategy. Bump when
-// adding new modes above; tests don't directly assert on
-// the constant, but `__fuzz_mutate`'s implicit contract is
-// that every mode 0..count-1 returns a valid mutation.
+// __fuzz_mutator_count is the upper bound on the strategy
+// draw in the mutation loop. Bump when adding new modes
+// above; `__fuzz_mutate`'s implicit contract is that every
+// mode 0..count-1 returns a valid mutation.
 function __fuzz_mutator_count(): i32 { return 8; }
 
-// __fuzz_escape — render an arbitrary byte string for the
+// __fuzz_escape — render an arbitrary byte buffer for the
 // failure diagnostic. Non-printable bytes go to "\xNN", quote
 // + backslash get escaped, everything else passes through.
 // Caps output at 200 bytes with a trailing " ..." so a
 // pathological input doesn't blow up the log.
-function __fuzz_escape(s: string): string {
-    var n: i32 = s.len();
+function __fuzz_escape(bs: u8[]): string {
+    var n: i32 = bs.len();
     var cap: i32 = 200;
     var trimmed: boolean = false;
     if (n > cap) { n = cap; trimmed = true; }
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        var b: i32 = bs[i] as i32;
         if (b == 92) {
             out = out + "\\\\";
         } else if (b == 34) {
@@ -180,44 +241,25 @@ function __fuzz_escape(s: string): string {
     return out;
 }
 
-// fuzz_run(name, seeds, iterations, target) — run the
-// `target` function against `iterations` inputs drawn from
-// `seeds` + mutations. Returns:
+// fuzz_run(seeds, iterations, target) — run the `target`
+// function against `iterations` inputs drawn from `seeds` +
+// mutations. Returns:
 //   Pass              — every input passed
 //   Fail(diagnostic)  — the first failing input, with the
 //                       target's message, the escaped
-//                       offending input, and the RNG SEED
+//                       offending bytes, and the RNG SEED
 //                       embedded — pass that seed to
 //                       `fuzz_run_seeded` to replay the exact
 //                       sequence that found it
 //
-// The mutation sequence comes from a seeded PCG32 (std/rand), drawn once
-// from the CSPRNG per run rather than per mutation. So a run is still
-// different every time, but any failure it finds is reproducible.
+// The mutation sequence comes from a seeded PCG32 (std/rand), seeded
+// once from the CSPRNG per run rather than per mutation. So a run is
+// still different every time, but any failure it finds is reproducible.
 //
 // Use through `r.fuzz(...)` rather than calling directly;
 // the receiver-method form folds the result into the
 // runner's TAP stream.
-// A fresh seed drawn from the CSPRNG, then `fuzz_run_seeded`. The seed is
-// named in every failure diagnostic, so any failure this finds replays exactly
-// by passing that seed back to `fuzz_run_seeded`.
-//
-// This body used to be a spelled-out copy of `fuzz_run_seeded` — about forty
-// duplicated lines — because delegating tripped a compiler bug (#6191). The
-// parameter is called `target`, and a fuzz program conventionally names its
-// target function `target` too; a compiler that resolved a bare fn-name ident
-// against the MODULE function table when boxing it into an env trampoline
-// picked the module function over the shadowing parameter, so the callee
-// invoked an unrelated top-level function — silently. Delegation was never the
-// trigger, only the thing that put `target` in a fn-value ARGUMENT position,
-// which is where the boxing happened.
-//
-// Both halves of that are fixed (the parameter case and the capture case the
-// `r.fuzz` receiver method below takes), and the native wasm backend never had
-// it — #6211 was a misreading of the component runner's 0/1 exit status. So the
-// duplication is gone. The parameter keeps the name `target`: a stdlib that has
-// to avoid words its users might pick would be a worse outcome than the bug.
-pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
+pub function fuzz_run(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
     return fuzz_run_seeded(seeds, iterations, (math.random_int(0 - 2000000000, 2000000000)) as i64, target);
 }
 
@@ -225,7 +267,7 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test
 // mutation sequence pinned to `rng_seed`. Equal seeds replay the identical
 // sequence of inputs, so a failure `fuzz_run` reports can be reproduced
 // exactly by calling this with the seed named in the diagnostic.
-pub function fuzz_run_seeded(seeds: string[], iterations: i32, rng_seed: i64, target: (string) => test.TestOutcome): test.TestOutcome {
+pub function fuzz_run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (u8[]) => test.TestOutcome): test.TestOutcome {
     if (iterations <= 0) {
         return test.fail("fuzz_run: iterations must be > 0, got " + iterations.to_string());
     }
@@ -250,13 +292,13 @@ pub function fuzz_run_seeded(seeds: string[], iterations: i32, rng_seed: i64, ta
     var st: i64 = rand.rng_seed(rng_seed);
     var iter: i32 = 0;
     while (iter < iterations) {
-        var seed: string = __fuzz_pick_seed(seeds, iter);
+        var seed: u8[] = __fuzz_pick_seed(seeds, iter);
         var mpick = rand.rng_below(st, __fuzz_mutator_count());
         st = mpick.0;
         var mode: i32 = mpick.1;
         var mutated = __fuzz_mutate(seed, mode, st);
         st = mutated.0;
-        var input: string = mutated.1;
+        var input: u8[] = mutated.1;
         match (target(input)) {
             Fail(msg) => {
                 // The rng seed is in the diagnostic on purpose: it is what
@@ -277,7 +319,7 @@ pub function fuzz_run_seeded(seeds: string[], iterations: i32, rng_seed: i64, ta
 // target and report its outcome as a single TAP case.
 // Pass at most one fuzz target per `it`-equivalent line so
 // the failure attribution stays clean.
-pub function (r: test.TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestRunner {
+pub function (r: test.TestRunner) fuzz(name: string, seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestRunner {
     return r.it(name, () => fuzz_run(seeds, iterations, target));
 }
 
@@ -303,9 +345,9 @@ pub function (r: test.TestRunner) fuzz(name: string, seeds: string[], iterations
 // Cap total `target(...)` calls during shrinking at
 // `__fuzz_shrink_budget` so a pathological input doesn't
 // stall the suite. The budget is small enough to keep a
-// failed run under a second on the migration's test sizes,
-// large enough to flatten typical 50-byte mutated buffers
-// down to the actual minimal trigger.
+// failed run under a second on typical test sizes, large
+// enough to flatten typical 50-byte mutated buffers down
+// to the actual minimal trigger.
 function __fuzz_shrink_budget(): i32 { return 256; }
 
 // __fuzz_shrink_once tries every "drop one byte" position
@@ -315,13 +357,13 @@ function __fuzz_shrink_budget(): i32 { return 256; }
 // single-byte deletes). Counts every call into `budget` and
 // stops returning new candidates when the budget is
 // exhausted.
-function __fuzz_shrink_once(seed: string, target: (string) => test.TestOutcome, budget: i32): (string, i32) {
+function __fuzz_shrink_once(seed: u8[], target: (u8[]) => test.TestOutcome, budget: i32): (u8[], i32) {
     var n: i32 = seed.len();
-    var best: string = seed;
+    var best: u8[] = seed;
     var best_len: i32 = n;
     var i: i32 = 0;
     while (i < n && budget > 0) {
-        var candidate: string = seed[0:i] + seed[i + 1:n];
+        var candidate: u8[] = __fuzz_bytes_drop(seed, i);
         budget = budget - 1;
         match (target(candidate)) {
             Fail(_) => {
@@ -342,12 +384,12 @@ function __fuzz_shrink_once(seed: string, target: (string) => test.TestOutcome, 
 // still fails. Logarithmic win when the failure is
 // localised; falls through to __fuzz_shrink_once for
 // fine-grained minimisation.
-function __fuzz_shrink_halve(seed: string, target: (string) => test.TestOutcome, budget: i32): (string, i32) {
+function __fuzz_shrink_halve(seed: u8[], target: (u8[]) => test.TestOutcome, budget: i32): (u8[], i32) {
     var n: i32 = seed.len();
     if (n < 2 || budget <= 0) { return (seed, budget); }
     var mid: i32 = n / 2;
-    var left: string = seed[0:mid].to_owned();
-    var right: string = seed[mid:n].to_owned();
+    var left: u8[] = __fuzz_bytes_slice(seed, 0, mid);
+    var right: u8[] = __fuzz_bytes_slice(seed, mid, n);
     // Try left half first — same lexicographic preference
     // the seed-iteration order uses, so failures cluster
     // toward the "obvious" minimal reproducer.
@@ -373,9 +415,9 @@ function __fuzz_shrink_halve(seed: string, target: (string) => test.TestOutcome,
 // further halving wins, then single-byte-drop until a full
 // pass yields no reduction. Return the best (shortest)
 // failing input found.
-function __fuzz_shrink(seed: string, target: (string) => test.TestOutcome): string {
+function __fuzz_shrink(seed: u8[], target: (u8[]) => test.TestOutcome): u8[] {
     var budget: i32 = __fuzz_shrink_budget();
-    var current: string = seed;
+    var current: u8[] = seed;
     // Halving pass.
     var (h, b) = __fuzz_shrink_halve(current, target, budget);
     current = h;
@@ -406,7 +448,7 @@ function __fuzz_shrink(seed: string, target: (string) => test.TestOutcome): stri
 // budget that does NOT inflate the user-visible `iterations`
 // param — `iterations` is the mutation count, shrinking is
 // a post-process amortised against the first failure.
-pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
+pub function fuzz_run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
     if (iterations <= 0) {
         return test.fail("fuzz_run_shrink: iterations must be > 0, got " + iterations.to_string());
     }
@@ -418,7 +460,7 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
     while (i < seeds.len()) {
         match (target(seeds[i])) {
             Fail(msg) => {
-                var min: string = __fuzz_shrink(seeds[i], target);
+                var min: u8[] = __fuzz_shrink(seeds[i], target);
                 return test.fail(__fuzz_format_failure(
                     "seed[" + i.to_string() + "]", seeds[i], min, msg));
             },
@@ -433,16 +475,16 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
     var st: i64 = rand.rng_seed(rng_seed);
     var iter: i32 = 0;
     while (iter < iterations) {
-        var seed: string = __fuzz_pick_seed(seeds, iter);
+        var seed: u8[] = __fuzz_pick_seed(seeds, iter);
         var mpick = rand.rng_below(st, __fuzz_mutator_count());
         st = mpick.0;
         var mode: i32 = mpick.1;
         var mutated = __fuzz_mutate(seed, mode, st);
         st = mutated.0;
-        var input: string = mutated.1;
+        var input: u8[] = mutated.1;
         match (target(input)) {
             Fail(msg) => {
-                var min: string = __fuzz_shrink(input, target);
+                var min: u8[] = __fuzz_shrink(input, target);
                 return test.fail(__fuzz_format_failure(
                     "iter " + iter.to_string() + " mode " + mode.to_string()
                         + " rng_seed " + rng_seed.to_string(),
@@ -458,8 +500,8 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
 // __fuzz_format_failure builds the diagnostic block. When
 // shrinking is a no-op (already minimal) the message omits
 // the redundant "shrunk to" line.
-function __fuzz_format_failure(origin: string, raw: string, minimised: string, msg: string): string {
-    if (raw == minimised) {
+function __fuzz_format_failure(origin: string, raw: u8[], minimised: u8[], msg: string): string {
+    if (cmp.eq_arrays(raw, minimised)) {
         return origin + " input \"" + __fuzz_escape(raw) + "\" (" +
                raw.len().to_string() + " bytes): " + msg;
     }
@@ -474,7 +516,7 @@ function __fuzz_format_failure(origin: string, raw: string, minimised: string, m
 // TAP case; on failure the case message embeds the
 // minimised counter-example so CI logs preserve a clean
 // reproducer.
-pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestRunner {
+pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestRunner {
     return r.it(name, () => fuzz_run_shrink(seeds, iterations, target));
 }
 
@@ -493,14 +535,12 @@ pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], ite
 // order. Hidden / `_`-prefixed entries are skipped so
 // scratch metadata doesn't get treated as fuzz input.
 
-import "core/cmp";
-
 // fuzz_corpus_from_dir(path) — load every regular file under
-// `path` as a seed string. Returns the seeds via Result so
+// `path` as a raw byte seed. Returns the seeds via Result so
 // the caller can fall back to inline seeds when the corpus
 // directory isn't present (typical pattern: ship a small
 // inline corpus + grow it on disk over time).
-pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
+pub function fuzz_corpus_from_dir(path: string): Result[u8[][], IoError] {
     match (read_dir(path)) {
         Err(e) => { return Err(e); },
         Ok(names) => {
@@ -511,7 +551,7 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
             // user-side mangled-load path too (the flat-load
             // path would resolve the bare name).
             var sorted: string[] = cmp.sort(names);
-            var seeds: string[] = [];
+            var seeds: u8[][] = [];
             var i: i32 = 0;
             while (i < sorted.len()) {
                 var name: string = sorted[i];
@@ -521,10 +561,8 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
                     match (stat(full)) {
                         Ok(s) => {
                             if (s.is_file) {
-                                // Seeds are byte-level artifacts (mutated corpora are
-                                // routinely not UTF-8), so read them raw.
                                 match (read_file_bytes(full)) {
-                                    Ok(content) => { seeds = seeds.append(string_from_bytes_unchecked(content)); },
+                                    Ok(content) => { seeds = seeds.append(content); },
                                     Err(_) => { },
                                 }
                             }
@@ -544,18 +582,18 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
 // the typical "use the on-disk corpus when present, else
 // fall back to inline seeds" pattern:
 //
-//   var seeds: string[] = fuzz_corpus_from_dir_or(
+//   var seeds: u8[][] = fuzz_corpus_from_dir_or(
 //       "testdata/parser_corpus",
-//       ["", "function main(): i32 { return 0; }"]);
+//       ["".bytes(), "function main(): i32 { return 0; }".bytes()]);
 //
 // Concatenates the on-disk seeds AFTER the fallback so the
 // inline ones are guaranteed to run even if the disk
 // corpus is empty.
-pub function fuzz_corpus_from_dir_or(path: string, fallback: string[]): string[] {
+pub function fuzz_corpus_from_dir_or(path: string, fallback: u8[][]): u8[][] {
     match (fuzz_corpus_from_dir(path)) {
         Ok(loaded) => {
             if (loaded.len() == 0) { return fallback; }
-            var out: string[] = fallback;
+            var out: u8[][] = fallback;
             var i: i32 = 0;
             while (i < loaded.len()) {
                 out = out.append(loaded[i]);
