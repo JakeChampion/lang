@@ -51,7 +51,7 @@ func tcpClientIRProgram(port int) string {
     if (tcp_pollable(c) != c) { tcp_close(c); return 102; }
     var req: string = "ping";
     if (tcp_send(c, req) < 0) { tcp_close(c); return 101; }
-    var resp: string = tcp_recv(c, 64);
+    var resp: u8[] = tcp_recv(c, 64);
     tcp_close(c);
     return resp.len();
 }`, host, port)

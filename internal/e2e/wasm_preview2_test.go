@@ -553,7 +553,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
     if (sock < 0) { return 1; }
     var conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg = tcp_recv(conn, 1024);
+    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
     var sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
     tcp_close(conn);
@@ -672,7 +672,7 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
     print("LISTENING");
     var conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg = tcp_recv(conn, 1024);
+    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
     print("GOTDATA");
     var sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
