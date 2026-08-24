@@ -324,7 +324,7 @@ pub function char_at(s: string, index: i32): Option[string] {
             None => { i = i + 1; valid = false; }
         }
         if (cp_idx == index) {
-            if (valid) { return Some(s[start : i].to_owned()); }
+            if (valid) { return Some(slice_unchecked(s, start, i).to_owned()); }
             return Some(utf8_encode(65533 as char));   // U+FFFD for a malformed byte
         }
         cp_idx = cp_idx + 1;
@@ -423,5 +423,5 @@ pub function substring(s: string, start: i32, end: i32): str {
     if (cp_idx == end) { byte_end = i; }
     if (byte_start < 0) { return ""; }          // `start` past the last codepoint
     if (byte_end < byte_start) { return ""; }   // `end` <= `start`
-    return s[byte_start : byte_end];
+    return slice_unchecked(s, byte_start, byte_end);
 }

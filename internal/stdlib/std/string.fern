@@ -441,7 +441,7 @@ pub function (s: string) to_ascii_capitalize(): string {
     if (first == (s[0] as i32)) { return s; }
     var buf: u8[] = __alloc_u8(1);
     buf = buf.with(0, first as u8);
-    return string_from_bytes_unchecked(buf) + s[1:n];
+    return string_from_bytes_unchecked(buf) + slice_unchecked(s, 1, n);
 }
 
 // `s.capitalize()` — uppercase the first CODE POINT, leave the
@@ -527,7 +527,7 @@ pub function (s: string) strip_quotes(): Option[string] {
     var first: i32 = s[0] as i32;
     var last: i32 = s[n - 1] as i32;
     if ((first == 34 && last == 34) || (first == 39 && last == 39)) {
-        return Some(s[1:n - 1].to_owned());
+        return Some(slice_unchecked(s, 1, n - 1).to_owned());
     }
     return None;
 }
@@ -1511,7 +1511,7 @@ pub function (s: string) dedent(): string {
         var ws: i32 = 0;
         while (ws < line.len() && (line[ws] == 32 || line[ws] == 9)) { ws = ws + 1; }
         if (ws < line.len()) {                     // has non-whitespace content
-            var lead: string = line[0:ws] + "";
+            var lead: string = slice_unchecked(line, 0, ws) + "";
             if (!have_common) {
                 common = lead;
                 have_common = true;
@@ -1520,7 +1520,7 @@ pub function (s: string) dedent(): string {
                 var maxk: i32 = common.len();
                 if (lead.len() < maxk) { maxk = lead.len(); }
                 while (k < maxk && common[k] == lead[k]) { k = k + 1; }
-                common = common[0:k] + "";
+                common = slice_unchecked(common, 0, k) + "";
             }
         }
         i = i + 1;
@@ -1536,7 +1536,7 @@ pub function (s: string) dedent(): string {
         if (wsj == ln.len()) {                     // whitespace-only or empty
             out = out.append("");
         } else {
-            out = out.append(ln[clen:ln.len()] + "");
+            out = out.append(slice_unchecked(ln, clen, ln.len()) + "");
         }
         j = j + 1;
     }
@@ -1572,7 +1572,7 @@ pub function (s: string) trim(): str {
         if (!__is_ascii_ws((s[high - 1] as i32))) { break; }
         high = high - 1;
     }
-    return s[low:high];
+    return slice_unchecked(s, low, high);
 }
 
 // `s.trim_start()` / `trim_end()` — one-sided whitespace
@@ -1583,14 +1583,14 @@ pub function (s: string) trim_start(): str {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n && __is_ascii_ws((s[i] as i32))) { i = i + 1; }
-    return s[i:n];
+    return slice_unchecked(s, i, n);
 }
 
 pub function (s: string) trim_end(): str {
     var n: i32 = s.len();
     var end: i32 = n;
     while (end > 0 && __is_ascii_ws((s[end - 1] as i32))) { end = end - 1; }
-    return s[0:end];
+    return slice_unchecked(s, 0, end);
 }
 
 // `s.rstrip_newline()` — strip a single trailing newline.
@@ -1601,8 +1601,8 @@ pub function (s: string) rstrip_newline(): str {
     var n: i32 = s.len();
     if (n == 0) { return s; }
     if (s[n - 1] == 10) {
-        if (n >= 2 && s[n - 2] == 13) { return s[0:n - 2]; }
-        return s[0:n - 1];
+        if (n >= 2 && s[n - 2] == 13) { return slice_unchecked(s, 0, n - 2); }
+        return slice_unchecked(s, 0, n - 1);
     }
     return s;
 }
@@ -1617,14 +1617,14 @@ pub function (s: string) trim_chars(chars: string): str {
     var low: i32 = 0;
     var high: i32 = n;
     while (low < high) {
-        if (chars.index_of(s[low:low + 1]) < 0) { break; }
+        if (chars.index_of(slice_unchecked(s, low, low + 1)) < 0) { break; }
         low = low + 1;
     }
     while (high > low) {
-        if (chars.index_of(s[high - 1:high]) < 0) { break; }
+        if (chars.index_of(slice_unchecked(s, high - 1, high)) < 0) { break; }
         high = high - 1;
     }
-    return s[low:high];
+    return slice_unchecked(s, low, high);
 }
 
 // `s.trim_start_chars(chars)` / `s.trim_end_chars(chars)` —
@@ -1634,20 +1634,20 @@ pub function (s: string) trim_start_chars(chars: string): str {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var i: i32 = 0;
-    while (i < n && chars.index_of(s[i:i + 1]) >= 0) {
+    while (i < n && chars.index_of(slice_unchecked(s, i, i + 1)) >= 0) {
         i = i + 1;
     }
-    return s[i:n];
+    return slice_unchecked(s, i, n);
 }
 
 pub function (s: string) trim_end_chars(chars: string): str {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var end: i32 = n;
-    while (end > 0 && chars.index_of(s[end - 1:end]) >= 0) {
+    while (end > 0 && chars.index_of(slice_unchecked(s, end - 1, end)) >= 0) {
         end = end - 1;
     }
-    return s[0:end];
+    return slice_unchecked(s, 0, end);
 }
 
 // `s.starts_with_ci(prefix)` / `s.ends_with_ci(suffix)` —
@@ -1825,7 +1825,7 @@ pub function (s: string) split(sep: string): string[] {
     var i: i32 = 0;
     if (sepLen == 0) {
         while (i < n) {
-            out = out.append(s[i:i+1]);
+            out = out.append(slice_unchecked(s, i, i+1));
             i = i + 1;
         }
         return out;
@@ -1833,11 +1833,11 @@ pub function (s: string) split(sep: string): string[] {
     var start: i32 = 0;
     var hit: i32 = __str_find_from(s, n, sep, sepLen, start);
     while (hit >= 0) {
-        out = out.append(s[start:hit]);
+        out = out.append(slice_unchecked(s, start, hit));
         start = hit + sepLen;
         hit = __str_find_from(s, n, sep, sepLen, start);
     }
-    return out.append(s[start:n]);
+    return out.append(slice_unchecked(s, start, n));
 }
 
 // `s.rsplit(sep)` — like `split`, but the pieces come out in reverse
@@ -1875,18 +1875,18 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
     if (sepLen == 0) {
         // Match split's empty-sep behaviour: per-byte slicing.
         while (i < sLen && out.len() < n - 1) {
-            out = out.append(s[i:i + 1]);
+            out = out.append(slice_unchecked(s, i, i + 1));
             i = i + 1;
         }
-        return out.append(s[i:sLen]);
+        return out.append(slice_unchecked(s, i, sLen));
     }
     var hit: i32 = __str_find_from(s, sLen, sep, sepLen, start);
     while (hit >= 0 && out.len() < n - 1) {
-        out = out.append(s[start:hit]);
+        out = out.append(slice_unchecked(s, start, hit));
         start = hit + sepLen;
         hit = __str_find_from(s, sLen, sep, sepLen, start);
     }
-    return out.append(s[start:sLen]);
+    return out.append(slice_unchecked(s, start, sLen));
 }
 
 // `s.rsplitn(sep, n)` — `splitn` scanning from the END: at most `n` pieces,
@@ -2050,7 +2050,7 @@ pub function (s: string) lines(): string[] {
             if (end > start) {
                 if (s[end - 1] == 13) { end = end - 1; }
             }
-            out = out.append(s[start:end]);
+            out = out.append(slice_unchecked(s, start, end));
             i = i + 1;
             start = i;
         } else {
@@ -2065,7 +2065,7 @@ pub function (s: string) lines(): string[] {
         if (endTail > start) {
             if (s[endTail - 1] == 13) { endTail = endTail - 1; }
         }
-        out = out.append(s[start:endTail]);
+        out = out.append(slice_unchecked(s, start, endTail));
     }
     return out;
 }
@@ -2089,7 +2089,7 @@ pub function (s: string) fields(): string[] {
         if (i >= n) { break; }
         var start: i32 = i;
         while (i < n && !__is_ascii_ws((s[i] as i32))) { i = i + 1; }
-        out = out.append(s[start:i]);
+        out = out.append(slice_unchecked(s, start, i));
     }
     return out;
 }
@@ -2143,7 +2143,7 @@ pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
 // the trailing chunk in a single call.
 pub function (s: string) strip_prefix(prefix: string): Option[string] {
     if (!s.starts_with(prefix)) { return None; }
-    return Some(s[prefix.len():s.len()].to_owned());
+    return Some(slice_unchecked(s, prefix.len(), s.len()).to_owned());
 }
 
 // `s.strip_suffix(s)` — Some(head) if s ends with the suffix.
@@ -2151,7 +2151,7 @@ pub function (s: string) strip_prefix(prefix: string): Option[string] {
 pub function (s: string) strip_suffix(suffix: string): Option[string] {
     if (!s.ends_with(suffix)) { return None; }
     var k: i32 = s.len() - suffix.len();
-    return Some(s[0:k].to_owned());
+    return Some(slice_unchecked(s, 0, k).to_owned());
 }
 
 // `s.remove_prefix(prefix)` / `s.remove_suffix(suffix)` —
@@ -2161,13 +2161,13 @@ pub function (s: string) strip_suffix(suffix: string): Option[string] {
 // value is the right fallback.
 pub function (s: string) remove_prefix(prefix: string): str {
     if (!s.starts_with(prefix)) { return s; }
-    return s[prefix.len():s.len()];
+    return slice_unchecked(s, prefix.len(), s.len());
 }
 
 pub function (s: string) remove_suffix(suffix: string): str {
     if (!s.ends_with(suffix)) { return s; }
     var k: i32 = s.len() - suffix.len();
-    return s[0:k];
+    return slice_unchecked(s, 0, k);
 }
 
 // `s.is_uuid()` — true if s matches the canonical UUID
@@ -2267,7 +2267,7 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
     var sLen: i32 = sep.len();
     var hit: i32 = __str_find_from(s, n, sep, sLen, 0);
     if (hit < 0) { return None; }
-    return Some((s[0:hit].to_owned(), s[hit + sLen:n].to_owned()));
+    return Some((slice_unchecked(s, 0, hit).to_owned(), slice_unchecked(s, hit + sLen, n).to_owned()));
 }
 
 // `s.partition(sep)` — split at the FIRST occurrence of `sep` into the
@@ -2282,7 +2282,7 @@ pub function (s: string) partition(sep: string): (string, string, string) {
     var sLen: i32 = sep.len();
     var hit: i32 = __str_find_from(s, n, sep, sLen, 0);
     if (hit < 0) { return (s.to_owned(), "", ""); }
-    return (s[0:hit].to_owned(), sep.to_owned(), s[hit + sLen:n].to_owned());
+    return (slice_unchecked(s, 0, hit).to_owned(), sep.to_owned(), slice_unchecked(s, hit + sLen, n).to_owned());
 }
 
 // `s.rpartition(sep)` — the LAST-occurrence mirror of `partition`: split at the
@@ -2296,7 +2296,7 @@ pub function (s: string) rpartition(sep: string): (string, string, string) {
     var sLen: i32 = sep.len();
     var i: i32 = __str_rfind_from(s, n, sep, sLen);
     if (i < 0) { return ("", "", s.to_owned()); }
-    return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
+    return (slice_unchecked(s, 0, i).to_owned(), sep.to_owned(), slice_unchecked(s, i + sLen, n).to_owned());
 }
 
 // `s.rsplit_once(sep)` — the LAST-occurrence mirror of `split_once`: splits
@@ -2311,7 +2311,7 @@ pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
     var sLen: i32 = sep.len();
     var i: i32 = __str_rfind_from(s, n, sep, sLen);
     if (i < 0) { return None; }
-    return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
+    return Some((slice_unchecked(s, 0, i).to_owned(), slice_unchecked(s, i + sLen, n).to_owned()));
 }
 
 // `s.trim_start_matches(sub)` / `s.trim_end_matches(sub)` —
@@ -2326,7 +2326,7 @@ pub function (s: string) trim_start_matches(sub: string): str {
     while (i + subLen <= n && __substr_eq(s, i, sub, subLen)) {
         i = i + subLen;
     }
-    return s[i:n];
+    return slice_unchecked(s, i, n);
 }
 
 pub function (s: string) trim_end_matches(sub: string): str {
@@ -2337,7 +2337,7 @@ pub function (s: string) trim_end_matches(sub: string): str {
     while (end - subLen >= 0 && __substr_eq(s, end - subLen, sub, subLen)) {
         end = end - subLen;
     }
-    return s[0:end];
+    return slice_unchecked(s, 0, end);
 }
 
 // `s.contains_ci(needle)` / `index_of_ci(needle)` — case-
@@ -2398,7 +2398,7 @@ pub function (s: string) pad_start_str(width: i32, fill: string): string {
         pad = pad + fill;
     }
     if (pad.len() < width - sLen) {
-        pad = pad + fill[0:width - sLen - pad.len()];
+        pad = pad + slice_unchecked(fill, 0, width - sLen - pad.len());
     }
     return pad + s;
 }
@@ -2411,7 +2411,7 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
         pad = pad + fill;
     }
     if (pad.len() < width - sLen) {
-        pad = pad + fill[0:width - sLen - pad.len()];
+        pad = pad + slice_unchecked(fill, 0, width - sLen - pad.len());
     }
     return s + pad;
 }
@@ -2483,7 +2483,7 @@ pub function (s: string) first_line(): Option[string] {
     if (s.len() == 0) { return None; }
     var idx: i32 = s.index_of("\n");
     if (idx < 0) { return Some(s); }
-    return Some(s[0:idx].to_owned());
+    return Some(slice_unchecked(s, 0, idx).to_owned());
 }
 
 // `s.at(i)` — bounds-checked byte access. Returns Some(byte)
@@ -2505,7 +2505,7 @@ pub function (s: string) to_array(): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.append(s[i:i + 1]);
+        out = out.append(slice_unchecked(s, i, i + 1));
         i = i + 1;
     }
     return out;
@@ -2781,12 +2781,12 @@ pub function (s: string) replace_n(old: string, new: string, n: i32): string {
     var done: i32 = 0;
     var hit: i32 = __str_find_from(s, sLen, old, oLen, 0);
     while (hit >= 0 && done < n) {
-        out = out + s[start:hit] + new;
+        out = out + slice_unchecked(s, start, hit) + new;
         start = hit + oLen;
         done = done + 1;
         hit = __str_find_from(s, sLen, old, oLen, start);
     }
-    return out + s[start:sLen];
+    return out + slice_unchecked(s, start, sLen);
 }
 
 // `s.remove_all(needle)` — replace every occurrence of
@@ -2801,7 +2801,7 @@ pub function (s: string) remove_all(needle: string): string {
 pub function (s: string) before(sep: string): str {
     var idx: i32 = s.index_of(sep);
     if (idx < 0) { return s; }
-    return s[0:idx];
+    return slice_unchecked(s, 0, idx);
 }
 
 // `s.after(sep)` — substring after the first occurrence
@@ -2811,7 +2811,7 @@ pub function (s: string) after(sep: string): str {
     if (sep.len() == 0) { return s; }
     var idx: i32 = s.index_of(sep);
     if (idx < 0) { return ""; }
-    return s[idx + sep.len():s.len()];
+    return slice_unchecked(s, idx + sep.len(), s.len());
 }
 
 // `s.between(start, end)` — Some(substring) for the content
@@ -2829,7 +2829,7 @@ pub function (s: string) between(start: string, end: string): Option[string] {
     var j: i32 = begin;
     while (j + endLen <= n) {
         if (__substr_eq(s, j, end, endLen)) {
-            return Some(s[begin:j].to_owned());
+            return Some(slice_unchecked(s, begin, j).to_owned());
         }
         j = j + 1;
     }
@@ -2956,12 +2956,12 @@ pub function (s: string) replacen(old: string, new: string, n: i32): string {
     var run_start: i32 = 0;
     var hit: i32 = __str_find_from(s, slen, old, oLen, 0);
     while (hit >= 0 && done < n) {
-        out = out + s[run_start:hit] + new;
+        out = out + slice_unchecked(s, run_start, hit) + new;
         run_start = hit + oLen;
         done = done + 1;
         hit = __str_find_from(s, slen, old, oLen, run_start);
     }
-    return out + s[run_start:slen];
+    return out + slice_unchecked(s, run_start, slen);
 }
 
 // `(s: string) parse_bool()` — accepts the canonical
@@ -3501,9 +3501,9 @@ pub function (s: string) replace_at(i: i32, new: string): string {
     var n: i32 = s.len();
     if (i < 0 || i >= n) { return s; }
     if (new.len() == 0) {
-        return s[0:i] + s[i + 1:n];
+        return slice_unchecked(s, 0, i) + slice_unchecked(s, i + 1, n);
     }
-    return s[0:i] + new[0:1] + s[i + 1:n];
+    return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, 1) + slice_unchecked(s, i + 1, n);
 }
 
 // `s.without_byte(b)` — copy of s with every byte equal to b
