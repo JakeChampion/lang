@@ -220,8 +220,10 @@ func loadConstructionRetainMatrix(t *testing.T) map[string][2]leakVerdict {
 }
 
 func TestSelfHostConstructionRetainMatrixX86_64(t *testing.T) {
-	// CI-DARK: FERN_CONSTRUCTION_RETAIN_DUMP prints measured lines INSTEAD of
-	// comparing — a regeneration tool, not coverage.
+	// CI-DARK: FERN_CONSTRUCTION_RETAIN_DUMP — a regeneration tool, not
+	// coverage: it prints measured matrix-file lines INSTEAD of comparing, so
+	// a lane setting it would disable this gate. The compare path below is
+	// the CI behaviour.
 	dump := os.Getenv("FERN_CONSTRUCTION_RETAIN_DUMP") == "1"
 	var known map[string][2]leakVerdict
 	if !dump {
