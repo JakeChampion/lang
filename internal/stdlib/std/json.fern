@@ -396,7 +396,7 @@ function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
         }
         if (expDigits == 0) { return (JNull, __json_fail(p)); }
     }
-    return (JNumber(p.s[start:p.pos] + ""), p);
+    return (JNumber(slice_unchecked(p.s, start, p.pos) + ""), p);
 }
 
 // __json_emit_codepoint encodes a single Unicode scalar value
@@ -1085,7 +1085,7 @@ pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
         // Token runs from i up to the next '/' (or the end).
         var j: i32 = i;
         while (j < n && pointer[j] != 47) { j = j + 1; }
-        var tok: string = __json_ptr_unescape(pointer[i : j]);
+        var tok: string = __json_ptr_unescape(slice_unchecked(pointer, i, j));
         match (cur) {
             JObject(m) => {
                 match (m.get(tok)) {

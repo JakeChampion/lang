@@ -771,7 +771,7 @@ pub function (z: Zoned) format_rfc3339(): string {
         // splice the fractional segment (between '.' and 'Z').
         var dot: i32 = s.index_of(".");
         var z_idx: i32 = s.index_of("Z");
-        tail = s[dot:z_idx];
+        tail = slice_unchecked(s, dot, z_idx);
     }
     if (z.zone.offset_seconds == 0) {
         return head + tail + "Z";

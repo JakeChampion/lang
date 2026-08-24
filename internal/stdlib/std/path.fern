@@ -76,14 +76,14 @@ pub function path_join(parts: string[]): string {
                 // just "/", which is the root path and must be
                 // preserved as a separator-sentinel).
                 while (out.len() > 1 && out[out.len() - 1] == 47) {
-                    out = out[0:out.len() - 1] + "";
+                    out = slice_unchecked(out, 0, out.len() - 1) + "";
                 }
                 // Strip any leading `/`s from p.
                 var start: i32 = 0;
                 while (start < p.len() && p[start] == 47) {
                     start = start + 1;
                 }
-                var rest: str = p[start:p.len()];
+                var rest: str = slice_unchecked(p, start, p.len());
                 if (out[out.len() - 1] == 47) {
                     out = out + rest;
                 } else {
@@ -109,7 +109,7 @@ pub function path_parent(p: string): str {
     while (i >= 0 && p[i] != 47) { i = i - 1; }
     if (i < 0) { return ""; }
     if (i == 0) { return "/"; }
-    return p[0:i];
+    return slice_unchecked(p, 0, i);
 }
 
 pub function path_file_name(p: string): str {
@@ -121,7 +121,7 @@ pub function path_file_name(p: string): str {
     if (end == 0) { return ""; }
     var i: i32 = end - 1;
     while (i >= 0 && p[i] != 47) { i = i - 1; }
-    return p[i + 1:end];
+    return slice_unchecked(p, i + 1, end);
 }
 
 pub function path_extension(p: string): str {
@@ -133,7 +133,7 @@ pub function path_extension(p: string): str {
     // Hidden files (leading dot, no other dot) have no
     // extension: `.bashrc` → "", not "bashrc".
     if (i <= 0) { return ""; }
-    return name[i + 1:n];
+    return slice_unchecked(name, i + 1, n);
 }
 
 // path_clean lexically normalises `p` (no FS access), matching Go
@@ -174,7 +174,7 @@ pub function path_clean(p: string): string {
         else {
             var start: i32 = i;
             while (i < n && p[i] != 47) { i = i + 1; }
-            var seg: str = p[start:i];
+            var seg: str = slice_unchecked(p, start, i);
             if (seg == ".") {
                 // current dir — drop
             } else if (seg == "..") {
@@ -225,7 +225,7 @@ pub function path_stem(p: string): str {
     // A dot only at index 0 (hidden file) is not an extension
     // separator, so the whole name is the stem.
     if (i <= 0) { return name; }
-    return name[0:i];
+    return slice_unchecked(name, 0, i);
 }
 
 // path_with_extension(p, ext) — `p` with its final extension replaced
@@ -254,7 +254,7 @@ pub function path_with_extension(p: string, ext: string): string {
     var j: i32 = end - 1;
     while (j > fs && p[j] != 46) { j = j - 1; }
     if (j > fs && p[j] == 46) { dot = j; }
-    var base: string = p[0:dot] + "";
+    var base: string = slice_unchecked(p, 0, dot) + "";
     if (ext.len() == 0) { return base; }
     return base + "." + ext;
 }

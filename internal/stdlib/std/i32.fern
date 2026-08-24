@@ -1068,7 +1068,7 @@ pub function (n: i32) to_string_padded(width: i32): string {
     if (s.len() >= width) { return s; }
     if (n >= 0) { return s.pad_start(width, "0"); }
     // For negatives, pad the body and re-prefix with '-'.
-    var body: str = s[1:s.len()];
+    var body: str = slice_unchecked(s, 1, s.len());
     return "-" + body.pad_start(width - 1, "0");
 }
 
@@ -1081,7 +1081,7 @@ pub function (n: i32) to_string_with_sep(sep: string): string {
     var sign: string = "";
     if (n < 0) {
         sign = "-";
-        s = s[1:s.len()].to_owned();
+        s = slice_unchecked(s, 1, s.len()).to_owned();
     }
     var L: i32 = s.len();
     if (L <= 3) { return sign + s; }
@@ -1089,7 +1089,7 @@ pub function (n: i32) to_string_with_sep(sep: string): string {
     var i: i32 = 0;
     while (i < L) {
         var idx: i32 = L - 1 - i;
-        out = s[idx:idx + 1] + out;
+        out = slice_unchecked(s, idx, idx + 1) + out;
         if (i % 3 == 2 && i < L - 1) {
             out = sep + out;
         }

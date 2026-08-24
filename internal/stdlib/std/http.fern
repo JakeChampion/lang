@@ -198,7 +198,7 @@ pub function http_path_segments(path: string): string[] {
         if (i >= n) { return out; }
         var start: i32 = i;
         while (i < n && path[i] != 47) { i = i + 1; }
-        out = out.append(path[start:i]);
+        out = out.append(slice_unchecked(path, start, i));
     }
     return out;
 }
@@ -211,7 +211,7 @@ pub function http_path_segments(path: string): string[] {
 pub function http_url_path_only(path: string): str {
     var q: i32 = path.index_of("?");
     if (q < 0) { return path; }
-    return path[0:q];
+    return slice_unchecked(path, 0, q);
 }
 
 // `http_user_agent_is_bot(ua)` — heuristic bot detection
@@ -252,12 +252,12 @@ function __http_parse_request_line(line: string): Option[HttpRequest] {
     if (sp1 < 0) {
         return None;
     }
-    var sp2: i32 = line[sp1 + 1:line.len()].index_of(" ");
+    var sp2: i32 = slice_unchecked(line, sp1 + 1, line.len()).index_of(" ");
     if (sp2 < 0) {
         return None;
     }
-    var method: string = line[0:sp1].to_owned();
-    var path: string = line[sp1 + 1:sp1 + 1 + sp2].to_owned();
+    var method: string = slice_unchecked(line, 0, sp1).to_owned();
+    var path: string = slice_unchecked(line, sp1 + 1, sp1 + 1 + sp2).to_owned();
     return Some(HttpRequest {
         method: method,
         path: path,
@@ -291,8 +291,8 @@ function __parse_headers(block: string): HeaderMap {
         if (line.len() > 0) {
             var col: i32 = line.index_of(":");
             if (col > 0) {
-                var name: string = line[0:col].to_owned();
-                var value: string = line[col + 1:line.len()].trim().to_owned();
+                var name: string = slice_unchecked(line, 0, col).to_owned();
+                var value: string = slice_unchecked(line, col + 1, line.len()).trim().to_owned();
                 h = h.append(name, value);
             }
         }
@@ -388,7 +388,7 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
     // Content-Length from it. `first_crlf + 2` skips the CRLF that
     // terminates the request line; `headers_end` is the start of the
     // `\r\n\r\n` separator, so the slice excludes the empty line.
-    var hdr_block: str = buf[first_crlf + 2:headers_end];
+    var hdr_block: str = slice_unchecked(buf, first_crlf + 2, headers_end);
     var req_headers: HeaderMap = __parse_headers(hdr_block);
     var content_length: i32 = 0;
     match (__http_content_length(req_headers)) {
@@ -406,11 +406,11 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
         // Caller hasn't read the full body yet.
         return None;
     }
-    match (__http_parse_request_line(buf[0:first_crlf])) {
+    match (__http_parse_request_line(slice_unchecked(buf, 0, first_crlf))) {
         Some(req) => {
             var body: string = "";
             if (content_length > 0) {
-                body = buf[headers_len:headers_len + content_length].to_owned();
+                body = slice_unchecked(buf, headers_len, headers_len + content_length).to_owned();
             }
             return Some(HttpRequest {
                 method: req.method,
@@ -576,8 +576,8 @@ pub function (r: HttpRequest) cookie(name: string): Option[string] {
             var pair: str = parts[j].trim();
             var eq: i32 = pair.index_of("=");
             if (eq > 0) {
-                if (pair[0:eq] == name) {
-                    return Some(pair[eq + 1:pair.len()].to_owned());
+                if (slice_unchecked(pair, 0, eq) == name) {
+                    return Some(slice_unchecked(pair, eq + 1, pair.len()).to_owned());
                 }
             }
             j = j + 1;
