@@ -409,6 +409,10 @@ pub struct FnSigs {
     // (rc_fe_call_ret_type) reads it instead of scanning the funcs list per
     // binding (#6074: derive module-scale facts once per module).
     ret_type_fns: SigReg,
+    // noesc_ret_fns: "name|" rows for the returns-no-param-escape subset
+    // oracle (noesc_ret_fns_of) — rc_fe_rhs_tainted's user-call arm untaints
+    // a qualified callee's result regardless of argument taint.
+    noesc_ret_fns: SigReg,
     // closure_fns: functions whose body returns a closure box (a hoisted
     // escaping lambda). `var f = <call to one>` marks f a closure local.
     closure_fns: string[],
@@ -46465,7 +46469,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // per-BLOCK variant is the quadratic trap the performance audit records).
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
-    if (plan_on) { plan_fe = free_eligible_of(fn, structs, sg.ret_type_fns); }
+    if (plan_on) { plan_fe = free_eligible_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
     var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
@@ -52862,7 +52866,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { arr_ret_fns: r, str_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r,
+    return FnSigs { arr_ret_fns: r, str_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, noesc_ret_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
@@ -52880,6 +52884,140 @@ pub function ret_type_fns_of(funcs: parser.FuncDecl[]): string[] {
     for fn in funcs {
         if (fn.type_params.len() == 0) { out = out.append(fn.name + "|" + fn.ret_type); }
     }
+    return out;
+}
+
+// noesc_ret_fns_of: a strict SUBSET port of native findReturnsNoParamEscape —
+// the functions whose every return provably aliases no parameter, so a call
+// result is fresh regardless of argument taint (rc_fe_rhs_tainted's user-call
+// arm consults it). Optimistic knock-out fixpoint over the module: a function
+// stays qualified while every return expression is built from literals,
+// scalar-typed idents, arithmetic over those, and calls to still-qualified
+// callees whose args qualify. Idents of non-scalar (or unknown) type refuse —
+// native's version additionally admits fresh locals and cow chains, so every
+// name this admits, native admits too: the dump gate can only converge, never
+// newly diverge. Rows are "name|" for sig_reg_has_name.
+function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[]): boolean {
+    match (e) {
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprBool(_) => { return true; },
+        parser.ExprString(_) => { return true; },
+        parser.ExprIdent(id) => {
+            // a nullary variant ctor (`None`, `Nil`) is a fresh (or static)
+            // box aliasing nothing; every other ident must be a scalar param.
+            if (id.name == "None") { return true; }
+            return util.index_of_str(scalars, id.name) >= 0 || util.index_of_str(q, "0:" + id.name) >= 0;
+        },
+        parser.ExprUnary(u) => { return noesc_ret_expr_ok(u.operand, scalars, q); },
+        parser.ExprBinary(b) => { return noesc_ret_expr_ok(b.left, scalars, q) && noesc_ret_expr_ok(b.right, scalars, q); },
+        parser.ExprArray(ar) => {
+            for el in ar.elements { if (!noesc_ret_expr_ok(el, scalars, q)) { return false; } }
+            return true;
+        },
+        parser.ExprTuple(tu) => {
+            for el in tu.elements { if (!noesc_ret_expr_ok(el, scalars, q)) { return false; } }
+            return true;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { return false; }
+            for fv in sl.field_values { if (!noesc_ret_expr_ok(fv, scalars, q)) { return false; } }
+            return true;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (util.index_of_str(q, cid.name) < 0) { return false; }
+                    for arg in c.args { if (!noesc_ret_expr_ok(arg, scalars, q)) { return false; } }
+                    return true;
+                },
+                _ => { return false; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function noesc_scalar_type(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f64" || t == "f32"
+        || t == "u8" || t == "boolean" || t == "usize";
+}
+
+// noesc_decl_names: every declared local name (any nesting) — a local
+// shadowing a scalar param's name would make the ident rule read the wrong
+// binding, so shadowed names leave the scalar set.
+function noesc_decl_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { a = a.append(v.name); },
+            parser.StmtIf(f) => { a = noesc_decl_names(f.then_body, a); a = noesc_decl_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = noesc_decl_names(w.body, a); },
+            parser.StmtFor(fo) => { a = a.append(fo.var_name); a = noesc_decl_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { a = noesc_decl_names(arm.body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+function noesc_collect_rets(stmts: parser.Stmt[], acc: parser.Expr[]): parser.Expr[] {
+    var a: parser.Expr[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => { a = a.append(r.value); },
+            parser.StmtIf(f) => { a = noesc_collect_rets(f.then_body, a); a = noesc_collect_rets(f.else_body, a); },
+            parser.StmtWhile(w) => { a = noesc_collect_rets(w.body, a); },
+            parser.StmtFor(fo) => { a = noesc_collect_rets(fo.body, a); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { a = noesc_collect_rets(arm.body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+pub function noesc_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    // Variant ctor names count as qualified callees (a ctor is a fresh box
+    // whose qualifying args cannot alias a param), seeded permanently.
+    var q: string[] = ["Some", "Ok", "Err"];
+    for fn in funcs { q = q.append(fn.name); }
+    for sd in structs {
+        if (sd.enum_owner.len() > 0) {
+            q = q.append(sd.name);
+            if (sd.fields.len() == 0) { q = q.append("0:" + sd.name); }
+        }
+    }
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for fn in funcs {
+            if (util.index_of_str(q, fn.name) < 0) { continue; }
+            var declared: string[] = noesc_decl_names(fn.body, []);
+            var scalars: string[] = [];
+            var pi: i32 = 0;
+            while (pi < fn.params.len()) {
+                if (noesc_scalar_type(fn.params[pi].type_name)
+                    && util.index_of_str(declared, fn.params[pi].name) < 0) { scalars = scalars.append(fn.params[pi].name); }
+                pi = pi + 1;
+            }
+            var rets: parser.Expr[] = noesc_collect_rets(fn.body, []);
+            var ok: boolean = true;
+            for r in rets { if (!noesc_ret_expr_ok(r, scalars, q)) { ok = false; } }
+            if (!ok) {
+                var nq: string[] = [];
+                for nm in q { if (nm != fn.name) { nq = nq.append(nm); } }
+                q = nq;
+                changed = true;
+            }
+        }
+    }
+    var out: string[] = [];
+    for fn in funcs { if (util.index_of_str(q, fn.name) >= 0) { out = out.append(fn.name + "|"); } }
     return out;
 }
 
@@ -52921,6 +53059,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
     return FnSigs {
         arr_ret_fns: sig_reg_of(arr_ret_fns),
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
+        noesc_ret_fns: sig_reg_of(noesc_ret_fns_of(funcs, structs)),
         str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)),
         strarr_ret_fns: sig_reg_of(strarr_ret_fns_of(funcs)),
         arr_method_fns: arr_method_fns_of(funcs),
@@ -53763,7 +53902,7 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
 // string slices are owned; ident reads the taint set; projections and array
 // slices are tainted; calls are owned unless the receiver or any arg is
 // tainted; unknown shapes default tainted.
-function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[]): boolean {
+function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg): boolean {
     match (e) {
         parser.ExprArray(_) => { return false; },
         parser.ExprStructLit(_) => { return false; },
@@ -53824,15 +53963,19 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                     // slice_unchecked(s, a, b): the ExprSlice string arm
                     // spelled as a builtin — same untainted result.
                     if (cid.name == "slice_unchecked" && c.args.len() == 3) { return false; }
+                    // returns-no-param-escape callee (native #4357's rule via
+                    // the subset oracle): the result is fresh however tainted
+                    // the inputs — they are only READ to build it.
+                    if (sig_reg_has_name(noesc, cid.name)) { return false; }
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
-                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs);
+                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc);
                 },
                 _ => {}
             }
             for arg in c.args {
-                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs)) { return true; }
+                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc)) { return true; }
             }
             return false;
         },
@@ -53843,7 +53986,7 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
 
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
-pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg): string[] {
+pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg): string[] {
     var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
@@ -53868,7 +54011,7 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
         var i: i32 = 0;
         while (i < st.an.len()) {
             var name: string = st.an[i];
-            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs)) {
+            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc)) {
                 st = FeState { tainted: st.tainted.append(name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
                 changed = true;
             }
@@ -55400,7 +55543,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
     }
     // freeEligible (#4482 — between consumedParams and preciseDrops, matching
     // native dumpRcPlan's line order): name-sorted, comma-joined.
-    var fe: string[] = free_eligible_of(fn, structs, sig_reg_of(ret_type_fns_of(funcs)));
+    var fe: string[] = free_eligible_of(fn, structs, sig_reg_of(ret_type_fns_of(funcs)), sig_reg_of(noesc_ret_fns_of(funcs, structs)));
     if (fe.len() > 0) {
         var fes: string[] = [];
         var fi: i32 = 0;
