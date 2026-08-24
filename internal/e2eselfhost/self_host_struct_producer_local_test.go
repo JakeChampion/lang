@@ -117,12 +117,14 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 1, allocs: 204, frees: 200,
+			want: 1, allocs: 204, frees: 204,
 		},
 		{
-			// Its pairwise witness. The colliding program above now matches
-			// these numbers exactly, which is checkable without deciding whether the
-			// residual 120 bytes are right — they are not this issue's.
+			// Its pairwise witness. The colliding program above matches these
+			// numbers exactly. frees moved 200 -> 204 with the struct routing:
+			// main's `b` is a plain call arg the plan does not taint, so its
+			// sweep is granted (live_bytes 0 where the 120-byte b residual
+			// leaked before) — the callee param alias stays refused per-site.
 			name: "sibling_alias_renamed",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
@@ -140,7 +142,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 1, allocs: 204, frees: 200,
+			want: 1, allocs: 204, frees: 204,
 		},
 		{
 			// ADMITTED, and deliberately so after being measured rather than
