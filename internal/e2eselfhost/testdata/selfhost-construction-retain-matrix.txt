@@ -1,0 +1,48 @@
+# The construction-retain matrix: struct-literal FIELD KIND x VALUE SHAPE,
+# verdicts per compiler (native selfhost). Regenerate with
+# FERN_CONSTRUCTION_RETAIN_DUMP=1 (and -v). Exits match native on every cell
+# and the underflow guard is 0 everywhere: every divergence below is a
+# LEAK-direction floor — an uncounted share the release side then cannot
+# reclaim — which is the killer-drops wave's burn-down list. Native is clean
+# on all 35 cells: every share is counted there and fields drop at the box's
+# rc-death.
+#
+# The shape axis: fresh = inline literal/ctor (sole-owned, no-inc baseline);
+# local = bare ident of a fresh local, both claims live; param = bare ident
+# of a param the caller keeps; fieldread = q.f off a live sibling holder
+# (the flatten__RewriteCtx class); call = producer result.
+str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
+str__local          clean leak   bare string local: retain gated on slit_reclaim + ownership; P not strfldok-admitted here
+str__param          clean leak   same gate, param origin
+str__fieldread      clean leak   string field read: uncounted borrow, holder goes box-only
+str__call           clean clean  producer result is Owned
+str_arr__fresh      clean clean  fresh string[] literal owned by the holder
+str_arr__local      clean leak   bare string[] local into the field: uncounted (the documented hole)
+str_arr__param      clean leak   same, param origin
+str_arr__fieldread  clean leak   the RewriteCtx shape, string[] flavor
+str_arr__call       clean clean  producer result owned
+arr_i32__fresh      clean clean  fresh scalar-array literal
+arr_i32__local      clean clean  the #3292 dup: bare scalar-array ident is retained and balanced
+arr_i32__param      clean clean  same dup, param origin
+arr_i32__fieldread  clean leak   q.f scalar-array read: no field-access retain fires here
+arr_i32__call       clean clean  producer result owned
+struct__fresh       clean clean  fresh Inner literal
+struct__local       clean leak   bare Inner ident: retained (nested-struct arm) but source strands its own claim
+struct__param       clean clean  param bare ident retained, param owns nothing to strand
+struct__fieldread   clean leak   q.f nested-struct read: retained conservatively, one side strands
+struct__call        clean clean  strict-fresh call result owned outright
+enum__fresh         clean clean  fresh variant ctor owned
+enum__local         clean leak   bare enum local: retained (enum arm), source claim strands
+enum__param         clean leak   param enum bare ident
+enum__fieldread     clean leak   q.f enum read
+enum__call          clean leak   enum-returning call: not in the fresh-ctor class, retained, strands
+enum_arr__fresh     clean leak   fresh [E.A(..)] literal: enum-array field admission missing even for fresh
+enum_arr__local     clean leak   bare enum-array ident
+enum_arr__param     clean leak   param enum-array
+enum_arr__fieldread clean leak   q.f enum-array read
+enum_arr__call      clean leak   enum-array producer result
+struct_arr__fresh   clean clean  fresh [Inner{..}] literal owned, deep-dropped
+struct_arr__local   clean leak   bare Inner[] ident
+struct_arr__param   clean leak   param Inner[]
+struct_arr__fieldread clean leak q.f Inner[] read
+struct_arr__call    clean clean  producer result owned
