@@ -121,7 +121,8 @@ struct_arr_field__if_block__alias_param       clean  leak   same as fnscope
 tuple_mixed__fnscope__alias_local             clean  clean  clean on both sides
 tuple_mixed__if_block__alias_local            clean  clean  clean on both sides
 tuple_mixed__loop_local__alias_local          clean  clean  clean on both sides
-tuple_mixed__callprod__alias_local            clean  leak   uncredited call producer: tuple credits are literal-init only, so no retain, no cancellation, no release (#4402 tuple limb boundary)
+tuple_mixed__ownedret_alias__bind_local       clean  leak   owned-return admission refuses an aliased producer local (frame-fresh walks with empty alias lists); no registry entry, no caller credit
+tuple_mixed__callprod__alias_local            clean  clean  owned-return admission: the caller's TUP: credit + ARRF-flagged element kinds release box and elements; the alias pair cancels
 tuple_mixed__fnscope__alias_param             clean  leak   constant keep-sweep refusal, tuple flavor
 tuple_mixed__if_block__alias_param            clean  leak   same as fnscope
 for_in_str_elem__loop__read                   clean  leak   for-in binder is not a StmtVar, no collector credits it; the fresh string[] and its elements survive (#7292/#7356 family)
