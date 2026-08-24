@@ -1447,9 +1447,10 @@ func (g *generator) recordUse(target string) {
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
-		// __fern_alloc_rc1 for its read buffer — so any tcp builtin
-		// needs the alloc runtime present, even a connect-only program.
+		// __alloc_u8 for its read buffer — so any tcp builtin needs
+		// the alloc runtime present, even a connect-only program.
 		g.usesAlloc = true
+		g.usesAllocU8 = true
 	case "wasm_pollable_drop":
 		// On native a pollable is just an fd (no separate resource to
 		// drop), so this is a no-op helper — present so std/async's
@@ -8912,7 +8913,11 @@ func (g *generator) emitTcpAcceptRuntime() {
 
 // emitTcpRecvRuntime emits `__fern_tcp_recv(fd, max)` —
 // reads up to `max` bytes from the socket fd into a fresh
-// length-prefixed lang string. EOF / error → length 0.
+// `u8[]` in the __alloc_u8 box shape (cap = max, len = the
+// actual byte count; the zero-fill makes the len-shrink
+// defined). EOF / error → length 0. max <= 0 returns the
+// shared empty sentinel untouched — its static header must
+// never receive the post-read len store.
 // Saves r12 across the syscall so the data pointer survives.
 func (g *generator) emitTcpRecvRuntime() {
 	g.line("")
@@ -8927,10 +8932,15 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("sub rsp, 8")    // align
 	g.emit("mov ebx, edi")  // rbx = fd
 	g.emit("mov r12d, esi") // r12 = max
-	// L2 rc-header layout (see __fern_strcat): payload = max data + 1 NUL.
-	g.emit("lea edi, [r12 + 1]")
-	g.emit("call __fern_alloc_rc1")
-	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
+	g.emit("test r12d, r12d")
+	g.emit("jg .Ltcp_recv_alloc")
+	g.emit("xor edi, edi")
+	g.emit("call __alloc_u8") // the shared empty sentinel
+	g.emit("jmp .Ltcp_recv_ret")
+	g.label(".Ltcp_recv_alloc")
+	g.emit("mov edi, r12d")
+	g.emit("call __alloc_u8")
+	g.emit("mov r13, rax") // r13 = data ptr
 	// read(fd, data, max)
 	g.emit("mov edi, ebx")
 	g.emit("mov rsi, r13")
@@ -8941,9 +8951,9 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("jns .Ltcp_recv_ok")
 	g.emit("xor eax, eax")
 	g.label(".Ltcp_recv_ok")
-	g.emitStrLenStore("eax", "r13")       // length prefix
-	g.emit("mov byte ptr [r13 + rax], 0") // trailing NUL
+	g.emit("mov dword ptr [r13 - 4], eax") // len = actual count (cap stays max)
 	g.emit("mov rax, r13")
+	g.label(".Ltcp_recv_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop r13")
 	g.emit("pop r12")

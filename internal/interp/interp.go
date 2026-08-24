@@ -928,14 +928,18 @@ func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
 	}
 	conn, ok := i.tcpConns[int64(id)]
 	if !ok {
-		return String(""), nil
+		return Array{}, nil
 	}
 	buf := make([]byte, int(max))
 	n, err := conn.Read(buf)
 	if err != nil || n <= 0 {
-		return String(""), nil
+		return Array{}, nil
 	}
-	return String(buf[:n]), nil
+	out := make(Array, n)
+	for j := 0; j < n; j++ {
+		out[j] = Number(buf[j])
+	}
+	return out, nil
 }
 
 func builtinTcpSend(i *Interp, args []Value) (Value, error) {
