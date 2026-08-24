@@ -472,6 +472,12 @@ pub struct FnSigs {
     // passed there is released by one post-call dec (param_counted_of).
     param_counted: string[],
     trmc_consume_fns: string[],
+    // handback_params: "fn|idx" for parameters the callee RETURNS BARE
+    // (`function keepit(s: S): S { return s; }`) — the argument's box flows
+    // back to the caller with no counted reference on the self-host, so the
+    // struct plan gate refuses a credited name passed at such a position
+    // (native retains at the return instead — paramCountedRetain's channel).
+    handback_params: string[],
 }
 
 pub struct LowerState {
@@ -32894,7 +32900,144 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[], plan_on: boolean, plan_fe: string[]): string[] {
+// struct_bare_assigned_src: `name` appears as the bare RHS of an assignment
+// to ANOTHER name (`held = s`). The plan's alias forgiveness is sound only
+// where the alias BIND retains; a plain assignment retains nothing on the
+// self-host, so the assignee holds the box uncounted and the source's
+// release frees it underneath (the BlockScopedStructBox aliased-to-outer
+// probe: want frees exactly 0). Family knowledge until assignments carry
+// the co-extensive retain.
+function struct_bare_assigned_src(stmts: parser.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(a) => {
+                match (a.value) {
+                    parser.ExprIdent(rid) => { if (rid.name == name && a.target != name) { return true; } },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => {
+                if (struct_bare_assigned_src(f.then_body, name)) { return true; }
+                if (struct_bare_assigned_src(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (struct_bare_assigned_src(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (struct_bare_assigned_src(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { if (struct_bare_assigned_src(arm.body, name)) { return true; } }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (struct_bare_assigned_src(one, name)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// struct_returned_bare: some `return name` exists. The self-host has no
+// return-transfer retain for structs, so the caller's fresh-ret release and
+// this slot's release are two claims on one box — refused, exactly as the
+// credit gate always refused a returned name.
+function struct_returned_bare(stmts: parser.Stmt[], name: string): boolean {
+    var rets: parser.Expr[] = noesc_collect_rets(stmts, []);
+    for r in rets {
+        match (r) {
+            parser.ExprIdent(rid) => { if (rid.name == name) { return true; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// struct_arg_to_handback: `name` is a bare argument at a position the callee
+// returns bare (handback_params_of) — `held = keepit(s)` hands s's box back
+// uncounted, so granting s frees it under the result (measured as underflow
+// 244 on the callee-keeps probe). A callee that stores the arg into a
+// returned CONSTRUCTION is not refused: the construction's retain counts it.
+function struct_arg_to_handback_expr(e: parser.Expr, name: string, handback: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var ai: i32 = 0;
+                    while (ai < c.args.len()) {
+                        match (c.args[ai]) {
+                            parser.ExprIdent(aid) => {
+                                if (aid.name == name
+                                    && util.index_of_str(handback, cid.name + "|" + util.i32_to_string(ai)) >= 0) { return true; }
+                            },
+                            _ => {}
+                        }
+                        ai = ai + 1;
+                    }
+                },
+                _ => {}
+            }
+            for arg in c.args { if (struct_arg_to_handback_expr(arg, name, handback)) { return true; } }
+            return struct_arg_to_handback_expr(c.callee, name, handback);
+        },
+        parser.ExprBinary(b) => { return struct_arg_to_handback_expr(b.left, name, handback) || struct_arg_to_handback_expr(b.right, name, handback); },
+        parser.ExprUnary(u) => { return struct_arg_to_handback_expr(u.operand, name, handback); },
+        parser.ExprIndex(ix) => { return struct_arg_to_handback_expr(ix.array, name, handback) || struct_arg_to_handback_expr(ix.index, name, handback); },
+        parser.ExprFieldAccess(fa) => { return struct_arg_to_handback_expr(fa.obj, name, handback); },
+        parser.ExprArray(ar) => {
+            for el in ar.elements { if (struct_arg_to_handback_expr(el, name, handback)) { return true; } }
+            return false;
+        },
+        parser.ExprTuple(tu) => {
+            for el in tu.elements { if (struct_arg_to_handback_expr(el, name, handback)) { return true; } }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && struct_arg_to_handback_expr(sl.base, name, handback)) { return true; }
+            for fv in sl.field_values { if (struct_arg_to_handback_expr(fv, name, handback)) { return true; } }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return struct_arg_to_handback(lm.body, name, handback); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function struct_arg_to_handback(stmts: parser.Stmt[], name: string, handback: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (struct_arg_to_handback_expr(v.init, name, handback)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_arg_to_handback_expr(a.value, name, handback)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_arg_to_handback_expr(r.value, name, handback)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_arg_to_handback_expr(e.value, name, handback)) { return true; } },
+            parser.StmtIf(f) => {
+                if (struct_arg_to_handback_expr(f.cond, name, handback)) { return true; }
+                if (struct_arg_to_handback(f.then_body, name, handback)) { return true; }
+                if (struct_arg_to_handback(f.else_body, name, handback)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (struct_arg_to_handback_expr(w.cond, name, handback)) { return true; }
+                if (struct_arg_to_handback(w.body, name, handback)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (struct_arg_to_handback_expr(fo.iter, name, handback)) { return true; }
+                if (struct_arg_to_handback(fo.body, name, handback)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (struct_arg_to_handback_expr(m.scrutinee, name, handback)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && struct_arg_to_handback_expr(arm.guard, name, handback)) { return true; }
+                    if (struct_arg_to_handback(arm.body, name, handback)) { return true; }
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (struct_arg_to_handback(one, name, handback)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -32966,6 +33109,9 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
         if (st_esc_ok && !reassigned_from_alias(body, fnm)
+            && !struct_bare_assigned_src(body, fnm)
+            && !struct_returned_bare(body, fnm)
+            && !struct_arg_to_handback(body, fnm, handback)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
             && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
             out = out.append(fresh[i]);
@@ -46748,7 +46894,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
     if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -53150,7 +53296,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, move_arr_params: e, param_counted: e, trmc_consume_fns: e };
+        tuple_fresh_ret_fns: e, move_arr_params: e, param_counted: e, trmc_consume_fns: e, handback_params: e };
 }
 
 // ret_type_fns_of: "name|ret_type" rows for every non-generic function, in
@@ -53506,7 +53652,32 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         move_arr_params: move_arr_params_of(funcs),
         param_counted: param_counted_of(funcs, structs, sfok),
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
+        handback_params: handback_params_of(funcs),
     };
+}
+
+// handback_params_of: "fn|idx" for every parameter some return hands back
+// BARE — see the FnSigs field comment. Only direct `return <param>` counts;
+// a param stored into a returned construction takes the construction's
+// counted retain and is not a hand-back.
+pub function handback_params_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        var rets: parser.Expr[] = noesc_collect_rets(fn.body, []);
+        var pi: i32 = 0;
+        while (pi < fn.params.len()) {
+            var hit: boolean = false;
+            for r in rets {
+                match (r) {
+                    parser.ExprIdent(rid) => { if (rid.name == fn.params[pi].name) { hit = true; } },
+                    _ => {}
+                }
+            }
+            if (hit) { out = out.append(fn.name + "|" + util.i32_to_string(pi)); }
+            pi = pi + 1;
+        }
+    }
+    return out;
 }
 
 // trmc_consume_fns_of scans for TRMC functions whose loop may consume its
