@@ -9,8 +9,8 @@ import (
 
 // TestTwoWordIoStringRuntimesUseRcHeaderedAlloc extends the #2817 guard to the
 // I/O runtime helpers that also return an owned two-word string and were the
-// same plain-__fern_alloc outliers: read_file (Ok(string)), tcp_recv
-// ((data,len)), and the Reader read_line / read_chunk (Some(string)).
+// same plain-__fern_alloc outliers: read_file (Ok(string)) and the Reader
+// read_line / read_chunk (Some(string)).
 //
 // Each is reclaimed by __fern_str_dec, which reads the rc at data-8 and the
 // payload size at data-4 — present only when the buffer is allocated through
@@ -32,7 +32,6 @@ func TestTwoWordIoStringRuntimesUseRcHeaderedAlloc(t *testing.T) {
 	}
 	probes := []probe{
 		{(*generator).emitReadFileRuntime, []string{"__fern_read_file"}},
-		{(*generator).emitTcpRecvRuntime, []string{"__fern_tcp_recv"}},
 		{(*generator).emitReaderWriterRuntime, []string{"__fern_reader_read_line", "__fern_reader_read_chunk"}},
 	}
 
