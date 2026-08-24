@@ -55,3 +55,19 @@ families in the sanctioned order are the small Option deep-free set
 (OPTAARR / OPTSTR / OPTARRARR), then struct (fixes the two alias_param
 rows with its retain moving in the same step), with str / tuple last
 behind the co-extensive retain gate and dup-at-extract.
+
+## CI-caught: the append store was uncounted
+
+Shard 14 failed `rebound_value_escapes_to_container` with a wrong answer —
+the #6127 hazard re-armed: the plan's counted-sink forgiveness assumes the
+STORE retains (native's `emitArrayPush` incs any rc-typed element), but the
+self-host's append retain covered only array slots and enum-field aliases.
+With the credit now granted, the loop-rebind release freed a box the array
+still read. The fix is the #7253 rule applied literally: the append arm
+retains a source slot holding the `SCENUMS:` credit — gated on the CREDIT,
+never the type, so retain and release stay co-extensive in both switch
+positions (plan off ⇒ no credit ⇒ no retain ⇒ exactly the old behavior).
+The sibling counted sinks were probed with the same rebind-in-loop shape:
+struct-lit, array-lit, tuple-lit, and variant-payload stores all answer
+correctly (two clean, two bounded leaks) — append was the one uncounted
+store.
