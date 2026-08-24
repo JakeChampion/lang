@@ -28245,7 +28245,7 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 // leaks; the enum_scalar__callarg matrix cells pin all
                 // three).
                 var esc_ok: boolean = false;
-                if (plan_on) { esc_ok = util.index_of_str(plan_fe, v.name) >= 0; }
+                if (plan_on) { esc_ok = util.index_of_str(plan_fe, reclaim_site_key_of(v.name, v.line, v.col)) >= 0; }
                 else { esc_ok = !body_unsafe_for(stmts, v.name, borrowable, []); }
                 if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0 && esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
@@ -33357,20 +33357,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // call-provenance local is plan-tainted through its own init args),
         // and the plan adds the call-arg/counted-sink grants the credit gate
         // cannot see. The credit half retires with that oracle's port.
-        var oa_esc_ok: boolean = !body_unsafe_for(body, oanm, borrowable, recv_borrow);
-        if (!oa_esc_ok && plan_on) {
-            // The plan verdict is NAME-level, so its half of the union only
-            // applies to a name with ONE binding site — a shadow-sibling pair
-            // shares the name, and granting both re-arms the #7272 collision
-            // over-release the site-keying exists to refuse (the
-            // optaarr_collide suite measures exactly that).
-            var oa_sites: i32 = 0;
-            var oa_sj: i32 = 0;
-            while (oa_sj < oaas.len()) {
-                if (reclaim_site_name(oaas[oa_sj]) == oanm) { oa_sites = oa_sites + 1; }
-                oa_sj = oa_sj + 1;
-            }
-            if (oa_sites == 1 && !name_is_alias_bound(body, oanm)) { oa_esc_ok = util.index_of_str(plan_fe, oanm) >= 0; }
+        var oa_esc_ok: boolean = false;
+        if (!plan_on) { oa_esc_ok = !body_unsafe_for(body, oanm, borrowable, recv_borrow); }
+        else if (!name_is_alias_bound(body, oanm)) {
+            oa_esc_ok = util.index_of_str(plan_fe, oaas[oai]) >= 0;
         }
         if (oa_esc_ok
             && util.index_of_str(reassigned, oanm) < 0
@@ -40291,8 +40281,9 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
                 // credit proof keeps call-provenance shapes the plan cannot
                 // yet type through returnsNoParamEscape; the plan adds the
                 // call-arg grants, still refusing any matched local.
-                var os_esc_ok: boolean = !body_unsafe_for(stmts, v.name, [], []);
-                if (!os_esc_ok && plan_on) { os_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
+                var os_esc_ok: boolean = false;
+                if (!plan_on) { os_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
+                else { os_esc_ok = util.index_of_str(plan_fe, reclaim_site_key_of(v.name, v.line, v.col)) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -40318,8 +40309,9 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                var oa_esc_ok: boolean = !body_unsafe_for(stmts, v.name, [], []);
-                if (!oa_esc_ok && plan_on) { oa_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
+                var oa_esc_ok: boolean = false;
+                if (!plan_on) { oa_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
+                else { oa_esc_ok = util.index_of_str(plan_fe, reclaim_site_key_of(v.name, v.line, v.col)) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -46469,7 +46461,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // per-BLOCK variant is the quadratic trap the performance audit records).
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
-    if (plan_on) { plan_fe = free_eligible_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
+    if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
     var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
@@ -53553,24 +53545,24 @@ function rc_fe_expr_type(e: parser.Expr, types_n: string[], types_t: string[], s
 // rc_fe_escape: the UNCOUNTED-sink taint walk (native `escape`): a bare ident
 // taints; a pointer-shaped index / field projection unwraps to its root; an
 // array slice unwraps (string slices copy — fresh owned — and do not).
-function rc_fe_escape(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[]): string[] {
+function rc_fe_escape(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], env_n: string[], env_s: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return rc_fe_taint(tainted, id.name); },
+        parser.ExprIdent(id) => { return rc_fe_taint(tainted, rc_fe_resolve(env_n, env_s, id.name)); },
         parser.ExprIndex(ix) => {
             if (rc_fe_ptr_type(rc_fe_expr_type(e, types_n, types_t, structs), structs)) {
-                return rc_fe_escape(ix.array, tainted, types_n, types_t, structs);
+                return rc_fe_escape(ix.array, tainted, types_n, types_t, structs, env_n, env_s);
             }
             return tainted;
         },
         parser.ExprFieldAccess(fa) => {
             if (rc_fe_ptr_type(rc_fe_expr_type(e, types_n, types_t, structs), structs)) {
-                return rc_fe_escape(fa.obj, tainted, types_n, types_t, structs);
+                return rc_fe_escape(fa.obj, tainted, types_n, types_t, structs, env_n, env_s);
             }
             return tainted;
         },
         parser.ExprSlice(sl) => {
             if (rc_fe_expr_type(sl.array, types_n, types_t, structs) != "string") {
-                return rc_fe_escape(sl.array, tainted, types_n, types_t, structs);
+                return rc_fe_escape(sl.array, tainted, types_n, types_t, structs, env_n, env_s);
             }
             return tainted;
         },
@@ -53588,7 +53580,7 @@ function rc_fe_escape(e: parser.Expr, tainted: string[], types_n: string[], type
 // native reads the checker; native's consuming-binding exemption is part of
 // the same "" bucket until the consuming-bindings port). Projections were
 // never tainted here — the sink dups those too.
-function rc_fe_escape_owned(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[]): string[] {
+function rc_fe_escape_owned(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], env_n: string[], env_s: string[]): string[] {
     match (e) {
         parser.ExprIdent(id) => {
             // the counted set mirrors needsRcIncOnAlias's type switch: arrays,
@@ -53596,7 +53588,7 @@ function rc_fe_escape_owned(e: parser.Expr, tainted: string[], types_n: string[]
             // (rc_fe_ptr_type), builtin Option/Result, inferred lambda "fn".
             var t: string = rc_fe_expr_type(e, types_n, types_t, structs);
             if (rc_fe_ptr_type(t, structs) || rc_fe_is_builtin_enum(t) || t == "fn") { return tainted; }
-            return rc_fe_taint(tainted, id.name);
+            return rc_fe_taint(tainted, rc_fe_resolve(env_n, env_s, id.name));
         },
         _ => { return tainted; }
     }
@@ -53605,7 +53597,26 @@ function rc_fe_escape_owned(e: parser.Expr, tainted: string[], types_n: string[]
 
 // FeState threads the taint set + the assigns table (parallel an/av arrays —
 // a name may repeat) + the name->type table through the recursive sink walk.
-struct FeState { tainted: string[], an: string[], av: parser.Expr[], types_n: string[], types_t: string[] }
+struct FeState { tainted: string[], an: string[], av: parser.Expr[], av_en: string[][], av_es: string[][], types_n: string[], types_t: string[], decl_s: string[], site_mode: boolean }
+
+// The fe engine keys taint by BINDING-SITE id. In name mode (the dump path,
+// native parity) the id IS the bare name, so every resolution falls back to
+// the name and the analysis is byte-identical to the historical name-level
+// one. In site mode the id is the binding's reclaim_site_key, and a scope
+// environment (env_n/env_s, threaded as parameters so block recursion scopes
+// it for free) resolves each use to its in-scope binding — the per-site
+// verdicts the routed release gates consume, which a name-level verdict
+// cannot supply for shadow siblings and binder collisions.
+function rc_fe_bind_site(site_mode: boolean, name: string, line: i32, col: i32): string {
+    if (site_mode) { return reclaim_site_key_of(name, line, col); }
+    return name;
+}
+
+function rc_fe_resolve(env_n: string[], env_s: string[], name: string): string {
+    var i: i32 = env_n.len() - 1;
+    while (i >= 0) { if (env_n[i] == name) { return env_s[i]; } i = i - 1; }
+    return name;
+}
 
 // rc_fe_collect_types: record every declared local's (name, type) pair,
 // recursively. A destructure `var (a, b) = t` types each binding by splitting
@@ -53627,7 +53638,7 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                     while (d < names.len()) {
                         var dt: string = "";
                         if (d < tys.len()) { dt = tys[d]; }
-                        st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(names[d]), types_t: st.types_t.append(dt) };
+                        st = FeState { ...st, types_n: st.types_n.append(names[d]), types_t: st.types_t.append(dt), decl_s: st.decl_s.append(rc_fe_bind_site(st.site_mode, names[d], v.line, v.col)) };
                         d = d + 1;
                     }
                 } else {
@@ -53691,7 +53702,7 @@ function rc_fe_collect_types(stmts: parser.Stmt[], s: FeState, structs: parser.S
                         // earlier array local resolves.
                         if (t.len() == 0) { t = rc_fe_expr_type(v.init, st.types_n, st.types_t, structs); }
                     }
-                    st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t) };
+                    st = FeState { ...st, types_n: st.types_n.append(v.name), types_t: st.types_t.append(t), decl_s: st.decl_s.append(rc_fe_bind_site(st.site_mode, v.name, v.line, v.col)) };
                 }
             },
             parser.StmtIf(f) => { st = rc_fe_collect_types(f.then_body, st, structs, retreg); st = rc_fe_collect_types(f.else_body, st, structs, retreg); },
@@ -53752,23 +53763,23 @@ function rc_fe_split_csv(s: string): string[] {
 // if/match desugar). Method-call sinks (Map_set / push / with) are ported as
 // escape/escape_owned on their value arguments when they appear as
 // `.set(...)` / `.append(...)` / `.with(...)` method calls.
-function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[]): FeState {
+function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[], env_n: string[], env_s: string[]): FeState {
     var st: FeState = s;
     match (e) {
         parser.ExprStructLit(sl) => {
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                st = FeState { tainted: rc_fe_escape_owned(sl.field_values[i], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
-                st = rc_fe_walk_expr(sl.field_values[i], st, structs);
+                st = FeState { ...st, tainted: rc_fe_escape_owned(sl.field_values[i], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
+                st = rc_fe_walk_expr(sl.field_values[i], st, structs, env_n, env_s);
                 i = i + 1;
             }
-            if (sl.has_base) { st = rc_fe_walk_expr(sl.base, st, structs); }
+            if (sl.has_base) { st = rc_fe_walk_expr(sl.base, st, structs, env_n, env_s); }
         },
         parser.ExprTuple(tu) => {
             var i: i32 = 0;
             while (i < tu.elements.len()) {
-                st = FeState { tainted: rc_fe_escape_owned(tu.elements[i], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
-                st = rc_fe_walk_expr(tu.elements[i], st, structs);
+                st = FeState { ...st, tainted: rc_fe_escape_owned(tu.elements[i], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
+                st = rc_fe_walk_expr(tu.elements[i], st, structs, env_n, env_s);
                 i = i + 1;
             }
         },
@@ -53782,23 +53793,23 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                         var en: string = variant_enum_owner(structs, id.name);
                         var rcp: boolean = enum_all_variants_array_payload(structs, en);
                         for arg in c.args {
-                            if (rcp) { st = FeState { tainted: rc_fe_escape_owned(arg, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
-                            else { st = FeState { tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            if (rcp) { st = FeState { ...st, tainted: rc_fe_escape_owned(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
+                            else { st = FeState { ...st, tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
                         }
                     }
                 },
                 parser.ExprLambda(lam) => {
                     // value-position if/match IIFE: walk the body inline.
-                    st = rc_fe_walk_stmts(lam.body, st, structs);
+                    st = rc_fe_walk_stmts(lam.body, st, structs, env_n, env_s);
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method-call sinks on the receiver object.
                     if (fa.field == "set" && c.args.len() == 2) {
-                        st = FeState { tainted: rc_fe_escape(c.args[0], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
-                        st = FeState { tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                        st = FeState { ...st, tainted: rc_fe_escape(c.args[0], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
+                        st = FeState { ...st, tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
                     }
                     if ((fa.field == "append" || fa.field == "push") && c.args.len() == 1) {
-                        st = FeState { tainted: rc_fe_escape_owned(c.args[0], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                        st = FeState { ...st, tainted: rc_fe_escape_owned(c.args[0], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
                     }
                     if (fa.field == "with" && c.args.len() == 2) {
                         // element-type gate (native: rc-tracked pointer elements
@@ -53807,31 +53818,31 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                         var rt: string = rc_fe_expr_type(fa.obj, st.types_n, st.types_t, structs);
                         var et: string = "";
                         if (is_array_type_name(rt)) { et = rt[0:rt.len() - 2] + ""; }
-                        if (et == "string") { st = FeState { tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
-                        else { st = FeState { tainted: rc_fe_escape_owned(c.args[1], st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                        if (et == "string") { st = FeState { ...st, tainted: rc_fe_escape(c.args[1], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
+                        else { st = FeState { ...st, tainted: rc_fe_escape_owned(c.args[1], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
                     }
                 },
                 _ => {}
             }
-            for arg in c.args { st = rc_fe_walk_expr(arg, st, structs); }
+            for arg in c.args { st = rc_fe_walk_expr(arg, st, structs, env_n, env_s); }
         },
-        parser.ExprBinary(b) => { st = rc_fe_walk_expr(b.left, st, structs); st = rc_fe_walk_expr(b.right, st, structs); },
+        parser.ExprBinary(b) => { st = rc_fe_walk_expr(b.left, st, structs, env_n, env_s); st = rc_fe_walk_expr(b.right, st, structs, env_n, env_s); },
         parser.ExprUnary(u) => {
             // `expr as T` desugars to unary op "as_<T>": a pointer-shaped
             // operand cast to a non-pointer target escapes (raw address).
             if (u.op.len() > 3 && u.op[0:3] == "as_") {
                 var target: str = u.op[3:u.op.len()];
                 if (!rc_fe_ptr_type(target, structs) && rc_fe_ptr_type(rc_fe_expr_type(u.operand, st.types_n, st.types_t, structs), structs)) {
-                    st = FeState { tainted: rc_fe_escape(u.operand, st.tainted, st.types_n, st.types_t, structs), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                    st = FeState { ...st, tainted: rc_fe_escape(u.operand, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
                 }
             }
-            st = rc_fe_walk_expr(u.operand, st, structs);
+            st = rc_fe_walk_expr(u.operand, st, structs, env_n, env_s);
         },
-        parser.ExprIndex(ix) => { st = rc_fe_walk_expr(ix.array, st, structs); st = rc_fe_walk_expr(ix.index, st, structs); },
-        parser.ExprFieldAccess(fa) => { st = rc_fe_walk_expr(fa.obj, st, structs); },
+        parser.ExprIndex(ix) => { st = rc_fe_walk_expr(ix.array, st, structs, env_n, env_s); st = rc_fe_walk_expr(ix.index, st, structs, env_n, env_s); },
+        parser.ExprFieldAccess(fa) => { st = rc_fe_walk_expr(fa.obj, st, structs, env_n, env_s); },
         parser.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { st = rc_fe_walk_expr(ar.elements[i], st, structs); i = i + 1; }
+            while (i < ar.elements.len()) { st = rc_fe_walk_expr(ar.elements[i], st, structs, env_n, env_s); i = i + 1; }
         },
         _ => {}
     }
@@ -53840,57 +53851,101 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
 
 // rc_fe_walk_stmts: the statement-level sink walk — records assigns, taints
 // binding forms, recurses into nested blocks and value expressions.
-function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[]): FeState {
+function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.StructDecl[], env_n: string[], env_s: string[]): FeState {
     var st: FeState = s;
+    // The scope environment grows through THIS statement list and is passed
+    // down into nested blocks; the recursion never hands its extensions back,
+    // so lexical scoping falls out of the value threading.
+    var en: string[] = env_n;
+    var es: string[] = env_s;
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
                 // A destructure's bindings are counted owners (each extracted
                 // element is dup'd) — neither tainted nor recorded as assigns.
                 if (!rc_fe_is_destructure(v.name)) {
-                    st = FeState { tainted: st.tainted, an: st.an.append(v.name), av: st.av.append(v.init), types_n: st.types_n, types_t: st.types_t };
+                    var vsid: string = rc_fe_bind_site(st.site_mode, v.name, v.line, v.col);
+                    // the init is evaluated in the env BEFORE this binding.
+                    st = FeState { ...st, an: st.an.append(vsid), av: st.av.append(v.init), av_en: st.av_en.append(en), av_es: st.av_es.append(es) };
+                    st = rc_fe_walk_expr(v.init, st, structs, en, es);
+                    en = en.append(v.name);
+                    es = es.append(vsid);
+                } else {
+                    st = rc_fe_walk_expr(v.init, st, structs, en, es);
+                    var dns: string[] = rc_fe_split_csv(v.name);
+                    var dd: i32 = 0;
+                    while (dd < dns.len()) {
+                        en = en.append(dns[dd]);
+                        es = es.append(rc_fe_bind_site(st.site_mode, dns[dd], v.line, v.col));
+                        dd = dd + 1;
+                    }
                 }
-                st = rc_fe_walk_expr(v.init, st, structs);
             },
             parser.StmtAssign(a) => {
-                st = FeState { tainted: st.tainted, an: st.an.append(a.target), av: st.av.append(a.value), types_n: st.types_n, types_t: st.types_t };
-                st = rc_fe_walk_expr(a.value, st, structs);
+                st = FeState { ...st, an: st.an.append(rc_fe_resolve(en, es, a.target)), av: st.av.append(a.value), av_en: st.av_en.append(en), av_es: st.av_es.append(es) };
+                st = rc_fe_walk_expr(a.value, st, structs, en, es);
             },
             parser.StmtIf(f) => {
-                st = rc_fe_walk_expr(f.cond, st, structs);
-                st = rc_fe_walk_stmts(f.then_body, st, structs);
-                st = rc_fe_walk_stmts(f.else_body, st, structs);
+                st = rc_fe_walk_expr(f.cond, st, structs, en, es);
+                st = rc_fe_walk_stmts(f.then_body, st, structs, en, es);
+                st = rc_fe_walk_stmts(f.else_body, st, structs, en, es);
             },
-            parser.StmtWhile(w) => { st = rc_fe_walk_expr(w.cond, st, structs); st = rc_fe_walk_stmts(w.body, st, structs); },
+            parser.StmtWhile(w) => { st = rc_fe_walk_expr(w.cond, st, structs, en, es); st = rc_fe_walk_stmts(w.body, st, structs, en, es); },
             parser.StmtFor(fr) => {
-                // for-in bindings alias the iterated container — tainted.
+                // for-in bindings alias the iterated container — tainted at a
+                // per-loop synthetic site scoped to the body, so a same-named
+                // outer local keeps its own verdict in site mode.
                 var names: string[] = rc_fe_split_csv(fr.var_name);
+                var fen: string[] = en;
+                var fes: string[] = es;
                 var d: i32 = 0;
-                while (d < names.len()) { st = FeState { tainted: rc_fe_taint(st.tainted, names[d]), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; d = d + 1; }
-                st = rc_fe_walk_expr(fr.iter, st, structs);
-                st = rc_fe_walk_stmts(fr.body, st, structs);
+                while (d < names.len()) {
+                    var fid: string = names[d];
+                    if (st.site_mode) { fid = "forin:" + names[d]; }
+                    st = FeState { ...st, tainted: rc_fe_taint(st.tainted, fid) };
+                    fen = fen.append(names[d]);
+                    fes = fes.append(fid);
+                    d = d + 1;
+                }
+                st = rc_fe_walk_expr(fr.iter, st, structs, en, es);
+                st = rc_fe_walk_stmts(fr.body, st, structs, fen, fes);
             },
             parser.StmtMatch(m) => {
-                st = rc_fe_walk_expr(m.scrutinee, st, structs);
+                st = rc_fe_walk_expr(m.scrutinee, st, structs, en, es);
                 for arm in m.arms {
+                    var aen: string[] = en;
+                    var aes: string[] = es;
                     match (arm.pattern) {
                         parser.PatVariant(pv) => {
                             // arm bindings alias enum payloads with no dup —
-                            // tainted (no consuming-bindings port yet).
-                            if (pv.binding.len() > 0 && pv.binding != "_") { st = FeState { tainted: rc_fe_taint(st.tainted, pv.binding), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                            // tainted (no consuming-bindings port yet), at an
+                            // arm-scoped synthetic site in site mode.
+                            if (pv.binding.len() > 0 && pv.binding != "_") {
+                                var bid: string = pv.binding;
+                                if (st.site_mode) { bid = "arm:" + pv.binding; }
+                                st = FeState { ...st, tainted: rc_fe_taint(st.tainted, bid) };
+                                aen = aen.append(pv.binding);
+                                aes = aes.append(bid);
+                            }
                             var xb: i32 = 0;
                             while (xb < pv.extra_bindings.len()) {
-                                if (pv.extra_bindings[xb] != "_") { st = FeState { tainted: rc_fe_taint(st.tainted, pv.extra_bindings[xb]), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t }; }
+                                if (pv.extra_bindings[xb] != "_") {
+                                    var xid: string = pv.extra_bindings[xb];
+                                    if (st.site_mode) { xid = "arm:" + pv.extra_bindings[xb]; }
+                                    st = FeState { ...st, tainted: rc_fe_taint(st.tainted, xid) };
+                                    aen = aen.append(pv.extra_bindings[xb]);
+                                    aes = aes.append(xid);
+                                }
                                 xb = xb + 1;
                             }
                         },
                         _ => {}
                     }
-                    st = rc_fe_walk_stmts(arm.body, st, structs);
+                    st = rc_fe_walk_stmts(arm.body, st, structs, aen, aes);
                 }
             },
-            parser.StmtReturn(r) => { st = rc_fe_walk_expr(r.value, st, structs); },
-            parser.StmtExpr(x) => { st = rc_fe_walk_expr(x.value, st, structs); },
+            parser.StmtReturn(r) => { st = rc_fe_walk_expr(r.value, st, structs, en, es); },
+            parser.StmtExpr(x) => { st = rc_fe_walk_expr(x.value, st, structs, en, es); },
             _ => {}
         }
     }
@@ -53902,13 +53957,13 @@ function rc_fe_walk_stmts(stmts: parser.Stmt[], s: FeState, structs: parser.Stru
 // string slices are owned; ident reads the taint set; projections and array
 // slices are tainted; calls are owned unless the receiver or any arg is
 // tainted; unknown shapes default tainted.
-function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg): boolean {
+function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg, env_n: string[], env_s: string[]): boolean {
     match (e) {
         parser.ExprArray(_) => { return false; },
         parser.ExprStructLit(_) => { return false; },
         parser.ExprTuple(_) => { return false; },
         parser.ExprLambda(_) => { return false; },   // a fresh closure is owned (native MakeClosure arm)
-        parser.ExprIdent(id) => { return util.index_of_str(tainted, id.name) >= 0; },
+        parser.ExprIdent(id) => { return util.index_of_str(tainted, rc_fe_resolve(env_n, env_s, id.name)) >= 0; },
         parser.ExprNumber(_) => { return false; },
         parser.ExprBool(_) => { return false; },
         parser.ExprString(_) => { return false; },
@@ -53970,12 +54025,12 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
-                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc);
+                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, env_n, env_s);
                 },
                 _ => {}
             }
             for arg in c.args {
-                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc)) { return true; }
+                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, env_n, env_s)) { return true; }
             }
             return false;
         },
@@ -53987,23 +54042,40 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
 pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg): string[] {
-    var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
+    return rc_fe_run(fn, structs, retreg, noesc, false);
+}
+
+// free_eligible_sites_of: the same analysis keyed by BINDING SITE — the
+// verdicts the plan-routed release gates consume. A shadow-sibling pair or a
+// binder collision resolves per binding here, where the name-level dump
+// variant (kept above for native parity) must collapse them.
+pub function free_eligible_sites_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg): string[] {
+    return rc_fe_run(fn, structs, retreg, noesc, true);
+}
+
+function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg, site_mode: boolean): string[] {
+    var st: FeState = FeState { tainted: [], an: [], av: [], av_en: [], av_es: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var p: parser.ParamDecl = fn.params[pi];
-        st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(p.name), types_t: st.types_t.append(p.type_name) };
+        // params keep NAME identity in both modes: the routed gates only ever
+        // query local binding-site keys, and the resolve fallback returns the
+        // bare name for anything the env does not hold.
+        st = FeState { ...st, types_n: st.types_n.append(p.name), types_t: st.types_t.append(p.type_name), decl_s: st.decl_s.append(p.name) };
         // taint seed: every param that is neither `own` nor consumed-threaded.
         // (native's owned-by-default paramVerdict ladder is not ported — the
         // scoping cut documented at the top of this section.)
         if (!p.own && util.index_of_str(consumed, p.name) < 0) {
-            st = FeState { tainted: rc_fe_taint(st.tainted, p.name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+            st = FeState { ...st, tainted: rc_fe_taint(st.tainted, p.name) };
         }
         pi = pi + 1;
     }
     st = rc_fe_collect_types(fn.body, st, structs, retreg);
-    st = rc_fe_walk_stmts(fn.body, st, structs);
+    var root_en: string[] = [];
+    var root_es: string[] = [];
+    st = rc_fe_walk_stmts(fn.body, st, structs, root_en, root_es);
     // fixpoint: forward taint via rhs, backward via bare-ident aliasing.
     var changed: boolean = true;
     while (changed) {
@@ -54011,15 +54083,16 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
         var i: i32 = 0;
         while (i < st.an.len()) {
             var name: string = st.an[i];
-            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc)) {
-                st = FeState { tainted: st.tainted.append(name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, st.av_en[i], st.av_es[i])) {
+                st = FeState { ...st, tainted: st.tainted.append(name) };
                 changed = true;
             }
             if (util.index_of_str(st.tainted, name) >= 0) {
                 match (st.av[i]) {
                     parser.ExprIdent(src) => {
-                        if (util.index_of_str(st.tainted, src.name) < 0) {
-                            st = FeState { tainted: st.tainted.append(src.name), an: st.an, av: st.av, types_n: st.types_n, types_t: st.types_t };
+                        var srcid: string = rc_fe_resolve(st.av_en[i], st.av_es[i], src.name);
+                        if (util.index_of_str(st.tainted, srcid) < 0) {
+                            st = FeState { ...st, tainted: st.tainted.append(srcid) };
                             changed = true;
                         }
                     },
@@ -54036,9 +54109,9 @@ pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[],
     while (qi < fn.params.len()) { pn = pn.append(fn.params[qi].name); qi = qi + 1; }
     var ti: i32 = 0;
     while (ti < st.types_n.len()) {
-        var nm: string = st.types_n[ti];
+        var nm: string = st.decl_s[ti];
         var t: string = st.types_t[ti];
-        var is_param: boolean = util.index_of_str(pn, nm) >= 0;
+        var is_param: boolean = util.index_of_str(pn, st.types_n[ti]) >= 0 && nm == st.types_n[ti];
         var dup: boolean = util.index_of_str(out, nm) >= 0;
         if (!dup && util.index_of_str(st.tainted, nm) < 0) {
             var ok: boolean = false;
@@ -54585,10 +54658,10 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: parser.StructDecl[
     var moved: MlOut = MlOut { names: [], sites: [] };
     // local name->type table, reusing the freeEligible collector (params
     // recorded first so destructure typing can read them, then locals).
-    var st: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
+    var st: FeState = FeState { tainted: [], an: [], av: [], av_en: [], av_es: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
-        st = FeState { tainted: st.tainted, an: st.an, av: st.av, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name) };
+        st = FeState { ...st, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name), decl_s: st.decl_s.append(fn.params[pi].name) };
         pi = pi + 1;
     }
     // movedLocals does not need call-return typing (it moves already-typed
@@ -54641,10 +54714,10 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: parser.StructDecl[
 
 // rc_ml_compute is rc_ml_compute_toplevel plus the loop-body moves.
 function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut {
-    var st2: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
+    var st2: FeState = FeState { tainted: [], an: [], av: [], av_en: [], av_es: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
-        st2 = FeState { tainted: st2.tainted, an: st2.an, av: st2.av, types_n: st2.types_n.append(fn.params[pj].name), types_t: st2.types_t.append(fn.params[pj].type_name) };
+        st2 = FeState { ...st2, types_n: st2.types_n.append(fn.params[pj].name), types_t: st2.types_t.append(fn.params[pj].type_name), decl_s: st2.decl_s.append(fn.params[pj].name) };
         pj = pj + 1;
     }
     st2 = rc_fe_collect_types(fn.body, st2, structs, sig_reg_empty());
