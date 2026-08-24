@@ -1953,7 +1953,7 @@ pub function capitalize(s: string): string {
         Some(pair) => {
             var up: i32 = _upper_cp(pair.0);
             if (up == pair.0) { return s; }
-            return utf8.utf8_encode((up) as char) + s[pair.1:n];
+            return utf8.utf8_encode((up) as char) + slice_unchecked(s, pair.1, n);
         },
         None => { return s; }
     }
@@ -2519,7 +2519,7 @@ pub function graphemes(s: string): str[] {
         var cur_pict: boolean = _is_extpict(cp);
         if (prev >= 0) {
             if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
-                out = out.append(s[start : i]);
+                out = out.append(slice_unchecked(s, start, i));
                 start = i;
             }
         }
@@ -2528,7 +2528,7 @@ pub function graphemes(s: string): str[] {
         prev = cls;
         i = i + w;
     }
-    return out.append(s[start : n]);
+    return out.append(slice_unchecked(s, start, n));
 }
 
 // ` + "`grapheme_count(s)`" + ` — how many clusters, without building the array
@@ -2763,7 +2763,7 @@ pub function word_segments(s: string): str[] {
             var nxt: i32 = 0 - 1;
             if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
             if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
-                out = out.append(s[start : i]);
+                out = out.append(slice_unchecked(s, start, i));
                 start = i;
             }
         }
@@ -2775,7 +2775,7 @@ pub function word_segments(s: string): str[] {
         }
         i = i + w;
     }
-    return out.append(s[start : n]);
+    return out.append(slice_unchecked(s, start, n));
 }
 
 // ` + "`" + `words(s)` + "`" + ` — the word-like segments only: what a reader would count
