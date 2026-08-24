@@ -543,6 +543,60 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// The three SCENUMS plan-routing witnesses (promotion step 2): the
+		// escape gate for all-scalar enums is the plan's free_eligible_of
+		// verdict, which — like native's computeFreeEligible — does not taint
+		// a plain call arg. A callee that KEEPS its arg retains it through
+		// its own counted construction store, so the caller's sweep is
+		// balanced; a botched routing shows here as exit 99 / a sanitizer
+		// trap, never as a changed leak count.
+		leakCell{name: "enum_scalar__callarg__read", src: `enum E { A(i32), B(i32) }
+function get(e: E, i: i32): i32 {
+    match (e) { A(x) => { return x + i; }, B(y) => { return y; } }
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var e: E = A(i);
+        acc = acc + get(e, i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		leakCell{name: "enum_scalar__callarg__stored_struct", src: `enum E { A(i32), B(i32) }
+struct H { e: E, n: i32 }
+function wrap(e: E, i: i32): H { return H { e: e, n: i, }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var e: E = A(i);
+        var h: H = wrap(e, i);
+        match (h.e) { A(x) => { acc = acc + x; }, B(y) => { acc = acc + y; } }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		leakCell{name: "enum_scalar__callarg__stored_arr", src: `enum E { A(i32), B(i32) }
+function box(e: E): E[] { return [e]; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var e: E = A(i);
+        var xs: E[] = box(e);
+        match (xs[0]) { A(x) => { acc = acc + x; }, B(y) => { acc = acc + y; } }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
 `})
 	return cells
 }
