@@ -1,0 +1,107 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_slice_snap_test.fern — pure-Fern coverage of
+// `s.slice_snap(a, b)` (total byte slicing: clamp both bounds to
+// [0, len], snap INWARD to char boundaries — a forward, b backward — ""
+// on inverted/empty) and the `slice_unchecked(s, a, b)` builtin's happy
+// path (#5634, D9). Multibyte inputs are built from explicit bytes via
+// string_from_bytes_unchecked (the utf8_test idiom), so the é's
+// [195, 169] encoding is pinned rather than trusted to source encoding.
+
+// h(104) é(195,169) l l o — 6 bytes; boundary set {0, 1, 3, 4, 5, 6}.
+function hello_acc(): string {
+    var b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
+    return string_from_bytes_unchecked(b);
+}
+
+// ---- slice_snap: snapping ----
+
+function test_snap_hi_backward(): test.TestOutcome {
+    // b = 2 sits on é's continuation byte; snaps back to 1.
+    return test.assert_eq(hello_acc().slice_snap(0, 2).to_owned(), "h");
+}
+
+function test_snap_lo_forward(): test.TestOutcome {
+    // a = 2 sits on the same continuation byte; snaps forward to 3.
+    return test.assert_eq(hello_acc().slice_snap(2, 6).to_owned(), "llo");
+}
+
+function test_snap_boundary_identity(): test.TestOutcome {
+    // Both indices already on boundaries: identical to the raw slice.
+    var s: string = hello_acc();
+    return test.assert_true(s.slice_snap(1, 3) == slice_unchecked(s, 1, 3)
+        && s.slice_snap(1, 3).len() == 2);
+}
+
+// ---- slice_snap: clamping ----
+
+function test_clamp_both_ends(): test.TestOutcome {
+    var s: string = hello_acc();
+    return test.assert_eq(s.slice_snap(0 - 5, 99).to_owned(), s);
+}
+
+function test_clamp_hi_only(): test.TestOutcome {
+    return test.assert_eq("abc".slice_snap(1, 50).to_owned(), "bc");
+}
+
+// ---- slice_snap: empty results ----
+
+function test_inverted_range(): test.TestOutcome {
+    return test.assert_eq(hello_acc().slice_snap(4, 2).to_owned(), "");
+}
+
+function test_snapped_empty(): test.TestOutcome {
+    // a snaps 2 -> 3 and b snaps 2 -> 1, crossing over.
+    return test.assert_eq(hello_acc().slice_snap(2, 2).to_owned(), "");
+}
+
+function test_empty_source(): test.TestOutcome {
+    return test.assert_eq("".slice_snap(0, 5).to_owned(), "");
+}
+
+// ---- slice_snap: ASCII identity ----
+
+function test_ascii_identity(): test.TestOutcome {
+    return test.assert_true("hello".slice_snap(1, 3) == "el"
+        && "hello".slice_snap(0, 5) == "hello"
+        && "hello".slice_snap(5, 5) == "");
+}
+
+// ---- slice_unchecked: happy path ----
+
+function test_unchecked_byte_honest(): test.TestOutcome {
+    // The cut lands mid-é and keeps the lead byte — no boundary check.
+    var t: str = slice_unchecked(hello_acc(), 0, 2);
+    return test.assert_true(t.len() == 2 && (t[0] as i32) == 104 && (t[1] as i32) == 195);
+}
+
+function test_unchecked_boundary_forms(): test.TestOutcome {
+    var s: string = hello_acc();
+    return test.assert_true(slice_unchecked(s, 0, 6) == s
+        && slice_unchecked(s, 3, 3).len() == 0
+        && slice_unchecked(s, 3, 6) == "llo");
+}
+
+function test_unchecked_owned_temp(): test.TestOutcome {
+    // The concat result is a temporary the view borrows.
+    var a: string = "ab";
+    var c: string = "cd";
+    return test.assert_eq(slice_unchecked(a + c, 1, 3).to_owned(), "bc");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string slice_snap + slice_unchecked");
+    r = r.it("snap hi backward",       test_snap_hi_backward);
+    r = r.it("snap lo forward",        test_snap_lo_forward);
+    r = r.it("boundary identity",      test_snap_boundary_identity);
+    r = r.it("clamp both ends",        test_clamp_both_ends);
+    r = r.it("clamp hi only",          test_clamp_hi_only);
+    r = r.it("inverted range",         test_inverted_range);
+    r = r.it("snapped empty",          test_snapped_empty);
+    r = r.it("empty source",           test_empty_source);
+    r = r.it("ascii identity",         test_ascii_identity);
+    r = r.it("unchecked byte honest",  test_unchecked_byte_honest);
+    r = r.it("unchecked boundary forms", test_unchecked_boundary_forms);
+    r = r.it("unchecked owned temp",   test_unchecked_owned_temp);
+    return r.finish();
+}

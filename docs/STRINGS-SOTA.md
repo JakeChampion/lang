@@ -774,10 +774,10 @@ Linux + Darwin), arm64ssa and wasm (preview-1 and -2) on the native
 side, and the self-host's register lanes (`asmcore.rt_src_utf8_valid`,
 plain Fern) plus its wasm p1/p2 lanes, all return
 `Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
-and nothing emitted is now real on every lane. `tcp_recv` is the last
-byte-carrying builtin still typed `string`, and the only remaining
-holdout for slice 4 (the "no stdlib operation produces an invalid
-`string`" property test).
+and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
+returns `u8[]` (#7467), so no byte-carrying builtin is typed `string`
+any more; the `string_from_bytes_unchecked` bridges in `std/tcp` /
+`std/fetch` are the debt the byte-based HTTP layer retires.
 
 Costs, stated honestly:
 
@@ -795,6 +795,21 @@ Costs, stated honestly:
   one, so snapping a pair widens the slice to whole characters rather
   than truncating it, and both are total (0 and `len` are always
   boundaries) rather than `Option`-returning.
+
+  The primitive/wrapper split for the flip **has landed too** (#5634
+  slice 3, PR 1): builtin `slice_unchecked(s, a, b): str` is `s[a:b]`
+  under its honest name (byte-indexed, exit-134 trap on OOB, no
+  boundary check — the caller guarantees both indices are boundaries),
+  and `std/string.slice_snap(a, b)` is the total sibling that clamps
+  to `[0, len]` and snaps INWARD (`a` forward, `b` backward, `""` when
+  they cross — identity on boundary indices, hence on all ASCII).
+  Unlike the utf8 pair-snapping above, `slice_snap` never returns
+  bytes outside the requested range. The plan: migrate the
+  boundary-safe bulk of today's `s[a:b]` callers to these two names
+  under unchanged semantics, then flip the expression itself to
+  `Option[str]` (`None` on OOB or a non-boundary index) in one
+  coordinated PR. The IR lowers the builtin onto the same `__str_slice`
+  path as the expression, so no backend carries new code for it.
 - **Ingest paths pay a validation scan — measured, and the cost was an
   artifact.** This decision assumed the scan was near-free. As written
   it was not: `is_valid_utf8` looped over `utf8_decode_at`, whose
