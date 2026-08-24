@@ -819,6 +819,13 @@ Costs, stated honestly:
   `truncate` / `ellipsis` floor-snap the kept prefix — at most the
   requested byte budget, never more. All are identity on boundary
   counts, hence on all ASCII.
+
+  `std/fuzz` is byte-based (#5634 slice 3, PR 3): seeds are `u8[][]`,
+  targets take `u8[]`, and the corpus loaders return `Result[u8[][],
+  IoError]` — the mutator's whole job is manufacturing arbitrary byte
+  sequences, which a valid-UTF-8 `string` cannot carry. A target that
+  parses text bridges at its own edge with `utf8.from_bytes`
+  (validated) or `string_from_bytes_unchecked`.
 - **Ingest paths pay a validation scan — measured, and the cost was an
   artifact.** This decision assumed the scan was near-free. As written
   it was not: `is_valid_utf8` looped over `utf8_decode_at`, whose
