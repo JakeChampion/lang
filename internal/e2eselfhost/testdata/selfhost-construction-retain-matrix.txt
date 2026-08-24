@@ -22,6 +22,14 @@
 #
 # So a `local` row that still reads leak is not evidence of one shared floor.
 # Measure the halves separately before attributing it.
+#
+# The whole `struct` row is clean as of the counted-sink narrowing: a struct
+# handed to a struct-literal FIELD keeps its free-eligibility, because that
+# position retains unconditionally and the exit sweep's field walk is now
+# rc-gated so only the owner that finds rc 1 performs it. CONTAINER sinks (an
+# append arg, an array / tuple element, a variant payload) are still refused —
+# their retain skips retired slots while the scoped sweep does not, so granting
+# them releases a box that was never inc'd.
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
 str__local          clean leak   bare string local: retain gated on slit_reclaim + ownership; P not strfldok-admitted here
 str__param          clean leak   same gate, param origin
@@ -38,7 +46,7 @@ arr_i32__param      clean clean  same dup, param origin
 arr_i32__fieldread  clean clean  counted: the literal retains the read and the source keeps its deep drop
 arr_i32__call       clean clean  producer result owned
 struct__fresh       clean clean  fresh Inner literal
-struct__local       clean leak   bare Inner ident: retained (nested-struct arm) but source strands its own claim
+struct__local       clean clean  counted-sink forgiveness taken; the rc-gated sweep lets both owners release
 struct__param       clean clean  param bare ident retained, param owns nothing to strand
 struct__fieldread   clean clean  counted: unconditional nested-struct retain + kept source drop
 struct__call        clean clean  strict-fresh call result owned outright
