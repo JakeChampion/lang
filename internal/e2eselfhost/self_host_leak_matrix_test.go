@@ -69,11 +69,13 @@ type leakKind struct {
 	read  string // expression over x yielding i32; "" = kind has no bare read
 	match string // full match statement consuming x into t; "" = no match form
 	// Origin-axis metadata (#7253's probe-audit requirement): ptype is the
-	// type spelling for a param of this kind, fixedInit a constant-only
-	// `var keep: T = …;` main can build ONCE and keep live across every call
-	// — the two conditions an origin probe must meet (the source outlives the
-	// callee and is genuinely released elsewhere). Kinds without a bare read
-	// leave these empty and get hand cells instead.
+	// type spelling for a param of this kind, fixedInit a `var keep: T = …;`
+	// main can build ONCE and keep live across every call — the two
+	// conditions an origin probe must meet (the source outlives the callee
+	// and is genuinely released elsewhere). A kind whose fixedInit cannot
+	// allocate on a pipeline (str on native x86: const-fold + SSO) has a
+	// vacuous column there — see that kind's caveat. Kinds without a bare
+	// read leave these empty and get hand cells instead.
 	ptype     string
 	fixedInit string
 }
@@ -88,7 +90,13 @@ var leakKinds = []leakKind{
 		// mkstr is the importless fresh producer both pipelines accept: string
 		// METHODS are stdlib-gated in native (E043 without `import
 		// "std/string"`) and the self-host driver resolves no stdlib, while a
-		// user concat fn compiles in both and neither const-folds a call.
+		// user concat fn compiles in both. CAVEAT (measured 2026-08-24): on
+		// native x86 a constant-seeded fixedInit string never allocates —
+		// const-fold collapses the call (an ident seed does not help; the
+		// fold propagates through const locals) and SSO keeps the short
+		// result inline — so the NATIVE column of this kind's origin cells is
+		// vacuous: it measures the absence of an allocation, not a sweep.
+		// The str alias_param rows' notes carry the real native verdict.
 		name:  "str",
 		decls: "function mkstr(a: string): string { return a + \"!\"; }",
 		init:  "var x: string = mkstr(\"x\");", init2: "x = mkstr(\"yz\");",
