@@ -43,7 +43,7 @@ function main(): i32 {
     while (la <= 40) {
         var lb: i32 = 0;
         while (lb <= 40) {
-            var c: string = a[0:la] + b[0:lb];
+            var c: string = slice_unchecked(a, 0, la) + slice_unchecked(b, 0, lb);
             if (c.len() != la + lb) { return 90; }
             acc = (acc + csum(c)) % 89;
             lb = lb + 1;

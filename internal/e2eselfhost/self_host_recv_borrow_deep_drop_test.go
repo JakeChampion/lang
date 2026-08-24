@@ -67,7 +67,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.label().len()) % 251; i = i + 1; }
     if (moved.len() != 15) { return 95; }
-    if (moved[0:5] != "start") { return 96; }
+    if (slice_unchecked(moved, 0, 5) != "start") { return 96; }
     if (__rc_underflow() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;

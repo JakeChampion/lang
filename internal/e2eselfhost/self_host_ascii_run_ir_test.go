@@ -53,7 +53,7 @@ function main(): i32 {
         if (__ascii_run(base, 0) != ref(base, 0)) { return 1; }
         var at: i32 = 0;
         while (at < n) {
-            var s: string = base[0:at] + "\xc3" + base[at + 1:n];
+            var s: string = slice_unchecked(base, 0, at) + "\xc3" + slice_unchecked(base, at + 1, n);
             if (__ascii_run(s, 0) != ref(s, 0)) { return 2; }
             if (__ascii_run(s, at) != ref(s, at)) { return 3; }
             if (__ascii_run(s, at + 1) != ref(s, at + 1)) { return 4; }

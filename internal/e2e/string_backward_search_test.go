@@ -104,7 +104,7 @@ function main(): i32 {
     while (a < L) {
         var b: i32 = a;
         while (b <= L) {
-            if (!chk(alphabet, alphabet[a:b].to_owned())) { return 19; }
+            if (!chk(alphabet, slice_unchecked(alphabet, a, b).to_owned())) { return 19; }
             b = b + 1;
         }
         a = a + 1;

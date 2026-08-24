@@ -15,7 +15,7 @@ import (
 // "self-host pending" audit gap.) The single-program driver resolves no
 // imports, so the body is inlined as `fmt_format`; this verifies the constructs
 // `format` compiles to lower on the IR path: string `.len()`, byte index
-// `s[i]`, single-char slice `s[i:i+1]`, string concat, and `string[]`
+// `s[i]`, single-char `slice_unchecked`, string concat, and `string[]`
 // index/`.len()` across a while loop. Each program returns the rendered
 // string's length (kept <= 126) and is oracle-checked against the reference
 // interpreter (cf. the hardcoded-expectation gap in #2908). FEATURE-AUDIT
@@ -41,7 +41,7 @@ const formatStringIRPrelude = `function fmt_format(fmt: string, args: string[]):
             }
             i = i + 2;
         } else {
-            out = out + fmt[i:i + 1];
+            out = out + slice_unchecked(fmt, i, i + 1);
             i = i + 1;
         }
     }

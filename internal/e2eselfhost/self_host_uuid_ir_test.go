@@ -62,7 +62,7 @@ func TestSelfHostUuidIR(t *testing.T) {
 	// now_unix_ms are builtins, no imports). The bodies match the stdlib
 	// (uuid_hex_digit's return type spelled `string` for the stdlib's `str`).
 	const helpers = `
-function uuid_hex_digit(n: i32): string { return "0123456789abcdef"[n : n + 1]; }
+function uuid_hex_digit(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1); }
 function uuid_byte_hex(b: i32): string { return uuid_hex_digit((b >> 4) & 15) + uuid_hex_digit(b & 15); }
 function uuid_v4(): string {
     var b: u8[] = random_bytes(16);

@@ -22,7 +22,7 @@ import (
 const structLenMethodIRPrelude = `struct Box { items: string[] }
 function helper(s: string): string {
     var alpha: string = "abcdefghijklmnopqrstuvwxyz";
-    return alpha[0:1] + s;
+    return slice_unchecked(alpha, 0, 1) + s;
 }
 function (b: Box) add(x: string): Box { return Box { ...b, items: b.items.append(helper(x)) }; }
 function (b: Box) len(): i32 { return b.items.len(); }

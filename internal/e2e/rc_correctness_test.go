@@ -1513,8 +1513,8 @@ import "core/map";
 import "std/string";
 function mk(): i32 {
     var src: string = "a=hi";
-    var short_key: str = src[0:1];   // inline (1 byte, tagged)
-    var short_val: str = src[2:4];   // inline (2 bytes, tagged)
+    var short_key: str = slice_unchecked(src, 0, 1);   // inline (1 byte, tagged)
+    var short_val: str = slice_unchecked(src, 2, 4);   // inline (2 bytes, tagged)
     var m: Map[string, string] = map_new(8);
     m = m.insert(short_key, short_val);    // aliased inline K + V — retains must skip tagged
     var n = m.len();
@@ -3665,7 +3665,7 @@ function main(): i32 {
     var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
     var i: i32 = 0;
     while (i < 40) {
-        var piece: str = base[0 : 20 + (i - (i / 30) * 30)];
+        var piece: str = slice_unchecked(base, 0, 20 + (i - (i / 30) * 30));
         s = need(s, "structdroptestprefix:" + piece);
         i = i + 1;
     }
@@ -3674,7 +3674,7 @@ function main(): i32 {
     while (j < 40) {
         var want: i32 = 21 + 20 + (j - (j / 30) * 30);
         if (s.needed[j].len() != want) { bad = bad + 1; }
-        if (s.needed[j][0:20] != "structdroptestprefix") { bad = bad + 1; }
+        if (slice_unchecked(s.needed[j], 0, 20) != "structdroptestprefix") { bad = bad + 1; }
         j = j + 1;
     }
     return bad + __rc_underflow_count();
@@ -3706,7 +3706,7 @@ function main(): i32 {
     var base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
     var i: i32 = 0;
     while (i < 40) {
-        var t: Tok = Tok { kind: i, text: "tokentextprefixvalue:" + base[0 : 20 + (i - (i / 30) * 30)] };
+        var t: Tok = Tok { kind: i, text: "tokentextprefixvalue:" + slice_unchecked(base, 0, 20 + (i - (i / 30) * 30)) };
         p = push_tok(p, t);
         i = i + 1;
     }
@@ -4820,7 +4820,7 @@ function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function (b: Box) relabel(t: string): Box {
     if (t.len() == 0) { return b; }

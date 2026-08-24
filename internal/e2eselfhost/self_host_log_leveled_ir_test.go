@@ -54,7 +54,7 @@ function log_json_escape(s: string): string {
         else if (c == 10) { out = out + "\\n"; }
         else if (c == 13) { out = out + "\\r"; }
         else if (c == 9) { out = out + "\\t"; }
-        else { out = out + s[i : i + 1]; }
+        else { out = out + slice_unchecked(s, i, i + 1); }
         i = i + 1;
     }
     return out;

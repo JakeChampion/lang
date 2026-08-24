@@ -383,7 +383,7 @@ pub function early(a: i32): void {
 	// the program's ownership. The return position is where the corpus has
 	// almost all of them (every `std/string` trimmer returns `str`).
 	{"written-str-spelling", `pub function head(s: string): str {
-return s[0:1];
+return slice_unchecked(s, 0, 1);
 }
 pub function tag(s: str, t: str): i32 {
 return s.len() + t.len();

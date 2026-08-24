@@ -404,7 +404,7 @@ struct TEof {}
 type Tok = TId | TEof;
 struct Res { lex: Lx, tok: Tok }
 function scan(l: Lx): Res {
-    var t: Tok = TId { text: l.src[l.i : l.i + 1] + "" };
+    var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
     return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
 }
 function run(src: string): i32 {
@@ -471,7 +471,7 @@ struct TEof { line: i32 }
 type Tok = TId | TPunct | TEof;
 struct Res { lex: Lx, tok: Tok }
 function scan(l: Lx, start_line: i32): Res {
-    var t: Tok = TId { text: l.src[l.i : l.i + 1] + "", line: start_line };
+    var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "", line: start_line };
     return Res { lex: Lx { src: l.src, i: l.i + 1, line: l.line + 1 }, tok: t };
 }
 function run(src: string): i32 {

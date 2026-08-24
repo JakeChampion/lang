@@ -242,10 +242,10 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     return parts[0];
 }
 function churn(src: string): i32 {
-    var a: string = src[1:9];
-    var b: string = src[2:10];
-    var c: string = src[3:11];
-    var d: string = src[4:12];
+    var a: string = slice_unchecked(src, 1, 9);
+    var b: string = slice_unchecked(src, 2, 10);
+    var c: string = slice_unchecked(src, 3, 11);
+    var d: string = slice_unchecked(src, 4, 12);
     return a.len() + b.len() + c.len() + d.len();
 }
 function round(pre: string): i32 {

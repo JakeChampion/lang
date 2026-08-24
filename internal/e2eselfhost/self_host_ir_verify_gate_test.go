@@ -51,7 +51,7 @@ function main(): i32 { return chain(7); }`},
 }
 function main(): i32 { return loopy(10); }`},
 	{"strings-and-arrays", `function work(s: string, xs: i32[]): i32 {
-    var sl: string = s[1:4];
+    var sl: string = slice_unchecked(s, 1, 4);
     var joined: string = s + sl;
     var w: i32[] = xs.with(1, 9);
     var sum: i32 = 0;

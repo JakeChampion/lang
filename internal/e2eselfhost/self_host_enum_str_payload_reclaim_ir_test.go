@@ -126,7 +126,7 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { re
 function go(pre: string, k: i32): i32 {
     var out: string = "";
     var x = Word(pre + "abc");
-    match (x) { Word(s) when k > 0 => { out = s[0:2]; }, Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
+    match (x) { Word(s) when k > 0 => { out = slice_unchecked(s, 0, 2); }, Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
     return out.len();
 }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre, 1) != 2) { bad = 1; } if (go(pre, 0) != 5) { bad = 1; } i = i + 1; } return bad; }

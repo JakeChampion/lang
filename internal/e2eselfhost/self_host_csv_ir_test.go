@@ -11,7 +11,7 @@ import (
 // TestSelfHostCsvParseLineIR covers std/csv's RFC-4180 single-line parser
 // through the self-hosted x86-64 IR path (a "self-host pending" audit gap).
 // csv_parse_line is self-contained — it uses only builtins (string byte index
-// `s[i]`, slice `s[i:j]`, concat, and a `string[]` builder), no std/string
+// `s[i]`, `slice_unchecked`, concat, and a `string[]` builder), no std/string
 // methods — so it lowers through the IR path directly. (csv_escape / csv_join
 // pull in `index_of` / `replace`, deferred.) The program self-checks the parse
 // of a quoted-field-with-comma line and returns 42 on success.
@@ -69,11 +69,11 @@ function csv_parse_line(s: string): string[] {
             if (c == 34) {
                 if (i + 1 < n && s[i + 1] == 34) { field = field + "\""; i = i + 2; }
                 else { in_quotes = false; i = i + 1; }
-            } else { field = field + s[i:i + 1]; i = i + 1; }
+            } else { field = field + slice_unchecked(s, i, i + 1); i = i + 1; }
         } else {
             if (c == 44) { out = out.append(field); field = ""; i = i + 1; }
             else if (c == 34 && field.len() == 0) { in_quotes = true; i = i + 1; }
-            else { field = field + s[i:i + 1]; i = i + 1; }
+            else { field = field + slice_unchecked(s, i, i + 1); i = i + 1; }
         }
     }
     return out.append(field);

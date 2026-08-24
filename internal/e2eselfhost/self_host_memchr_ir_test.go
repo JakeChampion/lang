@@ -57,7 +57,7 @@ function main(): i32 {
         if (__memchr(base, 122, 0) != ref(base, 122, 0)) { return 1; }
         var at: i32 = 0;
         while (at < n) {
-            var s: string = base[0:at] + "z" + base[at + 1:n];
+            var s: string = slice_unchecked(base, 0, at) + "z" + slice_unchecked(base, at + 1, n);
             if (__memchr(s, 122, 0) != ref(s, 122, 0)) { return 2; }
             if (__memchr(s, 122, at) != ref(s, 122, at)) { return 3; }
             if (__memchr(s, 122, at + 1) != ref(s, 122, at + 1)) { return 4; }
