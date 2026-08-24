@@ -389,13 +389,13 @@ pub function (n: Net) fetch_future(host_be: i32, port: i32, path: string): async
         var take: i32 = e.chunk_lens[k];
         if (e.body.len() - pos < take) { take = e.body.len() - pos; }
         if (take > 0) {
-            chunks = chunks.append(e.body[pos : pos + take] + "");
+            chunks = chunks.append(slice_unchecked(e.body, pos, pos + take) + "");
             pos = pos + take;
         }
         k = k + 1;
     }
     if (pos < e.body.len() || chunks.len() == 0) {
-        chunks = chunks.append(e.body[pos : e.body.len()] + "");
+        chunks = chunks.append(slice_unchecked(e.body, pos, e.body.len()) + "");
     }
     var now: i64 = n.drv.now_ns();
     var at_ms: i32[] = [];

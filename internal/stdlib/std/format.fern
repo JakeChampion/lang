@@ -108,7 +108,7 @@ pub function format(fmt: string, args: string[]): string {
             var isPlaceholder: boolean = false;
             var spec: str = "";
             if (j < n) {
-                spec = fmt[i + 1:j];
+                spec = slice_unchecked(fmt, i + 1, j);
                 if (spec.len() == 0) { isPlaceholder = true; }
                 else if (spec[0] == 58) { isPlaceholder = true; }
             }
@@ -255,7 +255,7 @@ function __format_apply_spec(s: string, spec: string): string {
     // the sign counts toward the width. Overrides fill/align.
     if (zero) {
         if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
-            return val[0:1] + __repeat_char("0", pad) + val[1:val.len()];
+            return slice_unchecked(val, 0, 1) + __repeat_char("0", pad) + slice_unchecked(val, 1, val.len());
         }
         return __repeat_char("0", pad) + val;
     }

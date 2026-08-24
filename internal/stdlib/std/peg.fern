@@ -339,7 +339,7 @@ function __peg_result(r: i32, st: PegState, input: string): PegResult {
     }
     var i: i32 = 0;
     while (i < st.tn.len()) {
-        caps = caps.insert(st.tn[i], input[st.ts[i]:st.te[i]]);
+        caps = caps.insert(st.tn[i], slice_unchecked(input, st.ts[i], st.te[i]));
         i = i + 1;
     }
     return PegResult { ok: true, pos: r, caps: caps };

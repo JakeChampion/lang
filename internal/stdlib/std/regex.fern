@@ -7,6 +7,10 @@
 // backtracking blow-up (and a star over an empty match can't loop — the
 // position set only ever grows, then stops). It's ordinary Fern.
 //
+// All offsets here (parse positions, match starts/ends, capture spans) are
+// byte indices produced by this byte-level engine, so `slice_unchecked` on
+// them is in-bounds by construction.
+//
 // Supported syntax:
 //   .            any single byte
 //   c            the literal byte `c`
@@ -198,7 +202,7 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
         while (j < p.len() && p[j] != 93) { j = j + 1; }
         var endb: i32 = j;
         if (endb < p.len()) { endb = endb + 1; }                 // include ']'
-        return RParse { node: RClass(p[i : endb] + ""), pos: endb, g: g };
+        return RParse { node: RClass(slice_unchecked(p, i, endb) + ""), pos: endb, g: g };
     }
     if (c == 46) { return RParse { node: RAny, pos: i + 1, g: g }; }   // '.'
     if (c == 94) { return RParse { node: RStart, pos: i + 1, g: g }; } // '^'
@@ -364,7 +368,7 @@ function __rx_group_names(pattern: string): string[] {
                     var ne: i32 = i + 3;
                     while (ne < n && pattern[ne] != 62) { ne = ne + 1; }  // to '>'
                     if (ne < n) {                       // named capturing group
-                        names = names.append(pattern[i + 3 : ne] + "");
+                        names = names.append(slice_unchecked(pattern, i + 3, ne) + "");
                         i = ne + 1;
                     } else {
                         i = i + 1;                      // `(?<…` no '>' → non-capturing
@@ -390,7 +394,7 @@ function __rx_group_names(pattern: string): string[] {
 // index claimed), matching the parser which strips it before numbering.
 function __rx_compile(pattern: string): RProg {
     var names: string[] = __rx_group_names(pattern);
-    if (pattern.len() >= 4 && pattern[0 : 4] == "(?i)") {
+    if (pattern.len() >= 4 && slice_unchecked(pattern, 0, 4) == "(?i)") {
         var r: RParse = __rx_alt(pattern, 4, 1);
         return RProg { root: r.node, ci: true, ngroups: r.g - 1, names: names };
     }
@@ -636,7 +640,7 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
         if (!m.found) {
             done = true;
         } else {
-            var seg: string = text[last : m.start] + "";
+            var seg: string = slice_unchecked(text, last, m.start) + "";
             parts = parts.append(seg);  total = total + seg.len();
             parts = parts.append(repl); total = total + repl.len();
             last = m.end;
@@ -644,14 +648,14 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
             // a zero-width match leaves `last` at m.start; carry the skipped
             // byte into the output by emitting it before advancing.
             if (m.end <= m.start && nxt <= text.len() && nxt > last) {
-                var z: string = text[last : nxt] + "";
+                var z: string = slice_unchecked(text, last, nxt) + "";
                 parts = parts.append(z);  total = total + z.len();
                 last = nxt;
             }
             pos = nxt;
         }
     }
-    var tail: string = text[last : text.len()] + "";
+    var tail: string = slice_unchecked(text, last, text.len()) + "";
     parts = parts.append(tail); total = total + tail.len();
     return __rx_join(parts, total);
 }
@@ -669,18 +673,18 @@ pub function regex_split(text: string, pattern: string): string[] {
     while (pos <= text.len()) {
         var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
         if (!m.found) {
-            out = out.append(text[last : text.len()]);
+            out = out.append(slice_unchecked(text, last, text.len()));
             return out;
         }
         if (m.end > m.start) {           // non-empty separator
-            out = out.append(text[last : m.start]);
+            out = out.append(slice_unchecked(text, last, m.start));
             last = m.end;
             pos = m.end;
         } else {
             pos = m.start + 1;           // skip a zero-width match
         }
     }
-    out = out.append(text[last : text.len()]);
+    out = out.append(slice_unchecked(text, last, text.len()));
     return out;
 }
 
@@ -712,7 +716,7 @@ pub function regex_count(pattern: string, text: string): i32 {
 pub function regex_replace(pattern: string, text: string, repl: string): string {
     var m: RMatch = regex_search(pattern, text);
     if (!m.found) { return text; }
-    return text[0 : m.start] + repl + text[m.end : text.len()];
+    return slice_unchecked(text, 0, m.start) + repl + slice_unchecked(text, m.end, text.len());
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,7 +1043,7 @@ pub function (c: RCaps) group(i: i32): string {
     var s: i32 = c.group_start(i);
     var e: i32 = c.group_end(i);
     if (s < 0 || e < 0) { return ""; }
-    return c.text[s : e] + "";
+    return slice_unchecked(c.text, s, e) + "";
 }
 
 // `.group_index(name)` — the 1-based index of the `(?<name>…)` group, or -1
@@ -1149,14 +1153,14 @@ function __rx_expand(tmpl: string, c: RCaps): string {
                 var ne: i32 = i + 2;
                 while (ne < tmpl.len() && tmpl[ne] != 125) { ne = ne + 1; }   // scan to '}'
                 if (ne < tmpl.len()) {                       // found '}'
-                    rep = c.group_named(tmpl[i + 2 : ne] + "");
+                    rep = c.group_named(slice_unchecked(tmpl, i + 2, ne) + "");
                     take = true;
                     adv = (ne + 1) - i;                      // consume through '}'
                 }
             }
         }
         if (take) {
-            var seg: string = tmpl[lit : i] + "";
+            var seg: string = slice_unchecked(tmpl, lit, i) + "";
             parts = parts.append(seg); total = total + seg.len();
             parts = parts.append(rep); total = total + rep.len();
             i = i + adv;
@@ -1165,7 +1169,7 @@ function __rx_expand(tmpl: string, c: RCaps): string {
             i = i + 1;
         }
     }
-    var tail: string = tmpl[lit : tmpl.len()] + "";
+    var tail: string = slice_unchecked(tmpl, lit, tmpl.len()) + "";
     parts = parts.append(tail); total = total + tail.len();
     return __rx_join(parts, total);
 }
@@ -1179,7 +1183,7 @@ function __rx_expand(tmpl: string, c: RCaps): string {
 pub function regex_replace_groups(pattern: string, text: string, tmpl: string): string {
     var c: RCaps = regex_captures(pattern, text);
     if (!c.found) { return text; }
-    return text[0 : c.group_start(0)] + __rx_expand(tmpl, c) + text[c.group_end(0) : text.len()];
+    return slice_unchecked(text, 0, c.group_start(0)) + __rx_expand(tmpl, c) + slice_unchecked(text, c.group_end(0), text.len());
 }
 
 // `regex_replace_all_groups(pattern, text, tmpl)` — replace every
@@ -1200,14 +1204,14 @@ pub function regex_replace_all_groups(pattern: string, text: string, tmpl: strin
         // A zero-width match has start == end == last-or-later; the bytes
         // between `last` and this match's start (including any byte a
         // zero-width advance skipped) ride along in `seg`.
-        var seg: string = text[last : m.group_start(0)] + "";
+        var seg: string = slice_unchecked(text, last, m.group_start(0)) + "";
         parts = parts.append(seg); total = total + seg.len();
         var rep: string = __rx_expand(tmpl, m);
         parts = parts.append(rep); total = total + rep.len();
         last = m.group_end(0);
         mi = mi + 1;
     }
-    var tail: string = text[last : text.len()] + "";
+    var tail: string = slice_unchecked(text, last, text.len()) + "";
     parts = parts.append(tail); total = total + tail.len();
     return __rx_join(parts, total);
 }

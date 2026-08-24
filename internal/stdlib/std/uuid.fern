@@ -15,7 +15,7 @@
 // lowercase hex string. Slicing a literal (rather than `chr`)
 // keeps the helper in the IR-lowerable string subset.
 function uuid_hex_digit(n: i32): str {
-    return "0123456789abcdef"[n : n + 1];
+    return slice_unchecked("0123456789abcdef", n, n + 1);
 }
 
 // uuid_byte_hex renders a byte (0-255) as two lowercase hex chars.

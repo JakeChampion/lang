@@ -126,14 +126,14 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
             no_more = true;
             i = i + 1;
         } else if (a.starts_with("--")) {
-            var body: str = a[2:a.len()];
+            var body: str = slice_unchecked(a, 2, a.len());
             var eq: i32 = body.index_of("=");
             var name: str = body;
             var inline_val: str = "";
             var has_inline: boolean = false;
             if (eq >= 0) {
-                name = body[0:eq];
-                inline_val = body[eq + 1:body.len()];
+                name = slice_unchecked(body, 0, eq);
+                inline_val = slice_unchecked(body, eq + 1, body.len());
                 has_inline = true;
             }
             match (__cli_find_long(s, name)) {
@@ -166,14 +166,14 @@ pub function (s: CliSpec) parse(argv: string[]): CliArgs {
             // valued option consumes the rest of the token as its
             // value (`-n5`) or, when it's the last character, the
             // next argv token (`-n 5`).
-            var cluster: str = a[1:a.len()];
+            var cluster: str = slice_unchecked(a, 1, a.len());
             var j: i32 = 0;
             while (j < cluster.len()) {
                 var cname: str = cluster[j:j + 1];
                 match (__cli_find_short(s, cname)) {
                     Some(f) => {
                         if (f.takes_value) {
-                            var glued: str = cluster[j + 1:cluster.len()];
+                            var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
                             if (glued.len() > 0) {
                                 opts = opts.insert(f.long, glued);
                             } else if (i + 1 < argv.len()) {

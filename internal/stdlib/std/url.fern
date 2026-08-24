@@ -220,7 +220,7 @@ pub function url_parse(s: string): Option[Url] {
 
     var rest_start: i32 = 0;
     if (scheme_end >= 0) {
-        u = Url { ...u, scheme: s[0:scheme_end] + "" };
+        u = Url { ...u, scheme: slice_unchecked(s, 0, scheme_end) + "" };
         rest_start = scheme_end + 3;
     }
 
@@ -232,7 +232,7 @@ pub function url_parse(s: string): Option[Url] {
         i = i + 1;
     }
     if (frag_start < n) {
-        u = Url { ...u, fragment: s[frag_start+1:n] + "" };
+        u = Url { ...u, fragment: slice_unchecked(s, frag_start+1, n) + "" };
     }
 
     // Find query '?' in [rest_start, frag_start).
@@ -243,7 +243,7 @@ pub function url_parse(s: string): Option[Url] {
         i = i + 1;
     }
     if (query_start < frag_start) {
-        u = Url { ...u, query: s[query_start+1:frag_start] + "" };
+        u = Url { ...u, query: slice_unchecked(s, query_start+1, frag_start) + "" };
     }
 
     // Find authority end. With a scheme, scan for the first
@@ -281,15 +281,15 @@ pub function url_parse(s: string): Option[Url] {
                 if (port > 65535) { port = 0; break; }
                 i = i + 1;
             }
-            u = Url { ...u, host: s[rest_start:colon] + "", port: port };
+            u = Url { ...u, host: slice_unchecked(s, rest_start, colon) + "", port: port };
         } else {
-            u = Url { ...u, host: s[rest_start:authority_end] + "" };
+            u = Url { ...u, host: slice_unchecked(s, rest_start, authority_end) + "" };
         }
     }
 
     // Path: [authority_end, query_start).
     if (authority_end < query_start) {
-        u = Url { ...u, path: s[authority_end:query_start] + "" };
+        u = Url { ...u, path: slice_unchecked(s, authority_end, query_start) + "" };
     }
 
     return Some(u);
@@ -337,10 +337,10 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
     var key: string = "";
     var val: string = "";
     if (eq >= 0) {
-        key = form_decode(s[start:eq]);
-        val = form_decode(s[eq+1:end]);
+        key = form_decode(slice_unchecked(s, start, eq));
+        val = form_decode(slice_unchecked(s, eq+1, end));
     } else {
-        key = form_decode(s[start:end]);
+        key = form_decode(slice_unchecked(s, start, end));
     }
     // Append-or-create: probe the map; on hit, copy + append;
     // else create a one-element array.
@@ -379,13 +379,13 @@ function __query_eq_pos(s: string, start: i32, end: i32): i32 {
 // [start, end). A pair with no '=' is all key, empty value.
 function __query_key_at(s: string, start: i32, end: i32): string {
     var eq: i32 = __query_eq_pos(s, start, end);
-    if (eq >= 0) { return form_decode(s[start:eq]); }
-    return form_decode(s[start:end]);
+    if (eq >= 0) { return form_decode(slice_unchecked(s, start, eq)); }
+    return form_decode(slice_unchecked(s, start, end));
 }
 
 function __query_val_at(s: string, start: i32, end: i32): string {
     var eq: i32 = __query_eq_pos(s, start, end);
-    if (eq >= 0) { return form_decode(s[eq+1:end]); }
+    if (eq >= 0) { return form_decode(slice_unchecked(s, eq+1, end)); }
     return "";
 }
 

@@ -362,8 +362,8 @@ function __float_fmt_sci(sig: string, msd: i32): string {
     var nd: i32 = sig.len();
     if (msd < 0 - 4 || msd >= 21) {
         // scientific: d[.ddd]e±XX
-        var out: string = "" + sig[0:1];
-        if (nd > 1) { out = out + "." + sig[1:nd]; }
+        var out: string = "" + slice_unchecked(sig, 0, 1);
+        if (nd > 1) { out = out + "." + slice_unchecked(sig, 1, nd); }
         if (msd < 0) { return out + "e-" + (0 - msd).to_string(); }
         return out + "e+" + msd.to_string();
     }
@@ -378,7 +378,7 @@ function __float_fmt_sci(sig: string, msd: i32): string {
         return sig + z2;
     }
     // point in the middle
-    return "" + sig[0:msd+1] + "." + sig[msd+1:nd];
+    return "" + slice_unchecked(sig, 0, msd+1) + "." + slice_unchecked(sig, msd+1, nd);
 }
 // Render a Dragonbox result — significand `sig` with decimal exponent `exp`,
 // value == sig * 10^exp — in Go %v / strconv 'g' style, prefixed by `out`
