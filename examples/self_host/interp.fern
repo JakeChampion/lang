@@ -2531,6 +2531,25 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             _ => { return v_err("string_from_bytes_unchecked: arg must be an array"); }
         }
     }
+    // `slice_unchecked(s, a, b)` — the byte slice `s[a:b]` as a builtin:
+    // same bounds contract as the ExprSlice eval (error on OOB, the
+    // interp's stand-in for the codegen trap), no char-boundary check
+    // (#5634). Mirrors internal/interp's builtinSliceUnchecked.
+    if (name == "slice_unchecked") {
+        if (args.len() != 3) { return v_err("slice_unchecked: expected 3 args (s, a, b)"); }
+        if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) { return v_err("slice_unchecked: bounds must be integers"); }
+        match (args[0]) {
+            VString(s) => {
+                var sua: i32 = vint_bits(args[1]);
+                var sub: i32 = vint_bits(args[2]);
+                if (sua < 0 || sub > s.v.len() || sua > sub) {
+                    return v_err("string slice out of range");
+                }
+                return v_string(s.v[sua:sub]);
+            },
+            _ => { return v_err("slice_unchecked: arg must be a string"); }
+        }
+    }
     // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
     // kernels the compiled backends vectorise, and the byte-search floor
     // under std/string's find family. `from` clamps (negative behaves as 0)

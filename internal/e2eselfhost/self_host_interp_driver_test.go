@@ -407,6 +407,11 @@ var interpProgs = []struct {
 	{"sat-shl-exact-min", "function main(): i32 { var a: i32 = 0 - 1; if ((a <<| 31) == (0 - 2147483647 - 1)) { return 7; } return 0; }", 7},
 	{"sat-shl-plain", "function main(): i32 { return 21 <<| 1; }", 42},
 	{"sat-shl-mask", "function main(): i32 { return 42 <<| 32; }", 42},
+	// `slice_unchecked(s, a, b)` (#5634): the byte-slice builtin the compiler's
+	// own sources now call. call_func evaluates it like the ExprSlice arm;
+	// before the case existed it fell through to "undefined function" → 254.
+	{"slice-unchecked-builtin", "function main(): i32 { var s: string = \"hello world\"; var n: i32 = s.len(); return slice_unchecked(s, 6, n).len(); }", 5},
+	{"slice-unchecked-oob", "function main(): i32 { var s: string = \"hi\"; return slice_unchecked(s, 0, 3).len(); }", 254},
 }
 
 // interpDriverFiles is the in-memory module set for interpDriverMod: its own
