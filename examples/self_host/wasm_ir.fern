@@ -389,7 +389,7 @@ pub function tid_get(name: string): string { return "    global.get " + tid_glob
 // module does file I/O — without this the emitted WAT would name an undeclared
 // global and fail to parse.
 pub function tid_named(): string[] {
-    return ["FileStat", "NotFound", "PermissionDenied", "AlreadyExists", "Interrupted", "Unsupported", "Other"];
+    return ["FileStat", "NotFound", "PermissionDenied", "AlreadyExists", "Interrupted", "Unsupported", "InvalidUtf8", "Other"];
 }
 
 // tid_globals_section declares one immutable global per type id: every struct in
@@ -1992,6 +1992,12 @@ pub function readfile_func_p2(): string {
     o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
     o = o + "      (br $rc)))\n";
     o = o + "    (i32.store (local.get $buf) (local.get $off))\n";
+    // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
+    o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
+    o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (local.get $np)))\n";
+    o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $buf))\n";
@@ -2219,7 +2225,7 @@ pub function component_io_shims(needs: string[]): string {
     if (need(needs, "args")) { o = o + args_func_p2(); }
     if (need(needs, "arg_at")) { o = o + arg_at_func_p2(); }
     if (need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")) { o = o + build_io_error_p2_func(); }
-    if (need(needs, "read_file")) { o = o + readfile_func_p2(); }
+    if (need(needs, "read_file")) { o = o + utf8_valid_func() + readfile_func_p2(); }
     if (need(needs, "read_file_bytes")) { o = o + readfile_bytes_func_p2(); }
     if (need(needs, "write_file")) { o = o + writefile_func_p2(); }
     return o;
@@ -4740,7 +4746,8 @@ function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
 // (same table the match arms read, so ids agree). errno→variant matches native
 // wasmbin: ENOENT(44) → NotFound(path), EACCES(2) → PermissionDenied(path),
 // EEXIST(20) → AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) →
-// Unsupported.
+// Unsupported, EILSEQ(25) → InvalidUtf8(path) (synthetic — no wasi call
+// returns it; only read_file's D9 gate passes 25).
 //
 // `slot` is the CONSUMER's variant-box slot width. Both consumers lay a box out
 // the same way — the variant id in slot 0, field i in slot 1+i, so field i sits
@@ -4819,6 +4826,12 @@ pub function build_io_error_func(slot: i32): string {
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 58)) (then\n";
     o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Unsupported") + "))\n";
+    o = o + "      (return (local.get $r))))\n";
+    // EILSEQ(25) -> InvalidUtf8(path)
+    o = o + "    (if (i32.eq (local.get $errno) (i32.const 25)) (then\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
+    o = o + "      (i32.store (local.get $r) (global.get " + tid_global("InvalidUtf8") + "))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // default -> Other(path, "") — the empty message is a valid [len=0] block.
     o = o + "    (local.set $e (call $__fern_alloc (i32.const 4)))\n";
@@ -6688,6 +6701,68 @@ pub function file_imports(): string {
     o = o + "  (import \"wasi_snapshot_preview1\" \"fd_close\" (func $fd_close (param i32) (result i32)))\n";
     return o;
 }
+// utf8_valid_func emits $__fern_utf8_valid(p, n) -> i32: read_file's strict
+// D9 well-formedness scan (#5714), the wasm sibling of asmcore's
+// rt_src_utf8_valid. Same acceptance, in the byte-range formulation:
+// continuation bytes are 128..191, leads below 194 reject (stray
+// continuations + overlong 2-byte), E0's first continuation needs >= 160
+// (overlong) and ED's < 160 (surrogates), F0's needs >= 144 (overlong) and
+// F4's < 144 (> U+10FFFF), leads above 244 reject, and every truncated
+// sequence rejects.
+pub function utf8_valid_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_utf8_valid (param $p i32) (param $n i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $b0 i32) (local $c1 i32) (local $c2 i32) (local $c3 i32)\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $b0 (i32.load8_u (i32.add (local.get $p) (local.get $i))))\n";
+    o = o + "      (if (i32.lt_u (local.get $b0) (i32.const 128)) (then\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $c)))\n";
+    o = o + "      (if (i32.lt_u (local.get $b0) (i32.const 194)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.lt_u (local.get $b0) (i32.const 224)) (then\n";
+    o = o + "        (if (i32.gt_u (i32.add (local.get $i) (i32.const 2)) (local.get $n)) (then (return (i32.const 0))))\n";
+    o = o + "        (local.set $c1 (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 1)))))\n";
+    o = o + "        (if (i32.lt_u (local.get $c1) (i32.const 128)) (then (return (i32.const 0))))\n";
+    o = o + "        (if (i32.gt_u (local.get $c1) (i32.const 191)) (then (return (i32.const 0))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 2)))\n";
+    o = o + "        (br $c)))\n";
+    o = o + "      (if (i32.lt_u (local.get $b0) (i32.const 240)) (then\n";
+    o = o + "        (if (i32.gt_u (i32.add (local.get $i) (i32.const 3)) (local.get $n)) (then (return (i32.const 0))))\n";
+    o = o + "        (local.set $c1 (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 1)))))\n";
+    o = o + "        (local.set $c2 (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 2)))))\n";
+    o = o + "        (if (i32.lt_u (local.get $c1) (i32.const 128)) (then (return (i32.const 0))))\n";
+    o = o + "        (if (i32.gt_u (local.get $c1) (i32.const 191)) (then (return (i32.const 0))))\n";
+    o = o + "        (if (i32.lt_u (local.get $c2) (i32.const 128)) (then (return (i32.const 0))))\n";
+    o = o + "        (if (i32.gt_u (local.get $c2) (i32.const 191)) (then (return (i32.const 0))))\n";
+    o = o + "        (if (i32.eq (local.get $b0) (i32.const 224)) (then\n";
+    o = o + "          (if (i32.lt_u (local.get $c1) (i32.const 160)) (then (return (i32.const 0))))))\n";
+    o = o + "        (if (i32.eq (local.get $b0) (i32.const 237)) (then\n";
+    o = o + "          (if (i32.gt_u (local.get $c1) (i32.const 159)) (then (return (i32.const 0))))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 3)))\n";
+    o = o + "        (br $c)))\n";
+    o = o + "      (if (i32.gt_u (local.get $b0) (i32.const 244)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.gt_u (i32.add (local.get $i) (i32.const 4)) (local.get $n)) (then (return (i32.const 0))))\n";
+    o = o + "      (local.set $c1 (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 1)))))\n";
+    o = o + "      (local.set $c2 (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 2)))))\n";
+    o = o + "      (local.set $c3 (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 3)))))\n";
+    o = o + "      (if (i32.lt_u (local.get $c1) (i32.const 128)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.gt_u (local.get $c1) (i32.const 191)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.lt_u (local.get $c2) (i32.const 128)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.gt_u (local.get $c2) (i32.const 191)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.lt_u (local.get $c3) (i32.const 128)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.gt_u (local.get $c3) (i32.const 191)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.eq (local.get $b0) (i32.const 240)) (then\n";
+    o = o + "        (if (i32.lt_u (local.get $c1) (i32.const 144)) (then (return (i32.const 0))))))\n";
+    o = o + "      (if (i32.eq (local.get $b0) (i32.const 244)) (then\n";
+    o = o + "        (if (i32.gt_u (local.get $c1) (i32.const 143)) (then (return (i32.const 0))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 4)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.const 1))\n";
+    return o;
+}
+
 // readfile_helpers / readfile_func emit the wasi file-read imports +
 // $__fern_read_file(path): Result[string, IoError]. Opens the path
 // relative to preopen fd 3 (a `--dir` / wasi preopen) via path_open,
@@ -6733,6 +6808,12 @@ pub function readfile_func(): string {
     o = o + "      (br $rc)))\n";
     o = o + "    (drop (call $fd_close (local.get $fd)))\n";
     o = o + "    (i32.store (local.get $blk) (local.get $off))\n";
+    // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
+    o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
+    o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (local.get $np)))\n";
+    o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $blk))\n";
@@ -8703,7 +8784,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Result[(), IoError]. They alloc via the heap runtime (module_allocates
     // pulls it in — op_allocates admits read_file/write_file). Emitted when
     // the module does the matching file op.
-    if (mode != 2 && need(needs, "read_file")) { parts = parts.append(readfile_func()); }
+    if (mode != 2 && need(needs, "read_file")) { parts = parts.append(utf8_valid_func() + readfile_func()); }
     if (mode != 2 && need(needs, "read_file_bytes")) { parts = parts.append(readfile_bytes_func()); }
     if (mode != 2 && need(needs, "write_file")) { parts = parts.append(writefile_func()); }
     if (need(needs, "open_file")) { parts = parts.append(open_file_func()); }
