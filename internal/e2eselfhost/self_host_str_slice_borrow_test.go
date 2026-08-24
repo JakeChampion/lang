@@ -42,7 +42,7 @@ var strSliceBorrowCases = []struct {
 	// because the escape scan read the slice as an alias and struck the binding's
 	// reclaim credit.
 	{"str-slice-len-recv-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); return base[4:12].len(); }
+function round(pre: string): i32 { var base: string = w(pre); return slice_unchecked(base, 4, 12).len(); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";
@@ -58,7 +58,7 @@ function main(): i32 {
 	// A comparison operand: `==` / `!=` lower to str_eq, which reads bytes and moves
 	// nothing.
 	{"str-slice-compare-operand-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); if (base[0:8] == pre) { return 3; } return 5; }
+function round(pre: string): i32 { var base: string = w(pre); if (slice_unchecked(base, 0, 8) == pre) { return 3; } return 5; }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";
@@ -73,7 +73,7 @@ function main(): i32 {
 }`, 0},
 	// A concat operand: `+` copies both operands' bytes into a new box.
 	{"str-slice-concat-operand-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); return (base[0:8] + "!").len(); }
+function round(pre: string): i32 { var base: string = w(pre); return (slice_unchecked(base, 0, 8) + "!").len(); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";
@@ -89,7 +89,7 @@ function main(): i32 {
 	// The free-function spelling `len(x)`, which lowers through the same
 	// view-borrowing path as the method.
 	{"str-slice-len-builtin-arg-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); return len(base[4:12]); }
+function round(pre: string): i32 { var base: string = w(pre); return len(slice_unchecked(base, 4, 12)); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";
@@ -105,7 +105,7 @@ function main(): i32 {
 	// A byte read off the view: `base[4:12][1]` indexes the view and copies out one
 	// byte.
 	{"str-slice-index-base-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); return (base[4:12][1] as i32); }
+function round(pre: string): i32 { var base: string = w(pre); return (slice_unchecked(base, 4, 12)[1] as i32); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";
@@ -121,7 +121,7 @@ function main(): i32 {
 	// A slice OF a slice, both in borrow position — the recursion has to carry the
 	// verdict through the inner view as well as the outer.
 	{"str-slice-nested-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); return base[4:20][2:6].len(); }
+function round(pre: string): i32 { var base: string = w(pre); return slice_unchecked(slice_unchecked(base, 4, 20), 2, 6).len(); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";
@@ -139,7 +139,7 @@ function main(): i32 {
 	// `base`, so a wrongly released buffer is recycled with different bytes and the
 	// value check sees it — without that, a freed-but-untouched buffer reads fine.
 	{"str-slice-returned-view-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function view(pre: string): str { var base: string = w(pre); return base[4:12]; }
+function view(pre: string): str { var base: string = w(pre); return slice_unchecked(base, 4, 12); }
 function round(pre: string): i32 {
     var v: str = view(pre);
     var p1: string = w("ZZZZZZZZ");
@@ -154,7 +154,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// one does. Only `len(x)` is admitted as a borrowing argument position.
 	{"str-slice-call-arg-view-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
 function keep(s: str): str { return s; }
-function view(pre: string): str { var base: string = w(pre); return keep(base[4:12]); }
+function view(pre: string): str { var base: string = w(pre); return keep(slice_unchecked(base, 4, 12)); }
 function round(pre: string): i32 {
     var v: str = view(pre);
     var p1: string = w("ZZZZZZZZ");
@@ -169,7 +169,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// alias of `base` and not a borrow. It is outside str_borrowing_method for
 	// exactly this reason; the set is not "every string method".
 	{"str-slice-trim-receiver-refused", `function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789  "; }
-function view(pre: string): str { var base: string = w(pre); return base[0:14].trim(); }
+function view(pre: string): str { var base: string = w(pre); return slice_unchecked(base, 0, 14).trim(); }
 function round(pre: string): i32 {
     var v: str = view(pre);
     var p1: string = w("ZZZZZZZZ");

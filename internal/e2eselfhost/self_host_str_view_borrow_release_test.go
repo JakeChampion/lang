@@ -82,30 +82,30 @@ var strViewBorrowReleaseCases = []struct {
 	src  string
 	want int
 }{
-	{"str-view-borrow-len-receiver", viewBorrowHeap(`    return base[4:base.len()].len();`), 0},
-	{"str-view-borrow-comparison", viewBorrowHeap(`    if (base[4:base.len()] == "nope") { return 1; }
+	{"str-view-borrow-len-receiver", viewBorrowHeap(`    return slice_unchecked(base, 4, base.len()).len();`), 0},
+	{"str-view-borrow-comparison", viewBorrowHeap(`    if (slice_unchecked(base, 4, base.len()) == "nope") { return 1; }
     return 0;`), 0},
-	{"str-view-borrow-concat-operand", viewBorrowHeap(`    var t: string = base[4:base.len()] + "-tail";
+	{"str-view-borrow-concat-operand", viewBorrowHeap(`    var t: string = slice_unchecked(base, 4, base.len()) + "-tail";
     return t.len();`), 0},
-	{"str-view-borrow-index-base", viewBorrowHeap(`    return (base[4:base.len()][0] as i32);`), 0},
+	{"str-view-borrow-index-base", viewBorrowHeap(`    return (slice_unchecked(base, 4, base.len())[0] as i32);`), 0},
 	// A slice OF a slice: the inner one is the outer op's operand. On wasm the
 	// outer str_slice copies, so the inner copy is dead the moment it has been
 	// read — which is why this is a borrow position and not an alias.
-	{"str-view-borrow-slice-source", viewBorrowHeap(`    return base[4:base.len()][1:5].len();`), 0},
+	{"str-view-borrow-slice-source", viewBorrowHeap(`    return slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5).len();`), 0},
 	// The free spelling of `.len()`, which lowers through the same borrow path.
-	{"str-view-borrow-free-len-builtin", viewBorrowHeap(`    return len(base[4:base.len()]);`), 0},
+	{"str-view-borrow-free-len-builtin", viewBorrowHeap(`    return len(slice_unchecked(base, 4, base.len()));`), 0},
 	// LIVENESS across every position at once, with the SOURCE and each RESULT
 	// read afterwards behind decoy allocations that would be handed the freed
 	// block if a release had landed too early.
 	{"str-view-borrow-all-positions-live", viewBorrowPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var n: i32 = base[4:base.len()].len();
-    var eq: boolean = base[4:base.len()] == "nope";
-    var lt: boolean = base[4:base.len()] < "zzzz";
-    var cat: string = base[4:base.len()] + "-tail";
-    var ch: i32 = (base[4:base.len()][0] as i32);
-    var sub: string = own2(base[4:base.len()][1:5]);
-    var fl: i32 = len(base[4:base.len()]);
+    var n: i32 = slice_unchecked(base, 4, base.len()).len();
+    var eq: boolean = slice_unchecked(base, 4, base.len()) == "nope";
+    var lt: boolean = slice_unchecked(base, 4, base.len()) < "zzzz";
+    var cat: string = slice_unchecked(base, 4, base.len()) + "-tail";
+    var ch: i32 = (slice_unchecked(base, 4, base.len())[0] as i32);
+    var sub: string = own2(slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5));
+    var fl: i32 = len(slice_unchecked(base, 4, base.len()));
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");

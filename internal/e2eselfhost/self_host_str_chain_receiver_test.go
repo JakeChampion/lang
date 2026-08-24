@@ -37,7 +37,7 @@ function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function (s: string) to_owned2(): string { return s + ""; }
 function (s: string) unrel2(): string { if (s.len() > 0) { return "xxxxxxxxxxxxxxxxxxxx"; } return "yyyyyyyyyyyyyyyyyyyy"; }

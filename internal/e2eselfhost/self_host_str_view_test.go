@@ -22,7 +22,7 @@ function main(): i32 {
     var v: str = s;
     var vs: str[] = ["ab", "cde"];
     var p: str = pick(vs);
-    var h: str = s[1:4];
+    var h: str = slice_unchecked(s, 1, 4);
     return view_len(s) + view_len(v) + p.len() + h.len();
 }
 `
@@ -42,7 +42,7 @@ function main(): i32 {
     var v: string = s;
     var vs: string[] = ["ab", "cde"];
     var p: string = pick(vs);
-    var h: string = s[1:4];
+    var h: string = slice_unchecked(s, 1, 4);
     return view_len(s) + view_len(v) + p.len() + h.len();
 }
 `

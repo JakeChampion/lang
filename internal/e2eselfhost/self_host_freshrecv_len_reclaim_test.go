@@ -46,7 +46,7 @@ var freshRecvLenCases = []struct {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen] + "";
+    return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -63,7 +63,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen] + "";
+    return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
     var i: i32 = 0;
@@ -83,7 +83,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen] + "";
+    return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -107,7 +107,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function main(): i32 {
     var i: i32 = 0;
@@ -127,7 +127,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -150,7 +150,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function (s: string) same(): string { return s; }
 function main(): i32 {
@@ -172,7 +172,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function (s: string) owned(): string { return s + ""; }
 function main(): i32 {
@@ -195,7 +195,7 @@ function main(): i32 {
 	{"freshrecv-len-view-nonrecv-return-refused", `function (s: string) pick(n: i32, alt: string): str {
     if (n < 0) { return alt; }
     if (n == 0) { return s; }
-    return s[n:s.len()];
+    return slice_unchecked(s, n, s.len());
 }
 function main(): i32 {
     var i: i32 = 0;
@@ -229,7 +229,7 @@ var freshRecvLenLeakCases = []struct {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen] + "";
+    return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -254,7 +254,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -282,7 +282,7 @@ function main(): i32 {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, n, sLen);
 }
 function (s: string) owned(): string { return s + ""; }
 function main(): i32 {

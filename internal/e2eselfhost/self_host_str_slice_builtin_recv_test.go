@@ -77,19 +77,19 @@ var strSliceBuiltinRecvCases = []struct {
 	want int
 }{
 	// A scalar predicate: reads the bytes, returns a boolean, keeps nothing.
-	{"str-slice-recv-builtin-starts-with-flat", sliceBuiltinHeap(`    if (base[4:base.len()].starts_with("efgh")) { return 1; }
+	{"str-slice-recv-builtin-starts-with-flat", sliceBuiltinHeap(`    if (slice_unchecked(base, 4, base.len()).starts_with("efgh")) { return 1; }
     return 0;`), 0},
 	// index_of returns a position, and takes the same path contains does.
-	{"str-slice-recv-builtin-index-of-flat", sliceBuiltinHeap(`    return base[4:base.len()].index_of("wide");`), 0},
+	{"str-slice-recv-builtin-index-of-flat", sliceBuiltinHeap(`    return slice_unchecked(base, 4, base.len()).index_of("wide");`), 0},
 	// A TRANSFORM rather than a predicate: to_ascii_upper allocates a new buffer,
 	// so the receiver is dead on a different code path through the same stash.
-	{"str-slice-recv-builtin-upper-flat", sliceBuiltinHeap(`    return base[4:base.len()].to_ascii_upper().len();`), 0},
+	{"str-slice-recv-builtin-upper-flat", sliceBuiltinHeap(`    return slice_unchecked(base, 4, base.len()).to_ascii_upper().len();`), 0},
 	// REFUSED: trim returns a VIEW of its receiver, so releasing the receiver's box
 	// frees what the result points into. It is outside str_borrowing_method and
 	// stays outside; this case reads the result and the source afterwards.
 	{"str-slice-recv-builtin-trim-refused", sliceBuiltinPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var t: str = base[4:base.len()].trim();
+    var t: str = slice_unchecked(base, 4, base.len()).trim();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
@@ -103,7 +103,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// has to outlive the call. Also outside str_borrowing_method.
 	{"str-slice-recv-builtin-split-refused", sliceBuiltinPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var parts: string[] = base[4:base.len()].split("-");
+    var parts: string[] = slice_unchecked(base, 4, base.len()).split("-");
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
@@ -119,8 +119,8 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// both wrong in kind and inert in practice.
 	{"str-slice-recv-builtin-source-live", sliceBuiltinPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var hit: boolean = base[4:base.len()].starts_with("efgh");
-    var up: string = base[4:base.len()].to_ascii_upper();
+    var hit: boolean = slice_unchecked(base, 4, base.len()).starts_with("efgh");
+    var up: string = slice_unchecked(base, 4, base.len()).to_ascii_upper();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");

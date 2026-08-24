@@ -110,7 +110,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// fresh-alloc-builtin sites. body_unsafe_for refuses it because a slice outside
 	// a borrow position is an escape.
 	{"str-view-return-method-receiver-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
-function (s: string) view(): string { return s[2:s.len()]; }
+function (s: string) view(): string { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
     var t: str = w(pre).view();
     var p1: string = w("ZZZZZZZZ");

@@ -31,7 +31,7 @@ func TestStrToOwnedAdviceIsFollowable(t *testing.T) {
 function mk(t: string): Q { return Q { tag: %s }; }
 function main(): i32 { return mk("abcdef").tag.len() - 3; }`
 
-	err := checkModuleSource(t, fmt.Sprintf(stored, "t[0:3]"))
+	err := checkModuleSource(t, fmt.Sprintf(stored, "slice_unchecked(t, 0, 3)"))
 	if err == nil {
 		t.Fatal("storing a str view in a string field should be refused")
 	}
@@ -39,7 +39,7 @@ function main(): i32 { return mk("abcdef").tag.len() - 3; }`
 		t.Fatalf("step 1 no longer advises .to_owned(), so this test watches the wrong loop:\n%s", err.Error())
 	}
 
-	err = checkModuleSource(t, fmt.Sprintf(stored, "t[0:3].to_owned()"))
+	err = checkModuleSource(t, fmt.Sprintf(stored, "slice_unchecked(t, 0, 3).to_owned()"))
 	if err == nil {
 		t.Fatal("`.to_owned()` without the import should still be refused — the import is what step 3 adds")
 	}
@@ -50,7 +50,7 @@ function main(): i32 { return mk("abcdef").tag.len() - 3; }`
 		t.Fatalf("step 2 lists the builtins a missing import leaves behind, which points away from the fix:\n%s", err.Error())
 	}
 
-	if err := checkModuleSource(t, "import \"std/string\";\n"+fmt.Sprintf(stored, "t[0:3].to_owned()")); err != nil {
+	if err := checkModuleSource(t, "import \"std/string\";\n"+fmt.Sprintf(stored, "slice_unchecked(t, 0, 3).to_owned()")); err != nil {
 		t.Fatalf("step 3 followed both hints and still does not check:\n%v", err)
 	}
 }
@@ -59,7 +59,7 @@ function main(): i32 { return mk("abcdef").tag.len() - 3; }`
 // front of. A near miss on a method the `str` surface really does carry is
 // still answered with the name rather than with an import that would not help.
 func TestStrKeepsItsNearMissSuggestion(t *testing.T) {
-	err := checkModuleSource(t, `function f(t: string): i32 { return t[0:3].lenn(); }
+	err := checkModuleSource(t, `function f(t: string): i32 { return slice_unchecked(t, 0, 3).lenn(); }
 function main(): i32 { return f("abcdef"); }`)
 	if err == nil {
 		t.Fatal("expected an unresolved-method error")
