@@ -23922,6 +23922,26 @@ function slot_nodeep(s: LowerState, i: i32): boolean {
     return reclaim_has(s.reclaimable_names, "NODEEP:", s.reclaim_site_key(i));
 }
 
+// emit_struct_field_drops_gated is emit_struct_field_drops with the release
+// optionally guarded by __fern_rc_is_unique — the struct twin of
+// emit_enum_variant_drops_gated. `shared` is true wherever the swept box may
+// carry a second counted claim; the guard then takes the shallow path and
+// leaves the fields to the owner that finds rc 1. Sound in either order, and
+// a sole-owned box (rc 1) is unaffected, which is why passing true at a sweep
+// costs nothing on the shapes that were already balanced.
+function emit_struct_field_drops_gated(s: LowerState, slot: i32, shared: boolean): LowerState {
+    if (!shared) { return emit_struct_field_drops(s, slot); }
+    var sty: string = s.struct_type_of_slot(slot);
+    if (sty.len() == 0) { return s; }
+    if (!s.struct_routes_field_reclaim(sty)) { return s; }
+    if (slot_nodeep(s, slot)) { return s; }
+    var st: LowerState = s.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));   // sole owner (and null-safe)
+    st = st.emit(ir.op_if(0));
+    st = emit_struct_field_drops(st, slot);
+    return st.emit(ir.op_end());
+}
+
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var sty: string = s.struct_type_of_slot(slot);
     if (sty.len() == 0) { return s; }
@@ -25465,7 +25485,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // run it under gdb —
             //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
             //       -out-dir OUT -func-budget 100 -unit-range 0:8
-            if (!scoped_credit || scoped_deep_ok) { st = emit_struct_field_drops(st, j); }
+            // The field drops run under __fern_rc_is_unique, the gate the holder
+            // side (__struct_drop_<T>'s k_struct arm) already applies: this box may
+            // be a COUNTED SHARE — an alias bind, or a bare ident handed to a
+            // struct-literal field — and its fields are then still reachable through
+            // the other owner. Whichever owner sweeps last finds rc 1 and does the
+            // deep work; the box dec below is unconditional, since it is the claim
+            // this slot owns and it is what lets the survivor reach 1.
+            if (!scoped_credit || scoped_deep_ok) { st = emit_struct_field_drops_gated(st, j, slot_credit_at(st, j, "SINKSHARE:")); }
             st = st.emit(ir.op_load_local(j));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -32453,16 +32480,26 @@ function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]
     return false;
 }
 
-// struct_box_sink_stored: `name`'s WHOLE BOX appears as a local counted-sink
-// element — an append/with arg, an array / tuple / struct-literal element (or
-// functional-update base), or a variant-ctor payload. The routed struct gate
-// REFUSES such a name (see its comment): the plan's counted-sink forgiveness
-// assumes the store retains and the killing dec drops the fields, neither of
-// which the struct release protocol provides yet. The field-move detectors
-// (moves_fields_* / optstruct_body_moves_field) cannot see this shape — a
-// bare ident is a leaf there — and the old escape gate refused every bare
-// mention, so the case needed no walker before the routing. A struct-lit
-// BASE (`T { ...name, … }`) is not a sink — see the StructLit arm.
+// struct_box_sink_stored: `name`'s WHOLE BOX appears as a CONTAINER counted-sink
+// element — an append/with arg, an array or tuple element, or a variant-ctor
+// payload. The routed struct gate refuses such a name, and the refusal is now
+// exactly as wide as the retain is narrow.
+//
+// The plan's counted-sink forgiveness assumes the store retains. A struct-literal
+// FIELD does, unconditionally, at the nested-struct / enum arms of the
+// ExprStructLit lowering — so that position is NOT a sink here and the gate takes
+// the forgiveness for it (that is what makes struct__local clean). The container
+// sinks retain only under `slot_is_reclaimable_struct`, which refuses a RETIRED
+// slot, so a block-scoped `var s` appended inside a loop gets no inc while the
+// scoped sweep — reading the retirement-TOLERANT sibling — would still release
+// it. Measured as a use-after-free (the block-scoped escape-into-a-container
+// probe read freed elements) and as exit 99 on the bound-element suites. Closing
+// that asymmetry is the remaining half of the release-protocol port; until the
+// retain and the release agree on retired slots, these sinks stay refused.
+//
+// The field-move detectors (moves_fields_* / optstruct_body_moves_field) cannot
+// see this shape — a bare ident is a leaf there. A struct-lit BASE
+// (`T { ...name, … }`) is not a sink either — see the StructLit arm.
 function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
@@ -32522,10 +32559,14 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
                     _ => { if (struct_box_sink_stored_expr(sl.base, name, structs)) { return true; } }
                 }
             }
+            // A bare-ident FIELD VALUE is a COUNTED share: the nested-struct and
+            // enum arms of the ExprStructLit lowering retain it unconditionally,
+            // so the source keeps a claim its own release balances. Not a sink —
+            // only nested sinks inside a field value walk.
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
                 match (sl.field_values[i]) {
-                    parser.ExprIdent(fid) => { if (fid.name == name) { return true; } },
+                    parser.ExprIdent(_) => {},
                     _ => { if (struct_box_sink_stored_expr(sl.field_values[i], name, structs)) { return true; } }
                 }
                 i = i + 1;
@@ -32579,6 +32620,84 @@ function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, struct
     return false;
 }
 
+// struct_field_shared_stmts: `name`'s whole box appears as a bare-ident value at
+// a struct-literal FIELD — the counted-sink position the routed gate forgives
+// (the nested-struct / enum arms of the ExprStructLit lowering retain it
+// unconditionally, so the source keeps a claim its own release must balance).
+// The marker it feeds ("SINKSHARE:") is what narrows the rc-gated field walk to
+// exactly these names; a container sink is not included, because the gate still
+// refuses those outright.
+function struct_field_shared_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                match (sl.field_values[i]) {
+                    parser.ExprIdent(fid) => { if (fid.name == name) { return true; } },
+                    _ => { if (struct_field_shared_expr(sl.field_values[i], name, structs)) { return true; } }
+                }
+                i = i + 1;
+            }
+            if (sl.has_base) { return struct_field_shared_expr(sl.base, name, structs); }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            for arg in c.args { if (struct_field_shared_expr(arg, name, structs)) { return true; } }
+            return false;
+        },
+        parser.ExprBinary(b) => { return struct_field_shared_expr(b.left, name, structs) || struct_field_shared_expr(b.right, name, structs); },
+        parser.ExprUnary(u) => { return struct_field_shared_expr(u.operand, name, structs); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (struct_field_shared_expr(a.elements[i], name, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (struct_field_shared_expr(t.elements[i], name, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function struct_field_shared_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (struct_field_shared_expr(v.init, name, structs)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_field_shared_expr(a.value, name, structs)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_field_shared_expr(r.value, name, structs)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_field_shared_expr(e.value, name, structs)) { return true; } },
+            parser.StmtIf(f) => {
+                if (struct_field_shared_expr(f.cond, name, structs)) { return true; }
+                if (struct_field_shared_stmts(f.then_body, name, structs)) { return true; }
+                if (struct_field_shared_stmts(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (struct_field_shared_expr(w.cond, name, structs)) { return true; }
+                if (struct_field_shared_stmts(w.body, name, structs)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (struct_field_shared_expr(fo.iter, name, structs)) { return true; }
+                if (struct_field_shared_stmts(fo.body, name, structs)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (struct_field_shared_expr(m.scrutinee, name, structs)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && struct_field_shared_expr(arm.guard, name, structs)) { return true; }
+                    if (struct_field_shared_stmts(arm.body, name, structs)) { return true; }
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (struct_field_shared_stmts(one, name, structs)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
 
 // struct_lit_unretained_borrow_field: the credited candidate's own struct
 // literal (found by its binding-site key) carries a BORROW-shaped value —
@@ -33264,16 +33383,19 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // are family knowledge the plan does not carry: the alias-rebind
         // borrow flag and the receiver-handed-back gates.
         var st_esc_ok: boolean = false;
-        // The plan's counted-sink forgiveness (#7345) is NOT taken for the
-        // struct family yet: it assumes the store retains and the release
-        // protocol lets the killing dec drop the fields, and the self-host's
-        // struct walks are statically-roled and rc-blind (NODEEP pairs,
-        // unconditional field_reclaim / sweep walks) — granting a
-        // container-stored struct measured as exit 99 (append-rebind) and as
-        // per-round leaks (the alloc_flat fixtures). So the routed gate
-        // carries the sink refusal as family knowledge, exactly like
-        // name_is_match_scrutinee for the Option families; it retires with
-        // the killer-drops-fields release-protocol port, not with keying.
+        // The plan's counted-sink forgiveness (#7345) is TAKEN for the struct
+        // family, which is what retires the sink refusal this gate used to
+        // carry. The refusal's stated condition was the release protocol, not
+        // the analysis: a counted sink retains, so the source keeps a claim
+        // nothing released, but two owners each running the struct release
+        // meant two deep field walks — measured as exit 99 on append-rebind.
+        // The exit sweep now releases through emit_struct_field_drops_gated,
+        // so the field walk runs only for the owner that finds rc 1 and the
+        // box dec is what hands the last one its turn. With that in place the
+        // same append-rebind probe is 600/600 against native's 600/600, and
+        // the struct row of the construction-retain matrix is clean end to
+        // end. Native agrees on the analysis half too: a StructLit / TupleLit
+        // slot is an INC-ing sink there and does not taint its source.
         if (plan_on) {
             st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
                 && !struct_box_sink_stored_stmts(body, fnm, structs);
@@ -33303,6 +33425,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // shares the whole release.
             out = credit_alias_sites(out, "", sal);
             out = credit_alias_sites(out, "NODEEP:", sal);
+            // "SINKSHARE:" marks the names this gate admits BECAUSE their box is
+            // a counted share at a struct-literal field — the class the sink
+            // refusal used to reject wholesale. Only they take the rc-gated field
+            // walk at the sweep; every other struct slot keeps the STATIC role
+            // pairing above (source deep, alias box-only), which is measured and
+            // must not move. Gating those too breaks them in both directions: with
+            // the NODEEP alias in place nothing walks the fields (a leak on
+            // struct_alias_in_a_conditional), and without it two owners walk them
+            // (exit 99 on the same shape).
+            if (struct_field_shared_stmts(body, fnm, structs)) {
+                out = out.append("SINKSHARE:" + fresh[i]);
+            }
         }
         i = i + 1;
     }

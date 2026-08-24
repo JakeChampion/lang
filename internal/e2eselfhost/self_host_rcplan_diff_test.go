@@ -585,13 +585,16 @@ function main(): i32 { return f(); }`,
 			// predicates read — the pure half consults the FULL moved set so
 			// both sides refuse the cancellation (movedLocals anchors the
 			// gate's premise). Native then retains the excluded alias; the
-			// self-host does not: the routed struct gate refuses a
-			// counted-sink-stored name (struct_box_sink_stored — the plan's
-			// #7345 forgiveness needs store retains and killer-drops-fields
-			// releases the struct protocol does not provide yet), so the
-			// aliasBindIncs / nestedDrops divergences remain until that
-			// release-protocol port lands (freeEligible agrees on both
-			// sides; the EMITTED credit still refuses).
+			// self-host does not, because p's sink here is an APPEND. The
+			// routed struct gate now takes the plan's #7345 counted-sink
+			// forgiveness for a struct-literal FIELD (which retains
+			// unconditionally), but still refuses the CONTAINER sinks: their
+			// retain is gated on slot_is_reclaimable_struct, which refuses a
+			// retired slot, while the scoped sweep reads the
+			// retirement-tolerant sibling — so granting it releases a box
+			// that was never inc'd. Both divergences here therefore wait on
+			// that last half of the release-protocol port: making the retain
+			// and the release agree about retired slots.
 			name: "dead-alias-struct-loop-body-moved-source-excluded",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {
