@@ -7095,14 +7095,10 @@ function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerStat
     var res: i32 = sr.slot_of(resname);
     sr = sr.emit(ir.op_store_local(res));
     if (lf) {
-        sr = sr.emit(ir.op_load_local(lt));
-        sr = sr.emit(ir.op_call_direct("__fern_str_free", 1));
-        sr = sr.emit(ir.op_drop());
+        sr = sr.release(lt, "__fern_str_free", "concat-operand");
     }
     if (rf) {
-        sr = sr.emit(ir.op_load_local(rt));
-        sr = sr.emit(ir.op_call_direct("__fern_str_free", 1));
-        sr = sr.emit(ir.op_drop());
+        sr = sr.release(rt, "__fern_str_free", "concat-operand");
     }
     var ccv: i32[] = [];
     if (lv >= 0) { ccv = ccv.append(lv); }
@@ -10686,18 +10682,14 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // borrowable position, but belt-and-braces) only decs.
     var lfi: i32 = 0;
     while (lfi < lat_slots.len()) {
-        scr = scr.emit(ir.op_load_local(lat_slots[lfi]));
-        scr = scr.emit(ir.op_call_direct("__fern_str_free", 1));
-        scr = scr.emit(ir.op_drop());
+        scr = scr.release(lat_slots[lfi], "__fern_str_free", "stashed-str-arg");
         lfi = lfi + 1;
     }
     // The array-literal arg temps: same net-zero stack shape, the
     // rc-guarded array release instead of the string free.
     var lfa: i32 = 0;
     while (lfa < laa_slots.len()) {
-        scr = scr.emit(ir.op_load_local(laa_slots[lfa]));
-        scr = scr.emit(ir.op_call_direct("__fern_rc_dec", 1));
-        scr = scr.emit(ir.op_drop());
+        scr = scr.release(laa_slots[lfa], "__fern_rc_dec", "stashed-arr-arg");
         lfa = lfa + 1;
     }
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
@@ -11047,9 +11039,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             }
             mget = mget.emit(ir.op_map_get(mkk2, meqfn, map_value_widekind(map_value_of(mtype))));
             if (mgk >= 0) {
-                mget = mget.emit(ir.op_load_local(mgk));
-                mget = mget.emit(ir.op_call_direct("__fern_str_free", 1));
-                mget = mget.emit(ir.op_drop());
+                mget = mget.release(mgk, "__fern_str_free", "map-get-key-temp");
             }
             return mget;
         }
@@ -11602,9 +11592,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 lr = lr.emit(ir.op_store_local(lslot));
                 lr = lr.emit(ir.op_load_local(lslot));
                 lr = lr.emit(ir.op_str_len());
-                lr = lr.emit(ir.op_load_local(lslot));
-                lr = lr.emit(ir.op_call_direct("__fern_str_free", 1));
-                lr = lr.emit(ir.op_drop());
+                lr = lr.release(lslot, "__fern_str_free", "len-fresh-str");
                 return lr;
             }
             // `b.relabel(t).tag.len()` — a string field read off a MIXED-path
@@ -11732,9 +11720,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             sl = sl.emit(ir.op_store_local(aslot));
             sl = sl.emit(ir.op_load_local(aslot));
             sl = sl.emit(ir.op_arr_len());
-            sl = sl.emit(ir.op_load_local(aslot));
-            sl = sl.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            sl = sl.emit(ir.op_drop());
+            sl = sl.release(aslot, "__fern_rc_dec", "len-fresh-arr");
             return sl;
         }
         return sl.emit(ir.op_arr_len());
@@ -14381,9 +14367,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         // the propagated None (rc_dec is the established option-box free; its
         // guards no-op on anything non-heap).
         if (try_box_fresh) {
-            ts = ts.emit(ir.op_load_local(tslot));
-            ts = ts.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            ts = ts.emit(ir.op_drop());
+            ts = ts.release(tslot, "__fern_rc_dec", "try-fresh-none");
         }
         ts = ts.emit(ir.op_opt_none());          // fresh None
     }
@@ -14424,9 +14408,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // `var s: string = ...?` binding, credited "STR:" by reclaimable_names_of
     // (collect_try_str_binding_names) when the producer's payloads are fresh.
     if (try_box_fresh) {
-        ts = ts.emit(ir.op_load_local(tslot));
-        ts = ts.emit(ir.op_call_direct("__fern_rc_dec", 1));
-        ts = ts.emit(ir.op_drop());
+        ts = ts.release(tslot, "__fern_rc_dec", "try-fresh-box");
     }
     return ts;
 }
@@ -17026,7 +17008,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             match (es.value) {
                 parser.ExprArray(dae) => {
                     if (discardable_scalar_arr_lit(dae, s)) {
-                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                        se = se.release_tos("__fern_rc_dec", "discard-arr-lit");
                     } else if (discardable_scalar_arrarr_lit(dae, s)) {
                         // A discarded fresh scalar-inner array-of-arrays literal
                         // (`[[i, i+1], [i]];`, #4365): __fern_arrarr_free frees
@@ -17035,7 +17017,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                         // whole release the exit sweep gives a reclaimable ARRARR:
                         // LOCAL. Every inner is a fresh sole-owned literal, so the
                         // deep free is complete and double-free-free.
-                        se = se.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+                        se = se.release_tos("__fern_arrarr_free", "discard-arrarr-lit");
                     } else if (discardable_fresh_strarr_lit(dae, s)) {
                         // A discarded fresh string[] literal deep-frees its element
                         // boxes and buffer via __fern_str_arr_free — the same release
@@ -17044,7 +17026,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                         // sole-owns each element at rc=1: the rc==1-gated element walk
                         // frees exactly the fresh boxes, then returns the buffer to its
                         // freelist — a COMPLETE, no-double-free reclaim.
-                        se = se.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                        se = se.release_tos("__fern_str_arr_free", "discard-strarr-lit");
                     }
                 },
                 // A discarded fresh scalar TUPLE / STRUCT literal box is likewise a
@@ -17070,12 +17052,12 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                         var dt_path: i32[] = [];
                         se = emit_tuple_child_drops(se, dtslot, dt_path, dte);       // free array/nested children
                         se = se.emit(ir.op_load_local(dtslot));                      // box again
-                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));         // free the box
+                        se = se.release_tos("__fern_rc_dec", "discard-tuple-box");         // free the box
                     }
                 },
                 parser.ExprStructLit(dse) => {
                     if (!dse.has_base && struct_lit_all_scalar(s.structs, dse.type_name)) {
-                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                        se = se.release_tos("__fern_rc_dec", "discard-struct-lit");
                     } else if (!dse.has_base && struct_fields_reusable(s.structs, dse.type_name)) {
                         // A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`)
                         // is reclaimed the same way the exit sweep drops a struct LOCAL
@@ -17107,11 +17089,11 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                             var sdslot: i32 = se.slot_of(sdtmp);
                             se = se.emit(ir.op_store_local(sdslot));                              // stash box
                             se = se.emit(ir.op_load_local(sdslot));                               // box (arg0)
-                            se = se.emit(ir.op_call_direct("__struct_drop_" + dse.type_name, 1)); // deep-drop rc fields
+                            se = se.release_tos("__struct_drop_" + dse.type_name, "discard-struct-deep"); // deep-drop rc fields
                             se = se.emit(ir.op_drop());                                           // discard clobbered return
                             se = se.emit(ir.op_load_local(sdslot));                               // box again
                         }
-                        se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));                      // free the box
+                        se = se.release_tos("__fern_rc_dec", "discard-struct-box");                      // free the box
                     }
                 },
                 // A discarded fresh STRING CONCAT (`a + b;`) allocates a new owned
@@ -17148,12 +17130,12 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                     var fcslot: i32 = se.slot_of(fcd);
                                     se = se.emit(ir.op_store_local(fcslot));                          // stash box
                                     se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
-                                    se = se.emit(ir.op_call_direct("__struct_drop_" + crt, 1));       // deep-drop rc fields
+                                    se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
                                     se = se.emit(ir.op_drop());                                       // discard clobbered return
                                     se = se.emit(ir.op_load_local(fcslot));                           // box again
-                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));              // free the box
+                                    se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
                                 } else {
-                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                                    se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");
                                 }
                             } else if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
                                     || util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
@@ -17166,7 +17148,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 // shallow rc-guarded __fern_rc_dec — element-blind,
                                 // which the "ARR:" scalar-element contract makes sound
                                 // one way and the surviving owner the other.
-                                se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                                se = se.release_tos("__fern_rc_dec", "discard-arr-ret");
                             } else if (reclaim_has(s.reclaimable_names, "MAPRET:", dcid.name)) {
                                 // A discarded call to a MAPF-registered map builder
                                 // (`mk(i);`, #4357): the result is a fresh sole-owner
@@ -17175,7 +17157,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 // the mapbox to the freelist (the same helper the slot
                                 // reclaim uses — deep on wasm via $__fern_map_release);
                                 // the shared tail drop discards the helper's return.
-                                se = se.emit(ir.op_call_direct("__fern_map_free", 1));
+                                se = se.release_tos("__fern_map_free", "discard-map-ret");
                             } else if (util.index_of_str(s.sigs.str_fresh_ret_fns, dcid.name) >= 0) {
                                 // A discarded call to a STRING-fresh-ret free function
                                 // (`mk(a);`): the result is a freshly-allocated string
@@ -17196,7 +17178,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 // Unlike the concat-OPERAND position (#6171), a discard
                                 // has no reader to outlive: the statement is the value's
                                 // whole lifetime.
-                                se = se.emit(ir.op_call_direct("__fern_str_free", 1));
+                                se = se.release_tos("__fern_str_free", "discard-str-ret");
                             } else {
                                 // A discarded call to a TUPLE-fresh-ret free function
                                 // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
@@ -17218,13 +17200,13 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                         if (dtrf[tck] == b'1') {
                                             se = se.emit(ir.op_load_local(tcslot));              // box
                                             se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
-                                            se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); // free the fresh buffer
+                                            se = se.release_tos("__fern_rc_dec", "discard-tupret-elem"); // free the fresh buffer
                                             se = se.emit(ir.op_drop());
                                         }
                                         tck = tck + 1;
                                     }
                                     se = se.emit(ir.op_load_local(tcslot));                      // box again
-                                    se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));         // free the box
+                                    se = se.release_tos("__fern_rc_dec", "discard-tupret-box");         // free the box
                                 }
                             }
                         },
@@ -17252,7 +17234,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                             if (drty != "" && decl_field_type(s.structs, drty, dcfa.field) == ""
                                 && (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
                                     || util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0)) {
-                                se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                                se = se.release_tos("__fern_rc_dec", "discard-field-arr-ret");
                             }
                         },
                         _ => {}
@@ -20151,9 +20133,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // is excluded. Params are never candidates (the local is fn-declared), but the
     // slot check mirrors the enumfrees emission rather than relying on that.
     if (slot >= s.n_params && reclaim_has(s.reclaimable_names, "SCENRB:", a.target)) {
-        s = s.emit(ir.op_load_local(slot));
-        s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
-        s = s.emit(ir.op_drop());
+        s = s.release(slot, "__fern_rc_dec", "scenrb-old-box");
     }
     s = refine_map_struct_val(a, slot, s);
     // #4297 CS4: a REASSIGNMENT re-binds the slot's string box, so the
@@ -20880,11 +20860,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             // inside the body skips it (a bounded, sound leak, like every
             // non-swept hidden temp). Zero the slot afterwards for hygiene.
             if (mki_flag == 0) {
-                mkf = mkf.emit(ir.op_load_local(mkisslot));
-                mkf = mkf.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                mkf = mkf.emit(ir.op_drop());
-                mkf = mkf.emit(ir.op_const_i32(0));
-                mkf = mkf.emit(ir.op_store_local(mkisslot));
+                mkf = mkf.release_zero(mkisslot, "__fern_rc_dec", "map-iter-snapshot");
             }
             // String column (flag 2, #4353 slice 3): the hidden local holds a
             // fresh snapshot whose elements were rc-inc'd on copy, so the
@@ -20893,11 +20869,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             // buffer), the exact inverse of __fern_map_snapshot_col_str. Same
             // break/early-return caveats as the scalar arm above.
             if (mki_flag == 2) {
-                mkf = mkf.emit(ir.op_load_local(mkisslot));
-                mkf = mkf.emit(ir.op_call_direct("__fern_str_arr_free", 1));
-                mkf = mkf.emit(ir.op_drop());
-                mkf = mkf.emit(ir.op_const_i32(0));
-                mkf = mkf.emit(ir.op_store_local(mkisslot));
+                mkf = mkf.release_zero(mkisslot, "__fern_str_arr_free", "map-iter-snapshot");
             }
             return mkf;
         }
@@ -21143,35 +21115,19 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         // must NOT be dec'd. An early `return` in the body skips this — a
         // bounded, sound leak, like every non-swept hidden temp.
         if (mkv_kflag == 0) {
-            fm = fm.emit(ir.op_load_local(ksslot));
-            fm = fm.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            fm = fm.emit(ir.op_drop());
-            fm = fm.emit(ir.op_const_i32(0));
-            fm = fm.emit(ir.op_store_local(ksslot));
+            fm = fm.release_zero(ksslot, "__fern_rc_dec", "map-iter-snapshot");
         }
         // String KEY column (flag 2, #4353 slice 3): deep-release the retaining
         // snapshot (__fern_str_arr_free — per-element rc-aware free + buffer).
         if (mkv_kflag == 2) {
-            fm = fm.emit(ir.op_load_local(ksslot));
-            fm = fm.emit(ir.op_call_direct("__fern_str_arr_free", 1));
-            fm = fm.emit(ir.op_drop());
-            fm = fm.emit(ir.op_const_i32(0));
-            fm = fm.emit(ir.op_store_local(ksslot));
+            fm = fm.release_zero(ksslot, "__fern_str_arr_free", "map-iter-snapshot");
         }
         if (mkv_vflag == 0) {
-            fm = fm.emit(ir.op_load_local(vsslot));
-            fm = fm.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            fm = fm.emit(ir.op_drop());
-            fm = fm.emit(ir.op_const_i32(0));
-            fm = fm.emit(ir.op_store_local(vsslot));
+            fm = fm.release_zero(vsslot, "__fern_rc_dec", "map-iter-snapshot");
         }
         // String VALUE column (flag 2): same deep-release.
         if (mkv_vflag == 2) {
-            fm = fm.emit(ir.op_load_local(vsslot));
-            fm = fm.emit(ir.op_call_direct("__fern_str_arr_free", 1));
-            fm = fm.emit(ir.op_drop());
-            fm = fm.emit(ir.op_const_i32(0));
-            fm = fm.emit(ir.op_store_local(vsslot));
+            fm = fm.release_zero(vsslot, "__fern_str_arr_free", "map-iter-snapshot");
         }
         return fm;
     }
@@ -22393,6 +22349,34 @@ pub function (s: LowerState) retain(slot: i32, site: string): LowerState {
 pub function (s: LowerState) retain_tos(site: string): LowerState {
     return s.emit(ir.op_call_direct("__fern_rc_inc", 1));
 }
+
+// The release choke points, same contract as retain/retain_tos: `freefn` is
+// the release symbol — the memory-layout-semantic choice (__fern_rc_dec
+// frees an array at data-16 where a string box's block starts at value-8;
+// picking wrong is heap corruption, not a leak) — and stays a decision of
+// the SITE, which knows the type. release covers the slot triple
+// (load / free / drop, net-zero on the operand stack); release_zero adds
+// the slot-zeroing that keeps this release site disjoint from the exit
+// sweep; release_tos frees the value already on the stack top (the
+// consumer or the statement's own drop follows). Guard structure —
+// cow / null / is_unique / tag dispatch — is never owned here: a guarded
+// site keeps its guards and routes only the emission.
+pub function (s: LowerState) release(slot: i32, freefn: string, site: string): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct(freefn, 1));
+    return st.emit(ir.op_drop());
+}
+
+pub function (s: LowerState) release_zero(slot: i32, freefn: string, site: string): LowerState {
+    var st: LowerState = s.release(slot, freefn, site);
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(slot));
+}
+
+pub function (s: LowerState) release_tos(freefn: string, site: string): LowerState {
+    return s.emit(ir.op_call_direct(freefn, 1));
+}
+
 
 
 // emit_arr_store stores the new value (on top of the operand stack) into
@@ -46928,11 +46912,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 // excluded — their buffers hold pointers needing an element walk.
                 if (dslot >= s.n_params && s.is_arr_slot(dslot)
                         && !s.is_strarr_slot(dslot) && !s.is_arrarr_slot(dslot)) {
-                    s = s.emit(ir.op_load_local(dslot));
-                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    s = s.emit(ir.op_drop());
-                    s = s.emit(ir.op_const_i32(0));
-                    s = s.emit(ir.op_store_local(dslot));
+                    s = s.release_zero(dslot, "__fern_rc_dec", "precise-drop-scalar-arr");
                 } else if (dslot >= s.n_params && slot_is_reclaimable_struct(s, dslot)
                         && util.index_of_str(xreuse.donors, pdrops.names[pi]) < 0
                         && util.index_of_str(reuse.bases, pdrops.names[pi]) < 0
