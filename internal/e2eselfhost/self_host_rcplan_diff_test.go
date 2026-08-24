@@ -476,6 +476,61 @@ function main(): i32 { return f(); }`,
 			// (tuple_elems / tup_elem_kinds), and the tuple sweep loops skip
 			// the elided source. Anchored agreement — the last aliasBindIncs
 			// move family burned down.
+			// TUPLE alias bind, LIVE source: a closed divergence — the
+			// dead-alias cancellation's tuple limb elides the borrowed
+			// view's inc and its shallow "TUP:" box dec exactly as native
+			// does; the source keeps its deep release at the exit sweep.
+			// Anchored agreement.
+			name: "alias-bind-tuple",
+			src: `function f(): i32 {
+	var t: (i32, i32[]) = (7, [1, 2]);
+	var v: (i32, i32[]) = t;
+	var n: i32 = v.0 + t.0;
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"freeEligible": "t,v", "aliasBindIncs": ""}},
+		},
+		{
+			// The returned-alias exclusion, tuple limb: the retain stays on
+			// both sides — the positive control pinning that the tuple
+			// cancellation still increments where it must. Native
+			// precise-drops the source at its last use; the self-host leaves
+			// it to the sweep (the known placement class).
+			name: "dead-alias-tuple-returned-excluded",
+			src: `function f(): i32 {
+	var t: (i32, i32[]) = (7, [1, 2]);
+	var v: (i32, i32[]) = t;
+	var n: i32 = t.0;
+	return v.0 + n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "3:2=v"}},
+			diverge: map[string]map[string]divergence{
+				"f": {"preciseDrops": {native: "2=t", selfhost: ""}},
+			},
+		},
+		{
+			// LOOP-scoped pair, tuple limb: both sides cancel, and the alias
+			// bind must then store WITHOUT the dec-on-overwrite — the same
+			// third-release-site audit as the other limbs; the runtime half
+			// is pinned by the loop_local alias cell in the leak matrix.
+			name: "dead-alias-tuple-loop-scoped",
+			src: `function f(): i32 {
+	var n: i32 = 0;
+	var i: i32 = 0;
+	while (i < 3) {
+		var t: (i32, i32[]) = (i, [i, i + 1]);
+		var v: (i32, i32[]) = t;
+		n = n + v.0 + t.1.len();
+		i = i + 1;
+	}
+	return n;
+}
+function main(): i32 { return f(); }`,
+			anchor: map[string]map[string]string{"f": {"aliasBindIncs": ""}},
+		},
+		{
 			name: "move-on-alias-tuple",
 			src: `function f(): i32 {
 	var t: (i32, i32[]) = (7, [1, 2]);

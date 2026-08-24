@@ -17489,7 +17489,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // Dead-alias cancellation, second half (#4402 opt 1): the retain was
     // skipped at this bind (the same per-kind predicate the ladder
     // consulted), so the ALIAS slot's exit dec is elided with it.
-    if (arr_dead_alias_bind(v, se) || str_dead_alias_bind(v, se) || struct_dead_alias_bind(v, se)) { sb = sb.note_moved_elided(slot); }
+    if (arr_dead_alias_bind(v, se) || str_dead_alias_bind(v, se) || struct_dead_alias_bind(v, se) || tuple_dead_alias_bind(v, se)) { sb = sb.note_moved_elided(slot); }
     // A tuple MOVE-alias transfers the source's release role to this slot
     // (the ladder's tuple clause swapped the credit class), so the slot facts
     // that release reads move with it: the element type tags the "TUPRCS:"
@@ -19192,7 +19192,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         se = LowerState { ...se, reclaimable_names: se.reclaimable_names.append("TUPRCS:" + reclaim_site_key_of(v.name, v.line, v.col)) };
                     }
                     se = se.note_moved_elided(aid_slot);
-                } else { alias_inc = true; }
+                }
+                // Dead-alias cancellation, tuple limb (#4402 opt 1): a proven
+                // borrowed VIEW skips the retain, and bind_var_slot elides
+                // the alias slot's shallow "TUP:" box dec under the same
+                // predicate. No credit surgery: the source keeps its deep
+                // release at the exit sweep.
+                else if (!tuple_dead_alias_bind(v, se)) { alias_inc = true; }
             }
             // A string box, on the one class that grants the alias a credit.
             // slot_is_reclaimable_str asks about the box AND the credit on its own
@@ -53942,10 +53948,10 @@ pub function move_sites_toplevel_of(fn: parser.FuncDecl, structs: parser.StructD
 // a source is not itself cancelled). sites: the cancelled alias BIND-site
 // keys; srcs: the borrow-source names (the precise-drop exclusion set).
 //
-// Covers ARRAY, STRING and STRUCT pairs — the pure kind gate is y's
-// annotation or kind evidence at x's declaration; the emitting side
-// (arr_dead_alias_bind / str_dead_alias_bind / struct_dead_alias_bind)
-// re-checks against the SLOT facts and is final.
+// Covers ARRAY, STRING, STRUCT and TUPLE pairs — the pure kind gate is y's
+// annotation or kind evidence at x's declaration; the emitting side (the
+// per-kind *_dead_alias_bind predicates) re-checks against the SLOT facts
+// and is final.
 pub struct DeadAliases { sites: string[], srcs: string[] }
 
 // moved: the FULL moved-locals set (rc_ml_compute, loop-body construction
@@ -54077,6 +54083,40 @@ function da_decl_structlit_evidence(stmts: parser.Stmt[], name: string): boolean
     return false;
 }
 
+// da_decl_tuple_evidence: x's declaration carries a tuple-literal init — the
+// tuple sibling of the struct evidence.
+function da_decl_tuple_evidence(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprTuple(_) => { return true; },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                if (da_decl_tuple_evidence(f.then_body, name)) { return true; }
+                if (da_decl_tuple_evidence(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (da_decl_tuple_evidence(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (da_decl_tuple_evidence(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (da_decl_tuple_evidence(m.arms[mi].body, name)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function da_returned_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -54138,7 +54178,10 @@ function da_scan(stmts: parser.Stmt[], body: parser.Stmt[], assigned: string[], 
                             && local_decl_count(body, id.name) == 1 && local_decl_count(body, v.name) == 1
                             && (is_array_type_name(v.type_name) || da_decl_array_evidence(body, id.name)
                                 || v.type_name == "string" || da_decl_string_evidence(body, id.name)
-                                || da_decl_structlit_evidence(body, id.name))) {
+                                || da_decl_structlit_evidence(body, id.name)
+                                || (v.type_name.len() >= 2 && v.type_name[0:1] == "("
+                                    && !util.contains(v.type_name, "=>"))
+                                || da_decl_tuple_evidence(body, id.name))) {
                             a = DeadAliases {
                                 sites: a.sites.append(reclaim_site_key_of(v.name, v.line, v.col)),
                                 srcs: push_str_unique(a.srcs, id.name)
@@ -54219,6 +54262,28 @@ function struct_dead_alias_bind(v: parser.StmtVar, se: LowerState): boolean {
             var src: i32 = se.slot_of(id.name);
             if (src < 0 || src < se.n_params) { return false; }
             if (!slot_is_reclaimable_struct(se, src)) { return false; }
+            if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
+            if (util.index_of_str(se.moved_names, id.name) >= 0 || util.index_of_str(se.moved_names, v.name) >= 0) { return false; }
+            return util.index_of_str(se.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// tuple_dead_alias_bind: the tuple sibling — THE one predicate for the tuple
+// limb, consulted by the ladder and bind_var_slot. Under duplication the
+// alias holds only the shallow "TUP:" box dec (the deep "TUPRCS:" release
+// stays with the source), so that box dec is the whole of what the
+// cancellation elides — no credit surgery, and a MOVE site takes the move
+// path (which transfers the deep class) instead.
+function tuple_dead_alias_bind(v: parser.StmtVar, se: LowerState): boolean {
+    match (v.init) {
+        parser.ExprIdent(id) => {
+            var src: i32 = se.slot_of(id.name);
+            if (src < 0 || src < se.n_params) { return false; }
+            if (!se.slot_is_tuple_box(src)) { return false; }
+            if (!slot_is_reclaimable_tuple(se, src) && !slot_is_reclaimable_rctuple(se, src)) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.moved_names, id.name) >= 0 || util.index_of_str(se.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;

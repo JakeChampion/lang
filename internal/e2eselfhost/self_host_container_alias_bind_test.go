@@ -83,6 +83,22 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 40, allocs: 200, frees: 200,
 		},
 		{
+			// The CANCELLED path (#4402 opt 1, tuple limb): the alias is read
+			// but never returned and the source is read after it — a LIVE
+			// source. The inc and the alias's shallow "TUP:" box dec are
+			// elided; the source keeps its deep release. Counts cannot move;
+			// the __rc_underflow_count guard catches an unpaired elision.
+			name: "tuple_alias_cancelled",
+			src: `function round(i: i32): i32 {
+    var t: (i32, i32[]) = (i, [i, i + 1]);
+    var v: (i32, i32[]) = t;
+    var n: i32 = v.0;
+    return n + t.1.len() + i;
+}
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 57, allocs: 200, frees: 200,
+		},
+		{
 			// A box-only tuple: no element release either side. Base 100/0, 4000.
 			name: "tuple_alias_scalar",
 			src: `function round(i: i32): i32 {
