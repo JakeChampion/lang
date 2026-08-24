@@ -8604,6 +8604,13 @@ pub function sfrrecv_chain_root_slot(e: parser.Expr, s: LowerState, depth: i32):
                     if (util.index_of_str(s.sigs.str_fresh_ret_fns, "SFRRECV:" + cty + "." + cfa.field) < 0) { return 0 - 1; }
                     return sfrrecv_chain_root_slot(cfa.obj, s, depth + 1);
                 },
+                parser.ExprIdent(ccid) => {
+                    // `slice_unchecked(X, a, b)` is the `X[a:b]` link as a
+                    // builtin (#5634): a view over X's bytes, never X's box.
+                    if (ccid.name == "slice_unchecked" && cc.args.len() == 3) {
+                        return sfrrecv_chain_root_slot(cc.args[0], s, depth + 1);
+                    }
+                },
                 _ => {}
             }
         },
@@ -29623,6 +29630,23 @@ function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string
                         parser.ExprSlice(rsl) => {
                             match (rsl.array) {
                                 parser.ExprIdent(rsid) => { ok = rsid.name == recv; },
+                                _ => {}
+                            }
+                        },
+                        // `slice_unchecked(recv, a, b)` is the ExprSlice arm
+                        // as a builtin (#5634): the identical kind-102 view
+                        // box over the receiver's bytes, released the same
+                        // way by the consuming site.
+                        parser.ExprCall(rcall) => {
+                            match (rcall.callee) {
+                                parser.ExprIdent(rcid) => {
+                                    if (rcid.name == "slice_unchecked" && rcall.args.len() == 3) {
+                                        match (rcall.args[0]) {
+                                            parser.ExprIdent(raid) => { ok = raid.name == recv; },
+                                            _ => {}
+                                        }
+                                    }
+                                },
                                 _ => {}
                             }
                         },
