@@ -414,18 +414,35 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
-		// A CALL-producer tuple source: native's freeEligible admits it and
-		// cancels the pair; the self-host's tuple credits are literal-init
-		// (or direct-scalar-literal-ret) only, so the source is uncredited —
-		// no retain, no cancellation, no release. The rcplan tables agree on
-		// both sides here (free_eligible_of is the ported analysis; the
-		// credit table is what diverges and it is not dumped), so this cell
-		// is the only instrument documenting the boundary.
+		// A CALL-producer tuple source: the owned-return admission credits
+		// the bound result ("TUP:" + the ARRF-flagged element kinds behind
+		// "TUPELEMOK:"), so box and element both release and the alias pair
+		// cancels — clean on both sides. The rcplan tables agree here either
+		// way (the credit table is not dumped), so this cell is the one
+		// instrument pinning the release.
 		leakCell{name: "tuple_mixed__callprod__alias_local", src: `function mk(i: i32): (i32, i32[]) { return (i, [i, i + 1]); }
 function round(i: i32): i32 {
     var t: (i32, i32[]) = mk(i);
     var v: (i32, i32[]) = t;
     return v.0 + t.1.len();
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// An ALIASED producer local: the owned-return admission walks with
+		// empty alias lists, so `var a = t` refuses the whole callee — no
+		// registry entry, no caller credit, the leak floor. Pinned because
+		// this is the admission boundary most tempting to widen next, and a
+		// careless widening (forgiving aliases) flips it to over-release,
+		// not just a leak.
+		leakCell{name: "tuple_mixed__ownedret_alias__bind_local", src: `function mk(i: i32): (i32, i32[]) {
+    var t: (i32, i32[]) = (i, [i, i + 1]);
+    var a: (i32, i32[]) = t;
+    if (a.0 < 0) { return (0, [0]); }
+    return t;
+}
+function round(i: i32): i32 {
+    var r: (i32, i32[]) = mk(i);
+    return r.0 + r.1.len();
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
