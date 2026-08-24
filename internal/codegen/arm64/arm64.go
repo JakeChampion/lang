@@ -4859,9 +4859,12 @@ func (g *generator) emitTcpAcceptRuntime() {
 }
 
 // emitTcpRecvRuntime emits `__fern_tcp_recv(fd, max)` —
-// reads up to `max` bytes from the socket fd, returns a
-// fresh length-prefixed lang string with the bytes read.
-// On error or EOF the returned string has length 0.
+// reads up to `max` bytes from the socket fd into a fresh
+// `u8[]` in the __alloc_u8 box shape (cap = max, len = the
+// actual byte count; the zero-fill makes the len-shrink
+// defined). EOF / error → length 0. max <= 0 returns the
+// shared empty sentinel untouched — its static header must
+// never receive the post-read len store.
 //
 // Frame: 48 bytes — fp/lr (16) + callee-save x19/x20 (16) +
 // callee-save x21 (8) + 8 bytes pad for 16-byte sp alignment.
@@ -4874,46 +4877,30 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.line(".global __fern_tcp_recv")
 	g.typeDirective("__fern_tcp_recv")
 	g.label("__fern_tcp_recv")
-	twoWord := ast.UseTwoWordStrings(8)
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
 	g.emit("mov x19, x0") // x19 = fd
 	g.emit("mov x20, x1") // x20 = max
-	if twoWord {
-		// Two-word heap form: alloc max bytes (no prefix /
-		// NUL); return (data, len) in (x0, x1). rc-headered alloc (rc=1
-		// @data-8, size @data-4) so __fern_str_dec reclaims the owned string
-		// correctly; plain __fern_alloc corrupts the heap (#2817 class).
-		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // x21 = dst (= base+8)
-		g.emit("mov x0, x19")
-		g.emit("mov x1, x21")
-		g.emit("mov x2, x20")
-		g.syscall("read")
-		g.emit("cmp x0, #0")
-		g.emit("csel x0, x0, xzr, ge")
-		// x0 = byte count, x21 = data ptr → return (data, len).
-		g.emit("mov x1, x0")  // x1 = len
-		g.emit("mov x0, x21") // x0 = data
-	} else {
-		// L2 rc-header layout — see __fern_strcat. Payload = max + 1 NUL.
-		g.emit("add x0, x20, #1")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-		g.emit("mov x0, x19")
-		g.emit("mov x1, x21")
-		g.emit("mov x2, x20")
-		g.syscall("read")
-		g.emit("cmp x0, #0")
-		g.emit("csel x0, x0, xzr, ge")
-		g.emit("stur w0, [x21, #-4]")
-		g.emit("add x1, x21, x0")
-		g.emit("strb wzr, [x1]")
-		g.emit("mov x0, x21")
-	}
+	g.emit("cmp w20, #0")
+	g.emit("b.gt .Ltcp_recv_alloc")
+	g.emit("mov w0, #0")
+	g.emit("bl __alloc_u8") // the shared empty sentinel
+	g.emit("b .Ltcp_recv_ret")
+	g.label(".Ltcp_recv_alloc")
+	g.emit("mov w0, w20")
+	g.emit("bl __alloc_u8")
+	g.emit("mov x21, x0") // x21 = data ptr
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x20")
+	g.syscall("read")
+	g.emit("cmp x0, #0")
+	g.emit("csel x0, x0, xzr, ge")
+	g.emitArrayLenStore("w0", "x21") // len = actual count (cap stays max)
+	g.emit("mov x0, x21")
+	g.label(".Ltcp_recv_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
@@ -11252,7 +11239,7 @@ func returnIsString(g *generator, name string) bool {
 		// (e.g. for OpReturn of an aliased string). __fern_str_dec
 		// is deliberately absent — it returns only `data` (x0).
 		return true
-	case "tcp_recv", "string_from_bytes_unchecked", "__str_slice", "strbuf_take":
+	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
 		// `__method_Reader_read_line` / etc — those return
@@ -11366,8 +11353,8 @@ func (g *generator) emitStrLen(dstW, srcX string) {
 // little-endian length prefix at `[dstX - 4]`, where dstX is the
 // new string's *data pointer* (one past the prefix). Inverse of
 // emitStrLen and the second half of the SSO encoding seam:
-// strcat / str_slice / string_from_bytes_unchecked / random_bytes / env /
-// read_file / tcp_recv / Reader.read_chunk all materialise a
+// strcat / str_slice / string_from_bytes_unchecked / env /
+// read_file / Reader.read_chunk all materialise a
 // fresh string and write its length through this one site, so
 // future encoding changes that affect string construction (e.g.
 // tagged-pointer inline-when-short) have a single function to
@@ -13256,26 +13243,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "tcp_listen":
-			target = "__fern_tcp_listen"
+		case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect":
+			target = "__fern_" + target
 			g.usesTcp = true
+			// usesTcp always emits __fern_tcp_recv, which calls
+			// __alloc_u8 for its read buffer — so any tcp builtin
+			// needs the alloc runtime, even a connect-only program.
 			g.usesAlloc = true
-		case "tcp_accept":
-			target = "__fern_tcp_accept"
-			g.usesTcp = true
-		case "tcp_recv":
-			target = "__fern_tcp_recv"
-			g.usesTcp = true
-			g.usesAlloc = true
-		case "tcp_send":
-			target = "__fern_tcp_send"
-			g.usesTcp = true
-		case "tcp_close":
-			target = "__fern_tcp_close"
-			g.usesTcp = true
-		case "tcp_pollable":
-			target = "__fern_tcp_pollable"
-			g.usesTcp = true
+			g.usesAllocU8 = true
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
 			g.usesWasmPollableDrop = true
@@ -13288,12 +13263,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "wasm_poll":
 			target = "__fern_wasm_poll"
 			g.usesWasmPoll = true
-		case "tcp_connect":
-			target = "__fern_tcp_connect"
-			g.usesTcp = true
-			// usesTcp always emits __fern_tcp_recv (→ __fern_alloc_rc1),
-			// so a connect-only program needs the alloc runtime too.
-			g.usesAlloc = true
 		case "poll":
 			target = "__fern_poll"
 			g.usesPoll = true

@@ -1319,41 +1319,46 @@ func emitTcpAcceptHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitTcpRecvHelper writes tcp_recv(fd, max) → string: read up to max bytes from
-// the socket fd into a fresh single-word rc string (its length set to the actual
-// count; 0 on EOF/error). Leaf: bump-allocates inline and read's svc preserves
-// every register but x0, so fd/max/data survive without spills. x0=fd, x1=max.
+// emitTcpRecvHelper writes tcp_recv(fd, max) → u8[]: read up to max bytes from
+// the socket fd into a fresh u8[] in the __alloc_u8 box shape (16-byte header;
+// cap@-12, rc=1@-8, len@-4). len = the actual byte count; 0 on EOF/error.
+// max <= 0 skips the read and returns the box empty. Leaf: bump-allocates
+// inline (like random_bytes) and read's svc preserves every register but x0,
+// so fd/max/data survive without spills. x0=fd, x1=max.
 func emitTcpRecvHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("tcp_recv"))
-	w("\tmov x9, x0")  // fd
-	w("\tmov x10, x1") // max
-	// Allocate a single-word rc string: 8-byte header + max + 1 NUL.
+	w("\tmov x9, x0") // fd
+	w("\tcmp w1, #0")
+	w("\tcsel w10, w1, wzr, gt") // n = max, clamped to >= 0
+	// Allocate a u8[] box: 16-byte header + n data bytes.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #7")
 	w("\tand x4, x4, #-8")
-	w("\tadd x5, x10, #9")
+	w("\tadd x5, x10, #16")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
 	emitHeapGuardCall(w)
+	w("\tadd x11, x4, #16")      // data ptr (past 16-byte header)
+	w("\tstur w10, [x11, #-12]") // cap = n
 	w("\tmov w7, #1")
-	w("\tstr w7, [x4]")    // rc = 1
-	w("\tadd x11, x4, #8") // data ptr
-	// read(fd, data, max)
+	w("\tstur w7, [x11, #-8]")  // rc = 1
+	w("\tstur wzr, [x11, #-4]") // len = 0 until the read lands
+	w("\tcbz w10, .Lssa_tcpr_ret")
+	// read(fd, data, n)
 	w("\tmov x0, x9")
 	w("\tmov x1, x11")
 	w("\tmov x2, x10")
 	w("\tmov x8, #63") // read
 	w("\tsvc #0")
-	// actual = max(x0, 0)
+	// len = max(result, 0); errors and EOF leave the box empty.
 	w("\tcmp x0, #0")
 	w("\tcsel x0, x0, xzr, ge")
-	w("\tstur w0, [x11, #-4]") // len = actual
-	w("\tadd x1, x11, x0")
-	w("\tstrb wzr, [x1]") // trailing NUL
-	w("\tmov x0, x11")    // return data ptr
+	w("\tstur w0, [x11, #-4]")
+	w(".Lssa_tcpr_ret:")
+	w("\tmov x0, x11") // return data ptr
 	w("\tret")
 }
 
