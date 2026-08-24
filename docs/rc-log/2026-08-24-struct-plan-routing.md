@@ -99,6 +99,25 @@ movement on the corpus — pure convergence.
   — the strfld admission — so only the READ shapes (field access, index,
   slice) reach the box uncounted. The rule now marks reads only.
 
+## Three uncounted escape channels, shard-caught (BlockScopedStructBox)
+
+The plan forgives three more channels because native retains at them and
+the self-host does not — each measured as an over-release the moment the
+routed gate granted it: a bare-ASSIGNED source (`held = s`; plain
+assignment retains nothing, want-frees-0 went 800), a bare RETURN
+(`return s`; no return-transfer retain, the caller's fresh-ret release is
+a second claim), and a bare arg to a HAND-BACK callee
+(`held = keepit(s)`, keepit returning its param raw — underflow 244).
+Three family-knowledge conjuncts refuse them
+(`struct_bare_assigned_src`, `struct_returned_bare`,
+`struct_arg_to_handback` over a new `handback_params` "fn|idx" registry —
+only a DIRECT `return <param>` counts; a param stored into a returned
+construction takes the construction's counted retain). All three retire
+with the killer-drops release-protocol wave. The StructProducerLocal
+sibling rows moved 200→204 frees with live 0 — main's `b` call arg is
+now swept, the same caller-side win as alias_param; the refused rows
+(param-returned, reassigned) hold at their pins through the conjuncts.
+
 ## Measured (x86-64, census + underflow; exits match native everywhere)
 
 | probe | native | plan-off (pre-wave) | plan-on |
