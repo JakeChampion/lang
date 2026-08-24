@@ -1948,6 +1948,38 @@ pub function (s: string) drop(n: i32): str {
     return s[n:sLen];
 }
 
+// `s.slice_snap(a, b)` — total byte slicing that cannot split a
+// UTF-8 code point (#5634, D9): both bounds are clamped to
+// [0, s.len()] and then snapped INWARD to char boundaries (`a`
+// forward, `b` backward), so the result never includes bytes
+// outside [a:b) and is identical to `s[a:b]` whenever both
+// indices already sit on boundaries — hence on all ASCII input.
+// An inverted or snapped-empty range returns "". The boundary
+// probe (`byte < 128 || byte >= 192`) is inlined rather than
+// imported: std/utf8 imports this module, so its
+// ceil/floor_char_boundary helpers cannot be used here.
+pub function (s: string) slice_snap(a: i32, b: i32): str {
+    var n: i32 = s.len();
+    var lo: i32 = a;
+    if (lo < 0) { lo = 0; }
+    if (lo > n) { lo = n; }
+    var hi: i32 = b;
+    if (hi < 0) { hi = 0; }
+    if (hi > n) { hi = n; }
+    while (lo < n) {
+        var cl: i32 = s[lo] as i32;
+        if (cl < 128 || cl >= 192) { break; }
+        lo = lo + 1;
+    }
+    while (hi > 0 && hi < n) {
+        var ch: i32 = s[hi] as i32;
+        if (ch < 128 || ch >= 192) { break; }
+        hi = hi - 1;
+    }
+    if (lo >= hi) { return ""; }
+    return slice_unchecked(s, lo, hi);
+}
+
 // `s.chunks(size)` — split into consecutive size-byte
 // chunks. The last chunk may be shorter. size <= 0 returns
 // an array containing just s (or empty if s is empty).

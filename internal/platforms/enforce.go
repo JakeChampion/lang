@@ -147,6 +147,7 @@ var coreBuiltins = map[string]bool{
 	"map_new":                     true,
 	"cell_new":                    true,
 	"string_from_bytes_unchecked": true,
+	"slice_unchecked":             true,
 	"strbuf_reset":                true,
 	"strbuf_append":               true,
 	"strbuf_take":                 true,
