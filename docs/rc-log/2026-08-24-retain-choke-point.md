@@ -49,3 +49,22 @@ sources and from the post-change sources, run both drivers' per-module
 emit-all over the SAME pre-change snapshot project, byte-compare every
 unit — the old-vs-new discipline `TYPED-IR-REWRITE.md` prescribes, on the
 `runEmitAllFixpoint` machinery. All units identical.
+
+## The release side (same day, next slice)
+
+`release(slot, freefn, site)` — the load/free/drop triple, net-zero on the
+operand stack — plus `release_zero` (the triple with the slot-zeroing that
+keeps a release site disjoint from the exit sweep) and `release_tos` (the
+value already on the stack top). `freefn` stays a parameter of the SITE:
+the symbol choice is memory-layout-semantic (an array frees at data-16
+where a string box's block starts at value-8), and the site knows the
+type. 33 mechanical emissions route through them: the whole
+discarded-expression ladder (including its dynamic `__struct_drop_<T>`
+deep-drops), the concat-operand and stashed-arg frees, the method-call
+fresh-receiver temps, the try `?` fresh boxes, SCENRB, the six map-iter
+snapshot columns, and the precise-drop scalar-array arm. Guard structure
+is never owned by the emitters — a guarded site keeps its guards and
+routes only the emission. Byte identity re-proven old-vs-new for the
+slice: 45/45 units identical. Still direct: the ~50 dedicated release
+helpers' internals, the exit sweep's is_unique-gated element walks, and
+the reuse arms — later slices.
