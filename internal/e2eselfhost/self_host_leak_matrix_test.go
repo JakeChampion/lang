@@ -414,6 +414,37 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
+		// A CALL-producer tuple source: native's freeEligible admits it and
+		// cancels the pair; the self-host's tuple credits are literal-init
+		// (or direct-scalar-literal-ret) only, so the source is uncredited —
+		// no retain, no cancellation, no release. The rcplan tables agree on
+		// both sides here (free_eligible_of is the ported analysis; the
+		// credit table is what diverges and it is not dumped), so this cell
+		// is the only instrument documenting the boundary.
+		leakCell{name: "tuple_mixed__callprod__alias_local", src: `function mk(i: i32): (i32, i32[]) { return (i, [i, i + 1]); }
+function round(i: i32): i32 {
+    var t: (i32, i32[]) = mk(i);
+    var v: (i32, i32[]) = t;
+    return v.0 + t.1.len();
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		// The tuple flavor of the same loop-scoped cancelled pair — the
+		// alias's shallow "TUP:" box dec is what the cancellation elides;
+		// the rebind store must not fire it either.
+		leakCell{name: "tuple_mixed__loop_local__alias_local", src: `function round(i: i32): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var p: (i32, i32[]) = (j, [i, j]);
+        var v: (i32, i32[]) = p;
+        t = (t + v.0 + p.1.len()) % 101;
+        j = j + 1;
+    }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
 		// The array flavor of the same loop-scoped cancelled pair — the
 		// #7455 limb's instance of the identical rebind double free.
 		leakCell{name: "arr_i32__loop_local__alias_local", src: `function round(i: i32): i32 {
