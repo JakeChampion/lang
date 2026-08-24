@@ -51,23 +51,6 @@ func TestSelfHostRcPlanDiff(t *testing.T) {
 		native   string // native's line value ("" = no line)
 		selfhost string // self-host's value
 	}
-	// PORT GAP: irlower's rc_fe_escape_owned still taints a source that an
-	// INC-ing sink RETAINS; native stopped (#7345), because the sink's dup is
-	// released by the container's deep drop and the source keeps a reference
-	// of its own. So a local stored into a struct literal or an array element
-	// is free-eligible on the native side only. Inert wherever the local also
-	// MOVES (a moved name is never swept, and both sides agree on
-	// movedLocals); a real reclaim where the move declines. These rows leave
-	// with the port.
-	// The lastUses table is computed over each side's OWN freeEligible set,
-	// so every one of these rows carries the same divergence one projection
-	// over: the natively-eligible-only name has a native-only last-use entry.
-	countedSinkSource := func(native, selfhost, luNative, luSelf string) map[string]divergence {
-		return map[string]divergence{
-			"freeEligible": {native: native, selfhost: selfhost},
-			"lastUses":     {native: luNative, selfhost: luSelf},
-		}
-	}
 	cases := []struct {
 		name string
 		src  string
@@ -602,10 +585,10 @@ function main(): i32 { return f(); }`,
 			// predicates read — the pure half consults the FULL moved set so
 			// both sides refuse the cancellation (movedLocals anchors the
 			// gate's premise). Native then retains the excluded alias; the
-			// self-host never granted that retain — a loop-body struct
-			// escaping into an append is never credited (freeEligible shows
-			// only vals), and the retain is co-extensive with the credit.
-			// The divergences predate the cancellation.
+			// self-host never granted that retain — the aliasBindIncs /
+			// nestedDrops divergences predate the cancellation and are the
+			// retain-plan port gap (freeEligible agrees: the counted append
+			// keeps p eligible per #7345; the EMITTED credit still refuses).
 			name: "dead-alias-struct-loop-body-moved-source-excluded",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {
@@ -622,12 +605,10 @@ function f(): i32 {
 	return n + vals.len();
 }
 function main(): i32 { return f(); }`,
-			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22"}},
+			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22", "freeEligible": "p,v,vals", "lastUses": "p=3,v=3,vals=4"}},
 			diverge: map[string]map[string]divergence{
 				"f": {
 					"aliasBindIncs": {native: "8:3=v", selfhost: ""},
-					"freeEligible":  {native: "p,v,vals", selfhost: "vals"},
-					"lastUses":      {native: "p=3,v=3,vals=4", selfhost: "vals=4"},
 					"nestedDrops":   {native: "9:5=v", selfhost: ""},
 				},
 			},
@@ -688,10 +669,10 @@ function w(): i32 {
 	return s.items[0];
 }
 function main(): i32 { return w(); }`,
-			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}}, // moveSites agreement-checked (ident col)
-			diverge: map[string]map[string]divergence{
-				"w": countedSinkSource("s,x", "s", "s=2,x=1", "s=2"),
-			},
+			// moveSites agreement-checked (ident col); freeEligible keeps the
+			// counted source: the field-init inc is released by the struct's
+			// field-drop, so `x` retains a reference of its own (#7345).
+			anchor: map[string]map[string]string{"w": {"movedLocals": "x", "freeEligible": "s,x", "lastUses": "s=2,x=1"}},
 		},
 		{
 			// ARRAY-STORE MOVE (#6535, native #6532): `xs.append(v)` stores the
@@ -708,10 +689,7 @@ function w(): i32 {
 	return xs[0].items[0];
 }
 function main(): i32 { return w(); }`,
-			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}}, // moveSites agreement-checked (ident col)
-			diverge: map[string]map[string]divergence{
-				"w": countedSinkSource("v,xs", "xs", "v=2,xs=3", "xs=3"),
-			},
+			anchor: map[string]map[string]string{"w": {"movedLocals": "v", "freeEligible": "v,xs", "lastUses": "v=2,xs=3"}}, // moveSites agreement-checked (ident col)
 		},
 		{
 			// The SAME store one level down, inside a struct literal's field —
@@ -729,10 +707,7 @@ function w(): i32 {
 	return d.vals[0].items[1];
 }
 function main(): i32 { return w(); }`,
-			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}},
-			diverge: map[string]map[string]divergence{
-				"w": countedSinkSource("d,v", "d", "d=3,v=2", "d=3"),
-			},
+			anchor: map[string]map[string]string{"w": {"movedLocals": "v", "freeEligible": "d,v", "lastUses": "d=3,v=2"}},
 		},
 		{
 			// LOOP-BODY MOVE, no early exit — the control the three rows below
@@ -751,10 +726,7 @@ function build(n: i32): i32 {
 	return total;
 }
 function main(): i32 { return build(3); }`,
-			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
-			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
-			},
+			anchor: map[string]map[string]string{"build": {"movedLocals": "v", "freeEligible": "v,vals", "lastUses": "v=2,vals=2"}},
 		},
 		{
 			// The early exit sits AFTER the push, so it cannot leave the body
@@ -774,10 +746,7 @@ function build(n: i32): i32 {
 	return total;
 }
 function main(): i32 { return build(3); }`,
-			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
-			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
-			},
+			anchor: map[string]map[string]string{"build": {"movedLocals": "v", "freeEligible": "v,vals", "lastUses": "v=2,vals=2"}},
 		},
 		{
 			// The guard clause every parser is built out of: the exit precedes
@@ -796,10 +765,7 @@ function build(n: i32): i32 {
 	return total;
 }
 function main(): i32 { return build(3); }`,
-			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
-			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
-			},
+			anchor: map[string]map[string]string{"build": {"movedLocals": "v", "freeEligible": "v,vals", "lastUses": "v=2,vals=2"}},
 		},
 		{
 			// The direction that is UNSOUND to get wrong: `?` returns the
@@ -827,13 +793,11 @@ function build(n: i32): Option[i32] {
 	return Some(total);
 }
 function main(): i32 { match (build(3)) { Some(v) => { return v; }, None => { return 0; } } }`,
-			anchor: map[string]map[string]string{"build": {"movedLocals": ""}},
-			// The move DECLINES here, so native's untainted `v` is a real
-			// per-iteration reclaim the self-host still misses, not an inert
-			// bookkeeping difference.
-			diverge: map[string]map[string]divergence{
-				"build": countedSinkSource("v,vals", "vals", "v=2,vals=2", "vals=2"),
-			},
+			// The move DECLINES here, so `v`'s eligibility is a real
+			// per-iteration reclaim, not inert bookkeeping — the plan grants
+			// it; the EMITTED sweep still rides the credit table until the
+			// plan promotion routes releases through freeEligible.
+			anchor: map[string]map[string]string{"build": {"movedLocals": "", "freeEligible": "v,vals", "lastUses": "v=2,vals=2"}},
 		},
 		{
 			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last
