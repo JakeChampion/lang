@@ -1197,15 +1197,16 @@ pub function (s: string) count_chars_in(set: string): i32 {
     return c;
 }
 
-// `s.split_at(i)` — split s into two parts at byte index i.
-// Returns a (string, string) tuple. Negative i clamps to 0;
-// i >= len(s) puts everything in the first part.
+// `s.split_at(i)` — split s into two parts at byte index i,
+// snapped BACKWARD to a char boundary when i lands inside a
+// code point (#5634, D9), so neither part ever holds a split
+// character and the parts always concatenate back to s.
+// Negative i clamps to 0; i >= len(s) puts everything in the
+// first part. Returns a (string, string) tuple.
 pub function (s: string) split_at(i: i32): (string, string) {
     var n: i32 = s.len();
-    var k: i32 = i;
-    if (k < 0) { k = 0; }
-    if (k > n) { k = n; }
-    return (s[0:k].to_owned(), s[k:n].to_owned());
+    var k: i32 = __floor_boundary(s, i);
+    return (slice_unchecked(s, 0, k).to_owned(), slice_unchecked(s, k, n).to_owned());
 }
 
 // `s.replace_byte(from, to)` — return a copy of s with every
@@ -1929,23 +1930,55 @@ pub function (s: string) last(): Option[i32] {
     return Some((s[n - 1] as i32));
 }
 
-// `s.take(n)` / `s.drop(n)` — prefix and suffix slicing
-// with bounds clamping. take(big) returns the whole string;
-// drop(big) returns empty. take(neg) / drop(neg) treat
-// the count as 0. Saves the `s[0:min(n, len(s))]` /
-// `s[min(n, len(s)):len(s)]` boilerplate at every call site.
+// __floor_boundary / __ceil_boundary — clamp i to [0, len] and
+// snap it to the nearest char boundary (backward / forward).
+// The probe (`byte < 128 || byte >= 192`) is inlined because
+// std/utf8 imports this module.
+function __floor_boundary(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    var k: i32 = i;
+    if (k < 0) { k = 0; }
+    if (k > n) { k = n; }
+    while (k > 0 && k < n) {
+        var c: i32 = s[k] as i32;
+        if (c < 128 || c >= 192) { break; }
+        k = k - 1;
+    }
+    return k;
+}
+
+function __ceil_boundary(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    var k: i32 = i;
+    if (k < 0) { k = 0; }
+    if (k > n) { k = n; }
+    while (k < n) {
+        var c: i32 = s[k] as i32;
+        if (c < 128 || c >= 192) { break; }
+        k = k + 1;
+    }
+    return k;
+}
+
+// `s.take(n)` / `s.drop(n)` — prefix and suffix with bounds
+// clamping, and a byte count landing inside a code point snaps
+// BACKWARD to the boundary (#5634, D9) — so neither half ever
+// splits a character, and `s.take(n) + s.drop(n) == s` holds for
+// every n. take(big) returns the whole string; drop(big) returns
+// empty; a negative count is treated as 0. On boundary counts —
+// hence all ASCII — both are exactly the old byte slices.
 pub function (s: string) take(n: i32): str {
     if (n <= 0) { return ""; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return s; }
-    return s[0:n];
+    return slice_unchecked(s, 0, __floor_boundary(s, n));
 }
 
 pub function (s: string) drop(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return s[n:sLen];
+    return slice_unchecked(s, __floor_boundary(s, n), sLen);
 }
 
 // `s.slice_snap(a, b)` — total byte slicing that cannot split a
@@ -1954,37 +1987,23 @@ pub function (s: string) drop(n: i32): str {
 // forward, `b` backward), so the result never includes bytes
 // outside [a:b) and is identical to `s[a:b]` whenever both
 // indices already sit on boundaries — hence on all ASCII input.
-// An inverted or snapped-empty range returns "". The boundary
-// probe (`byte < 128 || byte >= 192`) is inlined rather than
-// imported: std/utf8 imports this module, so its
-// ceil/floor_char_boundary helpers cannot be used here.
+// An inverted or snapped-empty range returns "".
 pub function (s: string) slice_snap(a: i32, b: i32): str {
-    var n: i32 = s.len();
-    var lo: i32 = a;
-    if (lo < 0) { lo = 0; }
-    if (lo > n) { lo = n; }
-    var hi: i32 = b;
-    if (hi < 0) { hi = 0; }
-    if (hi > n) { hi = n; }
-    while (lo < n) {
-        var cl: i32 = s[lo] as i32;
-        if (cl < 128 || cl >= 192) { break; }
-        lo = lo + 1;
-    }
-    while (hi > 0 && hi < n) {
-        var ch: i32 = s[hi] as i32;
-        if (ch < 128 || ch >= 192) { break; }
-        hi = hi - 1;
-    }
+    var lo: i32 = __ceil_boundary(s, a);
+    var hi: i32 = __floor_boundary(s, b);
     if (lo >= hi) { return ""; }
     return slice_unchecked(s, lo, hi);
 }
 
-// `s.chunks(size)` — split into consecutive size-byte
-// chunks. The last chunk may be shorter. size <= 0 returns
-// an array containing just s (or empty if s is empty).
-// Useful for base64 line-wrapping, hex-dump formatting,
-// paged output.
+// `s.chunks(size)` — split into consecutive chunks of at most
+// `size` bytes, with each cut snapped BACKWARD to a char
+// boundary so no chunk ends in a split code point (#5634, D9).
+// A chunk grows past `size` only when a single code point is
+// wider than the whole window (size < 4), which guarantees
+// progress. The last chunk may be shorter; on ASCII every chunk
+// is exactly `size` bytes. size <= 0 returns an array containing
+// just s (or empty if s is empty). Useful for base64
+// line-wrapping, hex-dump formatting, paged output.
 pub function (s: string) chunks(size: i32): string[] {
     var sLen: i32 = s.len();
     var out: string[] = [];
@@ -1994,7 +2013,11 @@ pub function (s: string) chunks(size: i32): string[] {
     while (i < sLen) {
         var end: i32 = i + size;
         if (end > sLen) { end = sLen; }
-        out = out.append(s[i:end]);
+        else {
+            end = __floor_boundary(s, end);
+            if (end <= i) { end = __ceil_boundary(s, i + size); }
+        }
+        out = out.append(slice_unchecked(s, i, end));
         i = end;
     }
     return out;
@@ -2417,25 +2440,27 @@ pub function (s: string) reverse_words(): string {
     return words.reverse().join(" ");
 }
 
-// `s.truncate(n, ellipsis)` — if len(s) > n, return the first
-// (n - len(ellipsis)) bytes followed by `ellipsis`. If
-// len(s) <= n, return s unchanged. If n is smaller than the
-// ellipsis itself, just hard-truncate s to n bytes (the
-// ellipsis would otherwise overflow). A non-positive cap yields
-// "" (guarded like the `ellipsis` sibling — otherwise a negative
-// n would fall through to `s[0:n]`, a negative slice bound).
+// `s.truncate(n, ellipsis)` — if len(s) > n, return at most
+// (n - len(ellipsis)) leading bytes followed by `ellipsis`,
+// with the cut snapped BACKWARD to a char boundary so the kept
+// prefix never ends in a split code point (#5634, D9) — the
+// result can therefore be a few bytes shorter than n, never
+// longer. If len(s) <= n, return s unchanged. If n is smaller
+// than the ellipsis itself, just hard-truncate s to (at most) n
+// bytes. A non-positive cap yields "".
 pub function (s: string) truncate(n: i32, ellipsis: string): string {
     if (n <= 0) { return ""; }
     var sLen: i32 = s.len();
     if (sLen <= n) { return s; }
     var eLen: i32 = ellipsis.len();
-    if (n <= eLen) { return s[0:n].to_owned(); }
-    return s[0:n - eLen] + ellipsis;
+    if (n <= eLen) { return s.slice_snap(0, n).to_owned(); }
+    return s.slice_snap(0, n - eLen) + ellipsis;
 }
 
 // `s.ellipsis(n)` — fit s into n bytes, marking truncation
 // with "...". When len(s) <= n, returns s unchanged.
-// Otherwise: if n >= 3, return the first (n-3) bytes
+// Otherwise: if n >= 3, return at most the first (n-3) bytes —
+// the cut snapped backward to a char boundary (#5634, D9) —
 // followed by "..." (so an n=3 cap on a long string is just
 // "..." — different from `truncate(3, "...")` which would
 // hard-truncate the source). If n < 3, return the first n
@@ -2444,10 +2469,10 @@ pub function (s: string) ellipsis(n: i32): string {
     if (s.len() <= n) { return s; }
     if (n < 3) {
         if (n <= 0) { return ""; }
-        return "..."[0:n].to_owned();
+        return slice_unchecked("...", 0, n).to_owned();
     }
     if (n == 3) { return "..."; }
-    return s[0:n - 3] + "...";
+    return s.slice_snap(0, n - 3) + "...";
 }
 
 // `s.first_line()` — Option[string] containing the prefix
