@@ -111,6 +111,14 @@ function test_short_lone_dash_is_positional(): test.TestOutcome {
     return test.assert_true(a.operands().len() == 1 && !a.is_error());
 }
 
+// -é : a multibyte character in a short cluster is an unknown flag, and
+// the error names the whole character rather than a split byte.
+function test_short_multibyte_unknown(): test.TestOutcome {
+    var a: cli.CliArgs = spec().parse(["greet", "-é"]);
+    if (!a.is_error()) { return test.fail("expected an unknown-option error"); }
+    return test.assert_eq(a.error_text(), "unknown option -é");
+}
+
 // ---- ANSI colour helpers (env-robust: assert per cli_color_enabled) ----
 
 // A coloriser wraps text in an SGR sequence when colour is on, and
@@ -150,6 +158,7 @@ function main(): i32 {
     r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued);
     r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value);
     r = r.it("lone dash is positional", test_short_lone_dash_is_positional);
+    r = r.it("multibyte short flag unknown", test_short_multibyte_unknown);
     r = r.it("colour red wraps or passes", test_color_red);
     r = r.it("colour bold wraps or passes", test_color_bold);
     return r.finish();

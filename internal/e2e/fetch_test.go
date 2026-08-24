@@ -224,3 +224,50 @@ function main(): i32 {
 		})
 	}
 }
+
+// get_url must reject a URL whose scheme bytes are not exactly
+// "http://" — including a multibyte look-alike lead byte — before any
+// network I/O happens. No upstream server: every case must return "".
+func TestFetchGetURLBadScheme(t *testing.T) {
+	bin := buildFernCLI(t)
+
+	src := `import "std/fetch";
+
+function main(): i32 {
+    // Cyrillic н look-alike scheme, a too-short string, a near-miss.
+    if (fetch.get_url("нttp://1.2.3.4/") != "") { return 1; }
+    if (fetch.get_url("htt") != "") { return 2; }
+    if (fetch.get_url("http:/1.2.3.4/") != "") { return 3; }
+    return 42;
+}`
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "geturl_badscheme.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64-linux", x86QemuOrEmpty, runX86Bin},
+		{"arm64-linux", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			out := filepath.Join(dir, be.target+"_geturl_badscheme.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: bad-scheme exit = %d, want 42", be.target, code)
+			}
+		})
+	}
+}

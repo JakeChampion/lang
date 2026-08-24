@@ -17,6 +17,10 @@
 // format_duration_ms). Declare std/i32 so those methods
 // register under no-prelude.
 import "std/i32";
+// `.slice_snap` for precision truncation, `utf8_decode_at` for the
+// (possibly multibyte) fill character in a format spec.
+import "std/string";
+import "std/utf8" as utf8;
 // The `Display` bound on format_values / format1..format4, and the
 // primitive impls that let an i32 / f64 / boolean be passed raw.
 import "core/cmp" as cmp;
@@ -197,14 +201,20 @@ function __format_apply_spec(s: string, spec: string): string {
     if (spec.len() == 0) { return s; }
     var m: i32 = spec.len();
     var p: i32 = 1; // skip the leading ':'
-    // [fill]align — a fill char only counts when an align char (`<>^`)
-    // follows it; a bare align char takes the default space fill.
+    // [fill]align — a fill char (a whole code point, possibly multibyte)
+    // only counts when an align char (`<>^`) follows it; a bare align
+    // char takes the default space fill.
     var fill: str = " ";
     var align: i32 = 1; // 1=left, 2=right, 3=center; strings default left.
-    if (p + 1 < m && __is_align((spec[p + 1] as i32))) {
-        fill = spec[p:p + 1];
-        align = __align_code((spec[p + 1] as i32));
-        p = p + 2;
+    var fw: i32 = 1; // byte width of the candidate fill char
+    match (utf8.utf8_decode_at(spec, p)) {
+        Some(pair) => { fw = pair.1; },
+        None => {}
+    }
+    if (p + fw < m && __is_align((spec[p + fw] as i32))) {
+        fill = slice_unchecked(spec, p, p + fw); // bounds from utf8_decode_at
+        align = __align_code((spec[p + fw] as i32));
+        p = p + fw + 1;
     } else if (p < m && __is_align((spec[p] as i32))) {
         align = __align_code((spec[p] as i32));
         p = p + 1;
@@ -226,7 +236,8 @@ function __format_apply_spec(s: string, spec: string): string {
         width = width * 10 + ((spec[p] as i32) - 48);
         p = p + 1;
     }
-    // .precision — fractional digits on a decimal numeral, byte length on
+    // .precision — fractional digits on a decimal numeral, max byte length
+    // (snapped back to a char boundary, so a code point is never split) on
     // anything else. Same "does it look like a number" split the sign flag
     // below uses: `format` sees only the stringified value, so the shape of
     // the digits is the only signal for which meaning was intended.
@@ -238,8 +249,9 @@ function __format_apply_spec(s: string, spec: string): string {
             prec = prec * 10 + ((spec[p] as i32) - 48);
             p = p + 1;
         }
+        // slice_snap: at most `prec` bytes, never a split code point.
         if (__is_decimal_numeral(val)) { val = __round_to_places(val, prec); }
-        else if (val.len() > prec) { val = val[0:prec].to_owned(); }
+        else if (val.len() > prec) { val = val.slice_snap(0, prec).to_owned(); }
     }
     // sign flag — prefix `+` on a value that looks like a non-negative
     // number (first byte a digit). A value already carrying `-`/`+`,

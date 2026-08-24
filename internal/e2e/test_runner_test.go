@@ -202,7 +202,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 41", "# fail 0", "1..41"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 43", "# fail 0", "1..43"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -221,7 +221,7 @@ func TestRunnerCmpHelpersExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: core/cmp helpers", "# pass 18", "# fail 0", "1..18"} {
+	for _, w := range []string{"# Suite: core/cmp helpers", "# pass 19", "# fail 0", "1..19"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -818,7 +818,7 @@ func TestRunnerTimeHttpDateExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/time http-date", "# pass 11", "# fail 0", "1..11"} {
+	for _, w := range []string{"# Suite: std/time http-date", "# pass 12", "# fail 0", "1..12"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -868,7 +868,7 @@ func TestRunnerJsonRoundtripExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 27", "# fail 0", "1..27"} {
+	for _, w := range []string{"# Suite: std/json roundtrip", "# pass 28", "# fail 0", "1..28"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -887,7 +887,7 @@ func TestRunnerJsonPointerExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/json pointer", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: std/json pointer", "# pass 11", "# fail 0", "1..11"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -967,7 +967,7 @@ func TestRunnerCliExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/cli", "# pass 18", "# fail 0", "1..18"} {
+	for _, w := range []string{"# Suite: std/cli", "# pass 19", "# fail 0", "1..19"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

@@ -637,7 +637,9 @@ pub function (i: Instant) format_http_date(): string {
 // it isn't one. Case-sensitive (IMF-fixdate is `Nov`, not `NOV`).
 function __month_from_short(s: string, start: i32): i32 {
     if (start + 3 > s.len()) { return -1; }
-    var m: str = s[start : start + 3];
+    // slice_snap: a multibyte sequence in the month field yields a
+    // snapped (shorter) slice that matches no month name → -1.
+    var m: str = s.slice_snap(start, start + 3);
     if (m == "Jan") { return 1; }
     if (m == "Feb") { return 2; }
     if (m == "Mar") { return 3; }
