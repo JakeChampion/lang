@@ -584,11 +584,11 @@ function main(): i32 { return f(); }`,
 			// native's movedLocals but NOT in the top-level set the emitting
 			// predicates read — the pure half consults the FULL moved set so
 			// both sides refuse the cancellation (movedLocals anchors the
-			// gate's premise). Native then retains the excluded alias; the
-			// self-host never granted that retain — the aliasBindIncs /
-			// nestedDrops divergences predate the cancellation and are the
-			// retain-plan port gap (freeEligible agrees: the counted append
-			// keeps p eligible per #7345; the EMITTED credit still refuses).
+			// gate's premise). Both sides then retain the excluded alias —
+			// the struct routing made the emitted credit follow the plan's
+			// counted-append forgiveness (#7345), converging aliasBindIncs.
+			// nestedDrops stays the known placement divergence: the
+			// self-host releases at the sweep, not the nested last use.
 			name: "dead-alias-struct-loop-body-moved-source-excluded",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {
@@ -605,11 +605,10 @@ function f(): i32 {
 	return n + vals.len();
 }
 function main(): i32 { return f(); }`,
-			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22", "freeEligible": "p,v,vals", "lastUses": "p=3,v=3,vals=4"}},
+			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22", "freeEligible": "p,v,vals", "lastUses": "p=3,v=3,vals=4", "aliasBindIncs": "8:3=v"}},
 			diverge: map[string]map[string]divergence{
 				"f": {
-					"aliasBindIncs": {native: "8:3=v", selfhost: ""},
-					"nestedDrops":   {native: "9:5=v", selfhost: ""},
+					"nestedDrops": {native: "9:5=v", selfhost: ""},
 				},
 			},
 		},

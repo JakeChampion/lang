@@ -181,18 +181,21 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 		{
 			// THE ROW THAT CARRIES THE MOST WEIGHT. 161 of the 173 struct alias
 			// binds in examples/self_host are PARAMETER-origin — 93% — so the
-			// refusal, not the credit, is what this change mostly does. A parameter
-			// is borrowed and owns nothing, and slot_is_reclaimable_struct refuses
-			// one at its first line. frees=0 is the status quo (t escapes into the
-			// call); the failure guarded against is that count staying 0 while the
-			// caller's box stops reaching zero.
+			// CALLEE-side refusal is what this row pins: a parameter is borrowed
+			// and owns nothing, and slot_is_reclaimable_struct refuses one at its
+			// first line, so `var v: P = p` inside take neither retains nor
+			// releases. The CALLER's sweep is the half that moved: the plan does
+			// not taint a plain call arg (struct routing wave), so t is swept in
+			// round and the cell is clean. The failure guarded against is the
+			// callee alias gaining a retain or release while the param owns
+			// nothing — that shows up here as an underflow or a count drift.
 			name: "struct_alias_of_a_parameter_refused",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
 function take(p: P): i32 { var v: P = p; return v.xs[0]; }
 function round(i: i32): i32 { var t: P = mk(i); return take(t) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 23, allocs: 200, frees: 0,
+			want: 23, allocs: 200, frees: 200,
 		},
 		{
 			// A RECEIVER source, which is a parameter by another spelling and is
@@ -276,29 +279,17 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 59, allocs: 100, frees: 100,
 		},
 		{
-			// The AS-PATTERN form of the same statement. It STILL LEAKS, and the
-			// name says so: this is an unfixed alias site, not a correct refusal.
-			//
-			// `w @ P { .. }` binds w to the whole scrutinee, so by the rule that
-			// governs every other row here it IS an alias site. It is not credited
-			// because build_struct_match caches the scrutinee first —
+			// The AS-PATTERN form of the same statement. `w @ P { .. }` binds w
+			// to the whole scrutinee via build_struct_match's scrutinee cache —
 			//     var __sm.._v = p;      <- alias level 1
 			//     var w = __sm.._v;      <- alias level 2
-			// — which makes it the second link of an ALIAS CHAIN, and chains are
-			// conservatively refused (struct_alias_chain_refused, same numbers).
-			// The middle binding escapes as a bare ident, so p loses its credit
-			// too: that is why adding `@` to a plain destructure SUPPRESSES the
-			// plain one's fix rather than merely failing to add its own.
-			//
-			// Measured against hand-written analogues, which match exactly:
-			//   one level  (`var t = p`)              100/0 -> 100/100
-			//   two levels (`var t = p; var w = t;`)  100/0 -> 100/0
-			// and `w` bound but NEVER USED is also 100/0, so it is the binding
-			// that costs the credit, not any use of w.
-			//
-			// Fixing the alias chain fixes this shape for free — they are one
-			// limitation, not two.
-			name: "struct_as_pattern_binder_leaks",
+			// — an ALIAS CHAIN, which the credit-side escape gate refused
+			// conservatively (this row measured 100/0 then). The plan's verdict
+			// (struct routing wave) forgives the chain for this SCALAR-ONLY
+			// struct and the cell is clean; the rc-FIELD chain is still refused
+			// (struct_alias_chain_refused above holds at 200/0), so the chain
+			// limitation persists exactly where a field buffer is at stake.
+			name: "struct_as_pattern_binder",
 			src: `struct P { x: i32, y: i32 }
 function round(i: i32): i32 {
     var total: i32 = 0;
@@ -307,7 +298,7 @@ function round(i: i32): i32 {
     return total;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 59, allocs: 100, frees: 0,
+			want: 59, allocs: 100, frees: 100,
 		},
 		{
 			// THE #7368 REGRESSION GUARD, and it is verified to fire rather than

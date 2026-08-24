@@ -13806,6 +13806,15 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             || sa.is_enum_field_alias(eid.name)) {
                             sa = sa.retain_tos("arrlit-elem");
                         }
+                        // A struct-CREDITED element: the plan's counted-sink
+                        // forgiveness assumes this store retains (the same
+                        // contract as the append arm). Gated on the credit,
+                        // never the type — co-extensive in both switch
+                        // positions; the element slot goes box-only (NODEEP
+                        // via struct_box_sink_stored).
+                        else if (slot_is_reclaimable_struct(sa, sa.slot_of(eid.name))) {
+                            sa = sa.retain_tos("arrlit-struct-elem");
+                        }
                     },
                     // A DIRECT ENUM field read (`[first.node]`) aliases the source
                     // struct's enum box, which __struct_drop_<T>'s k_enum arm decs on
@@ -13874,6 +13883,13 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     parser.ExprIdent(teid) => {
                         if (ts.slot_is_rc_container(ts.slot_of(teid.name))) {
                             ts = ts.retain_tos("tuplit-elem");
+                        }
+                        // Struct-CREDITED element: same counted-sink contract
+                        // as the array-literal arm — the plan forgives the
+                        // store because it retains. Credit-gated, box-only
+                        // release via struct_box_sink_stored.
+                        else if (slot_is_reclaimable_struct(ts, ts.slot_of(teid.name))) {
+                            ts = ts.retain_tos("tuplit-struct-elem");
                         }
                     },
                     _ => {}
@@ -20403,6 +20419,17 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                     // co-extensive in both switch positions.
                                     else if (apelslot >= 0 && slot_credit_at(s, apelslot, "SCENUMS:")) {
                                         aps = aps.retain(apelslot, "append-scenum-arg");
+                                    }
+                                    // A struct-credited local appended: the same
+                                    // counted-sink contract as the SCENUMS arm —
+                                    // the plan keeps a container-stored struct
+                                    // eligible because the store retains, so the
+                                    // store must retain. Gated on the CREDIT
+                                    // (slot_is_reclaimable_struct is the credit
+                                    // lookup), so retain and release stay
+                                    // co-extensive in both switch positions.
+                                    else if (apelslot >= 0 && slot_is_reclaimable_struct(s, apelslot)) {
+                                        aps = aps.retain(apelslot, "append-struct-arg");
                                     }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
@@ -32275,6 +32302,129 @@ function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]
     for stmt in stmts { if (moves_fields_stmt(stmt, name, nomove)) { return true; } }
     return false;
 }
+
+// struct_box_sink_stored: `name`'s WHOLE BOX appears as a local counted-sink
+// element — an append/with arg, an array / tuple / struct-literal element (or
+// functional-update base), or a variant-ctor payload. The plan's counted-sink
+// forgiveness keeps such a name eligible because the store retains, so the
+// box's rc arbitrates — but the struct deep field walk does not: the rebind
+// __field_reclaim and the exit sweep walk fields unconditionally, freeing a
+// buffer the container still reaches (measured as an rc underflow on the
+// append-rebind probe). Box-only is the shared box's sound release role; the
+// container's own deep free drops the fields exactly once. Field-move
+// detection (moves_fields_* / optstruct_body_moves_field) cannot see this
+// shape: a bare ident is a leaf there, and before the plan routing an escape
+// gate refused every container-stored name so the case was unreachable.
+function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var sink: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if ((fa.field == "append" && c.args.len() == 1) || (fa.field == "with" && c.args.len() == 2)) { sink = true; }
+                    if (struct_box_sink_stored_expr(fa.obj, name, structs)) { return true; }
+                },
+                parser.ExprIdent(cid) => {
+                    if (variant_enum_owner(structs, cid.name).len() > 0) { sink = true; }
+                },
+                _ => {}
+            }
+            for arg in c.args {
+                if (sink) {
+                    match (arg) {
+                        parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },
+                        _ => {}
+                    }
+                }
+                if (struct_box_sink_stored_expr(arg, name, structs)) { return true; }
+            }
+            return false;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                match (a.elements[i]) {
+                    parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
+                    _ => { if (struct_box_sink_stored_expr(a.elements[i], name, structs)) { return true; } }
+                }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                match (t.elements[i]) {
+                    parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
+                    _ => { if (struct_box_sink_stored_expr(t.elements[i], name, structs)) { return true; } }
+                }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) {
+                match (sl.base) {
+                    parser.ExprIdent(bid) => { if (bid.name == name) { return true; } },
+                    _ => { if (struct_box_sink_stored_expr(sl.base, name, structs)) { return true; } }
+                }
+            }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                match (sl.field_values[i]) {
+                    parser.ExprIdent(fid) => { if (fid.name == name) { return true; } },
+                    _ => { if (struct_box_sink_stored_expr(sl.field_values[i], name, structs)) { return true; } }
+                }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprBinary(b) => { return struct_box_sink_stored_expr(b.left, name, structs) || struct_box_sink_stored_expr(b.right, name, structs); },
+        parser.ExprUnary(u) => { return struct_box_sink_stored_expr(u.operand, name, structs); },
+        parser.ExprIndex(ix) => { return struct_box_sink_stored_expr(ix.array, name, structs) || struct_box_sink_stored_expr(ix.index, name, structs); },
+        parser.ExprFieldAccess(fa2) => { return struct_box_sink_stored_expr(fa2.obj, name, structs); },
+        parser.ExprLambda(lm) => { return struct_box_sink_stored_stmts(lm.body, name, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs)) { return true; } },
+            parser.StmtIf(f) => {
+                if (struct_box_sink_stored_expr(f.cond, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(f.then_body, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (struct_box_sink_stored_expr(w.cond, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(w.body, name, structs)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (struct_box_sink_stored_expr(fo.iter, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(fo.body, name, structs)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (struct_box_sink_stored_expr(m.scrutinee, name, structs)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs)) { return true; }
+                    if (struct_box_sink_stored_stmts(arm.body, name, structs)) { return true; }
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (struct_box_sink_stored_stmts(one, name, structs)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
 function moves_fields_stmt(st: parser.Stmt, name: string, nomove: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => { return moves_fields_expr(v.init, name, nomove); },
@@ -32751,7 +32901,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // input, so on INT_MIN the slot held 0x80000000: non-zero, even, above
         // 0x10000, past every __fern_rc_inc guard, dereferencing 0x7FFFFFF8.
         var sal: string[] = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, []);
-        if (!body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal) && !reassigned_from_alias(body, fnm)
+        // Step-2 routing, struct family: the ESCAPE conjunct is the plan's
+        // per-site verdict (free_eligible_sites_of; the alias forgiveness is
+        // the plan's own #7282 arithmetic, sound because the struct alias
+        // bind retains — credit-keyed at lower_stmt_var's ExprIdent arm, so
+        // the pair stays co-extensive by construction). The other conjuncts
+        // are family knowledge the plan does not carry: the alias-rebind
+        // borrow flag and the receiver-handed-back gates.
+        var st_esc_ok: boolean = false;
+        if (plan_on) { st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0; }
+        else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
+        if (st_esc_ok && !reassigned_from_alias(body, fnm)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
             && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
             out = out.append(fresh[i]);
@@ -32831,6 +32991,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // that polarity matters. Only when the local's struct type is known, so an
         // untyped local keeps its prior verdict exactly.
         if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, mvnmk, mvsty, structs, borrowable)) { mv_moves = true; }
+        // A WHOLE-BOX counted-sink store (plan routing makes it creditable):
+        // the container co-owns the box, so this slot's release role is
+        // box-only — see struct_box_sink_stored's header.
+        if (!mv_moves && struct_box_sink_stored_stmts(body, mvnmk, structs)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
         // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
         // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
