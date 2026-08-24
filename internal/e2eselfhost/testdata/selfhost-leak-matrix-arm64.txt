@@ -102,6 +102,9 @@ opt_arr__rebind__unused                       clean  leak   rebound Option[i32[]
 opt_arr__rebind__match                        clean  clean  clean on both sides
 opt_arr__shadow_siblings__unused              clean  clean  clean on both sides
 opt_arr__shadow_siblings__match               clean  clean  clean on both sides
+opt_arr__callarg__read                        clean  clean  plan-routed escape gate: a call arg is no longer an escape (native parity), the fresh option earns its sweep
+opt_str__callarg__read                        clean  leak   plan grants but the sweep stays refused elsewhere in the family; safe floor (exits match native, no underflow)
+opt_aarr__callarg__read                       clean  clean  plan-routed: the option-array call arg keeps its deep reclaim
 arr_i32__fnscope__alias_local                 clean  clean  clean on both sides
 arr_i32__if_block__alias_local                clean  clean  clean on both sides
 arr_i32__loop_local__alias_local              clean  clean  clean on both sides
