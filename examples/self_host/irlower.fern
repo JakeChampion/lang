@@ -20346,6 +20346,18 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                     else if (apelslot >= 0 && s.is_enum_field_alias(apel.name)) {
                                         aps = aps.retain(apelslot, "append-enum-alias-arg");
                                     }
+                                    // A SCENUMS-credited scalar-enum local appended:
+                                    // the plan's counted-sink forgiveness grants the
+                                    // rebind/sweep release for a container-stored
+                                    // enum, so the store must hold a counted
+                                    // reference or the rebind frees a box the array
+                                    // still reads (#6127's hazard, re-armed by the
+                                    // step-2 routing). Gated on the slot's CREDIT,
+                                    // never its type — retain and release stay
+                                    // co-extensive in both switch positions.
+                                    else if (apelslot >= 0 && slot_credit_at(s, apelslot, "SCENUMS:")) {
+                                        aps = aps.retain(apelslot, "append-scenum-arg");
+                                    }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
                                 // escapes the same way, against the k_enum dec of the
