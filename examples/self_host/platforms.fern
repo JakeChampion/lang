@@ -272,6 +272,7 @@ pub function gated_builtins(): Gate[] {
 pub function core_builtins(): string[] {
     return ["exit", "isatty",
             "map_new", "cell_new", "string_from_bytes_unchecked",
+            "slice_unchecked",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop"];
