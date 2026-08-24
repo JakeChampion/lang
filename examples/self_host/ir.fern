@@ -567,8 +567,9 @@ pub function op_wasm_poll(): Op { return op0("wasm_poll"); }
 // tcp_* client primitives (the self-host twins of the native socket builtins).
 // `tcp_connect` [host_be, port] -> i32 connected fd (or -errno); host_be is the
 // IPv4 in network byte order packed into an i32. `tcp_send` [fd, str box] -> i32
-// bytes written (or -errno). `tcp_recv` [fd, max] -> a string box (data, len) of
-// up to `max` bytes; allocates. `tcp_close` [fd] -> i32 0/-errno. `tcp_pollable`
+// bytes written (or -errno). `tcp_recv` [fd, max] -> a fresh `u8[]` box of up
+// to `max` bytes (empty on EOF/error), like `random_bytes` and
+// `read_file_bytes`; allocates. `tcp_close` [fd] -> i32 0/-errno. `tcp_pollable`
 // [fd] -> i32: the readiness token (the fd itself on native). All lower to the
 // matching __fern_tcp_* runtime helper. See docs/ASYNC-SELFHOST-IR.md.
 pub function op_tcp_connect(): Op { return op0("tcp_connect"); }

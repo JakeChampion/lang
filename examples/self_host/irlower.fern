@@ -5737,6 +5737,8 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "__alloc_u8") { return true; }
                     // `random_bytes(n)` yields a fresh n-element u8[] (op_random_bytes).
                     if (cid.name == "random_bytes" && c.args.len() == 1) { return true; }
+                    // `tcp_recv(fd, max)` yields a fresh u8[] (op_tcp_recv).
+                    if (cid.name == "tcp_recv" && c.args.len() == 2) { return true; }
                     // `str_split(s, sep)` yields a fresh string[] (op_str_split).
                     if (cid.name == "str_split" && c.args.len() == 2) { return true; }
                     return s.is_arr_ret_fn(s.mod_fn_name(cid.name));
@@ -19323,6 +19325,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     if (fid.name == "__alloc_u8") { is_arr = true; }
                     // `random_bytes(n)` yields a fresh owned u8[] — same move.
                     else if (fid.name == "random_bytes" && cc.args.len() == 1) { is_arr = true; }
+                    // `tcp_recv(fd, max)` yields a fresh owned u8[] — same move.
+                    else if (fid.name == "tcp_recv" && cc.args.len() == 2) { is_arr = true; }
                     // `str_split(s, sep)` yields a fresh owned string[] — a
                     // move, track as array (is_strarr comes from expr_is_strarr).
                     else if (fid.name == "str_split" && cc.args.len() == 2) { is_arr = true; }
@@ -53226,6 +53230,9 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                     // random_bytes(n): same argument — a fresh rc=1 u8[] box
                     // whose only argument is a scalar byte count.
                     if (cid.name == "random_bytes") { return false; }
+                    // tcp_recv(fd, max): a fresh rc=1 u8[] box; both
+                    // arguments are scalars (fd, byte count).
+                    if (cid.name == "tcp_recv") { return false; }
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
