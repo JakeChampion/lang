@@ -728,7 +728,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-method-not-field-ok", "function main(): i32 { var s = \"abc\"; return s.len(); }\n", nil},
 		{"slice-low-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: str = s[\"x\":3]; return 0; }\n", []string{"E037"}},
 		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
-		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:3]; return 0; }\n", nil},
+		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: str = slice_unchecked(s, 1, 3); return 0; }\n", nil},
 		// `s[:]` is the full-range view (#6798 un-reserved it in the Go
 		// parser). Like every string slice since the #4813 P2 producer flip it
 		// yields `str`, so the sink is annotated `str` exactly as
@@ -883,7 +883,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"slice-non-array", "function main(): i32 { var x = 5; var y = x[1:2]; return 0; }\n", []string{"E037"}},
 		{"index-string-source-ok", "function main(): i32 { var s = \"ab\"; return s[0] as i32; }\n", nil},
 		{"slice-array-source-ok", "function main(): i32 { var a = [1, 2, 3, 4]; var b = a[1:3]; return b[0]; }\n", nil},
-		{"slice-string-source-ok", "function main(): i32 { var s = \"abcd\"; var t = s[1:3]; return t.len(); }\n", nil},
+		{"slice-string-source-ok", "function main(): i32 { var s = \"abcd\"; var t = slice_unchecked(s, 1, 3); return t.len(); }\n", nil},
 		{"match-variant-on-i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-variant-on-string", "enum E { A, B }\nfunction main(): i32 { var s: string = \"x\"; match (s) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-i32-wildcard-only-ok", "function main(): i32 { var n: i32 = 5; match (n) { _ => { return 0; } } }\n", nil},
@@ -1344,7 +1344,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e063-slice-local-bound", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-slice-of-param-ok", "function f(xs: i32[]): [i32] { return xs[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-slice-of-param-bound-ok", "function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"e063-string-slice-ok", "function f(s: string): str { return s[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-string-slice-ok", "function f(s: string): str { return slice_unchecked(s, 0, 2); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-return-owned-array-ok", "function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-slice-local-not-returned-ok", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s[0]; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E023 (unknown enum): an unknown-BASE generic annotation survives
@@ -1396,7 +1396,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-inferred-local", "function f(): str {\n    var s = \"hi\";\n    return s;\n}\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-str-binding-chase", "function f(): str {\n    var s: string = \"hello\";\n    var t: str = s;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-literal-ok", "function f(): str {\n    return \"hi\";\n}\nfunction main(): i32 { return 0; }\n", nil},
-		{"e065-param-slice-ok", "function f(p: string): str {\n    return p[0:2];\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-param-slice-ok", "function f(p: string): str {\n    return slice_unchecked(p, 0, 2);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-str-of-param-ok", "function f(p: str): str {\n    var t: str = p;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		// E032 (`use` binding-type inference): an un-annotated `use` whose
 		// callee has no signature (the E001 rides along) or whose last

@@ -40,7 +40,7 @@ import "std/string";
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function ww(pre: string): string { return pre + "-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment-a-very-wide-payload-segment"; }
 function (s: string) own2(): string { return s + ""; }
-function (s: string) view2(): str { return s[1:s.len()]; }
+function (s: string) view2(): str { return slice_unchecked(s, 1, s.len()); }
 `
 
 // sliceRecvHeap wraps a `round` body in the churn/heap-delta harness. The gate
@@ -84,7 +84,7 @@ var strSliceRecvBorrowCases = []struct {
 }{
 	// The shape that led here. 64000 before, 9600 after; the gate at 32768 is
 	// 2x under the leak and 3.4x over what remains.
-	{"str-slice-recv-source-method-improved", sliceRecvHeap(`return base[4:base.len()].own2().len();`), 0},
+	{"str-slice-recv-source-method-improved", sliceRecvHeap(`return slice_unchecked(base, 4, base.len()).own2().len();`), 0},
 	// CONTROL: no slice, already a borrow through the bare-ident receiver arm.
 	// Flat (0) on both sides — pins that widening the carve-out does not disturb
 	// the path that never needed it.
@@ -97,7 +97,7 @@ var strSliceRecvBorrowCases = []struct {
 	// slice outside a borrow position is an escape, so the key is absent.
 	{"str-slice-recv-returned-view-witness", sliceRecvPrelude + `function leak(pre: string): str {
     var base: string = w(pre);
-    return base[2:base.len()].view2();
+    return slice_unchecked(base, 2, base.len()).view2();
 }
 function main(): i32 {
     var i: i32 = 0;
@@ -118,7 +118,7 @@ function main(): i32 {
 	// both the view and the source are read afterwards and must survive.
 	{"str-slice-recv-view-method-live", sliceRecvPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var v: str = base[2:base.len()].view2();
+    var v: str = slice_unchecked(base, 2, base.len()).view2();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
@@ -132,7 +132,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// releasing nothing and reclaiming `base` at scope end must leave both intact.
 	{"str-slice-recv-owned-live", sliceRecvPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var c: string = base[4:base.len()].own2();
+    var c: string = slice_unchecked(base, 4, base.len()).own2();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");

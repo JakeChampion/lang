@@ -251,7 +251,7 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"arrpush", `function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.append(4); return a[3] + a.len(); }`},
 		{"arrpushloop", `function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a.len() * 10 + a[4]; }`},
 		{"arrslice", `function main(): i32 { var a: i32[] = [10, 20, 30, 40, 50]; var b = a[1:4]; return b.len() * 100 + b[0] + b[2]; }`},
-		{"strslice", `function main(): i32 { var s: string = "hello world"; var t = s[0:5]; return t.len() + s[6:11].len(); }`},
+		{"strslice", `function main(): i32 { var s: string = "hello world"; var t = slice_unchecked(s, 0, 5); return t.len() + slice_unchecked(s, 6, 11).len(); }`},
 		// string_from_bytes_unchecked over real irlower output (slice 16): a byte array ->
 		// string via str_from_bytes, which lifts to __ssa_arr_slice(bs, 0,
 		// bs.len()) — a full-array copy that IS the string (shared layout),

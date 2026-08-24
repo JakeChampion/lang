@@ -132,7 +132,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// observable, so unlike the two above this case does not fail when the rule is
 	// relaxed. It pins the contract, not a witnessed fault.
 	{"str-view-return-method-binding-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
-function (s: string) rest(): string { return s[2:s.len()]; }
+function (s: string) rest(): string { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
     var b: string = w(pre);
     var t: string = b.rest();

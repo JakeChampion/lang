@@ -104,12 +104,12 @@ func selfHostSliceBoundsCases() []struct {
 		{"arr-negative-low",
 			`function main(): i32 { var a: i32[] = [1, 2, 3]; var lo: i32 = 0 - 1; var s: i32[] = a[lo:2]; return s.len(); }`, 134},
 		{"str-high-past-end",
-			`function main(): i32 { var s: string = "abc"; var t: string = s[0:9]; return t.len(); }`, 134},
+			`function main(): i32 { var s: string = "abc"; var t: string = slice_unchecked(s, 0, 9); return t.len(); }`, 134},
 		{"str-reversed",
-			`function main(): i32 { var s: string = "abc"; var t: string = s[2:1]; return t.len(); }`, 134},
+			`function main(): i32 { var s: string = "abc"; var t: string = slice_unchecked(s, 2, 1); return t.len(); }`, 134},
 		// In-range: boundary forms stay legal. a[1:3] sums 2+3 = 5,
 		// a[3:3] is empty, s[1:3] = "bc" has len 2 → exit 5+0+2 = 7.
 		{"in-range-ok",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; var w: i32[] = a[1:3]; var t: i32 = 0; var i: i32 = 0; while (i < w.len()) { t = t + w[i]; i = i + 1; } var e: i32[] = a[3:3]; var s: string = "abc"; return t + e.len() + (s[1:3]).len(); }`, 7},
+			`function main(): i32 { var a: i32[] = [1, 2, 3]; var w: i32[] = a[1:3]; var t: i32 = 0; var i: i32 = 0; while (i < w.len()) { t = t + w[i]; i = i + 1; } var e: i32[] = a[3:3]; var s: string = "abc"; return t + e.len() + (slice_unchecked(s, 1, 3)).len(); }`, 7},
 	}
 }

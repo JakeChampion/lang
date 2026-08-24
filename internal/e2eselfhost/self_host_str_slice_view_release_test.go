@@ -76,11 +76,11 @@ var strSliceViewReleaseCases = []struct {
 	want int
 }{
 	// The shape. 9600 before on the register backends, 48000 on wasm; flat after.
-	{"str-slice-view-release-flat", sliceViewHeap("w", `return base[4:base.len()].own2().len();`), 0},
+	{"str-slice-view-release-flat", sliceViewHeap("w", `return slice_unchecked(base, 4, base.len()).own2().len();`), 0},
 	// The wasm half specifically: with a payload four times wider the register
 	// residual would not move (a 24-byte box is a 24-byte box) but wasm's did,
 	// 230400, because the slice copies. Both go to 0.
-	{"str-slice-view-release-wide-payload", sliceViewHeap("ww", `return base[4:base.len()].own2().len();`), 0},
+	{"str-slice-view-release-wide-payload", sliceViewHeap("ww", `return slice_unchecked(base, 4, base.len()).own2().len();`), 0},
 	// A slice OF a slice: the root walk has to recurse through both links to reach
 	// `base`, or it stops at the inner one and releases nothing. This case pins the
 	// VALUE rather than the bytes, because the two backends leave different things
@@ -95,7 +95,7 @@ var strSliceViewReleaseCases = []struct {
 	// That is the next lead on this shape, not something to gate here.
 	{"str-slice-view-release-nested-chain", sliceViewPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var c: string = base[4:base.len()][1:20].own2();
+    var c: string = slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 20).own2();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
@@ -111,7 +111,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// bare `return s` is an escape, so the key is absent and nothing is emitted.
 	{"str-slice-view-release-identity-callee-refused", sliceViewPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var v: str = base[4:base.len()].idv();
+    var v: str = slice_unchecked(base, 4, base.len()).idv();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");
@@ -127,7 +127,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// read afterwards.
 	{"str-slice-view-release-named-slice-untouched", sliceViewPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var v: str = base[4:base.len()];
+    var v: str = slice_unchecked(base, 4, base.len());
     var c: string = v.own2();
     var p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
@@ -141,7 +141,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// __fern_str_view_free's immortal-rc case.
 	{"str-slice-view-release-source-live", sliceViewPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var c: string = base[4:base.len()].own2();
+    var c: string = slice_unchecked(base, 4, base.len()).own2();
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");
