@@ -32414,7 +32414,7 @@ function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, struct
 // a bare ident, field access, index or slice — in an rc field kind the
 // construction does NOT retain. The retain arms cover nested-struct, enum,
 // leak-safe scalar-array and struct-array fields (the
-// fieldmove_selfrebind_alias qualification list); string, string[],
+// fieldmove_counted_field_alias qualification list); string, string[],
 // enum-array and every other rc kind reach the new box UNCOUNTED, so the
 // deep field walk frees a buffer the SOURCE still owns — the
 // flatten__RewriteCtx wasm fault: `RewriteCtx { ivar_names: ctx.ivar_names,
@@ -37674,7 +37674,17 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
             }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                if (fieldmove_is_move_value(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
+                // A `name.<f>` value of a kind whose construction retain is
+                // GUARANTEED (fieldmove_counted_field_alias's list — nested
+                // struct, enum, leak-safe scalar array, struct array) is a
+                // COUNTED share: the literal incs it, so the source keeps its
+                // deep drop and both decs balance. Marking it a move withheld
+                // the source's drop while the retained claim stood — the arr
+                // buffer leaked at rc 1 (the construction-retain matrix's
+                // fieldread column, i32[]/struct/struct[] flavors). Call args
+                // and returns keep marking: no retain is guaranteed there.
+                if (!fieldmove_counted_field_alias(sl.field_values[i], name, sty, structs)
+                    && fieldmove_is_move_value(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
                 if (fieldmove_expr(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
                 i = i + 1;
             }
@@ -37690,12 +37700,16 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
     return false;
 }
 
-// fieldmove_selfrebind_alias: `e` is exactly `name.<f>`, where f is a field whose
-// override retain is GUARANTEED. In the self-rebind `name = T { …, f: name.f, … }`
-// that value goes into the box THIS SLOT is about to hold, and the struct-literal
-// override path retains it, so the superseded box's deep drop decs the dup instead
-// of freeing a live field. Treating such a read as a move only costs `name` its
-// whole reclaim credit (#6623).
+// fieldmove_counted_field_alias: `e` is exactly `name.<f>`, where f is a field
+// whose struct-literal retain is GUARANTEED — so a read of it into ANY struct
+// literal is a COUNTED share: the literal incs the value, the source keeps its
+// deep drop, and both decs balance against the one inc. Treating such a read
+// as a move costs `name` its whole reclaim credit (#6623) — and, generalized
+// past the self-rebind (`name = T { …, f: name.f, … }`) to every literal
+// position, withheld the SOURCE's drop while the retained claim stood, so the
+// shared buffer leaked at rc 1 (the construction-retain matrix's fieldread
+// column). Call-arg and return positions keep marking: no retain is
+// guaranteed there.
 //
 // Three field kinds qualify, each because its arm of the override path incs a field
 // READ with no further condition:
@@ -37711,7 +37725,7 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
 // a freshness test), and so does an array-of-ENUM field: `Ty[]` enters neither array
 // gate, and the fallback retain below them admits only a bare IDENT, so a field read
 // there really can reach the successor box uncounted.
-function fieldmove_selfrebind_alias(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function fieldmove_counted_field_alias(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -37766,7 +37780,7 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
         parser.StmtVar(v) => { return fieldmove_expr(v.init, name, sty, structs, borrowable); },
         parser.StmtAssign(a) => {
             // The self-rebind literal keeps its retained field aliases (see
-            // fieldmove_selfrebind_alias); every other value in it still marks.
+            // fieldmove_counted_field_alias); every other value in it still marks.
             if (a.target == name) {
                 match (a.value) {
                     parser.ExprStructLit(asl) => {
@@ -37776,7 +37790,7 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
                         }
                         var fi: i32 = 0;
                         while (fi < asl.field_values.len()) {
-                            if (!fieldmove_selfrebind_alias(asl.field_values[fi], name, sty, structs)
+                            if (!fieldmove_counted_field_alias(asl.field_values[fi], name, sty, structs)
                                 && fieldmove_is_move_value(asl.field_values[fi], name, sty, structs, borrowable)) { return true; }
                             if (fieldmove_expr(asl.field_values[fi], name, sty, structs, borrowable)) { return true; }
                             fi = fi + 1;
