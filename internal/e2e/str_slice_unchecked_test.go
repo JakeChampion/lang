@@ -83,6 +83,23 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 100) { return 20; }
+
+    // (e) Snap-semantics helpers (#5634 PR 2). take/drop/split_at floor
+    // the mid-é cut at 2 (partition preserved); chunks(2) floor-snaps
+    // each cut (h | é | ll | o); truncate/ellipsis keep at most n bytes.
+    if (s.take(2) != "h") { return 21; }
+    if (s.drop(2).len() != 5) { return 22; }
+    if (s.take(2).to_owned() + s.drop(2).to_owned() != s) { return 23; }
+    var p: (string, string) = s.split_at(2);
+    if (p.0 != "h") { return 24; }
+    if (p.0 + p.1 != s) { return 25; }
+    var cs: string[] = s.chunks(2);
+    if (cs.len() != 4) { return 26; }
+    if (cs[1].len() != 2) { return 27; }
+    var w: string = s + " world";
+    if (w.truncate(4, "..") != "h..") { return 28; }
+    if (w.truncate(5, "..").len() != 5) { return 29; }
+    if (w.ellipsis(5) != "h...") { return 30; }
     return 0;
 }
 `
@@ -224,6 +241,23 @@ func TestRunnerStringSliceSnapExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/string slice_snap + slice_unchecked", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// TestRunnerStringSnapHelpersExamplePasses gates the pure-Fern runner
+// suite for the snap-semantics std/string helpers (take / drop /
+// split_at / chunks / truncate / ellipsis, #5634).
+func TestRunnerStringSnapHelpersExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_snap_helpers_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string snap helpers", "# pass 12", "# fail 0", "1..12"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

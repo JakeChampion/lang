@@ -810,6 +810,15 @@ Costs, stated honestly:
   `Option[str]` (`None` on OOB or a non-boundary index) in one
   coordinated PR. The IR lowers the builtin onto the same `__str_slice`
   path as the expression, so no backend carries new code for it.
+
+  The `std/string` byte-count helpers no longer split code points
+  either (#5634 slice 3, PR 2): `take` / `drop` / `split_at` floor a
+  mid-code-point cut to the boundary (preserving
+  `take(n) + drop(n) == s`), `chunks` floor-snaps each cut and grows a
+  chunk only when one code point is wider than the whole window, and
+  `truncate` / `ellipsis` floor-snap the kept prefix — at most the
+  requested byte budget, never more. All are identity on boundary
+  counts, hence on all ASCII.
 - **Ingest paths pay a validation scan — measured, and the cost was an
   artifact.** This decision assumed the scan was near-free. As written
   it was not: `is_valid_utf8` looped over `utf8_decode_at`, whose

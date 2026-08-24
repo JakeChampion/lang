@@ -1,0 +1,123 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_snap_helpers_test.fern — the std/string
+// helpers that stopped splitting UTF-8 code points (#5634, D9):
+// take / drop / split_at snap a mid-code-point cut BACKWARD to the
+// boundary (preserving `take(n) + drop(n) == s`), chunks floor-snaps
+// each cut (growing a chunk only when one code point is wider than
+// the window), and truncate / ellipsis floor-snap the kept prefix
+// (at most n bytes, never more). Multibyte inputs are built from
+// explicit bytes so é's [195, 169] encoding is pinned.
+
+// h(104) é(195,169) l l o — 6 bytes; boundary set {0, 1, 3, 4, 5, 6}.
+function hello_acc(): string {
+    var b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
+    return string_from_bytes_unchecked(b);
+}
+
+// ---- take / drop ----
+
+function test_take_snaps_backward(): test.TestOutcome {
+    // 2 sits on é's continuation byte; the prefix keeps only "h".
+    return test.assert_eq(hello_acc().take(2).to_owned(), "h");
+}
+
+function test_drop_snaps_backward(): test.TestOutcome {
+    // The suffix starts at the same snapped boundary, keeping é whole.
+    var s: string = hello_acc();
+    return test.assert_true(s.drop(2) == slice_unchecked(s, 1, 6)
+        && s.drop(2).len() == 5);
+}
+
+function test_take_drop_partition(): test.TestOutcome {
+    // The partition law holds at every cut point, boundary or not.
+    var s: string = hello_acc();
+    var i: i32 = 0 - 1;
+    while (i <= 7) {
+        if (s.take(i).to_owned() + s.drop(i).to_owned() != s) {
+            return test.fail("take+drop != s at " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return test.assert_true(true);
+}
+
+function test_take_drop_ascii_identity(): test.TestOutcome {
+    return test.assert_true("hello".take(2) == "he"
+        && "hello".drop(2) == "llo"
+        && "hello".take(99).to_owned() == "hello"
+        && "hello".drop(99).len() == 0);
+}
+
+// ---- split_at ----
+
+function test_split_at_snaps(): test.TestOutcome {
+    var p: (string, string) = hello_acc().split_at(2);
+    return test.assert_true(p.0 == "h" && p.1.len() == 5
+        && p.0 + p.1 == hello_acc());
+}
+
+function test_split_at_ascii(): test.TestOutcome {
+    var p: (string, string) = "hello".split_at(2);
+    return test.assert_true(p.0 == "he" && p.1 == "llo");
+}
+
+// ---- chunks ----
+
+function test_chunks_no_split(): test.TestOutcome {
+    // héllo in 2-byte windows: the é does not fit after "h", so the
+    // first cut snaps back — h | é | ll | o.
+    var cs: string[] = hello_acc().chunks(2);
+    return test.assert_true(cs.len() == 4
+        && cs[0] == "h" && cs[1].len() == 2
+        && cs[2] == "ll" && cs[3] == "o");
+}
+
+function test_chunks_progress_on_wide_char(): test.TestOutcome {
+    // A window narrower than the code point still advances: the chunk
+    // grows to hold the whole character.
+    var cs: string[] = hello_acc().chunks(1);
+    return test.assert_true(cs.len() == 5
+        && cs[0] == "h" && cs[1].len() == 2 && cs[4] == "o");
+}
+
+function test_chunks_ascii_identity(): test.TestOutcome {
+    return test.assert_eq_array("abcdefg".chunks(3), ["abc", "def", "g"]);
+}
+
+// ---- truncate / ellipsis ----
+
+function test_truncate_snaps(): test.TestOutcome {
+    // Cap 4 with ".." leaves 2 bytes of prefix — mid-é, so only "h"
+    // survives and the result is shorter than the cap, never longer.
+    var s: string = hello_acc() + " world";
+    return test.assert_true(s.truncate(4, "..") == "h.."
+        && s.truncate(5, "..") == "hé..");
+}
+
+function test_truncate_ascii(): test.TestOutcome {
+    return test.assert_true("hello world".truncate(8, "...") == "hello..."
+        && "hi".truncate(10, "...") == "hi");
+}
+
+function test_ellipsis_snaps(): test.TestOutcome {
+    var s: string = hello_acc() + " world";
+    return test.assert_true(s.ellipsis(6) == "hé..." && s.ellipsis(5) == "h...");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string snap helpers");
+    r = r.it("take snaps backward",        test_take_snaps_backward);
+    r = r.it("drop snaps backward",        test_drop_snaps_backward);
+    r = r.it("take+drop partition",        test_take_drop_partition);
+    r = r.it("take/drop ascii identity",   test_take_drop_ascii_identity);
+    r = r.it("split_at snaps",             test_split_at_snaps);
+    r = r.it("split_at ascii",             test_split_at_ascii);
+    r = r.it("chunks never split",         test_chunks_no_split);
+    r = r.it("chunks progress on wide char", test_chunks_progress_on_wide_char);
+    r = r.it("chunks ascii identity",      test_chunks_ascii_identity);
+    r = r.it("truncate snaps",             test_truncate_snaps);
+    r = r.it("truncate ascii",             test_truncate_ascii);
+    r = r.it("ellipsis snaps",             test_ellipsis_snaps);
+    return r.finish();
+}
