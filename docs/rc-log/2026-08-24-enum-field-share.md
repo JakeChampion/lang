@@ -46,10 +46,17 @@ only one of which the first cut had gated).
 across x86 / arm64 / wasm, both release orders included, with 99 reserved
 for an over-release. Strict arm64 whole-compiler emit clean.
 
-The construction-retain matrix's `enum__local` cell does NOT flip, and that
-is not this slice falling short: the cell is COMPOUND. Its second half
-(`var q: P = P { f: mkv(..) }; var p: P = q;`) is a struct alias-bind, and
-that half accounts for the entire remaining leak — 300 allocs, 0 frees,
-measured with the first half removed. It is the `struct__local` floor,
-which is pinned leak in its own right and owns the next slice. The
-enum-source half of the same cell measures 250/250 clean.
+The construction-retain matrix's `enum__local` cell does not flip on this
+slice alone. The cell is COMPOUND: its second half
+(`var q: P = P { f: mkv(..) }; var p: P = q;`) leaks 300 allocs / 0 frees
+with the first half removed, while the enum-source half measures 250/250
+clean.
+
+That alias half is NOT an inherent struct alias-bind floor, which is what
+this entry first claimed. The next slice measured it: the cell reads its
+field through a `match` EXPRESSION, that desugars to an IIFE, and the escape
+walk read the IIFE body as a closure capture — poisoning the reclaim credit
+of every struct local in the function, the alias half included. The same
+shape with a plain field read was already clean. See
+`2026-08-24-match-expr-value-block-borrow.md`; with both slices in, the
+whole cell is clean.

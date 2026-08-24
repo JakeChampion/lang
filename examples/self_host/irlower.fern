@@ -24106,6 +24106,24 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
             return false;
         },
         parser.ExprLambda(lm) => {
+            // A VALUE BLOCK (`match`/`if`/block/comprehension expression, which
+            // parser.fern desugars to a zero-arg IIFE) is not a closure: irlower
+            // INLINES it, so nothing outlives the expression and a name read
+            // inside it is an ordinary in-scope read. Walk it with the same rules
+            // as the surrounding code — the strict walker's own StmtReturn arm
+            // still flags the block's VALUE, which is the one way a name really
+            // does leave (`var y = match (k) { A => p, … }`).
+            //
+            // The blanket capture test below is for a REAL lambda, whose body may
+            // run after this frame. Applying it to a value block cost every struct
+            // local read through a match expression its reclaim credit: the
+            // apparent capture refused the alias-bind site, which withdrew the
+            // source's credit too (#7282's two uses must agree), so neither box
+            // was released — 0 frees where the same code without the match
+            // expression is flat.
+            if (parser.is_value_block_origin(lm.origin)) {
+                return body_unsafe_for(lm.body, name, borrowable, recv_borrow);
+            }
             var used: string[] = [];
             var i: i32 = 0;
             while (i < lm.body.len()) { used = astwalk.collect_idents_stmt(lm.body[i], used); i = i + 1; }
@@ -31549,6 +31567,18 @@ function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]):
             return false;
         },
         parser.ExprLambda(lm) => {
+            // A VALUE BLOCK is not a closure — see expr_unsafe_for's arm. Same
+            // bug, same shape, one kind over: `xs[0].len()` read through a match
+            // expression left a string[] local uncredited, so its elements and
+            // buffer stranded where the identical plain read is flat.
+            //
+            // The empty str_fresh is a deliberate conservative bound: it only
+            // disables the self-`append` / self-`.with` rebind forgiveness inside
+            // the block, which can refuse a credit but never grant one.
+            if (parser.is_value_block_origin(lm.origin)) {
+                var no_str_fresh: string[] = [];
+                return strarr_unsafe_for(lm.body, name, borrowable, no_str_fresh);
+            }
             var used: string[] = [];
             var i: i32 = 0;
             while (i < lm.body.len()) { used = astwalk.collect_idents_stmt(lm.body[i], used); i = i + 1; }
@@ -32134,6 +32164,11 @@ function darr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]): b
             return false;
         },
         parser.ExprLambda(lm) => {
+            // A VALUE BLOCK is not a closure — see expr_unsafe_for's arm. The
+            // dyn-array twin of the string[] case beside it.
+            if (parser.is_value_block_origin(lm.origin)) {
+                return darr_unsafe_for(lm.body, name, borrowable);
+            }
             var used: string[] = [];
             var i: i32 = 0;
             while (i < lm.body.len()) { used = astwalk.collect_idents_stmt(lm.body[i], used); i = i + 1; }
