@@ -42,6 +42,12 @@ jobs:
       # per truncation point per seed, ~6 minutes. It belongs here rather
       # than in test-units because this lane already owns the generator
       # and runs its two hosts in parallel.
-      - run: gotestsum --format pkgname-and-test-fails -- ./internal/fernsmith/...
+      #
+      # -timeout=20m: the sweep alone sits at ~8 minutes on a 4-core box,
+      # so go test's default 10m package timeout left under two minutes of
+      # headroom and a slow runner blew it (twice on one PR, measured
+      # byte-identical to main — the diff was not the cause). Weight
+      # pessimistically, per TEST-GATES rule 8.
+      - run: gotestsum --format pkgname-and-test-fails -- -timeout=20m ./internal/fernsmith/...
         env:
           RUN_SHRINK_PROPERTY: "1"
