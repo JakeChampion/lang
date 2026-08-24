@@ -53,7 +53,7 @@ function tokenize(s: string): string[] {
     var is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
     if (is_break) {
       if (i > start) {
-        out = out.append(lower[start:i]);
+        out = out.append(slice_unchecked(lower, start, i));
       }
       start = i + 1;
     }

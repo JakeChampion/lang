@@ -48,7 +48,7 @@ function words_of(text: string): string[] {
         while (at < text.len() && is_blank(text[at])) { at = at + 1; }
         var start: i32 = at;
         while (at < text.len() && !is_blank(text[at])) { at = at + 1; }
-        if (at > start) { out = out.append(text[start:at].to_owned()); }
+        if (at > start) { out = out.append(slice_unchecked(text, start, at).to_owned()); }
     }
     return out;
 }

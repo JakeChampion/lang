@@ -49,7 +49,7 @@ function new_game(word: string, max_wrong: i32): Game {
 }
 
 function letter_at(w: string, i: i32): string {
-    return "" + w[i:i + 1];
+    return "" + slice_unchecked(w, i, i + 1);
 }
 
 function word_has(w: string, c: string): boolean {

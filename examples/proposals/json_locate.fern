@@ -53,7 +53,7 @@ function fail(p: Scan): Scan {
 
 function lit(s: string, p: Scan, word: string): Scan {
     if (p.pos + word.len() > s.len()) { return fail(p); }
-    if (s[p.pos:p.pos + word.len()] != word) { return fail(p); }
+    if (slice_unchecked(s, p.pos, p.pos + word.len()) != word) { return fail(p); }
     return Scan { pos: p.pos + word.len(), err: p.err };
 }
 

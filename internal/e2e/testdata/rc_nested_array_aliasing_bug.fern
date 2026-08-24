@@ -46,25 +46,25 @@ type Res = ExOk | ExErr;
 
 function split_lines(src: string): string[] {
     var out: string[] = []; var n: i32 = src.len(); var start: i32 = 0; var i: i32 = 0;
-    while (i < n) { if (src[i] == 10) { out = out.append(src[start:i]); start = i + 1; } i = i + 1; }
-    if (start < n) { out = out.append(src[start:n]); }
+    while (i < n) { if (src[i] == 10) { out = out.append(slice_unchecked(src, start, i)); start = i + 1; } i = i + 1; }
+    if (start < n) { out = out.append(slice_unchecked(src, start, n)); }
     return out;
 }
 function trim(s: string): string {
     var a: i32 = 0; var b: i32 = s.len();
     while (a < b && (s[a] == 32 || s[a] == 9)) { a = a + 1; }
     while (b > a && (s[b-1] == 32 || s[b-1] == 9)) { b = b - 1; }
-    return s[a:b] + "";
+    return slice_unchecked(s, a, b) + "";
 }
 function leading_ws(s: string): string {
     var i: i32 = 0; var n: i32 = s.len();
     while (i < n && (s[i] == 32 || s[i] == 9)) { i = i + 1; }
-    return s[0:i] + "";
+    return slice_unchecked(s, 0, i) + "";
 }
-function is_header(t: string): boolean { return t.len() >= 3 && t[0:2] == "<<" && t[t.len()-3:t.len()] == ">>="; }
-function header_name(t: string): string { return trim(t[2:t.len() - 3]); }
-function is_ref(t: string): boolean { return t.len() > 4 && t[0:2] == "<<" && t[t.len()-2:t.len()] == ">>"; }
-function ref_name(t: string): string { return trim(t[2:t.len() - 2]); }
+function is_header(t: string): boolean { return t.len() >= 3 && slice_unchecked(t, 0, 2) == "<<" && slice_unchecked(t, t.len()-3, t.len()) == ">>="; }
+function header_name(t: string): string { return trim(slice_unchecked(t, 2, t.len() - 3)); }
+function is_ref(t: string): boolean { return t.len() > 4 && slice_unchecked(t, 0, 2) == "<<" && slice_unchecked(t, t.len()-2, t.len()) == ">>"; }
+function ref_name(t: string): string { return trim(slice_unchecked(t, 2, t.len() - 2)); }
 function header_index(body: BodyLine[]): i32 {
     var i: i32 = 0;
     while (i < body.len()) { var t: string = trim(body[i].text); if (t.len() == 0) { i = i + 1; } else { if (is_header(t)) { return i; } return 0 - 1; } }
@@ -73,9 +73,9 @@ function header_index(body: BodyLine[]): i32 {
 function parse_defs(src: string): ChunkDef[] {
     var defs: ChunkDef[] = []; var lines: string[] = split_lines(src); var n: i32 = lines.len(); var i: i32 = 0;
     while (i < n) {
-        if (lines[i].len() >= 3 && lines[i][0:3] == "```") {
+        if (lines[i].len() >= 3 && slice_unchecked(lines[i], 0, 3) == "```") {
             var body: BodyLine[] = []; var i2: i32 = i + 1;
-            while (i2 < n && !(lines[i2].len() >= 3 && lines[i2][0:3] == "```")) { body = body.append(BodyLine { text: lines[i2], line: i2 + 1 }); i2 = i2 + 1; }
+            while (i2 < n && !(lines[i2].len() >= 3 && slice_unchecked(lines[i2], 0, 3) == "```")) { body = body.append(BodyLine { text: lines[i2], line: i2 + 1 }); i2 = i2 + 1; }
             var hidx: i32 = header_index(body);
             if (hidx >= 0) {
                 var name: string = header_name(trim(body[hidx].text));

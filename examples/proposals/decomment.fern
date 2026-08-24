@@ -104,17 +104,17 @@ function strip(src: string): StripR {
         if (c == 34 || c == 39) {
             var quote: u8 = c;
             var lit_start: i32 = i;
-            out = out + src[i:i + 1].to_owned();
+            out = out + slice_unchecked(src, i, i + 1).to_owned();
             i = i + 1;
             var done: boolean = false;
             while (i < n) {
                 var d: u8 = src[i];
                 if (d == 92 && i + 1 < n) {
-                    out = out + src[i:i + 2].to_owned();
+                    out = out + slice_unchecked(src, i, i + 2).to_owned();
                     i = i + 2;
                     continue;
                 }
-                out = out + src[i:i + 1].to_owned();
+                out = out + slice_unchecked(src, i, i + 1).to_owned();
                 i = i + 1;
                 if (d == quote) { done = true; break; }
             }
@@ -127,7 +127,7 @@ function strip(src: string): StripR {
             continue;
         }
 
-        out = out + src[i:i + 1].to_owned();
+        out = out + slice_unchecked(src, i, i + 1).to_owned();
         i = i + 1;
     }
     return StripR { ok: true, out: out, err: no_fault() };
