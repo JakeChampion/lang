@@ -33347,9 +33347,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // pattern); the element-alias and payload gates stay — a bound
         // `var o = xs[i]` takes no counted retain here (native's Index-shape
         // dup is not ported), so the name-level plan cannot license them.
-        var oa_esc_ok: boolean = false;
-        if (plan_on) { oa_esc_ok = util.index_of_str(plan_fe, oanm) >= 0; }
-        else { oa_esc_ok = !body_unsafe_for(body, oanm, borrowable, recv_borrow); }
+        // The two grants are individually sound, so their UNION is the staged
+        // gate: the credit-side escape proof keeps every pre-routing grant
+        // (the plan still lacks native's returnsNoParamEscape oracle, so a
+        // call-provenance local is plan-tainted through its own init args),
+        // and the plan adds the call-arg/counted-sink grants the credit gate
+        // cannot see. The credit half retires with that oracle's port.
+        var oa_esc_ok: boolean = !body_unsafe_for(body, oanm, borrowable, recv_borrow);
+        if (!oa_esc_ok && plan_on) { oa_esc_ok = util.index_of_str(plan_fe, oanm) >= 0; }
         if (oa_esc_ok
             && util.index_of_str(reassigned, oanm) < 0
             && !arrarr_row_escapes(body, oanm)
@@ -40237,9 +40242,12 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                var os_esc_ok: boolean = false;
-                if (plan_on) { os_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
-                else { os_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
+                // Union of the two sound grants (see the OPTAARR: note): the
+                // credit proof keeps call-provenance shapes the plan cannot
+                // yet type through returnsNoParamEscape; the plan adds the
+                // call-arg grants, still refusing any matched local.
+                var os_esc_ok: boolean = !body_unsafe_for(stmts, v.name, [], []);
+                if (!os_esc_ok && plan_on) { os_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -40265,9 +40273,8 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                var oa_esc_ok: boolean = false;
-                if (plan_on) { oa_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
-                else { oa_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
+                var oa_esc_ok: boolean = !body_unsafe_for(stmts, v.name, [], []);
+                if (!oa_esc_ok && plan_on) { oa_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
