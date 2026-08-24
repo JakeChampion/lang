@@ -13805,15 +13805,6 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             || sa.is_enum_field_alias(eid.name)) {
                             sa = sa.retain_tos("arrlit-elem");
                         }
-                        // A struct-CREDITED element: the plan's counted-sink
-                        // forgiveness assumes this store retains (the same
-                        // contract as the append arm). Gated on the credit,
-                        // never the type — co-extensive in both switch
-                        // positions; the element slot goes box-only (NODEEP
-                        // via struct_box_sink_stored).
-                        else if (slot_is_reclaimable_struct(sa, sa.slot_of(eid.name))) {
-                            sa = sa.retain_tos("arrlit-struct-elem");
-                        }
                     },
                     // A DIRECT ENUM field read (`[first.node]`) aliases the source
                     // struct's enum box, which __struct_drop_<T>'s k_enum arm decs on
@@ -13882,13 +13873,6 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     parser.ExprIdent(teid) => {
                         if (ts.slot_is_rc_container(ts.slot_of(teid.name))) {
                             ts = ts.retain_tos("tuplit-elem");
-                        }
-                        // Struct-CREDITED element: same counted-sink contract
-                        // as the array-literal arm — the plan forgives the
-                        // store because it retains. Credit-gated, box-only
-                        // release via struct_box_sink_stored.
-                        else if (slot_is_reclaimable_struct(ts, ts.slot_of(teid.name))) {
-                            ts = ts.retain_tos("tuplit-struct-elem");
                         }
                     },
                     _ => {}
@@ -20377,17 +20361,6 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                     // co-extensive in both switch positions.
                                     else if (apelslot >= 0 && slot_credit_at(s, apelslot, "SCENUMS:")) {
                                         aps = aps.retain(apelslot, "append-scenum-arg");
-                                    }
-                                    // A struct-credited local appended: the same
-                                    // counted-sink contract as the SCENUMS arm —
-                                    // the plan keeps a container-stored struct
-                                    // eligible because the store retains, so the
-                                    // store must retain. Gated on the CREDIT
-                                    // (slot_is_reclaimable_struct is the credit
-                                    // lookup), so retain and release stay
-                                    // co-extensive in both switch positions.
-                                    else if (apelslot >= 0 && slot_is_reclaimable_struct(s, apelslot)) {
-                                        aps = aps.retain(apelslot, "append-struct-arg");
                                     }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
@@ -32237,16 +32210,14 @@ function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]
 
 // struct_box_sink_stored: `name`'s WHOLE BOX appears as a local counted-sink
 // element — an append/with arg, an array / tuple / struct-literal element (or
-// functional-update base), or a variant-ctor payload. The plan's counted-sink
-// forgiveness keeps such a name eligible because the store retains, so the
-// box's rc arbitrates — but the struct deep field walk does not: the rebind
-// __field_reclaim and the exit sweep walk fields unconditionally, freeing a
-// buffer the container still reaches (measured as an rc underflow on the
-// append-rebind probe). Box-only is the shared box's sound release role; the
-// container's own deep free drops the fields exactly once. Field-move
-// detection (moves_fields_* / optstruct_body_moves_field) cannot see this
-// shape: a bare ident is a leaf there, and before the plan routing an escape
-// gate refused every container-stored name so the case was unreachable.
+// functional-update base), or a variant-ctor payload. The routed struct gate
+// REFUSES such a name (see its comment): the plan's counted-sink forgiveness
+// assumes the store retains and the killing dec drops the fields, neither of
+// which the struct release protocol provides yet. The field-move detectors
+// (moves_fields_* / optstruct_body_moves_field) cannot see this shape — a
+// bare ident is a leaf there — and the old escape gate refused every bare
+// mention, so the case needed no walker before the routing. A struct-lit
+// BASE (`T { ...name, … }`) is not a sink — see the StructLit arm.
 function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
@@ -32295,9 +32266,14 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             return false;
         },
         parser.ExprStructLit(sl) => {
+            // A bare-ident BASE is a field-COPY — a borrow of the box, not a
+            // store of it — so it is NOT a sink: the box stays the local's to
+            // free (box-only via the moves_fields NODEEP marking; the
+            // alloc_flat_struct_self_update fork_base shape). Only nested
+            // sinks inside the base expression walk.
             if (sl.has_base) {
                 match (sl.base) {
-                    parser.ExprIdent(bid) => { if (bid.name == name) { return true; } },
+                    parser.ExprIdent(_) => {},
                     _ => { if (struct_box_sink_stored_expr(sl.base, name, structs)) { return true; } }
                 }
             }
@@ -32320,6 +32296,44 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
     }
     return false;
 }
+
+function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs)) { return true; } },
+            parser.StmtIf(f) => {
+                if (struct_box_sink_stored_expr(f.cond, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(f.then_body, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (struct_box_sink_stored_expr(w.cond, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(w.body, name, structs)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (struct_box_sink_stored_expr(fo.iter, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(fo.body, name, structs)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (struct_box_sink_stored_expr(m.scrutinee, name, structs)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs)) { return true; }
+                    if (struct_box_sink_stored_stmts(arm.body, name, structs)) { return true; }
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (struct_box_sink_stored_stmts(one, name, structs)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
 
 // struct_lit_unretained_borrow_field: the credited candidate's own struct
 // literal (found by its binding-site key) carries a BORROW-shaped value —
@@ -32379,42 +32393,6 @@ function struct_lit_unretained_borrow_field(stmts: parser.Stmt[], key: string, s
     return false;
 }
 
-function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs)) { return true; } },
-            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs)) { return true; } },
-            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs)) { return true; } },
-            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs)) { return true; } },
-            parser.StmtIf(f) => {
-                if (struct_box_sink_stored_expr(f.cond, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(f.then_body, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(f.else_body, name, structs)) { return true; }
-            },
-            parser.StmtWhile(w) => {
-                if (struct_box_sink_stored_expr(w.cond, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(w.body, name, structs)) { return true; }
-            },
-            parser.StmtFor(fo) => {
-                if (struct_box_sink_stored_expr(fo.iter, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(fo.body, name, structs)) { return true; }
-            },
-            parser.StmtMatch(m) => {
-                if (struct_box_sink_stored_expr(m.scrutinee, name, structs)) { return true; }
-                for arm in m.arms {
-                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs)) { return true; }
-                    if (struct_box_sink_stored_stmts(arm.body, name, structs)) { return true; }
-                }
-            },
-            parser.StmtDefer(d) => {
-                var one: parser.Stmt[] = [d.action];
-                if (struct_box_sink_stored_stmts(one, name, structs)) { return true; }
-            },
-            _ => {}
-        }
-    }
-    return false;
-}
 function moves_fields_stmt(st: parser.Stmt, name: string, nomove: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => { return moves_fields_expr(v.init, name, nomove); },
@@ -32899,7 +32877,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // are family knowledge the plan does not carry: the alias-rebind
         // borrow flag and the receiver-handed-back gates.
         var st_esc_ok: boolean = false;
-        if (plan_on) { st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0; }
+        // The plan's counted-sink forgiveness (#7345) is NOT taken for the
+        // struct family yet: it assumes the store retains and the release
+        // protocol lets the killing dec drop the fields, and the self-host's
+        // struct walks are statically-roled and rc-blind (NODEEP pairs,
+        // unconditional field_reclaim / sweep walks) — granting a
+        // container-stored struct measured as exit 99 (append-rebind) and as
+        // per-round leaks (the alloc_flat fixtures). So the routed gate
+        // carries the sink refusal as family knowledge, exactly like
+        // name_is_match_scrutinee for the Option families; it retires with
+        // the killer-drops-fields release-protocol port, not with keying.
+        if (plan_on) {
+            st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
+                && !struct_box_sink_stored_stmts(body, fnm, structs);
+        }
         else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
         if (st_esc_ok && !reassigned_from_alias(body, fnm)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
@@ -32981,10 +32972,6 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // that polarity matters. Only when the local's struct type is known, so an
         // untyped local keeps its prior verdict exactly.
         if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, mvnmk, mvsty, structs, borrowable)) { mv_moves = true; }
-        // A WHOLE-BOX counted-sink store (plan routing makes it creditable):
-        // the container co-owns the box, so this slot's release role is
-        // box-only — see struct_box_sink_stored's header.
-        if (!mv_moves && struct_box_sink_stored_stmts(body, mvnmk, structs)) { mv_moves = true; }
         // A literal whose rc fields BORROW un-retained kinds (string /
         // string[] / enum-array reads of another value): the deep walk would
         // free the source's buffers — see struct_lit_unretained_borrow_field.
@@ -54226,13 +54213,14 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
             if (rc_fe_expr_type(sl.array, types_n, types_t, structs) == "string") { return false; }
             return true;
         },
-        parser.ExprBinary(b) => {
-            // string concat copies into a fresh owned buffer; other binaries
-            // keep the conservative tainted default.
-            if (b.op == "+" && (rc_fe_expr_type(b.left, types_n, types_t, structs) == "string" || rc_fe_expr_type(b.right, types_n, types_t, structs) == "string")) { return false; }
-            match (b.left) { parser.ExprString(_) => { return false; }, _ => {} }
-            match (b.right) { parser.ExprString(_) => { return false; }, _ => {} }
-            return true;
+        parser.ExprBinary(_) => {
+            // String concat copies into a fresh owned buffer, and every OTHER
+            // binary (arithmetic / comparison / logical) yields a SCALAR that
+            // cannot alias heap — native's rhsTainted answers false for both.
+            // The old conservative default tainted any non-concat binary, so
+            // `mkw(i % 8)` was refused through its own scalar ARGUMENT (the
+            // any-tainted-arg call rule) — the alloc_flat fixtures' shape.
+            return false;
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -54317,10 +54305,14 @@ function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: Si
         // query local binding-site keys, and the resolve fallback returns the
         // bare name for anything the env does not hold.
         st = FeState { ...st, types_n: st.types_n.append(p.name), types_t: st.types_t.append(p.type_name), decl_s: st.decl_s.append(p.name) };
-        // taint seed: every param that is neither `own` nor consumed-threaded.
-        // (native's owned-by-default paramVerdict ladder is not ported — the
-        // scoping cut documented at the top of this section.)
-        if (!p.own && util.index_of_str(consumed, p.name) < 0) {
+        // taint seed: every NON-SCALAR param that is neither `own` nor
+        // consumed-threaded. A scalar param cannot alias heap, and seeding it
+        // poisoned every call through the any-tainted-arg rule — `nodeB(s, n)`
+        // was refused through its own scalar n unless the callee happened to
+        // qualify for the noesc oracle (the alloc_flat fixtures' shape).
+        // Native taints no scalar there; the rest of the owned-by-default
+        // paramVerdict ladder is still not ported (the documented cut).
+        if (!p.own && util.index_of_str(consumed, p.name) < 0 && !rc_scalar_type_name(p.type_name)) {
             st = FeState { ...st, tainted: rc_fe_taint(st.tainted, p.name) };
         }
         pi = pi + 1;
