@@ -85,7 +85,11 @@ func structKeyCases() []structKeyCase {
 		{
 			// THE BUG. Two `var v` in sibling `if` arms: the first is a fresh
 			// struct literal and earns the credit, the second aliases a param and
-			// must not. Base: 99, `204/204 live_bytes=0` — the census cannot see it.
+			// must not. Base: 99, `204/204 live_bytes=0` — the census cannot see
+			// it; the underflow guard is what pins it. frees moved 200 -> 204
+			// with the struct routing: main's call-arg struct is now swept (the
+			// alias_param grant), which is the +4 — the collision guard is the
+			// exit, unchanged.
 			name: "collide_literal",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     var t: i32 = 0;
@@ -93,7 +97,7 @@ func structKeyCases() []structKeyCase {
     if (i % 2 == 1) { var v: P = base;  t = t + v.xs.len(); }
     return t;
 }` + structKeyMainB,
-			want: 34, allocs: 204, frees: 200,
+			want: 34, allocs: 204, frees: 204,
 		},
 		{
 			// THE PAIRWISE CONTROL, and the assertion that carries the most weight:
@@ -116,7 +120,7 @@ func structKeyCases() []structKeyCase {
     if (i % 2 == 1) { var u: P = base;  t = t + u.xs.len(); }
     return t;
 }` + structKeyMainB,
-			want: 34, allocs: 204, frees: 200,
+			want: 34, allocs: 204, frees: 204,
 		},
 		{
 			// The same collision reached through a LOOP rather than two `if`s, so
@@ -133,7 +137,7 @@ func structKeyCases() []structKeyCase {
     }
     return t;
 }` + structKeyMainB,
-			want: 68, allocs: 404, frees: 400,
+			want: 68, allocs: 404, frees: 404,
 		},
 		{
 			// CONTROL — a BLOCK-SCOPED struct local, credited through
