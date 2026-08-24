@@ -79,6 +79,26 @@ any-tainted-arg call rule:
 Both changes move the DUMP, and the rcplan diff gate held with zero
 movement on the corpus — pure convergence.
 
+## Two more, CI-caught by the shard suites
+
+- **The noesc subset was too narrow for producer chains** (ArrArgReclaim's
+  `node(w(pre), deps_of(pre), n)`): `w` returns a concat and `deps_of` a
+  builder local, both shapes native's oracle admits and the subset cut, so
+  `f` was plan-refused and the #6522 counted-retain arg-temp dec lost the
+  deep drop that balanced it. Widened, still subset-of-native: a `+` tree
+  witnessed by a string literal is a fresh concat (bare-ident leaves of
+  any type — they are copied); a BUILDER local (declared once from a
+  fresh container literal, grown only by appends of admitted values) is
+  returnable; and a still-qualified FUNCTION callee's args are irrelevant
+  (its result aliases none of them — native's composition), while variant
+  ctors keep the strict per-arg check ("fn:" rows split the two). The
+  diff gate held.
+- **The unretained-borrow NODEEP rule over-marked bare idents**
+  (BorrowedFieldRetain: the caller lost `__struct_drop_H`). The
+  construction's fallback retain admits bare IDENT string/string[] values
+  — the strfld admission — so only the READ shapes (field access, index,
+  slice) reach the box uncounted. The rule now marks reads only.
+
 ## Measured (x86-64, census + underflow; exits match native everywhere)
 
 | probe | native | plan-off (pre-wave) | plan-on |
