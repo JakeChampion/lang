@@ -167,7 +167,7 @@ function basename(path: string): string {
         if (path[i] == b'/') { start = i + 1; }
         i = i + 1;
     }
-    return path[start:path.len()] + "";
+    return slice_unchecked(path, start, path.len()) + "";
 }
 
 // mod_names derives the imported-module name set from a module.
@@ -278,20 +278,20 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     }
     var dot: i32 = first_dot(tn);
     if (dot >= 0) {
-        var qual: str = tn[0:dot];
+        var qual: str = slice_unchecked(tn, 0, dot);
         if (is_in(qual, ctx.modnames)) {
             // Resolve the qualifier to the module's mangle prefix (alias-aware).
             var prefix: string = resolve_prefix(qual, ctx);
             // Split any generic/array suffix off the base name so a
             // re-exported `facade.Point[]` redirects on `Point` and
             // re-attaches the `[]`.
-            var rest: str = tn[dot + 1:tn.len()];
+            var rest: str = slice_unchecked(tn, dot + 1, tn.len());
             var rb: i32 = first_bracket(rest);
             if (rb < 0) {
                 return lookup_reexport(prefix + "__" + rest, ctx);
             }
-            var rbase: str = rest[0:rb];
-            return lookup_reexport(prefix + "__" + rbase, ctx) + rest[rb:rest.len()];
+            var rbase: str = slice_unchecked(rest, 0, rb);
+            return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
         }
         return tn;
     }
@@ -301,9 +301,9 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     if (br < 0) {
         return mangle_bare(tn, ctx);
     }
-    var base: str = tn[0:br];
+    var base: str = slice_unchecked(tn, 0, br);
     if (is_in(base, ctx.declnames)) {
-        return ctx.prefix + "__" + base + tn[br:tn.len()];
+        return ctx.prefix + "__" + base + slice_unchecked(tn, br, tn.len());
     }
     return tn;
 }

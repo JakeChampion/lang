@@ -197,22 +197,22 @@ function dedupe_weak_into(asm_text: string, seen_in: string[]): string[] {
     while (i < n) {
         var j: i32 = i;
         while (j < n && asm_text[j] != b'\n') { j = j + 1; }
-        var line: string = asm_text[i:j] + "";
+        var line: string = slice_unchecked(asm_text, i, j) + "";
         var drop: boolean = false;
         if (state == 1) { drop = true; state = 2; }
         else if (state == 2) {
             // First non-blank column, so a directive is recognised whether or
             // not the emitter indented it.
             var k: i32 = 0;
-            while (k < line.len() && (line[k:k + 1] == " " || line[k:k + 1] == "\t")) { k = k + 1; }
-            var body: string = line[k:line.len()] + "";
+            while (k < line.len() && (slice_unchecked(line, k, k + 1) == " " || slice_unchecked(line, k, k + 1) == "\t")) { k = k + 1; }
+            var body: string = slice_unchecked(line, k, line.len()) + "";
             if (body.len() == 0) { drop = true; }                                  // blank
-            else if (body.len() > 2 && body[0:2] == ".L") { drop = true; }          // local label
-            else if (k > 0 && body[0:1] != ".") { drop = true; }                    // instruction
+            else if (body.len() > 2 && slice_unchecked(body, 0, 2) == ".L") { drop = true; }          // local label
+            else if (k > 0 && slice_unchecked(body, 0, 1) != ".") { drop = true; }                    // instruction
             else { state = 0; }                                                    // directive / label
         }
-        if (state == 0 && !drop && line.len() > 6 && line[0:6] == ".weak ") {
-            var sym: string = line[6:line.len()] + "";
+        if (state == 0 && !drop && line.len() > 6 && slice_unchecked(line, 0, 6) == ".weak ") {
+            var sym: string = slice_unchecked(line, 6, line.len()) + "";
             if (util.has_str(seen, sym)) { drop = true; state = 1; }
             else { seen = seen.append(sym); }
         }
@@ -626,7 +626,7 @@ function nth_field_i32(s: string, n: i32): i32 {
         if (s[i] == b':') { f = f + 1; }
         i = i + 1;
     }
-    return util.digits_to_i32(s[i:s.len()] + "");
+    return util.digits_to_i32(slice_unchecked(s, i, s.len()) + "");
 }
 
 // flat_unit_list enumerates the (module × function-window) units a per-module
@@ -1029,7 +1029,7 @@ function main(): i32 {
             var uci: i32 = 0;
             while (uci < urng.len() && urng[uci] != b':') { uci = uci + 1; }
             unit_lo = util.digits_to_i32(urng);
-            if (uci + 1 <= urng.len()) { unit_hi = util.digits_to_i32(urng[uci + 1:urng.len()]); }
+            if (uci + 1 <= urng.len()) { unit_hi = util.digits_to_i32(slice_unchecked(urng, uci + 1, urng.len())); }
             ai = ai + 1;
         }
         else if (a[ai] == "-extra-need" && ai + 1 < a.len()) { pm_extra = pm_extra.append(a[ai + 1]); ai = ai + 1; }
@@ -1042,7 +1042,7 @@ function main(): i32 {
             var ci: i32 = 0;
             while (ci < rng.len() && rng[ci] != b':') { ci = ci + 1; }
             pm_lo = util.digits_to_i32(rng);
-            if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(rng[ci + 1:rng.len()]); }
+            if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(slice_unchecked(rng, ci + 1, rng.len())); }
             ai = ai + 1;
         }
 

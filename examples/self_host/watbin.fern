@@ -153,7 +153,7 @@ function wat_tokenize(src: string): WatTok[] {
                     j = j + 1;
                 }
             }
-            toks = toks.append(WatTok { kind: 3, text: src[start:j] + "" });
+            toks = toks.append(WatTok { kind: 3, text: slice_unchecked(src, start, j) + "" });
             i = j + 1;
         } else {
             // Atom: run up to the next whitespace, paren, or quote.
@@ -165,7 +165,7 @@ function wat_tokenize(src: string): WatTok[] {
                 }
                 i = i + 1;
             }
-            toks = toks.append(WatTok { kind: 2, text: src[astart:i] + "" });
+            toks = toks.append(WatTok { kind: 2, text: slice_unchecked(src, astart, i) + "" });
         }
     }
     return toks;
@@ -963,11 +963,11 @@ function bulk_mem_tail(out: i32[], idx: i32): i32[] {
 function is_offset_atom(n: SExpr): boolean {
     if (n.kind == 0) { return false; }
     if (n.text.len() < 7) { return false; }
-    return n.text[0:7] == "offset=";
+    return slice_unchecked(n.text, 0, 7) == "offset=";
 }
 
 function offset_atom_value(n: SExpr): i32 {
-    return parse_dec(n.text[7:n.text.len()]);
+    return parse_dec(slice_unchecked(n.text, 7, n.text.len()));
 }
 
 // memarg_align gives the natural alignment (log2 of access size) for a

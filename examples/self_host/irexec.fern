@@ -163,8 +163,8 @@ function bin_apply(tag: i32, l: i32, r: i32): i32 {
 // Each returns its arg0 (the deepest of its args on the operand stack). The real
 // reclaim semantics are exercised by the differential / memory-churn suites.
 function is_reclaim_helper(name: string): boolean {
-    if (name.len() >= 14 && name[0:14] == "__struct_drop_") { return true; }
-    if (name.len() >= 16 && name[0:16] == "__field_reclaim_") { return true; }
+    if (name.len() >= 14 && slice_unchecked(name, 0, 14) == "__struct_drop_") { return true; }
+    if (name.len() >= 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_") { return true; }
     return name == "__fern_snapshot_dec" || name == "__fern_arr_dec" || name == "__fern_drop_arr_ptr"
         || name == "__fern_str_arr_free";
 }

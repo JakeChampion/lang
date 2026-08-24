@@ -926,7 +926,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
         while (fk < ffc) {
             var fft: string = irlower.decl_field_type_at(structs, frt[fri], fk);
             if (irlower.is_struct_array_field_type(structs, fft)) {
-                var felem: str = fft[0 : fft.len() - 2];
+                var felem: str = slice_unchecked(fft, 0, fft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, felem) && util.index_of_str(out, felem) < 0) {
                     out = out.append(felem);
                 }
@@ -958,7 +958,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
             // must be a struct_drop type too. Add it here (the index-driven loop then
             // expands X's own reclaimable fields transitively).
             if (irlower.is_struct_array_field_type(structs, ft)) {
-                var aelem: str = ft[0 : ft.len() - 2];
+                var aelem: str = slice_unchecked(ft, 0, ft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, aelem)) {
                     if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem); }
                 }
@@ -995,7 +995,7 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
         while (k < fc) {
             var ft: string = irlower.decl_field_type_at(structs, sdt[i], k);
             if (irlower.is_struct_array_field_type(structs, ft)) {
-                var elem: str = ft[0 : ft.len() - 2];
+                var elem: str = slice_unchecked(ft, 0, ft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
                     out = out.append(elem);
                 }
@@ -2936,13 +2936,13 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 pub function pipe_before(s: string): string {
     var i: i32 = 0;
     while (i < s.len() && s[i] != 124) { i = i + 1; }   // '|'
-    return s[0:i] + "";
+    return slice_unchecked(s, 0, i) + "";
 }
 pub function pipe_after(s: string): string {
     var i: i32 = 0;
     while (i < s.len() && s[i] != 124) { i = i + 1; }
     if (i >= s.len()) { return ""; }
-    return s[i + 1 : s.len()] + "";
+    return slice_unchecked(s, i + 1, s.len()) + "";
 }
 
 pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
@@ -3044,17 +3044,17 @@ function wasm_type_of_char(c: string): string {
 function fn_type_decl(entry: string): string {
     var bar: i32 = 0;
     while (bar < entry.len() && entry[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-    var name: str = entry[0 : bar];
-    var sig: str = entry[bar + 1 : entry.len()];
+    var name: str = slice_unchecked(entry, 0, bar);
+    var sig: str = slice_unchecked(entry, bar + 1, entry.len());
     var us: i32 = 0;
     while (us < sig.len() && sig[us] != 95) { us = us + 1; }             // 95 = '_'
     var out: string = "  (type " + name + " (func";
     var i: i32 = 0;
     while (i < us) {
-        out = out + " (param " + wasm_type_of_char(sig[i : i + 1]) + ")";
+        out = out + " (param " + wasm_type_of_char(slice_unchecked(sig, i, i + 1)) + ")";
         i = i + 1;
     }
-    return out + " (result " + wasm_type_of_char(sig[us + 1 : sig.len()]) + ")))\n";
+    return out + " (result " + wasm_type_of_char(slice_unchecked(sig, us + 1, sig.len())) + ")))\n";
 }
 
 // fn_support_section emits the WAT module items that back plain function values:
@@ -8185,7 +8185,7 @@ pub function wat_escape(s: string): string {
     while (i < s.len()) {
         var b: i32 = s[i] as i32;
         if (b >= 32 && b <= 126 && b != 34 && b != 92) {
-            parts = parts.append(s[i:i + 1]);
+            parts = parts.append(slice_unchecked(s, i, i + 1));
         } else {
             parts = parts.append("\\" + hex_digit(b / 16) + hex_digit(b % 16));
         }
@@ -8972,7 +8972,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
 // but not "[]", so they are correctly excluded.
 pub function ty_spelling_is_array(t: string): boolean {
     if (t.len() < 2) { return false; }
-    return t[t.len() - 2:t.len()] == "[]";
+    return slice_unchecked(t, t.len() - 2, t.len()) == "[]";
 }
 
 // struct_field_kind_char classifies a struct field TYPE for recursive
@@ -8999,7 +8999,7 @@ pub function struct_field_kind_char(ft: string, structs: parser.StructDecl[], mr
 // scalar elements, which must NOT be dec'd as pointers).
 pub function array_field_elem_is_ptr(ft: string, structs: parser.StructDecl[], mr_types: string[]): boolean {
     if (!ty_spelling_is_array(ft)) { return false; }
-    return struct_field_kind_char(ft[0:ft.len() - 2], structs, mr_types) != "i";
+    return struct_field_kind_char(slice_unchecked(ft, 0, ft.len() - 2), structs, mr_types) != "i";
 }
 
 // emit_wasm_struct_drop_body returns the WAT for $__struct_drop_<t>(box) -> box —
@@ -9133,7 +9133,7 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
                     // the element boxes + buffer. Enum-array elements have no $__struct_drop,
                     // so they keep the plain arr_dec_ptr (one level).
                     if (irlower.is_struct_array_field_type(structs, ft)) {
-                        var elem_ty: str = ft[0 : ft.len() - 2];
+                        var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
                         if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
                             o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
                         }
@@ -9295,7 +9295,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
                         // types into its closure, so $__struct_arr_elems_drop_E
                         // and the $__struct_drop_E it calls are both emitted.
                         if (irlower.is_struct_array_field_type(structs, ft)) {
-                            var elem_ty: str = ft[0 : ft.len() - 2];
+                            var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
                             if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
                                 dec = "(drop (call $__struct_arr_elems_drop_" + elem_ty + " " + oldf + ")) " + dec;
                             }
@@ -9450,8 +9450,8 @@ pub function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
 // u8 (slot 4 != canonical 1) would also need repacking — see
 // extern_byte_array_param for that path.
 pub function extern_array_param_supported(t: string): boolean {
-    if (t.len() <= 2 || t[t.len() - 2:t.len()] != "[]") { return false; }
-    var k: str = t[0:t.len() - 2];
+    if (t.len() <= 2 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return false; }
+    var k: str = slice_unchecked(t, 0, t.len() - 2);
     return k == "i32" || k == "u32" || k == "i64" || k == "u64" || k == "f32" || k == "f64";
 }
 
@@ -10558,7 +10558,7 @@ pub function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret
             // with the elements contiguous at their stride; rebuild the self-host
             // array ([len@0], elements at +8 in native slots — see the import
             // array-result wrapper) and pass its block base to the Fern func.
-            var akind: str = params[j].type_name[0:params[j].type_name.len() - 2];
+            var akind: str = slice_unchecked(params[j].type_name, 0, params[j].type_name.len() - 2);
             var assz: string = util.i32_to_string(elem_slot_size(akind));
             var ablkS: string = util.i32_to_string(blk);
             var aiS: string = util.i32_to_string(i_local);
@@ -10598,7 +10598,7 @@ pub function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret
         // wrapper — copy the elements into a fresh 8-aligned buffer, then write
         // the 4-byte-aligned [buf,len] return area the Go composer's memory lift
         // reads.
-        var rk: str = ret[0:ret.len() - 2];
+        var rk: str = slice_unchecked(ret, 0, ret.len() - 2);
         var ss: string = util.i32_to_string(elem_slot_size(rk));
         var aS: string = util.i32_to_string(arr_arr);
         var lnS: string = util.i32_to_string(arr_alen);
@@ -10816,7 +10816,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                     var cppn: string = "$ep" + util.i32_to_string(ci);
                     var bn: string = "$ab" + util.i32_to_string(ci);
                     var tn: string = f.params[ci].type_name;
-                    var k: str = tn[0:tn.len() - 2];
+                    var k: str = slice_unchecked(tn, 0, tn.len() - 2);
                     var ss: string = util.i32_to_string(elem_slot_size(k));
                     var lbl: string = util.i32_to_string(ci);
                     parts = parts.append("    (local.set $an (i32.load (local.get " + cppn + ")))\n");
@@ -11168,7 +11168,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
                 // numeric array list<T>: the slot size equals the canonical
                 // element size, so copy each element straight into its slot at
                 // +8 (no byte-expansion as for u8[]).
-                var rk: str = f.ret_type[0:f.ret_type.len() - 2];
+                var rk: str = slice_unchecked(f.ret_type, 0, f.ret_type.len() - 2);
                 var rss: string = util.i32_to_string(elem_slot_size(rk));
                 parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n");
                 parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");

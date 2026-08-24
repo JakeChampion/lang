@@ -80,7 +80,7 @@ function index_of_str(s: string, sub: string): i32 {
     if (sub.len() == 0) { return 0; }
     var i: i32 = 0;
     while (i + sub.len() <= s.len()) {
-        if (s[i:i + sub.len()] == sub) { return i; }
+        if (slice_unchecked(s, i, i + sub.len()) == sub) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -93,7 +93,7 @@ function quoted_value(s: string, from: i32): Option[string] {
     if (q1 < 0) { return None; }
     var q2: i32 = index_of(s, b'"', q1 + 1);
     if (q2 < 0) { return None; }
-    return Some(s[q1 + 1:q2] + "");
+    return Some(slice_unchecked(s, q1 + 1, q2) + "");
 }
 
 // split_lines splits `src` on '\n'.
@@ -103,12 +103,12 @@ function split_lines(src: string): string[] {
     var i: i32 = 0;
     while (i < src.len()) {
         if (src[i] == b'\n') {
-            out = out.append(src[start:i] + "");
+            out = out.append(slice_unchecked(src, start, i) + "");
             start = i + 1;
         }
         i = i + 1;
     }
-    out = out.append(src[start:src.len()] + "");
+    out = out.append(slice_unchecked(src, start, src.len()) + "");
     return out;
 }
 
@@ -134,13 +134,13 @@ pub function parse(src: string): Manifest {
         if (line[0] == b'#') { continue; }        // comment
         if (line[0] == b'[') {                     // section header
             var close: i32 = index_of(line, b']', 0);
-            if (close > 0) { section = line[1:close] + ""; }
+            if (close > 0) { section = slice_unchecked(line, 1, close) + ""; }
             continue;
         }
         var eq: i32 = index_of(line, b'=', 0);
         if (eq < 0) { continue; }
-        var key: string = util.trim(line[0:eq]);
-        var val: string = util.trim(line[eq + 1:line.len()]);
+        var key: string = util.trim(slice_unchecked(line, 0, eq));
+        var val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
         if (section == "package") {
             if (key == "name") {
                 match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
@@ -192,7 +192,7 @@ function parse_dep(name: string, val: string): Dep {
             var close: i32 = index_of(val, b']', open);
             if (close > open) {
                 governed = true;
-                caps = parse_str_array(val[open:close] + "");
+                caps = parse_str_array(slice_unchecked(val, open, close) + "");
             }
         }
     }
@@ -217,7 +217,7 @@ function parse_dep(name: string, val: string): Dep {
         if (heq >= 0) {
             match (quoted_value(val, heq)) {
                 Some(hv) => {
-                    if (hv.len() >= 8 && hv[0:7] == "sha256:") {
+                    if (hv.len() >= 8 && slice_unchecked(hv, 0, 7) == "sha256:") {
                         return Dep { name: name, kind: "url", path: "", hash: hv, version: "", governed: governed, caps: caps };
                     }
                 },
@@ -256,7 +256,7 @@ function parse_str_array(val: string): string[] {
         if (val[i] == b'"') {
             var j: i32 = index_of(val, b'"', i + 1);
             if (j < 0) { return out; }
-            out = out.append(val[i + 1:j] + "");
+            out = out.append(slice_unchecked(val, i + 1, j) + "");
             i = j + 1;
         } else {
             i = i + 1;
@@ -394,8 +394,8 @@ pub function parse_lock(src: string): LockEntry[] {
         }
         var eq: i32 = index_of(line, b'=', 0);
         if (eq < 0) { continue; }
-        var key: string = util.trim(line[0:eq]);
-        var val: string = util.trim(line[eq + 1:line.len()]);
+        var key: string = util.trim(slice_unchecked(line, 0, eq));
+        var val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
         if (key == "name") {
             match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
         }

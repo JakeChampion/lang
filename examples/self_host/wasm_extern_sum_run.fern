@@ -23,15 +23,15 @@ function ref_trim(s: string): string {
     while (lo < n && s[lo] == b' ') { lo = lo + 1; }
     var hi: i32 = n;
     while (hi > lo && s[hi - 1] == b' ') { hi = hi - 1; }
-    return s[lo:hi] + "";
+    return slice_unchecked(s, lo, hi) + "";
 }
 function ref_sum_supported(t: string): boolean {
-    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == b']') {
-        var p: string = ref_trim(t[7:t.len() - 1]);
+    if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Option[" && t[t.len() - 1] == b']') {
+        var p: string = ref_trim(slice_unchecked(t, 7, t.len() - 1));
         return p == "i32" || p == "u32";
     }
-    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == b']') {
-        var inner: str = t[7:t.len() - 1];
+    if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Result[" && t[t.len() - 1] == b']') {
+        var inner: str = slice_unchecked(t, 7, t.len() - 1);
         var i: i32 = 0;
         var depth: i32 = 0;
         while (i < inner.len()) {
@@ -39,8 +39,8 @@ function ref_sum_supported(t: string): boolean {
             if (c == 91) { depth = depth + 1; }
             else if (c == 93) { depth = depth - 1; }
             else if (c == 44 && depth == 0) {
-                var ok: string = ref_trim(inner[0:i]);
-                var er: string = ref_trim(inner[i + 1:inner.len()]);
+                var ok: string = ref_trim(slice_unchecked(inner, 0, i));
+                var er: string = ref_trim(slice_unchecked(inner, i + 1, inner.len()));
                 return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
             }
             i = i + 1;
@@ -50,7 +50,7 @@ function ref_sum_supported(t: string): boolean {
     return false;
 }
 function ref_is_option(t: string): boolean {
-    return t.len() > 7 && t[0:7] == "Option[";
+    return t.len() > 7 && slice_unchecked(t, 0, 7) == "Option[";
 }
 
 function b(x: boolean): string { if (x) { return "1"; } return "0"; }

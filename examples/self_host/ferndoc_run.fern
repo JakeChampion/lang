@@ -32,7 +32,7 @@ function escape(s: string): string {
         var b: i32 = s[i] as i32;
         if (b == 92) { out = out + "\\\\"; }
         else if (b == 10) { out = out + "\\n"; }
-        else { out = out + s[i:i + 1]; }
+        else { out = out + slice_unchecked(s, i, i + 1); }
         i = i + 1;
     }
     return out;

@@ -35,7 +35,7 @@ pub function dirname(path: string): string {
         if (path[i] == b'/') { cut = i + 1; }
         i = i + 1;
     }
-    return path[0:cut] + "";
+    return slice_unchecked(path, 0, cut) + "";
 }
 
 // base_name strips the directory and the import-relative `./` prefix from
@@ -47,13 +47,13 @@ pub function base_name(path: string): string {
         if (path[i] == b'/') { start = i + 1; }
         i = i + 1;
     }
-    return path[start:path.len()] + "";
+    return slice_unchecked(path, start, path.len()) + "";
 }
 
 // rel_path strips a leading import-relative `./` so the path joins cleanly
 // onto the entry directory: "./lexer" → "lexer", "std/io" → "std/io".
 function rel_path(path: string): string {
-    if (path.len() >= 2 && path[0:2] == "./") { return path[2:path.len()] + ""; }
+    if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") { return slice_unchecked(path, 2, path.len()) + ""; }
     return path;
 }
 
@@ -205,7 +205,7 @@ function parent_dir(dir: string): string {
     var end: i32 = dir.len() - 1;
     var i: i32 = end - 1;
     while (i >= 0) {
-        if (dir[i] == b'/') { return dir[0:i + 1] + ""; }
+        if (dir[i] == b'/') { return slice_unchecked(dir, 0, i + 1) + ""; }
         i = i - 1;
     }
     return "";
@@ -298,8 +298,8 @@ function load_locked(dir: string, name: string): Resolved {
 // loader trusts an already-populated store, exactly like the native
 // loader does at build time (#4949 — no build-time network).
 function load_from_store(hash: string): Resolved {
-    if (hash.len() < 8 || hash[0:7] != "sha256:") { return res_none(); }
-    var hex: string = hash[7:hash.len()] + "";
+    if (hash.len() < 8 || slice_unchecked(hash, 0, 7) != "sha256:") { return res_none(); }
+    var hex: string = slice_unchecked(hash, 7, hash.len()) + "";
     match (env("FERN_CACHE_DIR")) {
         Some(d) => { return load_lib(d + "/pkgs/" + hex + "/"); },
         None => { },
@@ -322,8 +322,8 @@ function load_from_store(hash: string): Resolved {
 // strip_fern_ext removes a trailing ".fern" so the name joins onto
 // try_read (which appends ".fern"): "api.fern" → "api", "lib" → "lib".
 function strip_fern_ext(s: string): string {
-    if (s.len() >= 5 && s[s.len() - 5:s.len()] == ".fern") {
-        return s[0:s.len() - 5] + "";
+    if (s.len() >= 5 && slice_unchecked(s, s.len() - 5, s.len()) == ".fern") {
+        return slice_unchecked(s, 0, s.len() - 5) + "";
     }
     return s;
 }

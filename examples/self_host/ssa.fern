@@ -394,9 +394,9 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     // raw "Cell[T]" (which the cell path's `urt == "cell"` check
                     // would miss → build_func bail). Same for Map[...] fields.
                     var ftn: string = sd.fields[f].type_name;
-                    if (ftn.len() >= 5 && ftn[0:5] == "Cell[") { return "cell"; }
-                    if (ftn.len() >= 10 && ftn[0:10] == "Map[string") { return "SMap"; }
-                    if (ftn.len() >= 3 && ftn[0:3] == "Map") { return "Map"; }
+                    if (ftn.len() >= 5 && slice_unchecked(ftn, 0, 5) == "Cell[") { return "cell"; }
+                    if (ftn.len() >= 10 && slice_unchecked(ftn, 0, 10) == "Map[string") { return "SMap"; }
+                    if (ftn.len() >= 3 && slice_unchecked(ftn, 0, 3) == "Map") { return "Map"; }
                     return ftn;
                 }
                 f = f + 1;
@@ -421,7 +421,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     // resolves, a string-returning call's `.len()` dispatches,
                     // and a function-returning call is a function value ("fn").
                     var cgt: string = s.get_var_type(cid.name);
-                    if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()] + ""; }
+                    if (cgt.len() >= 4 && slice_unchecked(cgt, 0, 4) == "gfn:") { return slice_unchecked(cgt, 4, cgt.len()) + ""; }
                 },
                 parser.ExprFieldAccess(fa2) => {
                     if (fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
@@ -431,10 +431,10 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     var mrt: string = type_of_expr(fa2.obj, s);
                     if (mrt.len() > 0) {
                         var mm: string = s.get_var_type(mrt + "#" + fa2.field);
-                        if (mm.len() > 2 && mm[0:2] == "m:") {
-                            var mrest: str = mm[2 : mm.len()];
+                        if (mm.len() > 2 && slice_unchecked(mm, 0, 2) == "m:") {
+                            var mrest: str = slice_unchecked(mm, 2, mm.len());
                             var mcolon: i32 = index_of_byte(mrest, b':');
-                            if (mcolon >= 0) { return mrest[mcolon + 1 : mrest.len()] + ""; }
+                            if (mcolon >= 0) { return slice_unchecked(mrest, mcolon + 1, mrest.len()) + ""; }
                         }
                     }
                 },
@@ -455,7 +455,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             // a[i] has the array's element type: strip one trailing "[]".
             var at: string = type_of_expr(ix.array, s);
             var n: i32 = at.len();
-            if (n >= 2 && at[n - 2 : n] == "[]") { return at[0 : n - 2] + ""; }
+            if (n >= 2 && slice_unchecked(at, n - 2, n) == "[]") { return slice_unchecked(at, 0, n - 2) + ""; }
             return "";
         },
         _ => { return ""; }
@@ -465,7 +465,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
 // ends_with_brackets reports whether a type name is an array type `T[]`.
 function ends_with_brackets(t: string): boolean {
     var n: i32 = t.len();
-    return n >= 2 && t[n - 2 : n] == "[]";
+    return n >= 2 && slice_unchecked(t, n - 2, n) == "[]";
 }
 
 // fn_sym is the emitted symbol name for a function: a receiver method
@@ -482,7 +482,7 @@ pub function fn_sym(fd: parser.FuncDecl): string {
 // value ("fnval") or a capturing lambda binding ("fn:…|…").
 function is_boxed_fnty(t: string): boolean {
     if (t == "fnval") { return true; }
-    if (t.len() > 3 && t[0:3] == "fn:" && index_of_byte(t, b'|') >= 0) { return true; }
+    if (t.len() > 3 && slice_unchecked(t, 0, 3) == "fn:" && index_of_byte(t, b'|') >= 0) { return true; }
     return false;
 }
 
@@ -515,7 +515,7 @@ function count_fn_markers(types: string[]): i32 {
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < types.len()) {
-        if (types[i].len() > 3 && types[i][0:3] == "fn:") { c = c + 1; }
+        if (types[i].len() > 3 && slice_unchecked(types[i], 0, 3) == "fn:") { c = c + 1; }
         i = i + 1;
     }
     return c;
@@ -579,10 +579,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // lambda binding "fn:…|…" holds its box in the var, so it took the
             // get_var path above.)
             var idfn: string = s.get_var_type(id.name);
-            if (idfn.len() > 3 && idfn[0:3] == "fn:" && index_of_byte(idfn, b'|') < 0) {
-                return emit_fn_box(s, idfn[3 : idfn.len()]);
+            if (idfn.len() > 3 && slice_unchecked(idfn, 0, 3) == "fn:" && index_of_byte(idfn, b'|') < 0) {
+                return emit_fn_box(s, slice_unchecked(idfn, 3, idfn.len()));
             }
-            if (idfn.len() >= 4 && idfn[0:4] == "gfn:") {
+            if (idfn.len() >= 4 && slice_unchecked(idfn, 0, 4) == "gfn:") {
                 return emit_fn_box(s, id.name);
             }
             return s.fail();
@@ -947,10 +947,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // "|" is the capture list to pass as trailing args.
                     var cap_csv: string = "";
                     var cfnty: string = s.get_var_type(cid.name);
-                    if (cfnty.len() > 3 && cfnty[0:3] == "fn:") {
-                        var crest: str = cfnty[3 : cfnty.len()];
+                    if (cfnty.len() > 3 && slice_unchecked(cfnty, 0, 3) == "fn:") {
+                        var crest: str = slice_unchecked(cfnty, 3, cfnty.len());
                         var cbar: i32 = index_of_byte(crest, b'|');
-                        if (cbar >= 0) { callee_name = crest[0 : cbar] + ""; cap_csv = crest[cbar + 1 : crest.len()] + ""; }
+                        if (cbar >= 0) { callee_name = slice_unchecked(crest, 0, cbar) + ""; cap_csv = slice_unchecked(crest, cbar + 1, crest.len()) + ""; }
                         else { callee_name = crest + ""; }
                     }
                     var argvals: i32[] = [];
@@ -968,7 +968,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         if (cpi == cap_csv.len() || cap_csv[cpi] == b',') {
                             if (ccn.len() > 0) { argvals = argvals.append(s.get_var(ccn)); }
                             ccn = "";
-                        } else { ccn = ccn + cap_csv[cpi : cpi + 1]; }
+                        } else { ccn = ccn + slice_unchecked(cap_csv, cpi, cpi + 1); }
                         cpi = cpi + 1;
                     }
                     s = s.fresh();
@@ -984,11 +984,11 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var urt: string = type_of_expr(fa.obj, s);
                     if (urt.len() > 0) {
                         var um: string = s.get_var_type(urt + "#" + fa.field);
-                        if (um.len() > 2 && um[0:2] == "m:") {
-                            var urest: str = um[2 : um.len()];
+                        if (um.len() > 2 && slice_unchecked(um, 0, 2) == "m:") {
+                            var urest: str = slice_unchecked(um, 2, um.len());
                             var ucolon: i32 = index_of_byte(urest, b':');   // before ret type
                             var usym: string = urest + "";
-                            if (ucolon >= 0) { usym = urest[0 : ucolon] + ""; }
+                            if (ucolon >= 0) { usym = slice_unchecked(urest, 0, ucolon) + ""; }
                             s = build_expr(fa.obj, s);
                             if (!s.ok) { return s; }
                             var uargs: i32[] = [s.cur_id()];
@@ -1342,7 +1342,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                         dnm = "";
                         didx = didx + 1;
                     } else {
-                        dnm = dnm + v.name[dci : dci + 1];
+                        dnm = dnm + slice_unchecked(v.name, dci, dci + 1);
                     }
                     dci = dci + 1;
                 }
@@ -1409,7 +1409,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // ("fn"), a lambda binding used as a value ("fn:…"), or a top-level
             // function name ("gfn:…") — is recorded "fnval" so calls through it
             // dispatch indirectly.
-            if (ity == "fn" || (ity.len() > 3 && ity[0:3] == "fn:") || (ity.len() >= 4 && ity[0:4] == "gfn:")) { return s.set_var_type(v.name, "fnval"); }
+            if (ity == "fn" || (ity.len() > 3 && slice_unchecked(ity, 0, 3) == "fn:") || (ity.len() >= 4 && slice_unchecked(ity, 0, 4) == "gfn:")) { return s.set_var_type(v.name, "fnval"); }
             if (ity == "Map" || ity == "SMap") { return s.set_var_type(v.name, ity); }
             if (ity == "cell") { return s.set_var_type(v.name, "cell"); }
             if (ity == "f64" || v.type_name == "f64") { return s.set_var_type(v.name, "f64"); }
@@ -1616,8 +1616,8 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     // to the entry count). A plain name iterates an array element by index.
     var comma: i32 = index_of_byte(fr.var_name, b',');
     if (comma >= 0) {
-        var kname: str = fr.var_name[0:comma];
-        var vname: str = fr.var_name[comma + 1 : fr.var_name.len()];
+        var kname: str = slice_unchecked(fr.var_name, 0, comma);
+        var vname: str = slice_unchecked(fr.var_name, comma + 1, fr.var_name.len());
         // Arg lists are built with .push (which coerces each element into the
         // Expr union) rather than an array literal `[ExprIdent{…}, …]`: a
         // literal of concrete struct values assigned to a union-typed array
@@ -2070,7 +2070,7 @@ function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
                     if (ci == v.name.len() || v.name[ci] == b',') {
                         if (nm.len() > 0) { out = out.append(nm); }
                         nm = "";
-                    } else { nm = nm + v.name[ci : ci + 1]; }
+                    } else { nm = nm + slice_unchecked(v.name, ci, ci + 1); }
                     ci = ci + 1;
                 }
             },
@@ -2362,9 +2362,9 @@ pub function build_func_seeded(raw_fd: parser.FuncDecl, structs: parser.StructDe
     var pj: i32 = 0;
     while (pj < fd.params.len()) {
         var ptn: string = fd.params[pj].type_name;
-        if (ptn.len() >= 10 && ptn[0:10] == "Map[string") { s = s.set_var_type(fd.params[pj].name, "SMap"); }
-        else if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
-        else if (ptn.len() >= 5 && ptn[0:5] == "Cell[") { s = s.set_var_type(fd.params[pj].name, "cell"); }
+        if (ptn.len() >= 10 && slice_unchecked(ptn, 0, 10) == "Map[string") { s = s.set_var_type(fd.params[pj].name, "SMap"); }
+        else if (ptn.len() >= 3 && slice_unchecked(ptn, 0, 3) == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
+        else if (ptn.len() >= 5 && slice_unchecked(ptn, 0, 5) == "Cell[") { s = s.set_var_type(fd.params[pj].name, "cell"); }
         else if (ptn == "fn") { s = s.set_var_type(fd.params[pj].name, "fnval"); }
         else if (ptn == "f64") { s = s.set_var_type(fd.params[pj].name, "f64"); }
         else if (ends_with_brackets(ptn)) { s = s.set_var_type(fd.params[pj].name, ptn); }

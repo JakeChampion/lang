@@ -678,7 +678,7 @@ function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[
     var i: i32 = 0;
     while (i < lab_names.len()) {
         var keep: boolean = lab_names[i].len() > 0;
-        if (keep && lab_names[i][0:1] == ".") { keep = false; }
+        if (keep && slice_unchecked(lab_names[i], 0, 1) == ".") { keep = false; }
         if (keep && sec_filter >= 0) {
             if (i >= lab_secs.len() || lab_secs[i] != sec_filter) { keep = false; }
         }

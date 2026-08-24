@@ -59,14 +59,14 @@ function is_backtick(b: u8): boolean { return b == b'`'; }
 function starts_with(s: string, prefix: string): boolean {
     var pn: i32 = prefix.len();
     if (pn > s.len()) { return false; }
-    return s[0:pn] == prefix;
+    return slice_unchecked(s, 0, pn) == prefix;
 }
 
 function ends_with(s: string, suffix: string): boolean {
     var sn: i32 = suffix.len();
     var n: i32 = s.len();
     if (sn > n) { return false; }
-    return s[n - sn:n] == suffix;
+    return slice_unchecked(s, n - sn, n) == suffix;
 }
 
 // contains reports whether `sub` occurs anywhere in `s` (used to
@@ -78,7 +78,7 @@ function contains(s: string, sub: string): boolean {
     if (sn > n) { return false; }
     var i: i32 = 0;
     while (i + sn <= n) {
-        if (s[i:i + sn] == sub) { return true; }
+        if (slice_unchecked(s, i, i + sn) == sub) { return true; }
         i = i + 1;
     }
     return false;
@@ -90,7 +90,7 @@ function trim(s: string): string {
     var b: i32 = s.len();
     while (a < b && is_hspace((s[a] as i32))) { a = a + 1; }
     while (b > a && is_hspace((s[b - 1] as i32))) { b = b - 1; }
-    return s[a:b] + "";
+    return slice_unchecked(s, a, b) + "";
 }
 
 // leading_ws returns the run of leading spaces/tabs (the indentation
@@ -99,7 +99,7 @@ function leading_ws(s: string): string {
     var k: i32 = 0;
     var n: i32 = s.len();
     while (k < n && (s[k] == b' ' || s[k] == b'\t')) { k = k + 1; }
-    return s[0:k] + "";
+    return slice_unchecked(s, 0, k) + "";
 }
 
 // split_lines splits on '\n', mirroring Go's strings.Split: a trailing
@@ -112,12 +112,12 @@ function split_lines(src: string): string[] {
     var n: i32 = src.len();
     while (i < n) {
         if (src[i] == b'\n') {
-            lines = lines.append(src[start:i]);
+            lines = lines.append(slice_unchecked(src, start, i));
             start = i + 1;
         }
         i = i + 1;
     }
-    lines = lines.append(src[start:n]);
+    lines = lines.append(slice_unchecked(src, start, n));
     return lines;
 }
 
@@ -154,11 +154,11 @@ function fence_lang(line: string): string {
     var i: i32 = ws.len();
     var n: i32 = line.len();
     while (i < n && is_backtick(line[i])) { i = i + 1; }
-    var info: string = trim(line[i:n]);
+    var info: string = trim(slice_unchecked(line, i, n));
     var j: i32 = 0;
     var m: i32 = info.len();
     while (j < m && info[j] != b' ' && info[j] != b'\t') { j = j + 1; }
-    return info[0:j] + "";
+    return slice_unchecked(info, 0, j) + "";
 }
 
 // fence_info returns the trimmed info string after a fence's backtick
@@ -168,7 +168,7 @@ function fence_info(line: string): string {
     var i: i32 = ws.len();
     var n: i32 = line.len();
     while (i < n && is_backtick(line[i])) { i = i + 1; }
-    return trim(line[i:n]);
+    return trim(slice_unchecked(line, i, n));
 }
 
 // split_ws splits a string on runs of spaces/tabs into non-empty words.
@@ -180,7 +180,7 @@ function split_ws(s: string): string[] {
         while (i < n && (s[i] == b' ' || s[i] == b'\t')) { i = i + 1; }
         var start: i32 = i;
         while (i < n && s[i] != b' ' && s[i] != b'\t') { i = i + 1; }
-        if (i > start) { words = words.append(s[start:i]); }
+        if (i > start) { words = words.append(slice_unchecked(s, start, i)); }
     }
     return words;
 }
@@ -191,7 +191,7 @@ function fence_file(line: string): string {
     var words: string[] = split_ws(fence_info(line));
     var i: i32 = 0;
     while (i < words.len()) {
-        if (starts_with(words[i], "file=")) { return words[i][5:words[i].len()] + ""; }
+        if (starts_with(words[i], "file=")) { return slice_unchecked(words[i], 5, words[i].len()) + ""; }
         i = i + 1;
     }
     return "";
@@ -228,27 +228,27 @@ function is_fence_close(line: string, open_len: i32): boolean {
 // header `<<NAME>>=` with a non-empty NAME free of `>>`.
 function is_header(t: string): boolean {
     if (!starts_with(t, "<<") || !ends_with(t, ">>=")) { return false; }
-    var inner: str = t[2:t.len() - 3];
+    var inner: str = slice_unchecked(t, 2, t.len() - 3);
     if (contains(inner, ">>")) { return false; }
     return trim(inner).len() > 0;
 }
 
 function header_name(t: string): string {
-    return trim(t[2:t.len() - 3]);
+    return trim(slice_unchecked(t, 2, t.len() - 3));
 }
 
 // is_ref reports whether a trimmed line is a chunk reference `<<NAME>>`.
 // A header ends in `>>=` (not `>>`), so headers are excluded here.
 function is_ref(t: string): boolean {
     if (!starts_with(t, "<<") || !ends_with(t, ">>")) { return false; }
-    var inner: str = t[2:t.len() - 2];
+    var inner: str = slice_unchecked(t, 2, t.len() - 2);
     if (inner.len() == 0) { return false; }
     if (contains(inner, "<<") || contains(inner, ">>")) { return false; }
     return true;
 }
 
 function ref_name(t: string): string {
-    return trim(t[2:t.len() - 2]);
+    return trim(slice_unchecked(t, 2, t.len() - 2));
 }
 
 // ─── document model ────────────────────────────────────────────────

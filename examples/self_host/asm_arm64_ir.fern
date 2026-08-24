@@ -2242,8 +2242,8 @@ pub function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitS
     var fri: i32 = 0;
     while (fri < s.needed.len()) {
         var frnd: string = s.needed[fri];
-        if (frnd.len() > 14 && frnd[0:14] == "field_reclaim:") {
-            s = emit_arm64_field_reclaim_one(s, frnd[14 : frnd.len()]);
+        if (frnd.len() > 14 && slice_unchecked(frnd, 0, 14) == "field_reclaim:") {
+            s = emit_arm64_field_reclaim_one(s, slice_unchecked(frnd, 14, frnd.len()));
         }
         fri = fri + 1;
     }
@@ -2253,10 +2253,10 @@ pub function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitS
         // One index-driven loop over both prefixes so the transitive needs
         // (arr_elems -> struct_drop, and a struct_drop k_box arm -> arr_elems) are all
         // absorbed as they are appended, regardless of discovery order.
-        if (sdnd.len() > 22 && sdnd[0:22] == "struct_arr_elems_drop:") {
-            s = emit_arm64_struct_arr_elems_drop_one(s, sdnd[22 : sdnd.len()]);
-        } else if (sdnd.len() > 12 && sdnd[0:12] == "struct_drop:") {
-            s = emit_arm64_struct_drop_one(s, sdnd[12 : sdnd.len()]);
+        if (sdnd.len() > 22 && slice_unchecked(sdnd, 0, 22) == "struct_arr_elems_drop:") {
+            s = emit_arm64_struct_arr_elems_drop_one(s, slice_unchecked(sdnd, 22, sdnd.len()));
+        } else if (sdnd.len() > 12 && slice_unchecked(sdnd, 0, 12) == "struct_drop:") {
+            s = emit_arm64_struct_drop_one(s, slice_unchecked(sdnd, 12, sdnd.len()));
         }
         sdi = sdi + 1;
     }
@@ -2354,7 +2354,7 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
                 // clobbers x10/x11/x12, so all three are reloaded from the stack
                 // args (shifted +16 by the stp x29,x30 frame) afterwards.
                 if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                    var elem_ty: str = fdt[0 : fdt.len() - 2];
+                    var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                     if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                         var esan: string = asmcore.sanitize_label(elem_ty);
                         s = s.need("struct_arr_elems_drop:" + elem_ty);
@@ -2513,7 +2513,7 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             // (entry pushed one stp frame), mirroring the k_struct deep-drop arm.
             // Enum-array elements have no __struct_drop, so they stay shallow.
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                var elem_ty: str = fdt[0 : fdt.len() - 2];
+                var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                     var esan: string = asmcore.sanitize_label(elem_ty);
                     s = s.need("struct_arr_elems_drop:" + elem_ty);
@@ -6632,12 +6632,12 @@ function peephole_push_pop_arm64(asm: string): string {
                 var dhi: i32 = dlo;
                 while (dhi < i && asm[dhi] != 44) { dhi = dhi + 1; }
                 if (asm_ir.pp_at(asm, dhi, i, ", [sp], #16") && dhi + 11 == i && !pp_arm64_marker_reg(asm, dlo, dhi)) {
-                    if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                    if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
                     if (!asm_ir.pp_eq_bytes(asm, src_lo, src_hi, dlo, dhi)) {
                         strbuf_append("    mov ");
-                        strbuf_append(asm[dlo:dhi]);
+                        strbuf_append(slice_unchecked(asm, dlo, dhi));
                         strbuf_append(", ");
-                        strbuf_append(asm[src_lo:src_hi]);
+                        strbuf_append(slice_unchecked(asm, src_lo, src_hi));
                         strbuf_append("\n");
                     }
                     run_start = i + 1;
@@ -6652,7 +6652,7 @@ function peephole_push_pop_arm64(asm: string): string {
                 // check keeps it off any other sp adjustment. Both lines go.
                 // A `str` source is always a register, so unlike the x86-64 twin
                 // there is no memory operand to worry about dropping a load for.
-                if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
                 run_start = i + 1;
                 push_at = 0 - 1;
                 folded = true;
@@ -6675,7 +6675,7 @@ function peephole_push_pop_arm64(asm: string): string {
         }
         i = i + 1;
     }
-    if (run_start < n) { strbuf_append(asm[run_start:n]); }
+    if (run_start < n) { strbuf_append(slice_unchecked(asm, run_start, n)); }
     return strbuf_take();
 }
 
@@ -6882,14 +6882,14 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
 
 function darwin_starts_with(s: string, p: string): boolean {
     if (s.len() < p.len()) { return false; }
-    return s[0:p.len()] == p;
+    return slice_unchecked(s, 0, p.len()) == p;
 }
 
 // darwin_lstrip drops leading ASCII spaces.
 function darwin_lstrip(s: string): string {
     var i: i32 = 0;
     while (i < s.len() && s[i] == 32) { i = i + 1; }
-    return s[i:s.len()] + "";
+    return slice_unchecked(s, i, s.len()) + "";
 }
 
 // darwin_index_of returns the first index of sub in s, or -1.
@@ -6898,7 +6898,7 @@ function darwin_index_of(s: string, sub: string): i32 {
     if (s.len() < sub.len()) { return 0 - 1; }
     var i: i32 = 0;
     while (i <= s.len() - sub.len()) {
-        if (s[i:i + sub.len()] == sub) { return i; }
+        if (slice_unchecked(s, i, i + sub.len()) == sub) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -6969,7 +6969,7 @@ pub function darwinize(asm: string): string {
     var norm_n: i32 = 0;   // fresh-label counter for errno normalisation
     while (i <= n) {
         if (i == n || asm[i] == 10) {
-            var line: str = asm[start:i];
+            var line: str = slice_unchecked(asm, start, i);
             var has_nl: boolean = (i < n);
             var body: string = darwin_lstrip(line);
             var keep: boolean = true;
@@ -7002,7 +7002,7 @@ pub function darwinize(asm: string): string {
                 out_line = line + "@PAGE";
             } else if (darwin_index_of(line, ":lo12:") >= 0) {
                 var idx: i32 = darwin_index_of(line, ":lo12:");
-                out_line = line[0:idx] + line[idx + 6:line.len()] + "@PAGEOFF";
+                out_line = slice_unchecked(line, 0, idx) + slice_unchecked(line, idx + 6, line.len()) + "@PAGEOFF";
             } else if (body == "ldr x8, [sp], #16") {
                 // The __syscall3 op's number load (#2649) — a generic syscall
                 // whose number is an operand, not a literal, so the `mov x8, #N`
@@ -7018,7 +7018,7 @@ pub function darwinize(asm: string): string {
                 // helper's `close(fd)` sequences carry two and even three
                 // spaces — and an indent-keyed match left those syscalls with
                 // their Linux number and a Linux `svc #0` in a Mach-O binary.
-                var num: i32 = util.digits_to_i32(body[9:body.len()]);
+                var num: i32 = util.digits_to_i32(slice_unchecked(body, 9, body.len()));
                 var m: i32 = darwin_sysno(num);
                 pend_sys = m;
                 if (m >= 0) {

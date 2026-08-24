@@ -552,7 +552,7 @@ function append_bound_name(acc: string[], name: string): string[] {
     var i: i32 = 0;
     while (i <= name.len()) {
         if (i == name.len() || name[i] == b',') {
-            var piece: string = name[start : i] + "";
+            var piece: string = slice_unchecked(name, start, i) + "";
             if (piece.len() > 0) { acc = acc.append(piece); }
             start = i + 1;
         }

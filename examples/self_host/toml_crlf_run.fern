@@ -52,7 +52,7 @@ function crlf(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < s.len()) {
-        if (s[i] == b'\n') { out = out + "\r\n"; } else { out = out + s[i:i + 1]; }
+        if (s[i] == b'\n') { out = out + "\r\n"; } else { out = out + slice_unchecked(s, i, i + 1); }
         i = i + 1;
     }
     return out;

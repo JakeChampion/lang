@@ -22,19 +22,19 @@ function ref_trim(s: string): string {
     var b: i32 = s.len();
     while (a < b && s[a] == b' ') { a = a + 1; }
     while (b > a && s[b - 1] == b' ') { b = b - 1; }
-    return s[a:b] + "";
+    return slice_unchecked(s, a, b) + "";
 }
 function ref_elem_tag(t: string, n: i32): string {
     var len: i32 = t.len();
-    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return ""; }
-    var inner: str = t[1 : len - 1];
+    if (len < 3 || slice_unchecked(t, 0, 1) != "(" || slice_unchecked(t, len - 1, len) != ")") { return ""; }
+    var inner: str = slice_unchecked(t, 1, len - 1);
     var depth: i32 = 0;
     var start: i32 = 0;
     var idx: i32 = 0;
     var i: i32 = 0;
     while (i <= inner.len()) {
         if (i == inner.len() || (depth == 0 && inner[i] == b',')) {
-            if (idx == n) { return ref_trim(inner[start : i]); }
+            if (idx == n) { return ref_trim(slice_unchecked(inner, start, i)); }
             idx = idx + 1;
             start = i + 1;
         } else {
