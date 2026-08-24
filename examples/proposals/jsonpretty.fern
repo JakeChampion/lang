@@ -178,7 +178,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     var c: u8 = text[at];
 
     if (c == 110) { // null
-        if (at + 4 > text.len() || text[at:at + 4] != "null") {
+        if (at + 4 > text.len() || slice_unchecked(text, at, at + 4) != "null") {
             return fail_val(d, at, "expected null");
         }
         var v: Val = empty_val();
@@ -188,7 +188,7 @@ function parse_value(text: string, at0: i32, d0: Doc): ValR {
     if (c == 116 || c == 102) { // true / false
         var lit: string = "true";
         if (c == 102) { lit = "false"; }
-        if (at + lit.len() > text.len() || text[at:at + lit.len()] != lit) {
+        if (at + lit.len() > text.len() || slice_unchecked(text, at, at + lit.len()) != lit) {
             return fail_val(d, at, "expected a boolean");
         }
         var vb: Val = empty_val();
@@ -303,7 +303,7 @@ function number_text(neg: boolean, mant0: i32, scale0: i32): string {
         out = digits;
     } else {
         while (digits.len() <= scale) { digits = "0" + digits; }
-        out = digits[0:digits.len() - scale] + "." + digits[digits.len() - scale:digits.len()];
+        out = slice_unchecked(digits, 0, digits.len() - scale) + "." + slice_unchecked(digits, digits.len() - scale, digits.len());
     }
     if (neg && mant != 0) { out = "-" + out; }
     return out;

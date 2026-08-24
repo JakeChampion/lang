@@ -38,7 +38,7 @@ function expand_set(s: string): string {
       }
       i = i + 3;
     } else {
-      out = out + s[i:i + 1];
+      out = out + slice_unchecked(s, i, i + 1);
       i = i + 1;
     }
   }
@@ -59,10 +59,10 @@ function translate(text: string, set1: string, set2: string): string {
         k = set2.len() - 1;
       }
       if (set2.len() > 0) {
-        out = out + set2[k:k + 1];
+        out = out + slice_unchecked(set2, k, k + 1);
       }
     } else {
-      out = out + text[i:i + 1];
+      out = out + slice_unchecked(text, i, i + 1);
     }
     i = i + 1;
   }
@@ -85,7 +85,7 @@ function squeeze_set(text: string, set1: string): string {
       i = i + 1;
       continue;
     }
-    out = out + text[i:i + 1];
+    out = out + slice_unchecked(text, i, i + 1);
     prev = b;
     i = i + 1;
   }

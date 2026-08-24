@@ -102,7 +102,7 @@ function cut_chars(line: string, ranges: (i32, i32)[]): string {
   var i: i32 = 0;
   while (i < line.len()) {
     if (selected(i + 1, ranges)) {
-      out = out + line[i:i + 1];
+      out = out + slice_unchecked(line, i, i + 1);
     }
     i = i + 1;
   }

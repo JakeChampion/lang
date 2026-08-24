@@ -6,7 +6,7 @@ function view_len(s: string): i64 {
   var total: i64 = 0i64;
   var i: i32 = 0;
   while (i + 16 <= s.len()) {
-    var part: str = s[i:i + 16];
+    var part: str = slice_unchecked(s, i, i + 16);
     total = total + part.len() as i64;
     i = i + 4;
   }

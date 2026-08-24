@@ -55,7 +55,7 @@ function lex(src: string): Tok[] {
         if (l.at_end()) { out = out.append(eof_of(l.line)); return out; }
         var start: i32 = l.i;
         while (!l.at_end() && l.src[l.i] != 32) { l = l.adv(); }
-        out = out.append(tok_of(src[start : l.i], l.line));
+        out = out.append(tok_of(slice_unchecked(src, start, l.i), l.line));
     }
     return out;
 }

@@ -64,7 +64,7 @@ function expand(line: string, ts: i32): string {
             out = out + spaces(target - col);
             col = target;
         } else {
-            out = out + line[i:i + 1].to_owned();
+            out = out + slice_unchecked(line, i, i + 1).to_owned();
             col = col + 1;
         }
         i = i + 1;
@@ -137,7 +137,7 @@ function visible_of(line: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < line.len()) {
-        if (!is_tab(line[i]) && !is_space(line[i])) { out = out + line[i:i + 1].to_owned(); }
+        if (!is_tab(line[i]) && !is_space(line[i])) { out = out + slice_unchecked(line, i, i + 1).to_owned(); }
         i = i + 1;
     }
     return out;

@@ -61,7 +61,7 @@ function parse_hex(s: string): Option[Rgb] {
 
 function hex_char(v: i32): string {
     var d: string = "0123456789abcdef";
-    return "" + d[v:v + 1];
+    return "" + slice_unchecked(d, v, v + 1);
 }
 
 // Always the 6-digit lowercase form, so formatting is a function rather

@@ -255,14 +255,14 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
         if (hi < a) { return test.fail("ceil shrank the index"); }
         var b: i32 = a;
         while (b <= 10) {
-            var cut: str = s[utf8.floor_char_boundary(s, a) : utf8.ceil_char_boundary(s, b)];
+            var cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
             if (!utf8.is_valid_utf8(cut.to_owned())) { return test.fail("snapped slice is not valid UTF-8"); }
             b = b + 1;
         }
         a = a + 1;
     }
     // The raw, unsnapped slice is exactly what these guard against.
-    return test.assert_true(!utf8.is_valid_utf8(s[0 : 2].to_owned()));
+    return test.assert_true(!utf8.is_valid_utf8(slice_unchecked(s, 0, 2).to_owned()));
 }
 
 function main(): i32 {

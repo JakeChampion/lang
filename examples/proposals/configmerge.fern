@@ -217,8 +217,8 @@ function env_layer(vars: string[]): Layer {
     while (i < vars.len()) {
         var at: i32 = vars[i].index_of("=");
         if (at >= 0) {
-            var name: string = vars[i][0:at].to_owned();
-            var val: string = vars[i][at + 1 : vars[i].len()].to_owned();
+            var name: string = slice_unchecked(vars[i], 0, at).to_owned();
+            var val: string = slice_unchecked(vars[i], at + 1, vars[i].len()).to_owned();
             var m: MappedKey = env_to_key(name);
             if (m.ok) { es = es.append(Entry { key: m.key, value: val }); }
         }

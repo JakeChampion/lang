@@ -28,7 +28,7 @@ function scan(src: string): i32 {
     while (i < n && is_ident_byte(src[i])) {
       i = i + 1;
     }
-    var word: str = src[start:i];
+    var word: str = slice_unchecked(src, start, i);
     // Keyword comparison — the strcmp-bound half.
     if (word == "function" || word == "return" || word == "while" || word == "var" || word == "if" || word == "else") {
       kw = kw + 1;

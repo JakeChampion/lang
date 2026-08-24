@@ -92,7 +92,7 @@ function lex(src: string): Lexed {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
-            var text: string = src[start:i].to_owned();
+            var text: string = slice_unchecked(src, start, i).to_owned();
             toks = toks.append(Token { kind: tk_num(), text: text, value: v,
                                        line: line, col: col });
             col = col + (i - start);
@@ -101,7 +101,7 @@ function lex(src: string): Lexed {
         if (is_ident_start(b)) {
             var start2: i32 = i;
             while (i < src.len() && is_ident_part(src[i] as i32)) { i = i + 1; }
-            var word: string = src[start2:i].to_owned();
+            var word: string = slice_unchecked(src, start2, i).to_owned();
             var k: i32 = tk_ident();
             if (is_keyword(word)) { k = tk_keyword(); }
             toks = toks.append(Token { kind: k, text: word, value: 0,
@@ -112,7 +112,7 @@ function lex(src: string): Lexed {
         var matched: boolean = false;
         var twos: string[] = two_char_ops();
         for k in 0..twos.len() {
-            if (!matched && i + 2 <= src.len() && src[i:i + 2] == twos[k]) {
+            if (!matched && i + 2 <= src.len() && slice_unchecked(src, i, i + 2) == twos[k]) {
                 toks = toks.append(Token { kind: tk_punct(), text: twos[k],
                                            value: 0, line: line, col: col });
                 i = i + 2;
@@ -123,7 +123,7 @@ function lex(src: string): Lexed {
         if (matched) { continue; }
         var ones: string[] = one_char_ops();
         for k in 0..ones.len() {
-            if (!matched && src[i:i + 1] == ones[k]) {
+            if (!matched && slice_unchecked(src, i, i + 1) == ones[k]) {
                 toks = toks.append(Token { kind: tk_punct(), text: ones[k],
                                            value: 0, line: line, col: col });
                 i = i + 1;
@@ -669,7 +669,7 @@ function test_truncations_are_rejected(): test.TestOutcome {
     var src: string = "var total = 0; while (total < 10) { total = total + 3; } print total;";
     var accepted: i32 = 0;
     for cut in 1..src.len() {
-        var head: string = src[0:cut].to_owned();
+        var head: string = slice_unchecked(src, 0, cut).to_owned();
         var p: Parsed = parse(head);
         if (p.error.len() == 0) {
             // A prefix ending exactly at a statement boundary IS valid.

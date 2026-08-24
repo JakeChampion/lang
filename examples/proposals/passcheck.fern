@@ -310,7 +310,7 @@ function test_entropy_grows_with_length(): test.TestOutcome {
     var prev: i32 = entropy_milli(pw);
     var pad: string = "acegikmortvxz";
     for i in 0..pad.len() {
-        pw = pw + ("" + pad[i:i + 1]);
+        pw = pw + ("" + slice_unchecked(pad, i, i + 1));
         var now: i32 = entropy_milli(pw);
         if (now <= prev) {
             return test.fail("\"" + pw + "\" (" + fixed3(now)
@@ -379,7 +379,7 @@ function test_the_verdict_never_goes_backwards(): test.TestOutcome {
         // Build a lowercase password whose entropy lands near `bits`.
         var chars: string = "qwfpgjluyzxkvmnbrstdheaio";
         var need: i32 = (bits * 1000) / 4700 + 1;
-        for i in 0..need { pw = pw + ("" + chars[(i * 7) % chars.len():(i * 7) % chars.len() + 1]); }
+        for i in 0..need { pw = pw + ("" + slice_unchecked(chars, (i * 7) % chars.len(), (i * 7) % chars.len() + 1)); }
         var v: string = verdict(pw);
         var idx: i32 = -1;
         for k in 0..names.len() {

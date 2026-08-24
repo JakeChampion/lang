@@ -70,11 +70,11 @@ function token_at(s: string, at: i32): Option[(string, i32)] {
         var j: i32 = i + 1;
         while (j < s.len() && (s[j] as i32) != close) { j = j + 1; }
         if (j >= s.len()) { return None; }          // unclosed group
-        return Some(("" + s[i + 1:j], j + 1));
+        return Some(("" + slice_unchecked(s, i + 1, j), j + 1));
     }
     var j: i32 = i;
     while (j < s.len() && (s[j] as i32) != 32) { j = j + 1; }
-    return Some(("" + s[i:j], j));
+    return Some(("" + slice_unchecked(s, i, j), j));
 }
 
 function all_digits(s: string): boolean {
@@ -310,7 +310,7 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
     var ls: string[] = good_lines();
     for i in 0..ls.len() {
         for k in 0..(ls[i].len() + 1) {
-            var prefix: string = "" + ls[i][0:k];
+            var prefix: string = "" + slice_unchecked(ls[i], 0, k);
             match (parse_line(prefix)) {
                 None => { },
                 Some(e) => {
@@ -327,8 +327,8 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
     // A prefix cut inside either GROUP must fail outright — an unclosed
     // bracket or quote has no honest reading at all.
     var line: string = good_lines()[0];
-    var mid_bracket: string = "" + line[0:30];
-    var mid_quote: string = "" + line[0:60];
+    var mid_bracket: string = "" + slice_unchecked(line, 0, 30);
+    var mid_quote: string = "" + slice_unchecked(line, 0, 60);
     match (parse_line(mid_bracket)) {
         Some(e) => { return test.fail("a prefix cut inside the timestamp parsed"); },
         None => { },

@@ -52,7 +52,7 @@ function main(): i32 {
         } else if (c == 99) {
           o = Opts { ...o, count_only: true };  // c
         } else {
-          eprint("grep: invalid option -- '" + a[f:f + 1] + "'");
+          eprint("grep: invalid option -- '" + slice_unchecked(a, f, f + 1) + "'");
           return 2;
         }
         f = f + 1;
