@@ -33343,7 +33343,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // `oaas` holds BINDING-SITE keys (#7253); all four gates ask about the
         // VARIABLE, so each takes the bare name back out of the key.
         var oanm: string = reclaim_site_name(oaas[oai]);
-        if (!body_unsafe_for(body, oanm, borrowable, recv_borrow)
+        // The whole-name escape gate is plan-routed (step 2, the SCENUMS
+        // pattern); the element-alias and payload gates stay — a bound
+        // `var o = xs[i]` takes no counted retain here (native's Index-shape
+        // dup is not ported), so the name-level plan cannot license them.
+        var oa_esc_ok: boolean = false;
+        if (plan_on) { oa_esc_ok = util.index_of_str(plan_fe, oanm) >= 0; }
+        else { oa_esc_ok = !body_unsafe_for(body, oanm, borrowable, recv_borrow); }
+        if (oa_esc_ok
             && util.index_of_str(reassigned, oanm) < 0
             && !arrarr_row_escapes(body, oanm)
             && !optaarr_elem_payload_escapes(body, oanm)) {
@@ -33411,7 +33418,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
-    var ufa: string[] = collect_unmatched_optarr_names(body, opt_fresh_ret, []);
+    var ufa: string[] = collect_unmatched_optarr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
     var ufai: i32 = 0;
     while (ufai < ufa.len()) {
         out = out.append("OPTARR:" + ufa[ufai]);
@@ -33431,7 +33438,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
-    var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, []);
+    var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
     var ufsi: i32 = 0;
     while (ufsi < ufs.len()) {
         out = out.append("OPTSTR:" + ufs[ufsi]);
@@ -35299,6 +35306,31 @@ function body_has_top_level_match(stmts: parser.Stmt[], name: string): boolean {
 // sole_top_level_match_idx returns the index of the ONLY top-level match on
 // `name`, or -1 when there is none or more than one. The consuming-match
 // reclamation paths need the unique site, not merely its existence.
+// name_is_match_scrutinee: some match in `stmts` (any nesting) scrutinises the
+// bare local `name`. The plan-routed "unmatched" Option families keep this as
+// an explicit conjunct: body_unsafe_for refused EVERY bare mention, so the
+// match-refusal was implicit there; the plan verdict does not model the
+// consuming-match release channel, and granting a matched local would put a
+// second claim on the payload the match machinery may free.
+function name_is_match_scrutinee(stmts: parser.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtMatch(m) => {
+                match (m.scrutinee) {
+                    parser.ExprIdent(id) => { if (id.name == name) { return true; } },
+                    _ => {}
+                }
+                for arm in m.arms { if (name_is_match_scrutinee(arm.body, name)) { return true; } }
+            },
+            parser.StmtIf(f) => { if (name_is_match_scrutinee(f.then_body, name) || name_is_match_scrutinee(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (name_is_match_scrutinee(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (name_is_match_scrutinee(fo.body, name)) { return true; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
 function sole_top_level_match_idx(stmts: parser.Stmt[], name: string): i32 {
     var idx: i32 = 0 - 1;
     var n: i32 = 0;
@@ -40199,24 +40231,27 @@ function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_
     return false;
 }
 
-function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, acc: string[]): string[] {
+function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
+                var os_esc_ok: boolean = false;
+                if (plan_on) { os_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
+                else { os_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
-                    && !body_unsafe_for(stmts, v.name, [], [])) {
+                    && os_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            parser.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, a); },
-            parser.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_fresh_reg, a); },
-            parser.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_fresh_reg, a); },
+            parser.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, plan_on, plan_fe, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_fresh_reg, plan_on, plan_fe, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_fresh_reg, plan_on, plan_fe, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, opt_fresh_reg, a); }
+                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, opt_fresh_reg, plan_on, plan_fe, a); }
             },
             _ => {}
         }
@@ -40224,24 +40259,27 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: Sig
     return a;
 }
 
-function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
+                var oa_esc_ok: boolean = false;
+                if (plan_on) { oa_esc_ok = util.index_of_str(plan_fe, v.name) >= 0 && !name_is_match_scrutinee(stmts, v.name); }
+                else { oa_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
-                    && !body_unsafe_for(stmts, v.name, [], [])) {
+                    && oa_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh_reg, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh_reg, a); },
-            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, opt_fresh_reg, a); },
-            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, opt_fresh_reg, a); },
+            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh_reg, plan_on, plan_fe, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, opt_fresh_reg, plan_on, plan_fe, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, opt_fresh_reg, plan_on, plan_fe, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, opt_fresh_reg, a); }
+                for arm in m.arms { a = collect_unmatched_optarr_names(arm.body, opt_fresh_reg, plan_on, plan_fe, a); }
             },
             _ => {}
         }

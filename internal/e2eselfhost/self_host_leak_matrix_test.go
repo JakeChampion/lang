@@ -597,6 +597,54 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }
+`},
+		// The Option-family plan-routing witnesses: the escape gate for
+		// OPTARR/OPTSTR/OPTAARR is now the plan verdict (matched locals stay
+		// refused via name_is_match_scrutinee), so a fresh option passed to a
+		// reading callee earns its sweep.
+		leakCell{name: "opt_arr__callarg__read", src: `function peek(o: Option[i32[]], i: i32): i32 {
+    match (o) { Some(xs) => { return xs.len() + i; }, None => { return 0; } }
+}
+function round(i: i32): i32 {
+    var o: Option[i32[]] = Some([i, i + 1]);
+    return peek(o, i) % 101;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
+`},
+		leakCell{name: "opt_str__callarg__read", src: `function mk(a: string): string { return a + "!"; }
+function peek(o: Option[string]): i32 {
+    match (o) { Some(s) => { return s.len(); }, None => { return 0; } }
+}
+function round(i: i32): i32 {
+    var o: Option[string] = Some(mk("abc"));
+    return peek(o) + i % 3;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
+`},
+		leakCell{name: "opt_aarr__callarg__read", src: `function count(xs: Option[i32[]][]) : i32 { return xs.len(); }
+function round(i: i32): i32 {
+    var xs: Option[i32[]][] = [Some([i, i + 1]), None];
+    return count(xs) + i % 3;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
 `})
 	return cells
 }
