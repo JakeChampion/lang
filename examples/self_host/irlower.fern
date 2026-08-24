@@ -54619,14 +54619,16 @@ function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: Si
         // query local binding-site keys, and the resolve fallback returns the
         // bare name for anything the env does not hold.
         st = FeState { ...st, types_n: st.types_n.append(p.name), types_t: st.types_t.append(p.type_name), decl_s: st.decl_s.append(p.name) };
-        // taint seed: every NON-SCALAR param that is neither `own` nor
-        // consumed-threaded. A scalar param cannot alias heap, and seeding it
-        // poisoned every call through the any-tainted-arg rule — `nodeB(s, n)`
-        // was refused through its own scalar n unless the callee happened to
-        // qualify for the noesc oracle (the alloc_flat fixtures' shape).
-        // Native taints no scalar there; the rest of the owned-by-default
-        // paramVerdict ladder is still not ported (the documented cut).
-        if (!p.own && util.index_of_str(consumed, p.name) < 0 && !rc_scalar_type_name(p.type_name)) {
+        // taint seed: every NON-SCALAR, NON-STRING param that is neither `own`
+        // nor consumed-threaded. A scalar param cannot alias heap; native
+        // leaves a STRING param untainted too (owned-by-default), and seeding
+        // it poisoned every call through the any-tainted-arg rule — a scalar
+        // arg (`nodeB(s, n)`, the alloc_flat shape) and then a bare string
+        // arg (`node(pre, mk(), n)`, the StrArrFieldBufferRelease shape) each
+        // refused an entire fixture's credits. The rest of the
+        // owned-by-default paramVerdict ladder is still not ported (the
+        // documented cut); array and container params stay seeded.
+        if (!p.own && util.index_of_str(consumed, p.name) < 0 && !rc_scalar_type_name(p.type_name) && p.type_name != "string") {
             st = FeState { ...st, tainted: rc_fe_taint(st.tainted, p.name) };
         }
         pi = pi + 1;
