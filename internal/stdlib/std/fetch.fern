@@ -212,7 +212,7 @@ pub function http_body(resp: string): str {
     if (sep < 0) {
         return "";
     }
-    return resp[sep + 4 : resp.len()];
+    return slice_unchecked(resp, sep + 4, resp.len());
 }
 
 // parse_ipv4(s) — parse a dotted-quad "a.b.c.d" into the network-byte-
@@ -271,22 +271,22 @@ pub function get_url(url: string): string {
     var prefix: string = "http://";
     if (url.len() < prefix.len()) { return ""; }
     if (url[0 : prefix.len()] != prefix) { return ""; }
-    var rest: str = url[prefix.len() : url.len()];
+    var rest: str = slice_unchecked(url, prefix.len(), url.len());
     // authority is up to the first '/'; the rest (incl. the '/') is the path.
     var slash: i32 = rest.index_of("/");
     var authority: str = rest;
     var path: str = "/";
     if (slash >= 0) {
-        authority = rest[0 : slash];
-        path = rest[slash : rest.len()];
+        authority = slice_unchecked(rest, 0, slash);
+        path = slice_unchecked(rest, slash, rest.len());
     }
     // authority = HOST[:PORT].
     var host: str = authority;
     var port: i32 = 80;
     var colon: i32 = authority.index_of(":");
     if (colon >= 0) {
-        host = authority[0 : colon];
-        var portstr: str = authority[colon + 1 : authority.len()];
+        host = slice_unchecked(authority, 0, colon);
+        var portstr: str = slice_unchecked(authority, colon + 1, authority.len());
         port = 0;
         var i: i32 = 0;
         while (i < portstr.len()) {
