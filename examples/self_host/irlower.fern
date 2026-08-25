@@ -20870,6 +20870,21 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
         },
         _ => {}
     }
+    // The STRING alias reassign takes the same hoisted retain, and for the same
+    // reason: emit_str_reclaim_store returns before emit_arr_store is reached and
+    // takes no alias_inc, so routing it there would drop the retain while the
+    // credit is still granted.
+    if (!alias_reassign_inc) {
+        match (a.value) {
+            parser.ExprIdent(sid3) => {
+                if (!s.is_arr_slot(s.slot_of(sid3.name))
+                        && reclaim_has(s.reclaimable_names, "STRALIASSRC:", s.reclaim_site_key(s.slot_of(sid3.name)))) {
+                    alias_reassign_inc = true;
+                }
+            },
+            _ => {}
+        }
+    }
     if (alias_reassign_inc) { se = se.emit(ir.op_call_direct("__fern_rc_inc", 1)); }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
     // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
@@ -24562,6 +24577,97 @@ function body_unsafe_for_clo_alias(stmts: parser.Stmt[], name: string, borrowabl
 // alias site. Granting one without the other is the double free — forgiving
 // alone leaves two slots sweeping one box at rc 1; copying alone leaves the
 // source uncredited and the box unreleased.
+// alias_ok_holds_name: any site key in `alias_ok` is for the variable `name`. Used
+// by the alias-REASSIGN forgiveness, which has only the target's name to key on.
+function alias_ok_holds_name(alias_ok: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < alias_ok.len()) {
+        if (reclaim_site_name(alias_ok[i]) == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// str_alias_reassign_target_sites: the binding SITES of string locals `t` that are
+// reassigned from `src` (`t = src`) and from nothing else uncounted. Handed to the
+// escape walker as extra alias_ok entries so the source's bare-ident use at that
+// assignment is read as the counted share it now is, and credited alongside it so
+// inc and dec stay co-extensive.
+//
+// Every reassign of `t` must be a bare ident: a field or element read (`t = x.f`,
+// `t = xs[i]`) is a borrow of a container's memory that no retain covers, and a
+// fresh producer (`t = a + b`) is the consume-rebind that emit_str_reclaim_store
+// already owns and which deliberately takes no inc.
+function str_alias_reassign_target_sites(stmts: parser.Stmt[], src: string, cands: string[], body: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(asg) => {
+                match (asg.value) {
+                    parser.ExprIdent(rid) => {
+                        if (rid.name == src && asg.target != src
+                                && str_all_reassigns_bare_ident(body, asg.target)) {
+                            var tsite: string = str_cand_site_of(cands, asg.target);
+                            if (tsite.len() > 0) { a = push_str_unique(a, tsite); }
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => {
+                a = str_alias_reassign_target_sites(f.then_body, src, cands, body, a);
+                a = str_alias_reassign_target_sites(f.else_body, src, cands, body, a);
+            },
+            parser.StmtWhile(w) => { a = str_alias_reassign_target_sites(w.body, src, cands, body, a); },
+            parser.StmtFor(fo) => { a = str_alias_reassign_target_sites(fo.body, src, cands, body, a); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = str_alias_reassign_target_sites(m.arms[ai].body, src, cands, body, a); ai = ai + 1; }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// str_all_reassigns_bare_ident: every assignment to `name` has a bare-ident RHS.
+function str_all_reassigns_bare_ident(stmts: parser.Stmt[], name: string): boolean {
+    for stmt in stmts { if (!str_reassign_bare_ok(stmt, name)) { return false; } }
+    return true;
+}
+
+function str_reassign_bare_ok(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target != name) { return true; }
+            match (a.value) {
+                parser.ExprIdent(_) => { return true; },
+                _ => { return false; }
+            }
+        },
+        parser.StmtIf(f) => { return str_all_reassigns_bare_ident(f.then_body, name) && str_all_reassigns_bare_ident(f.else_body, name); },
+        parser.StmtWhile(w) => { return str_all_reassigns_bare_ident(w.body, name); },
+        parser.StmtFor(fo) => { return str_all_reassigns_bare_ident(fo.body, name); },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { if (!str_all_reassigns_bare_ident(m.arms[ai].body, name)) { return false; } ai = ai + 1; }
+            return true;
+        },
+        parser.StmtDefer(d) => { return str_reassign_bare_ok(d.action, name); },
+        _ => { return true; }
+    }
+}
+
+// str_cand_site_of: the binding-site key in `cands` for the variable `name`, or "".
+function str_cand_site_of(cands: string[], name: string): string {
+    var i: i32 = 0;
+    while (i < cands.len()) {
+        if (reclaim_site_name(cands[i]) == name) { return cands[i]; }
+        i = i + 1;
+    }
+    return "";
+}
+
 function alias_bind_sites_of(stmts: parser.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
@@ -24739,7 +24845,29 @@ function stmt_unsafe_for_alias_vb(st: parser.Stmt, name: string, borrowable: str
         },
         parser.StmtReturn(r) => { return expr_unsafe_for_vb(r.value, name, borrowable, recv_borrow, vb_borrow); },
         parser.StmtExpr(e) => { return expr_unsafe_for_vb(e.value, name, borrowable, recv_borrow, vb_borrow); },
-        parser.StmtAssign(a) => { return expr_unsafe_for_vb(a.value, name, borrowable, recv_borrow, vb_borrow); },
+        parser.StmtAssign(a) => {
+            // The REASSIGN twin of the StmtVar alias forgiveness above: `t = name`
+            // hands the box to a slot that RETAINS it, so it is a counted share
+            // rather than an escape. Only reached when the caller put t's site in
+            // alias_ok, which it does only for a target it is about to credit.
+            //
+            // Matched by NAME rather than by site key, because an assignment
+            // carries only the target's name — there is no line/col to key on. The
+            // precision loss is bounded and lands in the safe direction: two
+            // same-named string locals in sibling blocks share a verdict, and for
+            // the STRING class sharing a verdict leaks rather than frees (the
+            // struct class, where it would free a live box, is the one #7253 calls
+            // out and is not this).
+            if (alias_ok.len() > 0) {
+                match (a.value) {
+                    parser.ExprIdent(rid) => {
+                        if (rid.name == name && alias_ok_holds_name(alias_ok, a.target)) { return false; }
+                    },
+                    _ => {}
+                }
+            }
+            return expr_unsafe_for_vb(a.value, name, borrowable, recv_borrow, vb_borrow);
+        },
         parser.StmtIf(f) => {
             if (expr_unsafe_for_vb(f.cond, name, borrowable, recv_borrow, vb_borrow)) { return true; }
             return body_unsafe_for_alias_vb(f.then_body, name, borrowable, recv_borrow, alias_ok, vb_borrow) || body_unsafe_for_alias_vb(f.else_body, name, borrowable, recv_borrow, alias_ok, vb_borrow);
@@ -34105,6 +34233,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         tprc = tprc + 1;
     }
+    // The candidate pool an alias-reassign TARGET must come from: a string local
+    // bound by a fresh producer or a literal. A target outside it is some other
+    // class and earns nothing here.
+    var str_cands: string[] = [];
+    var sc0: i32 = 0;
+    while (sc0 < strs.len()) { str_cands = push_str_unique(str_cands, strs[sc0]); sc0 = sc0 + 1; }
+    var lits_pre: string[] = collect_litstr_local_names(body, []);
+    var sc1: i32 = 0;
+    while (sc1 < lits_pre.len()) { str_cands = push_str_unique(str_cands, lits_pre[sc1]); sc1 = sc1 + 1; }
     var si: i32 = 0;
     while (si < strs.len()) {
         // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
@@ -34129,10 +34266,25 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // than the struct and rc-tuple cases rather than merely different.
         var sal: string[] = [];
         sal = alias_bind_sites_of(body, snm, borrowable, recv_borrow, body, sal);
+        // The alias REASSIGN (`t = s`) joins the alias BIND, on the same terms: the
+        // assignment now RETAINS (keyed on the "STRALIASSRC:" row below), so `t`
+        // holds a counted share rather than a borrow. Its site goes into `sal` so
+        // the escape walker reads the source's use there as the share it is, and
+        // takes the "STR:" credit alongside — the same "granting both is what makes
+        // inc and dec co-extensive" this block already states for the bind.
+        var sra: string[] = str_alias_reassign_target_sites(body, snm, str_cands, body, []);
+        var sal_all: string[] = sal;
+        var sri: i32 = 0;
+        while (sri < sra.len()) { sal_all = push_str_unique(sal_all, sra[sri]); sri = sri + 1; }
         if (util.index_of_str(reassigned, snm) < 0
-            && !body_unsafe_for_clo_alias(body, snm, borrowable, clo_ok, recv_borrow, sal)) {
+            && !body_unsafe_for_clo_alias(body, snm, borrowable, clo_ok, recv_borrow, sal_all)) {
             out = out.append("STR:" + strs[si]);
-            out = credit_alias_sites(out, "STR:", sal);
+            out = credit_alias_sites(out, "STR:", sal_all);
+            if (sra.len() > 0) {
+                // The source is handing its box on at an assignment, so the retain
+                // has to fire there. lower_stmt_assign keys on this row.
+                out = out.append("STRALIASSRC:" + strs[si]);
+            }
         }
         si = si + 1;
     }
@@ -34145,12 +34297,16 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (li2 < lits.len()) {
         var lnm: string = reclaim_site_name(lits[li2]);
         var lal: string[] = alias_bind_sites_of(body, lnm, borrowable, recv_borrow, body, []);
+        var lra: string[] = str_alias_reassign_target_sites(body, lnm, str_cands, body, []);
+        var lri: i32 = 0;
+        while (lri < lra.len()) { lal = push_str_unique(lal, lra[lri]); lri = lri + 1; }
         if (util.index_of_str(strs, lits[li2]) < 0
             && util.index_of_str(reassigned, lnm) < 0
             && !litstr_tostring_recv_body(body, lnm)
             && !body_unsafe_for_clo_alias(body, lnm, borrowable, clo_ok, recv_borrow, lal)) {
             out = out.append("STR:" + lits[li2]);
             out = credit_alias_sites(out, "STR:", lal);
+            if (lra.len() > 0) { out = out.append("STRALIASSRC:" + lits[li2]); }
         }
         li2 = li2 + 1;
     }
