@@ -30,5 +30,9 @@ variant__moved        clean clean  a MOVED struct payload: the enum's rc-gated p
 variant__live         clean leak   refused: the ctor stores no counted reference, so a live source would dangle
 variant_unqual__moved clean clean  the bare spelling must measure identically — it used not to
 variant_unqual__live  clean leak   refused, same as the qualified spelling
-option__moved         clean leak   refused: opt_make retains an rc CONTAINER payload, not a struct box
-option__live          clean leak   refused
+option__moved         clean leak   NOT the store: the credit needs a match STATEMENT, and this cell reads through a match EXPRESSION
+option__live          clean leak   same — see option_stmt for the store's own axis
+option_stmt__moved    clean clean  opt_make retains the struct box, so the option co-owns it and both releases are rc-gated
+option_stmt__live     clean clean  a counted payload: the source stays live and each owner releases once
+result_stmt__moved    clean clean  `Ok(p)` is the same box through the same lowering — it must measure identically
+result_stmt__live     clean clean

@@ -86,6 +86,55 @@ function main(): i32 {
     }
 }`
 
+// rcOptStructPayloadUAF: the STRUCT-BOX sibling of rcMatchPayloadUAF, and the
+// same bug one payload kind over. lower_opt_make_payload's alias-inc was gated on
+// slot_is_rc_container — array / string / tuple slots — so `Some(p)` / `Ok(p)`
+// where p is a struct LOCAL stored the box with no retain. p's exit sweep then
+// freed a box the RETURNED option still pointed at, and `clobber`'s allocation
+// reused the cell, so the payload read back 9999 instead of i.
+//
+// Both spellings are exercised: they build the same box through the same
+// lowering, so a fix reaching only one of them is not a fix. Correct answer is 0
+// (no round disagrees); the pre-fix self-host returned 100.
+const rcOptStructPayloadUAF = `struct P { xs: i32[], k: i32 }
+
+function some_of(i: i32): Option[P] {
+    var p: P = P { xs: [i, i + 1], k: i };
+    var o: Option[P] = Some(p);
+    return o;
+}
+
+function ok_of(i: i32): Result[P, i32] {
+    var p: P = P { xs: [i, i + 1], k: i };
+    var o: Result[P, i32] = Ok(p);
+    return o;
+}
+
+function clobber(i: i32): i32 {
+    var q: P = P { xs: [9999, 9999], k: 9999 };
+    return q.k + q.xs[0];
+}
+
+function round(i: i32): i32 {
+    var a: Option[P] = some_of(i);
+    var b: Result[P, i32] = ok_of(i);
+    var junk: i32 = clobber(i);
+    var m: i32 = 0;
+    var n: i32 = 0;
+    match (a) { Some(p2) => { m = p2.k; }, None => { m = 0 - 1; } }
+    match (b) { Ok(p3) => { n = p3.k; }, Err(e) => { n = 0 - 1; } }
+    if (m != i) { return 1; }
+    if (n != i) { return 1; }
+    return 0;
+}
+
+function main(): i32 {
+    var bad: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { bad = bad + round(r); r = r + 1; }
+    return bad;
+}`
+
 func compileAndRunSelfHostIR(t *testing.T, gcc string, runner []string, dir, driverBin, name, src string) int {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -133,6 +182,15 @@ func TestSelfHostMatchPayloadRC(t *testing.T) {
 	t.Run("match_payload_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_uaf", rcMatchPayloadUAF); code != 17 {
 			t.Errorf("match-extracted array across an allocating call exited %d, want 17", code)
+		}
+	})
+
+	// The struct-box payload takes the same retain: a returned `Some(p)` / `Ok(p)`
+	// must outlive p's exit sweep.
+	t.Run("struct_payload_across_alloc", func(t *testing.T) {
+		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_optstruct_uaf", rcOptStructPayloadUAF); code != 0 {
+			t.Errorf("returned option carrying a struct local exited %d, want 0 "+
+				"(each nonzero round read a clobbered payload)", code)
 		}
 	})
 }
