@@ -855,6 +855,36 @@ Costs, stated honestly:
   assumed. Still short of `simdutf`-class multi-GB/s — that needs SIMD
   and this is a scalar loop — but the right order of magnitude, and the
   scan is no longer the reason not to validate.
+
+  **Those bodies are pure ASCII, and the cost is not flat once they are
+  not.** Re-measured for #5634's acceptance on a handler that reads a
+  4 KB body and parses it 200 times, comparing `utf8.from_bytes` against
+  `string_from_bytes_unchecked` on the SAME body (x86-64, native):
+
+  | Body | callgrind Ir | wall, best of 7 |
+  |---|---|---|
+  | ASCII only | +1.2% | **+0%** (4.67 vs 4.67 ms, within noise) |
+  | mostly ASCII, non-ASCII text in one field | +39.6% | **+24%** (4.67 vs 3.76 ms) |
+
+  Wall time is the number to trust where the two disagree, per
+  `scripts/perf-bench`: Ir counts a 16-byte vector op as one
+  instruction, so it flatters the ASCII path and overstates the
+  multibyte delta.
+
+  The cause is spacing, not volume. Only ~5% of the second body's bytes
+  are non-ASCII, so a per-byte decoding cost cannot explain a 24% swing.
+  `__ascii_run`, the SIMD kernel that clears the runs BETWEEN multibyte
+  sequences, is tuned for "a 2-byte codepoint every 1 KB" — the run
+  length its 63× came from. Prose with accented words or CJK puts one
+  every ~17 bytes, about one vector block, so the kernel is re-entered
+  constantly and its fixed cost stops being amortised.
+
+  This does not reopen D9: 24% of a parse on the least favourable
+  realistic body is still a cost worth the invariant, and an ASCII body
+  — the common case for machine-generated JSON — pays nothing
+  measurable. It does mean the "flat ~5–6%" above should be read as the
+  ASCII figure rather than the figure, and that the next optimisation
+  here is the short-run entry cost, not the per-byte decode.
 - Non-UTF-8 filesystem paths become unrepresentable. See D10.
 
 The payoff: `std/utf8`'s `is_valid_utf8` stops being something callers
