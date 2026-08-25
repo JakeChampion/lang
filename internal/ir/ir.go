@@ -9621,15 +9621,51 @@ func (b *builder) expr(e ast.Expr) error {
 		// for strings yet). Bounds-check happens inside the
 		// helper.
 		if n.IsString {
+			// `s[a:b]` on a string is CHECKED (#5634): it yields `None`
+			// when the range is out of bounds or either end falls inside
+			// a multi-byte code point, and `Some(slice)` otherwise. Only
+			// a validated range reaches `__str_slice` — the trapping,
+			// boundary-blind form kept the old lowering under the name
+			// `slice_unchecked`.
+			//
 			// __str_slice copies bytes OUT of its source and leaves that
 			// buffer alone, so an owned-temp source (`f(x)[a:b]`) is
-			// reclaimed by nobody unless stashed — one leaked buffer per
-			// slice. The slot doubles as the default-`high` length read,
-			// which otherwise re-evaluates Source (calling `f` twice).
-			slSrc, err := b.stashOwnedStringOperand(n.Source)
+			// reclaimed by nobody unless spilled — one leaked buffer per
+			// slice. The slot also serves the length read and both
+			// boundary probes, so the source is evaluated exactly once
+			// whatever bound forms are written.
+			srcSlot, decOwed, err := b.spillStringOperand(n.Source)
 			if err != nil {
 				return err
 			}
+			// Reserve every scratch slot and evaluate both bounds BEFORE
+			// the first block opens: a value pushed outside an if-scope
+			// and consumed inside it is rejected by the wasm validator
+			// (emitEnumNew's payload loop documents the same hazard).
+			i32 := ast.NumberType{Width: 32}
+			lenSlot := b.allocSlot()
+			b.scratchType[lenSlot] = i32
+			loSlot := b.allocSlot()
+			b.scratchType[loSlot] = i32
+			hiSlot := b.allocSlot()
+			b.scratchType[hiSlot] = i32
+			okSlot := b.allocSlot()
+			b.scratchType[okSlot] = i32
+			bokSlot := b.allocSlot()
+			b.scratchType[bokSlot] = i32
+			byteSlot := b.allocSlot()
+			b.scratchType[byteSlot] = i32
+			resultSlot := b.allocSlot()
+			b.scratchType[resultSlot] = i32
+			sliceSlot := b.allocSlot()
+			b.scratchType[sliceSlot] = ast.StringType{}
+			// len: OpStrLen for the SSO-aware read (inline / heap
+			// branch). The two-word ABI's length lives on the operand
+			// stack as the second i32 of `(data, len)` — the legacy
+			// `[ptr - 4]` array-shape prefix-load no longer applies.
+			b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+			b.emit(Op{Kind: OpStrLen})
+			b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
 			if n.Low != nil {
 				if err := b.expr(n.Low); err != nil {
 					return err
@@ -9637,40 +9673,111 @@ func (b *builder) expr(e ast.Expr) error {
 			} else {
 				b.emit(Op{Kind: OpConstI32, I32: 0})
 			}
+			b.emit(Op{Kind: OpStoreLocal, I32: loSlot})
 			if n.High != nil {
 				if err := b.expr(n.High); err != nil {
 					return err
 				}
 			} else {
-				// Fall back to source length: re-evaluate
-				// Source then route through OpStrLen for the
-				// SSO-aware length read (inline / heap branch).
-				// The two-word ABI's length lives on the operand
-				// stack as the second i32 of `(data, len)` — the
-				// legacy `[ptr - 4]` array-shape prefix-load no
-				// longer applies.
-				if slSrc >= 0 {
-					b.emit(Op{Kind: OpLoadLocal, I32: slSrc})
-				} else if err := b.expr(n.Source); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpStrLen})
+				b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 			}
-			// I32 is the IR-level operand-stack pop count (one
-			// per source argument), so it stays at 3 on both
-			// targets. On wasm32 the OpLoadLocal-of-string
-			// fans to two wasm-stack i32s automatically, so
-			// the runtime helper's 4-param signature is fed
-			// the right number of wasm-stack slots without the
-			// IR caller knowing about the fan-out.
+			b.emit(Op{Kind: OpStoreLocal, I32: hiSlot})
+			// ok = 0 <= lo && lo <= hi && hi <= len
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
+			b.emit(Op{Kind: OpLeS})
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: hiSlot})
+			b.emit(Op{Kind: OpLeS})
+			b.emit(Op{Kind: OpAnd})
+			b.emit(Op{Kind: OpLoadLocal, I32: hiSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+			b.emit(Op{Kind: OpLeS})
+			b.emit(Op{Kind: OpAnd})
+			b.emit(Op{Kind: OpStoreLocal, I32: okSlot})
+			// probeBoundary ANDs `is_char_boundary(src, idx)` into
+			// bokSlot. 0 and len are boundaries by definition and
+			// `__str_idx` TRAPS out of range, so the `0 < idx < len`
+			// guard is a correctness requirement, not an optimisation —
+			// and it only ever runs inside the bounds-OK arm.
+			probeBoundary := func(idxSlot int32) {
+				b.emit(Op{Kind: OpLoadLocal, I32: idxSlot})
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emit(Op{Kind: OpGtS})
+				b.emit(Op{Kind: OpLoadLocal, I32: idxSlot})
+				b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+				b.emit(Op{Kind: OpLtS})
+				b.emit(Op{Kind: OpAnd})
+				b.openIf(BlockTypeVoid)
+				b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+				b.emit(Op{Kind: OpLoadLocal, I32: idxSlot})
+				// ArgTypes stamped explicitly: the string argument comes
+				// from a slot here, and the arm64 two-word ABI has to
+				// count it as 2 operand-stack slots.
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_idx", Width: ResAddr, I32: 2, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+				b.emit(Op{Kind: OpLoadByte})
+				b.emit(Op{Kind: OpStoreLocal, I32: byteSlot})
+				// is_char_boundary: b < 0x80 || b >= 0xC0 (std/utf8).
+				b.emit(Op{Kind: OpLoadLocal, I32: byteSlot})
+				b.emit(Op{Kind: OpConstI32, I32: 128})
+				b.emit(Op{Kind: OpLtS})
+				b.emit(Op{Kind: OpLoadLocal, I32: byteSlot})
+				b.emit(Op{Kind: OpConstI32, I32: 192})
+				b.emit(Op{Kind: OpGeS})
+				b.emit(Op{Kind: OpOr})
+				b.emit(Op{Kind: OpLoadLocal, I32: bokSlot})
+				b.emit(Op{Kind: OpAnd})
+				b.emit(Op{Kind: OpStoreLocal, I32: bokSlot})
+				b.closeScope()
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: okSlot})
+			b.openIf(BlockTypeVoid) // ---- bounds OK ----
+			b.emit(Op{Kind: OpConstI32, I32: 1})
+			b.emit(Op{Kind: OpStoreLocal, I32: bokSlot})
+			probeBoundary(loSlot)
+			probeBoundary(hiSlot)
+			b.emit(Op{Kind: OpLoadLocal, I32: bokSlot})
+			b.openIf(BlockTypeVoid) // ---- Some ----
+			// I32 is the IR-level operand-stack pop count (one per
+			// source argument), so it stays at 3 on both targets. On
+			// wasm32 the OpLoadLocal-of-string fans to two wasm-stack
+			// i32s automatically, so the runtime helper's 4-param
+			// signature is fed the right number of wasm-stack slots
+			// without the IR caller knowing about the fan-out.
 			//
-			// ArgTypes stamped explicitly because `__str_slice`
-			// isn't in FuncSigs (it's a synthesised helper, not
-			// a user-callable name) — the arm64 two-word ABI
-			// needs `(string, i32, i32)` to count the string
-			// arg as 2 operand-stack slots.
+			// ArgTypes stamped explicitly because `__str_slice` isn't in
+			// FuncSigs (it's a synthesised helper, not a user-callable
+			// name) — the arm64 two-word ABI needs `(string, i32, i32)`
+			// to count the string arg as 2 operand-stack slots.
+			b.emit(Op{Kind: OpLoadLocal, I32: srcSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: loSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: hiSlot})
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__str_slice", Width: ResAddr, I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
-			b.decStashedStringTemps(slSrc)
+			b.emit(Op{Kind: OpStoreLocal, I32: sliceSlot})
+			// The payload type is passed EXPLICITLY: routing through
+			// emitEnumNew with a nil call node would resolve Option's
+			// payload to its generic ParamType and size the slot at the
+			// 4-byte default, truncating a two-word string to its low
+			// word on arm64.
+			if err := b.emitOptionSomeFromSlot(ast.StringType{}, sliceSlot); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.elseBranch() // ---- None: an end splits a code point ----
+			b.emit(Op{Kind: OpEnumSentinel, I32: 1})
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.closeScope()
+			b.elseBranch() // ---- None: out of range ----
+			b.emit(Op{Kind: OpEnumSentinel, I32: 1})
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.closeScope()
+			// One dec, after the join: inside the Some arm it would leak
+			// the source buffer on both None paths, and per-arm it would
+			// emit three times.
+			if decOwed {
+				b.decStashedStringTemps(srcSlot)
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 			break
 		}
 		// Lower `arr[low:high]` to:
@@ -10486,8 +10593,9 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		return ast.StringType{}
 	case *ast.SliceExpr:
 		// A slice expression's static type follows the source:
-		// `string[a:b]` is still a string (handled by __str_slice
-		// at runtime), array[a:b] is a SliceType over the element.
+		// `array[a:b]` is a SliceType over the element, and a checked
+		// `string[a:b]` is `Option[string]` (#5634 — `str` is already
+		// erased away by the time exprType runs).
 		src := b.exprType(x.Source)
 		switch s := src.(type) {
 		case ast.ArrayType:
@@ -10495,7 +10603,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		case ast.SliceType:
 			return s
 		case ast.StringType:
-			return ast.StringType{}
+			return ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
 		}
 	case *ast.Binary:
 		// `+` between strings produces a string. Returning the
@@ -11173,6 +11281,29 @@ func (b *builder) stashOwnedStringOperand(e ast.Expr) (int32, error) {
 	b.emit(Op{Kind: OpStoreLocal, I32: sl}) // pop (data,len) → slot
 	b.emit(Op{Kind: OpLoadLocal, I32: sl})  // re-push for the borrowing op
 	return sl, nil
+}
+
+// spillStringOperand lowers `e` and parks the result in a string-typed
+// scratch slot, leaving nothing on the operand stack. It is the sibling of
+// stashOwnedStringOperand for lowerings that read their source MORE THAN
+// ONCE (the guarded string slice reads it for the length, both boundary
+// probes and the copy): the stash helper only spills an owned temp and
+// otherwise leaves the value on the stack, which cannot be re-read.
+// The second result reports whether the caller owes the source an
+// owned-temp dec once every read has happened.
+func (b *builder) spillStringOperand(e ast.Expr) (int32, bool, error) {
+	if err := b.expr(e); err != nil {
+		return -1, false, err
+	}
+	decOwed := ast.RcFreeEnabled && b.isOwnedStringTemp(e)
+	sl := b.allocSlot()
+	// Same reserved `__strtmp_` naming stashOwnedStringOperand uses: the
+	// scope-exit sweep works off checker-declared locals, so a slot under
+	// this name is never swept and cannot be double-dec'd.
+	b.locals[fmt.Sprintf("__strtmp_%d", sl)] = sl
+	b.scratchType[sl] = ast.StringType{}
+	b.emit(Op{Kind: OpStoreLocal, I32: sl}) // pop (data,len) → slot
+	return sl, decOwed, nil
 }
 
 // decStashedStringTemps releases the slots stashOwnedStringOperand handed

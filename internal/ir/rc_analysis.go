@@ -1822,9 +1822,13 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return true
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer
-		// (the wasm runtime always allocates), so it's reclaimable — not
-		// a view. Array / other slices share the source buffer → tainted.
-		if _, ok := b.exprType(x).(ast.StringType); ok {
+		// (the wasm runtime always allocates) and boxes it in a fresh
+		// `Option`, so both are reclaimable — not views. Array / other
+		// slices share the source buffer → tainted. Keyed on IsString,
+		// NOT on exprType: exprType now reports the Option box, so a type
+		// test would taint the fresh box and downgrade the consumer's
+		// reclaim to the non-freeing __fern_rc_dec.
+		if x.IsString {
 			return false
 		}
 		return true
