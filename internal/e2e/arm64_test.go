@@ -8544,7 +8544,7 @@ function tokenize(s: string): string[] {
     if (i < sLen) { b = s[i] as i32; }
     var is_break: boolean = i == sLen || b == 32;
     if (is_break) {
-      if (i > start) { out = out.append(s[start:i]); }
+      if (i > start) { out = out.append(slice_unchecked(s, start, i)); }
       start = i + 1;
     }
     i = i + 1;
