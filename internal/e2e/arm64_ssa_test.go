@@ -1428,6 +1428,26 @@ function main(): i32 {
 }`,
 			want: 42,
 		},
+		{
+			// `.with` on an array of rc-tracked elements routes through
+			// __fern_arr_cow_inplace_ptr, the element-RETAINING copy-on-write
+			// the shared IR selects whenever the element type is a pointer.
+			// The SSA runtime satisfies it as an alias of the plain
+			// __fern_arr_cow_inplace: its decs never free, so the retain has
+			// nothing to balance. Two live handles onto one buffer force the
+			// COPY path (rc > 1) — the fast in-place path would hide it — and
+			// both are read back, so a copy that shared or clobbered the
+			// original's elements shows up in the answer.
+			name: "with_ptr_elements",
+			src: `struct P { v: i32 }
+function main(): i32 {
+  var a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }];
+  var b: P[] = a;
+  a = a.with(1, P { v: 9 });
+  return a[1].v + b[1].v;
+}`,
+			want: 11,
+		},
 	}
 
 	for _, c := range cases {
