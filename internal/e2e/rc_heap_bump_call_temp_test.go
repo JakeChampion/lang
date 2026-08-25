@@ -36,7 +36,7 @@ import (
 // classes fill; native reaches steady state immediately.
 
 // Exit code 0 = every consumer bounded; 1..4 names the one that grew.
-const callTempConsumerBumpSrc = `function mk(s: string): string { return s[0:20] + "!"; }
+const callTempConsumerBumpSrc = `function mk(s: string): string { return slice_unchecked(s, 0, 20) + "!"; }
 function burn(a: string, n: i32, mode: i32): i32 {
     var i: i32 = 0;
     var acc: i32 = 0;
@@ -44,7 +44,7 @@ function burn(a: string, n: i32, mode: i32): i32 {
         if (mode == 0) { acc = acc + ("<" + mk(a)).len(); }
         if (mode == 1) { if (mk(a) == "zzz") { acc = acc + 1; } }
         if (mode == 2) { var c: u8 = mk(a)[0]; acc = acc + (c as i32); }
-        if (mode == 3) { acc = acc + (mk(a)[0:3] + "").len(); }
+        if (mode == 3) { acc = acc + (slice_unchecked(mk(a), 0, 3) + "").len(); }
         i = i + 1;
     }
     return acc;
@@ -71,14 +71,14 @@ function main(): i32 {
 // iteration reuses it, and the final content checks see garbage. It stays
 // correct because a Fern return is owned at the call site, so the borrowed
 // return was inc'd on the way out. Each borrowing consumer gets a turn.
-const callTempConsumerUnderflowSrc = `function mk(s: string): string { return s[0:2] + "!"; }
+const callTempConsumerUnderflowSrc = `function mk(s: string): string { return slice_unchecked(s, 0, 2) + "!"; }
 function pick(a: string, b: string): string {
     if (a.len() > 3) { return a; }
     return b;
 }
 function main(): i32 {
     var seed: string = "abcdefghij";
-    var a: string = seed[0:8] + "";
+    var a: string = slice_unchecked(seed, 0, 8) + "";
     var b: string = "xy";
     var i: i32 = 0;
     var acc: i32 = 0;
@@ -89,7 +89,7 @@ function main(): i32 {
         if (pick(a, b) == "abcdefgh") { acc = acc + 1; }
         var c: u8 = pick(a, b)[0];              // 'a'
         acc = acc + (c as i32);
-        acc = acc + (pick(a, b)[0:3] + "").len();
+        acc = acc + (slice_unchecked(pick(a, b), 0, 3) + "").len();
         i = i + 1;
     }
     if (acc != 23200) { return 999; } // 200 * (5 + 10 + 1 + 97 + 3)
