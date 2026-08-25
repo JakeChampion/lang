@@ -197,6 +197,24 @@ function round(r: i32): i32 {
 		},
 		{
 			// Aliased to a local that outlives the block and is read after it.
+			//
+			// wantFrees moved 0 -> 1000 with the alias-REASSIGN retain. This row is
+			// the probe struct_bare_assigned_src's header cited for refusing the
+			// source outright ("the assignee holds the box uncounted and the
+			// source's release frees it underneath ... want frees exactly 0"), and
+			// that header named its own precondition: the refusal stood only until
+			// assignments carried the co-extensive retain. `held = s` now retains,
+			// so `s`'s block-exit release lands on a second counted claim rather
+			// than on the box, and `held` still owns it after the loop.
+			//
+			// Checked rather than assumed, because 0 -> 200 is the direction an
+			// over-release also moves in: native frees every block on this exact
+			// program, the answer is unchanged at 57, __rc_underflow_count() is 0,
+			// and -sanitize reports neither a use-after-free nor a double free. The
+			// check that settles it reads `held.xs[1]` after THREE fresh arrays are
+			// allocated post-loop — a freed buffer would be reused before the read —
+			// and returns native's answer with allocs == frees (measured at 260/260
+			// over 20 rounds; this row runs 100, hence 1000).
 			name: "aliased_to_an_outer_local",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -212,7 +230,7 @@ function round(r: i32): i32 {
     return acc + held.xs[1] + r;
 }`,
 			want:      57,
-			wantFrees: 0,
+			wantFrees: 1000,
 		},
 		{
 			// Returned out of the block to the caller.
