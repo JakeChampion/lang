@@ -18502,34 +18502,33 @@ function main(): i32 {
         _ => { return 655; }
     }
 
-    // Open-ended slice `s[1:]` — the omitted high bound desugars to
-    // `s.len()`, so sl.end is a zero-arg call of `s.len` (mirrors the
-    // Go parser's nil High → length default).
+    // Open-ended slice `s[1:]` — the omitted high bound sets `open_end`
+    // and leaves `end` an unevaluated placeholder. It used to desugar to
+    // `s.len()`, which put a SECOND copy of the base expression in the
+    // tree and evaluated it twice; this now mirrors the Go parser, which
+    // leaves High nil and lets the lowering supply the length.
+    //
+    // The base is asserted to appear exactly once, as `sl.array`.
     var srcOS: string = "var t = s[1:]; return 0;";
     var progOS: Stmt[] = parse_program(lexer.tokenize(srcOS));
     match (progOS[0]) {
         StmtVar(v) => {
             match (v.init) {
                 ExprSlice(sl) => {
+                    if (!sl.open_end) { return 658; }
                     match (sl.start) {
                         ExprNumber(n) => { if (n.text != "1") { return 656; } },
                         _ => { return 657; }
                     }
+                    match (sl.array) {
+                        ExprIdent(id) => { if (id.name != "s") { return 660; } },
+                        _ => { return 661; }
+                    }
+                    // The placeholder must not be a call: a `.len()` here
+                    // is the duplicated base coming back.
                     match (sl.end) {
-                        ExprCall(c) => {
-                            if (c.args.len() != 0) { return 658; }
-                            match (c.callee) {
-                                ExprFieldAccess(fa) => {
-                                    if (fa.field != "len") { return 659; }
-                                    match (fa.obj) {
-                                        ExprIdent(id) => { if (id.name != "s") { return 660; } },
-                                        _ => { return 661; }
-                                    }
-                                },
-                                _ => { return 662; }
-                            }
-                        },
-                        _ => { return 663; }
+                        ExprCall(_) => { return 663; },
+                        _ => {}
                     }
                 },
                 _ => { return 664; }
