@@ -42,7 +42,7 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		{"literal-not-unique", "function main(): i32 { var s: string = \"hello\"; return __fern_rc_is_unique(s); }", 0},
 		// String values survive the new layout: len + bytes read correctly.
 		{"concat-value-intact", "function main(): i32 { var s: string = \"foo\" + \"barbaz\"; return s.len(); }", 9},
-		{"substr-value-intact", "function main(): i32 { var s: string = \"hello world\"; var t: string = s[0:5]; return t.len(); }", 5},
+		{"substr-value-intact", "function main(): i32 { var s: string = \"hello world\"; var t: string = slice_unchecked(s, 0, 5); return t.len(); }", 5},
 		// String counting milestone (free OFF): an owned concat local is
 		// released (rc dec) at exit, value-correct + over-release detector 0.
 		{"concat-swept-clean", "function main(): i32 { var a: string = \"x\"; var b: string = \"yz\"; var s: string = a + b; return s.len() + __rc_underflow_count(); }", 3},
@@ -77,7 +77,7 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// Method / call / slice string results are now counted+swept too.
 		{"string-method-result-swept", "function main(): i32 { var s: string = \"AbC\".to_ascii_upper(); return s.len() + __rc_underflow_count(); }", 3},
 		{"string-fn-result-swept", "function build(): string { return \"x\" + \"yz\"; } function main(): i32 { var s: string = build(); return s.len() + __rc_underflow_count(); }", 3},
-		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = src[1:4]; return s.len() + __rc_underflow_count(); }", 3},
+		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = slice_unchecked(src, 1, 4); return s.len() + __rc_underflow_count(); }", 3},
 		// Regression: a function returning a BORROWED string field with NO
 		// swept locals must still return-retain it, or the caller's sweep of
 		// the result frees the field underfoot (the node_head/watbin UAF).

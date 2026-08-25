@@ -87,7 +87,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		// More of the compiler-shaped feature set the self-hosted
 		// compiler must lower to eventually compile its own source.
 		{"string_concat", "function main(): i32 { var s: string = \"ab\"; var t: string = s + \"cd\"; return t.len(); }", 4},
-		{"string_slice", "function main(): i32 { var s: string = \"abcde\"; return s[1:4].len(); }", 3},
+		{"string_slice", "function main(): i32 { var s: string = \"abcde\"; return slice_unchecked(s, 1, 4).len(); }", 3},
 		{"and_or", "function main(): i32 { var x: i32 = 3; if (x > 1 && x < 5) { return 1; } return 0; }", 1},
 		{"break_continue", "function main(): i32 { var i: i32 = 0; var c: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i == 7) { break; } c = c + 1; } return c; }", 5},
 		{"else_if_chain", "function main(): i32 { var x: i32 = 2; if (x == 1) { return 10; } else if (x == 2) { return 20; } else { return 30; } }", 20},

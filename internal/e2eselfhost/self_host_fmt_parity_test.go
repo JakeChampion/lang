@@ -276,7 +276,7 @@ var xs: i32[] = [1, 2, 3];
 var p: P = P { x: 1, y: 2 };
 var a: i32 = (s + "x").len();
 var b: i32 = xs[p.x + 1];
-var c: string = s[p.x:p.x + 2];
+var c: string = slice_unchecked(s, p.x, p.x + 2);
 var d: i32 = (p.x + p.y) * 2;
 return a + b + c.len() + d;
 }
