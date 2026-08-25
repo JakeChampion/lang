@@ -1943,10 +1943,13 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
   return false;
 }
 
-// has_sig is lookup_sig's predicate form. lookup_sig's miss builds a FuncSig
-// with three empty arrays and a `t_unknown("undefined function:" + name)`
-// concat; the two call sites below want a boolean, and both reach it only
-// after `defines` already failed — i.e. they are biased toward the miss.
+// has_sig is lookup_sig's predicate form. lookup_sig's miss still builds a
+// FuncSig with three empty arrays and an unknown ret_type; every caller here
+// wants a boolean, and each is biased toward the miss — reached only after
+// `defines` failed, or asking about a qualified spelling most calls do not
+// have. Both probes walk the same bucket, so gating a value lookup on this
+// costs a second chain walk on the HIT and saves the whole sentinel on the
+// miss.
 function (s: Scope) has_sig(name: string): boolean {
   var i: i32 = s.sigs.head[sig_name_bucket(name)];
   while (i >= 0) {
@@ -2219,8 +2222,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
       match (fa.obj) {
         parser.ExprIdent(ns_id) => {
           var qname: string = ns_id.name + "." + fa.field;
-          var qsig: FuncSig = s.lookup_sig(qname);
-          if (qsig.name.len() > 0) {
+          if (s.has_sig(qname)) {
             name = qname;
             qhandled = true;
           }
@@ -2509,10 +2511,10 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
   if (ctor_enum.len() > 0) {
     return t_union(ctor_enum);
   }
-  var sig: FuncSig = s.lookup_sig(name);
-  if (sig.name.len() == 0) {
+  if (!s.has_sig(name)) {
     return t_unknown("undefined function: " + name);
   }
+  var sig: FuncSig = s.lookup_sig(name);
   if (c.args.len() != sig.param_types.len()) {
     return t_unknown("arity mismatch calling `" + name + "`");
   }
