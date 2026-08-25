@@ -1325,6 +1325,14 @@ ratio compares compile TIME for the same input, not work per line.
 account of it stands: it is the kernel zeroing arena pages, so it tracks bytes
 bumped and no user-code profile will show it.
 
+That has a consequence for how work here is measured. `lower_func` copied every
+row of the borrow registry for every function it lowered; reading the rows by
+offset instead deleted **303 MB of arena traffic and 12% of system time** — and
+three interleaved wall-clock rounds could not see it, while peak RSS repeated to
+the megabyte on both sides. **A change that removes allocation without removing
+work lands in `sys`, so an A/B of the clock alone will report it as noise.**
+`docs/LOCAL-DEV-LOOP.md` carries the rule.
+
 ## 8. Reproducing any of this
 
 **Build the A/B baseline from the SAME COMMIT, not just before your edit.**
