@@ -1,0 +1,11 @@
+call_true=true
+call_false=false
+method_true=true
+method_false=false
+method_other=true
+var=true
+lit=true
+lit_false=false
+cmp=true
+neg=false
+index=false

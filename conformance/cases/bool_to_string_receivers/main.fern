@@ -1,0 +1,48 @@
+// `.to_string()` on a boolean renders true/false for EVERY receiver form.
+//
+// A boolean-returning CALL used to render 1/0 on the self-host while every
+// other form rendered true/false: irlower's expr_is_bool had arms for a
+// literal, an ident, a `!`, an index and a struct field, but none for a
+// call, so the receiver fell to expr_scalar_type's "i32" default and
+// dispatched __fern_i32_to_string.
+//
+// Both call shapes are covered — a free function and a METHOD — because
+// they resolve through different halves of the fix, and the method half is
+// keyed by the receiver's base type so a name shared across receivers
+// cannot answer for another.
+//
+// The four non-call forms are here as controls. They rendered correctly
+// before the fix and after it, so on their own they would pin nothing; a
+// case containing only them would be green whether or not the bug is
+// present.
+import "std/string";
+
+struct Box { v: i32 }
+
+function yes(): boolean { return true; }
+function no(): boolean { return false; }
+function (b: Box) over_ten(): boolean { return b.v > 10; }
+function (b: Box) under_ten(): boolean { return b.v < 10; }
+
+function main(): i32 {
+    var b: boolean = true;
+    var big: Box = Box { v: 42 };
+    var small: Box = Box { v: 3 };
+    var flags: boolean[] = [true, false];
+
+    // the two forms that regressed
+    print("call_true=" + yes().to_string());
+    print("call_false=" + no().to_string());
+    print("method_true=" + big.over_ten().to_string());
+    print("method_false=" + small.over_ten().to_string());
+    print("method_other=" + small.under_ten().to_string());
+
+    // controls
+    print("var=" + b.to_string());
+    print("lit=" + true.to_string());
+    print("lit_false=" + false.to_string());
+    print("cmp=" + (1 == 1).to_string());
+    print("neg=" + (!b).to_string());
+    print("index=" + flags[1].to_string());
+    return 0;
+}
