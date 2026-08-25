@@ -40,7 +40,15 @@ import "./lexer";
 // suffixed integer literal reads them unchanged and only the printer
 // needs the spelling back. Empty for an ordinary number.
 pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
-pub struct ExprIdent { name: string, line: i32, col: i32 }
+// `ty` is the typed-IR carrier (#5986, the ExprIdent sibling of ExprCall.ty
+// from #5531): the checker's inferred type for the value this name reads,
+// spelled in irlower's canonical tag vocabulary and stamped by
+// checker.annotate_module. It is what lets lowering type a name whose type no
+// local SLOT carries — a module `const`, whose read is really a call to its
+// zero-argument accessor. Empty when unannotated (the asm_ir_run harness and
+// the native compiler never run annotate) or when the checker could not name
+// the type, in which case irlower's slot walk answers unchanged.
+pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
 pub struct ExprString { value: string, line: i32, col: i32 }
 pub struct ExprBool { value: boolean }
 pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32 }
@@ -595,8 +603,8 @@ function e_number_at(text: string, suffix: string, is_float: boolean, line: i32,
 function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: i32): Expr {
     return ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
 }
-function e_ident(name: string): Expr { return ExprIdent { name: name, line: 0, col: 0 }; }
-function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent { name: name, line: line, col: col }; }
+function e_ident(name: string): Expr { return ExprIdent { name: name, line: 0, col: 0, ty: "" }; }
+function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent { name: name, line: line, col: col, ty: "" }; }
 function e_string(value: string): Expr { return ExprString { value: value, line: 0, col: 0 }; }
 function e_string_at(value: string, line: i32, col: i32): Expr { return ExprString { value: value, line: line, col: col }; }
 pub function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
@@ -1991,7 +1999,7 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
 // their count, and no consumer reads a name back apart from the printer.
 function with_written_type_args(callee: Expr, args: string): Expr {
     match (callee) {
-        ExprIdent(id) => { return ExprIdent { name: id.name + "[" + args + "]", line: id.line, col: id.col }; },
+        ExprIdent(id) => { return ExprIdent { name: id.name + "[" + args + "]", line: id.line, col: id.col, ty: id.ty }; },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: fa.obj, field: fa.field + "[" + args + "]", line: fa.line, col: fa.col, ty: fa.ty }; },
         _ => { return callee; }
     }
@@ -2037,7 +2045,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                         p = p.advance();   // consume `=`
                         var (rv_expr, rv_p) = parse_expr(p);
                         p = rv_p;
-                        args = args.append(ExprBinary { op: "__named_arg", left: ExprIdent { name: an, line: aline, col: acol }, right: rv_expr, line: aline, col: acol });
+                        args = args.append(ExprBinary { op: "__named_arg", left: ExprIdent { name: an, line: aline, col: acol, ty: "" }, right: rv_expr, line: aline, col: acol });
                     } else {
                         var (ra_expr, ra_p) = parse_expr(p);
                         p = ra_p;
@@ -8850,7 +8858,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                             // struct pass's mg_ty still see `iter__ArrayIter[i32]`.
                             var mang: string = cid.name + "__" + sanitize_key(ct);
                             cur = cur.iadd(cid.name, ct);
-                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
+                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col, ty: cid.ty }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                         }
                     }
                 },
@@ -8897,7 +8905,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                                 var fk: i32 = 0;
                                 while (fk < nargs.len()) { folded = folded.append(nargs[fk]); fk = fk + 1; }
                                 cur = cur.iadd(amn, ct3);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col }, args: folded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col, ty: "" }, args: folded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
                             }
                         }
                     }
@@ -8923,7 +8931,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                                 var mfk: i32 = 0;
                                 while (mfk < nargs.len()) { mfolded = mfolded.append(nargs[mfk]); mfk = mfk + 1; }
                                 cur = cur.iadd(mmn, mct);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col }, args: mfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col, ty: "" }, args: mfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
                             }
                         }
                     }
@@ -8951,7 +8959,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                                 var sfk: i32 = 0;
                                 while (sfk < nargs.len()) { sfolded = sfolded.append(nargs[sfk]); sfk = sfk + 1; }
                                 cur = cur.iadd(smn, sct);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: smn + "__" + sanitize_key(sct), line: fac.line, col: fac.col }, args: sfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: smn + "__" + sanitize_key(sct), line: fac.line, col: fac.col, ty: "" }, args: sfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
                             }
                         }
                     }
@@ -9065,7 +9073,7 @@ function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: MFns, i
                                 }
                                 var mang: string = cid.name + "__" + sanitize_key(key);
                                 cur = cur.iadd(cid.name, key);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col, ty: cid.ty }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                             }
                         }
                     },
@@ -9319,7 +9327,7 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
     match (e) {
         ExprIdent(id) => {
             var k: i32 = tp_index(id.name, tparams);
-            if (k >= 0) { return ExprIdent { name: cts[k], line: id.line, col: id.col }; }
+            if (k >= 0) { return ExprIdent { name: cts[k], line: id.line, col: id.col, ty: id.ty }; }
             return e;
         },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
@@ -10332,7 +10340,7 @@ function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[])
                             if (gstruct_index(gstructs, oid.name) >= 0) {
                                 var pfx: string = oid.name + "__";
                                 if (concrete.len() > pfx.len() && slice_unchecked(concrete, 0, pfx.len()) == pfx) {
-                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                                 }
                             }
                         },
@@ -11063,7 +11071,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                         if (carg.len() == 0) { carg = key; }
                         cur = cur.iadd_arg(enums[owner].name, key, carg);
                         var mv: string = vname + "__" + key;
-                        return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
+                        return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                     }
                 }
             }
@@ -11078,7 +11086,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                 var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs.decls);
                 if (key.len() > 0) {
                     var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
-                    return RExpr { rexpr: ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col }, rins: nins };
+                    return RExpr { rexpr: ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col, ty: id.ty }, rins: nins };
                 }
             }
             return RExpr { rexpr: e, rins: ins };
@@ -11161,7 +11169,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                             var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs.decls);
                             if (key.len() > 0) {
                                 var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
-                                return RExpr { rexpr: ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col }, rins: nins };
+                                return RExpr { rexpr: ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col, ty: "" }, rins: nins };
                             }
                         }
                     }
@@ -14743,7 +14751,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             var ncallee: Expr = c.callee;
             var done: boolean = false;
             match (c.callee) {
-                ExprIdent(cid) => { if (cid.name == f) { ncallee = ExprIdent { name: target, line: cid.line, col: cid.col }; done = true; } },
+                ExprIdent(cid) => { if (cid.name == f) { ncallee = ExprIdent { name: target, line: cid.line, col: cid.col, ty: cid.ty }; done = true; } },
                 _ => { }
             }
             if (!done) { ncallee = cf_rw_expr(c.callee, f, target); }

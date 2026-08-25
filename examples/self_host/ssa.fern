@@ -1533,13 +1533,13 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                 var ot: i32 = opt_tag(pv.type_name);
                 var tag: i32 = ot;
                 if (ot < 0) { tag = find_struct_index(structs, pv.type_name); }
-                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: util.i32_to_string(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
+                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0, ty: "" }, right: parser.ExprNumber { text: util.i32_to_string(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
                 var then_body: parser.Stmt[] = [];
                 if (pv.binding.len() > 0 && pv.binding != "_") {
-                    var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0 };
+                    var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0, ty: "" };
                     if (ot >= 0) {
-                        var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0 }];
-                        binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0 }, args: oargs, line: 0, col: 0, type_argc: 0, ty: "" };
+                        var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0, ty: "" }];
+                        binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0, ty: "" }, args: oargs, line: 0, col: 0, type_argc: 0, ty: "" };
                     }
                     then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false, fn_ret: "" });
                 }
@@ -1631,16 +1631,16 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     // guard: $iN + 1 < $arrN.len()
     var guard: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "<",
         left: parser.ExprBinary { line: 0, col: 0, op: "+",
-            left: parser.ExprIdent { name: i_name, line: 0, col: 0 },
+            left: parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" },
             right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } },
         right: parser.ExprCall {
-            callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0 }, field: "len", line: 0, col: 0, ty: "" },
+            callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" }, field: "len", line: 0, col: 0, ty: "" },
             args: [], line: 0, col: 0, type_argc: 0, ty: "" } };
 
     // body: $iN = $iN + 1; <element binding>; <body>
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
         value: parser.ExprBinary { line: 0, col: 0, op: "+",
-            left: parser.ExprIdent { name: i_name, line: 0, col: 0 },
+            left: parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" },
             right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var wbody: parser.Stmt[] = [incr];
     // `for (k, v) in m` — the parser joins the two names as "k,v". A comma in
@@ -1656,22 +1656,22 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         // literal of concrete struct values assigned to a union-typed array
         // doesn't tag-wrap its elements, so a later match on them misfires.
         var kargs: parser.Expr[] = [];
-        kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
-        kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
+        kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" });
+        kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0, ty: "" }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         var vargs: parser.Expr[] = [];
-        vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
-        vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
+        vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" });
+        vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0, ty: "" }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         wbody = wbody.append(bind_k);
         wbody = wbody.append(bind_v);
     } else {
         var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
             init: parser.ExprIndex {
-                array: parser.ExprIdent { name: arr_name, line: 0, col: 0 },
-                index: parser.ExprIdent { name: i_name, line: 0, col: 0 }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+                array: parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" },
+                index: parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;
@@ -2212,7 +2212,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
-                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: util.i32_to_string(cj + 1), line: 0, col: 0, ty: "" };
+                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, field: util.i32_to_string(cj + 1), line: 0, col: 0, ty: "" };
                                     ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false, fn_ret: "" });
                                     cj = cj + 1;
                                 }

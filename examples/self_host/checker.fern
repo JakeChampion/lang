@@ -12985,11 +12985,14 @@ function annotate_advance(st: parser.Stmt, s: Scope): Scope {
   return s;
 }
 
-// annotate_expr rebuilds `e`, stamping ExprCall.ty, ExprFieldAccess.ty and
-// ExprIndex.ty with the checker-inferred result tag. Recurses through every
-// composite so a nested call is reached.
+// annotate_expr rebuilds `e`, stamping ExprCall.ty, ExprIdent.ty,
+// ExprFieldAccess.ty and ExprIndex.ty with the checker-inferred result tag.
+// Recurses through every composite so a nested call is reached.
 function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
   match (e) {
+    parser.ExprIdent(id) => {
+      return parser.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(check_expr(e, s)) };
+    },
     parser.ExprBinary(b) => {
       return parser.ExprBinary { op: b.op, left: annotate_expr(b.left, s), right: annotate_expr(b.right, s), line: b.line, col: b.col };
     },
