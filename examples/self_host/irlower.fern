@@ -44259,7 +44259,20 @@ function ef_unsafe_stmt(st: parser.Stmt, name: string, borrowable: string[], str
             return body_unsafe_for_enumfield(fo.body, name, borrowable, structs);
         },
         parser.StmtMatch(m) => {
-            if (ef_unsafe_expr(m.scrutinee, name, borrowable, structs)) { return true; }
+            // A bare-ident scrutinee is a BORROW, the reading
+            // stmt_unsafe_for_match_borrow has always applied and this fork never
+            // did. It matters because collect_fresh_rcenum_names only takes its
+            // match-consumed branch when sole_top_level_match_idx finds exactly ONE
+            // top-level match; everything else — matched twice, matched inside an
+            // `if`, matched inside a loop — falls to this walk, and every one of
+            // them reclaimed nothing (200 allocs / 0 frees against native's
+            // 200/200 on all three).
+            var ef_scrut_borrow: boolean = false;
+            match (m.scrutinee) {
+                parser.ExprIdent(sid) => { if (sid.name == name) { ef_scrut_borrow = true; } },
+                _ => {}
+            }
+            if (!ef_scrut_borrow && ef_unsafe_expr(m.scrutinee, name, borrowable, structs)) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && ef_unsafe_expr(arm.guard, name, borrowable, structs)) { return true; }
                 if (body_unsafe_for_enumfield(arm.body, name, borrowable, structs)) { return true; }
