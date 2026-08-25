@@ -2642,7 +2642,11 @@ function check_expr(e: parser.Expr, s: Scope): Type {
           return at;
         },
         TypeString(_) => {
-          return at;
+          // `s[a:b]` on a string is bounds- and codepoint-boundary-checked
+          // (#5634), so it yields `Option[str]`. The unchecked byte slice
+          // keeps its `string` type under `slice_unchecked`.
+          var slcoa: Type[] = [t_string()];
+          return t_union_g("Option", slcoa);
         },
         _ => {
           return t_unknown("can only slice array or string");
@@ -10087,6 +10091,30 @@ function e065_ident_in(name: string, xs: string[]): boolean {
   return false;
 }
 
+// e065_slice_unchecked_src reports whether a call is
+// `slice_unchecked(src, a, b)` over a local that is itself backing
+// storage — the byte view `s[a:b]` used to yield before #5634. A view
+// of a parameter is caller-owned and so never tainted.
+function e065_slice_unchecked_src(c: parser.ExprCall, params: string[], sbacked: string[]): boolean {
+  var callee_name: string = "";
+  match (c.callee) {
+    parser.ExprIdent(cid) => {
+      callee_name = cid.name;
+    },
+    _ => {}
+  }
+  if (callee_name != "slice_unchecked" || c.args.len() != 3) {
+    return false;
+  }
+  match (c.args[0]) {
+    parser.ExprIdent(sid) => {
+      return !e065_ident_in(sid.name, params) && e065_ident_in(sid.name, sbacked);
+    },
+    _ => {}
+  }
+  return false;
+}
+
 function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   var cur: Scope = s;
@@ -10096,23 +10124,18 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
         if (v.is_str) {
           // A `str` binding views its initializer: tainted only
           // when the init is (a view of) local string storage —
-          // a backed ident, or a slice whose SOURCE is backed
-          // (the P2 flip makes s[a:b] a view, and the native
-          // chase follows it to the backing local).
+          // a backed ident, or a `slice_unchecked` whose SOURCE
+          // is backed. `s[a:b]` cannot appear here: it is
+          // `Option[str]` (#5634), which does not bind to `str`.
           match (v.init) {
             parser.ExprIdent(id) => {
               if (!e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked)) {
                 sbacked = sbacked.append(v.name);
               }
             },
-            parser.ExprSlice(vsl) => {
-              match (vsl.array) {
-                parser.ExprIdent(sid) => {
-                  if (!e065_ident_in(sid.name, params) && e065_ident_in(sid.name, sbacked)) {
-                    sbacked = sbacked.append(v.name);
-                  }
-                },
-                _ => {}
+            parser.ExprCall(sc) => {
+              if (e065_slice_unchecked_src(sc, params, sbacked)) {
+                sbacked = sbacked.append(v.name);
               }
             },
             _ => {}
@@ -10121,26 +10144,13 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
           // An annotated owned `string` local IS backing storage.
           sbacked = sbacked.append(v.name);
         } else if (v.type_name.len() == 0) {
-          // Unannotated: infer the native way — a string literal,
-          // a (copying) string slice, or an alias of known local
-          // storage makes an owned StringType local; a call to a
-          // `str`-returning function makes a view (not chased).
+          // Unannotated: infer the native way — a string literal
+          // or an alias of known local storage makes an owned
+          // StringType local; a call to a `str`-returning function
+          // makes a view (not chased).
           match (v.init) {
             parser.ExprString(_) => {
               sbacked = sbacked.append(v.name);
-            },
-            parser.ExprSlice(sl) => {
-              // A string slice is a VIEW (P2): backed only when
-              // its source is a backed local, mirroring the
-              // native chase (a slice of a parameter is safe).
-              match (sl.array) {
-                parser.ExprIdent(sid) => {
-                  if (!e065_ident_in(sid.name, params) && e065_ident_in(sid.name, sbacked)) {
-                    sbacked = sbacked.append(v.name);
-                  }
-                },
-                _ => {}
-              }
             },
             parser.ExprIdent(id) => {
               if (e065_ident_in(id.name, sbacked)) {
@@ -11643,12 +11653,30 @@ function main(): i32 {
     return 120;
   }
 
-  // String slicing preserves type: `s[1:4]` is still TypeString.
+  // String slicing is checked (#5634): `s[1:4]` is `Option[str]`.
   var src13: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
   var stmts13: parser.Stmt[] = parser.parse_program(lexer.tokenize(src13));
   var pt13: ProgramTypes = check_program(stmts13);
-  if (!type_eq(pt13.tys[1], t_string())) {
-    return 130;
+  match (pt13.tys[1]) {
+    TypeUnion(u13) => {
+      if (u13.name != "Option") {
+        return 130;
+      }
+      if (u13.args.len() != 1 || !type_eq(u13.args[0], t_string())) {
+        return 131;
+      }
+    },
+    _ => {
+      return 132;
+    }
+  }
+
+  // `slice_unchecked(s, 1, 4)` keeps the raw `string` type.
+  var src13u: string = "var s = \"hello\"; var t = slice_unchecked(s, 1, 4); return 0;";
+  var stmts13u: parser.Stmt[] = parser.parse_program(lexer.tokenize(src13u));
+  var pt13u: ProgramTypes = check_program(stmts13u);
+  if (!type_eq(pt13u.tys[1], t_string())) {
+    return 133;
   }
 
   // Struct lit + field access well-typed.

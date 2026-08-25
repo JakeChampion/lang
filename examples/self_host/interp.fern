@@ -453,6 +453,16 @@ function v_variant(name: string, args: Value[]): Value {
     return v_struct(name, vnames, args);
 }
 
+// interp_char_boundary reports whether byte offset `i` starts a UTF-8 code
+// point in `s`. Mirrors std/utf8.is_char_boundary: a continuation byte is
+// 0b10xxxxxx, so 128..191 are interior; both ends of the string are
+// boundaries by definition.
+function interp_char_boundary(s: string, i: i32): boolean {
+    if (i <= 0 || i >= s.len()) { return true; }
+    var icb: i32 = (s[i] as i32);
+    return icb < 128 || icb >= 192;
+}
+
 // =================== SCOPE ====================
 
 // Same shape as the checker's Scope but the parallel slot is
@@ -1824,10 +1834,18 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             match (av) {
                 VString(s) => {
+                    // `s[a:b]` on a string is checked (#5634): an out-of-range
+                    // bound or a bound that splits a code point yields `None`
+                    // rather than an error. `slice_unchecked` keeps the trap.
                     if (sb < 0 || eb > s.v.len() || sb > eb) {
-                        return v_err("string slice out of range");
+                        var slcn1: Value[] = [];
+                        return v_variant("None", slcn1);
                     }
-                    return v_string(slice_unchecked(s.v, sb, eb));
+                    if (!interp_char_boundary(s.v, sb) || !interp_char_boundary(s.v, eb)) {
+                        var slcn2: Value[] = [];
+                        return v_variant("None", slcn2);
+                    }
+                    return v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]);
                 },
                 VArr(a) => {
                     if (sb < 0 || eb > a.elements.len() || sb > eb) {
@@ -3459,16 +3477,22 @@ function main(): i32 {
         _ => { return 280; }
     }
 
-    // String slicing: `"hello"[1:4]` → "ell". We can't directly
-    // return a string as exit code, so cross-check via len.
-    var r29: Value = run_source("var s = \"hello\"; var t = s[1:4]; return len(t);");
+    // String slicing is checked (#5634): `"hello"[1:4]` → `Some("ell")`.
+    var r29: Value = run_source("var s = \"hello\"; return s[1:4];");
     match (r29) {
-        VInt(i) => { if (i.v != 3) { return 290; } },
+        VStruct(sv29) => {
+            if (sv29.type_name != "Some") { return 290; }
+            match (sv29.field_values[0]) {
+                VString(s29) => { if (s29.v != "ell") { return 292; } },
+                _ => { return 293; }
+            }
+        },
         _ => { return 291; }
     }
 
-    // Slice + indexing: `"hello"[1:4][1]` → 'l' = 108.
-    var r30: Value = run_source("var s = \"hello\"; return s[1:4][1];");
+    // The unchecked byte slice keeps the raw string: slice + index
+    // → 'l' = 108.
+    var r30: Value = run_source("var s = \"hello\"; return slice_unchecked(s, 1, 4)[1];");
     match (r30) {
         VInt(i) => { if (i.v != 108) { return 300; } },
         _ => { return 301; }
@@ -3482,13 +3506,29 @@ function main(): i32 {
         _ => { return 311; }
     }
 
-    // Out-of-range slice → VErr. (Surface the VErr through
-    // len() so it reaches the program's return rather than
-    // getting silently stored in a var.)
-    var r32: Value = run_source("var s = \"hi\"; return len(s[0:99]);");
+    // Out-of-range slice → `None`, not an error (#5634).
+    var r32: Value = run_source("var s = \"hi\"; return s[0:99];");
     match (r32) {
+        VStruct(sv32) => { if (sv32.type_name != "None") { return 320; } },
+        _ => { return 321; }
+    }
+
+    // A bound that splits a code point → `None`. "héllo" is 6 bytes,
+    // with the two-byte é at offsets 1..2, so 2 is interior.
+    var r32b: Value = run_source("var s = \"héllo\"; return s[0:2];");
+    match (r32b) {
+        VStruct(sv32b) => { if (sv32b.type_name != "None") { return 322; } },
+        _ => { return 323; }
+    }
+
+    // The trap the expression form gave up lives on `slice_unchecked`:
+    // an out-of-range bound is still an error there. (Surface it through
+    // len() so it reaches the program's return rather than getting
+    // silently stored in a var.)
+    var r32u: Value = run_source("var s = \"hi\"; return len(slice_unchecked(s, 0, 99));");
+    match (r32u) {
         VErr(_) => { },
-        _ => { return 320; }
+        _ => { return 324; }
     }
 
     // Compound assignment lowers to plain assign at parse time —
