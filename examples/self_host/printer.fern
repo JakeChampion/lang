@@ -966,6 +966,77 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
     return (out + pad + "}", g);
 }
 
+// print_sugared_let_else reprints `let PAT = EXPR else { … };` for a LITERAL
+// or range head, whose desugar is build_literal_match's if/else chain rather
+// than a StmtMatch — so the carrier on the `if` is the only record of what was
+// written. Sibling of print_let_else, which recovers the variant-pattern form
+// from its StmtMatch, and it re-emits the statements that followed the same
+// way: the desugar moved them inside the success arm.
+function print_sugared_let_else(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+    var arms: WrittenArm[] = sugar_written_arms(sg);
+    if (arms.len() < 2) { return print_sugared_match(sg, depth, f); }
+    var g: Fmt = f;
+    var (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
+    g = g1;
+    var head: string = "";
+    var hi: i32 = 0;
+    while (hi + 1 < arms.len()) {
+        if (hi > 0) { head = head + " | "; }
+        head = head + arms[hi].head;
+        hi = hi + 1;
+    }
+    var out: string = "let " + head + " = " + print_expr(sg.scrut) + " else " + els + ";";
+    var rest: parser.Stmt[] = arms[0].body;
+    var i: i32 = 0;
+    while (i < rest.len()) {
+        var ln: i32 = stmt_line(rest[i]);
+        out = out + "\n";
+        if (ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
+        if (ln > 0) {
+            var (lead, gl) = drain_leading(g, ln, depth);
+            out = out + lead;
+            g = gl;
+        }
+        var (stext, g2) = print_stmt_line(rest[i], depth, g);
+        out = out + stext;
+        g = g2;
+        i = i + 1;
+    }
+    return (out, g);
+}
+
+// print_sugared_if_let reprints an `if let` whose head is a tuple, struct or
+// literal pattern. Those heads take the same builders a `match` on such a
+// scrutinee does, so the chain they leave behind carries the arms as written
+// and nothing else — sibling of print_if_let, which recovers the source form
+// for the variant-pattern path from its StmtMatch.
+//
+// The last written arm is the else block (empty when none was written); every
+// arm before it is the head, with any `|` alternatives already joined by
+// sugar_written_arms.
+function print_sugared_if_let(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+    var arms: WrittenArm[] = sugar_written_arms(sg);
+    if (arms.len() < 2) { return print_sugared_match(sg, depth, f); }
+    var g: Fmt = f;
+    var (then_block, g1) = print_block(arms[0].body, depth, g);
+    g = g1;
+    var out: string = "if let ";
+    var i: i32 = 0;
+    while (i + 1 < arms.len()) {
+        if (i > 0) { out = out + " | "; }
+        out = out + arms[i].head;
+        i = i + 1;
+    }
+    out = out + " = " + print_expr(sg.scrut) + " " + then_block;
+    var els: parser.Stmt[] = arms[arms.len() - 1].body;
+    if (els.len() > 0) {
+        var (else_block, g2) = print_block(els, depth, g);
+        g = g2;
+        out = out + " else " + else_block;
+    }
+    return (out, g);
+}
+
 // print_lit_pat renders one literal arm pattern: `_`, a literal, or a range.
 function print_lit_pat(a: parser.LitArm): string {
     if (a.is_wild) { return "_"; }
@@ -1043,11 +1114,23 @@ function print_if_let(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
 // that followed it, which the desugar moved inside the success arm. They re-emit
 // as the siblings they were written as, at the same depth.
 function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
+    // The written arms when a nested payload or an or-pattern was consumed
+    // into the lowering; otherwise the lowered ones already are the written
+    // ones. Same carrier print_if_let reads, for the same reason.
+    var arms: parser.MatchArm[] = m.arms;
+    if (m.sugar.len() > 0) { arms = m.sugar; }
     var g: Fmt = f;
-    var (els, g1) = print_block(m.arms[1].body, depth, g);
+    var (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
     g = g1;
-    var out: string = "let " + print_pattern(m.arms[0].pattern) + " = " + print_expr(m.scrutinee) + " else " + els + ";";
-    var rest: parser.Stmt[] = m.arms[0].body;
+    var head: string = "";
+    var hi: i32 = 0;
+    while (hi + 1 < arms.len()) {
+        if (hi > 0) { head = head + " | "; }
+        head = head + print_pattern(arms[hi].pattern);
+        hi = hi + 1;
+    }
+    var out: string = "let " + head + " = " + print_expr(m.scrutinee) + " else " + els + ";";
+    var rest: parser.Stmt[] = arms[0].body;
     var i: i32 = 0;
     while (i < rest.len()) {
         var ln: i32 = stmt_line(rest[i]);
@@ -1622,6 +1705,8 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // and leaves no StmtMatch, so the carrier on the if is the only
             // record of what was written (#7065).
             if (ifs.sugar.tup.len() > 0 || ifs.sugar.strct.len() > 0 || ifs.sugar.lits.len() > 0) {
+                if (ifs.sugar.origin == "if_let") { return print_sugared_if_let(ifs.sugar, depth, f); }
+                if (ifs.sugar.origin == "let_else") { return print_sugared_let_else(ifs.sugar, depth, f); }
                 return print_sugared_match(ifs.sugar, depth, f);
             }
             // A bare `{ … }` statement is the same if-true scope, tagged.
@@ -1643,7 +1728,7 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // so printing the match rewrites the whole tail of the function into
             // a nested one. StmtMatch.origin already records which form was
             // written; the printer just had to read it.
-            if (m.origin == "let_else" && m.arms.len() == 2) { return print_let_else(m, depth, f); }
+            if (m.origin == "let_else" && m.arms.len() >= 2) { return print_let_else(m, depth, f); }
             if (m.origin == "if_let" && m.arms.len() >= 2) { return print_if_let(m, depth, f); }
             return print_match(m, depth, f);
         },

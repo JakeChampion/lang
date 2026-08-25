@@ -217,7 +217,11 @@ pub struct StmtExpr { value: Expr, line: i32 }
 // (#7065) or the bare `if (n == 0) … else …` (#7072) over the user's match.
 // Read by the printer only; the walk and every lowering pass ignore it. Empty
 // (all three arm lists empty) on every other StmtIf, which is all of them.
-pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: LitArm[], line: i32, col: i32 }
+// Its `origin` names the source form the chain stands in for when that form is
+// not a `match` at all: "if_let" / "let_else" for an `if let` / `let … else`
+// whose head is a tuple, struct, literal or range pattern, which lower through
+// these same builders. "" is a `match`, which is every other carrier.
+pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: LitArm[], line: i32, col: i32, origin: string }
 // origin records the source form a synthesised `if (true) { … }` stands in for,
 // so `-fmt` reprints what was written rather than the lowering: "block" for a
 // bare `{ … }` statement (the Stmt union has no block node), "chain_assign" for
@@ -814,7 +818,7 @@ pub function no_match_sugar(): MatchSugar {
     var no_tup: TupArm[] = [];
     var no_struct: StructArm[] = [];
     var no_lit: LitArm[] = [];
-    return MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, line: 0, col: 0 };
+    return MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, line: 0, col: 0, origin: "" };
 }
 // s_if_match wraps the done-flag chain a tuple- or struct-scrutinee match
 // desugars to, carrying the arms as WRITTEN so the printer reprints the match.
@@ -3035,6 +3039,17 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 function with_match_sugar(st: Stmt, sugar: MatchSugar): Stmt {
     match (st) {
         StmtIf(i) => { return StmtIf { ...i, sugar: sugar }; },
+        _ => { return st; },
+    }
+}
+
+// with_sugar_origin re-tags a desugared chain with the source form it stands
+// in for. The tuple / struct / literal match builders have no way to know their
+// arms came from an `if let` or `let … else` head rather than a `match`, so
+// those sites stamp the result rather than every builder growing a parameter.
+function with_sugar_origin(st: Stmt, origin: string): Stmt {
+    match (st) {
+        StmtIf(i) => { return StmtIf { ...i, sugar: MatchSugar { ...i.sugar, origin: origin } }; },
         _ => { return st; },
     }
 }
@@ -5545,7 +5560,97 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                 var ils_no_lits: Expr[] = [];
                 var ils_nf: string[] = [];
                 ils_arms = ils_arms.append(StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
-                return (build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), p);
+                return (with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p);
+            }
+            // A TUPLE-pattern head (`if let (a, b) = t`) takes the same
+            // parse_tuple_arm_pattern + build_tuple_match the tuple match
+            // arms use. parse_pattern has no tuple form, so without this the
+            // head read as a variant pattern and the checker rejected the
+            // tuple scrutinee (E022). The then-block is the tuple arm's body
+            // and the else-block the wildcard arm's, as in the struct branch.
+            if (p.peek_punct() == "(" || (p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(")) {
+                var ilt_line: i32 = p.peek_line();
+                var ilt_col: i32 = p.peek_col();
+                var ilt_at: string = "";
+                if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
+                    ilt_at = p.peek_ident();
+                    p = p.advance();
+                    p = p.advance();
+                }
+                var ilt_empty: Stmt[] = [];
+                var ilt_pats: TupArm[] = [];
+                var (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
+                p = ilt_pp;
+                if (ilt_kinds.len() == 0) { return (s_unknown("bad tuple pattern"), p); }
+                ilt_pats = ilt_pats.append(TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
+                // Or-alternatives (`if let (1, 2) | (3, 4) = t`) expand one
+                // arm each, sharing the then-block — the same per-alternative
+                // shape the tuple match arms use.
+                while (p.peek_punct() == "|") {
+                    p = p.advance();
+                    var (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
+                    p = ilo_p;
+                    if (ilo_kinds.len() == 0) { return (s_unknown("bad tuple pattern"), p); }
+                    ilt_pats = ilt_pats.append(TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
+                }
+                if (p.peek_punct() == "=") { p = p.advance(); }
+                var ilt_saved: boolean = p.no_struct;
+                var (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
+                p = (ilt_sp).with_no_struct(ilt_saved);
+                var (ilt_then, ilt_tp) = parse_block(p);
+                p = ilt_tp;
+                var ilt_else: Stmt[] = [];
+                if (p.peek_keyword() == "else") {
+                    p = p.advance();
+                    var (ilt_eb, ilt_ep) = parse_block(p);
+                    p = ilt_ep;
+                    ilt_else = ilt_eb;
+                }
+                var ilt_arms: TupArm[] = [];
+                var ilt_i: i32 = 0;
+                while (ilt_i < ilt_pats.len()) {
+                    var ilt_a: TupArm = ilt_pats[ilt_i];
+                    ilt_arms = ilt_arms.append(TupArm { is_wild: false, elem_kinds: ilt_a.elem_kinds, binds: ilt_a.binds, lits: ilt_a.lits, elem_pats: ilt_a.elem_pats, at_binding: ilt_at, guard: e_bool(true), has_guard: false, body: ilt_then, line: ilt_line, col: ilt_col, alt_cont: ilt_i > 0 });
+                    ilt_i = ilt_i + 1;
+                }
+                var ilt_wk: i32[] = [];
+                var ilt_wb: string[] = [];
+                var ilt_wl: Expr[] = [];
+                var ilt_wp: Pattern[] = [];
+                ilt_arms = ilt_arms.append(TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
+                return (with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p);
+            }
+            // A LITERAL or RANGE head (`if let 3 = n`, `if let 1 | 2 = n`,
+            // `if let 3..5 = n`) takes parse_lit_alts + build_literal_match,
+            // the path a literal match arm already uses. parse_pattern reads
+            // only variant patterns, so these reached the checker as an enum
+            // match on a scalar scrutinee (E022).
+            if (p.peek_is_pat_literal()) {
+                var ill_line: i32 = p.peek_line();
+                var ill_col: i32 = p.peek_col();
+                var (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
+                p = ill_p;
+                if (p.peek_punct() == "=") { p = p.advance(); }
+                var ill_saved: boolean = p.no_struct;
+                var (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
+                p = (ill_sp).with_no_struct(ill_saved);
+                var (ill_then, ill_tp) = parse_block(p);
+                p = ill_tp;
+                var ill_else: Stmt[] = [];
+                if (p.peek_keyword() == "else") {
+                    p = p.advance();
+                    var (ill_eb, ill_ep) = parse_block(p);
+                    p = ill_ep;
+                    ill_else = ill_eb;
+                }
+                var ill_arms: LitArm[] = [];
+                var ill_i: i32 = 0;
+                while (ill_i < ill_lits.len()) {
+                    ill_arms = ill_arms.append(LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0 });
+                    ill_i = ill_i + 1;
+                }
+                ill_arms = ill_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
+                return (with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p);
             }
             var (ilpat_pattern, ilpat_p) = parse_pattern(p);
             p = ilpat_p;
@@ -5686,6 +5791,45 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             if (p.peek_punct() == ";") { p = p.advance(); }
             return (s_var_at(tdnames, at_marker(at_bind, ""), tdinit_expr, vline, vcol), p);
         }
+        // `let 3 = n else { … };` — a LITERAL or RANGE head, including
+        // `|` alternatives (`let 1 | 2 = n else …`). A binding needs a name,
+        // so a literal here is unambiguously a let-else pattern; it still
+        // parses speculatively, because only the `else` past the initializer
+        // makes it one, and without it the head must reach the
+        // missing-var-name error below rather than a half-consumed cursor.
+        //
+        // Same shape as the variant-pattern let-else: the rest of the
+        // enclosing block is the success arm, so the `else` block is the only
+        // other arm, and build_literal_match lowers the pair.
+        if (p.peek_is_pat_literal()) {
+            var (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(p);
+            if (lel_p.peek_punct() == "=") {
+                lel_p = lel_p.advance();
+                var (lel_init, lel_ip) = parse_expr(lel_p);
+                lel_p = lel_ip;
+                if (lel_p.peek_keyword() == "else") {
+                    p = lel_p.advance();  // consume `else`
+                    var (lel_else, lel_ep) = parse_block(p);
+                    p = lel_ep;
+                    if (p.peek_punct() == ";") { p = p.advance(); }
+                    var lel_rest: Stmt[] = [];
+                    while (p.peek_punct() != "}" && !p.at_end()) {
+                        var (lel_rs, lel_rp) = parse_stmt(p);
+                        if (lel_rp.pos == p.pos) { p = p.advance(); continue; }
+                        p = lel_rp;
+                        lel_rest = lel_rest.append(lel_rs);
+                    }
+                    var lel_arms: LitArm[] = [];
+                    var lel_i: i32 = 0;
+                    while (lel_i < lel_lits.len()) {
+                        lel_arms = lel_arms.append(LitArm { is_wild: false, lit: lel_lits[lel_i], guard: e_bool(true), has_guard: false, body: lel_rest, line: vline, col: vcol, range_hi: lel_his[lel_i], has_range: lel_hrs[lel_i], range_inclusive: lel_incs[lel_i], alt_cont: lel_i > 0 });
+                        lel_i = lel_i + 1;
+                    }
+                    lel_arms = lel_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
+                    return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else"), p);
+                }
+            }
+        }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
             return (s_unknown("missing var name"), p);
@@ -5742,15 +5886,26 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                         lsp_rest = lsp_rest.append(lsp_rs);
                     }
                     var lsp_arms: MatchArm[] = [];
+                    var lsp_written: MatchArm[] = [];
                     var lsp_i: i32 = 0;
                     while (lsp_i < lsp_pats.len()) {
+                        lsp_written = lsp_written.append(MatchArm { pattern: lsp_pats[lsp_i], body: lsp_rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: lsp_i > 0 });
                         var (fl_pat, fl_g, fl_hg) = fold_lit_cond(lsp_pats[lsp_i], e_bool(true), false);
                         lsp_arms = lsp_arms.append(MatchArm { pattern: fl_pat, body: lsp_rest, line: vline, col: vcol, guard: fl_g, has_guard: fl_hg, alt_cont: false });
                         lsp_i = lsp_i + 1;
                     }
-                    lsp_arms = lsp_arms.append(MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
+                    var lsp_wild: MatchArm = MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false };
+                    lsp_arms = lsp_arms.append(lsp_wild);
+                    lsp_written = lsp_written.append(lsp_wild);
                     lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
-                    return (s_match_origin(lsp_init, lsp_arms, vline, vcol, "let_else"), p);
+                    // A nested payload (`let Wrap(A(v)) = w else …`) leaves the
+                    // synthesised `__nest` temp as the arm's only pattern, so
+                    // without the written form `-fmt` wrote that name into the
+                    // user's source — the #7059 fault, at the site it had not
+                    // reached yet.
+                    var lsp_sugar: MatchArm[] = [];
+                    if (arms_have_written_form(lsp_written)) { lsp_sugar = lsp_written; }
+                    return (s_match_origin_sugared(lsp_init, lsp_arms, lsp_sugar, vline, vcol, "let_else"), p);
                 }
             }
         }

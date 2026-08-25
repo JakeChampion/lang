@@ -1,0 +1,172 @@
+// One pattern grammar, shared by every binding site (#2698).
+//
+// `if let` and `let … else` consume the same production the match arms do, so
+// a tuple, struct, literal or range head works at all of them rather than only
+// at `match`. The heads below are the ones that used to be variant-only: each
+// lowers through the same builder its `match` spelling does — the tuple / struct
+// flag chain, or the literal if/else chain — with the then-block as the pattern
+// arm's body and the else-block as the wildcard arm's.
+
+import "std/i32";
+
+struct Point { x: i32, y: i32 }
+
+enum Inner { Ok2(i32), Err2(i32) }
+
+enum Outer { A(Inner), B }
+
+enum E { A(i32), B(i32) }
+
+// --- `if let` ---------------------------------------------------------------
+
+function il_tuple(t: (i32, i32)): i32 {
+    if let (a, b) = t {
+        return a + b;
+    }
+    return 0;
+}
+
+// An `@` names the whole tuple beside its elements.
+function il_tuple_at(t: (i32, i32)): i32 {
+    if let w @ (a, b) = t {
+        return a + b + w.0;
+    }
+    return 0;
+}
+
+// Or-alternatives expand one arm each, sharing the then-block.
+function il_tuple_or(t: (i32, i32)): i32 {
+    if let (1, 2) | (3, 4) = t {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+// A tuple element may itself be a variant sub-pattern.
+function il_tuple_variant(t: (Inner, i32)): i32 {
+    if let (Ok2(v), b) = t {
+        return v + b;
+    }
+    return 0;
+}
+
+function il_tuple_nested(t: (i32, (i32, i32))): i32 {
+    if let (a, (b, c)) = t {
+        return a + b + c;
+    }
+    return 0;
+}
+
+function il_struct(p: Point): i32 {
+    if let Point { x: a, y } = p {
+        return a + y;
+    }
+    return 0;
+}
+
+function il_literal(n: i32): i32 {
+    if let 3 = n {
+        return 1;
+    }
+    return 0;
+}
+
+function il_literal_or(n: i32): i32 {
+    if let 1 | 2 = n {
+        return 10;
+    } else {
+        return 0;
+    }
+}
+
+function il_range(n: i32): i32 {
+    if let 3..5 = n {
+        return 20;
+    }
+    return 0;
+}
+
+function il_range_inclusive(n: i32): i32 {
+    if let 7..=9 = n {
+        return 30;
+    }
+    return 0;
+}
+
+function il_string(s: string): i32 {
+    if let "go" = s {
+        return 1;
+    }
+    return 0;
+}
+
+// --- `let … else` -----------------------------------------------------------
+
+function le_literal(n: i32): i32 {
+    let 3 = n else {
+        return 0;
+    };
+    return 9;
+}
+
+function le_literal_or(n: i32): i32 {
+    let 1 | 2 = n else {
+        return 0;
+    };
+    return 8;
+}
+
+function le_range(n: i32): i32 {
+    let 3..5 = n else {
+        return 0;
+    };
+    return 7;
+}
+
+// The bindings of a let-else stay live for the rest of the enclosing block,
+// which is the success arm — including through a nested payload pattern.
+function le_nested(o: Outer): i32 {
+    let A(Ok2(n)) = o else {
+        return 0;
+    };
+    return n + 1;
+}
+
+function le_or(e: E): i32 {
+    let A(v) | B(v) = e else {
+        return 0;
+    };
+    return v;
+}
+
+function main(): i32 {
+    print(il_tuple((3, 4)).to_string());
+    print(il_tuple_at((3, 4)).to_string());
+    print(il_tuple_or((3, 4)).to_string());
+    print(il_tuple_or((5, 6)).to_string());
+    print(il_tuple_variant((Inner.Ok2(1), 2)).to_string());
+    print(il_tuple_variant((Inner.Err2(1), 2)).to_string());
+    print(il_tuple_nested((1, (2, 3))).to_string());
+    print(il_struct(Point { x: 1, y: 2 }).to_string());
+
+    print(il_literal(3).to_string());
+    print(il_literal(4).to_string());
+    print(il_literal_or(2).to_string());
+    print(il_literal_or(5).to_string());
+    print(il_range(4).to_string());
+    print(il_range(5).to_string());
+    print(il_range_inclusive(9).to_string());
+    print(il_string("go").to_string());
+    print(il_string("stop").to_string());
+
+    print(le_literal(3).to_string());
+    print(le_literal(4).to_string());
+    print(le_literal_or(2).to_string());
+    print(le_range(4).to_string());
+    print(le_nested(Outer.A(Inner.Ok2(5))).to_string());
+    print(le_nested(Outer.A(Inner.Err2(5))).to_string());
+    print(le_nested(Outer.B).to_string());
+    print(le_or(E.B(4)).to_string());
+    return 0;
+}
