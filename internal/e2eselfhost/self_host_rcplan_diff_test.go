@@ -661,6 +661,24 @@ function main(): i32 { return f(); }`,
 			anchor: map[string]map[string]string{"f": {"aliasBindIncs": ""}},
 		},
 		{
+			// ENUM VARIANT CTOR payload move. Native's markConstructionMoves has
+			// an arm for this (rc_analysis.go, "Slice 1b: an enum variant
+			// constructor"); the self-host's rc_ml_construction_moves covers
+			// struct / array / tuple literals and append / with args, and never
+			// ported the ctor case. Added with no anchor and no pinned divergence
+			// so the harness reports whatever the two compilers actually say —
+			// this case exists to MEASURE the gap, not to assert a verdict.
+			name: "enum-ctor-payload-move",
+			src: `struct P { xs: i32[], n: i32 }
+enum E { A(P), B }
+function f(): i32 {
+	var p: P = P { xs: [1, 2], n: 3 };
+	var e: E = E.A(p);
+	return (match (e) { E.A(q) => q.n, E.B => 0 });
+}
+function main(): i32 { return f(); }`,
+		},
+		{
 			// MOVE-ON-CONSTRUCTION: an owned rc local consumed at last use in
 			// a struct-lit rc-tracked (non-string) field — the field-init inc
 			// and x's sweep dec cancel; the struct's field-drop frees it once.
