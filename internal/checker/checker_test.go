@@ -5783,6 +5783,48 @@ func TestStrSliceEscapeRejected(t *testing.T) {
 	}
 }
 
+// TestStrMatchArmEscapeRejected: E065 through a match-arm payload binding.
+// Since #5634 `s[a:b]` is an `Option[str]`, so unwrapping it through a
+// match is the ONLY way to name the view it produces — and an arm binding
+// is not a declared local, so before this the whole producer was invisible
+// to the rule and every program below was accepted.
+func TestStrMatchArmEscapeRejected(t *testing.T) {
+	for _, src := range []string{
+		// the Option slice, unwrapped and returned
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
+		// two-step: the Option lands in a local first
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return ""; } } }`,
+		// the arm binding re-bound through a `str` local before the return
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { var w: str = v; return w; }, None => { return ""; } } }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("%q: expected E065, got nil", src)
+			continue
+		}
+		if !hasCode(err, "E065") {
+			t.Errorf("%q: want diagnostic stamped E065, got %v", src, err)
+		}
+	}
+}
+
+// TestStrMatchArmEscapeAllowed: the arm-binding chase must not fire on a
+// view whose backing outlives the call. A param is caller-owned and a
+// literal is immortal — both stay accepted, including when the arm binding
+// SHADOWS the param it views, which is the case a name-keyed environment
+// is most likely to get wrong.
+func TestStrMatchArmEscapeAllowed(t *testing.T) {
+	for _, src := range []string{
+		`function f(p: string): str { match (p[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
+		`function f(): str { match ("hello"[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
+		`function f(p: string): str { match (p[0:1]) { Some(p) => { return p; }, None => { return ""; } } }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: expected acceptance, got %v", src, err)
+		}
+	}
+}
+
 // TestStrViewOwnParamRejected: an `own` (consuming) parameter takes
 // ownership of its argument — the callee frees it. A `str` view must never
 // be freed by its holder, so the borrowed-position carve-out does not
