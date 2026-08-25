@@ -132,7 +132,51 @@ leaves every `ty` empty and gets the structural walk unchanged.
 | `ExprCall.ty` | #5531 | `expr_struct_type`, `expr_map_type_tag`, `expr_tuple_elem_tag`, `try_opt_type`, `expr_is_str` / `_f64` / `_u32` / `_u64`, `infer_expr_width` |
 | `ExprFieldAccess.ty` | #5986 | `fa_type_tag` — the single leaf behind `expr_struct_type`, `expr_map_type_tag`, `infer_expr_width` and `expr_is_f64` / `_f32` / `_u32` / `_u64`; plus `cap_type_expr` at lift time |
 | `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
-| `ExprSlice.ty` | this slice | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
+| `ExprSlice.ty` | #5986 | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
+| `ExprIdent.ty` | this slice | `id_type_tag` — the leaf behind the `ExprIdent` arms of `expr_is_str` / `_bool` / `_f64` / `_u32` / `_u64` and `infer_expr_width`, plus `lower_i64`'s ExprIdent LOAD site |
+
+### What `ExprIdent.ty` is for: the half no slot carries
+
+A bare name is typed in irlower from the SLOT it reads, and the slot walk is
+strictly better than the annotation wherever it resolves — it records widths the
+checker's `Type` erases, and every slot-marking rule maintains it. So the
+carrier is read only for the OTHER half: a name with no slot at all, which today
+means a module `const`. A `const` desugars to a zero-argument accessor, so its
+bare read is really a call, and each ident predicate had to learn that
+separately — `expr_is_str` did (#2954), `expr_is_f64` and `infer_expr_width` did
+(#4801), and `expr_is_u32` / `expr_is_u64` / `expr_is_bool` never did.
+
+Both omissions were live miscompiles, and both are the same shape as every
+defect in this issue's table:
+
+```fern
+const M: u32 = 2147484527u32;
+function main(): i32 { return ((M >> 1u32) % 100u32) as i32; }   // wasm: 11, oracle 63
+```
+```fern
+import "std/json";
+const B: boolean = true;
+function main(): i32 { return B.to_json().len() as i32; }        // 1 ("1"), oracle 4 ("true")
+```
+
+The u32 one is wasm-only — x86-64 and arm64 keep a u32 zero-extended in a
+64-bit register, so a signed `shr` already matched there — which is why it
+survived a green x86-64 fixture leg. The boolean one diverges on both.
+
+`id_type_tag` replaces all six clauses, so the next scalar kind is added in one
+place rather than missed in three. It keeps the ret-flag registries as the
+UNANNOTATED build's answer (`asm_ir_run`, the native compiler), which is what
+keeps the field byte-identity-safe — but reads `id.ty` ahead of them, because
+for a const the stamp names the DECLARED return type while the registries
+re-derive it and collapse i64 with u64. That is the reverse of `fa_type_tag`'s
+ordering and for a reason that does not apply here: there the walk returns the
+field's declared SPELLING and is more precise than the tag; here the walk IS the
+registry and is less precise than it.
+
+The load site rule from `ExprIndex.ty` applies unchanged: `lower_i64`'s
+`ExprIdent` arm decides whether an i64 const emits its 8-byte call, and it
+reads the same leaf `infer_expr_width` does. Split across two derivations, a
+disagreement is a module the wasm validator rejects.
 
 **Open, and it is NOT a lambda problem: calling an f64-returning fn-VALUE
 through a param loses its type.** Probing the lambda positions the var-binding

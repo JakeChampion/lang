@@ -329,9 +329,9 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             // A local variable shadowing a module-level decl keeps its bare
             // name (don't mangle it into the decl's reference).
             if (is_in(id.name, ctx.locals)) {
-                return parser.ExprIdent { name: id.name, line: id.line, col: id.col };
+                return parser.ExprIdent { name: id.name, line: id.line, col: id.col, ty: id.ty };
             }
-            return parser.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col };
+            return parser.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty };
         },
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -339,7 +339,9 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                     if (is_in(id.name, ctx.modnames)) {
                         // Alias-aware: `io.foo` -> `io_buffered__foo`.
                         var mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
-                        return parser.ExprIdent { name: mangled, line: id.line, col: id.col };
+                        // `ty: ""` and not `id.ty`: the result names a module-qualified
+                        // FUNCTION, so the module ident's own tag says nothing about it.
+                        return parser.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
                     }
                 },
                 _ => { }
