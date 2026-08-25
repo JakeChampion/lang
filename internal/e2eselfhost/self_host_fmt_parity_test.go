@@ -238,6 +238,96 @@ function main(): i32 {
 return pick(Sm.V(0)) + pick(Sm.V(7)) + pick(Sm.W);
 }
 `},
+	// The five binding sites share one pattern grammar (#2698), so `if let`
+	// and `let … else` accept tuple, struct, literal and range heads. Those
+	// heads lower through the tuple / struct / literal match builders, which
+	// leave no StmtMatch — so the carrier on the synthesised `if` is the only
+	// record of what was written, and without it `-fmt -w` rewrote the source
+	// into the `match` (or, for a nested payload, into the `__nest` temp).
+	{"pattern-if-let-tuple", `function pick(t: (i32, i32)): i32 {
+if let (1, 2) | (3, 4) = t {
+return 1;
+}
+return 0;
+}
+function whole(t: (i32, i32)): i32 {
+if let w @ (a, b) = t {
+return a + b;
+} else {
+return 0;
+}
+}
+function main(): i32 {
+return pick((3, 4)) + whole((1, 2));
+}
+`},
+	{"pattern-if-let-literal", `function pick(n: i32): i32 {
+if let 1 | 2 = n {
+return 10;
+}
+if let 3..5 = n {
+return 20;
+}
+if let 7..=9 = n {
+return 30;
+}
+return 0;
+}
+function main(): i32 {
+return pick(2) + pick(4) + pick(9);
+}
+`},
+	{"pattern-if-let-struct", `struct Point { x: i32, y: i32 }
+function sum(p: Point): i32 {
+if let Point { x: a, y } = p {
+return a + y;
+} else {
+return 0;
+}
+}
+function main(): i32 {
+return sum(Point { x: 1, y: 2 });
+}
+`},
+	{"pattern-let-else-literal", `function pick(n: i32): i32 {
+let 1 | 2 = n else {
+return 0;
+};
+return 9;
+}
+function ranged(n: i32): i32 {
+let 3..5 = n else {
+return 0;
+};
+return 8;
+}
+function main(): i32 {
+return pick(2) + ranged(4);
+}
+`},
+	{"pattern-let-else-nested", `enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+function unwrap(o: Outer): i32 {
+let A(Ok2(n)) = o else {
+return 0;
+};
+return n;
+}
+function main(): i32 {
+return unwrap(Outer.A(Inner.Ok2(5)));
+}
+`},
+	{"pattern-let-else-or", `enum E { A(i32), B(i32) }
+function get(e: E): i32 {
+let A(v) | B(v) = e else {
+return 0;
+};
+return v;
+}
+function main(): i32 {
+return get(E.B(4));
+}
+`},
 	{"precedence-bitwise-vs-compare", `function is_pow2(n: i32): boolean {
 return (n & (n - 1)) == 0;
 }
