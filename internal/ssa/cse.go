@@ -118,11 +118,18 @@ func resolveValue(v Value, sub map[int32]Value) Value {
 
 // exprKey returns a stable canonical key for `op` after Args
 // have been resolved through the substitution map. The key
-// folds Kind, Imm, F64, Str, and the Arg ID sequence into one
-// string — cheap to build, hash-table-friendly.
+// folds Kind, Width, Imm, F64, Str, and the Arg ID sequence
+// into one string — cheap to build, hash-table-friendly.
+//
+// Width is part of the identity, not decoration: the same Kind
+// over the same Args means something different at 32 and at 64
+// — clz(1) is 31 or 63, an fadd rounds to f32 or not — so a key
+// without it merges two ops that compute different values.
 func exprKey(op *Op, args []Value) string {
 	var sb strings.Builder
 	sb.WriteString(op.Kind.String())
+	sb.WriteByte('|')
+	sb.WriteString(strconv.FormatInt(int64(op.Width), 10))
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatInt(op.Imm, 10))
 	sb.WriteByte('|')

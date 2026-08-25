@@ -801,6 +801,19 @@ func asmInst(in Inst, scratch int) (string, error) {
 			return fmt.Sprintf("movsx %s, %s", reg(d), reg8n(d)), nil
 		case ssa.OpExtend16S:
 			return fmt.Sprintf("movsx %s, %s", reg(d), reg16n(d)), nil
+		case ssa.OpClz, ssa.OpCtz, ssa.OpPopcount:
+			// in.W is the OPERAND width, so the 32-bit form is the 32-bit
+			// register — lzcnt on the full 64-bit register would count the
+			// zero-extended high half too. LZCNT/TZCNT rather than bsr/bsf
+			// because the IR defines the zero case as the operand width, which
+			// is what they give; the Haswell baseline (docs/BACKEND-PARITY.md)
+			// makes them assumable. A 32-bit destination zero-extends, so the
+			// count is already a clean i32 in the full register.
+			r := reg32n(d)
+			if in.W == 64 {
+				r = reg(d)
+			}
+			return fmt.Sprintf("%s %s, %s", bitCountMnemonic(in.K), r, r), nil
 		default:
 			return "", fmt.Errorf("x86_64ssa: unsupported unary op %v", in.K)
 		}
@@ -1813,6 +1826,21 @@ func divSeq(in Inst, scratch int) string {
 		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch)), // place result into dst
 	)
 	return strings.Join(lines, "\n\t")
+}
+
+// bitCountMnemonic names the x86-64 instruction for a bit-count op. LZCNT and
+// TZCNT are BMI1/LZCNT; both are in the Haswell-class baseline this backend
+// targets, and both fail SILENTLY on an older CPU (same opcodes as bsr/bsf plus
+// an F3 prefix it ignores) rather than faulting — see docs/BACKEND-PARITY.md.
+func bitCountMnemonic(k ssa.OpKind) string {
+	switch k {
+	case ssa.OpClz:
+		return "lzcnt"
+	case ssa.OpCtz:
+		return "tzcnt"
+	default:
+		return "popcnt"
+	}
 }
 
 func binMnemonic(k ssa.OpKind) (string, bool) {

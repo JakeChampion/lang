@@ -3,6 +3,7 @@ package x86_64ssa
 import (
 	"fmt"
 	"math"
+	"math/bits"
 
 	"github.com/jakechampion/lang/internal/ssa"
 )
@@ -87,7 +88,7 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 			case UnNeg:
 				regs[in.Dst] = maskW(in.W, -regs[in.Dst])
 			case UnOp:
-				regs[in.Dst] = maskW(in.W, unInt(in.K, regs[in.Dst]))
+				regs[in.Dst] = maskW(in.W, unInt(in.K, regs[in.Dst], in.W))
 			case SetCmp:
 				regs[in.Dst] = cmpInt(in.K, regs[in.Dst], regs[in.Src])
 			case LoadSlot:
@@ -420,10 +421,25 @@ func fconv(k ssa.OpKind, a int64, w int8) int64 {
 }
 
 // unInt evaluates a unary integer transform, mirroring ssa.Eval.
-func unInt(k ssa.OpKind, v int64) int64 {
+func unInt(k ssa.OpKind, v int64, w int8) int64 {
 	switch k {
 	case ssa.OpNot:
 		return b2i(v == 0)
+	case ssa.OpClz:
+		if w == 64 {
+			return int64(bits.LeadingZeros64(uint64(v)))
+		}
+		return int64(bits.LeadingZeros32(uint32(v)))
+	case ssa.OpCtz:
+		if w == 64 {
+			return int64(bits.TrailingZeros64(uint64(v)))
+		}
+		return int64(bits.TrailingZeros32(uint32(v)))
+	case ssa.OpPopcount:
+		if w == 64 {
+			return int64(bits.OnesCount64(uint64(v)))
+		}
+		return int64(bits.OnesCount32(uint32(v)))
 	case ssa.OpTrunc, ssa.OpExtendS:
 		return int64(int32(v))
 	case ssa.OpExtendU:

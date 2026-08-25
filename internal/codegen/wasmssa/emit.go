@@ -548,7 +548,8 @@ func inferResultType(op *ssa.Op, widthOf map[int32]int8, floatOf map[int32]bool)
 	case ssa.OpEq, ssa.OpNe,
 		ssa.OpLt, ssa.OpLtU, ssa.OpLe, ssa.OpLeU,
 		ssa.OpGt, ssa.OpGtU, ssa.OpGe, ssa.OpGeU,
-		ssa.OpNot:
+		ssa.OpNot,
+		ssa.OpClz, ssa.OpCtz, ssa.OpPopcount:
 		return 32, false
 	case ssa.OpConstInt:
 		if op.Width == 64 {
@@ -775,6 +776,18 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 			body = append(body, 0x50) // i64.eqz → i32
 		} else {
 			body = append(body, 0x45) // i32.eqz
+		}
+		return storeResult(body, op, ctx), nil
+	case ssa.OpClz, ssa.OpCtz, ssa.OpPopcount:
+		// wasm has all three as single opcodes, per width. The i64 forms
+		// return an i64, so wrap back down — the SSA contract is an i32
+		// count whatever the operand width.
+		body = pushValue(body, op.Args[0], ctx)
+		if op.Width == 64 || ctx.valueWidth[op.Args[0].ID] == 64 {
+			body = append(body, bitCountOpcode(op.Kind, true))
+			body = append(body, 0xa7) // i32.wrap_i64
+		} else {
+			body = append(body, bitCountOpcode(op.Kind, false))
 		}
 		return storeResult(body, op, ctx), nil
 	case ssa.OpExtendS:
@@ -1058,4 +1071,21 @@ func binaryI32Opcode(k ssa.OpKind) (byte, bool) {
 		return 0x4f, true
 	}
 	return 0, false
+}
+
+// bitCountOpcode names the wasm numeric opcode for a bit-count op:
+// i32.clz/ctz/popcnt are 0x67..0x69, the i64 forms 0x79..0x7b.
+func bitCountOpcode(k ssa.OpKind, wide bool) byte {
+	base := byte(0x67)
+	if wide {
+		base = 0x79
+	}
+	switch k {
+	case ssa.OpCtz:
+		return base + 1
+	case ssa.OpPopcount:
+		return base + 2
+	default:
+		return base
+	}
 }

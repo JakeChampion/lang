@@ -85,11 +85,11 @@ const (
 	// under BOTH backends and ran. This is the number the leg's value is
 	// proportional to: a regression that widened the SSA bail set would
 	// otherwise turn the lane green by testing almost nothing. Measured
-	// 2026-08-25 over 286 corpus programs: 264 compared, 17 ssa-refused,
-	// 5 baseline-rejected. The refusals left are one enumerable list —
-	// __method_string_as_bytes (12, needs the slice-view helpers this
-	// emitter has none of), stat (2), and the popcnt lift gap (3).
-	arm64SSADiffMinCompared = 250
+	// 2026-08-25 over 286 corpus programs: 267 compared, 14 ssa-refused,
+	// 5 baseline-rejected. The refusals left are two helpers —
+	// __method_string_as_bytes (12, which needs the slice-view helpers this
+	// emitter has none of) and stat (2).
+	arm64SSADiffMinCompared = 255
 
 	// arm64SSADiffRunTimeout bounds one execution. The heaviest corpus
 	// program (examples/bench/struct_drop.fern) takes ~0.9 s under

@@ -381,6 +381,26 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-1]
 		v := l.out.AddOp(l.cur, OpNot, arg)
 		l.stack = append(l.stack, v)
+	case ir.OpClz, ir.OpCtz, ir.OpPopcount:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 1 operand", op.Kind, i)
+		}
+		arg := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		kind := OpClz
+		switch op.Kind {
+		case ir.OpCtz:
+			kind = OpCtz
+		case ir.OpPopcount:
+			kind = OpPopcount
+		}
+		v := l.out.AddOp(l.cur, kind, arg)
+		// The OPERAND width, carried through so a backend counts from the
+		// right bit. The result is an i32 count either way.
+		if op.Width == 64 {
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		}
+		l.stack = append(l.stack, v)
 	case ir.OpFNeg:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpFNeg at op[%d] needs 1 operand", i)
