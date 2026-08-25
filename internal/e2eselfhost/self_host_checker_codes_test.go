@@ -1397,6 +1397,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e063-callee-owned-array-arg", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(): [i32] { var a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-other-arg-ok", "function second(a: [i32], b: [i32]): [i32] { return b; }\nfunction f(p: i32[]): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-callee-param-ok", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(p: i32[]): [i32] { return idsl(p[0:2]); }\nfunction main(): i32 { return 0; }\n", nil},
+		// An element-polymorphic receiver method is HOISTED to a free
+		// function, and the hoist rebuilds the decl rather than copying it
+		// — so the `[T]`-vs-`T[]` flag the report filter reads has to ride
+		// along or this stops being reported with no other symptom.
+		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { var local: T[] = [1, 2, 3]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		// An owned `T[]` return MOVES its storage to the caller, so a
+		// function handing a local array back THROUGH A CALLEE that passes
+		// one through is not returning a view and must stay accepted.
+		// Every function is summarised, so without a return-type filter on
+		// the REPORT this draws E063 — the shape that failed 154 tests
+		// across a dozen lanes once a program importing `core/bigint`
+		// reached the self-host compiler, while every stdlib-free row
+		// above stayed green. The direct form is e063-return-owned-array-ok
+		// and passes either way, so it does not gate this.
+		{"e063-owned-return-through-callee-ok", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(): i32[] { var a: i32[] = [1, 2, 3]; return idarr(a); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E023 (unknown enum): an unknown-BASE generic annotation survives
 		// type resolution as an "unknown enum" (native resolveType keeps
 		// ast.EnumType), so a match / if-let on the value draws E023 at the
