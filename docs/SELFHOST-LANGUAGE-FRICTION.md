@@ -39,7 +39,7 @@ except a deliberate conversion.
 
 ## 1. The census
 
-What a 175k-line compiler written in a modern language uses, counted across
+What a 182k-line compiler written in a modern language uses, counted across
 `examples/self_host/*.fern` with comments and literals stripped. The `Gate`
 column says what `TestSelfHostFeatureCensus` holds the row to.
 
@@ -48,22 +48,22 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
 | Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **47** — 4 anonymous `function(…)` exprs and 43 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors); 23 of the 47 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **303** in 2 modules — 288 in `checker.fern`, 15 in `visibility.fern`; falling as SH-022 folds collectors onto `astwalk` | floor |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,054** in 4 modules — 703 in `irlower.fern`, 304 in `checker.fern`, 32 in `astwalk.fern`, 15 in `visibility.fern` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **99** across 11 modules | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **104** across 11 modules | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **4,386** loops, **4,728** `x = x + 1` | ceiling on the increments |
-| `-1` as "absent" | — | **240** `return 0 - 1` | logged |
+| `while` + manual index | — | **3,811** loops, **4,137** `x = x + 1` | ceiling on the increments |
+| `-1` as "absent" | — | **247** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
-| Explicit `as` casts | — | **682** | logged |
+| Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,563** of **9,245** arrow tokens (28%) | ceiling |
-| Locals with a written type annotation | inference exists | **17,320** of 17,327 (99.9%) | logged |
-| Methods (`function (r: T) name(…)`) | ✅ | **276** in 9 modules | logged |
+| Wildcard `_ =>` match arms | — | **2,737** of **9,760** arrow tokens (28%) | ceiling |
+| Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
+| Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
 
 **Method.** Every counted row is taken after `//` comments and string, f-string
 and char literals are stripped out. The self-host embeds whole test programs as
@@ -87,8 +87,8 @@ a fall; `ceiling` allows ~10% of headroom over the measurement before failing;
 `logged` rows are printed by the same run but not asserted. A row marked `—` is
 hand-counted and not covered by the test.
 
-The single largest file, `irlower.fern`, is **60,552 lines** and contains a
-**1,704-line function** (`lower_call_method`). `LowerState`, the value threaded
+The single largest file, `irlower.fern`, is **64,542 lines** and contains a
+**1,758-line function** (`lower_call_method`). `LowerState`, the value threaded
 through all of it, has **31 fields**, fourteen of which are `string[]` sets
 carrying ownership facts.
 
@@ -458,7 +458,51 @@ more than once, and 1 never reads an element at all. The safe pass is a
 fixpoint: converting an outer loop turns `xs[i].ys` into a path and so exposes an
 inner loop the first pass could not see.
 
-Six slices, ten bugs. The census rows that remain are not blocked on the
+**What the seventh adoption cost (#6993).** The same conversion, run at scale on
+`irlower.fern` — 45% of the self-host's index-loop mass — split by iterated array
+because one diff over 60k lines is not reviewable: `astwalk` as the pilot
+(#7421), then `stmts` (#7431, 192 loops), `m.arms` (#7437), `c.args` (#7450),
+`funcs` (#7454, 63 loops), and `t.elements` / `structs` / `sl.field_values` with
+the `sd.fields` loops the outer conversion exposed (131 loops). The pilot was a
+different module; the five `irlower` slices took that file from 0 `for..in` to
+703.
+
+**The transferable output is the transformer's three refusal rules, each from a
+bug hit rather than anticipated:**
+
+1. **The index must be initialised to `0`.** A suffix scan (`var j: i32 = i + 1`)
+   has the same body shape and the same index usage, and `for x in xs` rescans
+   from the front. Two of `wcap_stmt_needs_env_box`'s scans were converted before
+   this rule existed. It type-checked and the fixpoint still converged — the
+   function decides whether a closure needs an env box, so the wrong answer is a
+   miscompile, not a crash.
+2. **Nothing is rewritten inside a `//` comment.** The pilot rewrote a subscript
+   in prose and mangled it. A comment naming the subscript now refuses the whole
+   loop, to be converted by hand.
+3. **The binding must not already be live in the enclosing function.**
+   `irlower.fern` has 105 functions taking a parameter named `st`; a loop
+   variable shadowing one is silent.
+
+Rule 1 is the one worth carrying: it is the case the bucket classification above
+already named as non-convertible, and encoding the classification is a separate
+act from writing it down.
+
+**The fixpoint the sixth slice predicted is real and is worth budgeting for.**
+Converting the `structs` loops turned `structs[i].fields` into `sd.fields`, which
+exposed 22 inner loops the first pass could not see — 21 of them convertible, a
+16% bonus on that slice. Re-run the pass until the per-array counts stop moving
+rather than assuming one sweep is complete.
+
+**What the bucket-A share actually predicts.** Of the 118 `t.elements` /
+`structs` / `sl.field_values` loops, 110 converted and 8 held back, every one of
+them because the index is used for its own sake — `variant_decl_index` returning
+its position, `decl_field_index`'s inner loop returning `fi`. That is a 93%
+bucket-A rate against the 68% the whole-frame census predicts, because these
+three arrays are AST recursion rather than the mixed population. A module's
+predicted share is not its per-array share, and the per-array numbers are the
+ones to plan a slice from.
+
+Seven slices, ten bugs. The census rows that remain are not blocked on the
 ratchet any more; they are blocked on their own prerequisites.
 
 ### 2.5 Types are strings
