@@ -56,7 +56,8 @@ pub struct LocalInfo {
     strarr_builtin: boolean,
     // str_view_local: this string slot may hold a fresh BOX over ANOTHER
     // string's bytes — `<string>.trim()`, or a chain of SFRRECV string methods
-    // that can return `s[a:b]`. The box is this frame's; the data is not. Picks
+    // that can return a `slice_unchecked` view. The box is this frame's; the
+    // data is not. Picks
     // __fern_str_view_free over __fern_str_free at the release sites, which
     // frees the box alone when the rc is the immortal view sentinel and takes
     // the ordinary path otherwise (wasm's slices copy).
@@ -2649,6 +2650,9 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
     var t: string = "";
     match (e) {
         parser.ExprIdent(id) => { t = s.opt_type_of_slot(s.slot_of(id.name)); },
+        // `s[a:b].unwrap_or("")` — the checked string slice (#5634) is an
+        // Option VALUE, so its methods key "Option.<m>".
+        parser.ExprSlice(osl) => { if (expr_is_str(osl.array, s)) { t = "Option[string]"; } },
         // `b.v` where `v` is an Option/Result struct field, or `t.N` where the
         // tuple element is an Option/Result — lets `b.v.uo(...)` / `match (b.v)`
         // dispatch on the field value (#3069).
@@ -6079,11 +6083,11 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             // Indexing a string[] array yields a string element.
             return expr_is_strarr(ix.array, s);
         },
-        parser.ExprSlice(slc) => {
-            // Slicing a string yields a string (`s[a:b]`). Without this, a
-            // slice-result var isn't a str slot, so `.len()` would mis-dispatch
-            // to arr_len (offset 0) instead of str_len (offset 8).
-            return expr_is_str(slc.array, s);
+        parser.ExprSlice(_) => {
+            // `s[a:b]` on a string is `Option[str]`, not a string (#5634) — an
+            // Option box, whose `.len()` must NOT dispatch to str_len. The raw
+            // string view is `slice_unchecked(s, a, b)`, tracked below.
+            return false;
         },
         // `inner?` unwraps an Option[string]/Result[string, E] to its string
         // payload, so `var s = f()?` str-tracks `s` (else `s.len()` mis-
@@ -6148,8 +6152,8 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 //     string_from_bytes_unchecked / __raw_string, the str_to_upper / str_to_lower /
 //     str_repeat free-fns, and the .to_upper / .to_lower / .reverse / .repeat
 //     methods — is OWNED: a fresh rc=1 box the field-drop reclaims;
-//   - a slice `s[a:b]` / `.trim()` is a VIEW: a zero-copy immortal box (rc=-1,
-//     #4294) sharing the source buffer, never freed;
+//   - a view `slice_unchecked(s, a, b)` / `.trim()` is a VIEW: a zero-copy
+//     immortal box (rc=-1, #4294) sharing the source buffer, never freed;
 //   - a string LITERAL is STATIC — its DATA is interned .rodata, but since #2649
 //     Option A the BOX around it is freshly __fern_str_box'd at rc=1 on every
 //     evaluation, so a Static value is as sole-owned as an Owned one. Callers
@@ -6164,7 +6168,6 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
     match (e) {
         parser.ExprString(_) => { return 3; },   // static / immortal literal
-        parser.ExprSlice(_) => { return 2; },     // zero-copy view (rc=-1 box)
         parser.ExprBinary(b) => {
             if (b.op == "+") { if (expr_is_str(b.left, s) || expr_is_str(b.right, s)) { return 0; } }
             return 1;
@@ -8647,11 +8650,6 @@ pub function sfrrecv_chain_root_slot(e: parser.Expr, s: LowerState, depth: i32):
                 _ => {}
             }
         },
-        // `X[a:b]` is a link of exactly the same character as an SFRRECV call:
-        // the box it yields is a view over X's bytes and is never X's own box, so
-        // the chain root is X's root. It reaches the caller unnamed, which is why
-        // it needs releasing at all.
-        parser.ExprSlice(sl) => { return sfrrecv_chain_root_slot(sl.array, s, depth + 1); },
         _ => {}
     }
     return 0 - 1;
@@ -9043,21 +9041,22 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     // because their results carry views into the receiver's bytes — all three
     // still lower here, and all three keep the leak rather than risk the alias.
     var rslots: i32[] = [];
-    // A SLICE receiver is a box nobody names either — `base[a:b].starts_with(..)`
-    // materialises one and the op is done with it once it returns.
-    // is_fresh_str_temp refuses it (a slice aliases its source's bytes, which is
-    // the question it answers), but str_borrowing_method is the warrant that
-    // matters here: every method in that set reads the receiver's bytes and hands
-    // back a scalar or a freshly allocated string, never the receiver or a view of
-    // it. `trim` / `replace` / `lines` / `split` are outside it precisely
-    // because they can alias, and they keep the leak.
+    // A `slice_unchecked(base, a, b)` receiver is a box nobody names either —
+    // `slice_unchecked(base, a, b).starts_with(..)` materialises one and the op is
+    // done with it once it returns. is_fresh_str_temp refuses it (a view aliases
+    // its source's bytes, which is the question it answers), but
+    // str_borrowing_method is the warrant that matters here: every method in that
+    // set reads the receiver's bytes and hands back a scalar or a freshly
+    // allocated string, never the receiver or a view of it. `trim` / `replace` /
+    // `lines` / `split` are outside it precisely because they can alias, and they
+    // keep the leak. The `s[a:b]` spelling is not here: it yields an `Option[str]`
+    // box (#5634), which has no string-method surface at all.
     var rview: boolean = false;
     var rtake: boolean = false;
     if (str_borrowing_method(field)) {
         rtake = is_fresh_str_temp(recv, s);
         if (!rtake) {
             match (recv) {
-                parser.ExprSlice(_) => { rtake = true; rview = true; },
                 parser.ExprCall(_) => { if (slice_unchecked_call(recv)) { rtake = true; rview = true; } },
                 _ => {}
             }
@@ -12441,8 +12440,9 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         // builtin-method release. The warrant is the callee-side proof
         // recv_borrow_fns_of already computes: the plain "<Type>.<method>" key
         // says body_unsafe_for found no escape of the receiver, which refuses a
-        // bare `return s` and a `return s[a:b]` view alike because both are
-        // escapes for it. So the box is dead once the call returns, and the
+        // bare `return s` and a `return slice_unchecked(s, a, b)` view alike
+        // because both are escapes for it. So the box is dead once the call
+        // returns, and the
         // argument machinery below drains it.
         var recv_ok: boolean = util.index_of_str(s.sigs.recv_borrow_fns, pty + "." + fa.field) >= 0;
         if (is_fresh_str_temp(fa.obj, s) && recv_ok) {
@@ -12466,7 +12466,6 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         if (recv_ok && !is_fresh_str_temp(fa.obj, s)) {
             match (fa.obj) {
                 parser.ExprCall(_) => { prroot = sfrrecv_chain_root_slot(fa.obj, s, 0); },
-                parser.ExprSlice(_) => { prroot = sfrrecv_chain_root_slot(fa.obj, s, 0); },
                 _ => {}
             }
         }
@@ -13975,11 +13974,12 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             return sidx.emit(ir.op_arr_get(gw));
         },
         parser.ExprSlice(slc) => {
-            // `s[start:end]` lowers [src, start, end] then `str_slice` (a fresh
-            // string) or `arr_slice` (a fresh array) depending on the source. A
-            // non-string, non-array source bails. (The binding is `slc`, not `sl`:
-            // other arms bind `var sl: LowerState`, and the compiler's scope-blind
-            // locals collapse same-named locals of different types.)
+            // `a[start:end]` on an ARRAY lowers [src, start, end] then `arr_slice`
+            // (a fresh array). On a STRING it is the CHECKED slice (#5634) and goes
+            // to lower_str_slice_checked, which yields `Option[str]`. A non-string,
+            // non-array source bails. (The binding is `slc`, not `sl`: other arms
+            // bind `var sl: LowerState`, and the compiler's scope-blind locals
+            // collapse same-named locals of different types.)
             var slc_is_str: boolean = expr_is_str(slc.array, s);
             // The typed-IR tag is proof of array-ness the walk cannot reach:
             // slc.ty is non-empty exactly when the checker typed slc.array as an
@@ -13988,6 +13988,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // and so cannot see the tag itself — it is applied here, at the one
             // site that holds the ExprSlice node.
             if (!slc_is_str && !expr_is_arr_src(slc.array, s) && slc.ty == "") { return s.fail(); }
+            if (slc_is_str) { return lower_str_slice_checked(slc, s); }
             // An f64[] or i64[] slice copies 8-byte elements (arr_slice width 64
             // → the wasm $__fern_arr_slice8 helper, a raw 8-byte move that serves
             // both); i32[] / string[] copy 4-byte elements. The result is a fresh
@@ -13995,9 +13996,6 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // expr_is_i64arr's ExprSlice cases.
             var slc_w: i32 = 32;
             if (slice_elem_is_wide(slc, s)) { slc_w = 64; }
-            // A slice OF a slice borrows its source: the outer box's data
-            // pointer aims into the ORIGINAL buffer, never into the inner box,
-            // so the inner one is dead the moment this op has read it.
             var slvst: ArgStash = lower_view_borrowed_parked(slc.array, s);
             var ssl: LowerState = slvst.state;
             if (!ssl.ok) { return ssl; }
@@ -14005,7 +14003,6 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.end, ssl);
             if (!ssl.ok) { return ssl; }
-            if (slc_is_str) { return free_parked_view_after(ssl.emit(ir.op_str_slice()), slvst.slot); }
             return ssl.emit(ir.op_arr_slice(slc_w));
         },
         parser.ExprCall(c) => {
@@ -14510,6 +14507,12 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
         // `(a +? b)?` — a checked arithmetic operand (#5542) is Option[T].
         parser.ExprBinary(ob) => {
             if (is_chk_op(ob.op)) { return chk_opt_type_tag(ob, s); }
+        },
+        // `s[a:b]?` / `match (s[a:b])` — the checked string slice (#5634) is
+        // Option[str], which the self-host spells "string" after the parse-time
+        // str erasure. An ARRAY slice is not an Option and falls through.
+        parser.ExprSlice(osl) => {
+            if (expr_is_str(osl.array, s)) { return "Option[string]"; }
         },
         _ => {}
     }
@@ -17407,10 +17410,10 @@ pub struct VarTypes {
 }
 
 // slice_unchecked_call reports whether `e` is the builtin call
-// `slice_unchecked(src, a, b)` — the ExprSlice string arm under its honest
-// name (#5634), source/start/end in args[0]/[1]/[2]. The frame path and the
-// borrow scans admit the two spellings identically so a migrated site keeps
-// its frame box and its source's reclaim credit.
+// `slice_unchecked(src, a, b)` — the raw byte slice under its honest name
+// (#5634), source/start/end in args[0]/[1]/[2]. It is the ONLY spelling the
+// frame path and the borrow scans admit: `s[a:b]` is the checked form and
+// yields an `Option[str]` box that escapes the expression.
 pub function slice_unchecked_call(e: parser.Expr): boolean {
     match (e) {
         parser.ExprCall(c) => {
@@ -17426,14 +17429,15 @@ pub function slice_unchecked_call(e: parser.Expr): boolean {
 
 // view_frame_binding_ok decides whether `var <name> = <expr>` may take the
 // frame-allocated form of the string view its initialiser builds (#6713):
-// a STRING slice (an array slice copies, so it has no view box), a name the
-// per-function borrow scan approved, and a register backend — wasm's str_slice
-// copies into a fresh inline block, so there is no box to place in a frame.
+// a `slice_unchecked` STRING view (an array slice copies, so it has no view
+// box), a name the per-function borrow scan approved, and a register backend —
+// wasm's str_slice copies into a fresh inline block, so there is no box to place
+// in a frame. `s[a:b]` is NOT a candidate: it yields an `Option[str]` heap box
+// (#5634), and putting one in the three reserved 24-byte slots is corruption.
 function view_frame_binding_ok(v: parser.StmtVar, s: LowerState): boolean {
     if (s.for_wasm()) { return false; }
     if (!s.is_view_frame_name(v.name)) { return false; }
     match (v.init) {
-        parser.ExprSlice(slc) => { return expr_is_str(slc.array, s); },
         parser.ExprCall(c) => {
             if (slice_unchecked_call(v.init)) { return expr_is_str(c.args[0], s); }
             return false;
@@ -17443,18 +17447,19 @@ function view_frame_binding_ok(v: parser.StmtVar, s: LowerState): boolean {
     return false;
 }
 
-// view_frame_temp_ok decides whether an ANONYMOUS string-slice temporary may
-// take the frame form. #6713 placed the box of a NAMED `var t = s[a:b]` whose
-// every use borrows it; a temp consumed inside the expression that built it —
-// `"x" + o.name[0:1]`, `s[a:b].len()`, `s[a:b] == "x"` — has no name at all, so
-// neither hazard the named scan filters for can arise: nothing can carry it out
-// of the frame, and the enclosing operator has finished reading it before the
-// site can run again. Callers are the borrow positions themselves, which is
-// what makes the whitelist a property of the CALL SITE rather than of a scan.
+// view_frame_temp_ok decides whether an ANONYMOUS string-view temporary may
+// take the frame form. #6713 placed the box of a NAMED
+// `var t = slice_unchecked(s, a, b)` whose every use borrows it; a temp consumed
+// inside the expression that built it — `"x" + slice_unchecked(o.name, 0, 1)`,
+// `slice_unchecked(s, a, b).len()` — has no name at all, so neither hazard the
+// named scan filters for can arise: nothing can carry it out of the frame, and
+// the enclosing operator has finished reading it before the site can run again.
+// Callers are the borrow positions themselves, which is what makes the whitelist
+// a property of the CALL SITE rather than of a scan. The `s[a:b]` spelling never
+// qualifies: it builds an `Option[str]` heap box, not a view box (#5634).
 function view_frame_temp_ok(e: parser.Expr, s: LowerState): boolean {
     if (s.for_wasm()) { return false; }
     match (e) {
-        parser.ExprSlice(slc) => { return expr_is_str(slc.array, s); },
         parser.ExprCall(c) => {
             if (slice_unchecked_call(e)) { return expr_is_str(c.args[0], s); }
             return false;
@@ -17465,8 +17470,8 @@ function view_frame_temp_ok(e: parser.Expr, s: LowerState): boolean {
 }
 
 // lower_view_borrowed lowers `e` in a position that only borrows a string for
-// the duration of one expression: a slice temp takes its box from the frame,
-// everything else lowers normally.
+// the duration of one expression: a `slice_unchecked` view temp takes its box
+// from the frame, everything else lowers normally.
 function lower_view_borrowed(e: parser.Expr, s: LowerState): LowerState {
     if (view_frame_temp_ok(e, s)) { return lower_str_slice_frame(e, s); }
     return lower_expr(e, s);
@@ -17497,7 +17502,6 @@ function lower_view_borrowed_parked(e: parser.Expr, s: LowerState): ArgStash {
     if (!p.ok || !s.for_wasm()) { return ArgStash { state: p, slot: 0 - 1 }; }
     var is_str_slice: boolean = false;
     match (e) {
-        parser.ExprSlice(vsl) => { is_str_slice = expr_is_str(vsl.array, s); },
         parser.ExprCall(vc) => { if (slice_unchecked_call(e)) { is_str_slice = expr_is_str(vc.args[0], s); } },
         _ => {}
     }
@@ -17539,24 +17543,11 @@ function free_parked_view_after(s: LowerState, slot: i32): LowerState {
 // are never swept — they hold a box the RC layer already treats as immortal.
 function view_frame_slot_name(): string { return "!view!"; }
 
-// lower_str_slice_frame lowers `s[a:b]` with its box in the frame: the same
-// [src, start, end] operands as the heap form, then three reserved local slots
-// (24 bytes, the box) named in the op's immediate.
+// lower_str_slice_frame lowers `slice_unchecked(src, a, b)` with its box in the
+// frame: the same [src, start, end] operands as the heap form, then three
+// reserved local slots (24 bytes, the box) named in the op's immediate.
 function lower_str_slice_frame(e: parser.Expr, s: LowerState): LowerState {
     match (e) {
-        parser.ExprSlice(slc) => {
-            var fvs: LowerState = lower_view_borrowed(slc.array, s);
-            if (!fvs.ok) { return fvs; }
-            fvs = lower_expr(slc.start, fvs);
-            if (!fvs.ok) { return fvs; }
-            fvs = lower_expr(slc.end, fvs);
-            if (!fvs.ok) { return fvs; }
-            var fvbase: i32 = fvs.locals.len();
-            fvs = fvs.add_local(view_frame_slot_name());
-            fvs = fvs.add_local(view_frame_slot_name());
-            fvs = fvs.add_local(view_frame_slot_name());
-            return fvs.emit(ir.op_str_slice_frame(fvbase));
-        },
         parser.ExprCall(fc) => {
             if (!slice_unchecked_call(e)) { return s.fail(); }
             var fcs: LowerState = lower_view_borrowed(fc.args[0], s);
@@ -17574,6 +17565,131 @@ function lower_str_slice_frame(e: parser.Expr, s: LowerState): LowerState {
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// lower_str_slice_checked lowers `s[a:b]` on a STRING source. The expression is
+// bounds- AND UTF-8-boundary-checked and yields `Option[str]` (#5634):
+// `Some(view)` when `0 <= a <= b <= len(s)` and both bounds land on a code-point
+// start, `None` otherwise. `slice_unchecked(s, a, b)` is the raw view that keeps
+// the trap, and it is the form every frame-view / borrow path still admits.
+//
+// A bound is a boundary by definition at 0 and at len(s), so the byte probe runs
+// only for an interior bound — str_index has no bounds check of its own, so that
+// guard is correctness, not an optimisation. Both probes sit inside the
+// bounds-OK branch for the same reason.
+//
+// Every scratch slot is allocated BEFORE the first `if` opens: a value pushed
+// outside a block and consumed inside it is rejected by the wasm validator, and
+// the result rides its own slot so all three arms join on an empty stack. This
+// is emit_str_reclaim_store's void-if-plus-scratch shape, one level deeper.
+function lower_str_slice_checked(slc: parser.ExprSlice, s: LowerState): LowerState {
+    var slvst: ArgStash = lower_view_borrowed_parked(slc.array, s);
+    var cs: LowerState = slvst.state;
+    if (!cs.ok) { return cs; }
+    var srcn: string = "$slcsrc" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(srcn);
+    var srcslot: i32 = cs.slot_of(srcn);
+    cs = cs.emit(ir.op_store_local(srcslot));
+    var lenn: string = "$slclen" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(lenn);
+    var lenslot: i32 = cs.slot_of(lenn);
+    var lon: string = "$slclo" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(lon);
+    var loslot: i32 = cs.slot_of(lon);
+    var hin: string = "$slchi" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(hin);
+    var hislot: i32 = cs.slot_of(hin);
+    var bokn: string = "$slcbok" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(bokn);
+    var bokslot: i32 = cs.slot_of(bokn);
+    var byten: string = "$slcbyte" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(byten);
+    var byteslot: i32 = cs.slot_of(byten);
+    var resn: string = "$slcres" + util.i32_to_string(cs.locals.len());
+    cs = cs.add_local(resn);
+    var resslot: i32 = cs.slot_of(resn);
+
+    // len(s) — read once; the source is never re-evaluated.
+    cs = cs.emit(ir.op_load_local(srcslot));
+    cs = cs.emit(ir.op_str_len());
+    cs = cs.emit(ir.op_store_local(lenslot));
+    // The bounds evaluate exactly once each, in source order.
+    cs = lower_expr(slc.start, cs);
+    if (!cs.ok) { return cs; }
+    cs = cs.emit(ir.op_store_local(loslot));
+    cs = lower_expr(slc.end, cs);
+    if (!cs.ok) { return cs; }
+    cs = cs.emit(ir.op_store_local(hislot));
+
+    // 0 <= lo && lo <= hi && hi <= len
+    cs = cs.emit(ir.op_const_i32(0));
+    cs = cs.emit(ir.op_load_local(loslot));
+    cs = cs.emit(ir.op_bin("le_s", 0, false));
+    cs = cs.emit(ir.op_load_local(loslot));
+    cs = cs.emit(ir.op_load_local(hislot));
+    cs = cs.emit(ir.op_bin("le_s", 0, false));
+    cs = cs.emit(ir.op_bin("and", 0, false));
+    cs = cs.emit(ir.op_load_local(hislot));
+    cs = cs.emit(ir.op_load_local(lenslot));
+    cs = cs.emit(ir.op_bin("le_s", 0, false));
+    cs = cs.emit(ir.op_bin("and", 0, false));
+    cs = cs.emit(ir.op_if(0));
+    cs = cs.emit(ir.op_const_i32(1));
+    cs = cs.emit(ir.op_store_local(bokslot));
+    cs = emit_slice_boundary_probe(cs, srcslot, loslot, lenslot, byteslot, bokslot);
+    cs = emit_slice_boundary_probe(cs, srcslot, hislot, lenslot, byteslot, bokslot);
+    cs = cs.emit(ir.op_load_local(bokslot));
+    cs = cs.emit(ir.op_if(0));
+    cs = cs.emit(ir.op_load_local(srcslot));
+    cs = cs.emit(ir.op_load_local(loslot));
+    cs = cs.emit(ir.op_load_local(hislot));
+    cs = cs.emit(ir.op_str_slice());
+    cs = cs.emit(ir.op_opt_make(0));
+    cs = cs.emit(ir.op_store_local(resslot));
+    cs = cs.emit(ir.op_else());
+    cs = cs.emit(ir.op_opt_none());          // a bound splits a code point
+    cs = cs.emit(ir.op_store_local(resslot));
+    cs = cs.emit(ir.op_end());
+    cs = cs.emit(ir.op_else());
+    cs = cs.emit(ir.op_opt_none());          // a bound is out of range
+    cs = cs.emit(ir.op_store_local(resslot));
+    cs = cs.emit(ir.op_end());
+    // The parked wasm copy of the source is dead once str_slice has read it, and
+    // the drain is stack-neutral — so it goes after the join, where it runs on
+    // the None paths too rather than leaking there.
+    cs = free_parked_view_after(cs, slvst.slot);
+    return cs.emit(ir.op_load_local(resslot));
+}
+
+// emit_slice_boundary_probe folds `is_char_boundary(src, at)` into `bok`, for an
+// INTERIOR `at` only: 0 and len(src) are boundaries by definition and str_index
+// would read out of bounds there. A UTF-8 continuation byte is 0b10xxxxxx, so
+// the byte at a boundary is < 128 or >= 192.
+function emit_slice_boundary_probe(s: LowerState, srcslot: i32, atslot: i32, lenslot: i32, byteslot: i32, bokslot: i32): LowerState {
+    var p: LowerState = s;
+    p = p.emit(ir.op_load_local(atslot));
+    p = p.emit(ir.op_const_i32(0));
+    p = p.emit(ir.op_bin("gt_s", 0, false));
+    p = p.emit(ir.op_load_local(atslot));
+    p = p.emit(ir.op_load_local(lenslot));
+    p = p.emit(ir.op_bin("lt_s", 0, false));
+    p = p.emit(ir.op_bin("and", 0, false));
+    p = p.emit(ir.op_if(0));
+    p = p.emit(ir.op_load_local(srcslot));
+    p = p.emit(ir.op_load_local(atslot));
+    p = p.emit(ir.op_str_index());
+    p = p.emit(ir.op_store_local(byteslot));
+    p = p.emit(ir.op_load_local(byteslot));
+    p = p.emit(ir.op_const_i32(128));
+    p = p.emit(ir.op_bin("lt_s", 0, false));
+    p = p.emit(ir.op_load_local(byteslot));
+    p = p.emit(ir.op_const_i32(192));
+    p = p.emit(ir.op_bin("ge_s", 0, false));
+    p = p.emit(ir.op_bin("or", 0, false));
+    p = p.emit(ir.op_load_local(bokslot));
+    p = p.emit(ir.op_bin("and", 0, false));
+    p = p.emit(ir.op_store_local(bokslot));
+    return p.emit(ir.op_end());
 }
 
 // bind_var_slot is lower_stmt_var's second half: allocate the local's slot,
@@ -17675,7 +17791,8 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (vt.is_str && reclaim_has(sb.reclaimable_names, "SFRCAND:", reclaim_site_key_of(v.name, v.line, v.col))) { sfroot = sfrrecv_chain_root_slot(v.init, se, 0); }
     // Same shape for the trim class: the receiver's type is known here, and the
     // flag is what makes the release site pick the view-aware free. A chain link
-    // can return `s[a:b]` too, so its result gets the same view-aware release.
+    // can return a `slice_unchecked` view too, so its result gets the same
+    // view-aware release.
     if (vt.is_str) { sb = sb.mark_str_view_local(slot, sfroot >= 0); }
     // …and the slot the result may BE, for the identity guard the release needs:
     // replace's receiver, or the chain's root.
@@ -19216,8 +19333,10 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         }
     }
     var se: LowerState = s;
-    // #6713: `var t = s[a:b]` where every use of `t` borrows the view takes the
-    // 24-byte box from the frame instead of the heap. Only the storage changes —
+    // #6713: `var t = slice_unchecked(s, a, b)` where every use of `t` borrows
+    // the view takes the 24-byte box from the frame instead of the heap. `s[a:b]`
+    // is not a candidate — it builds an `Option[str]` box (#5634). Only the
+    // storage changes —
     // same layout, same rc=-1 immortal sentinel — so the binding's own slot
     // marking below is untouched.
     if (view_frame_binding_ok(v, s)) { se = lower_str_slice_frame(v.init, s); }
@@ -19873,6 +19992,9 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // the module. (Annotating u worked, which is what made
         // this look like a match gap rather than a propagation one.)
         parser.ExprIdent(oaid) => { opt_ty = se.opt_type_of_slot(se.slot_of(oaid.name)); },
+        // `var t = s[a:b]` — the checked string slice (#5634) binds an
+        // Option[str], so a later `match (t)` recovers the payload.
+        parser.ExprSlice(osl) => { if (expr_is_str(osl.array, se)) { opt_ty = "Option[string]"; } },
         _ => {}
     }
     if (opt_ty == "" && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Option[" || slice_unchecked(v.type_name, 0, 7) == "Result[")) { opt_ty = v.type_name; }
@@ -21613,6 +21735,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // width). Recover it so the Some(v) arm binds v.
                             parser.ExprBinary(scb) => {
                                 if (is_chk_op(scb.op)) { srt = chk_opt_type_tag(scb, ms); }
+                            },
+                            // `match (s[a:b])` — the checked string slice (#5634)
+                            // evaluates to Option[str]. An ARRAY slice is not an
+                            // Option and leaves srt empty, which bails.
+                            parser.ExprSlice(scsl) => {
+                                if (expr_is_str(scsl.array, ms)) { srt = "Option[string]"; }
                             },
                             _ => {}
                         }
@@ -23908,21 +24036,22 @@ function str_borrowing_method(field: string): boolean {
 
 // str_method_recv_borrows extends str_borrowing_method's carve-out from the
 // fixed builtin set to any SOURCE-DECLARED method the callee-side proof already
-// clears, so `base[a:b].to_owned()` reads `base` instead of aliasing it.
+// clears, so `slice_unchecked(base, a, b).to_owned()` reads `base` instead of
+// aliasing it.
 //
 // The proof is the plain recv_borrow key, which body_unsafe_for grants only when
 // nothing carries the receiver out — so `to_owned` (`return s + ""`) qualifies
-// and `trim` (`return s[low:high]`, a view of the receiver) does not. That is
-// the same warrant the receiver RELEASE sites use; here it decides whether the
-// SOURCE keeps its reclaim credit.
+// and `trim` (`return slice_unchecked(s, low, high)`, a view of the receiver)
+// does not. That is the same warrant the receiver RELEASE sites use; here it
+// decides whether the SOURCE keeps its reclaim credit.
 //
 // The key can only be spelled `string.<method>`: this scan runs on bare AST with
 // no types, so a same-named method on another type answers to it. That is sound
 // only because admitting a receiver is what routes it to
-// expr_unsafe_for_view_pos, which DIFFERS from expr_unsafe_for on ExprSlice
-// alone and delegates straight to it for every other shape — so a non-slice
-// receiver reaches the same verdict either way, and a slice of a string is a
-// string. A type check here would be dead code, not a guard.
+// expr_unsafe_for_view_pos, which DIFFERS from expr_unsafe_for on a
+// `slice_unchecked` call alone and delegates straight to it for every other
+// shape — so any other receiver reaches the same verdict either way, and a view
+// of a string is a string. A type check here would be dead code, not a guard.
 function str_method_recv_borrows(field: string, recv_borrow: string[]): boolean {
     if (recv_borrow.len() == 0) { return false; }
     return util.index_of_str(recv_borrow, "string." + field) >= 0;
@@ -23945,22 +24074,19 @@ function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: stri
 // expr_unsafe_for_view_pos is expr_unsafe_for at a position that only BORROWS a
 // string for the duration of one expression: the escape-scan twin of
 // lower_view_borrowed, called from the same positions the lowerer treats as
-// view-borrowing. A slice of `name` there is a view that dies inside the
-// expression — lower_str_slice_frame puts its box in reserved frame slots no
+// view-borrowing. A `slice_unchecked` of `name` there is a view that dies inside
+// the expression — lower_str_slice_frame puts its box in reserved frame slots no
 // slot_of can name — so the source is READ, not aliased out, and keeps its
-// reclaim credit. Counting it as an escape cost `base[a:b].len()` the whole
-// reclaim of `base`. The bounds are ordinary positions and scan unchanged.
+// reclaim credit. Counting it as an escape cost
+// `slice_unchecked(base, a, b).len()` the whole reclaim of `base`. The bounds
+// are ordinary positions and scan unchanged.
+//
+// `s[a:b]` is deliberately absent: it wraps the view in an `Option[str]` box
+// (#5634) that leaves the expression, and on the register backends that view
+// still points into the SOURCE buffer (ir.fern's str_slice is zero-copy), so the
+// source is aliased out and must fall through to expr_unsafe_for's escaping arm.
 function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (e) {
-        parser.ExprSlice(sl) => {
-            var src_unsafe: boolean = false;
-            match (sl.array) {
-                parser.ExprIdent(_) => {},
-                _ => { src_unsafe = expr_unsafe_for_view_pos(sl.array, name, borrowable, recv_borrow); }
-            }
-            return src_unsafe || expr_unsafe_for(sl.start, name, borrowable, recv_borrow)
-                || expr_unsafe_for(sl.end, name, borrowable, recv_borrow);
-        },
         parser.ExprCall(c) => {
             // slice_unchecked(src, a, b) (#5634): the ExprSlice arm's builtin
             // spelling — the same frame-boxed view, so an ident source there
@@ -26623,7 +26749,7 @@ function walk_stmt_escapes(st: parser.Stmt, acc: string[]): string[] {
 
 // --- frame-allocated string views (#6713) ------------------------------------
 //
-// A string slice `s[a:b]` is a zero-copy VIEW: a 24-byte box
+// A string view `slice_unchecked(s, a, b)` is zero-copy: a 24-byte box
 // [rc=-1, data = src.data + start, len] sharing the source buffer. Sharing is
 // why it is born IMMORTAL (rc=-1, #4294) — freeing it would attack the middle
 // of the source's allocation — and immortal is why it is never reclaimed, so a
@@ -26679,10 +26805,9 @@ function expr_view_borrow_only(e: parser.Expr, name: string): boolean {
             if (ident_named_is(ix.array, name)) { return expr_view_borrow_only(ix.index, name); }
             return expr_view_borrow_only(ix.array, name) && expr_view_borrow_only(ix.index, name);
         },
-        parser.ExprSlice(sl) => {
-            var arr_ok: boolean = ident_named_is(sl.array, name) || expr_view_borrow_only(sl.array, name);
-            return arr_ok && expr_view_borrow_only(sl.start, name) && expr_view_borrow_only(sl.end, name);
-        },
+        // `s[a:b]` is NOT borrow-only: the `Option[str]` box it builds (#5634)
+        // carries a view of `name`'s bytes out of the expression. It falls to the
+        // catch-all, which refuses. `slice_unchecked` stays borrow-only below.
         parser.ExprBinary(b) => {
             if (view_borrow_binop(b.op)) {
                 var l_ok: boolean = ident_named_is(b.left, name) || expr_view_borrow_only(b.left, name);
@@ -26767,8 +26892,9 @@ function stmt_view_borrow_only(st: parser.Stmt, name: string): boolean {
     return true;
 }
 
-// view_slice_binding_names collects every name bound from a slice expression —
-// the candidates the borrow scan then filters.
+// view_slice_binding_names collects every name bound from a `slice_unchecked`
+// view — the candidates the borrow scan then filters. `s[a:b]` binds an
+// `Option[str]` box, not a view, so it is not a candidate (#5634).
 function view_slice_binding_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
@@ -26781,7 +26907,6 @@ function view_slice_binding_names_stmt(st: parser.Stmt, acc: string[]): string[]
     match (st) {
         parser.StmtVar(v) => {
             match (v.init) {
-                parser.ExprSlice(_) => { return push_str_unique(acc, v.name); },
                 parser.ExprCall(_) => {
                     if (slice_unchecked_call(v.init)) { return push_str_unique(acc, v.name); }
                     return acc;
@@ -29853,16 +29978,11 @@ function body_has_nonfreshrecv_str_return_reg(stmts: parser.Stmt[], recv: string
                 if (!ok) {
                     match (r.value) {
                         parser.ExprIdent(rid) => { ok = rid.name == recv; },
-                        parser.ExprSlice(rsl) => {
-                            match (rsl.array) {
-                                parser.ExprIdent(rsid) => { ok = rsid.name == recv; },
-                                _ => {}
-                            }
-                        },
-                        // `slice_unchecked(recv, a, b)` is the ExprSlice arm
-                        // as a builtin (#5634): the identical kind-102 view
-                        // box over the receiver's bytes, released the same
-                        // way by the consuming site.
+                        // `slice_unchecked(recv, a, b)` is a kind-102 view box
+                        // over the receiver's bytes, released the same way by the
+                        // consuming site. `recv[a:b]` cannot appear here: it is an
+                        // `Option[str]`, which no `string`-returning function can
+                        // return (#5634).
                         parser.ExprCall(rcall) => {
                             match (rcall.callee) {
                                 parser.ExprIdent(rcid) => {
@@ -32655,8 +32775,8 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
             // of the receiver out, and a string has none. What is left is the
             // question that matters at a caller-side release — does the box
             // escape — and body_unsafe_for already answers it, refusing a bare
-            // `return s` (an identity return) and `return s[a:b]` (a view of the
-            // receiver) alike, since both are escapes for it.
+            // `return s` (an identity return) and `return slice_unchecked(s, a, b)`
+            // (a view of the receiver) alike, since both are escapes for it.
             if (rty == "string") {
                 if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
                     out = out.append("RECVRET:" + rty + "." + fn.name);
