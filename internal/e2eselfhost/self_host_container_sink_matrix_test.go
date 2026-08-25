@@ -69,6 +69,12 @@ var csmPositions = []csmPosition{
     out = out.with(0, p);`, `out.len() + out[0].k`},
 	{"tuple", `var tp: (i32, P) = (i, p);`, `tp.0 + tp.1.k`},
 	{"variant", `var e: E = E.A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
+	// The UNQUALIFIED ctor spelling, pinned separately because the two used to
+	// disagree: struct_box_sink_stored_expr's ident-callee arm caught `A(p)`
+	// while its field-access arm did not catch `E.A(p)`, so the same program
+	// measured 300/0 one way and 300/200 the other. Nothing in this grid used
+	// the bare spelling, which is why that went unnoticed.
+	{"variant_unqual", `var e: E = A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
 	{"option", `var o: Option[P] = Some(p);`, `(match (o) { Some(q) => q.k, None => 0 })`},
 }
 

@@ -23162,7 +23162,7 @@ function struct_lit_all_enum_fields_fresh(structs: parser.StructDecl[], slit: pa
     while (i < slit.field_names.len()) {
         var ft: string = decl_field_type(structs, slit.type_name, slit.field_names[i]);
         if (decl_is_enum(structs, ft)) {
-            if (fresh_rcpayload_enum_init(slit.field_values[i], structs, []) != ft) { return false; }
+            if (fresh_rcpayload_enum_init(slit.field_values[i], structs, [], []) != ft) { return false; }
         }
         i = i + 1;
     }
@@ -25353,7 +25353,7 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, str_fresh: string[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: SigReg, strarr_ret: SigReg, borrowable: string[], opt_fresh_reg: SigReg, str_fresh: string[], msites: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
@@ -25477,7 +25477,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // emit_enum_variant_drops can dispatch the right variant deep-drop.
                 var rcenum_owner: string = "";
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum) {
-                    var eo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh);
+                    var eo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites);
                     if (eo != "") {
                         if (!body_has_top_level_match(body, v.name) && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
                     }
@@ -26609,7 +26609,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // computed over fn.body FLAT, exactly like edon, so a nested-block box can
     // never have been donated to a cross-reuse recipient — which is what the
     // fn-level emission's ecross.donors suppression guards against.
-    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, s.sigs.str_fresh_ret_fns);
+    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, s.sigs.str_fresh_ret_fns, s.move_sites);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -28801,7 +28801,7 @@ function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string,
     match (st) {
         parser.StmtAssign(asn) => {
             if (asn.target != name) { return true; }
-            var o: string = fresh_rcpayload_enum_init(asn.value, structs, str_fresh);
+            var o: string = fresh_rcpayload_enum_init(asn.value, structs, str_fresh, []);
             if (o == "") { o = rcenum_call_init_owner(asn.value, opt_fresh_ret); }
             return o != "" && o == owner;
         },
@@ -28881,7 +28881,7 @@ function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.Struct
     return a;
 }
 
-function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], acc: string[]): string[] {
+function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -28892,7 +28892,7 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 // a whole-program-proven fresh rc-enum ctor fn ("RCE:<name>|<Enum>"
                 // in opt_fresh_ret — every return a fresh direct construction, so
                 // the call result is a sole-owned chain exactly like an inline ctor).
-                var rceo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh);
+                var rceo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites);
                 if (rceo == "") { rceo = rcenum_call_init_owner(v.init, opt_fresh_ret); }
                 // A REBOUND name is admitted when every assignment constructs a
                 // fresh chain of the SAME enum (#6127) — the rebind then routes
@@ -28937,15 +28937,15 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                     }
                 }
             },
-            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, opt_fresh_ret, borrowable, str_fresh, a); a = collect_fresh_rcenum_names(iff.else_body, structs, opt_fresh_ret, borrowable, str_fresh, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, opt_fresh_ret, borrowable, str_fresh, a); },
-            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, opt_fresh_ret, borrowable, str_fresh, a); },
+            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); a = collect_fresh_rcenum_names(iff.else_body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
+            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_rcenum_names(arm.body, structs, opt_fresh_ret, borrowable, str_fresh, a); }
+                for arm in m.arms { a = collect_fresh_rcenum_names(arm.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); }
             },
             parser.StmtDefer(d) => {
                 match (d.action) {
-                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, opt_fresh_ret, borrowable, str_fresh, a); },
+                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, opt_fresh_ret, borrowable, str_fresh, msites, a); },
                     _ => {}
                 }
             },
@@ -32850,6 +32850,17 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     if ((fa.field == "append" && c.args.len() == 1) || (fa.field == "with" && c.args.len() == 2)) { sink = true; }
+                    // The QUALIFIED variant ctor `E.A(p)` is the same sink as the
+                    // unqualified `A(p)` the ident arm below catches, and it reaches
+                    // here instead because its callee is a field access.
+                    // fresh_rcpayload_enum_init has carried both spellings all along;
+                    // this arm had only append / with, so `p` kept its struct credit
+                    // on one spelling and lost it on the other. Measured: 300/200 for
+                    // `E.A(p)` against 300/0 for `A(p)`, same program otherwise. That
+                    // is also a latent OVER-release rather than a mere inconsistency —
+                    // the moment the enum earns a payload drop, the credited `p` and
+                    // the enum both release the same box.
+                    if (variant_enum_owner(structs, fa.field).len() > 0) { sink = true; }
                     if (struct_box_sink_stored_expr(fa.obj, name, structs, apretain)) { return true; }
                 },
                 parser.ExprIdent(cid) => {
@@ -34227,7 +34238,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // moved-out payload is rejected) before crediting. The consuming-match reclaim
     // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
     // loop-local; this closes that gap (#4357) with no overlap.
-    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, borrowable, str_fresh_ret, []);
+    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, borrowable, str_fresh_ret, msites, []);
     var rei: i32 = 0;
     while (rei < rcenums.len()) {
         // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
@@ -37237,7 +37248,7 @@ function enum_all_variants_rc_droppable(structs: parser.StructDecl[], enum_name:
 // they stay admissible. A non-struct / non-deep-drop-ok field imposes no constraint.
 // `str_fresh` is str_fresh_ret_fns (whole-program fresh-string producers, #7364) —
 // pass [] where the registry is out of reach and only the syntactic set applies.
-function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string, structs: parser.StructDecl[], str_fresh: string[]): boolean {
+function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string, structs: parser.StructDecl[], str_fresh: string[], msites: string[]): boolean {
     var n: i32 = decl_field_count(structs, variant_name);
     var i: i32 = 0;
     while (i < n && i < args.len()) {
@@ -37253,6 +37264,13 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
                 parser.ExprStructLit(_) => { fresh = true; },
                 _ => {}
             }
+            // A bare ident the store MOVES qualifies too, and NOT for the reason
+            // the fresh-literal rule above states. There is no sweep to double-free:
+            // struct_box_sink_stored_expr already refuses a variant-ctor argument its
+            // struct credit, so the source releases nothing. What a move adds is that
+            // the source's VALUE is dead after this store, which is what makes the
+            // enum the only reader and its payload drop the one release.
+            if (!fresh && moved_ident_at(args[i], msites)) { fresh = true; }
             if (!fresh) { return false; }
         }
         // A STRING payload (#4355) must be FRESH too — a literal (const_str allocs
@@ -37292,14 +37310,14 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
 // fresh literal/producer (variant_struct_payloads_fresh) so the match-site drop
 // can't double-free a local the payload aliases; array payloads ride the
 // construction alias-inc and need no such gate.
-function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[], str_fresh: string[]): string {
+function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[], str_fresh: string[], msites: string[]): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     var owner: string = variant_enum_owner(structs, id.name);
                     if (owner != "" && enum_all_variants_rc_droppable(structs, owner)
-                        && variant_struct_payloads_fresh(c.args, id.name, structs, str_fresh)) { return owner; }
+                        && variant_struct_payloads_fresh(c.args, id.name, structs, str_fresh, msites)) { return owner; }
                     return "";
                 },
                 // Qualified ctor `Enum.Variant(args...)` — the callee is a field
@@ -37310,7 +37328,7 @@ function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[],
                 parser.ExprFieldAccess(fa) => {
                     var ownerq: string = variant_enum_owner(structs, fa.field);
                     if (ownerq != "" && enum_all_variants_rc_droppable(structs, ownerq)
-                        && variant_struct_payloads_fresh(c.args, fa.field, structs, str_fresh)) { return ownerq; }
+                        && variant_struct_payloads_fresh(c.args, fa.field, structs, str_fresh, msites)) { return ownerq; }
                     return "";
                 },
                 _ => { return ""; }
@@ -37609,7 +37627,7 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // exit sweep, and this pass emits the free the credit assumes. Admitting the
 // call form there and not here left `var v: E = mkv(i)` with a sole consuming
 // match reclaiming nothing at all.
-function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[]): RcEnumFrees {
+function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[], msites: string[]): RcEnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var enums: string[] = [];
@@ -37618,7 +37636,7 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
     while (vi < body.len()) {
         match (body[vi]) {
             parser.StmtVar(v) => {
-                var owner: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh);
+                var owner: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites);
                 if (owner == "") { owner = rcenum_call_init_owner(v.init, opt_fresh_ret); }
                 // A REBOUND name is admitted when every assignment builds a fresh
                 // chain of the same enum (#6127). The rebinds release the orphaned
@@ -42827,10 +42845,13 @@ function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[], ba
 // The retain is gated on this very credit (slot_is_reclaimable_arrstruct at the
 // append), which is what keeps the inc and the dec the same set.
 
-// arrstruct_moved_elem: `e` is a bare ident the move analysis recorded at this
-// source position. Keyed on line:col, not the name, so a local that is moved at
-// one push and merely read at another admits only the push that moved it.
-function arrstruct_moved_elem(e: parser.Expr, msites: string[]): boolean {
+// moved_ident_at: `e` is a bare ident the move analysis recorded at this source
+// position. Keyed on line:col, not the name, so a local that is moved at one store
+// and merely read at another admits only the store that moved it.
+//
+// The question is not specific to any container: wherever a store would take over
+// a local's only reference, this is what says the store may.
+function moved_ident_at(e: parser.Expr, msites: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => {
             return util.index_of_str(msites, util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) >= 0;
@@ -42856,7 +42877,7 @@ function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parse
             }
             if (!is_self_append) { return false; }
             if (c.args.len() != 1) { return false; }
-            if (arrstruct_moved_elem(c.args[0], msites)) { return true; }
+            if (moved_ident_at(c.args[0], msites)) { return true; }
             // ANY bare ident. The credit no longer needs the element to be dead
             // after the push, because the append RETAINS it and both owners run
             // their field walk under __fern_rc_is_unique: whichever reaches rc 1
@@ -43354,7 +43375,7 @@ function arrenum_lit_enum(e: parser.Expr, structs: parser.StructDecl[]): string 
             var owner: string = "";
             var i: i32 = 0;
             while (i < arr.elements.len()) {
-                var o: string = fresh_rcpayload_enum_init(arr.elements[i], structs, []);
+                var o: string = fresh_rcpayload_enum_init(arr.elements[i], structs, [], []);
                 if (o.len() == 0) { return ""; }
                 if (owner.len() == 0) { owner = o; }
                 if (o != owner) { return ""; }
@@ -48608,7 +48629,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
+    var pdrops: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -48646,7 +48667,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant_is guard releasing that variant's rc fields) then freed right after
     // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
     // fed to the donor path, so an rc-payload box is freed exactly once here.
-    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns);
+    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs));
     // Consumed RC-PAYLOAD option/result frees: a function-local `var o = Some([..])`
     // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
     // one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
@@ -50290,7 +50311,7 @@ function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: par
                 // Strict set only ([]): this proof registers "RCE:" rows while
                 // str_fresh_ret_fns is built independently; keeping it syntactic
                 // avoids ordering the two registries against each other.
-                if (fresh_rcpayload_enum_init(r.value, structs, []) != owner) { return true; }
+                if (fresh_rcpayload_enum_init(r.value, structs, [], []) != owner) { return true; }
                 if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
             },
             parser.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner)) { return true; } },
@@ -57837,7 +57858,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)), str_fresh_ret_fns_of(funcs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's

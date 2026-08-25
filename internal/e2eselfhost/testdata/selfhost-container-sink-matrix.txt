@@ -26,7 +26,9 @@ with__live            clean leak   refused: arr_set stores no counted reference
 with__moved           clean leak   refused: `with` is not a sanctioned arrstruct rebind either
 tuple__moved          clean clean  a MOVED struct element: the tuple is sole owner, so its walk is the one release
 tuple__live           clean leak   refused: tuple_make stores no counted reference, so a live source would dangle
-variant__moved        clean leak   refused: the ctor call form retains array and enum payloads, not struct
-variant__live         clean leak   refused
+variant__moved        clean clean  a MOVED struct payload: the enum's rc-gated payload drop is the one release
+variant__live         clean leak   refused: the ctor stores no counted reference, so a live source would dangle
+variant_unqual__moved clean clean  the bare spelling must measure identically — it used not to
+variant_unqual__live  clean leak   refused, same as the qualified spelling
 option__moved         clean leak   refused: opt_make retains an rc CONTAINER payload, not a struct box
 option__live          clean leak   refused
