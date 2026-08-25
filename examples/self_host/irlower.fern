@@ -56405,6 +56405,27 @@ function rc_ml_decl_count(stmts: parser.Stmt[], name: string): i32 {
     return n;
 }
 
+// rc_ml_ctor_arg_moves marks every variant-ctor argument that is an owned rc
+// local at its last use, then descends. Split out because both ctor spellings
+// need it and the two callee arms cannot share a match.
+function rc_ml_ctor_arg_moves(args: parser.Expr[], body: parser.Stmt[], k: i32, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut, allow: string[], restrict: boolean): MlOut {
+    var out: MlOut = moved;
+    var ai: i32 = 0;
+    while (ai < args.len()) {
+        match (args[ai]) {
+            parser.ExprIdent(aid) => {
+                if (rc_ml_move_ok(aid.name, allow, restrict) && rc_ml_owned_rc_local(aid.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, aid.name, k) && util.index_of_str(out.names, aid.name) < 0) {
+                    out = MlOut { names: out.names.append(aid.name), sites: out.sites.append(util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col)) };
+                }
+            },
+            _ => {}
+        }
+        out = rc_ml_construction_moves(args[ai], body, k, fn, types_n, types_t, structs, out, allow, restrict);
+        ai = ai + 1;
+    }
+    return out;
+}
+
 function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut, allow: string[], restrict: boolean): MlOut {
     var out: MlOut = moved;
     match (val) {
@@ -56447,6 +56468,31 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
             // under the same counted retain an array literal's elements take, and
             // the buffer's deep drop dec's it — so a moved last-use owned local
             // balances there too (native storedArrayElemOperand).
+            // An enum VARIANT CTOR argument (native markConstructionMoves' "Slice
+            // 1b" arm, which the self-host never ported): the ctor stores each
+            // payload under the same counted retain a struct-literal field takes,
+            // and the enum's deep drop dec's it, so a moved last-use owned local
+            // balances there too. Both spellings — the bare `A(p)` reaches here as
+            // an ident callee, the qualified `E.A(p)` as a field access, and native
+            // resolves both through lookupVariantOn.
+            match (c.callee) {
+                parser.ExprIdent(vcid) => {
+                    var vowner: string = variant_enum_owner(structs, vcid.name);
+                    if (vowner != "" && enum_all_variants_rc_droppable(structs, vowner)) {
+                        out = rc_ml_ctor_arg_moves(c.args, body, k, fn, types_n, types_t, structs, out, allow, restrict);
+                    }
+                },
+                _ => {}
+            }
+            match (c.callee) {
+                parser.ExprFieldAccess(qfa) => {
+                    var qowner: string = variant_enum_owner(structs, qfa.field);
+                    if (qowner != "" && enum_all_variants_rc_droppable(structs, qowner)) {
+                        out = rc_ml_ctor_arg_moves(c.args, body, k, fn, types_n, types_t, structs, out, allow, restrict);
+                    }
+                },
+                _ => {}
+            }
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     var elem_idx: i32 = 0 - 1;
