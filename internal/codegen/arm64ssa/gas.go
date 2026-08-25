@@ -273,6 +273,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.quad 0")
 		w("%s:", heapEndSym)
 		w("\t.quad 0")
+		// The reservation's base, kept so __fern_heap_bump_bytes can report
+		// the high-water mark as (cursor - base). The cursor alone cannot:
+		// mmap picks the base, so it is not a compile-time constant.
+		w("%s:", heapBaseSym)
+		w("\t.quad 0")
 	}
 	if withArgs {
 		// argc / argv snapshot + the memoised args() container pointer.
@@ -339,6 +344,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 const (
 	heapPtrSym   = "__ssa_heap_ptr"
 	heapEndSym   = "__ssa_heap_end"
+	heapBaseSym  = "__ssa_heap_base"
 	heapGuardSym = "__ssa_heap_guard"
 	heapOOMLabel = ".Lssa_heap_oom"
 	heapOOMMsg   = "__ssa_msg_oom"
@@ -422,6 +428,9 @@ func emitHeapReserve(w func(string, ...any)) {
 	w("\tadrp x9, %s", heapPtrSym)
 	w("\tadd x9, x9, #:lo12:%s", heapPtrSym)
 	w("\tstr x0, [x9]") // cursor = region base
+	w("\tadrp x12, %s", heapBaseSym)
+	w("\tadd x12, x12, #:lo12:%s", heapBaseSym)
+	w("\tstr x0, [x12]")
 	w("\tadrp x11, %s", heapEndSym)
 	w("\tadd x11, x11, #:lo12:%s", heapEndSym)
 	w("\tstr x10, [x11]")
@@ -651,12 +660,18 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_8_nc":                emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
 	"__arr_idx_16_nc":               emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
 	"__fern_arr_push_grow":          emitArrPushGrowHelper,
-	"__fern_arr_push_grow_ptr":      emitArrPushGrowAliasHelper("__fern_arr_push_grow_ptr"),
-	"__fern_arr_push_grow_str":      emitArrPushGrowAliasHelper("__fern_arr_push_grow_str"),
-	"__fern_arr_push_grow_move_ptr": emitArrPushGrowAliasHelper("__fern_arr_push_grow_move_ptr"),
-	"__fern_arr_push_grow_move_str": emitArrPushGrowAliasHelper("__fern_arr_push_grow_move_str"),
+	"__fern_arr_push_grow_ptr":      emitAliasHelper("__fern_arr_push_grow_ptr", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_str":      emitAliasHelper("__fern_arr_push_grow_str", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_move_ptr": emitAliasHelper("__fern_arr_push_grow_move_ptr", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_move_str": emitAliasHelper("__fern_arr_push_grow_move_str", "__fern_arr_push_grow"),
 	"__alloc_u8":                    emitAllocU8Helper,
 	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
+	"__fern_arr_cow_inplace_ptr":    emitAliasHelper("__fern_arr_cow_inplace_ptr", "__fern_arr_cow_inplace"),
+	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
+	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
+	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
+	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
+	"sleep_ms":                      emitSleepMsHelper,
 	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
 	"__str_slice":                   emitStrSliceHelper,
 	"args":                          emitArgsHelper,
@@ -1976,6 +1991,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
+	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace"},
+	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"write_file":                    {"__fern_io_error"},
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
@@ -1993,9 +2010,9 @@ var runtimeHelperDeps = map[string][]string{
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 }
 
-// heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
-// arena must be reserved whenever one is referenced even if no program body has
-// a direct heap op.
+// heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, or
+// read its cursor, so the arena must be reserved whenever one is referenced even
+// if no program body has a direct heap op.
 var heapUsingHelpers = map[string]bool{
 	"__str_concat":                  true,
 	"__fern_arr_push_grow":          true,
@@ -2007,6 +2024,9 @@ var heapUsingHelpers = map[string]bool{
 	"__alloc":                       true,
 	"__alloc_reuse":                 true,
 	"__fern_arr_cow_inplace":        true,
+	"__fern_arr_cow_inplace_ptr":    true,
+	"__fern_arr_cow_inplace_str":    true,
+	"__fern_heap_bump_bytes":        true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,
@@ -4556,19 +4576,122 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitArrPushGrowAliasHelper writes __fern_arr_push_grow_ptr / _str and their
-// _move_ siblings as a tail-branch alias of __fern_arr_push_grow. The shared IR
-// routes rc-tracked-element appends to these element-retaining variants (#3425,
-// #3457) so backends whose drop walks FREE elements stay balanced; the SSA
-// runtime's dec helpers never free (leak-world bump heap,
-// docs/SSA-RC-RUNTIME.md), so the retain is unnecessary here and the plain grow
-// body is behaviour-identical. If the SSA runtime ever gains freeing decs,
-// these must become real element-retaining bodies like the native/wasm ones.
-func emitArrPushGrowAliasHelper(name string) func(w func(string, ...any)) {
+// emitHeapBumpBytesHelper writes __fern_heap_bump_bytes() -> i64: the bump
+// high-water mark, (cursor - base) in bytes. Zero before _start seeds the
+// reservation, which only a program that never allocates can observe. Mirrors
+// the native helper of the same name; leaf.
+func emitHeapBumpBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_heap_bump_bytes"))
+	w("\tadrp x1, %s", heapPtrSym)
+	w("\tadd x1, x1, #:lo12:%s", heapPtrSym)
+	w("\tldr x0, [x1]")
+	w("\tcbz x0, .Lssa_bumpb_zero") // never reserved -> 0
+	w("\tadrp x2, %s", heapBaseSym)
+	w("\tadd x2, x2, #:lo12:%s", heapBaseSym)
+	w("\tldr x2, [x2]")
+	w("\tsub x0, x0, x2")
+	w("\tret")
+	w(".Lssa_bumpb_zero:")
+	w("\tmov x0, #0")
+	w("\tret")
+}
+
+// movImm64 writes `reg = v` for a non-negative v that exceeds `mov`'s 16-bit
+// immediate, as movz + up to three movk. The native backends reach for the
+// `ldr reg, =v` literal-pool form here; this emitter has no pool to flush, so
+// materialise the constant in registers instead.
+func movImm64(w func(string, ...any), reg string, v uint64) {
+	w("\tmov %s, #%d", reg, v&0xffff)
+	for shift := 16; shift < 64; shift += 16 {
+		if half := (v >> uint(shift)) & 0xffff; half != 0 {
+			w("\tmovk %s, #%d, lsl #%d", reg, half, shift)
+		}
+	}
+}
+
+// The asm-generic syscall numbers the time helpers issue, and the two clock ids
+// clock_gettime reads.
+const (
+	sysClockGettime = 113
+	sysNanosleep    = 101
+	clockRealtime   = 0
+	clockMonotonic  = 1
+)
+
+// emitClockHelper writes a clock_gettime(clockID, &ts) reader returning an i64
+// in x0: `tv_sec*mul + tv_nsec/div`. monotonic_ns is (CLOCK_MONOTONIC, 1e9, 1)
+// — whole nanoseconds — and now_unix_ms is (CLOCK_REALTIME, 1e3, 1e6). The
+// timespec lands in a 16-byte frame slot; errno is ignored, as on the native
+// backends, because the clock id is fixed and the buffer is ours.
+func emitClockHelper(name string, clockID int, mul, div uint64) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
 		w("%s:", fnLabel(name))
-		w("\tb %s", fnLabel("__fern_arr_push_grow"))
+		w("\tsub sp, sp, #16") // struct timespec { i64 tv_sec; i64 tv_nsec }
+		w("\tmov x0, #%d", clockID)
+		w("\tmov x1, sp")
+		w("\tmov x8, #%d", sysClockGettime)
+		w("\tsvc #0")
+		w("\tldr x9, [sp]")      // tv_sec
+		w("\tldr x11, [sp, #8]") // tv_nsec
+		movImm64(w, "x10", mul)
+		w("\tmul x9, x9, x10")
+		if div > 1 {
+			movImm64(w, "x10", div)
+			w("\tudiv x11, x11, x10")
+		}
+		w("\tadd x0, x9, x11")
+		w("\tadd sp, sp, #16")
+		w("\tret")
+	}
+}
+
+// emitSleepMsHelper writes sleep_ms(ms): nanosleep for ms milliseconds, split
+// into the timespec's whole seconds and the nanosecond remainder. A
+// non-positive argument returns without a syscall. Mirrors the native
+// __fern_sleep_ms; leaf, with the request struct in a 16-byte frame slot. A
+// signal-interrupted sleep is not resumed (rem = NULL), as on the natives.
+func emitSleepMsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("sleep_ms"))
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_sleep_done")
+	w("\tsub sp, sp, #16") // struct timespec { i64 tv_sec; i64 tv_nsec }
+	w("\tmov x9, #1000")
+	w("\tudiv x10, x0, x9")      // tv_sec = ms / 1000
+	w("\tmsub x11, x10, x9, x0") // remainder ms
+	w("\tstr x10, [sp]")
+	movImm64(w, "x12", 1_000_000)
+	w("\tmul x11, x11, x12") // tv_nsec = rem * 1e6
+	w("\tstr x11, [sp, #8]")
+	w("\tmov x0, sp") // &req
+	w("\tmov x1, #0") // rem = NULL
+	w("\tmov x8, #%d", sysNanosleep)
+	w("\tsvc #0")
+	w("\tadd sp, sp, #16")
+	w(".Lssa_sleep_done:")
+	w("\tret")
+}
+
+// emitAliasHelper writes `name` as a tail-branch alias of `target`.
+//
+// It is how the element-RETAINING variants of the array helpers are satisfied
+// here: __fern_arr_push_grow_ptr / _str and their _move_ siblings, and
+// __fern_arr_cow_inplace_ptr / _str. The shared IR routes rc-tracked-element
+// appends and copy-on-writes to those variants (#3425, #3457) so that backends
+// whose drop walk FREES elements stay balanced — the fresh buffer must own its
+// own reference to each element it copied. The SSA runtime's dec helpers never
+// free (leak-world bump heap, docs/SSA-RC-RUNTIME.md), so nothing can observe
+// the missing retain and the plain body is behaviour-identical.
+//
+// If the SSA runtime ever gains freeing decs, every one of these must become a
+// real element-retaining body like the native/wasm ones.
+func emitAliasHelper(name, target string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tb %s", fnLabel(target))
 	}
 }
 

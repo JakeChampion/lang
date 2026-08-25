@@ -80,8 +80,16 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   on arm64 it is now **closed against both fernsmith corpora**: all 2048
   exit-byte and all 1024 printable seeds compile through
   `-target arm64-linux -backend ssa` and match the interpreter, with no skips
-  left on either leg (`diffOracleSSAMinRunRatio` is 1.0 accordingly). Coverage
-  beyond the generator's reach is still open.
+  left on either leg (`diffOracleSSAMinRunRatio` is 1.0 accordingly).
+
+  The examples corpus reaches past what the generator writes, and it is where
+  the remaining gap is measured: 264 of 286 programs compile under
+  `-target arm64-linux -backend ssa` and behave identically to the flat
+  backend, 0 diverge, 5 are rejected by the flat backend too
+  (`TestArm64SSABackendDifferential`). The 17 refusals left are one enumerable
+  list, not open-ended semantics work — `__method_string_as_bytes` (12, which
+  needs the slice-view helpers this emitter has none of), `stat` (2), and the
+  `popcnt` lift gap (3, shared with `OpClz`/`OpCtz`).
 - **Perceus / RC ordering.** The IR carries reference-counting ops; the SSA path
   must preserve them and the allocator must not reorder across the points they
   assume. Confirm whether RC insertion happens before or after the SSA lift.
