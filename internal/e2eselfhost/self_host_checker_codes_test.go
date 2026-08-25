@@ -726,15 +726,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"field-on-string", "function main(): i32 { var s = \"a\"; return s.foo; }\n", []string{"E043"}},
 		{"field-on-array", "function main(): i32 { var a = [1, 2, 3]; return a.foo; }\n", []string{"E043"}},
 		{"str-method-not-field-ok", "function main(): i32 { var s = \"abc\"; return s.len(); }\n", nil},
-		{"slice-low-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: str = s[\"x\":3]; return 0; }\n", []string{"E037"}},
-		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
+		{"slice-low-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: Option[str] = s[\"x\":3]; return 0; }\n", []string{"E037"}},
+		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: Option[str] = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
 		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: str = slice_unchecked(s, 1, 3); return 0; }\n", nil},
-		// `s[:]` is the full-range view (#6798 un-reserved it in the Go
-		// parser). Like every string slice since the #4813 P2 producer flip it
-		// yields `str`, so the sink is annotated `str` exactly as
-		// slice-bounds-ok's is — a `string` sink is an E003 asking for
-		// `.to_owned()`, which is the rule under test one line up, not this one.
-		{"slice-full-ok", "function main(): i32 { var s: string = \"hello\"; var t: str = s[:]; return 0; }\n", nil},
+		// `s[:]` is the full-range slice (#6798 un-reserved it in the Go
+		// parser). Since #5634 every string slice yields `Option[str]`, open
+		// forms included, so the sink is annotated to match.
+		//
+		// This row pins acceptance on both lanes, not the slice's TYPE on the
+		// self-host one: `s[:]` carries an `s.len()` bound, and the self-host
+		// checker types every `.len()` call as unknown, which suppresses the
+		// diagnostic either annotation would produce. Until that is fixed the
+		// E003 below is the row that pins the sink rule, and it uses literal
+		// bounds so both checkers actually settle the type.
+		{"slice-full-ok", "function main(): i32 { var s: string = \"hello\"; var t: Option[str] = s[:]; return 0; }\n", nil},
+		{"slice-str-sink", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:3]; return 0; }\n", []string{"E003"}},
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},

@@ -272,7 +272,7 @@ function main(): i32 {
 // bound like `len + (-2)` reaches the compares as 0x1_0000_0003 and the
 // slice reads out of bounds instead of trapping cleanly.
 func TestStrSliceSignExtendsBounds(t *testing.T) {
-	asm := compile(t, `function main(): i32 { var s: string = "hello"; var sub: str = s[0:2]; return sub.len(); }`)
+	asm := compile(t, `function main(): i32 { var s: string = "hello"; var sub: str = slice_unchecked(s, 0, 2); return sub.len(); }`)
 	if !strings.Contains(asm, "movsxd r12, esi") || !strings.Contains(asm, "movsxd r13, edx") {
 		t.Fatalf("__str_slice does not sign-extend its i32 bounds (want movsxd r12, esi / movsxd r13, edx)")
 	}
