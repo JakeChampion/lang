@@ -24180,11 +24180,14 @@ function str_method_recv_borrows(field: string, recv_borrow: string[]): boolean 
 // every `return s + ""` its param's borrowability, so a caller could not release
 // the temp it had just passed in.
 function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
+    return binop_operand_unsafe_for_vb(e, name, borrowable, recv_borrow, false);
+}
+function binop_operand_unsafe_for_vb(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[], vb_borrow: boolean): boolean {
     match (e) {
         parser.ExprIdent(_) => { return false; },
-        _ => { return expr_unsafe_for_view_pos(e, name, borrowable, recv_borrow); }
+        _ => { return expr_unsafe_for_view_pos_vb(e, name, borrowable, recv_borrow, vb_borrow); }
     }
-    return expr_unsafe_for_view_pos(e, name, borrowable, recv_borrow);
+    return expr_unsafe_for_view_pos_vb(e, name, borrowable, recv_borrow, vb_borrow);
 }
 
 // expr_unsafe_for_view_pos is expr_unsafe_for at a position that only BORROWS a
@@ -24202,6 +24205,9 @@ function binop_operand_unsafe_for(e: parser.Expr, name: string, borrowable: stri
 // still points into the SOURCE buffer (ir.fern's str_slice is zero-copy), so the
 // source is aliased out and must fall through to expr_unsafe_for's escaping arm.
 function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
+    return expr_unsafe_for_view_pos_vb(e, name, borrowable, recv_borrow, false);
+}
+function expr_unsafe_for_view_pos_vb(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[], vb_borrow: boolean): boolean {
     match (e) {
         parser.ExprCall(c) => {
             // slice_unchecked(src, a, b) (#5634): the ExprSlice arm's builtin
@@ -24211,16 +24217,16 @@ function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: stri
                 var su_unsafe: boolean = false;
                 match (c.args[0]) {
                     parser.ExprIdent(_) => {},
-                    _ => { su_unsafe = expr_unsafe_for_view_pos(c.args[0], name, borrowable, recv_borrow); }
+                    _ => { su_unsafe = expr_unsafe_for_view_pos_vb(c.args[0], name, borrowable, recv_borrow, vb_borrow); }
                 }
-                return su_unsafe || expr_unsafe_for(c.args[1], name, borrowable, recv_borrow)
-                    || expr_unsafe_for(c.args[2], name, borrowable, recv_borrow);
+                return su_unsafe || expr_unsafe_for_vb(c.args[1], name, borrowable, recv_borrow, vb_borrow)
+                    || expr_unsafe_for_vb(c.args[2], name, borrowable, recv_borrow, vb_borrow);
             }
-            return expr_unsafe_for(e, name, borrowable, recv_borrow);
+            return expr_unsafe_for_vb(e, name, borrowable, recv_borrow, vb_borrow);
         },
-        _ => { return expr_unsafe_for(e, name, borrowable, recv_borrow); }
+        _ => { return expr_unsafe_for_vb(e, name, borrowable, recv_borrow, vb_borrow); }
     }
-    return expr_unsafe_for(e, name, borrowable, recv_borrow);
+    return expr_unsafe_for_vb(e, name, borrowable, recv_borrow, vb_borrow);
 }
 
 // expr_unsafe_for reports whether `name` appears anywhere in `e` in a position
@@ -24236,7 +24242,13 @@ function expr_unsafe_for_view_pos(e: parser.Expr, name: string, borrowable: stri
 // read-only callee cannot retain the arg, so passing it there is a BORROW. The
 // registry is "" for Level-1 borrowability computation itself (every call arg
 // escapes), avoiding circularity.
+// expr_unsafe_for is the STRICT entry point: a value block inside `e` is walked
+// with the strict walker too. expr_unsafe_for_vb is the same walk with the
+// match-borrow reading carried into value blocks — see its ExprLambda arm.
 function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[]): boolean {
+    return expr_unsafe_for_vb(e, name, borrowable, recv_borrow, false);
+}
+function expr_unsafe_for_vb(e: parser.Expr, name: string, borrowable: string[], recv_borrow: string[], vb_borrow: boolean): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprNumber(_) => { return false; },
@@ -24248,23 +24260,23 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
             // lower_view_borrowed calls at each of them say. Every other op is
             // arithmetic on scalars, where a slice operand cannot arise.
             if (b.op == "+" || b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                return binop_operand_unsafe_for(b.left, name, borrowable, recv_borrow)
-                    || binop_operand_unsafe_for(b.right, name, borrowable, recv_borrow);
+                return binop_operand_unsafe_for_vb(b.left, name, borrowable, recv_borrow, vb_borrow)
+                    || binop_operand_unsafe_for_vb(b.right, name, borrowable, recv_borrow, vb_borrow);
             }
-            return expr_unsafe_for(b.left, name, borrowable, recv_borrow) || expr_unsafe_for(b.right, name, borrowable, recv_borrow);
+            return expr_unsafe_for_vb(b.left, name, borrowable, recv_borrow, vb_borrow) || expr_unsafe_for_vb(b.right, name, borrowable, recv_borrow, vb_borrow);
         },
-        parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name, borrowable, recv_borrow); },
+        parser.ExprUnary(u) => { return expr_unsafe_for_vb(u.operand, name, borrowable, recv_borrow, vb_borrow); },
         parser.ExprIndex(ix) => {
             var base_unsafe: boolean = false;
             match (ix.array) {
                 parser.ExprIdent(_) => { base_unsafe = false; },   // name[i] / other[i]: base read is a borrow
                 _ => { base_unsafe = expr_unsafe_for_view_pos(ix.array, name, borrowable, recv_borrow); }
             }
-            return base_unsafe || expr_unsafe_for(ix.index, name, borrowable, recv_borrow);
+            return base_unsafe || expr_unsafe_for_vb(ix.index, name, borrowable, recv_borrow, vb_borrow);
         },
         parser.ExprSlice(sl) => {
             // a slice creates a VIEW that aliases the source buffer → escapes.
-            return expr_unsafe_for(sl.array, name, borrowable, recv_borrow) || expr_unsafe_for(sl.start, name, borrowable, recv_borrow) || expr_unsafe_for(sl.end, name, borrowable, recv_borrow);
+            return expr_unsafe_for_vb(sl.array, name, borrowable, recv_borrow, vb_borrow) || expr_unsafe_for_vb(sl.start, name, borrowable, recv_borrow, vb_borrow) || expr_unsafe_for_vb(sl.end, name, borrowable, recv_borrow, vb_borrow);
         },
         parser.ExprCall(c) => {
             var callee_unsafe: boolean = false;
@@ -24282,13 +24294,13 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
                         // bare-ident receiver above does.
                         _ => {
                             if (str_borrowing_method(fa.field) || str_method_recv_borrows(fa.field, recv_borrow)) { callee_unsafe = expr_unsafe_for_view_pos(fa.obj, name, borrowable, recv_borrow); }
-                            else { callee_unsafe = expr_unsafe_for(fa.obj, name, borrowable, recv_borrow); }
+                            else { callee_unsafe = expr_unsafe_for_vb(fa.obj, name, borrowable, recv_borrow, vb_borrow); }
                         }
                     }
                     // method args stay escapes: method-param borrowability isn't in
                     // the (free-function-keyed) registry (callee_name left "").
                 },
-                _ => { callee_unsafe = expr_unsafe_for(c.callee, name, borrowable, recv_borrow); }
+                _ => { callee_unsafe = expr_unsafe_for_vb(c.callee, name, borrowable, recv_borrow, vb_borrow); }
             }
             if (callee_unsafe) { return true; }
             var ai: i32 = 0;
@@ -24307,7 +24319,7 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
                 // borrows its source too.
                 if (callee_name == "len" && c.args.len() == 1) {
                     if (expr_unsafe_for_view_pos(c.args[ai], name, borrowable, recv_borrow)) { return true; }
-                } else if (!arg_is_borrow && expr_unsafe_for(c.args[ai], name, borrowable, recv_borrow)) { return true; }
+                } else if (!arg_is_borrow && expr_unsafe_for_vb(c.args[ai], name, borrowable, recv_borrow, vb_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -24315,17 +24327,17 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(_) => { return false; },   // name.field: base read is a borrow
-                _ => { return expr_unsafe_for(fa.obj, name, borrowable, recv_borrow); }
+                _ => { return expr_unsafe_for_vb(fa.obj, name, borrowable, recv_borrow, vb_borrow); }
             }
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_unsafe_for(a.elements[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (expr_unsafe_for_vb(a.elements[i], name, borrowable, recv_borrow, vb_borrow)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (expr_unsafe_for(t.elements[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (expr_unsafe_for_vb(t.elements[i], name, borrowable, recv_borrow, vb_borrow)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
@@ -24340,11 +24352,11 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
             if (sl.has_base) {
                 match (sl.base) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (expr_unsafe_for(sl.base, name, borrowable, recv_borrow)) { return true; } }
+                    _ => { if (expr_unsafe_for_vb(sl.base, name, borrowable, recv_borrow, vb_borrow)) { return true; } }
                 }
             }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name, borrowable, recv_borrow)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (expr_unsafe_for_vb(sl.field_values[i], name, borrowable, recv_borrow, vb_borrow)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -24364,6 +24376,26 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[], rec
             // was released — 0 frees where the same code without the match
             // expression is flat.
             if (parser.is_value_block_origin(lm.origin)) {
+                // Walked by the caller's OWN walker, because the block is inlined:
+                // a name read inside it is a read in the enclosing function, under
+                // whatever reading that function's walker applies. `vb_borrow` is
+                // the match-borrow walkers saying so — for them a bare-ident
+                // `match (name)` scrutinee is a borrow, and recursing strictly here
+                // threw that away, so a name read through a match EXPRESSION still
+                // escaped. That cost the enum local its release AND the
+                // borrowability of any param read that way, which cost every CALLER
+                // its release too: 200 allocs / 0 frees against native's 200/200 on
+                // `var v: E = E.A([..]); consume(v);`, where the same helper written
+                // with a match STATEMENT was already flat.
+                //
+                // The strict walker keeps recursing strictly. precise_drop_names
+                // reads it and widens to the match-borrow reading for ONE class at a
+                // time on purpose; making the value block borrow-aware for everyone
+                // silently widened the enum class too, and the plan then claimed a
+                // precise drop of a box its own consuming-match reuse still owned.
+                if (vb_borrow) {
+                    return body_unsafe_for_match_borrow(lm.body, name, borrowable, recv_borrow);
+                }
                 return body_unsafe_for(lm.body, name, borrowable, recv_borrow);
             }
             var used: string[] = [];
@@ -24609,7 +24641,10 @@ function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[
 // of `name` — a container element, a call argument, a return, a lambda capture,
 // a reassignment — still flags, because none of those takes the bind's retain.
 function body_unsafe_for_alias(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
-    for stmt in stmts { if (stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; } }
+    return body_unsafe_for_alias_vb(stmts, name, borrowable, recv_borrow, alias_ok, false);
+}
+function body_unsafe_for_alias_vb(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[], vb_borrow: boolean): boolean {
+    for stmt in stmts { if (stmt_unsafe_for_alias_vb(stmt, name, borrowable, recv_borrow, alias_ok, vb_borrow)) { return true; } }
     return false;
 }
 
@@ -24667,6 +24702,9 @@ function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], re
     return stmt_unsafe_for_alias(st, name, borrowable, recv_borrow, no_alias);
 }
 function stmt_unsafe_for_alias(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
+    return stmt_unsafe_for_alias_vb(st, name, borrowable, recv_borrow, alias_ok, false);
+}
+function stmt_unsafe_for_alias_vb(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[], vb_borrow: boolean): boolean {
     match (st) {
         parser.StmtVar(v) => {
             if (alias_ok.len() > 0) {
@@ -24678,33 +24716,33 @@ function stmt_unsafe_for_alias(st: parser.Stmt, name: string, borrowable: string
                     _ => {}
                 }
             }
-            return expr_unsafe_for(v.init, name, borrowable, recv_borrow);
+            return expr_unsafe_for_vb(v.init, name, borrowable, recv_borrow, vb_borrow);
         },
-        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable, recv_borrow); },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
-        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable, recv_borrow); },
+        parser.StmtReturn(r) => { return expr_unsafe_for_vb(r.value, name, borrowable, recv_borrow, vb_borrow); },
+        parser.StmtExpr(e) => { return expr_unsafe_for_vb(e.value, name, borrowable, recv_borrow, vb_borrow); },
+        parser.StmtAssign(a) => { return expr_unsafe_for_vb(a.value, name, borrowable, recv_borrow, vb_borrow); },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
-            return body_unsafe_for_alias(f.then_body, name, borrowable, recv_borrow, alias_ok) || body_unsafe_for_alias(f.else_body, name, borrowable, recv_borrow, alias_ok);
+            if (expr_unsafe_for_vb(f.cond, name, borrowable, recv_borrow, vb_borrow)) { return true; }
+            return body_unsafe_for_alias_vb(f.then_body, name, borrowable, recv_borrow, alias_ok, vb_borrow) || body_unsafe_for_alias_vb(f.else_body, name, borrowable, recv_borrow, alias_ok, vb_borrow);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
-            return body_unsafe_for_alias(w.body, name, borrowable, recv_borrow, alias_ok);
+            if (expr_unsafe_for_vb(w.cond, name, borrowable, recv_borrow, vb_borrow)) { return true; }
+            return body_unsafe_for_alias_vb(w.body, name, borrowable, recv_borrow, alias_ok, vb_borrow);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
+                _ => { iter_unsafe = expr_unsafe_for_vb(fo.iter, name, borrowable, recv_borrow, vb_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for_alias(fo.body, name, borrowable, recv_borrow, alias_ok);
+            return body_unsafe_for_alias_vb(fo.body, name, borrowable, recv_borrow, alias_ok, vb_borrow);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
+            if (expr_unsafe_for_vb(m.scrutinee, name, borrowable, recv_borrow, vb_borrow)) { return true; }
             for arm in m.arms {
-                if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, recv_borrow)) { return true; }
-                if (body_unsafe_for_alias(arm.body, name, borrowable, recv_borrow, alias_ok)) { return true; }
+                if (arm.has_guard && expr_unsafe_for_vb(arm.guard, name, borrowable, recv_borrow, vb_borrow)) { return true; }
+                if (body_unsafe_for_alias_vb(arm.body, name, borrowable, recv_borrow, alias_ok, vb_borrow)) { return true; }
             }
             return false;
         },
@@ -24739,19 +24777,19 @@ function body_unsafe_for_match_borrow(stmts: parser.Stmt[], name: string, borrow
 function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
     match (st) {
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+            if (expr_unsafe_for_vb(f.cond, name, borrowable, recv_borrow, true)) { return true; }
             return body_unsafe_for_match_borrow(f.then_body, name, borrowable, recv_borrow)
                 || body_unsafe_for_match_borrow(f.else_body, name, borrowable, recv_borrow);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+            if (expr_unsafe_for_vb(w.cond, name, borrowable, recv_borrow, true)) { return true; }
             return body_unsafe_for_match_borrow(w.body, name, borrowable, recv_borrow);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
+                _ => { iter_unsafe = expr_unsafe_for_vb(fo.iter, name, borrowable, recv_borrow, true); }
             }
             if (iter_unsafe) { return true; }
             return body_unsafe_for_match_borrow(fo.body, name, borrowable, recv_borrow);
@@ -24762,14 +24800,17 @@ function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable:
                 parser.ExprIdent(sid) => { if (sid.name == name) { scrut_borrow = true; } },
                 _ => {}
             }
-            if (!scrut_borrow && expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
+            if (!scrut_borrow && expr_unsafe_for_vb(m.scrutinee, name, borrowable, recv_borrow, true)) { return true; }
             for arm in m.arms {
-                if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, recv_borrow)) { return true; }
+                if (arm.has_guard && expr_unsafe_for_vb(arm.guard, name, borrowable, recv_borrow, true)) { return true; }
                 if (body_unsafe_for_match_borrow(arm.body, name, borrowable, recv_borrow)) { return true; }
             }
             return false;
         },
-        _ => { return stmt_unsafe_for(st, name, borrowable, recv_borrow); }
+        // The mode rides through the fallback too: a `var t = match (name) { … }`
+        // is a StmtVar, so it lands here, and dropping to the strict walker is
+        // exactly how the match-EXPRESSION read lost its borrow reading.
+        _ => { var no_alias_mb: string[] = []; return stmt_unsafe_for_alias_vb(st, name, borrowable, recv_borrow, no_alias_mb, true); }
     }
 }
 
@@ -44171,7 +44212,7 @@ function ef_unsafe_expr(e: parser.Expr, name: string, borrowable: string[], stru
             if (sl.has_base) {
                 match (sl.base) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (expr_unsafe_for(sl.base, name, borrowable, none)) { return true; } }
+                    _ => { if (expr_unsafe_for_vb(sl.base, name, borrowable, none, true)) { return true; } }
                 }
             }
             var i: i32 = 0;
@@ -44182,7 +44223,12 @@ function ef_unsafe_expr(e: parser.Expr, name: string, borrowable: string[], stru
             }
             return false;
         },
-        _ => { return expr_unsafe_for(e, name, borrowable, none); }
+        // vb_borrow: a value block reached from here is walked with the
+        // match-borrow reading, which is what a `var t = match (name) { … }`
+        // needs. The enum-FIELD forgiveness above does not ride into the block —
+        // that direction is conservative, so a field share written inside a value
+        // block simply keeps the old refusal rather than gaining a wrong credit.
+        _ => { return expr_unsafe_for_vb(e, name, borrowable, none, true); }
     }
     return false;
 }
