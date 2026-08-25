@@ -13999,6 +13999,22 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             var slvst: ArgStash = lower_view_borrowed_parked(slc.array, s);
             var ssl: LowerState = slvst.state;
             if (!ssl.ok) { return ssl; }
+            if (slc.open_end) {
+                // `a[lo:]` — the upper bound is the source's own length and
+                // slc.end is an unevaluated placeholder. Spill the source so
+                // arr_len reads the same value arr_slice will, instead of
+                // lowering the base a second time.
+                var aon: string = "$aopen" + util.i32_to_string(ssl.locals.len());
+                ssl = ssl.add_local(aon);
+                var aoslot: i32 = ssl.slot_of(aon);
+                ssl = ssl.emit(ir.op_store_local(aoslot));
+                ssl = ssl.emit(ir.op_load_local(aoslot));
+                ssl = lower_expr(slc.start, ssl);
+                if (!ssl.ok) { return ssl; }
+                ssl = ssl.emit(ir.op_load_local(aoslot));
+                ssl = ssl.emit(ir.op_arr_len());
+                return ssl.emit(ir.op_arr_slice(slc_w));
+            }
             ssl = lower_expr(slc.start, ssl);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.end, ssl);
@@ -17617,8 +17633,14 @@ function lower_str_slice_checked(slc: parser.ExprSlice, s: LowerState): LowerSta
     cs = lower_expr(slc.start, cs);
     if (!cs.ok) { return cs; }
     cs = cs.emit(ir.op_store_local(loslot));
-    cs = lower_expr(slc.end, cs);
-    if (!cs.ok) { return cs; }
+    if (slc.open_end) {
+        // `s[lo:]` — the bound is len(s), already in $slclen; slc.end is a
+        // placeholder that must not be lowered.
+        cs = cs.emit(ir.op_load_local(lenslot));
+    } else {
+        cs = lower_expr(slc.end, cs);
+        if (!cs.ok) { return cs; }
+    }
     cs = cs.emit(ir.op_store_local(hislot));
 
     // 0 <= lo && lo <= hi && hi <= len
@@ -58235,7 +58257,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             var slar: LiftExpr = lift_expr_walk(sl.array, acc, gfns);
             var slsr: LiftExpr = lift_expr_walk(sl.start, slar.acc, gfns);
             var sler: LiftExpr = lift_expr_walk(sl.end, slsr.acc, gfns);
-            return LiftExpr { expr: parser.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr, ty: sl.ty }, acc: sler.acc };
+            return LiftExpr { expr: parser.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr, ty: sl.ty, open_end: sl.open_end }, acc: sler.acc };
         },
         parser.ExprFieldAccess(fa) => {
             var faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
@@ -62122,7 +62144,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             return parser.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked, ty: x.ty }; },
-        parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes), ty: sl.ty }; },
+        parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes), ty: sl.ty, open_end: sl.open_end }; },
         parser.ExprStructLit(sl) => {
             var nv: parser.Expr[] = [];
             var i: i32 = 0;
@@ -62500,7 +62522,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
             var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);
             var ss: WCapExpr = wcap_expr(sl.start, fd, gfns, structs, mfuncs, sa.caps, atargets);
             var se: WCapExpr = wcap_expr(sl.end, fd, gfns, structs, mfuncs, ss.caps, atargets);
-            return WCapExpr { expr: parser.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr, ty: sl.ty }, caps: se.caps };
+            return WCapExpr { expr: parser.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr, ty: sl.ty, open_end: sl.open_end }, caps: se.caps };
         },
         parser.ExprStructLit(sl) => {
             var a: WCaps = acc;
