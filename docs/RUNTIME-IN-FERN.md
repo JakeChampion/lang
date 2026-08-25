@@ -57,10 +57,13 @@ What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
 `__fern_map_*`, `__fern_arr_push`), the net/proc/timer leaves (audited below),
-and the per-backend wasm helper bundles. Two helpers stay hand-written on
-principle rather than for want of a wrapper, both on Darwin: `monotonic_ns`
-(`mrs cntvct_el0` is not a syscall) and `fork` (it reports failure in the carry
-flag and marks the child in `x1`, and Fern can read neither).
+and the per-backend wasm helper bundles. Three helpers stay hand-written on
+principle rather than for want of a wrapper, all on Darwin: `monotonic_ns`
+(`mrs cntvct_el0` is not a syscall), `fork` (it reports failure in the carry
+flag and marks the child in `x1`, and Fern can read neither), and `subprocess`,
+which needs both that `fork` and a `pipe()` that reports its second fd in `x1`
+too. Everywhere else `subprocess` is Fern — the first COMPOSITE to move, and
+the one that showed length is not the same thing as floor distance.
 
 ## The hot core needs better codegen first, not better expressiveness
 
@@ -538,8 +541,31 @@ remainder splits three ways:
   builtin's name rather than an IR op's. The refusal stays as the backstop for an
   op with no builtin name to report.
 
-- **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
-  exec, drain and reap in one body), `map_delete`, `strbuf_append`.
+- **Composites, not leaves**: `map_delete` and `strbuf_append`. `subprocess`
+  **has since moved** on both Linux targets — the first composite rather than a
+  leaf, and the one that showed the composites were never a separate category.
+  Its 31 traps are pipes, a fork, three dup3s, six closes, three execve
+  attempts, a write, two read loops and a wait4, and every one of them is a
+  three- or four-argument syscall the floor has had since the leaves. No
+  primitive was added: `pipe2` and `dup3` are two `sysno` rows, `wait4` is the
+  call `proc_waitpid` already makes, envp comes from `__raw_environ()` as in
+  `proc_exec`, and the fork is the expression `rt_src_proc_fork` returns,
+  factored out as `fork_expr`. What made it look bigger than a leaf was its
+  LENGTH, not its floor requirements.
+
+  Darwin keeps a hand-written body, for the reason it keeps `proc_fork`: XNU has
+  no `pipe2`, and its `pipe()` reports the second fd in **x1**. So the two halves
+  of that one target's spawn — the pipe and the fork — are the same floor limit
+  twice, and the Fern body covers x86-64 and arm64 Linux. Both bodies answer to
+  the stack ABI under the `__fn___` name, so the op site never learns which it
+  got.
+
+  Two bugs came with it, both the shapes earlier slices found. The result
+  strings were built with a bare `__fern_alloc`'d `{data, len}` pair, so they
+  carried no refcount header — the #6921 hazard, where a dec reads the last word
+  of the preceding allocation. And arm64 emitted the whole body inside the bare
+  `heap` gate, so every allocating program carried ~400 instructions nothing
+  branched to, exactly as the Reader bodies did.
 - **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths
   (`oob_abort`, `san_abort`, `hev_f`).
 

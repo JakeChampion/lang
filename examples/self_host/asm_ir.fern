@@ -2587,21 +2587,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // stat(2)s into __fern_scratch via __syscall3, reads st_mode/st_size, and
     // builds Ok(FileStat{...}) / Err(NotFound(path)). The op_stat handler calls
     // the stack-ABI __fn___fern_stat symbol.
-    // __fern_subprocess: %rdi = cmd box, %rsi = args box (string[]), %rdx = stdin
-    // box -> ProcessResult struct {shape, stdout@8, stderr@16, exit_code@24}. 3 pipes
-    // + fork + execve(cmd, [cmd, args.., NULL], envp); parent writes stdin, reads
-    // stdout/stderr to EOF, waits, packs the result; spawn failure -> exit 127.
-    // Transcribed verbatim from asm.fern (the same body the AST path called), with the
-    // ProcessResult shape via shape_ref (pre-interned before the literal pool). The
-    // body is emitted as a few coalesced multi-line writes (not one per asm line) so
-    // it adds minimal .text to the large self-host binary — an arm64 R_AARCH64_CALL26
-    // branch-range overflow surfaced when this runtime was emitted line-by-line.
-    // Gated on the subprocess need; calls __fern_alloc (the heap runtime, present).
-    if (s.has_need("subprocess")) {
-        var prLit: ShapeRefOut = shape_ref(s, "ProcessResult");
-        s = prLit.state;
-        s = s.write("__fern_subprocess:\n    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    subq $128, %rsp\n    movq %rdi, %r12\n    movq %rsi, %r13\n    movq %rdx, %r14\n    movq 8(%r12), %r15\n    leaq 1(%r15), %rdi\n    call __fern_alloc\n    movq %rax, -64(%rbp)\n    movq (%r12), %rcx\n    movq $0, %r8\n.Lsp_ccmd:\n    cmpq %r15, %r8\n    jge .Lsp_ccmd_d\n    movb (%rcx, %r8, 1), %al\n    movq -64(%rbp), %r9\n    movb %al, (%r9, %r8, 1)\n    incq %r8\n    jmp .Lsp_ccmd\n.Lsp_ccmd_d:\n    movq -64(%rbp), %r9\n    movb $0, (%r9, %r15, 1)\n    movq (%r13), %r15\n    leaq 2(%r15), %rdi\n    shlq $3, %rdi\n    call __fern_alloc\n    movq %rax, -56(%rbp)\n    movq -64(%rbp), %rcx\n    movq -56(%rbp), %r9\n    movq %rcx, (%r9)\n    movq $0, %rbx\n.Lsp_arg:\n    cmpq %r15, %rbx\n    jge .Lsp_arg_d\n    leaq 1(%rbx), %rcx\n    movq (%r13, %rcx, 8), %r10\n    movq 8(%r10), %rsi\n    leaq 1(%rsi), %rdi\n    pushq %r10\n    pushq %rsi\n    call __fern_alloc\n    popq %rsi\n    popq %r10\n    movq (%r10), %rcx\n    movq $0, %r8\n.Lsp_acopy:\n    cmpq %rsi, %r8\n    jge .Lsp_acopy_d\n    movb (%rcx, %r8, 1), %dl\n    movb %dl, (%rax, %r8, 1)\n    incq %r8\n    jmp .Lsp_acopy\n.Lsp_acopy_d:\n    movb $0, (%rax, %rsi, 1)\n    movq -56(%rbp), %r9\n    leaq 1(%rbx), %rcx\n    movq %rax, (%r9, %rcx, 8)\n    incq %rbx\n    jmp .Lsp_arg\n.Lsp_arg_d:\n    movq -56(%rbp), %r9\n    leaq 1(%r15), %rcx\n    movq $0, (%r9, %rcx, 8)\n    leaq -96(%rbp), %rdi\n    movq $0, %rsi\n    movq $293, %rax\n    syscall\n    leaq -88(%rbp), %rdi\n    movq $0, %rsi\n    movq $293, %rax\n    syscall\n    leaq -80(%rbp), %rdi\n    movq $0, %rsi\n    movq $293, %rax\n    syscall\n    movq $57, %rax\n    syscall\n    testq %rax, %rax\n    jne .Lsp_parent\n    movl -96(%rbp), %edi\n    movq $0, %rsi\n    movq $33, %rax\n    syscall\n    movl -84(%rbp), %edi\n    movq $1, %rsi\n    movq $33, %rax\n    syscall\n    movl -76(%rbp), %edi\n    movq $2, %rsi\n    movq $33, %rax\n    syscall\n    movl -96(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -92(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -88(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -84(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -80(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -76(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movq -64(%rbp), %rdi\n    movq -56(%rbp), %rsi\n    movq __fern_envp(%rip), %rdx\n    movq $59, %rax\n    syscall\n    movq -64(%rbp), %r12\n    movq $0, %rbx\n.Lsp_clen:\n    movb (%r12, %rbx, 1), %al\n    cmpb $0, %al\n    je .Lsp_clen_d\n    incq %rbx\n    jmp .Lsp_clen\n.Lsp_clen_d:\n    leaq 6(%rbx), %rdi\n    call __fern_alloc\n    movq %rax, %r13\n    movb $47, 0(%r13)\n    movb $98, 1(%r13)\n    movb $105, 2(%r13)\n    movb $110, 3(%r13)\n    movb $47, 4(%r13)\n    movq $0, %r8\n.Lsp_bcopy:\n    cmpq %rbx, %r8\n    jge .Lsp_bcopy_d\n    movb (%r12, %r8, 1), %al\n    leaq 5(%r8), %rcx\n    movb %al, (%r13, %rcx, 1)\n    incq %r8\n    jmp .Lsp_bcopy\n.Lsp_bcopy_d:\n    leaq 5(%rbx), %rcx\n    movb $0, (%r13, %rcx, 1)\n    movq %r13, %rdi\n    movq -56(%rbp), %rsi\n    movq __fern_envp(%rip), %rdx\n    movq $59, %rax\n    syscall\n    leaq 10(%rbx), %rdi\n    call __fern_alloc\n    movq %rax, %r13\n    movb $47, 0(%r13)\n    movb $117, 1(%r13)\n    movb $115, 2(%r13)\n    movb $114, 3(%r13)\n    movb $47, 4(%r13)\n    movb $98, 5(%r13)\n    movb $105, 6(%r13)\n    movb $110, 7(%r13)\n    movb $47, 8(%r13)\n    movq $0, %r8\n.Lsp_ucopy:\n    cmpq %rbx, %r8\n    jge .Lsp_ucopy_d\n    movb (%r12, %r8, 1), %al\n    leaq 9(%r8), %rcx\n    movb %al, (%r13, %rcx, 1)\n    incq %r8\n    jmp .Lsp_ucopy\n.Lsp_ucopy_d:\n    leaq 9(%rbx), %rcx\n    movb $0, (%r13, %rcx, 1)\n    movq %r13, %rdi\n    movq -56(%rbp), %rsi\n    movq __fern_envp(%rip), %rdx\n    movq $59, %rax\n    syscall\n    movq $127, %rdi\n    movq $60, %rax\n    syscall\n.Lsp_parent:\n    movq %rax, %r15\n    movl -96(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -84(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movl -76(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movq 8(%r14), %rdx\n    testq %rdx, %rdx\n    jz .Lsp_close_in\n    movl -92(%rbp), %edi\n    movq (%r14), %rsi\n    movq $1, %rax\n    syscall\n.Lsp_close_in:\n    movl -92(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movq $65536, %rdi\n    call __fern_alloc\n    movq %rax, %rbx\n    movq $0, %r12\n.Lsp_rdo:\n    movq $65536, %rdx\n    subq %r12, %rdx\n    testq %rdx, %rdx\n    jle .Lsp_rdo_d\n    movl -88(%rbp), %edi\n    leaq (%rbx, %r12, 1), %rsi\n    movq $0, %rax\n    syscall\n    testq %rax, %rax\n    jle .Lsp_rdo_d\n    addq %rax, %r12\n    jmp .Lsp_rdo\n.Lsp_rdo_d:\n    movl -88(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movq $65536, %rdi\n    call __fern_alloc\n    movq %rax, %r13\n    movq $0, %r14\n.Lsp_rde:\n    movq $65536, %rdx\n    subq %r14, %rdx\n    testq %rdx, %rdx\n    jle .Lsp_rde_d\n    movl -80(%rbp), %edi\n    leaq (%r13, %r14, 1), %rsi\n    movq $0, %rax\n    syscall\n    testq %rax, %rax\n    jle .Lsp_rde_d\n    addq %rax, %r14\n    jmp .Lsp_rde\n.Lsp_rde_d:\n    movl -80(%rbp), %edi\n    movq $3, %rax\n    syscall\n    movq %r15, %rdi\n    leaq -8(%rbp), %rsi\n    movq $0, %rdx\n    movq $0, %r10\n    movq $61, %rax\n    syscall\n    movl -8(%rbp), %eax\n    testb $127, %al\n    jnz .Lsp_signaled\n    shrl $8, %eax\n    andl $255, %eax\n    jmp .Lsp_have_exit\n.Lsp_signaled:\n    andl $127, %eax\n    addl $128, %eax\n.Lsp_have_exit:\n    movl %eax, %r15d\n    movq $16, %rdi\n    call __fern_alloc\n    movq %rbx, (%rax)\n    movq %r12, 8(%rax)\n    movq %rax, %rbx\n    movq $16, %rdi\n    call __fern_alloc\n    movq %r13, (%rax)\n    movq %r14, 8(%rax)\n    movq %rax, %r13\n    movq $32, %rdi\n    call __fern_alloc\n    leaq " + prLit.label + "(%rip), %rcx\n    movq %rcx, (%rax)\n    movq %rbx, 8(%rax)\n    movq %r13, 16(%rax)\n    movq %r15, 24(%rax)\n    addq $128, %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
-    }
+    // __fern_subprocess is now a Fern runtime function (#2649): emitted via
+    // emit_ir_runtime_fern_fn in the migrated-helpers section (need-gated on
+    // subprocess) — three pipes, fork, execve with the /bin and /usr/bin
+    // fallbacks in the child, stdin feed + stream drain + wait4 in the parent,
+    // returning a ProcessResult built by the ordinary struct lowering. The
+    // op-177 handler calls the stack-ABI __fn___fern_subprocess symbol.
     // __fern_argc / __fern_argv globals (.bss) + __fern_arg_at + __fern_args: the
     // command-line argv accessor. The entry's _start saves argc / argv from the
     // initial stack into these globals (gated on the same args need); __fern_args
@@ -4375,7 +4366,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
-        "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
+        "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
@@ -5461,10 +5452,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.need("heap"); s = s.need("stat");
         } else if (o.kind_tag == 177) {  // subprocess
             // [cmdbox][argsbox][stdinbox] (stdin on TOS) -> spawn the child, push a
-            // fresh ProcessResult struct box (the AST path's __fern_subprocess, which
-            // allocates the struct + its stdout/stderr string blocks). Pop stdin into
-            // %rdx, args into %rsi, cmd into %rdi (the asm.fern arg order).
-            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_subprocess\n    pushq %rax\n");
+            // fresh ProcessResult struct. Call the Fern-compiled
+            // __fn___fern_subprocess (#2649) via the stack ABI: the operands are
+            // already in param order but on the wrong end, so pop all three and
+            // re-push them with param[0] (cmd) on top.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_subprocess\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("subprocess");
         } else if (o.kind_tag == 178) {  // read_chunk
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
@@ -7959,6 +7952,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("proc_exec")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86_64"), all_structs, s);
+    }
+    // subprocess (#2649) — the composite: pipes + fork + exec + drain + reap in
+    // one bundle with its two local helpers. Heap-dependent (it allocates the
+    // argv, the stream buffers and the result), and the "ProcessResult" shape
+    // label it builds through is pre-interned in the entry block on the same need.
+    if (s.has_need("subprocess")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("x86_64"), all_structs, s);
     }
     // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
     // helpers hand the kernel to write structs into (timespec for the clocks,

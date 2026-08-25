@@ -389,6 +389,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "connect") { return "42"; }
     if (name == "execve") { return "59"; }
     if (name == "fork") { return "57"; }
+        if (name == "pipe2") { return "293"; }
+        if (name == "dup3") { return "292"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         if (name == "ioctl") { return "16"; }
@@ -428,6 +430,10 @@ pub function sysno(t: string, name: string): string {
         if (name == "connect") { return "98"; }
         if (name == "execve") { return "59"; }
         if (name == "ioctl") { return "54"; }
+        // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
+        // second fd in x1, which no __syscall* intrinsic can see. That is why
+        // subprocess keeps a hand-written body on this one target — the same
+        // limit that keeps proc_fork hand-written (see rt_src_subprocess).
         return "-1";
     }
     // arm64 (Linux).
@@ -454,6 +460,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "connect") { return "203"; }
     if (name == "execve") { return "221"; }
     if (name == "clone") { return "220"; }
+    if (name == "pipe2") { return "59"; }
+    if (name == "dup3") { return "24"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     if (name == "ioctl") { return "29"; }
@@ -713,6 +721,58 @@ pub function rt_src_proc_exec(t: string): string {
     return "function __fern_proc_exec(path: string, args: string[]): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var n: i32 = args.len(); var argv: i32 = __raw_alloc((n + 2) * 8); __raw_store_ptr(argv, 0, pathz); var k: i32 = 0; while (k < n) { var a: string = args[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(argv, k + 1, ab); k = k + 1; } __raw_store_ptr(argv, n + 1, 0); return __syscall3(" + sysno(t, "execve") + ", pathz, argv, __raw_environ()); }";
 }
 
+// rt_src_subprocess backs `subprocess(cmd, args, stdin)` (#2649) → a bare
+// ProcessResult { stdout, stderr, exit_code }. The largest helper to move, and
+// the first COMPOSITE rather than a leaf: three pipes, a fork, three dup3s and
+// six closes in the child, an execve with two PATH fallbacks, then stdin
+// feeding, both streams drained to EOF and a wait4 in the parent.
+//
+// None of it needed a floor addition. pipe2 and dup3 are ordinary 3-argument
+// syscalls, wait4 is the __syscall4 proc_waitpid already uses, envp comes from
+// __raw_environ() as in proc_exec, and the fork is fork_expr — the same
+// expression rt_src_proc_fork returns.
+//
+// NOT called for arm64-darwin, and for the same reason proc_fork is not: XNU
+// has no pipe2, and its pipe() reports the second fd in x1, which no __syscall*
+// intrinsic can see. asm_arm64_ir keeps the hand-written body for that target.
+//
+// The result strings go through __raw_string, so they carry a real refcount
+// header. Both hand-asm bodies built them with a bare __fern_alloc'd
+// { data, len } pair instead, which is the headerless-box hazard #6921 closed
+// for the Reader leaves: __fn___fern_str_free reads the refcount at box-8, so a
+// dec of one of those read the last word of the PRECEDING allocation.
+//
+// The 64 KiB per-stream cap and the shell's status decode (128 + signal when
+// killed, else the exit code) are preserved verbatim — both are observable.
+pub function rt_src_subprocess(t: string): string {
+    // Drain one pipe to EOF into `buf`, then close it. The cap is the buffer's
+    // own 64 KiB: `got` is compared against it before every read, so a child
+    // that outproduces the buffer is truncated rather than writing past it.
+    var drain: string = "function __fern_sp_drain(fd: i32, buf: i32): i32 { var got: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= 65536) { done = 1; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, got), 65536 - got); if (n <= 0) { done = 1; } else { got = got + n; } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return got; }";
+    // execve <prefix><cmd> with the caller's argv untouched — argv[0] stays the
+    // name the caller passed, which is what a shell does for a PATH hit.
+    var execat: string = "function __fern_sp_exec_at(pre: i32, plen: i32, cmdz: i32, clen: i32, argv: i32, envp: i32): i32 { var b: i32 = __raw_alloc(plen + clen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(b, i, __raw_load8(pre, i)); i = i + 1; } var j: i32 = 0; while (j < clen) { __raw_store8(b, plen + j, __raw_load8(cmdz, j)); j = j + 1; } __raw_store8(b, plen + clen, 0); return __syscall3(" + sysno(t, "execve") + ", b, argv, envp); }";
+    // argv: [cmdz, args..., NULL], every element a fresh NUL-terminated copy.
+    var setup: string = "function __fern_subprocess(cmd: string, args: string[], input: string): ProcessResult { var clen: i32 = cmd.len(); var cmdz: i32 = __raw_alloc(clen + 1); var i: i32 = 0; while (i < clen) { __raw_store8(cmdz, i, cmd[i]); i = i + 1; } __raw_store8(cmdz, clen, 0); var n: i32 = args.len(); var argv: i32 = __raw_alloc((n + 2) * 8); __raw_store_ptr(argv, 0, cmdz); var k: i32 = 0; while (k < n) { var a: string = args[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(argv, k + 1, ab); k = k + 1; } __raw_store_ptr(argv, n + 1, 0); ";
+    // 32 raw bytes: six i32 pipe fds at 0..23 (in {r@0,w@4}, out {r@8,w@12},
+    // err {r@16,w@20}) and wait4's status word at 24. One allocation rather than
+    // __raw_scratch, so subprocess stays off the shared static buffer's gate.
+    var pipes: string = "var fds: i32 = __raw_alloc(32); __syscall3(" + sysno(t, "pipe2") + ", fds, 0, 0); __syscall3(" + sysno(t, "pipe2") + ", __raw_addr(fds, 8), 0, 0); __syscall3(" + sysno(t, "pipe2") + ", __raw_addr(fds, 16), 0, 0); var in_r: i32 = __load_i32(fds); var in_w: i32 = __load_i32(__raw_addr(fds, 4)); var out_r: i32 = __load_i32(__raw_addr(fds, 8)); var out_w: i32 = __load_i32(__raw_addr(fds, 12)); var err_r: i32 = __load_i32(__raw_addr(fds, 16)); var err_w: i32 = __load_i32(__raw_addr(fds, 20)); var pid: i32 = " + fork_expr(t) + "; ";
+    // Child: wire the three pipe ends onto 0/1/2, close every original fd, then
+    // exec cmd, /bin/cmd and /usr/bin/cmd in turn so bare names like "echo"
+    // resolve without re-implementing a $PATH search. exec only returns on
+    // failure, so reaching the exit means all three missed.
+    //
+    // dup3, not dup2: arm64 Linux has no dup2 at all, and unifying on the form
+    // both targets carry is what keeps this one body — the same move the `stat`
+    // slice made onto the 4-argument fstatat family.
+    var child: string = "if (pid == 0) { __syscall3(" + sysno(t, "dup3") + ", in_r, 0, 0); __syscall3(" + sysno(t, "dup3") + ", out_w, 1, 0); __syscall3(" + sysno(t, "dup3") + ", err_w, 2, 0); __syscall3(" + sysno(t, "close") + ", in_r, 0, 0); __syscall3(" + sysno(t, "close") + ", in_w, 0, 0); __syscall3(" + sysno(t, "close") + ", out_r, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w, 0, 0); __syscall3(" + sysno(t, "close") + ", err_r, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w, 0, 0); var envp: i32 = __raw_environ(); __syscall3(" + sysno(t, "execve") + ", cmdz, argv, envp); var pre: i32 = __raw_alloc(9); __raw_store8(pre, 0, 47); __raw_store8(pre, 1, 98); __raw_store8(pre, 2, 105); __raw_store8(pre, 3, 110); __raw_store8(pre, 4, 47); __fern_sp_exec_at(pre, 5, cmdz, clen, argv, envp); __raw_store8(pre, 1, 117); __raw_store8(pre, 2, 115); __raw_store8(pre, 3, 114); __raw_store8(pre, 4, 47); __raw_store8(pre, 5, 98); __raw_store8(pre, 6, 105); __raw_store8(pre, 7, 110); __raw_store8(pre, 8, 47); __fern_sp_exec_at(pre, 9, cmdz, clen, argv, envp); __syscall3(" + sysno(t, "exit") + ", 127, 0, 0); } ";
+    // Parent: drop the ends the child owns (so its stdout/stderr reach EOF when
+    // it exits), push the stdin payload, drain both streams, reap.
+    var parent: string = "__syscall3(" + sysno(t, "close") + ", in_r, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w, 0, 0); if (input.len() > 0) { __syscall3(" + sysno(t, "write") + ", in_w, __raw_data(input), input.len()); } __syscall3(" + sysno(t, "close") + ", in_w, 0, 0); var obuf: i32 = __raw_alloc(65536); var olen: i32 = __fern_sp_drain(out_r, obuf); var ebuf: i32 = __raw_alloc(65536); var elen: i32 = __fern_sp_drain(err_r, ebuf); __syscall4(" + sysno(t, "wait4") + ", pid, __raw_addr(fds, 24), 0, 0); var w: i32 = __load_i32(__raw_addr(fds, 24)); var code: i32 = (w >> 8) & 255; if ((w & 127) != 0) { code = (w & 127) + 128; } return ProcessResult { stdout: __raw_string(obuf, olen), stderr: __raw_string(ebuf, elen), exit_code: code }; }";
+    return drain + " " + execat + " " + setup + pipes + child + parent;
+}
+
 // rt_src_proc_fork backs `proc_fork()` (#2649, syscall-leaf) → 0 in the child,
 // the child's pid in the parent, -errno on failure — the crash-only supervision
 // primitive (docs/CRASH-ONLY-SERVE.md D2', #5686). The kernel's return shape IS
@@ -727,10 +787,16 @@ pub function rt_src_proc_exec(t: string): string {
 // that one target keeps a hand-written body (under the __fn___ name, since a
 // zero-arg helper's stack and register conventions coincide).
 pub function rt_src_proc_fork(t: string): string {
-    if (t == "x86_64") {
-        return "function __fern_proc_fork(): i32 { return __syscall3(" + sysno(t, "fork") + ", 0, 0, 0); }";
-    }
-    return "function __fern_proc_fork(): i32 { return __syscall5(" + sysno(t, "clone") + ", 17, 0, 0, 0, 0); }";
+    return "function __fern_proc_fork(): i32 { return " + fork_expr(t) + "; }";
+}
+
+// fork_expr is the fork CALL for `t`, shared by rt_src_proc_fork and
+// rt_src_subprocess: x86-64 has a bare no-argument fork(2), arm64 Linux has no
+// fork at all and spells it clone(SIGCHLD, 0, 0, 0, 0). Never called for
+// arm64-darwin, for the reason above.
+function fork_expr(t: string): string {
+    if (t == "x86_64") { return "__syscall3(" + sysno(t, "fork") + ", 0, 0, 0)"; }
+    return "__syscall5(" + sysno(t, "clone") + ", 17, 0, 0, 0, 0)";
 }
 
 // rt_src_timer_fd backs `timer_fd(ms)` (#2649, syscall-leaf) → a CLOCK_MONOTONIC
