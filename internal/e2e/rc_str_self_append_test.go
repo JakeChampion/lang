@@ -228,7 +228,7 @@ function main(): i32 {
         k = k + 1;
     }
     var s: string = "abcdefghij";
-    print(s[0:3] + s[3:6] + s[6:9] + "!");
+    print(slice_unchecked(s, 0, 3) + slice_unchecked(s, 3, 6) + slice_unchecked(s, 6, 9) + "!");
     return 0;
 }`
 

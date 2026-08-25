@@ -173,9 +173,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-str-index-local", "function main(): i32 { var s = \"hello\"; return s[0] as i32; }", 104, ""},
 		{"ir-str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }", 94, ""},
 		{"ir-str-index-param", "function first(s: string): i32 { return s[0] as i32; } function main(): i32 { return first(\"Z\"); }", 90, ""},
-		{"ir-str-slice-len", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t.len(); }", 3, ""},
-		{"ir-str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t[0] as i32; }", 101, ""},
-		{"ir-str-slice-param", "function tok(s: string): i32 { return s[0:2].len(); } function main(): i32 { return tok(\"abcd\"); }", 2, ""},
+		{"ir-str-slice-len", "function main(): i32 { var s = \"hello\"; var t = slice_unchecked(s, 1, 4); return t.len(); }", 3, ""},
+		{"ir-str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = slice_unchecked(s, 1, 4); return t[0] as i32; }", 101, ""},
+		{"ir-str-slice-param", "function tok(s: string): i32 { return slice_unchecked(s, 0, 2).len(); } function main(): i32 { return tok(\"abcd\"); }", 2, ""},
 		{"ir-str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, ""},
 		{"ir-struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, ""},
 		{"ir-enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, ""},
@@ -991,7 +991,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"generic-method-T-receiver", "struct Box[T] { val: T } function (b: Box[T]) doubled(): i32 { return b.val * 2; } function main(): i32 { var b = Box { val: 21 }; print_int(b.doubled()); return 0; }", 0, "42"},
 		// Char-processing programs (now that s[i] byte access works).
 		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { var s: string = \"hello world\"; var n: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (isvowel((s[i] as i32))) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
-		{"string-reverse", "function main(): i32 { var s: string = \"abcde\"; var out: string = \"\"; var i: i32 = s.len() - 1; while (i >= 0) { out = out + s[i:i + 1]; i = i - 1; } write(out); return 0; }", 0, "edcba"},
+		{"string-reverse", "function main(): i32 { var s: string = \"abcde\"; var out: string = \"\"; var i: i32 = s.len() - 1; while (i >= 0) { out = out + slice_unchecked(s, i, i + 1); i = i - 1; } write(out); return 0; }", 0, "edcba"},
 
 		// Compound assignment (including the array-element form, which must
 		// not drop the old value), hex / escape / unary, and complex

@@ -52,7 +52,7 @@ function classify(s: string, t: string): string {
     var lit: string = "hello";
     var fresh: string = s + t;
     var up: string = str_to_upper(s);
-    var view: string = s[1:3];
+    var view: string = slice_unchecked(s, 1, 3);
     var trimmed: string = s.trim();
     var alias: string = fresh;
     var viewalias: string = view;

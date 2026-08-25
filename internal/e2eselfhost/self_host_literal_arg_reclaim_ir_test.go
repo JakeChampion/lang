@@ -580,7 +580,7 @@ function main(): i32 {
 	// the slice arm credited, and its `k` reads a byte of the same buffer so
 	// both halves of the read are covered.
 	run(t, `struct Q { tag: string, k: i32 }
-function mk3(t: string, k: i32): Q { return Q { tag: t[0:3], k: k + (t[3] as i32) }; }
+function mk3(t: string, k: i32): Q { return Q { tag: slice_unchecked(t, 0, 3), k: k + (t[3] as i32) }; }
 function main(): i32 {
     var keep: Q[] = [];
     var i: i32 = 0;

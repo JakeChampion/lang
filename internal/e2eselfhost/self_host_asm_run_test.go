@@ -1772,7 +1772,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"str-slice-len", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t.len(); }", 3, "", ""},
 		{"str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t[0] as i32; }", 101, "", ""},
 		{"str-slice-chain", "function main(): i32 { return \"hello\"[1:4][2] as i32; }", 108, "", ""},
-		{"str-slice-param", "function tok(s: string): i32 { return s[0:2].len(); } function main(): i32 { return tok(\"abcd\"); }", 2, "", ""},
+		{"str-slice-param", "function tok(s: string): i32 { return slice_unchecked(s, 0, 2).len(); } function main(): i32 { return tok(\"abcd\"); }", 2, "", ""},
 		{
 			"string-print-ident",
 			"function main(): i32 { var s = \"world\\n\"; write(s); return 0; }",
