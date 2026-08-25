@@ -116,8 +116,9 @@ of values there share one type — the `FnSigs` registries are all `string[]`,
 the IR ops all `ir.Op` — so a crossed wire or a dropped argument type-checks
 cleanly and surfaces only as a miscompile. The fixpoint will not catch it
 (self-referential, see above) and the type checker cannot. Comparing emitted
-bytes over 1491 (fixture, target) pairs will. **~28 minutes per side**
-(measured 2026-08-22; this said ~8, from a smaller corpus).
+bytes over every (fixture, target) pair will — three per fixture, 1,521 of them
+at the 507 fixtures of 2026-08-25. **~28 minutes per side** (measured
+2026-08-22 over 1,491 pairs; this said ~8, from a smaller corpus again).
 
 **Any change to `examples/self_host/*.fern` must run
 `TestSelfHostFeatureCensus`, whatever the change is about.** Every other gate
