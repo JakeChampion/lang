@@ -1197,11 +1197,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    bl __fn___fern_stat\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 177) {  // subprocess
             // [cmdbox][argsbox][stdinbox] (stdin on TOS) -> spawn the child, push a
-            // fresh ProcessResult struct box (asm_arm64.emit_runtime's
-            // __fern_subprocess, in its heap block; ProcessResult pre-interned there
-            // too — both heap-gated). Pop stdin into x2, args into x1, cmd into x0.
-            s = s.need("heap");
-            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_subprocess\n    str x0, [sp, #-16]!\n");
+            // fresh ProcessResult struct. Both bodies answer to the stack ABI under
+            // the __fn___ name — the Fern-compiled asmcore.rt_src_subprocess on
+            // arm64 Linux, the hand-written one on Darwin (XNU's pipe reports the
+            // second fd in x1) — so this site never learns which one it got. The
+            // operands are in param order but on the wrong end: pop all three and
+            // re-push with param[0] (cmd) on top.
+            s = s.need("heap"); s = s.need("subprocess");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_subprocess\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 178) {  // read_chunk
             // [fd, n] -> the Fern-compiled __fn___fern_reader_read_chunk (#2649),
             // pushing a fresh Option[string]. n is on top but param[0] is fd, so
@@ -4631,34 +4635,33 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     return s;
 }
 
-// emit_rt_subprocess emits __fern_subprocess: fork / exec / wait with the pipe plumbing
-// that collects the child's stdout and stderr.
-function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-    // __fern_subprocess(x0 = cmd box, x1 = args box (string[]),
-    //                   x2 = stdin box) → ProcessResult struct.
-    // arm64 mirror of asm.fern's helper: 3 pipes via pipe2 (sysno
-    // 59), fork via clone(SIGCHLD,0,…) (sysno 220, no fork on
-    // arm64), child execve (sysno 221, dup3=24, close=57) trying
-    // cmd → /bin/cmd → /usr/bin/cmd then exit(127) (sysno 93).
-    // Parent writes stdin (sysno 64), reads stdout + stderr to
-    // EOF (sysno 63) into 64 KiB scratch bufs, wait4s (sysno 260),
-    // decodes WIFEXITED (status >> 8) vs signaled (128 + sig),
-    // packs {shape, stdout, stderr, exit_code} on the heap.
-    //
-    // Darwin: the ABI-identical syscalls ride darwinize's number
-    // remap (close 57→6, read 63→3, write 64→4, exit 93→1, and the
-    // dup3 24→dup2 90 / execve 221→59 / wait4 260→7 entries added to
-    // darwin_sysno). Only the two ABI-divergent steps are branched
-    // here: pipe (no pipe2 — pipe() sysno 42 returns the two fds in
-    // x0/x1) and fork (no clone — fork() sysno 2 returns the pid in
-    // x0 with x1=child-flag, normalised to the Linux x0=0-in-child
-    // shape). The BSD WIFEXITED/WTERMSIG status encoding matches
-    // Linux, so the decode below is shared.
+// emit_rt_subprocess emits Darwin's __fn___fern_subprocess: fork / exec / wait
+// with the pipe plumbing that collects the child's stdout and stderr.
+//
+// arm64 LINUX does not come here — it lowers asmcore.rt_src_subprocess through
+// the IR like every other migrated helper (#2649). This body survives for the
+// one target the floor cannot reach: XNU has no pipe2, and its pipe() reports
+// the second fd in x1, which no __syscall* intrinsic can see — the same limit
+// that keeps proc_fork hand-written here.
+//
+// It answers to the STACK ABI under the __fn___ name its Fern sibling uses, so
+// the op site never learns which body it got: param[0] (cmd) is at [sp],
+// param[1] (args) at [sp, #16], param[2] (stdin) at [sp, #32] on entry.
+//
+// The ABI-identical syscalls ride darwinize's number remap (close 57→6,
+// read 63→3, write 64→4, exit 93→1, dup3 24→dup2 90, execve 221→59,
+// wait4 260→7). The BSD WIFEXITED/WTERMSIG status encoding matches Linux, so
+// the decode below is the same one the Fern helper does.
+function emit_rt_subprocess(s: asmcore.EmitState): asmcore.EmitState {
     var prLitA: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "ProcessResult");
     s = prLitA.state;
-    s = s.write(".globl __fern_subprocess\n");
-    s = s.write(".type __fern_subprocess, %function\n");
-    s = s.write("__fern_subprocess:\n");
+    s = s.write(".globl __fn___fern_subprocess\n");
+    s = s.write(".type __fn___fern_subprocess, %function\n");
+    s = s.write("__fn___fern_subprocess:\n");
+    // Read the three stack-ABI params before the frame moves sp.
+    s = s.write("    ldr x0, [sp]\n");
+    s = s.write("    ldr x1, [sp, #16]\n");
+    s = s.write("    ldr x2, [sp, #32]\n");
     // Big frame: x29/x30 + 5 callee-saved pairs (x19..x28) + 128
     // bytes of locals = 224 bytes. Layout (from sp = x29):
     //   [sp+ 0]  saved x29
@@ -4746,57 +4749,30 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
     s = s.write("    add x9, x22, #1\n");
     s = s.write("    mov x10, #0\n");
     s = s.write("    str x10, [x24, x9, lsl #3]\n");
-    // Create 3 pipes. Linux: pipe2(&fds, 0) writes the 2 i32 fds to
-    // the buffer. Darwin has no pipe2; pipe() (sysno 42) returns the
-    // read fd in x0 and the write fd in x1 — store them into the same
-    // [read@+0, write@+4] slots the rest of the routine reads.
-    if (darwin) {
-        s = s.write("    mov x16, #42\n");
-        s = s.write("    svc #0x80\n");
-        s = s.write("    str w0, [sp, #96]\n");    // in_r
-        s = s.write("    str w1, [sp, #100]\n");   // in_w
-        s = s.write("    mov x16, #42\n");
-        s = s.write("    svc #0x80\n");
-        s = s.write("    str w0, [sp, #104]\n");   // out_r
-        s = s.write("    str w1, [sp, #108]\n");   // out_w
-        s = s.write("    mov x16, #42\n");
-        s = s.write("    svc #0x80\n");
-        s = s.write("    str w0, [sp, #112]\n");   // err_r
-        s = s.write("    str w1, [sp, #116]\n");   // err_w
-    } else {
-        s = s.write("    add x0, sp, #96\n");      // in fds
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #59\n");
-        s = s.write("    svc #0\n");
-        s = s.write("    add x0, sp, #104\n");     // out fds
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #59\n");
-        s = s.write("    svc #0\n");
-        s = s.write("    add x0, sp, #112\n");     // err fds
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #59\n");
-        s = s.write("    svc #0\n");
-    }
-    // fork. Linux: clone(SIGCHLD=17, 0,0,0,0) (sysno 220) returns the
-    // child pid in the parent and 0 in the child, in x0. Darwin: fork
-    // (sysno 2) returns the pid in x0 with x1=0 in the parent and x1=1
-    // in the child; normalise to the Linux shape (x0=0 in the child)
-    // so the shared `cbnz x0, .Lsp_parent` dispatch works on both.
-    if (darwin) {
-        s = s.write("    mov x16, #2\n");
-        s = s.write("    svc #0x80\n");
-        s = s.write("    cbz x1, .Lsp_forked\n");  // x1==0 → parent, keep pid
-        s = s.write("    mov x0, #0\n");           // x1==1 → child
-        s = s.write(".Lsp_forked:\n");
-    } else {
-        s = s.write("    mov x0, #17\n");
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x2, #0\n");
-        s = s.write("    mov x3, #0\n");
-        s = s.write("    mov x4, #0\n");
-        s = s.write("    mov x8, #220\n");
-        s = s.write("    svc #0\n");
-    }
+    // Create 3 pipes. pipe() (sysno 42) returns the read fd in x0 and
+    // the write fd in x1 — the reason this body is not the Fern one —
+    // stored into the [read@+0, write@+4] slots the rest reads.
+    s = s.write("    mov x16, #42\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    str w0, [sp, #96]\n");    // in_r
+    s = s.write("    str w1, [sp, #100]\n");   // in_w
+    s = s.write("    mov x16, #42\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    str w0, [sp, #104]\n");   // out_r
+    s = s.write("    str w1, [sp, #108]\n");   // out_w
+    s = s.write("    mov x16, #42\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    str w0, [sp, #112]\n");   // err_r
+    s = s.write("    str w1, [sp, #116]\n");   // err_w
+    // fork (sysno 2) returns the pid in x0 with x1=0 in the parent and
+    // x1=1 in the child; normalise to x0=0-in-the-child so the dispatch
+    // below is the ordinary one. That x1 is the other half of why this
+    // target keeps a hand-written body.
+    s = s.write("    mov x16, #2\n");
+    s = s.write("    svc #0x80\n");
+    s = s.write("    cbz x1, .Lsp_forked\n");  // x1==0 → parent, keep pid
+    s = s.write("    mov x0, #0\n");           // x1==1 → child
+    s = s.write(".Lsp_forked:\n");
     s = s.write("    cbnz x0, .Lsp_parent\n");
     // ---------- CHILD ----------
     // dup3(in_r, 0, 0); dup3(out_w, 1, 0); dup3(err_w, 2, 0).
@@ -4982,21 +4958,23 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
     s = s.write("    add w9, w9, #128\n");
     s = s.write(".Lsp_have_exit:\n");
     s = s.write("    mov x22, x9\n");                         // exit_code (full reg, x22)
-    // Build stdout box {data=x25, len=x26}.
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x25, [x0]\n");
-    s = s.write("    str x26, [x0, #8]\n");
+    // Build the two stream strings and the result struct through the
+    // rc-headered constructors — __fern_str_box for a string, __fern_arr_box
+    // with cap = nf+1 for a struct, exactly what struct_make emits. Both used to
+    // be a bare __fern_alloc'd block with no refcount at box-8, so a dec of one
+    // read the last word of the preceding allocation (#6921). Both clobber only
+    // x0..x3, so the callee-saved holders below stay live across them.
+    s = s.write("    mov x0, x25\n");                         // stdout data
+    s = s.write("    mov x1, x26\n");                         // stdout len
+    s = s.write("    bl __fern_str_box\n");
     s = s.write("    mov x25, x0\n");                         // stdout box
-    // Build stderr box {data=x27, len=x28}.
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x27, [x0]\n");
-    s = s.write("    str x28, [x0, #8]\n");
+    s = s.write("    mov x0, x27\n");                         // stderr data
+    s = s.write("    mov x1, x28\n");                         // stderr len
+    s = s.write("    bl __fern_str_box\n");
     s = s.write("    mov x27, x0\n");                         // stderr box
-    // Build ProcessResult struct: [shape, stdout, stderr, exit_code].
-    s = s.write("    mov x0, #32\n");
-    s = s.write("    bl __fern_alloc\n");
+    // ProcessResult: [shape, stdout, stderr, exit_code] — 3 fields, cap 4.
+    s = s.write("    mov x0, #4\n");
+    s = s.write("    bl __fern_arr_box\n");
     s = s.write("    adrp x9, " + prLitA.label + "\n");
     s = s.write("    add x9, x9, :lo12:" + prLitA.label + "\n");
     s = s.write("    str x9, [x0]\n");
@@ -5012,7 +4990,7 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
     s = s.write("    ldp x29, x30, [sp, #0]\n");
     s = s.write("    add sp, sp, #224\n");
     s = s.write("    ret\n");
-    s = s.write(".size __fern_subprocess, .-__fern_subprocess\n");
+    s = s.write(".size __fn___fern_subprocess, .-__fn___fern_subprocess\n");
 
     // ---- TCP sockets ------------------------------------------------
     // The raw primitives std/tcp.fern's tcp_serve() composes into the
@@ -5135,7 +5113,18 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = emit_rt_arena_and_alloc(s, darwin);
         s = emit_rt_large_tier_and_rc(s);
         s = emit_rt_fs(s, darwin);
-        s = emit_rt_subprocess(s, darwin);
+        // subprocess (#2649) is Fern on arm64 Linux and hand-written on Darwin
+        // (see emit_rt_subprocess). Need-gated on BOTH legs: the hand-asm used to
+        // ride the bare `heap` gate, so every allocating program carried ~400
+        // instructions nothing branched to — the same unconditional emission the
+        // Reader bodies had (#6921).
+        if (s.has_need("subprocess")) {
+            if (darwin) {
+                s = emit_rt_subprocess(s);
+            } else {
+                s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("arm64-linux"), s.struct_decls, s);
+            }
+        }
         s = emit_rt_net(s, darwin);
     }
     // Census report (#5362): OUTSIDE the heap gate — the exit op calls
@@ -6954,7 +6943,8 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
 //     generator behind its `darwin` flag instead: clock_gettime →
 //     gettimeofday (now_unix_ms) / CNTVCT_EL0 (monotonic_ns), getrandom
 //     → getentropy (random_i32), nanosleep → select (sleep_ms), and
-//     the subprocess pipe2 → pipe / clone → fork divergences. A THIRD
+//     the whole of subprocess, whose pipe() and fork() both report a
+//     second value in x1 that no __syscall* op can see. A THIRD
 //     shape rides the generic `__syscall3` op (#2649): its number is an
 //     operand rather than a literal, so the Fern runtime source bakes in
 //     the target's number and darwinize only rewrites the number
