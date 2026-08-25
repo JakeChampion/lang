@@ -1765,6 +1765,19 @@ func optionNone() *Enum {
 	return &Enum{EnumName: "Option", VariantName: "None", Index: 1}
 }
 
+// interpCharBoundary reports whether byte offset i starts a UTF-8 code
+// point in s, mirroring std/utf8.is_char_boundary: the ends are
+// boundaries by definition, and every other offset is one unless it
+// points at a continuation byte (0b10xxxxxx). It gates the checked
+// `s[a:b]` slice; callers have already bounds-checked i.
+func interpCharBoundary(s String, i int64) bool {
+	if i == 0 || i == int64(len(s)) {
+		return true
+	}
+	b := s[i]
+	return b < 0x80 || b >= 0xC0
+}
+
 // builtinReadFile is the interpreter analogue of the
 // $read_file / __fern_read_file runtime helpers. Reads the
 // file in one shot, builds a Result[string, IoError] enum
@@ -3799,9 +3812,11 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	case *ast.SliceExpr:
 		// Slices on arrays are stored as `Array` at interp time
 		// — same type because the interpreter doesn't model
-		// alias / ownership. String slicing returns a fresh
-		// String holding the byte range — matches the codegen
-		// `__str_slice` runtime semantics. Both share the same
+		// alias / ownership. String slicing returns
+		// `Option[string]`: `Some` of a fresh String holding the
+		// byte range, or `None` for an out-of-range or
+		// code-point-splitting range — matching the codegen's
+		// guarded `__str_slice` lowering. Both share the same
 		// SliceExpr AST shape; we dispatch on the source value's
 		// runtime type.
 		srcV, err := i.evalExpr(x.Source, env)
@@ -3841,14 +3856,23 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			high = int64(n)
 		}
-		if low < 0 || high > slen || low > high {
-			return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
-		}
 		switch v := srcV.(type) {
 		case Array:
+			if low < 0 || high > slen || low > high {
+				return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
+			}
 			return Array(v[low:high]), nil
 		case String:
-			return String(string(v)[low:high]), nil
+			// `s[a:b]` on a string is CHECKED (#5634): an out-of-range
+			// range or an end inside a multi-byte code point is `None`,
+			// never an error. `slice_unchecked` keeps the trapping form.
+			if low < 0 || high > slen || low > high {
+				return optionNone(), nil
+			}
+			if !interpCharBoundary(v, low) || !interpCharBoundary(v, high) {
+				return optionNone(), nil
+			}
+			return optionSome(String(string(v)[low:high])), nil
 		}
 		return nil, fmt.Errorf("unreachable: srcV type %T not Array/String after pre-check", srcV)
 	case *ast.Lambda:
