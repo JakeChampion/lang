@@ -34,7 +34,9 @@ import (
 // that MOVED the local (the #6726 elided retain) was swept anyway.
 //
 // Every want was confirmed against the native x86-64 backend, which is clean on
-// all five shapes; the self-host numbers below now match it.
+// all five shapes; the self-host numbers below now match it — including the
+// call-argument row, which this suite originally pinned at a leak and called a
+// refusal.
 
 type enumFieldShareCase struct {
 	name   string
@@ -121,10 +123,15 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 28, allocs: 250, frees: 250,
 		},
 		{
-			// REFUSED, and still refused: the source escapes through a call
-			// argument, which no retain covers. It leaks (the safe direction)
-			// rather than being swept under a live claim.
-			name: "call_arg_escape_refused",
+			// The source reaches a call ARGUMENT as well as the field. This row
+			// was written as a correct REFUSAL and pinned at 100 frees; it was
+			// not correct, it was a leak — native is 300/300 on this exact
+			// program. `sink` only READS its param, through a match expression,
+			// so the param is borrowable and the source keeps its claim; what
+			// refused it was the value-block walk losing the match-borrow
+			// reading on the way through `+`. See
+			// docs/rc-log/2026-08-25-enum-value-block-borrow.md.
+			name: "call_arg_borrowed_by_callee",
 			src: decls + `function sink(e: E, k: i32): i32 {
     return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + k;
 }
@@ -134,7 +141,7 @@ function round(i: i32): i32 {
     return (sink(src, p.n)) % 101;
 }
 ` + efsMain,
-			want: 5, allocs: 300, frees: 100,
+			want: 5, allocs: 300, frees: 300,
 		},
 	}
 }
