@@ -2883,6 +2883,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		c.checkFunction(fn)
 	}
 
+	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
 
 	if len(c.errors) > 0 {
@@ -8695,8 +8696,6 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		c.inferReturnType(fn, rets)
 	}
 	c.checkOwnedParams(fn)
-	c.checkSliceEscape(fn)
-	c.checkStrEscape(fn)
 	c.checkMustConsume(fn)
 	// A value-returning function must return on every path. Falling off
 	// the end leaves the result undefined (the interpreter yields Void
@@ -8708,152 +8707,60 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	}
 }
 
-// checkSliceEscape implements E063: a non-owning `[T]` slice must not
-// outlive the storage it views. A slice is a `{data_ptr, len}` pair
-// that holds no RC reference to its parent, so returning a slice whose
-// backing array is function-local is a use-after-free the moment the
-// frame's last owning reference drops — the documented dangling case
-// in docs/LANGUAGE-DIRECTION.md's "Slice / view lifetime contract".
+// checkEscapes runs the two view-escape rules — E063 (`[T]` slice) and
+// E065 (`str`) — over the whole program, after every body has been
+// checked. Both are interprocedural: a view laundered through a callee
+// (`return id(slice_unchecked(s, 0, 1))`) escapes exactly when the
+// argument that callee views does, so each rule needs a summary of which
+// PARAMETERS a function's return may view, and that summary needs the
+// callee's resolved locals and match-arm binding types. Running per
+// function during checkFunction could only ever see callees declared
+// earlier, which would make a diagnostic depend on declaration order.
 //
-// The rule is conservative and low-false-positive: a return is rejected
-// only when we can *prove* the slice views storage owned by this
-// function — an array literal or a locally-declared owned array (chased
-// through slice-typed local bindings and sub-slices). String slices are
-// copies (`__str_slice` yields a fresh owned string), and slices of a
-// parameter / receiver stay valid as long as the caller's owner does, so
-// neither is flagged. Anything whose origin we can't pin down (a call
-// result, a global, a field read) is assumed safe rather than rejected.
-func (c *checker) checkSliceEscape(fn *ast.FuncDecl) {
+// By this point the checker has rewritten `x.m(a)` into
+// `__method_T_m(x, a)`, so every call is an Ident callee with the
+// receiver as argument 0 and one summary keyed by function name covers
+// methods and free functions alike.
+func (c *checker) checkEscapes(prog *ast.Program) {
+	c.checkSliceEscapes(prog)
+	c.checkStrEscapes(prog)
+}
+
+// escapeEnv is the scope a returned view is resolved against: the
+// enclosing function's parameters (by declaration index, which is what a
+// summary names) and its declared locals, plus — for the `str` rule —
+// each match-arm payload binding and the expression whose storage it
+// views. The slice rule has no such binding form and ignores armViews.
+type escapeEnv struct {
+	params   map[string]int
+	locals   map[string]*ast.Var
+	armViews map[string]ast.Expr
+	visiting map[string]bool // cycle guard for the binding chase
+}
+
+// escapeEnv builds the resolution scope for one function, or nil when it
+// has no body to resolve against.
+func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 	if fn.Body == nil {
-		return
+		return nil
 	}
-	params := map[string]bool{}
-	for _, p := range fn.Params {
-		params[p.Name] = true
-	}
-	locals := map[string]*ast.Var{}
-	for _, v := range c.info.Locals[fn] {
-		locals[v.Name] = v
-	}
-	ast.Walk(fn.Body, func(n ast.Node) bool {
-		ret, ok := n.(*ast.Return)
-		if !ok || ret.Value == nil {
-			return true
-		}
-		if c.sliceBorrowsLocal(ret.Value, locals, params, map[string]bool{}) {
-			c.errfCode(ret.P, "E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", fn.Name)
-		}
-		return true
-	})
-}
-
-// sliceBorrowsLocal reports whether expr evaluates to a `[T]` slice
-// whose backing storage is local to the current function (so it dies
-// when the function returns). `visiting` guards the binding-chase
-// recursion against cycles. See checkSliceEscape.
-func (c *checker) sliceBorrowsLocal(expr ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
-	switch e := expr.(type) {
-	case *ast.SliceExpr:
-		if e.IsString {
-			// String slicing copies into a fresh owned string.
-			return false
-		}
-		return c.sourceIsLocalStorage(e.Source, locals, params, visiting)
-	case *ast.Ident:
-		if params[e.Name] {
-			return false
-		}
-		v, ok := locals[e.Name]
-		if !ok || v.Init == nil || visiting[e.Name] {
-			return false
-		}
-		visiting[e.Name] = true
-		defer delete(visiting, e.Name)
-		return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
-	}
-	return false
-}
-
-// sourceIsLocalStorage reports whether src names storage owned by the
-// current function — an array literal, a locally-declared owned array,
-// or a (sub)slice that itself views such storage. Parameters and
-// receivers are caller-owned, so a slice of them is excluded.
-func (c *checker) sourceIsLocalStorage(src ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
-	switch s := src.(type) {
-	case *ast.ArrayLit:
-		return true
-	case *ast.SliceExpr:
-		if s.IsString {
-			return false
-		}
-		return c.sourceIsLocalStorage(s.Source, locals, params, visiting)
-	case *ast.Ident:
-		if params[s.Name] || visiting[s.Name] {
-			return false
-		}
-		v, ok := locals[s.Name]
-		if !ok {
-			return false
-		}
-		if _, isArr := v.Type.(ast.ArrayType); isArr {
-			// A locally-declared owned array is the backing storage.
-			return true
-		}
-		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
-			// A local slice borrows whatever its initializer views.
-			visiting[s.Name] = true
-			defer delete(visiting, s.Name)
-			return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
-		}
-		return false
-	}
-	return false
-}
-
-// checkStrEscape implements E065 — the `str` sibling of E063 (#4814 / #4297
-// A2): a borrowed-string view must not escape via `return` unless its source
-// is a parameter (caller-owned) or a string literal ('static / immortal). A
-// `str` viewing a function-LOCAL owned `string` outlives storage the RC
-// passes may reclaim at exit — the #4294 corruption class the `str` type
-// exists to prevent.
-//
-// The rejectable shapes bottom out at a local `string` binding through an
-// ident chain, a `slice_unchecked` call, or a match-arm payload binding.
-// That last one carries the slice producer since #5634: `s[a:b]` is an
-// `Option[str]`, so unwrapping it through a match is the only way to name
-// the view, and the arm binding is not a declared local. The chase mirrors
-// sliceBorrowsLocal (cycle-guarded, params excluded).
-//
-// `return` remains the only checked escape position, and the chase is
-// intraprocedural: a view laundered through a `str`-returning callee —
-// `return id(slice_unchecked(s, 0, 1))` — is still accepted. Closing that
-// needs a per-function summary of which params a return may view, computed
-// in dependency order; it is a wider change than this rule and is tracked
-// separately.
-func (c *checker) checkStrEscape(fn *ast.FuncDecl) {
-	if fn.Body == nil {
-		return
-	}
-	if _, ok := fn.ReturnType.(ast.StrType); !ok {
-		return
-	}
-	env := &strEscapeEnv{
-		params:   map[string]bool{},
+	env := &escapeEnv{
+		params:   map[string]int{},
 		locals:   map[string]*ast.Var{},
 		armViews: map[string]ast.Expr{},
 		visiting: map[string]bool{},
 	}
-	for _, p := range fn.Params {
-		env.params[p.Name] = true
+	for i, p := range fn.Params {
+		env.params[p.Name] = i
 	}
 	for _, v := range c.info.Locals[fn] {
 		env.locals[v.Name] = v
 	}
 	// A match-arm payload binding is not a declared local, so the chase
-	// below cannot reach its scrutinee on its own. Record what each `str`
-	// binding views first; since #5634 made `s[a:b]` an `Option[str]`,
+	// cannot reach its scrutinee on its own. Record what each `str`
+	// binding views; since #5634 made `s[a:b]` an `Option[str]`,
 	// unwrapping through a match is the ONLY way to name that view, and
-	// without this the whole producer is invisible to the rule.
+	// without this the producer is invisible to the rule.
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch m := n.(type) {
 		case *ast.Match:
@@ -8867,26 +8774,249 @@ func (c *checker) checkStrEscape(fn *ast.FuncDecl) {
 		}
 		return true
 	})
-	ast.Walk(fn.Body, func(n ast.Node) bool {
-		ret, ok := n.(*ast.Return)
-		if !ok || ret.Value == nil {
-			return true
+	return env
+}
+
+// escapeEnvs builds one env per function whose return type `wants`
+// accepts, plus the declaration-ordered list of those functions so the
+// fixpoint and the reporting walk agree on order.
+func (c *checker) escapeEnvs(prog *ast.Program, wants func(ast.Type) bool) (map[*ast.FuncDecl]*escapeEnv, []*ast.FuncDecl) {
+	envs := map[*ast.FuncDecl]*escapeEnv{}
+	var order []*ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if _, dup := envs[fn]; dup || !wants(fn.ReturnType) {
+			continue
 		}
-		if c.strViewsLocal(ret.Value, env) {
-			c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
+		env := c.escapeEnv(fn)
+		if env == nil {
+			continue
+		}
+		envs[fn] = env
+		order = append(order, fn)
+	}
+	return envs, order
+}
+
+// viewRoots is where a returned view bottoms out: `local` when it views
+// storage the enclosing function owns (what E063 / E065 reject), and
+// `params` for each parameter index of that function whose storage it may
+// view (what a caller's chase needs). Both can be set at once — a
+// conditional returning a param view on one path and a local view on the
+// other. Literals are immortal and contribute neither.
+type viewRoots struct {
+	local  bool
+	params map[int]bool
+}
+
+func (r *viewRoots) merge(o viewRoots) {
+	r.local = r.local || o.local
+	for i := range o.params {
+		r.params[i] = true
+	}
+}
+
+// forEachReturn calls f for every value-carrying `return` in fn's body.
+func forEachReturn(fn *ast.FuncDecl, f func(*ast.Return)) {
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if ret, ok := n.(*ast.Return); ok && ret.Value != nil {
+			f(ret)
 		}
 		return true
 	})
 }
 
-// strEscapeEnv is the scope a returned `str` is resolved against: the
-// function's params and declared locals, plus each match-arm payload
-// binding and the expression whose storage it views.
-type strEscapeEnv struct {
-	params   map[string]bool
-	locals   map[string]*ast.Var
-	armViews map[string]ast.Expr
-	visiting map[string]bool // cycle guard for the binding chase
+// returnViewSummaries maps each function in fns to the set of parameter
+// indices whose storage one of its returns may view, iterating rootsOf to
+// a fixpoint. Growth is monotone (a summary only ever gains indices) and
+// each set is bounded by the parameter count, so this terminates; and
+// recursion needs no special case: a self-call reads the partial summary
+// and the next round picks up whatever it grew.
+//
+// A function absent from the result returns no view of any parameter —
+// either it was not summarised, or every return is owned or immortal.
+func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Expr, map[string]map[int]bool) viewRoots) map[string]map[int]bool {
+	sums := map[string]map[int]bool{}
+	for _, fn := range fns {
+		sums[fn.Name] = map[int]bool{}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range fns {
+			cur := sums[fn.Name]
+			forEachReturn(fn, func(ret *ast.Return) {
+				for i := range rootsOf(fn, ret.Value, sums).params {
+					if !cur[i] {
+						cur[i] = true
+						changed = true
+					}
+				}
+			})
+		}
+	}
+	return sums
+}
+
+// checkSliceEscapes implements E063: a non-owning `[T]` slice must not
+// outlive the storage it views. A slice is a `{data_ptr, len}` pair
+// pointing into an array the caller still owns; returning one that views
+// a function-LOCAL array hands back a pointer into storage the RC passes
+// reclaim at exit. Params and receivers are caller-owned, so slicing one
+// is fine; an array literal or a locally-declared owned array is not.
+//
+// Like E065 the chase runs through calls: a slice laundered through a
+// callee that returns a view of one of its parameters — `return
+// id_sl(a[0:2])` — views whatever the caller passed to that parameter.
+// The summary sliceViewSummaries computes says which those are.
+func (c *checker) checkSliceEscapes(prog *ast.Program) {
+	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool {
+		_, ok := t.(ast.SliceType)
+		return ok
+	})
+	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]map[int]bool) viewRoots {
+		return c.sliceViewRoots(ret, envs[fn], sums)
+	})
+	// Every function is reported against, not just the summarised ones: a
+	// `T[]`-returning function whose body returns a slice expression is a
+	// type error reported elsewhere, but a lambda or a generic body can
+	// still put a borrowing return in a signature that is not SliceType.
+	for _, fn := range prog.Funcs {
+		env, ok := envs[fn]
+		if !ok {
+			env = c.escapeEnv(fn)
+			if env == nil {
+				continue
+			}
+		}
+		forEachReturn(fn, func(ret *ast.Return) {
+			if c.sliceViewRoots(ret.Value, env, sums).local {
+				c.errfCode(ret.P, "E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", fn.Name)
+			}
+		})
+	}
+}
+
+// sliceViewRoots reports where the `[T]` value of expr bottoms out — see
+// strViewRoots, which this mirrors for arrays: `local` is what E063
+// rejects, `params` is what the caller's chase needs.
+func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]map[int]bool) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch e := expr.(type) {
+	case *ast.SliceExpr:
+		if e.IsString {
+			// String slicing yields an `Option[str]`, not a `[T]`.
+			return out
+		}
+		out.merge(c.sliceSourceRoots(e.Source, env, sums))
+	case *ast.Call:
+		// The result views the STORAGE behind each argument the callee's
+		// summary names — an array argument is that storage itself, not a
+		// slice value, so the chase goes through sliceSourceRoots.
+		if id, ok := e.Callee.(*ast.Ident); ok {
+			for i := range sums[id.Name] {
+				if i < len(e.Args) {
+					out.merge(c.sliceSourceRoots(e.Args[i], env, sums))
+				}
+			}
+		}
+	case *ast.Ident:
+		if i, ok := env.params[e.Name]; ok {
+			out.params[i] = true
+			return out
+		}
+		v, ok := env.locals[e.Name]
+		if !ok || v.Init == nil || env.visiting[e.Name] {
+			return out
+		}
+		env.visiting[e.Name] = true
+		defer delete(env.visiting, e.Name)
+		out.merge(c.sliceViewRoots(v.Init, env, sums))
+	}
+	return out
+}
+
+// sliceSourceRoots reports where the storage a slice EXPRESSION views
+// bottoms out — an array literal and a locally-declared owned array are
+// the function's own, a parameter is the caller's, and a local slice
+// borrows whatever its initializer views.
+func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]map[int]bool) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch s := src.(type) {
+	case *ast.ArrayLit:
+		out.local = true
+	case *ast.SliceExpr:
+		if s.IsString {
+			return out
+		}
+		out.merge(c.sliceSourceRoots(s.Source, env, sums))
+	case *ast.Call:
+		// A callee handing back a view of one of its parameters is
+		// slicing the caller's storage, so the slice of that result
+		// views whatever the caller passed in.
+		if id, ok := s.Callee.(*ast.Ident); ok {
+			for i := range sums[id.Name] {
+				if i < len(s.Args) {
+					out.merge(c.sliceSourceRoots(s.Args[i], env, sums))
+				}
+			}
+		}
+	case *ast.Ident:
+		if i, ok := env.params[s.Name]; ok {
+			out.params[i] = true
+			return out
+		}
+		if env.visiting[s.Name] {
+			return out
+		}
+		v, ok := env.locals[s.Name]
+		if !ok {
+			return out
+		}
+		if _, isArr := v.Type.(ast.ArrayType); isArr {
+			// A locally-declared owned array is the backing storage.
+			out.local = true
+			return out
+		}
+		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
+			// A local slice borrows whatever its initializer views.
+			env.visiting[s.Name] = true
+			defer delete(env.visiting, s.Name)
+			out.merge(c.sliceViewRoots(v.Init, env, sums))
+		}
+	}
+	return out
+}
+
+// checkStrEscapes implements E065 — the `str` sibling of E063 (#4814 /
+// #4297 A2): a borrowed-string view must not escape via `return` unless
+// its source is a parameter (caller-owned) or a string literal ('static /
+// immortal). A `str` viewing a function-LOCAL owned `string` outlives
+// storage the RC passes may reclaim at exit — the #4294 corruption class
+// the `str` type exists to prevent.
+//
+// A returned view bottoms out at a local `string` binding through an ident
+// chain, a `slice_unchecked` call, a match-arm payload binding, or a call
+// to a function that returns a view of one of its own parameters — the
+// route the summary below carries. The match-arm one carries the slice
+// producer since #5634: `s[a:b]` is an `Option[str]`, so unwrapping it
+// through a match is the only way to name the view, and the arm binding is
+// not a declared local.
+//
+// `return` remains the only checked escape position.
+func (c *checker) checkStrEscapes(prog *ast.Program) {
+	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool {
+		_, ok := t.(ast.StrType)
+		return ok
+	})
+	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]map[int]bool) viewRoots {
+		return c.strViewRoots(ret, envs[fn], sums)
+	})
+	for _, fn := range order {
+		forEachReturn(fn, func(ret *ast.Return) {
+			if c.strViewRoots(ret.Value, envs[fn], sums).local {
+				c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
+			}
+		})
+	}
 }
 
 // bindArmViews records, for every `str` payload binding in one arm, the
@@ -8897,7 +9027,7 @@ type strEscapeEnv struct {
 // it: two sibling arms binding the same name collapse to one entry. That
 // can only widen what the rule reports, never narrow it, because every
 // entry names storage some arm really does view.
-func bindArmViews(tag ast.Expr, names []string, types []ast.Type, env *strEscapeEnv) {
+func bindArmViews(tag ast.Expr, names []string, types []ast.Type, env *escapeEnv) {
 	src := viewedSource(tag, env, map[string]bool{})
 	if src == nil {
 		return
@@ -8915,7 +9045,7 @@ func bindArmViews(tag ast.Expr, names []string, types []ast.Type, env *strEscape
 // viewedSource returns the expression whose storage a slice-producing
 // expression views, or nil when it produces no view of anything nameable.
 // `visiting` guards the local-initialiser chase against a cycle.
-func viewedSource(e ast.Expr, env *strEscapeEnv, visiting map[string]bool) ast.Expr {
+func viewedSource(e ast.Expr, env *escapeEnv, visiting map[string]bool) ast.Expr {
 	switch x := e.(type) {
 	case *ast.SliceExpr:
 		return x.Source
@@ -8938,60 +9068,67 @@ func viewedSource(e ast.Expr, env *strEscapeEnv, visiting map[string]bool) ast.E
 	return nil
 }
 
-// strViewsLocal reports whether expr evaluates to a `str` view whose viewed
-// storage is a function-local owned `string` (so it dies when the function
-// returns). Params are caller-owned and string literals immortal — both are
-// safe sources. A call result is not chased (today every callee returns an
-// owned `string`, a move; the producer flip revisits this together with the
-// slice rule's identical hole). `visiting` guards the binding-chase
-// recursion against cycles, mirroring sliceBorrowsLocal.
-func (c *checker) strViewsLocal(expr ast.Expr, env *strEscapeEnv) bool {
+// strViewRoots reports where the `str` value of expr bottoms out; see
+// viewRoots for what each field means.
+func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]map[int]bool) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
 	switch e := expr.(type) {
 	case *ast.StringLit:
-		return false // 'static / immortal
+		return out // 'static / immortal
 	case *ast.SliceExpr:
 		// `s[a:b]` is `Option[str]` (#5634), so it can never be the value
 		// of a `str`-returning `return` — assignability rejects it before
 		// this walk runs. The view it produces reaches a `return` only by
 		// being unwrapped into a match-arm binding, which the Ident arm
 		// resolves through env.armViews.
-		return false
+		return out
 	case *ast.Call:
-		// `slice_unchecked(s, a, b)` is the unchecked slice producer —
-		// the same byte view `s[a:b]` used to yield — so it escapes
-		// exactly when its source does.
-		if id, ok := e.Callee.(*ast.Ident); ok && id.Name == "slice_unchecked" && len(e.Args) == 3 {
-			return c.strViewsLocal(e.Args[0], env)
+		if id, ok := e.Callee.(*ast.Ident); ok {
+			// `slice_unchecked(s, a, b)` is the unchecked slice producer
+			// — the same byte view `s[a:b]` used to yield — so it escapes
+			// exactly when its source does.
+			if id.Name == "slice_unchecked" && len(e.Args) == 3 {
+				out.merge(c.strViewRoots(e.Args[0], env, sums))
+				return out
+			}
+			// Otherwise the result views whatever the caller handed to
+			// the parameters the callee's summary names.
+			for i := range sums[id.Name] {
+				if i < len(e.Args) {
+					out.merge(c.strViewRoots(e.Args[i], env, sums))
+				}
+			}
 		}
-		return false
+		return out
 	case *ast.Ident:
 		// A match-arm binding is the innermost scope, so it is resolved
 		// before params and locals: an arm may shadow either name.
 		if src, ok := env.armViews[e.Name]; ok && !env.visiting[e.Name] {
 			env.visiting[e.Name] = true
 			defer delete(env.visiting, e.Name)
-			return c.strViewsLocal(src, env)
+			return c.strViewRoots(src, env, sums)
 		}
-		if env.params[e.Name] {
-			return false // caller-owned
+		if i, ok := env.params[e.Name]; ok {
+			out.params[i] = true // caller-owned, and named for the summary
+			return out
 		}
 		v, ok := env.locals[e.Name]
 		if !ok || env.visiting[e.Name] {
-			return false
+			return out
 		}
 		if _, isStr := v.Type.(ast.StrType); isStr && v.Init != nil {
 			// A local `str` binding views whatever its initializer views.
 			env.visiting[e.Name] = true
 			defer delete(env.visiting, e.Name)
-			return c.strViewsLocal(v.Init, env)
+			return c.strViewRoots(v.Init, env, sums)
 		}
 		if _, isString := v.Type.(ast.StringType); isString {
 			// A locally-declared owned string IS the backing storage.
-			return true
+			out.local = true
 		}
-		return false
+		return out
 	}
-	return false
+	return out
 }
 
 // inferReturnType folds the return-expression types collected while
