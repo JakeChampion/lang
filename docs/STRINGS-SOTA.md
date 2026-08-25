@@ -879,12 +879,42 @@ Costs, stated honestly:
   every ~17 bytes, about one vector block, so the kernel is re-entered
   constantly and its fixed cost stops being amortised.
 
-  This does not reopen D9: 24% of a parse on the least favourable
+  This does not reopen D9: a fifth of a parse on the least favourable
   realistic body is still a cost worth the invariant, and an ASCII body
   — the common case for machine-generated JSON — pays nothing
   measurable. It does mean the "flat ~5–6%" above should be read as the
-  ASCII figure rather than the figure, and that the next optimisation
-  here is the short-run entry cost, not the per-byte decode.
+  ASCII figure rather than the figure.
+
+  **Where that cost actually sits, by attribution rather than by
+  inference.** The paragraph above blamed `__ascii_run`'s entry cost and
+  said that was the next optimisation. Profiling says otherwise, and the
+  guess was wrong by an order of magnitude in priority. Callgrind over
+  the two `examples/bench/utf8_ingest_*` programs, x86-64, `-O -g` so
+  symbols resolve:
+
+  | | Ir | share of the validation delta |
+  |---|---|---|
+  | `is_valid_utf8` (self) | 7,283,400 | **82.7%** |
+  | `__fern_ascii_run` | 1,537,400 | 17.5% |
+
+  Delta = 30,935,190 − 22,126,190 = 8,809,000 Ir (+39.8%, which is the
+  +39.6% row above reproducing). `__ascii_run` runs 33,800 times at 45.5
+  Ir per call, so its whole prologue is 8.1% of the delta and shaving
+  five instructions off it buys **1.9%**. That is not the next
+  optimisation.
+
+  The 82.7% is not the decode algorithm either. Disassembling the loop
+  shows the default x86-64 emitter is a STACK MACHINE: one `s[i]` is 16
+  instructions, including a `push`/`pop` pair to shuffle operands and a
+  fresh SSO test plus data-pointer derivation, repeated per index. The
+  validator reads `s[i]` several times per codepoint, so the operand
+  traffic — not the branching, not the kernel — is the cost.
+
+  That points at codegen, not at this file. `-backend ssa` is the
+  existing answer (register allocation instead of the stack-machine
+  emitter) and is NOT available for x86-64 today: `arm64-linux` and
+  `wasm32-wasi` only. Widening it is a roadmap decision, not a
+  string-layer one.
 - Non-UTF-8 filesystem paths become unrepresentable. See D10.
 
 The payoff: `std/utf8`'s `is_valid_utf8` stops being something callers
