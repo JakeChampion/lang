@@ -7171,16 +7171,21 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
       }
     },
     parser.ExprSlice(s2) => {
-      out = util.append_diags(call_diags(s2.array, s), util.append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
-      // E037: a present slice bound must be i32. A missing bound
-      // (`s[:]`, `s[a:]`) parses to an unknown placeholder — skip it.
+      out = util.append_diags(call_diags(s2.array, s), call_diags(s2.start, s));
+      // E037: a present slice bound must be i32.
       var sbt: Type = check_expr(s2.start, s);
       if (!is_unknown(sbt) && !is_integer(sbt)) {
         out = out.append(dg_at("E037", "slice low bound must be i32, got " + type_label(sbt), expr_line(s2.start), expr_col(s2.start)));
       }
-      var ebt: Type = check_expr(s2.end, s);
-      if (!is_unknown(ebt) && !is_integer(ebt)) {
-        out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
+      // An open-ended `s[a:]` / `s[:]` writes no high bound: `end` holds a
+      // placeholder the lowering never evaluates, so diagnosing it would
+      // report on source the programmer did not write.
+      if (!s2.open_end) {
+        out = util.append_diags(out, call_diags(s2.end, s));
+        var ebt: Type = check_expr(s2.end, s);
+        if (!is_unknown(ebt) && !is_integer(ebt)) {
+          out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
+        }
       }
       // E037: the sliced value must be an array or string. Mirrors the Go
       // checker ("cannot slice value of type T").
