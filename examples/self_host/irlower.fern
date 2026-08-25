@@ -18273,6 +18273,24 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                                 kc = "a";
                                 tkany = true;
                             }
+                            // A STRUCT box the store MOVES — the source's last
+                            // mention, so the tuple becomes its sole owner and this
+                            // walk is the one release. Its own kind rather than
+                            // "a"'s box-only dec, because a struct's release is a
+                            // deep FIELD drop plus the box dec; the element type
+                            // comes from the slot's tuple tags, so the kinds string
+                            // stays one char per position.
+                            //
+                            // A source that stays LIVE is NOT recorded. The store
+                            // holds no counted reference to it, so freeing it here
+                            // would dangle rather than leak. That position waits on
+                            // the tuple credit stamping its element sites, which is
+                            // what let the array family count a live element.
+                            else if (kslot >= 0 && sb.moves_local_at(kid.name, kid.line, kid.col)
+                                && decl_is_struct(sb.structs, sb.tuple_elem_tag(slot, tki))) {
+                                kc = "t";
+                                tkany = true;
+                            }
                         },
                         _ => {}
                     }
@@ -22831,7 +22849,10 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
     st = st.emit(ir.op_if(0));
     var ki: i32 = 0;
     while (ki < kinds.len()) {
-        if (kinds[ki] != b'.') {
+        if (kinds[ki] == b't') {
+            st = emit_tup_struct_elem_release(st, slot, ki);
+        }
+        else if (kinds[ki] != b'.') {
             var helper: string = "__fern_rc_dec";
             if (kinds[ki] == b's') { helper = "__fern_str_free"; }
             st = emit_load_tuple_path(st, slot, [ki]);
@@ -22841,6 +22862,25 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         ki = ki + 1;
     }
     return st.emit(ir.op_end());
+}
+
+// emit_tup_struct_elem_release: a struct-box element's release — the deep FIELD
+// drop under __fern_rc_is_unique, then the box dec, which is the protocol the
+// array family's element walk uses. The walk belongs to whichever owner finds
+// rc 1; for the moved element this class records, the tuple is the only one.
+// A scalar-field struct routes no field reclaim, so the gate emits nothing and
+// the box dec is the whole release.
+function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerState {
+    var scratch: string = "$tse" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var eslot: i32 = st.slot_of(scratch);
+    st = st.mark_struct_type(eslot, st.tuple_elem_tag(slot, n));
+    st = emit_load_tuple_path(st, slot, [n]);
+    st = st.emit(ir.op_store_local(eslot));
+    st = emit_struct_field_drops_gated(st, eslot, true);
+    st = st.emit(ir.op_load_local(eslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    return st.emit(ir.op_drop());
 }
 
 // emit_tup_elem_reclaim_store stores `new` (already on the operand stack) into a

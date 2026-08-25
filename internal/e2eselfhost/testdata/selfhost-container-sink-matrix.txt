@@ -24,8 +24,8 @@ append__blockscoped   clean clean  a retired source: the site key cannot fall th
 
 with__live            clean leak   refused: arr_set stores no counted reference
 with__moved           clean leak   refused: `with` is not a sanctioned arrstruct rebind either
-tuple__moved          clean leak   refused: tuple_make stores no counted reference for a struct element
-tuple__live           clean leak   refused
+tuple__moved          clean clean  a MOVED struct element: the tuple is sole owner, so its walk is the one release
+tuple__live           clean leak   refused: tuple_make stores no counted reference, so a live source would dangle
 variant__moved        clean leak   refused: the ctor call form retains array and enum payloads, not struct
 variant__live         clean leak   refused
 option__moved         clean leak   refused: opt_make retains an rc CONTAINER payload, not a struct box
