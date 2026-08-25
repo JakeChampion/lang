@@ -45,6 +45,10 @@ import (
 //     while the credit was still granted. That produced exact native COUNT parity
 //     — 80/80 — with exit 99. Only __rc_underflow_count() dissented.
 //
+// The string limb this slice left open is closed by the follow-up, and its gap row
+// left with it — self_host_str_alias_reassign_test.go owns that shape now, with the
+// accumulator and fresh-RHS controls the string class needs.
+//
 // Every want below was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count().
 
@@ -152,23 +156,6 @@ function round(i: i32): i32 {
 }
 ` + sarMain,
 			want: 63, allocs: 160, frees: 160,
-		},
-		{
-			// THE STRING LIMB, still refused. `keep = s` over a string local is the
-			// exact analogue of the first row and is NOT closed here: 40/0, a sound
-			// leak. The string classes reach their own reclaim predicates
-			// (slot_is_reclaimable_str / emit_str_reclaim_store) rather than the
-			// struct credit this change forgives, so admitting them is its own
-			// slice. Pinned as the gap it is.
-			name: "string_alias_reassign_still_refused",
-			src: `function round(i: i32): i32 {
-    var s: string = "ab" + "cd";
-    var keep: string = "zz";
-    keep = s;
-    return keep.len() * 10 + (keep[0] as i32);
-}
-` + sarMain,
-			want: 24, allocs: 40, frees: 0,
 		},
 	}
 }
