@@ -37,8 +37,8 @@ package checker
 
 import "github.com/jakechampion/lang/internal/ast"
 
-// checkMustConsume is the per-function E067 entry point, invoked
-// alongside checkSliceEscape/checkStrEscape after the body check.
+// checkMustConsume is the per-function E067 entry point, invoked after
+// the body check.
 func (c *checker) checkMustConsume(fn *ast.FuncDecl) {
 	if fn.Body == nil {
 		return

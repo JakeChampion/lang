@@ -5825,6 +5825,125 @@ func TestStrMatchArmEscapeAllowed(t *testing.T) {
 	}
 }
 
+// TestStrCalleeEscapeRejected: E065 through a callee that returns a view
+// of one of its own parameters. The chase used to stop at any call, so
+// wrapping the producer in a one-line identity function laundered the
+// view past the rule — the hole the per-function summary closes. Every
+// shape below returns a pointer into a string reclaimed at exit.
+func TestStrCalleeEscapeRejected(t *testing.T) {
+	const decls = `function mk(): string { return "a" + "b"; }
+function id_view(s: str): str { return s; }
+function hop2(s: str): str { return id_view(s); }
+function rec(s: str, n: i32): str { if (n <= 0) { return s; } return rec(s, n - 1); }
+function (s: string) view(): str { return s; }
+`
+	for _, src := range []string{
+		// one hop
+		`function f(): str { var s: string = mk(); return id_view(slice_unchecked(s, 0, 1)); }`,
+		// two hops — the summary has to reach through hop2 to id_view
+		`function f(): str { var s: string = mk(); return hop2(slice_unchecked(s, 0, 1)); }`,
+		// a self-recursive laundering function: the fixpoint converges
+		// on it rather than looping
+		`function f(): str { var s: string = mk(); return rec(slice_unchecked(s, 0, 1), 3); }`,
+		// method form — the receiver is argument 0 of the hoisted
+		// `__method_string_view`, so it resolves through the same summary
+		`function f(): str { var s: string = mk(); return s.view(); }`,
+		// the arm binding from the checked producer, handed to a callee
+		`function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return id_view(v); }, None => { return ""; } } }`,
+	} {
+		err := checkSource(t, decls+src)
+		if err == nil {
+			t.Errorf("%q: expected E065, got nil", src)
+			continue
+		}
+		if !hasCode(err, "E065") {
+			t.Errorf("%q: want diagnostic stamped E065, got %v", src, err)
+		}
+	}
+}
+
+// TestStrCalleeEscapeAllowed: the summary is per PARAMETER, not per
+// function, so a callee that takes a local-backed view and returns a
+// different argument stays accepted. Coarsening it to "this function
+// returns some view" would reject every program here.
+func TestStrCalleeEscapeAllowed(t *testing.T) {
+	const decls = `function mk(): string { return "a" + "b"; }
+function id_view(s: str): str { return s; }
+function second(a: str, b: str): str { return b; }
+function lit_only(a: str): str { return "x"; }
+function (s: string) view(): str { return s; }
+`
+	for _, src := range []string{
+		// the local-backed view is argument 0; only argument 1 escapes
+		`function f(): str { var s: string = mk(); return second(slice_unchecked(s, 0, 1), "lit"); }`,
+		// the callee returns a literal, viewing no argument at all
+		`function f(): str { var s: string = mk(); return lit_only(slice_unchecked(s, 0, 1)); }`,
+		// the laundered view is param-backed, so it outlives the callee
+		`function f(p: string): str { return id_view(slice_unchecked(p, 0, 1)); }`,
+		`function f(p: string): str { return p.view(); }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: expected acceptance, got %v", src, err)
+		}
+	}
+}
+
+// TestSliceCalleeEscapeRejected: E063's half of the same hole. A callee
+// that hands back a view of a parameter is slicing the CALLER's storage,
+// so the result escapes exactly when that argument's storage does — and
+// the argument is chased as storage rather than as a slice value, which
+// is what lets an owned array passed straight in be recognised.
+func TestSliceCalleeEscapeRejected(t *testing.T) {
+	const decls = `function id_sl(x: [i32]): [i32] { return x; }
+function hop(x: [i32]): [i32] { return id_sl(x); }
+function second(a: [i32], b: [i32]): [i32] { return b; }
+function (xs: T[]) win(): [T] { return xs[0:1]; }
+`
+	for _, src := range []string{
+		// one hop
+		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return id_sl(a[0:2]); }`,
+		// two hops
+		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return hop(a[0:2]); }`,
+		// the local array itself is the argument: chasing it as a slice
+		// value would find nothing, chasing it as storage finds the array
+		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return id_sl(a)[0:1]; }`,
+		// element-polymorphic receiver method over a local array
+		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return a.win(); }`,
+		// the escaping storage is the array LITERAL at argument 1, which
+		// is the one the callee returns
+		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], [9]); }`,
+	} {
+		err := checkSource(t, decls+src)
+		if err == nil {
+			t.Errorf("%q: expected E063, got nil", src)
+			continue
+		}
+		if !hasCode(err, "E063") {
+			t.Errorf("%q: want diagnostic stamped E063, got %v", src, err)
+		}
+	}
+}
+
+// TestSliceCalleeEscapeAllowed: param-backed storage survives the call,
+// and a callee that returns an argument other than the local-backed one
+// stays accepted — the same per-parameter precision E065 relies on.
+func TestSliceCalleeEscapeAllowed(t *testing.T) {
+	const decls = `function id_sl(x: [i32]): [i32] { return x; }
+function second(a: [i32], b: [i32]): [i32] { return b; }
+function (xs: T[]) win(): [T] { return xs[0:1]; }
+`
+	for _, src := range []string{
+		`function f(p: i32[]): [i32] { return id_sl(p[0:2]); }`,
+		`function f(p: i32[]): [i32] { return p.win(); }`,
+		// argument 0 is local-backed, but the callee returns argument 1
+		`function f(p: i32[]): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: expected acceptance, got %v", src, err)
+		}
+	}
+}
+
 // TestStrViewOwnParamRejected: an `own` (consuming) parameter takes
 // ownership of its argument — the callee frees it. A `str` view must never
 // be freed by its holder, so the borrowed-position carve-out does not
