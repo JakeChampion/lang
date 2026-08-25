@@ -591,7 +591,8 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		return nil
 
-	case ssa.OpNot, ssa.OpTrunc, ssa.OpExtendS, ssa.OpExtendU, ssa.OpExtend8S, ssa.OpExtend16S:
+	case ssa.OpNot, ssa.OpTrunc, ssa.OpExtendS, ssa.OpExtendU, ssa.OpExtend8S, ssa.OpExtend16S,
+		ssa.OpClz, ssa.OpCtz, ssa.OpPopcount:
 		ra, err := e.materialize(op.Args[0], e.s0)
 		if err != nil {
 			return err

@@ -6171,8 +6171,43 @@ func unOpSeq(in x86.Inst) ([]string, error) {
 		return []string{fmt.Sprintf("sxtb %s, %s", xreg(d), wreg(d))}, nil
 	case ssa.OpExtend16S:
 		return []string{fmt.Sprintf("sxth %s, %s", xreg(d), wreg(d))}, nil
+	case ssa.OpClz, ssa.OpCtz, ssa.OpPopcount:
+		return bitCountSeq(in), nil
 	}
 	return nil, fmt.Errorf("arm64ssa: unary op %v not supported yet", in.K)
+}
+
+// bitCountSeq renders clz / ctz / popcount. in.W is the OPERAND width, so the
+// 32-bit forms use the w-register — counting over the full x-register would add
+// the zero-extended high half to clz. A w-register write zero-extends, so the
+// count comes back as a clean i32 either way.
+//
+// AArch64 has clz but no ctz: reversing the bits first turns trailing zeros into
+// leading ones. Nor does it have a scalar popcount — cnt is Advanced SIMD and
+// counts per BYTE, so the value shuttles into v0, cnt gives eight per-byte
+// counts, and addv sums them into one. At 32 bits `fmov s0, w` leaves the top
+// four bytes of the 8B group zero, so the same 8-byte sequence serves both
+// widths, and the ≤64 total cannot overflow addv's byte-wide destination.
+func bitCountSeq(in x86.Inst) []string {
+	d, wide := in.Dst, in.W == 64
+	r := wreg
+	if wide {
+		r = xreg
+	}
+	switch in.K {
+	case ssa.OpClz:
+		return []string{fmt.Sprintf("clz %s, %s", r(d), r(d))}
+	case ssa.OpCtz:
+		return []string{
+			fmt.Sprintf("rbit %s, %s", r(d), r(d)),
+			fmt.Sprintf("clz %s, %s", r(d), r(d)),
+		}
+	}
+	mov := fmt.Sprintf("fmov s0, %s", wreg(d))
+	if wide {
+		mov = fmt.Sprintf("fmov d0, %s", xreg(d))
+	}
+	return []string{mov, "cnt v0.8b, v0.8b", "addv b0, v0.8b", fmt.Sprintf("fmov %s, s0", wreg(d))}
 }
 
 // selectSeq renders OpSelect (reg[Dst] = reg[Src] != 0 ? reg[Src2] : reg[Src3])

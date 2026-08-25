@@ -128,6 +128,19 @@ const (
 	// Value; result is the flipped bool.
 	OpNot
 
+	// Bit-counting intrinsics. Args[0] is an integer of Width
+	// (32 or 64); the result is an i32 count. Clz/Ctz of zero
+	// are the operand width, matching the IR (and wasm) rather
+	// than leaving them undefined, which is why x86-64 selects
+	// lzcnt/tzcnt over the same-opcode bsr/bsf.
+	//
+	// Width is the OPERAND's, not the result's: clz of an i32
+	// counts from bit 31, so a backend that reads the wrong one
+	// is off by 32 rather than visibly broken.
+	OpClz      // (i32|i64) → i32, count of leading zero bits
+	OpCtz      // (i32|i64) → i32, count of trailing zero bits
+	OpPopcount // (i32|i64) → i32, count of set bits
+
 	// Ternary select — `cond ? ifTrue : ifFalse`. Args[0] is
 	// the bool condition; Args[1] is the value when true;
 	// Args[2] is the value when false. Branchless; backends
@@ -353,6 +366,12 @@ func (k OpKind) String() string {
 		return "reinterpret_i64_to_f64"
 	case OpNot:
 		return "not"
+	case OpClz:
+		return "clz"
+	case OpCtz:
+		return "ctz"
+	case OpPopcount:
+		return "popcnt"
 	case OpSelect:
 		return "select"
 	case OpFAdd:

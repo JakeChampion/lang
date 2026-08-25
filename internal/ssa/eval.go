@@ -3,6 +3,7 @@ package ssa
 import (
 	"fmt"
 	"math"
+	"math/bits"
 )
 
 // Eval is a reference interpreter for the integer/control-flow subset of SSA.
@@ -446,6 +447,29 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			return err
 		}
 		return set(b2i(a == 0))
+	case OpClz, OpCtz, OpPopcount:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		// op.Width is the OPERAND's. At 32 the count runs over the low half
+		// only, so clz(1) is 31 rather than 63.
+		if op.Width == 64 {
+			switch op.Kind {
+			case OpClz:
+				return set(int64(bits.LeadingZeros64(uint64(a))))
+			case OpCtz:
+				return set(int64(bits.TrailingZeros64(uint64(a))))
+			}
+			return set(int64(bits.OnesCount64(uint64(a))))
+		}
+		switch op.Kind {
+		case OpClz:
+			return set(int64(bits.LeadingZeros32(uint32(a))))
+		case OpCtz:
+			return set(int64(bits.TrailingZeros32(uint32(a))))
+		}
+		return set(int64(bits.OnesCount32(uint32(a))))
 
 	case OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe, OpGeU:
 		a, err := arg(0)
