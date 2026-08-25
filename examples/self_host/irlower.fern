@@ -355,6 +355,12 @@ pub struct FnSigs {
     // `f().len()`) tracks the result as a string for op dispatch. Strings are
     // not RC'd, so this is type tracking only.
     str_ret_fns: SigReg,
+    // bool_ret_fns: functions returning `boolean`, so a CALL result dispatches
+    // "boolean.<m>" rather than falling to expr_scalar_type's "i32" default —
+    // which rendered `f().to_string()` as 1/0. Keyed like str_ret_fns (bare
+    // for a free function, "<BaseType>.<method>" for a method) for the same
+    // reason: a method name collides across receiver types.
+    bool_ret_fns: SigReg,
     // strarr_ret_fns: functions returning `string[]` — the string-element
     // overlay on arr_ret_fns, which still drives the array's RC.
     strarr_ret_fns: SigReg,
@@ -5077,6 +5083,24 @@ function expr_is_bool(e: parser.Expr, s: LowerState): boolean {
         // on, which is why this arm needed LocalInfo.is_bool rather than the
         // annotation route the ExprIndex arm below can use (#6305).
         parser.ExprIdent(id) => { return s.is_bool_slot(s.slot_of(id.name)); },
+        // A boolean-RETURNING call, free or method. Without this the receiver
+        // takes expr_scalar_type's "i32" default and `.to_string()` renders
+        // 1/0 — the struct-field case this function's doc already describes,
+        // one expression kind over. A method is keyed by its receiver's base
+        // type, so a name shared across receivers cannot answer for another.
+        parser.ExprCall(bc) => {
+            match (bc.callee) {
+                parser.ExprIdent(bcid) => {
+                    return sig_reg_has_exact(s.sigs.bool_ret_fns, bcid.name);
+                },
+                parser.ExprFieldAccess(bcfa) => {
+                    var brecv: string = expr_struct_type(bcfa.obj, s);
+                    if (brecv.len() == 0) { return false; }
+                    return sig_reg_has_exact(s.sigs.bool_ret_fns, brecv + "." + bcfa.field);
+                },
+                _ => { return false; }
+            }
+        },
         parser.ExprUnary(u) => { return u.op == "!"; },
         // An element of a boolean[] is a boolean, so `bs[i].to_json()` keys
         // "boolean.to_json" instead of rendering 1/0 through i32's impl. The
@@ -48506,6 +48530,24 @@ pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], 
     return "";
 }
 
+// bool_ret_fns_of: rows for every function returning `boolean`. Keyed exactly
+// as str_ret_fns_of keys its own — bare for a free function, and
+// "<BaseType>.<method>" for a method, because a method name can collide
+// across receiver types with different return types (the `to_lower` case
+// str_ret_fns_of's comment records). Generic functions are included: a
+// `boolean` return is concrete whatever the type parameters are.
+pub function bool_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.ret_type == "boolean") {
+            var key: string = fn.name;
+            if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
+            out = out.append(key);
+        }
+    }
+    return out;
+}
+
 pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     for fn in funcs {
@@ -53967,7 +54009,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { arr_ret_fns: r, str_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, noesc_ret_fns: r,
+    return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, noesc_ret_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
@@ -54300,6 +54342,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
         noesc_ret_fns: sig_reg_of(noesc_ret_fns_of(funcs, structs)),
         str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)),
+        bool_ret_fns: sig_reg_of(bool_ret_fns_of(funcs)),
         strarr_ret_fns: sig_reg_of(strarr_ret_fns_of(funcs)),
         arr_method_fns: arr_method_fns_of(funcs),
         opt_ret_fns: sig_reg_of(opt_ret_fns_of(funcs)),
