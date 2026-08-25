@@ -23224,14 +23224,50 @@ function nddo_reach(structs: parser.StructDecl[], sty: string, visiting: string[
 // >= 0 is the SNAPSHOT-param case (free a box != the caller's original); < 0 is
 // the LOCAL consume-rebind case (no snapshot — the helper is passed snap=0, so
 // only the != new guard applies, and the box free is cow-guarded as before).
+//
+// rc-GATED on the OLD BOX. The helper's per-field guards compare against `new`
+// and `snap`; neither says whether a SECOND OWNER holds the old box, and freeing
+// a shared box's field buffers is a use-after-free rather than a leak — an
+// element appended into a container and then rebound (`ps = ps.append(p);
+// p = P { … }`) had the container reading buffers this store had freed. So the
+// whole reclaim runs only for the sole owner; a shared old box takes the
+// box-only path, which for a LOCAL rebind is this slot giving up its counted
+// reference (__fern_rc_dec) so the surviving owner reaches rc 1 and does the
+// deep work. A snapshot PARAM has no counted reference to give up — the caller
+// owns the box — so it takes neither.
 function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_slot: i32): LowerState {
-    var st: LowerState = se.emit(ir.op_load_local(slot));        // old (arg1); new already on stack (arg0)
+    var scratch: string = "$frs" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));                        // stash new
+    st = st.emit(ir.op_load_local(slot));                        // old
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));   // sole owner (and null-safe)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(tmp));                         // new (arg0)
+    st = st.emit(ir.op_load_local(slot));                        // old (arg1)
     if (snap_slot >= 0) {
         st = st.emit(ir.op_load_local(snap_slot));              // snap (arg2)
     } else {
         st = st.emit(ir.op_const_i32(0));                       // snap = null (local reclaim)
     }
     st = st.emit(ir.op_call_direct("__field_reclaim_" + sty, 3));   // frees replaced fields + box; returns new
+    st = st.emit(ir.op_drop());
+    if (snap_slot < 0) {
+        st = st.emit(ir.op_else());
+        // Shared, and this slot is about to stop pointing at it: hand back the
+        // count. Cow-guarded, because a self-store (`p = f(p)` returning the same
+        // box) must keep it. Shallow — the fields belong to whoever finds rc 1.
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_load_local(tmp));
+        st = st.emit(ir.op_bin("ne", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_end());
+    }
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));                         // new
     return st.emit(ir.op_store_local(slot));
 }
 

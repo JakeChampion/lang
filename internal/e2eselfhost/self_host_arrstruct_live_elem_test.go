@@ -32,6 +32,12 @@ import (
 // Unstamped sinks — an append into an uncredited container, `with`, an array or
 // tuple element, a variant payload — still refuse.
 //
+// Its REBIND release is gated on the same predicate. __field_reclaim_<T>'s guards
+// compare the old box's fields against the new value and the caller's snapshot;
+// neither says whether a second owner holds the old box, so the whole reclaim now
+// runs for the sole owner only and a shared old box just hands back this slot's
+// count. The last two rows below are what that costs and what it buys.
+//
 // Every want below was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count(): a release that ran under a live claim
 // fails the row on the dangling direction rather than the leaking one.
@@ -130,13 +136,11 @@ function round(i: i32): i32 {
 			want: 36, allocs: 1000, frees: 1000,
 		},
 		{
-			// The source is REBOUND after the push. The container reclaims its
-			// element (base was 200 frees, now 500), but `p`'s superseded box and
-			// its xs still strand: a reassigned struct local earns no reclaim
-			// credit at all, so nothing releases the value it holds at the exit.
-			// Native is 600/600 here. That gap is the struct-local reassign
-			// reclaim, which this slice does not build.
-			name: "rebound_source_partial",
+			// The source is REBOUND after the push. The rebind's field reclaim
+			// finds the old box shared and hands back this slot's count instead
+			// of freeing anything, so the container's walk reaches rc 1 and does
+			// the deep work. Base: 600 allocs / 200 frees.
+			name: "rebound_source",
 			src: decl + `function round(i: i32): i32 {
     var p: P = P { xs: [i, i + 1], n: i };
     var ps: P[] = [];
@@ -145,7 +149,25 @@ function round(i: i32): i32 {
     return (ps.len() + p.n) % 101;
 }
 ` + alelMain,
-			want: 5, allocs: 600, frees: 500,
+			want: 5, allocs: 600, frees: 600,
+		},
+		{
+			// THE USE-AFTER-FREE the rc gate closes, read as a VALUE rather than a
+			// count: the rebind used to free the old box's xs while the container
+			// still held that box, and the two fresh arrays below reuse the
+			// buffer. Read garbage where native reads 15 per round.
+			name: "rebound_source_element_still_readable",
+			src: decl + `function round(i: i32): i32 {
+    var p: P = P { xs: [7, 8], n: i };
+    var ps: P[] = [];
+    ps = ps.append(p);
+    p = P { xs: [111, 222], n: i + 1 };
+    var junk: i32[] = [333, 444];
+    var junk2: i32[] = [555, 666];
+    return ps[0].xs[0] + ps[0].xs[1] + junk[0] - junk[0] + junk2[0] - junk2[0];
+}
+` + alelMain,
+			want: 45, allocs: 800, frees: 800,
 		},
 	}
 }
