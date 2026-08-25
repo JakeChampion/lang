@@ -5959,6 +5959,62 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 	}
 }
 
+// TestSlicedTemporaryRejected: a call's result is a TEMPORARY this frame
+// owns, so slicing it and returning the slice dangles exactly as slicing a
+// local does. Binding it first was already rejected — `var t = mkarr();
+// return t[0:1];` — so the gap this closes is precisely the storage without
+// a name, on both rules.
+func TestSlicedTemporaryRejected(t *testing.T) {
+	const decls = `function mkarr(): i32[] { var a: i32[] = [1, 2, 3]; return a; }
+function fresharr(): i32[] { return [1, 2, 3]; }
+function mkstr(): string { return "a" + "b"; }
+function (s: string) own_copy(): string { return s + ""; }
+`
+	for _, src := range []string{
+		// the callee hands back a local array it built
+		`function f(): [i32] { return mkarr()[0:1]; }`,
+		// …or an array literal, which is the same storage one step shorter
+		`function f(): [i32] { return fresharr()[0:1]; }`,
+		// the `str` twin: a view of a string the callee allocated
+		`function f(): str { return slice_unchecked(mkstr(), 0, 1); }`,
+		// method form, and the receiver is a local rather than a param
+		`function f(): str { var s: string = mkstr(); return slice_unchecked(s.own_copy(), 0, 1); }`,
+	} {
+		err := checkSource(t, decls+src)
+		if err == nil {
+			t.Errorf("%q: expected a dangling-view diagnostic, got nil", src)
+			continue
+		}
+		if !hasCode(err, "E063") && !hasCode(err, "E065") {
+			t.Errorf("%q: want E063 or E065, got %v", src, err)
+		}
+	}
+}
+
+// TestSlicedTemporaryAllowed: the storage has to be THIS frame's. A callee
+// that hands back a parameter is handing back the caller's own storage,
+// which outlives the call, and a string literal is immortal however many
+// calls it is laundered through.
+func TestSlicedTemporaryAllowed(t *testing.T) {
+	const decls = `function idarr(x: i32[]): i32[] { return x; }
+function idstr(s: string): string { return s; }
+function lit(): string { return "hello"; }
+`
+	for _, src := range []string{
+		`function f(p: i32[]): [i32] { return idarr(p)[0:1]; }`,
+		`function f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }`,
+		`function f(p: string): str { return slice_unchecked(p, 0, 1); }`,
+		// a literal is immortal, so a view of one never dangles — this is
+		// the row that fails if `fresh` is set from "not a param" instead
+		// of from storage the callee really built
+		`function f(): str { return slice_unchecked(lit(), 0, 1); }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: expected acceptance, got %v", src, err)
+		}
+	}
+}
+
 // TestStrViewOwnParamRejected: an `own` (consuming) parameter takes
 // ownership of its argument — the callee frees it. A `str` view must never
 // be freed by its holder, so the borrowed-position carve-out does not

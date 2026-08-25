@@ -8825,35 +8825,67 @@ func forEachReturn(fn *ast.FuncDecl, f func(*ast.Return)) {
 	})
 }
 
-// returnViewSummaries maps each function in fns to the set of parameter
-// indices whose storage one of its returns may view, iterating rootsOf to
-// a fixpoint. Growth is monotone (a summary only ever gains indices) and
-// each set is bounded by the parameter count, so this terminates; and
-// recursion needs no special case: a self-call reads the partial summary
-// and the next round picks up whatever it grew.
+// viewSummary is what a CALLER needs to know about a callee's return.
+type viewSummary struct {
+	// params are the callee's parameter indices whose storage a return
+	// may view, so a caller chases the arguments it passed there.
+	params map[int]bool
+	// fresh marks a callee that hands back storage IT owns, by value — an
+	// owned `T[]` or `string` return built in its own frame. The CALLER's
+	// frame then owns that storage, so slicing the result and returning
+	// the slice dangles exactly as slicing a local does. A view-returning
+	// function in the same shape is reported against where it stands, so
+	// it is not marked: propagating it too would report one bug twice.
+	fresh bool
+}
+
+// returnViewSummaries maps each function in fns to what its returns hand
+// back, iterating rootsOf to a fixpoint. Growth is monotone — a summary
+// only ever gains parameter indices, and `fresh` only ever goes false to
+// true — and the index set is bounded by the parameter count, so this
+// terminates; recursion needs no special case, since a self-call reads
+// the partial summary and the next round picks up whatever it grew.
 //
-// A function absent from the result returns no view of any parameter —
-// either it was not summarised, or every return is owned or immortal.
-func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Expr, map[string]map[int]bool) viewRoots) map[string]map[int]bool {
-	sums := map[string]map[int]bool{}
+// A function absent from the result hands back nothing a caller can
+// dangle on — either it was not summarised, or every return is a view of
+// something that outlives the call.
+func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Expr, map[string]viewSummary) viewRoots) map[string]viewSummary {
+	sums := map[string]viewSummary{}
 	for _, fn := range fns {
-		sums[fn.Name] = map[int]bool{}
+		sums[fn.Name] = viewSummary{params: map[int]bool{}}
 	}
 	for changed := true; changed; {
 		changed = false
 		for _, fn := range fns {
 			cur := sums[fn.Name]
+			owned := !isViewReturn(fn.ReturnType)
 			forEachReturn(fn, func(ret *ast.Return) {
-				for i := range rootsOf(fn, ret.Value, sums).params {
-					if !cur[i] {
-						cur[i] = true
+				roots := rootsOf(fn, ret.Value, sums)
+				for i := range roots.params {
+					if !cur.params[i] {
+						cur.params[i] = true
 						changed = true
 					}
+				}
+				if roots.local && owned && !cur.fresh {
+					cur.fresh = true
+					sums[fn.Name] = cur
+					changed = true
 				}
 			})
 		}
 	}
 	return sums
+}
+
+// isViewReturn reports whether a return type is a borrowed VIEW — a `[T]`
+// slice or a `str`. Everything else hands the caller storage it owns.
+func isViewReturn(t ast.Type) bool {
+	switch t.(type) {
+	case ast.SliceType, ast.StrType:
+		return true
+	}
+	return false
 }
 
 // checkSliceEscapes implements E063: a non-owning `[T]` slice must not
@@ -8875,8 +8907,16 @@ func (c *checker) checkSliceEscapes(prog *ast.Program) {
 	// to reach `a`. Which functions are reported against is separate;
 	// see below.
 	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool { return true })
-	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]map[int]bool) viewRoots {
-		return c.sliceViewRoots(ret, envs[fn], sums)
+	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
+		if _, isSlice := fn.ReturnType.(ast.SliceType); isSlice {
+			// A `[T]` return IS the view, so where it points is the view
+			// question.
+			return c.sliceViewRoots(ret, envs[fn], sums)
+		}
+		// An owned return hands its STORAGE to the caller, so the question
+		// is where that storage came from — an argument the caller still
+		// owns, or the callee's own frame.
+		return c.sliceSourceRoots(ret, envs[fn], sums)
 	})
 	// Only a `[T]` return is REPORTED against, even though every function
 	// is summarised: an owned `T[]` return MOVES its storage to the
@@ -8902,7 +8942,7 @@ func (c *checker) checkSliceEscapes(prog *ast.Program) {
 // sliceViewRoots reports where the `[T]` value of expr bottoms out — see
 // strViewRoots, which this mirrors for arrays: `local` is what E063
 // rejects, `params` is what the caller's chase needs.
-func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]map[int]bool) viewRoots {
+func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch e := expr.(type) {
 	case *ast.SliceExpr:
@@ -8916,7 +8956,7 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 		// summary names — an array argument is that storage itself, not a
 		// slice value, so the chase goes through sliceSourceRoots.
 		if id, ok := e.Callee.(*ast.Ident); ok {
-			for i := range sums[id.Name] {
+			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
 					out.merge(c.sliceSourceRoots(e.Args[i], env, sums))
 				}
@@ -8942,7 +8982,7 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 // bottoms out — an array literal and a locally-declared owned array are
 // the function's own, a parameter is the caller's, and a local slice
 // borrows whatever its initializer views.
-func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]map[int]bool) viewRoots {
+func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch s := src.(type) {
 	case *ast.ArrayLit:
@@ -8954,10 +8994,16 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 		out.merge(c.sliceSourceRoots(s.Source, env, sums))
 	case *ast.Call:
 		// A callee handing back a view of one of its parameters is
-		// slicing the caller's storage, so the slice of that result
-		// views whatever the caller passed in.
+		// slicing the caller's storage, so the slice of that result views
+		// whatever the caller passed in. A callee handing back storage it
+		// BUILT is handing this frame the owner, so slicing an unbound
+		// `mkarr()[0:1]` dangles exactly as slicing a local array does —
+		// binding it first already reported, and the temporary is the
+		// same storage without a name.
 		if id, ok := s.Callee.(*ast.Ident); ok {
-			for i := range sums[id.Name] {
+			sum := sums[id.Name]
+			out.local = out.local || sum.fresh
+			for i := range sum.params {
 				if i < len(s.Args) {
 					out.merge(c.sliceSourceRoots(s.Args[i], env, sums))
 				}
@@ -9007,14 +9053,28 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 //
 // `return` remains the only checked escape position.
 func (c *checker) checkStrEscapes(prog *ast.Program) {
+	// `string`-returning functions are summarised alongside the `str` ones:
+	// a view of the owned string one of them BUILT dangles once this frame
+	// drops it, so `slice_unchecked(mkstr(), 0, 1)` needs mkstr's summary.
+	// Only `str` returns are REPORTED against — an owned `string` return
+	// moves its storage to the caller and cannot dangle.
 	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool {
-		_, ok := t.(ast.StrType)
-		return ok
+		switch t.(type) {
+		case ast.StrType, ast.StringType:
+			return true
+		}
+		return false
 	})
-	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]map[int]bool) viewRoots {
-		return c.strViewRoots(ret, envs[fn], sums)
+	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
+		if _, isStr := fn.ReturnType.(ast.StrType); isStr {
+			return c.strViewRoots(ret, envs[fn], sums)
+		}
+		return c.stringSourceRoots(ret, envs[fn], sums)
 	})
 	for _, fn := range order {
+		if _, isStr := fn.ReturnType.(ast.StrType); !isStr {
+			continue
+		}
 		forEachReturn(fn, func(ret *ast.Return) {
 			if c.strViewRoots(ret.Value, envs[fn], sums).local {
 				c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
@@ -9072,9 +9132,63 @@ func viewedSource(e ast.Expr, env *escapeEnv, visiting map[string]bool) ast.Expr
 	return nil
 }
 
+// stringSourceRoots reports where the storage behind an OWNED `string`
+// value comes from: a parameter the caller still owns, or this frame. It
+// answers the question `strViewRoots` cannot, because a `string` is not a
+// view — the interesting fact is who allocated it, not what it points at.
+//
+// A string literal is immortal and contributes neither root. Anything that
+// BUILDS a string — a concat, a format, an interpolation — is this frame's.
+// So is a call the summary does not cover: the only string-returning
+// callees without a FuncDecl are the builtins, and every one of them
+// (`strbuf_take`, `string_from_bytes_unchecked`) allocates fresh.
+func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch e := expr.(type) {
+	case *ast.StringLit:
+		return out // 'static / immortal
+	case *ast.Ident:
+		if i, ok := env.params[e.Name]; ok {
+			out.params[i] = true // caller-owned, and named for the summary
+			return out
+		}
+		if v, ok := env.locals[e.Name]; ok {
+			if _, isString := v.Type.(ast.StringType); isString {
+				// A locally-declared owned `string` IS this frame's
+				// storage, whatever built it. Chasing its initialiser
+				// instead would call `var s: string = mk()` immortal
+				// whenever mk happens to return a literal, which is a
+				// precision claim neither checker makes.
+				out.local = true
+				return out
+			}
+			if v.Init != nil && !env.visiting[e.Name] {
+				env.visiting[e.Name] = true
+				defer delete(env.visiting, e.Name)
+				return c.stringSourceRoots(v.Init, env, sums)
+			}
+		}
+		out.local = true
+		return out
+	case *ast.Call:
+		if id, ok := e.Callee.(*ast.Ident); ok {
+			sum, summarised := sums[id.Name]
+			out.local = !summarised || sum.fresh
+			for i := range sum.params {
+				if i < len(e.Args) {
+					out.merge(c.stringSourceRoots(e.Args[i], env, sums))
+				}
+			}
+			return out
+		}
+	}
+	out.local = true
+	return out
+}
+
 // strViewRoots reports where the `str` value of expr bottoms out; see
 // viewRoots for what each field means.
-func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]map[int]bool) viewRoots {
+func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch e := expr.(type) {
 	case *ast.StringLit:
@@ -9092,12 +9206,15 @@ func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]ma
 			// — the same byte view `s[a:b]` used to yield — so it escapes
 			// exactly when its source does.
 			if id.Name == "slice_unchecked" && len(e.Args) == 3 {
-				out.merge(c.strViewRoots(e.Args[0], env, sums))
+				// Its source is a `string`, so who OWNS that string is
+				// the question — a param outlives the call, storage this
+				// frame holds does not.
+				out.merge(c.stringSourceRoots(e.Args[0], env, sums))
 				return out
 			}
 			// Otherwise the result views whatever the caller handed to
 			// the parameters the callee's summary names.
-			for i := range sums[id.Name] {
+			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
 					out.merge(c.strViewRoots(e.Args[i], env, sums))
 				}
