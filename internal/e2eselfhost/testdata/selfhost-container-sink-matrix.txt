@@ -1,0 +1,32 @@
+# The container-sink matrix — see self_host_container_sink_matrix_test.go.
+#
+#   <cell> <native> <selfhost> <note>
+#
+# CONTAINER POSITION x what the source local does after the store. A store at
+# the source's LAST USE is a move and has always worked; a source that stays
+# LIVE (or is REBOUND) makes the store a counted SHARE, which needs the store's
+# retain, an "APOWNED:" stamp from the pass that granted the container its
+# element walk, and an rc-gated release on both owners.
+#
+# Native is clean on every cell. A `leak` in the self-host column is a position
+# whose release protocol is unfinished, so struct_box_sink_stored refuses the
+# source's credit outright rather than dangle. Retiring one is a slice: stamp
+# the container's element sites, add the store's retain, admit the counted
+# element in that container's own credit, and flip its two cells here.
+
+arrlit__moved         clean clean  the literal admits a bare ident, stamped like a self-append
+arrlit__live          clean clean  counted element: [p] retains, both owners release rc-gated
+arrlit__rebound       clean clean
+append__moved         clean clean
+append__live          clean clean
+append__rebound       clean clean  the stamp says who OWNS the element; the move analysis says who pays
+append__blockscoped   clean clean  a retired source: the site key cannot fall through the way a slot predicate did
+
+with__live            clean leak   refused: arr_set stores no counted reference
+with__moved           clean leak   refused: `with` is not a sanctioned arrstruct rebind either
+tuple__moved          clean leak   refused: tuple_make stores no counted reference for a struct element
+tuple__live           clean leak   refused
+variant__moved        clean leak   refused: the ctor call form retains array and enum payloads, not struct
+variant__live         clean leak   refused
+option__moved         clean leak   refused: opt_make retains an rc CONTAINER payload, not a struct box
+option__live          clean leak   refused

@@ -584,17 +584,15 @@ function main(): i32 { return f(); }`,
 			// native's movedLocals but NOT in the top-level set the emitting
 			// predicates read — the pure half consults the FULL moved set so
 			// both sides refuse the cancellation (movedLocals anchors the
-			// gate's premise). Native then retains the excluded alias; the
-			// self-host does not, because p's sink here is an APPEND. The
-			// routed struct gate now takes the plan's #7345 counted-sink
-			// forgiveness for a struct-literal FIELD (which retains
-			// unconditionally), but still refuses the CONTAINER sinks: their
-			// retain is gated on slot_is_reclaimable_struct, which refuses a
-			// retired slot, while the scoped sweep reads the
-			// retirement-tolerant sibling — so granting it releases a box
-			// that was never inc'd. Both divergences here therefore wait on
-			// that last half of the release-protocol port: making the retain
-			// and the release agree about retired slots.
+			// gate's premise). Native then retains the excluded alias, and the
+			// self-host now does too: p's sink here is an APPEND, and once the
+			// container's element sites are stamped whether or not the move
+			// analysis took them over, a moved push stops reading as an
+			// uncounted sink and p keeps its credit. So aliasBindIncs is an
+			// ANCHOR here rather than a divergence.
+			//
+			// nestedDrops stays divergent: the self-host dumps no counterpart
+			// for that table, which is a gap in the dump, not in the analysis.
 			name: "dead-alias-struct-loop-body-moved-source-excluded",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {
@@ -611,11 +609,10 @@ function f(): i32 {
 	return n + vals.len();
 }
 function main(): i32 { return f(); }`,
-			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22", "freeEligible": "p,v,vals", "lastUses": "p=3,v=3,vals=4"}},
+			anchor: map[string]map[string]string{"f": {"movedLocals": "p", "moveSites": "10:22", "freeEligible": "p,v,vals", "lastUses": "p=3,v=3,vals=4", "aliasBindIncs": "8:3=v"}},
 			diverge: map[string]map[string]divergence{
 				"f": {
-					"aliasBindIncs": {native: "8:3=v", selfhost: ""},
-					"nestedDrops":   {native: "9:5=v", selfhost: ""},
+					"nestedDrops": {native: "9:5=v", selfhost: ""},
 				},
 			},
 		},

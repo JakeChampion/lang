@@ -13838,6 +13838,17 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             || sa.is_enum_field_alias(eid.name)) {
                             sa = sa.retain_tos("arrlit-elem");
                         }
+                        // A bare STRUCT ident element of a container whose ELEMENT
+                        // WALK is credited — the literal sibling of the self-append
+                        // arm, reading the same "APOWNED:" stamps and deferring to
+                        // the same move analysis. A struct box is not in
+                        // slot_is_rc_container (its release is a field walk, not a
+                        // box dec), so it needs its own clause.
+                        else if (reclaim_has(sa.reclaimable_names, "APOWNED:",
+                            util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col))) {
+                            if (sa.moves_local_at(eid.name, eid.line, eid.col)) { sa = sa.note_moved_elided(sa.slot_of(eid.name)); }
+                            else { sa = sa.retain_tos("arrlit-arrstruct-elem"); }
+                        }
                     },
                     // A DIRECT ENUM field read (`[first.node]`) aliases the source
                     // struct's enum box, which __struct_drop_<T>'s k_enum arm decs on
@@ -20582,18 +20593,25 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                         aps = aps.retain(apelslot, "append-scenum-arg");
                                     }
                                     // A bare struct ident appended to a container whose
-                                    // ELEMENT WALK is credited, at a site the move
-                                    // analysis did not take over. The walk decs every
+                                    // ELEMENT WALK is credited. The walk decs every
                                     // element once and deep-drops its fields under
                                     // __fern_rc_is_unique, so a source that outlives the
                                     // push needs the container to hold a count of its
-                                    // own. "APRETAIN:" is stamped by the same pass that
+                                    // own. "APOWNED:" is stamped by the same pass that
                                     // grants the walk, which is what keeps the inc and
                                     // the dec the same set of sites.
+                                    //
+                                    // At the source's LAST USE the push TRANSFERS that
+                                    // reference instead: no inc, and the source's own
+                                    // release is elided with it, so the walk is the one
+                                    // release. The stamp says who OWNS the element; the
+                                    // move analysis says whether this store had to pay
+                                    // for it.
                                     else if (apelslot >= 0
-                                        && reclaim_has(s.reclaimable_names, "APRETAIN:",
+                                        && reclaim_has(s.reclaimable_names, "APOWNED:",
                                             util.i32_to_string(apel.line) + ":" + util.i32_to_string(apel.col))) {
-                                        aps = aps.retain(apelslot, "append-arrstruct-elem");
+                                        if (s.moves_local_at(apel.name, apel.line, apel.col)) { aps = aps.note_moved_elided(apelslot); }
+                                        else { aps = aps.retain(apelslot, "append-arrstruct-elem"); }
                                     }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
@@ -32645,15 +32663,16 @@ function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]
 // FIELD does, unconditionally, at the nested-struct / enum arms of the
 // ExprStructLit lowering — so that position is NOT a sink here and the gate takes
 // the forgiveness for it (that is what makes struct__local clean). A SELF-APPEND
-// does too, but only at the sites the ARRSTRUCT pass stamped "APRETAIN:", which
-// is why those stamps are threaded in: a stamp is issued exactly where the
-// container earned its element walk, and it is keyed on the SITE, so a retired
-// slot cannot fall through it the way `slot_is_reclaimable_struct` did.
+// does too, and so does an ARRAY-LITERAL element — but only at the sites the
+// ARRSTRUCT pass stamped "APOWNED:", which is why those stamps are threaded in: a
+// stamp is issued exactly where the container earned its element walk, and it is
+// keyed on the SITE, so a retired slot cannot fall through it the way
+// `slot_is_reclaimable_struct` did.
 //
-// Every other container sink still refuses, and must. An append into an
-// UNCREDITED container stores an element pointer nothing retained and can carry
-// it past the source's scope through a return; `with`, an array or tuple
-// element, and a variant payload have no retain at all.
+// Every other container sink still refuses, and must. An append or array literal
+// whose container is UNCREDITED stores an element pointer nothing retained and can
+// carry it past the source's scope through a return; `with`, a tuple element, and
+// a variant payload have no retain at all.
 //
 // The field-move detectors (moves_fields_* / optstruct_body_moves_field) cannot
 // see this shape — a bare ident is a leaf there. A struct-lit BASE
@@ -32685,7 +32704,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
                             // an uncredited container, `with`, an array or tuple
                             // element, a variant payload — still refuses.
                             if (aid.name == name
-                                && !reclaim_has(apretain, "APRETAIN:", util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col))) {
+                                && !reclaim_has(apretain, "APOWNED:", util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col))) {
                                 return true;
                             }
                         },
@@ -32700,7 +32719,13 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             var i: i32 = 0;
             while (i < a.elements.len()) {
                 match (a.elements[i]) {
-                    parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
+                    // An element of a literal the ARRSTRUCT pass stamped is a
+                    // counted share, not an uncounted sink — same rule, same
+                    // stamps, as the self-append arg above.
+                    parser.ExprIdent(eid) => {
+                        if (eid.name == name
+                            && !reclaim_has(apretain, "APOWNED:", util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col))) { return true; }
+                    },
                     _ => { if (struct_box_sink_stored_expr(a.elements[i], name, structs, apretain)) { return true; } }
                 }
                 i = i + 1;
@@ -32793,8 +32818,8 @@ function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, struct
 
 // struct_counted_share_stmts: `name`'s whole box appears as a bare-ident value in
 // a position that RETAINS it — a struct-literal FIELD (the nested-struct / enum
-// arms of the ExprStructLit lowering retain unconditionally) or a self-append
-// into a container whose element walk is credited. Either way the source keeps a
+// arms of the ExprStructLit lowering retain unconditionally), or a self-append or
+// ARRAY-LITERAL element of a container whose element walk is credited. Either way the source keeps a
 // claim its own release must balance, and both owners then run their deep field
 // walk under __fern_rc_is_unique so whichever reaches rc 1 does it once. The
 // marker it feeds ("SINKSHARE:") is what narrows the rc-gated field walk to
@@ -32837,7 +32862,16 @@ function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser
         parser.ExprUnary(u) => { return struct_counted_share_expr(u.operand, name, structs); },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (struct_counted_share_expr(a.elements[i], name, structs)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) {
+                // `var ps: P[] = [name]` — the literal sibling of the append arm
+                // above, and the same reasoning about stamps: the sink gate only
+                // admitted this name if the literal's element sites were stamped.
+                match (a.elements[i]) {
+                    parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
+                    _ => { if (struct_counted_share_expr(a.elements[i], name, structs)) { return true; } }
+                }
+                i = i + 1;
+            }
             return false;
         },
         parser.ExprTuple(t) => {
@@ -33626,7 +33660,7 @@ function struct_arg_to_handback(stmts: parser.Stmt[], name: string, handback: st
 }
 
 // arrstruct_credit_rows: the ARRSTRUCT / ARRSTRUCTA credit rows and their
-// "APRETAIN:" site stamps. Computed as one unit and BEFORE the struct family's
+// "APOWNED:" site stamps. Computed as one unit and BEFORE the struct family's
 // gate, which reads the stamps: whether a self-append is a counted share or an
 // uncounted sink depends on whether the CONTAINER earned its element walk, so
 // the two gates cannot be decided independently.
@@ -33662,9 +33696,9 @@ function arrstruct_credit_rows(body: parser.Stmt[], structs: parser.StructDecl[]
             } else {
                 out = out.append("ARRSTRUCT:" + asts[asti]);
             }
-            var apr: string[] = arrstruct_append_retain_sites(body, asnm, structs, msites, []);
+            var apr: string[] = arrstruct_owned_elem_sites(body, asnm, structs, msites, []);
             var apri: i32 = 0;
-            while (apri < apr.len()) { out = out.append("APRETAIN:" + apr[apri]); apri = apri + 1; }
+            while (apri < apr.len()) { out = out.append("APOWNED:" + apr[apri]); apri = apri + 1; }
         }
         asti = asti + 1;
     }
@@ -33679,7 +33713,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // below still proves non-escape before any is freed.
     var reassigned: string[] = body_assign_targets(body);
     fresh = collect_fresh_ret_call_names(body, structs, fresh_ret, reassigned, fresh);
-    // The array-of-structs rows come FIRST: their "APRETAIN:" stamps say which
+    // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
     var asrows: string[] = arrstruct_credit_rows(body, structs, borrowable, fresh_ret, msites);
@@ -42578,18 +42612,30 @@ function arrstruct_elem_struct_type(type_name: string, structs: parser.StructDec
     return elem + "";
 }
 
-// arrstruct_lit_is_fresh: `e` is a non-empty array literal whose EVERY element is a
-// fresh struct literal (is_fresh_struct_init — an ExprStructLit of a struct decl). The
-// struct construction's alias-inc balances the per-element __struct_drop, so a
-// freshly-built element box is sole-owned; a bare-ident element would alias a live
-// struct the free could dangle, so only literals qualify.
-function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+// arrstruct_lit_is_fresh: `e` is a non-empty array literal whose EVERY element the
+// array may own — a fresh struct literal (is_fresh_struct_init), or, when
+// `bare_ok`, a bare IDENT. The literal RETAINS a bare ident exactly as the
+// self-append does, so the element is a counted share and both owners run their
+// field walk under __fern_rc_is_unique; the sites that retain are the ones
+// arrstruct_owned_elem_sites stamps.
+//
+// `bare_ok` is false for the ARRSTRUCTF producer registry, whose question is the
+// stricter one: a RETURNED literal's counted co-owner is a local of the frame
+// being left, so "every element box is the callee's own" needs the fresh-literal
+// evidence rather than a count.
+function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[], bare_ok: boolean): boolean {
     match (e) {
         parser.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
-                if (!is_fresh_struct_init(arr.elements[i], structs)) { return false; }
+                if (!is_fresh_struct_init(arr.elements[i], structs)) {
+                    if (!bare_ok) { return false; }
+                    match (arr.elements[i]) {
+                        parser.ExprIdent(_) => {},
+                        _ => { return false; }
+                    }
+                }
                 i = i + 1;
             }
             return true;
@@ -42664,29 +42710,39 @@ function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parse
     }
     return false;
 }
-// arrstruct_append_retain_sites: the "line:col" keys of the bare-ident elements
-// `name` is self-appended that the move analysis did NOT take over. Each is a
-// counted share — the source keeps its reference and the container needs one of
-// its own — so the append emits a retain there and the element walk decs it back.
+// arrstruct_owned_elem_sites: the "line:col" keys of every bare-ident element the
+// credited container `name` takes ownership of — a self-append argument, or an
+// element of the LITERAL `name` is bound from. The container's element walk decs
+// each element once and deep-drops its fields under __fern_rc_is_unique, so what
+// a stamp says is "this element is the array's to release".
 //
-// Computed HERE, beside the credit it belongs to, and read at the append by
-// site key: the walk and the inc then cannot disagree about which elements are
-// shared. Deriving the inc from the ELEMENT's own credit instead was the bug
-// this replaced — a source with no credit got no inc while the container still
-// dec'd once per push, so a box appended four times was released four times.
-function arrstruct_append_retain_sites(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
+// It deliberately does NOT ask about moves. The site says who owns the element;
+// whether the store RETAINS or TRANSFERS is the move analysis's answer, read at
+// the lowering site, which has it. Encoding both here left the two questions
+// entangled: a source appended once and then rebound was refused the credit at
+// its second, MOVED push, so its first — retained — box was never released
+// (`ps.append(p); p = P { … }; ps.append(p)`, 600/400 against native's 600/600).
+//
+// Computed HERE, beside the credit it belongs to, and read by site key: the walk
+// and the inc then cannot disagree about which elements are shared. Deriving the
+// inc from the ELEMENT's own credit instead was the bug this replaced — a source
+// with no credit got no inc while the container still dec'd once per push, so a
+// box appended four times was released four times.
+function arrstruct_owned_elem_sites(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
+            parser.StmtVar(v) => {
+                // The literal `name` is bound from: `var ps: P[] = [p, q];`.
+                if (v.name == name) { a = arrstruct_lit_elem_sites(v.init, a); }
+            },
             parser.StmtAssign(as1) => {
                 if (as1.target == name && arrstruct_self_append_elem(as1.value, name, structs, msites)) {
                     match (as1.value) {
                         parser.ExprCall(c) => {
                             match (c.args[0]) {
                                 parser.ExprIdent(eid) => {
-                                    if (!arrstruct_moved_elem(c.args[0], msites)) {
-                                        a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col));
-                                    }
+                                    a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col));
                                 },
                                 _ => {}
                             }
@@ -42696,16 +42752,35 @@ function arrstruct_append_retain_sites(stmts: parser.Stmt[], name: string, struc
                 }
             },
             parser.StmtIf(f) => {
-                a = arrstruct_append_retain_sites(f.then_body, name, structs, msites, a);
-                a = arrstruct_append_retain_sites(f.else_body, name, structs, msites, a);
+                a = arrstruct_owned_elem_sites(f.then_body, name, structs, msites, a);
+                a = arrstruct_owned_elem_sites(f.else_body, name, structs, msites, a);
             },
-            parser.StmtWhile(w) => { a = arrstruct_append_retain_sites(w.body, name, structs, msites, a); },
-            parser.StmtFor(fo) => { a = arrstruct_append_retain_sites(fo.body, name, structs, msites, a); },
+            parser.StmtWhile(w) => { a = arrstruct_owned_elem_sites(w.body, name, structs, msites, a); },
+            parser.StmtFor(fo) => { a = arrstruct_owned_elem_sites(fo.body, name, structs, msites, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = arrstruct_append_retain_sites(arm.body, name, structs, msites, a); }
+                for arm in m.arms { a = arrstruct_owned_elem_sites(arm.body, name, structs, msites, a); }
             },
             _ => {}
         }
+    }
+    return a;
+}
+
+// arrstruct_lit_elem_sites: the bare-ident element sites of an array literal.
+function arrstruct_lit_elem_sites(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprArray(arr) => {
+            var i: i32 = 0;
+            while (i < arr.elements.len()) {
+                match (arr.elements[i]) {
+                    parser.ExprIdent(eid) => { a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col)); },
+                    _ => {}
+                }
+                i = i + 1;
+            }
+        },
+        _ => {}
     }
     return a;
 }
@@ -42782,7 +42857,7 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 function body_has_nonfresh_arrstruct_return(stmts: parser.Stmt[], structs: parser.StructDecl[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtReturn(r) => { if (!arrstruct_lit_is_fresh(r.value, structs)) { return true; } },
+            parser.StmtReturn(r) => { if (!arrstruct_lit_is_fresh(r.value, structs, false)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, structs) || body_has_nonfresh_arrstruct_return(f.else_body, structs)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, structs)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, structs)) { return true; } },
@@ -42829,7 +42904,7 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[]
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, true)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
