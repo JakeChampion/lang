@@ -5554,9 +5554,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// the no-free path.
 	b.rc.preciseDrops = b.computePreciseDrops()
 	b.rc.nestedDrops = b.computeNestedDrops()
-	if b.tryEmitTrmc() {
-		// TRMC took over the whole body (a single `match`); skip normal
-		// statement lowering. Scratch-type recording below still runs.
+	if handled, err := b.tryEmitTrmc(); err != nil {
+		return nil, err
+	} else if handled {
+		// TRMC took over the whole body (the setup statements and the
+		// trailing `match`); skip normal statement lowering. Scratch-type
+		// recording below still runs.
 	} else {
 		for i, st := range fn.Body.Stmts {
 			if err := b.stmt(st); err != nil {

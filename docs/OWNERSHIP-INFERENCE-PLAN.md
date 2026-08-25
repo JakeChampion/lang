@@ -304,7 +304,12 @@ analysis, which is independent, pure, and de-risks the design.
   temps — and before the param store rebinds the scrutinee to the tail), so
   it is correct regardless of whether those expressions reference the
   scrutinee. Pointer-headed cells and trees are excluded (a shallow free
-  would lose a non-tail reference). Consume-safe TRMC callees become
+  would lose a non-tail reference), and so are the shapes `detectTrmc`
+  admits beyond the canonical list map (#5344 — guards, a `_` arm, a branch
+  tail, an early `return`, a bare tail self-call): the loop releases a cell
+  only on the advance, so any path leaving it early walks away from the
+  cells still ahead of it. Those shapes still get TRMC; they keep the
+  borrow model. Consume-safe TRMC callees become
   owned-by-default at the CALL site (`calleeParamOwnedByDefault`) while the
   definition side still skips the exit-sweep (the loop frees, not the
   sweep). Verified: the differential gate stays byte-identical; IR tests pin
