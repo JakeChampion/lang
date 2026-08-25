@@ -20852,6 +20852,25 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     var se: LowerState = lower_expr(a.value, aas);
     se = se.with_selfrebind("");
     if (!se.ok) { return se; }
+    // The COUNTED struct alias reassign (`keep = p`) retains HERE rather than via
+    // emit_arr_store's alias_inc, because the struct classes return earlier —
+    // emit_field_reclaim_store and the snapshot/deep paths take no alias_inc
+    // parameter at all. Emitting it on the operand stack right after the RHS is
+    // lowered is the one point every return path passes through, so the credit
+    // this retain pays for can never be granted without it. (__fern_rc_inc returns
+    // its argument, so the value stays on the stack.) The ARRAY path is untouched
+    // and still takes its retain inside emit_arr_store.
+    var alias_reassign_inc: boolean = false;
+    match (a.value) {
+        parser.ExprIdent(aid2) => {
+            if (!s.is_arr_slot(s.slot_of(aid2.name))
+                    && reclaim_has(s.reclaimable_names, "ALIASSRC:", s.reclaim_site_key(s.slot_of(aid2.name)))) {
+                alias_reassign_inc = true;
+            }
+        },
+        _ => {}
+    }
+    if (alias_reassign_inc) { se = se.emit(ir.op_call_direct("__fern_rc_inc", 1)); }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
     // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
     // storing the fresh one — closes the register-backend per-reassign payload leak
@@ -33313,6 +33332,116 @@ function method_result_moved_stmt(st: parser.Stmt, name: string, method: string,
     return false;
 }
 
+// bare_assign_targets_all_fresh: every `other = name` in `body` assigns into a
+// local that is itself a fresh struct candidate (a site key in `fresh`). Those are
+// exactly the assignments lower_stmt_assign retains, so the source's box stays
+// counted; an assign into anything else retains nothing and keeps the refusal.
+function bare_assign_targets_all_fresh(stmts: parser.Stmt[], name: string, fresh: string[]): boolean {
+    for stmt in stmts { if (!bare_assign_tgt_ok(stmt, name, fresh)) { return false; } }
+    return true;
+}
+
+function bare_assign_tgt_ok(st: parser.Stmt, name: string, fresh: string[]): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            match (a.value) {
+                parser.ExprIdent(rid) => {
+                    if (rid.name == name && a.target != name) { return credited_holds_name(fresh, a.target); }
+                },
+                _ => {}
+            }
+            return true;
+        },
+        parser.StmtIf(f) => { return bare_assign_targets_all_fresh(f.then_body, name, fresh) && bare_assign_targets_all_fresh(f.else_body, name, fresh); },
+        parser.StmtWhile(w) => { return bare_assign_targets_all_fresh(w.body, name, fresh); },
+        parser.StmtFor(fo) => { return bare_assign_targets_all_fresh(fo.body, name, fresh); },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (!bare_assign_targets_all_fresh(m.arms[ai].body, name, fresh)) { return false; }
+                ai = ai + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return bare_assign_tgt_ok(d.action, name, fresh); },
+        _ => { return true; }
+    }
+}
+
+// alias_reassign_sources_counted: every ALIAS reassign of `name` has a bare-ident
+// RHS naming a local that is itself struct-CREDITED (site key in `credited`). Field
+// reads (`name = x.f`) and element reads (`name = xs[i]`) are counted by no retain
+// and stay refused. Asking about the CREDITED set rather than the candidate set is
+// what keeps this co-extensive with the retain: a candidate the escape gate rejects
+// earns no "ALIASSRC:" row, so forgiving off it would release an uncounted box.
+function alias_reassign_sources_counted(stmts: parser.Stmt[], name: string, credited: string[]): boolean {
+    var t: i32 = alias_reassign_sources_tri(stmts, name, credited);
+    return t > 0;
+}
+
+// alias_reassign_src_ok: -1 = an alias reassign this cannot count, 1 = a counted
+// one, 0 = no alias reassign of `name` here.
+function alias_reassign_src_ok(st: parser.Stmt, name: string, credited: string[]): i32 {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target != name) { return 0; }
+            match (a.value) {
+                parser.ExprIdent(rid) => {
+                    if (rid.name == name) { return 0; }
+                    if (credited_holds_name(credited, rid.name)) { return 1; }
+                    return 0 - 1;
+                },
+                parser.ExprFieldAccess(_) => { return 0 - 1; },
+                parser.ExprIndex(_) => { return 0 - 1; },
+                _ => { return 0; }
+            }
+        },
+        parser.StmtIf(f) => {
+            var tt: i32 = alias_reassign_sources_tri(f.then_body, name, credited);
+            var ee: i32 = alias_reassign_sources_tri(f.else_body, name, credited);
+            if (tt < 0 || ee < 0) { return 0 - 1; }
+            if (tt > 0 || ee > 0) { return 1; }
+            return 0;
+        },
+        parser.StmtWhile(w) => { return alias_reassign_sources_tri(w.body, name, credited); },
+        parser.StmtFor(fo) => { return alias_reassign_sources_tri(fo.body, name, credited); },
+        parser.StmtMatch(m) => {
+            var acc: i32 = 0;
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var r: i32 = alias_reassign_sources_tri(m.arms[ai].body, name, credited);
+                if (r < 0) { return 0 - 1; }
+                if (r > 0) { acc = 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtDefer(d) => { return alias_reassign_src_ok(d.action, name, credited); },
+        _ => { return 0; }
+    }
+}
+
+function alias_reassign_sources_tri(stmts: parser.Stmt[], name: string, credited: string[]): i32 {
+    var acc: i32 = 0;
+    for stmt in stmts {
+        var r: i32 = alias_reassign_src_ok(stmt, name, credited);
+        if (r < 0) { return 0 - 1; }
+        if (r > 0) { acc = 1; }
+    }
+    return acc;
+}
+
+// credited_holds_name: `credited` holds binding-SITE keys ("name@line:col"); this
+// asks whether any of them is for the variable `name`.
+function credited_holds_name(credited: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < credited.len()) {
+        if (reclaim_site_name(credited[i]) == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // reassigned_from_alias reports whether `name` is ever the TARGET of an
 // assignment whose RHS ALIASES existing owned memory — a bare local read
 // (`lam = l`), a field read (`lam = x.f`), or an element read (`lam = xs[i]`).
@@ -33619,8 +33748,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
                 && !struct_box_sink_stored_stmts(body, fnm, structs, asrows);
         }
         else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
+        // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
+        // Its header named the precondition itself — "family knowledge until
+        // assignments carry the co-extensive retain" — and lower_stmt_assign now
+        // carries it, keyed on the "ALIASSRC:" row this branch emits.
+        var bas_ok: boolean = !struct_bare_assigned_src(body, fnm)
+            || bare_assign_targets_all_fresh(body, fnm, fresh);
         if (st_esc_ok && !reassigned_from_alias(body, fnm)
-            && !struct_bare_assigned_src(body, fnm)
+            && bas_ok
             && !struct_returned_bare(body, fnm)
             && !struct_arg_to_handback(body, fnm, handback)
             && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
@@ -33655,8 +33790,38 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             if (struct_counted_share_stmts(body, fnm, structs)) {
                 out = out.append("SINKSHARE:" + fresh[i]);
             }
+            // A forgiven bare-assign SOURCE hands its box on as a COUNTED share, so
+            // both owners reach the release and the field walk must be rc-gated for
+            // the same reason the struct-literal sink is: two static deep walks free
+            // every buffer twice (exit 99).
+            if (struct_bare_assigned_src(body, fnm)) {
+                out = out.append("ALIASSRC:" + fresh[i]);
+                if (util.index_of_str(out, "SINKSHARE:" + fresh[i]) < 0) {
+                    out = out.append("SINKSHARE:" + fresh[i]);
+                }
+            }
         }
         i = i + 1;
+    }
+    // SECOND PASS — the counted alias reassign TARGET. reassigned_from_alias refuses
+    // every such name because the slot would hold a BORROW; the retain above makes it
+    // a counted share instead, so the premise no longer holds. It runs second because
+    // the forgiveness asks whether the SOURCE ended up credited, which is only known
+    // once the first pass finishes — and that ordering is the co-extensivity
+    // guarantee.
+    var ai2: i32 = 0;
+    while (ai2 < fresh.len()) {
+        var anm: string = reclaim_site_name(fresh[ai2]);
+        if (util.index_of_str(out, fresh[ai2]) < 0
+                && reassigned_from_alias(body, anm)
+                && alias_reassign_sources_counted(body, anm, out)
+                && !struct_returned_bare(body, anm)
+                && !body_unsafe_for_alias(body, anm, borrowable, recv_borrow,
+                       alias_bind_sites_of(body, anm, borrowable, recv_borrow, body, []))) {
+            out = out.append(fresh[ai2]);
+            out = out.append("SINKSHARE:" + fresh[ai2]);
+        }
+        ai2 = ai2 + 1;
     }
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
     // sweeps' DEEP field drop (emit_struct_field_drops → __struct_drop_<T>) is
