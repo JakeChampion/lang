@@ -1521,6 +1521,28 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"mc-match-expr-consumes-ok", "@must_consume\nenum Pending { Reply(string), Close }\nfunction f(p: Pending): i32 { var r: i32 = match (p) { Reply(s) => 1, Close => 0 }; return r; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"mc-nested-block-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction f(c: boolean): void { if (c) { var t: Ticket = Ticket { id: 1 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E067"}},
 		{"mc-unmarked-unaffected-ok", "struct Plain { id: i32 }\nfunction f(): void { var p: Plain = Plain { id: 1 }; }\nfunction main(): i32 { return 0; }\n", nil},
+		// Mixed-SIGNEDNESS integer operands (native's commonIntegerWidth).
+		// The self-host tested only "both are integers", so `i32 + u32` and
+		// every sibling were accepted where native rejects them — a whole
+		// class of programs the two compilers disagreed on, invisible to the
+		// differential suites because they compile the same (valid) sources
+		// through both. One row per operator family: the rule lives in six
+		// arms and each was widened separately.
+		{"e009-mixed-sign-add", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (n + u) as i32; }\n", []string{"E009"}},
+		{"e009-mixed-sign-sub", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (n - u) as i32; }\n", []string{"E009"}},
+		{"e009-mixed-sign-shift", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (u << n) as i32; }\n", []string{"E009"}},
+		{"e009-mixed-sign-bitand", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (n & u) as i32; }\n", []string{"E009"}},
+		{"e009-mixed-sign-order", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; if (n < u) { return 1; } return 0; }\n", []string{"E009"}},
+		{"e009-mixed-sign-saturating", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (n +| u) as i32; }\n", []string{"E009"}},
+		{"e009-mixed-sign-u8", "function main(): i32 { var s: string = \"abc\"; var n: i32 = 1; return n + s[0]; }\n", []string{"E009"}},
+		// The three shapes that must STAY accepted, which is what stops the
+		// rule from being a blanket "widths must match". Same signedness at
+		// different widths auto-widens; an unsuffixed literal is read at the
+		// other operand's width (native's Polymorphic, unsettled_int_literal
+		// here); an explicit cast settles it.
+		{"mixed-width-same-sign-clean", "function main(): i32 { var n: i32 = 1; var q: i64 = 5; return (q + n) as i32; }\n", nil},
+		{"unsigned-plus-literal-clean", "function main(): i32 { var s: string = \"abc\"; var b: u8 = s[0]; return (b + 1) as i32; }\n", nil},
+		{"mixed-sign-cast-clean", "function main(): i32 { var n: i32 = 1; var u: u32 = 2; return (u as i32) + n; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1675,6 +1697,19 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// a tuple whose element is a (builtin) enum/union. All well-typed: the
 		// self-host must not invent a diagnostic the Go checker doesn't report.
 		{"tuple-return", "function pair(): (i32, string) { return (1, \"a\"); }\nfunction main(): i32 { return 0; }\n"},
+		// Integer-width arithmetic the mixed-signedness rule must NOT flag.
+		// The rule rejects operands that differ in SIGNEDNESS; everything
+		// else about integer arithmetic has to keep working, and these are
+		// the shapes the stdlib and the compiler's own sources lean on. The
+		// Go checker is the oracle, so a self-host false positive on any of
+		// them fails here rather than surfacing as a rejected stdlib build.
+		{"int-widen-i64-i32", "function main(): i32 { var q: i64 = 5; var n: i32 = 1; return (q + n) as i32; }\n"},
+		{"int-widen-u8-u32", "function main(): i32 { var s: string = \"ab\"; var b: u8 = s[0]; var u: u32 = 2; return (b + u) as i32; }\n"},
+		{"int-unsigned-literal", "function main(): i32 { var s: string = \"ab\"; var b: u8 = s[0]; return (b * 2 + 1) as i32; }\n"},
+		{"int-unsigned-shift-literal", "function main(): i32 { var u: u64 = 7; return ((u << 3) + 1) as i32; }\n"},
+		{"int-unsigned-compare-literal", "function main(): i32 { var s: string = \"ab\"; var b: u8 = s[0]; if (b < 128) { return 1; } return 0; }\n"},
+		{"int-byte-digit-arith", "function main(): i32 { var s: string = \"7\"; var d: u8 = s[0] - b'0'; return d as i32; }\n"},
+		{"int-usize-mixed", "function main(): i32 { var p: usize = 16; var n: i32 = 4; return (p + n) as i32; }\n"},
 		{"tuple-var-annot", "function main(): i32 { var t: (i32, string) = (1, \"a\"); return t.0; }\n"},
 		{"tuple-array-annot", "function main(): i32 { var out: (i32, string)[] = []; return 0; }\n"},
 		{"tuple-nested", "function main(): i32 { var t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},

@@ -16366,11 +16366,17 @@ function dv_cmp_stmts(vn: string, ty: string, lhs: Expr, rhs: Expr): Stmt[] {
 function dv_hash_stmts(hv: string, ty: string, recv: Expr, sfx: string): Stmt[] {
     var mul: Expr = e_binary("*", e_ident(hv), e_number("31", "", false));
     if (ty == "string") {
-        // h = h * 31; var i = 0; while (i < recv.len()) { h = h*31 + recv[i]; i = i+1; }
+        // h = h * 31; var i = 0; while (i < recv.len()) { h = h*31 + (recv[i] as i32); i = i+1; }
+        //
+        // The byte is cast, not widened implicitly: an index into a string is
+        // u8 and the accumulator is i32, which is a mixed-SIGNEDNESS binop the
+        // checker rejects. The numeric-scalar arm below has always cast for the
+        // same reason; this one did not, and nothing noticed while the checker
+        // let mixed signedness through. Value-identical either way.
         var iv: string = "__hsi" + sfx;
         var body: Stmt[] = [s_assign(hv, e_binary("+",
             e_binary("*", e_ident(hv), e_number("31", "", false)),
-            e_index(recv, e_ident(iv))))];
+            e_unary("as_i32", e_index(recv, e_ident(iv)))))];
         body = body.append(s_assign(iv, e_binary("+", e_ident(iv), e_number("1", "", false))));
         var out: Stmt[] = [s_assign(hv, mul)];
         out = out.append(s_var(iv, "i32", e_number("0", "", false)));
