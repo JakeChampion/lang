@@ -224,6 +224,7 @@ type scope struct {
 	// Slot snapshots used to build the merge phis.
 	preSlots  []Value // slots state entering the scope
 	thenSlots []Value // captured at OpElse; slots after the then arm
+	thenFell  bool    // then arm reached OpElse alive (thenSlots is its snapshot)
 	sawElse   bool
 
 	// Value semantics. If blockType != BlockTypeVoid, the if is
@@ -903,13 +904,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 				l.stack = l.stack[:len(l.stack)-1]
 			}
 			l.out.SetBr(l.cur, top.postB)
+			top.thenFell = true
 			top.thenSlots = append([]Value(nil), l.slots...)
 		} else {
 			// Then-arm exited via OpBr/OpReturn — no fall-through
-			// merge source. Leave thenSlots nil as sentinel, and
-			// drop whatever the dead arm left on the operand stack
-			// so the else arm isn't lifted on top of it.
-			top.thenSlots = nil
+			// merge source. Drop whatever the dead arm left on the
+			// operand stack so the else arm isn't lifted on top of it.
 			l.dropAbandonedStack(*top)
 		}
 		l.slots = append([]Value(nil), top.preSlots...)
@@ -1060,9 +1060,12 @@ func (l *lifter) endIfScope(top scope) error {
 	// Source 1: then-arm fall-through.
 	thenAlive := false
 	if top.sawElse {
-		// SetBr was emitted at OpElse time iff cur was alive there;
-		// detect that via top.thenSlots != nil.
-		if top.thenSlots != nil {
+		// SetBr was emitted at OpElse time iff cur was alive there,
+		// which top.thenFell records. It cannot be read off thenSlots
+		// being non-nil: a function with no locals snapshots an EMPTY
+		// slot slice, and `append([]Value(nil))` of nothing is nil, so
+		// every live then arm in such a function looked dead.
+		if top.thenFell {
 			thenAlive = true
 			sources = append(sources, mergeSource{
 				slots:    top.thenSlots,

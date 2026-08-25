@@ -34,14 +34,13 @@
 // perfectly well in an exit code, so the byte oracle's narrowness
 // costs nothing for that class.
 //
-// Coverage-gap seeds are expected and skipped: the arm64-ssa
+// A coverage-gap seed SKIPS rather than fails: the arm64-ssa
 // contract is that an unsupported op *errors* rather than
 // miscompiles, so a compile failure is a documented endpoint, not a
-// bug. To stop that from quietly hollowing the test out — the
-// failure mode TestArm64SSACliRoundtrip actually suffered, asserting
-// unmet behaviour for months because it skipped everywhere — the
-// sweep asserts a floor on how many sampled seeds must have
-// compiled and run.
+// bug. Neither corpus has one left — both sweep clean end to end —
+// so the sweep asserts a floor on how many sampled seeds compiled
+// and ran, which stops a regression from hollowing the test out the
+// way TestArm64SSACliRoundtrip was hollowed for months.
 package e2e
 
 import (
@@ -59,12 +58,16 @@ import (
 )
 
 // diffOracleSSAMinRunRatio is the floor on sampled-and-executed
-// seeds. Compile gaps are legitimate (~21% of the corpus today), but
-// if the arm64-ssa frontend regressed to rejecting nearly everything
-// this test would go green while testing nothing — so require that
-// at least this fraction of the sampled seeds made it all the way to
-// a stdout comparison.
-const diffOracleSSAMinRunRatio = 0.4
+// seeds: without one, a backend that regressed to rejecting programs
+// it used to accept would turn every seed into a skip and leave this
+// oracle green while testing nothing.
+//
+// It is 1.0 because arm64-ssa now compiles and runs BOTH corpora
+// whole — all 2048 exit-byte and all 1024 printable seeds, with no
+// interpreter-side gap either. So a single skip is a regression, and
+// the floor says exactly that rather than leaving 60% of the sweep
+// free to disappear unnoticed.
+const diffOracleSSAMinRunRatio = 1.0
 
 // TestDifferential_Arm64SSAStdout runs the printable fernsmith
 // corpus through `-target arm64-linux -backend ssa` and asserts the resulting

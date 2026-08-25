@@ -73,11 +73,15 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
 
 ## Known hazards (called out so later phases don't trip on them)
 
-- **SSA coverage parity.** `LiftFromIR`/`wasmssa` target wasm and may not yet
-  cover everything the native IR backends emit (strings, structs, arrays, maps,
-  closures, **RC inc/dec**, runtime-helper calls, PIE). Phase 2 must audit the
-  lift for native-relevant ops and extend it before the differential suite can
-  pass — this is the bulk of the work, not the allocator itself.
+- **SSA coverage parity.** `LiftFromIR` and the native emit path have to cover
+  everything the native IR backends emit (strings, structs, arrays, maps,
+  closures, **RC inc/dec**, runtime-helper calls, PIE) before the differential
+  suite can pass. This was the bulk of the work, not the allocator itself, and
+  on arm64 it is now **closed against both fernsmith corpora**: all 2048
+  exit-byte and all 1024 printable seeds compile through
+  `-target arm64-linux -backend ssa` and match the interpreter, with no skips
+  left on either leg (`diffOracleSSAMinRunRatio` is 1.0 accordingly). Coverage
+  beyond the generator's reach is still open.
 - **Perceus / RC ordering.** The IR carries reference-counting ops; the SSA path
   must preserve them and the allocator must not reorder across the points they
   assume. Confirm whether RC insertion happens before or after the SSA lift.
@@ -441,7 +445,12 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   added here). Adding the scalar unary ops here lifts coverage to ~96%; strings
   + floats are the next big blocks.
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
-- [ ] Phase 4 — arm64 SSA emit + default
+- [~] Phase 4 — arm64 SSA emit + default. The emit path ships as
+  `-target arm64-linux -backend ssa` (`internal/codegen/arm64ssa`), not as a
+  separate target, so the target descriptor and its E066 capability
+  enforcement still apply. Both fernsmith corpora sweep clean through it (see
+  the coverage-parity hazard above). Remaining: flipping the default, and the
+  binary-size measurement that flip is for.
 - [ ] Phase 5 — retire the stack-machine backends
 
 ## Emit-quality phase — results
