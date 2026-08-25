@@ -3031,13 +3031,14 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 		}
 	}
 
-	// Destructuring foreach: `for ( PATTERN ) in expr body`. The opening
-	// `(` is shared with the C-style for, so the disambiguation rule is
-	// written down rather than discovered: a parenthesised group whose
-	// MATCHING `)` is followed by `in` opens a pattern. A C-style header
-	// closes on the body's `{`, and the plain `for x in xs` form has no
-	// parens at all, so nothing else in a `for` header can look like this.
-	if p.match(lexer.Punct, "(") && p.forHeaderPatternAhead() {
+	// Destructuring foreach: `for PATTERN in expr body`, over the same
+	// pattern heads every other binding site takes. Only the tuple head
+	// needs disambiguating — its `(` is shared with the C-style for — so
+	// the rule is written down rather than discovered: a parenthesised
+	// group whose MATCHING `)` is followed by `in` opens a pattern. A
+	// C-style header closes on the body's `{`, and the plain `for x in xs`
+	// form has already been taken above.
+	if p.forHeaderPatternAhead() {
 		return p.parseForEachPattern(kw, label)
 	}
 
@@ -3353,12 +3354,20 @@ func desugarForEachExpr(e ast.Expr, streamFns map[string]bool) {
 	})
 }
 
-// forHeaderPatternAhead reports whether the `(` at the cursor opens a
-// destructuring header rather than a C-style `for` clause: it scans to the
-// MATCHING `)` — tracking nesting, so a nested element in `for ((a, b), c) in
-// m` stays balanced — and asks whether `in` follows. The lexer treats `in` as a
-// plain identifier, so match on text rather than kind.
+// forHeaderPatternAhead reports whether the cursor opens a destructuring
+// `for` header rather than a C-style `for` clause.
+//
+// A tuple head shares its `(` with the C-style form, so that one needs the
+// scan below: to the MATCHING `)` — tracking nesting, so a nested element in
+// `for ((a, b), c) in m` stays balanced — asking whether `in` follows. The
+// lexer treats `in` as a plain identifier, so match on text rather than kind.
+// Every other pattern head is unambiguous here, and atPatternHead settles it:
+// a C-style header always opens `(`, and the plain `for x in xs` form is an
+// identifier followed by `in`, which parseFor has already taken.
 func (p *parser) forHeaderPatternAhead() bool {
+	if !p.match(lexer.Punct, "(") {
+		return p.atPatternHead()
+	}
 	depth := 0
 	for i := p.i; i < len(p.tokens); i++ {
 		t := p.tokens[i]
@@ -3417,11 +3426,18 @@ func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, er
 		return nil, err
 	}
 
+	// The element variable holds the whole value the pattern destructures,
+	// so an `@` binding names it — the same placement a destructured
+	// parameter gives its holder.
 	id := p.nextForeachID()
+	elem := pat.atBinding
+	if elem == "" {
+		elem = ast.ForEachElemName(id)
+	}
 	fe := &ast.ForEach{
 		P:       kw.Pos,
 		ID:      id,
-		Var:     fmt.Sprintf("__foreach_elem_%d", id),
+		Var:     elem,
 		VarPos:  pos,
 		Pattern: d,
 		Iter:    expr,
@@ -5055,7 +5071,7 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 	// expr;`. Mirrors the `let` spellings (both route to parseDestructure)
 	// but uses the `var` keyword to keep the source surface uniform with
 	// regular `var name = expr;` declarations.
-	if p.atDestructurePattern() {
+	if p.atPatternHead() {
 		return p.parseDestructure(kw.Pos)
 	}
 	name, err := p.expect(lexer.Ident, "")
@@ -5214,7 +5230,7 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	// arity-checked and a struct has one shape, so neither can fail the
 	// way an enum destructure can. The refutable forms below all have
 	// `(`, `.`, `@` or a literal after the name, never `{`.
-	if p.atDestructurePattern() {
+	if p.atPatternHead() {
 		return p.parseDestructure(kw.Pos)
 	}
 	pats, err := p.parseOrPatterns()
@@ -5254,33 +5270,24 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 }
 
 // atParamPattern reports whether the cursor is on a destructuring
-// parameter rather than a plain `name: T` one — an opening `(` for a
-// tuple pattern, or `IDENT {` for a struct pattern. Neither shape can be
-// a plain parameter (those always have `:` after the name), and `own` is
-// followed by an identifier, so the test is unambiguous.
+// parameter rather than a plain `name: T` one. The shared pattern heads
+// say so, plus one head atPatternHead deliberately leaves alone: an enum
+// variant pattern. That is not a legal parameter — it can fail to match —
+// but claiming it here routes it to parseParamPattern, which says so,
+// rather than to the plain-param path's bare `expected ":"`.
 func (p *parser) atParamPattern() bool {
-	if p.match(lexer.Punct, "(") {
+	if p.atPatternHead() {
 		return true
 	}
 	i := 0
-	// `w @ <pattern>` names the whole value alongside the destructure.
 	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "@" {
 		i = 2
-		if p.peekAt(i).Kind == lexer.Punct && p.peekAt(i).Text == "(" {
-			return true
-		}
 	}
 	if p.peekAt(i).Kind != lexer.Ident || p.peekAt(i+1).Kind != lexer.Punct {
 		return false
 	}
 	switch p.peekAt(i + 1).Text {
-	case "{":
-		return true
 	case "(", ".":
-		// An enum variant pattern. Not a legal parameter — it can fail to
-		// match — but claiming it here routes it to parseParamPattern,
-		// which says so, rather than to the plain-param path's bare
-		// `expected ":"`.
 		return true
 	}
 	return false
@@ -5421,8 +5428,9 @@ func discardNames(names []string, pos ast.Position, tag string) []string {
 }
 
 // Binding sites that irrefutableDestructure serves, named for its
-// diagnostics. Only a parameter has somewhere to put an `@` binding (the
-// synthetic parameter itself).
+// diagnostics. Each holds the whole value in a local of its own, which is
+// where an `@` binding lands: the parameter itself, the destructure's
+// holding local, or the foreach element variable.
 const (
 	paramSite       = "parameter"
 	destructureSite = "destructuring binding"
@@ -5434,17 +5442,31 @@ func (p *parser) refutableBindErr(pos ast.Position, what, site string) error {
 		"%s can fail to match, so it cannot be a %s pattern — there is no else branch here; destructure with a tuple `(a, b)` or struct `S { x, y }` pattern, or `match` on the value in the body", what, site)
 }
 
-// atDestructurePattern reports whether the cursor opens one of the
-// irrefutable `let` / `var` destructuring forms — `(` for a tuple
-// pattern, `IDENT {` for a struct one. A plain `var name` declaration is
-// followed by `:`, `=` or `;`, and every refutable `let` form puts `(`,
-// `.`, `@` or a literal after the name, so neither collides.
-func (p *parser) atDestructurePattern() bool {
-	if p.match(lexer.Punct, "(") {
+// atPatternHead reports whether the cursor opens a destructuring pattern
+// rather than a plain identifier binding. Two heads say so — `(` for a
+// tuple pattern and `IDENT {` for a struct one — either optionally
+// preceded by `IDENT @` naming the whole value.
+//
+// This is the ONE lookahead every irrefutable binding site asks, so a
+// pattern head admitted at one is admitted at all of them: a `let` / `var`
+// destructure, a destructuring parameter, and a `for` header. Nothing else
+// at those sites can look like this — a plain `var name` declaration is
+// followed by `:`, `=` or `;`, a plain parameter by `:`, and `for x in xs`
+// by `in`.
+//
+// A refutable `let` head — `IDENT (`, `IDENT .` or a literal, with or
+// without the `@` — is deliberately NOT claimed: it belongs to `let … else`,
+// which has a miss branch to run.
+func (p *parser) atPatternHead() bool {
+	i := 0
+	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "@" {
+		i = 2
+	}
+	if p.peekAt(i).Kind == lexer.Punct && p.peekAt(i).Text == "(" {
 		return true
 	}
-	return p.peek().Kind == lexer.Ident &&
-		p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{"
+	return p.peekAt(i).Kind == lexer.Ident &&
+		p.peekAt(i+1).Kind == lexer.Punct && p.peekAt(i+1).Text == "{"
 }
 
 // parseDestructure handles the irrefutable binding statements
@@ -5454,9 +5476,12 @@ func (p *parser) atDestructurePattern() bool {
 // parse error rather than a runtime miss. The cursor is on the pattern's
 // first token, the keyword having been consumed.
 //
-// An `@` binding can't arrive here: atDestructurePattern only claims a
-// leading `(` or `IDENT {`, and the `IDENT @` form routes to the
-// refutable `let … else` path (where the `@` has a match arm to bind in).
+// An `@` binding names the whole value beside the pattern; the value
+// already lives in a local between the init's evaluation and the per-name
+// loads, so the binding just names that local rather than minting a hidden
+// one. A REFUTABLE head past the `@` — `w @ A(n)` — is not claimed by
+// atPatternHead and routes to `let … else` instead, where the miss has
+// somewhere to go.
 func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {
 	pat, err := p.parseMatchPattern()
 	if err != nil {
@@ -5466,6 +5491,7 @@ func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.AtName = pat.atBinding
 	if _, err := p.expect(lexer.Punct, "="); err != nil {
 		return nil, err
 	}

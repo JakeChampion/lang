@@ -65,6 +65,17 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"array of tuples", `function f(): (i32, i32)[] { return xs; }`},
 		{"array of tuples, local", `function main(): i32 { var p: (K, V)[] = q; return 0; }`},
 
+		// One BindPattern serves every irrefutable binding site (#5356), so
+		// the struct and `@` heads a destructuring parameter took are
+		// derivable at a `for` header and a `let` / `var` destructure too. No
+		// corpus source uses them yet, so the differential cannot reach them.
+		{"for struct pattern", `function main(): i32 { for P { x, y } in ps { f(x, y); } return 0; }`},
+		{"for struct pattern, rename and rest", `function main(): i32 { for P { x: a, .. } in ps { f(a); } return 0; }`},
+		{"for @ struct pattern", `function main(): i32 { for w @ P { x, y } in ps { f(w, x, y); } return 0; }`},
+		{"for @ tuple pattern", `function main(): i32 { for w @ (a, b) in ts { f(w, a, b); } return 0; }`},
+		{"var @ struct destructure", `function main(): i32 { var w @ P { x, y } = p; return w.x + x + y; }`},
+		{"let @ tuple destructure", `function main(): i32 { let w @ (a, b) = t; return w.0 + a + b; }`},
+
 		// `own` is a modifier AND an ordinary name.
 		{"own as modifier", `function f(own xs: string[]): i32 { return 0; }`},
 		{"own as parameter name", `function f(rl: i32, own: string[]): i32 { return 0; }`},

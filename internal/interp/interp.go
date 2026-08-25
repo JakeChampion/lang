@@ -3047,6 +3047,10 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
+		// An `@` binding names the whole value beside the pattern.
+		if x.AtName != "" {
+			e.declare(x.AtName, v)
+		}
 		if x.Fields != nil {
 			st, ok := v.(*Struct)
 			if !ok {

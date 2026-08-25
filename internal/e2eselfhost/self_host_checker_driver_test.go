@@ -37,6 +37,27 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		// Immutability rejections surface a formatted diagnostic on stderr.
 		{"field-assign-e048", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", 1, "error[E048]"},
 		{"subscript-assign-e056", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", 1, "error[E056]"},
+		// A struct destructure carries its bindings comma-joined, exactly as
+		// the tuple form does, and the marker channel is the only thing that
+		// tells them apart. Reading the comma alone made E024 demand a tuple
+		// of every struct destructure — a valid program native accepts,
+		// rejected here.
+		{"struct-destructure", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var P { x, y } = p; return x + y; }\n", 0, ""},
+		{"struct-destructure-single-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var P { x, .. } = p; return x; }\n", 0, ""},
+		// #5356: an `@` binding rides on the destructure's marker channel, so
+		// its `@at:` component reaches the checker in the slot a `: Type`
+		// annotation uses. It must not be read as one — a spurious diagnostic
+		// here would reject a program native accepts.
+		{"at-binding-tuple", "function main(): i32 { var w @ (a, b) = (1, 2); return w.0 + a + b; }\n", 0, ""},
+		{"at-binding-struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var w @ P { x, y } = p; return w.x + x + y; }\n", 0, ""},
+		{"for-struct-pattern", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var ps: P[] = [P { x: 1, y: 2 }]; var acc: i32 = 0; for P { x, y } in ps { acc = acc + x + y; } return acc; }\n", 0, ""},
+		{"nested-tuple-destructure", "function main(): i32 { var (a, (b, c)) = (1, (2, 3)); return a + b + c; }\n", 0, ""},
+		// The bindings carry their ELEMENT types now, so a misuse of one is a
+		// coded diagnostic rather than the uncoded whole-function rejection
+		// every destructure used to draw.
+		{"destructure-arity-e024", "function main(): i32 { var (a, b, c) = (1, 2); return a; }\n", 1, "error[E024]"},
+		{"destructure-non-tuple-e024", "function main(): i32 { var (a, b) = 5; return a; }\n", 1, "error[E024]"},
+		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { var p: P = P { x: \"s\" }; var P { x } = p; return x; }\n", 1, "error[E002]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

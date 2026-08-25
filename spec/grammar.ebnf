@@ -56,19 +56,22 @@ Param       = PatternParam | NamedParam ;
 NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
             | IDENT [ ':' Type ] [ '=' Expr ]
             ;
-# A pattern parameter binds by shape instead of by name: a tuple, whose every
-# position is a name, a `_` discard, or a nested list — the same shape the
-# `let` destructure takes, because both are irrefutable binding sites the one
-# parser serves — or a struct pattern, with the same field spellings a match
-# arm uses. `w @ <pattern>` names the whole value alongside the fields.
+# BindPattern is the head of every IRREFUTABLE binding site — a destructuring
+# parameter, a `let` / `var` destructure, and a `for` header. One production,
+# because one parser lookahead admits it at all three: a shape spellable at one
+# is spellable at the others. It binds by shape instead of by name — a tuple,
+# whose every position is a name, a `_` discard, or a nested list, or a struct
+# pattern with the same field spellings a match arm uses. `w @ <pattern>` names
+# the whole value alongside the fields it binds.
 #
-# A parameter has no miss branch, so only the two always-matching shapes are
-# derivable here. The parser still READS the full pattern grammar at this site
-# and then rejects a refutable one by name ("an enum variant pattern can fail
-# to match"), which is a better answer than the stuck-parse a narrower parser
+# These sites have no miss branch, so only the two always-matching shapes are
+# derivable. The parser still READS the full pattern grammar here and then
+# rejects a refutable one by name ("an enum variant pattern can fail to
+# match"), which is a better answer than the stuck-parse a narrower parser
 # would give.
+BindPattern = [ IDENT '@' ] ( DestructureList | StructPattern ) ;
 PatternParam
-            = [ IDENT '@' ] ( DestructureList | StructPattern ) ':' Type ;
+            = BindPattern ':' Type ;
 DestructureList
             = '(' DestructurePos { ',' DestructurePos } [ ',' ] ')' ;
 DestructurePos
@@ -169,28 +172,36 @@ ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Expr ] ')' Block
             | 'for' ForBinding 'in' NoStructExpr Block
             ;
 ForInit     = VarNoSemi | Expr ;
-# A parenthesised binder is a TuplePattern, the same production `var (a, b) =
-# e;` takes, and irrefutable for the same reason: a loop body has no else
-# branch. Which loop it lowers to is a typing question, not a grammar one —
-# over an array it binds against each element, over a Map against each entry.
+# A shape binder is a BindPattern, the same production `var (a, b) = e;` and a
+# destructuring parameter take, and irrefutable for the same reason: a loop
+# body has no else branch. Which loop it lowers to is a typing question, not a
+# grammar one — over an array it binds against each element, over a Map against
+# each entry. A Map binds its key and value separately, so there is no whole
+# value for an `@` binding to name and one is rejected there.
 # A `for` header's '(' also opens the three-part form, decided by whether the
 # token after the matching ')' is `in`.
-ForBinding  = TuplePattern | IDENT ;
+ForBinding  = BindPattern | IDENT ;
 
 MatchStmt   = 'match' NoStructExpr '{' { MatchArm } '}' [ ';' ] ;
 MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;
 ArmPatterns = Pattern { '|' Pattern } ;
 ArmBody     = ValueBlock | Expr ;
 
+# A destructuring `var` takes no type annotation: the shape is the declaration,
+# and each binding's type comes from the initialiser.
 VarStmt     = VarNoSemi ';' ;
-VarNoSemi   = 'var' ( TupleBinding | IDENT ) [ ':' Type ] '=' Expr ;
-TupleBinding
-            = '(' IDENT { ',' IDENT } [ ',' ] ')' ;
+VarNoSemi   = 'var' BindPattern '=' Expr
+            | 'var' IDENT [ ':' Type ] '=' Expr
+            ;
 
-# `let PATTERN = expr else { … };`, plus tuple/struct destructuring. The head
-# takes the same or-pattern list a match arm does — `if let` and `let … else`
-# both consume the shared pattern grammar.
-LetStmt     = 'let' ArmPatterns '=' Expr [ 'else' Block ] ';' ;
+# Two forms. The irrefutable one is the `var` destructure under the other
+# keyword, and takes no `else` — nothing can miss. The refutable one is
+# `let PATTERN = expr else { … };`, whose head takes the same or-pattern list a
+# match arm does: `if let` and `let … else` both consume the shared pattern
+# grammar, and the `else` block is what a miss runs.
+LetStmt     = 'let' BindPattern '=' Expr ';'
+            | 'let' ArmPatterns '=' Expr 'else' Block ';'
+            ;
 
 # Callback-flattening bind. `<-` lexes as two punctuation tokens.
 UseStmt     = 'use' IDENT [ ':' Type ] '<' '-' Expr ';' ;

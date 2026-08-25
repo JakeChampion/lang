@@ -2638,6 +2638,12 @@ type ForEach struct {
 // binds it first and reads its type back to choose between the lowerings below.
 func ForEachIterName(id int) string { return fmt.Sprintf("__foreach_iter_%d", id) }
 
+// ForEachElemName is the synthetic local a destructuring foreach binds each
+// element to before the pattern reads it. An `@` binding replaces it with the
+// name the source wrote — that element IS the whole value — so a stage asking
+// whether one was written compares Var against this.
+func ForEachElemName(id int) string { return fmt.Sprintf("__foreach_elem_%d", id) }
+
 // DesugarForEachArray lowers a ForEach over an array/string/slice to the
 // `.len()` + index C-style loop — the exact shape the parser used to build at
 // parse time (moved here so a type-aware pass owns the choice of lowering).
@@ -2893,7 +2899,12 @@ type Destructure struct {
 	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
 	Init       Expr
-	TempName   string // checker-stamped: name of the synthesised tuple/struct-holding local.
+	// AtName is the `@` binding naming the WHOLE value beside the pattern —
+	// `w @ Point { x, y }`. Parser-set; empty when the source wrote none.
+	// The checker binds the holding local under it instead of minting a
+	// hidden name, so `w` is an ordinary local the body may read.
+	AtName   string
+	TempName string // name of the tuple/struct-holding local: AtName when the source named it, else checker-minted.
 	// Nested runs parallel to Names: a non-nil entry destructures that
 	// position AGAIN — `let (a, (b, c)) = t;`. Names[i] is then a
 	// synthesised binder holding the inner tuple and Nested[i] is a

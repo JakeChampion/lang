@@ -445,6 +445,34 @@ let Point { x: px, y: py } = Point { x: 6, y: 7 };
 return a + b + q + r + s + x + y + px + py;
 }
 `},
+	// #5356: the pattern-head lookahead is now shared, so a `for` header and a
+	// `let` / `var` destructure take the struct and `@` heads a destructured
+	// parameter already did. The two printers reach them by different routes —
+	// native reprints the ForEach node's Pattern, while the self-host reprints
+	// the `$forpat_` element's own destructure, its desugar having consumed the
+	// header — so this is where the two would diverge on the written form.
+	{"pattern-binding-sites", `struct Point { x: i32, y: i32 }
+function main(): i32 {
+var ps: Point[] = [Point { x: 1, y: 2 }];
+var ts: (i32, i32)[] = [(3, 4)];
+var acc = 0;
+for Point { x, y } in ps {
+acc = acc + x + y;
+}
+for Point { x: a, y: b } in ps {
+acc = acc + a + b;
+}
+for w @ Point { x, y } in ps {
+acc = acc + w.x + x + y;
+}
+for w @ (m, n) in ts {
+acc = acc + w.0 + m + n;
+}
+var v @ Point { x, y } = ps[0];
+var t @ (p, q) = ts[0];
+return acc + v.x + x + y + t.0 + p + q;
+}
+`},
 	// Surfaced by the two cases above: FuncDecl.type_params carried only the
 	// BOUNDED parameters (the unbounded ones are erased and the monomorphiser
 	// has no use for their names), so a formatted `each[T, U]` lost both and

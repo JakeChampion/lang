@@ -746,7 +746,7 @@ function parse_struct_pattern_fields(p: Par): (string, string, boolean, Par) {
 // carries the marker "@sd:<StructName>:<comma-joined FIELD names>". irlower's
 // lower_struct_destructure decodes it into per-field `var bind = tmp.field;`
 // binds.
-function parse_struct_destructure(p: Par, struct_name: string, line: i32, col: i32): (Stmt, Par) {
+function parse_struct_destructure(p: Par, struct_name: string, at: string, line: i32, col: i32): (Stmt, Par) {
     var (bindings, fields, fields_ok, fields_p) = parse_struct_pattern_fields(p);
     p = fields_p;
     if (!fields_ok) {
@@ -756,7 +756,7 @@ function parse_struct_destructure(p: Par, struct_name: string, line: i32, col: i
     var (init_expr, ip) = parse_expr(p);
     p = ip;
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (s_var_at(bindings, "@sd:" + struct_name + ":" + fields, init_expr, line, col), p);
+    return (s_var_at(bindings, at_marker(at, "@sd:" + struct_name + ":" + fields), init_expr, line, col), p);
 }
 function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
 // s_return_at carries the `return` keyword position so E002 / E012 point at it.
@@ -1703,7 +1703,7 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
     var apd: ParamDestr[] = [];
     if (p.peek_punct() != ")") {
         while (true) {
-            if (at_param_pattern(p)) {
+            if (at_pattern_head(p)) {
                 var (atpr_param, atpr_destr, atpr_p) = parse_pattern_param(p);
                 p = atpr_p;
                 if (atpr_destr.names.len() == 0) {
@@ -2377,7 +2377,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 var lpd: ParamDestr[] = [];
                 if (p.peek_punct() != ")") {
                     while (true) {
-                        if (at_param_pattern(p)) {
+                        if (at_pattern_head(p)) {
                             var (ltpr_param, ltpr_destr, ltpr_p) = parse_pattern_param(p);
                             p = ltpr_p;
                             if (ltpr_destr.names.len() == 0) {
@@ -5208,11 +5208,57 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
         p = kvb_p;
         return (s_for(kvnames, kvi_expr, kvb_body), p);
     }
-    var fvar: string = p.peek_ident();
-    if (fvar.len() == 0) {
-        return (s_unknown("missing for-var name"), p);
+    // A pattern-shaped header — `for Point { x, y } in ps`, `for w @ (a, b) in
+    // xs` — takes the same grammar every other binding site does. It desugars
+    // to the plain foreach plus a destructure of the element, which is the
+    // shape irlower already builds for the encoded `for (a, b) in xs` form
+    // (its `$fordes` element bind), so nothing below the parser learns a new
+    // header. An `@` binding names the element itself, exactly as it names a
+    // destructured parameter's holder. The bare tuple head stays on the
+    // encoded path above: it is the only one that can also iterate a Map,
+    // whose key and value columns are not an element to destructure.
+    var fpre: Stmt[] = [];
+    var fvar: string = "";
+    if (at_pattern_head(p)) {
+        var fp_line: i32 = p.peek_line();
+        var fp_col: i32 = p.peek_col();
+        // The `@` binding rides on the DESTRUCTURE, which already names the
+        // temp holding the whole value after it — so the element local stays
+        // synthetic and the printer has one rule for every pattern header:
+        // a `$forpat_` element whose first body statement destructures it.
+        var fp_at: string = "";
+        if (p.peek_punct_at(1) == "@") {
+            fp_at = p.peek_ident();
+            p = p.advance();
+            p = p.advance();
+        }
+        var fp_elem: string = "$forpat_" + util.i32_to_string(fp_line) + "_" + util.i32_to_string(fp_col);
+        var fp_init: Expr = e_ident_at(fp_elem, fp_line, fp_col);
+        if (p.peek_punct() == "(") {
+            var (fpnames, fpcount, fpok, fpnames_p) = parse_destructure_names(p);
+            p = fpnames_p;
+            if (!fpok || fpcount < 2) {
+                return (s_unknown("for pattern needs at least 2 binders"), p);
+            }
+            fpre = [s_var_at(fpnames, at_marker(fp_at, ""), fp_init, fp_line, fp_col)];
+        } else {
+            var fp_struct: string = p.peek_ident();
+            p = p.advance();
+            var (fpbinds, fpfields, fpfields_ok, fpfields_p) = parse_struct_pattern_fields(p);
+            p = fpfields_p;
+            if (!fpfields_ok || fpbinds.len() == 0) {
+                return (s_unknown("a struct destructuring pattern binds field names"), p);
+            }
+            fpre = [s_var_at(fpbinds, at_marker(fp_at, "@sd:" + fp_struct + ":" + fpfields), fp_init, fp_line, fp_col)];
+        }
+        fvar = fp_elem;
+    } else {
+        fvar = p.peek_ident();
+        if (fvar.len() == 0) {
+            return (s_unknown("missing for-var name"), p);
+        }
+        p = p.advance();
     }
-    p = p.advance();
     if (p.peek_ident() != "in") {
         return (s_unknown("missing `in` in for"), p);
     }
@@ -5251,7 +5297,9 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
     }
     var (fb_body, fb_p) = parse_block_or_stmt(p);
     p = fb_p;
-    return (s_for(fvar, iter_expr, fb_body), p);
+    var fbi: i32 = 0;
+    while (fbi < fb_body.len()) { fpre = fpre.append(fb_body[fbi]); fbi = fbi + 1; }
+    return (s_for(fvar, iter_expr, fpre), p);
 }
 
 // with_stmt_line stamps the source line a statement STARTS on. Five Stmt kinds
@@ -5604,6 +5652,17 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         var vline: i32 = p.peek_line();
         var vcol: i32 = p.peek_col();
         p = p.advance();
+        // `w @ <pattern>` names the whole value beside the pattern, the same
+        // binding a destructured parameter takes. Consumed here so the tuple
+        // and struct heads below read exactly as they do without one; a
+        // REFUTABLE head past the `@` is not claimed by at_pattern_head and
+        // stays with the let-else path, where the miss has somewhere to go.
+        var at_bind: string = "";
+        if (p.peek_punct_at(1) == "@" && at_pattern_head(p)) {
+            at_bind = p.peek_ident();
+            p = p.advance();
+            p = p.advance();
+        }
         // `var (x, y, …) = E` / `let (x, y, …) = E` — tuple destructuring of
         // ANY arity. The names are encoded comma-joined ("x,y,z"); the emitter
         // splits them and binds from the tuple's element slots.
@@ -5617,7 +5676,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var (tdinit_expr, tdinit_p) = parse_expr(p);
             p = tdinit_p;
             if (p.peek_punct() == ";") { p = p.advance(); }
-            return (s_var_at(tdnames, "", tdinit_expr, vline, vcol), p);
+            return (s_var_at(tdnames, at_marker(at_bind, ""), tdinit_expr, vline, vcol), p);
         }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
@@ -5635,7 +5694,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         // only surface. `if let` accepts the record form on both, via
         // parse_pattern.
         if (p.peek_punct() == "{") {
-            return parse_struct_destructure(p, name, vline, vcol);
+            return parse_struct_destructure(p, name, at_bind, vline, vcol);
         }
         // `let PAT = E else { … }` with a pattern-shaped head takes the shared
         // grammar: parse_pattern gives it nested payloads, `@` bindings and
@@ -6496,18 +6555,60 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
     return (nm, false, "", p);
 }
 
-// at_param_pattern reports whether the cursor sits on a DESTRUCTURING
-// parameter rather than a plain `name: T` one. Three heads say so: `(`
-// opens a tuple pattern, `Ident {` a struct pattern, and `w @` names the
-// whole value alongside either. None can start a plain parameter — those
-// are always `name :` (or `own name :`) — so the test is unambiguous.
-// Mirrors the native parser's atParamPattern.
-function at_param_pattern(p: Par): boolean {
-    if (p.peek_punct() == "(") { return true; }
+// at_pattern_head reports whether the cursor opens a destructuring pattern
+// rather than a plain identifier binding. Two heads say so — `(` for a tuple
+// pattern and `Ident {` for a struct one — either optionally preceded by
+// `Ident @` naming the whole value.
+//
+// This is the ONE lookahead every irrefutable binding site asks, so a pattern
+// head admitted at one is admitted at all of them: a `let` / `var`
+// destructure, a destructuring parameter, and a `for` header. Nothing else at
+// those sites can look like this — a plain `var name` declaration is followed
+// by `:`, `=` or `;`, a plain parameter by `:` (or `own name :`), and
+// `for x in xs` by `in`. A REFUTABLE head — `Ident (`, `Ident .` or a literal
+// — is deliberately not claimed: it belongs to `let … else`, which has a miss
+// branch to run. Mirrors the native parser's atPatternHead.
+function at_pattern_head(p: Par): boolean {
     var i: i32 = 0;
     if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") { i = 2; }
-    if (i == 2 && p.peek_punct_at(i) == "(") { return true; }
+    if (p.peek_punct_at(i) == "(") { return true; }
     return p.peek_ident_at(i).len() > 0 && p.peek_punct_at(i + 1) == "{";
+}
+
+// at_marker encodes an `@` binding — the source's name for the WHOLE value
+// beside a destructuring pattern — as the leading component of a destructure
+// StmtVar's marker channel: `@at:<name>;`. A struct destructure's `@sd:…`
+// marker follows it; a tuple destructure carries the `@at:` component alone.
+// Encoded rather than given a StmtVar field of its own because every stage
+// already reads the marker channel to tell the destructure forms apart.
+pub function at_marker(at: string, rest: string): string {
+    if (at.len() == 0) { return rest; }
+    return "@at:" + at + ";" + rest;
+}
+
+// is_struct_destr_marker reports whether a destructure StmtVar's marker channel
+// carries the struct form's `@sd:<Struct>:<fields>` tag, past any `@at:`
+// component. `is_destr_marker` is the same question for either form, asked
+// where the channel would otherwise be read as a `: Type` annotation.
+pub function is_struct_destr_marker(type_name: string): boolean {
+    var (_, marker) = at_marker_split(type_name);
+    return util.str_has_prefix(marker, "@sd:");
+}
+
+pub function is_destr_marker(type_name: string): boolean {
+    return util.str_has_prefix(type_name, "@at:") || util.str_has_prefix(type_name, "@sd:");
+}
+
+// at_marker_split reads at_marker back, returning the `@` binding (empty when
+// the source wrote none) and the marker that followed it.
+pub function at_marker_split(marker: string): (string, string) {
+    if (!util.str_has_prefix(marker, "@at:")) { return ("", marker); }
+    var i: i32 = 4;
+    while (i < marker.len()) {
+        if (marker[i] == b';') { return (slice_unchecked(marker, 4, i) + "", slice_unchecked(marker, i + 1, marker.len()) + ""); }
+        i = i + 1;
+    }
+    return ("", marker);
 }
 
 // parse_pattern_param consumes a destructuring parameter — `(a, b): (T, U)`
@@ -6968,7 +7069,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     var pd: ParamDestr[] = [];
     if (p.peek_punct() != ")") {
         while (true) {
-            if (at_param_pattern(p)) {
+            if (at_pattern_head(p)) {
                 var (tpr_param, tpr_destr, tpr_p) = parse_pattern_param(p);
                 p = tpr_p;
                 if (tpr_destr.names.len() == 0) {
