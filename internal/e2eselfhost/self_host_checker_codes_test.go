@@ -750,6 +750,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-match-arm-two-step", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); var t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-match-arm-param-ok", "function f(p: string): str { match (p[0:1]) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-slice-unchecked-return", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); return slice_unchecked(s, 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		// `x.len()` in METHOD spelling. Both receivers resolve through a
+		// table that is empty without the stdlib in scope, so the
+		// statement typed unknown: check_func_body then marked the module
+		// ill-typed while every coded pass stayed silent, and the whole
+		// class came out as the uncoded "cannot represent yet" bail
+		// rather than a real code. A mismatched sink is what makes that
+		// visible — the matching sink checked clean either way.
+		{"len-method-string-sink", "function main(): i32 { var s: string = \"hello\"; var b: boolean = s.len(); return 0; }\n", []string{"E003"}},
+		{"len-method-array-sink", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var b: boolean = xs.len(); return 0; }\n", []string{"E003"}},
+		{"len-method-literal-sink", "function main(): i32 { var b: boolean = \"lit\".len(); return 0; }\n", []string{"E003"}},
+		{"len-method-ok", "function main(): i32 { var s: string = \"hello\"; var xs: i32[] = [1, 2]; return s.len() + xs.len(); }\n", nil},
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},
