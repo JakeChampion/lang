@@ -26385,7 +26385,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // computed over fn.body FLAT, exactly like edon, so a nested-block box can
     // never have been donated to a cross-reuse recipient — which is what the
     // fn-level emission's ecross.donors suppression guards against.
-    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs, s.sigs.str_fresh_ret_fns);
+    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, s.sigs.str_fresh_ret_fns);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -37169,7 +37169,14 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // ownership transferred to the escapee. Each such x's box is deep-dropped +
 // freed right after its match (emit_enum_variant_drops_gated). Same shape as
 // the scalar pass.
-function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], str_fresh: string[]): RcEnumFrees {
+//
+// The init is resolved exactly as collect_fresh_rcenum_names resolves it — a
+// direct/qualified ctor OR a call to an "RCE:"-registered fresh rc-enum ctor fn.
+// The two must agree: collect grants the credit, which is what SUPPRESSES the
+// exit sweep, and this pass emits the free the credit assumes. Admitting the
+// call form there and not here left `var v: E = mkv(i)` with a sole consuming
+// match reclaiming nothing at all.
+function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[]): RcEnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var enums: string[] = [];
@@ -37179,13 +37186,14 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
         match (body[vi]) {
             parser.StmtVar(v) => {
                 var owner: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh);
+                if (owner == "") { owner = rcenum_call_init_owner(v.init, opt_fresh_ret); }
                 // A REBOUND name is admitted when every assignment builds a fresh
                 // chain of the same enum (#6127). The rebinds release the orphaned
                 // chains via emit_enum_deep_reinit_store; this free is what releases
                 // the LAST one, and without it the final value's box + payload leaked
                 // (2 blocks per round) even with the rebind release in place.
                 var cre_rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
-                    || all_assigns_fresh_rcenum(body, v.name, owner, structs, sig_reg_empty(), str_fresh);
+                    || all_assigns_fresh_rcenum(body, v.name, owner, structs, opt_fresh_ret, str_fresh);
                 if (owner != "" && cre_rebind_ok) {
                     var match_idx: i32 = sole_top_level_match_idx(body, v.name);
                     if (match_idx > vi) {
@@ -37353,9 +37361,12 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     // admits an enum whose struct payload was a FRESH struct LITERAL
                     // (variant_struct_payloads_fresh), so the payload box is the sole
                     // owner (rc == 1) — a bare-ident/call payload aliasing a swept local
-                    // is rejected (its inner buffers would double-free). The backend
-                    // auto-emits __struct_drop_<T> on seeing the call_direct (asm_ir op
-                    // scan / wasm struct_drop_types).
+                    // is rejected (its inner buffers would double-free). A call-BOUND
+                    // enum inherits the same invariant rather than escaping it: the
+                    // "RCE:" registry admits a producer only when every one of its
+                    // returns satisfies fresh_rcpayload_enum_init, which is that
+                    // literal test. The backend auto-emits __struct_drop_<T> on seeing
+                    // the call_direct (asm_ir op scan / wasm struct_drop_types).
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__struct_drop_" + eft, 1));   // release payload's rc fields; returns box
@@ -48198,7 +48209,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant_is guard releasing that variant's rc fields) then freed right after
     // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
     // fed to the donor path, so an rc-payload box is freed exactly once here.
-    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.str_fresh_ret_fns);
+    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns);
     // Consumed RC-PAYLOAD option/result frees: a function-local `var o = Some([..])`
     // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
     // one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
