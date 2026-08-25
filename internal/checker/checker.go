@@ -8861,9 +8861,22 @@ func (c *checker) strViewsLocal(expr ast.Expr, locals map[string]*ast.Var, param
 	case *ast.StringLit:
 		return false // 'static / immortal
 	case *ast.SliceExpr:
-		// s[a:b] on a string is a sub-view of s's bytes (the P2 producer
-		// flip): the slice escapes iff its base does.
-		return c.strViewsLocal(e.Source, locals, params, visiting)
+		// `s[a:b]` is `Option[str]` (#5634), so it can never be the
+		// value of a `str`-returning `return` — assignability rejects it
+		// before this walk runs. A view unwrapped from the Option and
+		// returned from a match arm is NOT chased: the arm binding is
+		// not a declared local, so this rule does not see which
+		// scrutinee it came from. Same known hole as a view laundered
+		// through a `str`-returning callee.
+		return false
+	case *ast.Call:
+		// `slice_unchecked(s, a, b)` is the unchecked slice producer —
+		// the same byte view `s[a:b]` used to yield — so it escapes
+		// exactly when its source does.
+		if id, ok := e.Callee.(*ast.Ident); ok && id.Name == "slice_unchecked" && len(e.Args) == 3 {
+			return c.strViewsLocal(e.Args[0], locals, params, visiting)
+		}
+		return false
 	case *ast.Ident:
 		if params[e.Name] {
 			return false // caller-owned
@@ -12300,21 +12313,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return sl
 		}
 		if _, ok := st.(ast.StringType); ok {
-			// Slicing an owned string yields a `str` view of its bytes —
-			// the #4813 P2 producer flip. The backends still copy until
-			// the P3 zero-copy convergence; the erasure at LowerWith
-			// keeps them seeing a plain string program either way.
+			// `s[a:b]` is a CHECKED slice: it yields `None` when the
+			// bounds are out of range or either end falls inside a
+			// multi-byte code point, `Some(view)` otherwise (#5634).
+			// The unchecked, trapping form is `slice_unchecked(s, a, b)`.
+			// IsString still drives the IR's string arm — it is the
+			// source that is a string, not the result.
 			n.IsString = true
-			return ast.StrType{}
+			return ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
 		}
-		// Slicing a `str` view yields another `str` — a sub-view of the
-		// same bytes (#4813). The backends still copy until the P3
-		// zero-copy convergence (a fresh box typed `str` is safe-leak at
-		// worst); the erasure makes the lowering identical to a string
-		// slice either way.
+		// Slicing a `str` view is the same checked operation over the
+		// same bytes (#4813 / #5634): `Option[str]`, a sub-view when the
+		// bounds land on code-point boundaries.
 		if _, ok := st.(ast.StrType); ok {
 			n.IsString = true
-			return ast.StrType{}
+			return ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
 		}
 		if st != nil {
 			c.errfCode(n.P, "E037", "cannot slice value of type %s", st)
