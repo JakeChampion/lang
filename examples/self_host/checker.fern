@@ -11589,9 +11589,21 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       }
     }
     // E063: returning a `[T]` slice that views function-local storage
-    // (a use-after-free once the frame is reclaimed). Runs for every
-    // function — a slice can escape from an inferred-return body too.
-    body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums).diags);
+    // (a use-after-free once the frame is reclaimed). Only a `[T]`
+    // return is reported against, even though every function is
+    // summarised above: an owned `T[]` return MOVES its storage to the
+    // caller, so it cannot dangle. Reporting on both flags every
+    // `T[]`-returning function that hands a local array back — a move,
+    // and legal — which is what bigint / sort / cmp / unicode do.
+    // The flag comes from the parser, not from ret_type: parse_type_name
+    // erases `[T]` to `T[]` exactly as it erases `str` to `string`, so
+    // by here the two spellings are one (hence ret_str beside it). The
+    // flag comes from the parser rather than ret_type because
+    // parse_type_name erases `[T]` to `T[]`, exactly as it erases `str`
+    // to `string` (hence ret_str beside it).
+    if (mod.funcs[i].ret_slice) {
+      body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums).diags);
+    }
     // E067: a value of a @must_consume struct/enum type must be consumed
     // on every path before its binding leaves scope (the native
     // checkMustConsume — docs/MUST-CONSUME.md).
