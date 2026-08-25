@@ -5899,6 +5899,7 @@ func TestSliceCalleeEscapeRejected(t *testing.T) {
 	const decls = `function id_sl(x: [i32]): [i32] { return x; }
 function hop(x: [i32]): [i32] { return id_sl(x); }
 function second(a: [i32], b: [i32]): [i32] { return b; }
+function idarr(x: i32[]): i32[] { return x; }
 function (xs: T[]) win(): [T] { return xs[0:1]; }
 `
 	for _, src := range []string{
@@ -5914,6 +5915,11 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 		// the escaping storage is the array LITERAL at argument 1, which
 		// is the one the callee returns
 		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], [9]); }`,
+		// a `T[]`-returning callee that hands back a parameter MOVES the
+		// caller's array, so slicing the result views the caller's
+		// storage — which is why every function is summarised and not
+		// just the `[T]`-returning ones
+		`function f(): [i32] { var a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }`,
 	} {
 		err := checkSource(t, decls+src)
 		if err == nil {
@@ -5932,6 +5938,7 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 func TestSliceCalleeEscapeAllowed(t *testing.T) {
 	const decls = `function id_sl(x: [i32]): [i32] { return x; }
 function second(a: [i32], b: [i32]): [i32] { return b; }
+function mkarr(): i32[] { var a: i32[] = [1, 2, 3]; return a; }
 function (xs: T[]) win(): [T] { return xs[0:1]; }
 `
 	for _, src := range []string{
@@ -5939,6 +5946,12 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 		`function f(p: i32[]): [i32] { return p.win(); }`,
 		// argument 0 is local-backed, but the callee returns argument 1
 		`function f(p: i32[]): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }`,
+		// an owned `T[]` return MOVES its storage to the caller, so a
+		// function handing back its own local array is not returning a
+		// view at all. Summarising every function makes this reachable;
+		// only reporting against `[T]` returns keeps it accepted.
+		`function f(): i32[] { return mkarr(); }`,
+		`function f(): i32[] { var a: i32[] = [1, 2, 3]; return a; }`,
 	} {
 		if err := checkSource(t, decls+src); err != nil {
 			t.Errorf("%q: expected acceptance, got %v", src, err)
