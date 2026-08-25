@@ -206,6 +206,16 @@ handed out fresh, i.e. everything the freelist could not recycle). It is exact,
 host-independent, and meaningful under qemu, so it is the right gate for a
 memory regression test.
 
+**On ONE host, an A/B of peak RSS is still the sharpest instrument for an
+allocation change** — the 12x above is a spread *between* hosts, and THP does
+not move under you mid-session. Measured 2026-08-25 on the self-compile:
+6159 / 6159 / 6159 MB before a change and 5856 / 5856 / 5857 MB after, i.e.
+deterministic to the megabyte, while three interleaved wall-clock rounds of the
+same pair disagreed on the sign. A third of that run is the kernel zeroing arena
+pages, so bytes bumped land in `sys` and not in `user`, and a change that
+deletes allocation without deleting work can be invisible to a clock. Read RSS
+for the verdict and `__heap_bump_bytes()` for a gate that survives the host.
+
 **It returns i64.** Bind it to an `i64` (`var b: i64 = __heap_bump_bytes();`);
 narrowing to an exit code needs an explicit `as i32`, which is what the existing
 corpus does. It used to be declared i32 while every runtime helper computed the
