@@ -54668,7 +54668,59 @@ pub function ret_type_fns_of(funcs: parser.FuncDecl[]): string[] {
 // native's version additionally admits fresh locals and cow chains, so every
 // name this admits, native admits too: the dump gate can only converge, never
 // newly diverge. Rows are "name|" for sig_reg_has_name.
-function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[], builders: string[]): boolean {
+// NoescSet is the qualified-callee set the noesc fixpoint shrinks. Membership
+// is asked once per returned expression per body walk per round over ~9,400
+// rows, which `util.index_of_str` answered by scanning all of them; this is the
+// sig_reg_of index over the same rows plus a live flag per row, so a removal
+// clears flags instead of rebuilding the array. The rows are fixed at the seed,
+// which is what lets one index serve every round.
+struct NoescSet {
+    reg: SigReg,
+    live: boolean[],
+}
+
+function noesc_set_of(rows: string[]): NoescSet {
+    var live: boolean[] = [];
+    var i: i32 = 0;
+    while (i < rows.len()) { live = live.append(true); i = i + 1; }
+    return NoescSet { reg: sig_reg_of(rows), live: live };
+}
+
+// noesc_set_has tests the row "<pfx><name>" byte-wise, so the three prefixed
+// probes ("fn:", "0:") never build the key they ask about.
+function noesc_set_has(s: NoescSet, pfx: string, name: string): boolean {
+    var want: i32 = pfx.len() + name.len();
+    var i: i32 = s.reg.head[sig_key_bucket(pfx, name, s.reg.head.len())];
+    while (i >= 0) {
+        var e: string = s.reg.rows[i];
+        if (s.live[i] && e.len() == want && bytes_at(e, 0, pfx) && bytes_at(e, pfx.len(), name)) { return true; }
+        i = s.reg.next[i];
+    }
+    return false;
+}
+
+// noesc_set_kill drops `name` from the set, both as a bare row and as its "fn:"
+// row — the pair the fixpoint seeds and retires together. Every matching row
+// goes, not the first: the seed can hold a function name and a same-named
+// variant struct, and the scan this replaces removed both.
+function noesc_set_kill(s: NoescSet, name: string): NoescSet {
+    var live: boolean[] = s.live;
+    var i: i32 = s.reg.head[sig_key_bucket("", name, s.reg.head.len())];
+    while (i >= 0) {
+        if (s.reg.rows[i] == name) { live = live.with(i, false); }
+        i = s.reg.next[i];
+    }
+    var nl: i32 = name.len() + 3;
+    var j: i32 = s.reg.head[sig_key_bucket("fn:", name, s.reg.head.len())];
+    while (j >= 0) {
+        var e: string = s.reg.rows[j];
+        if (e.len() == nl && bytes_at(e, 0, "fn:") && bytes_at(e, 3, name)) { live = live.with(j, false); }
+        j = s.reg.next[j];
+    }
+    return NoescSet { reg: s.reg, live: live };
+}
+
+function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: NoescSet, builders: string[]): boolean {
     match (e) {
         parser.ExprNumber(_) => { return true; },
         parser.ExprBool(_) => { return true; },
@@ -54681,7 +54733,7 @@ function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[], build
             // scalar param.
             if (id.name == "None") { return true; }
             if (util.index_of_str(builders, id.name) >= 0) { return true; }
-            return util.index_of_str(scalars, id.name) >= 0 || util.index_of_str(q, "0:" + id.name) >= 0;
+            return util.index_of_str(scalars, id.name) >= 0 || noesc_set_has(q, "0:", id.name);
         },
         parser.ExprUnary(u) => { return noesc_ret_expr_ok(u.operand, scalars, q, builders); },
         parser.ExprBinary(b) => {
@@ -54710,13 +54762,13 @@ function noesc_ret_expr_ok(e: parser.Expr, scalars: string[], q: string[], build
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (util.index_of_str(q, cid.name) < 0) { return false; }
+                    if (!noesc_set_has(q, "", cid.name)) { return false; }
                     // A still-qualified FUNCTION's result aliases none of its
                     // arguments — that is the property being tracked — so the
                     // args are irrelevant (native composes the oracle the same
                     // way). A variant CTOR's box CONTAINS its payload args, so
                     // those stay strictly checked.
-                    if (util.index_of_str(q, "fn:" + cid.name) >= 0) { return true; }
+                    if (noesc_set_has(q, "fn:", cid.name)) { return true; }
                     for arg in c.args { if (!noesc_ret_expr_ok(arg, scalars, q, builders)) { return false; } }
                     return true;
                 },
@@ -54743,7 +54795,7 @@ function noesc_concat_witness(e: parser.Expr): boolean {
     return false;
 }
 
-function noesc_concat_leaves_ok(e: parser.Expr, scalars: string[], q: string[], builders: string[]): boolean {
+function noesc_concat_leaves_ok(e: parser.Expr, scalars: string[], q: NoescSet, builders: string[]): boolean {
     match (e) {
         parser.ExprBinary(b) => {
             if (b.op != "+") { return noesc_ret_expr_ok(e, scalars, q, builders); }
@@ -54786,7 +54838,7 @@ function noesc_decl_names(stmts: parser.Stmt[], acc: string[]): string[] {
 // No param pointer can reach such a local, so a `return x` of one aliases no
 // param — native's fresh-locals recursion, subset form. Recomputed per
 // fixpoint iteration: q only shrinks, so builders only shrink with it.
-function noesc_builder_cands(stmts: parser.Stmt[], scalars: string[], q: string[], declared: string[], acc: string[]): string[] {
+function noesc_builder_cands(stmts: parser.Stmt[], scalars: string[], q: NoescSet, declared: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var none: string[] = [];
     for stmt in stmts {
@@ -54817,7 +54869,7 @@ function noesc_builder_cands(stmts: parser.Stmt[], scalars: string[], q: string[
     return a;
 }
 
-function noesc_builder_assign_ok(stmts: parser.Stmt[], cands: string[], scalars: string[], q: string[], bad: string[]): string[] {
+function noesc_builder_assign_ok(stmts: parser.Stmt[], cands: string[], scalars: string[], q: NoescSet, bad: string[]): string[] {
     var b: string[] = bad;
     var none: string[] = [];
     for stmt in stmts {
@@ -54860,7 +54912,7 @@ function noesc_builder_assign_ok(stmts: parser.Stmt[], cands: string[], scalars:
     return b;
 }
 
-function noesc_builder_locals(fn: parser.FuncDecl, scalars: string[], q: string[], declared: string[]): string[] {
+function noesc_builder_locals(fn: parser.FuncDecl, scalars: string[], q: NoescSet, declared: string[]): string[] {
     var cands: string[] = noesc_builder_cands(fn.body, scalars, q, declared, []);
     var bad: string[] = noesc_builder_assign_ok(fn.body, cands, scalars, q, []);
     var out: string[] = [];
@@ -54900,11 +54952,12 @@ pub function noesc_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             if (sd.fields.len() == 0) { q = q.append("0:" + sd.name); }
         }
     }
+    var qs: NoescSet = noesc_set_of(q);
     var changed: boolean = true;
     while (changed) {
         changed = false;
         for fn in funcs {
-            if (util.index_of_str(q, fn.name) < 0) { continue; }
+            if (!noesc_set_has(qs, "", fn.name)) { continue; }
             var declared: string[] = noesc_decl_names(fn.body, []);
             var scalars: string[] = [];
             var pi: i32 = 0;
@@ -54913,20 +54966,18 @@ pub function noesc_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                     && util.index_of_str(declared, fn.params[pi].name) < 0) { scalars = scalars.append(fn.params[pi].name); }
                 pi = pi + 1;
             }
-            var builders: string[] = noesc_builder_locals(fn, scalars, q, declared);
+            var builders: string[] = noesc_builder_locals(fn, scalars, qs, declared);
             var rets: parser.Expr[] = noesc_collect_rets(fn.body, []);
             var ok: boolean = true;
-            for r in rets { if (!noesc_ret_expr_ok(r, scalars, q, builders)) { ok = false; } }
+            for r in rets { if (!noesc_ret_expr_ok(r, scalars, qs, builders)) { ok = false; } }
             if (!ok) {
-                var nq: string[] = [];
-                for nm in q { if (nm != fn.name && nm != "fn:" + fn.name) { nq = nq.append(nm); } }
-                q = nq;
+                qs = noesc_set_kill(qs, fn.name);
                 changed = true;
             }
         }
     }
     var out: string[] = [];
-    for fn in funcs { if (util.index_of_str(q, fn.name) >= 0) { out = out.append(fn.name + "|"); } }
+    for fn in funcs { if (noesc_set_has(qs, "", fn.name)) { out = out.append(fn.name + "|"); } }
     return out;
 }
 
