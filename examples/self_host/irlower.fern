@@ -3377,10 +3377,8 @@ pub function (s: LowerState) mark_arrarr_elem(i: i32, kind: string): LowerState 
 // cannot answer for a name two enums both declare. Anywhere the enum is
 // already known — a qualified `Enum.Variant` — use variant_decl_index.
 pub function variant_enum_owner(structs: parser.StructDecl[], name: string): string {
-    var vi: i32 = 0;
-    while (vi < structs.len()) {
-        if (structs[vi].name == name) { return structs[vi].enum_owner; }
-        vi = vi + 1;
+    for sd in structs {
+        if (sd.name == name) { return sd.enum_owner; }
     }
     return "";
 }
@@ -3459,10 +3457,8 @@ function qualified_variant_enum(fa: parser.ExprFieldAccess, s: LowerState): stri
 // decl_field_index returns a field's position in DECL order (-1 if absent);
 // decl_is_struct reports whether `name` is a declared struct.
 pub function decl_is_struct(structs: parser.StructDecl[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == name) { return true; }
-        i = i + 1;
+    for sd in structs {
+        if (sd.name == name) { return true; }
     }
     return false;
 }
@@ -3508,26 +3504,22 @@ function display_arg(e: parser.Expr, line: i32, col: i32, s: LowerState): parser
 // enum-field exit-reclaim (gate + construction inc + the k_enum struct-drop arm).
 pub function decl_is_enum(structs: parser.StructDecl[], name: string): boolean {
     if (name.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == name) { return true; }
-        i = i + 1;
+    for sd in structs {
+        if (sd.enum_owner == name) { return true; }
     }
     return false;
 }
 
 pub function decl_field_index(structs: parser.StructDecl[], struct_name: string, field: string): i32 {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
+    for sd in structs {
+        if (sd.name == struct_name) {
             var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (structs[i].fields[fi].name == field) { return fi; }
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == field) { return fi; }
                 fi = fi + 1;
             }
             return 0 - 1;
         }
-        i = i + 1;
     }
     return 0 - 1;
 }
@@ -4369,17 +4361,13 @@ pub function prim_type_id(structs: parser.StructDecl[], name: string): i32 {
 
 // decl_has_scalar_array reports whether a struct has any scalar-array field.
 pub function decl_has_scalar_array(structs: parser.StructDecl[], struct_name: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (is_scalar_array_type(structs[i].fields[fi].type_name)) { return true; }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == struct_name) {
+            for fld in sd.fields {
+                if (is_scalar_array_type(fld.type_name)) { return true; }
             }
             return false;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -4387,17 +4375,13 @@ pub function decl_has_scalar_array(structs: parser.StructDecl[], struct_name: st
 // decl_field_type returns the declared type name of `field` in `struct_name`
 // ("" if absent) — used to track a string-typed field's reads as strings.
 pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, field: string): string {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (structs[i].fields[fi].name == field) { return structs[i].fields[fi].type_name; }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == struct_name) {
+            for fld in sd.fields {
+                if (fld.name == field) { return fld.type_name; }
             }
             return "";
         }
-        i = i + 1;
     }
     return "";
 }
@@ -4407,17 +4391,13 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
 // `(…) => R` return is a struct/nominal/string spelling), or "". The string
 // case drives expr_is_str's fn-field-call arm (#5306 gap 2).
 pub function decl_field_fn_ret(structs: parser.StructDecl[], struct_name: string, field: string): string {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (structs[i].fields[fi].name == field) { return structs[i].fields[fi].fn_ret; }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == struct_name) {
+            for fld in sd.fields {
+                if (fld.name == field) { return fld.fn_ret; }
             }
             return "";
         }
-        i = i + 1;
     }
     return "";
 }
@@ -4664,10 +4644,8 @@ pub function is_builtin_variant_pattern(structs: parser.StructDecl[], name: stri
 }
 
 pub function decl_field_count(structs: parser.StructDecl[], struct_name: string): i32 {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) { return structs[i].fields.len(); }
-        i = i + 1;
+    for sd in structs {
+        if (sd.name == struct_name) { return sd.fields.len(); }
     }
     return 0;
 }
@@ -24373,8 +24351,7 @@ function expr_unsafe_for_vb(e: parser.Expr, name: string, borrowable: string[], 
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (expr_unsafe_for_vb(t.elements[i], name, borrowable, recv_borrow, vb_borrow)) { return true; } i = i + 1; }
+            for el in t.elements { if (expr_unsafe_for_vb(el, name, borrowable, recv_borrow, vb_borrow)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
@@ -24392,8 +24369,7 @@ function expr_unsafe_for_vb(e: parser.Expr, name: string, borrowable: string[], 
                     _ => { if (expr_unsafe_for_vb(sl.base, name, borrowable, recv_borrow, vb_borrow)) { return true; } }
                 }
             }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (expr_unsafe_for_vb(sl.field_values[i], name, borrowable, recv_borrow, vb_borrow)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (expr_unsafe_for_vb(fv, name, borrowable, recv_borrow, vb_borrow)) { return true; } }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -26058,13 +26034,11 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
         parser.ExprStructLit(sl) => {
             // Only descend into enum-payload fields (ExprCall constructors): a bare
             // array-field value gets its own alias-inc, so it must stay swept.
-            var fi: i32 = 0;
-            while (fi < sl.field_values.len()) {
-                match (sl.field_values[fi]) {
-                    parser.ExprCall(_) => { out = returned_moved_arr_slots(sl.field_values[fi], s, out); },
+            for fv in sl.field_values {
+                match (fv) {
+                    parser.ExprCall(_) => { out = returned_moved_arr_slots(fv, s, out); },
                     _ => {}
                 }
-                fi = fi + 1;
             }
         },
         parser.ExprTuple(tl) => {
@@ -27523,8 +27497,7 @@ function tuple_pos_esc_expr(e: parser.Expr, host: string, idx: i32): boolean {
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && tuple_pos_esc_expr(sl.base, host, idx)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (tuple_pos_esc_expr(sl.field_values[i], host, idx)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (tuple_pos_esc_expr(fv, host, idx)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -28410,14 +28383,12 @@ function rctuple_esc_expr(e: parser.Expr, name: string, ttype: string, structs: 
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (rctuple_esc_expr(t.elements[i], name, ttype, structs, borrowable)) { return true; } i = i + 1; }
+            for el in t.elements { if (rctuple_esc_expr(el, name, ttype, structs, borrowable)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs, borrowable)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (rctuple_esc_expr(sl.field_values[i], name, ttype, structs, borrowable)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (rctuple_esc_expr(fv, name, ttype, structs, borrowable)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -28943,8 +28914,7 @@ function len_recv_callees_expr(e: parser.Expr, acc: string[]): string[] {
             return a;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { a = len_recv_callees_expr(t.elements[i], a); i = i + 1; }
+            for el in t.elements { a = len_recv_callees_expr(el, a); }
             return a;
         },
         parser.ExprIndex(x) => {
@@ -28958,8 +28928,7 @@ function len_recv_callees_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { a = len_recv_callees_expr(sl.base, a); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { a = len_recv_callees_expr(sl.field_values[i], a); i = i + 1; }
+            for fv in sl.field_values { a = len_recv_callees_expr(fv, a); }
             return a;
         },
         parser.ExprFieldAccess(fa) => { return len_recv_callees_expr(fa.obj, a); },
@@ -29074,16 +29043,14 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
             return a;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { a = lit_arg_callees_expr(t.elements[i], a); i = i + 1; }
+            for el in t.elements { a = lit_arg_callees_expr(el, a); }
             return a;
         },
         parser.ExprIndex(x) => { a = lit_arg_callees_expr(x.array, a); return lit_arg_callees_expr(x.index, a); },
         parser.ExprSlice(sl) => { a = lit_arg_callees_expr(sl.array, a); a = lit_arg_callees_expr(sl.start, a); return lit_arg_callees_expr(sl.end, a); },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { a = lit_arg_callees_expr(sl.base, a); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { a = lit_arg_callees_expr(sl.field_values[i], a); i = i + 1; }
+            for fv in sl.field_values { a = lit_arg_callees_expr(fv, a); }
             return a;
         },
         parser.ExprFieldAccess(fa) => { return lit_arg_callees_expr(fa.obj, a); },
@@ -29209,8 +29176,7 @@ function litstr_tostring_receiver(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var ti: i32 = 0;
-            while (ti < t.elements.len()) { if (litstr_tostring_receiver(t.elements[ti], name)) { return true; } ti = ti + 1; }
+            for el in t.elements { if (litstr_tostring_receiver(el, name)) { return true; } }
             return false;
         },
         _ => { return false; },
@@ -31197,18 +31163,14 @@ function map_val_box_one_dec(vt: string, structs: parser.StructDecl[]): boolean 
 // non-pointer scalar. An unknown / generic name reads false (the safe direction —
 // it keeps the shallow free).
 function struct_fields_all_scalar(structs: parser.StructDecl[], sty: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == sty) {
-            if (structs[i].type_params.len() > 0) { return false; }
-            var f: i32 = 0;
-            while (f < structs[i].fields.len()) {
-                if (map_value_is_ptr(structs[i].fields[f].type_name)) { return false; }
-                f = f + 1;
+    for sd in structs {
+        if (sd.name == sty) {
+            if (sd.type_params.len() > 0) { return false; }
+            for fld in sd.fields {
+                if (map_value_is_ptr(fld.type_name)) { return false; }
             }
             return true;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -31360,8 +31322,7 @@ function expr_map_identity_use(e: parser.Expr, name: string): boolean {
         parser.ExprFieldAccess(fa) => { return expr_map_identity_use(fa.obj, name); },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && expr_map_identity_use(sl.base, name)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (expr_map_identity_use(sl.field_values[i], name)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (expr_map_identity_use(fv, name)) { return true; } }
             return false;
         },
         parser.ExprArray(a) => {
@@ -31370,8 +31331,7 @@ function expr_map_identity_use(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (expr_map_identity_use(t.elements[i], name)) { return true; } i = i + 1; }
+            for el in t.elements { if (expr_map_identity_use(el, name)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -31402,8 +31362,7 @@ function map_expr_mentions_name(e: parser.Expr, name: string): boolean {
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && map_expr_mentions_name(sl.base, name)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (map_expr_mentions_name(sl.field_values[i], name)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (map_expr_mentions_name(fv, name)) { return true; } }
             return false;
         },
         parser.ExprArray(a) => {
@@ -31412,8 +31371,7 @@ function map_expr_mentions_name(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (map_expr_mentions_name(t.elements[i], name)) { return true; } i = i + 1; }
+            for el in t.elements { if (map_expr_mentions_name(el, name)) { return true; } }
             return false;
         },
         _ => { return true; }
@@ -31877,8 +31835,7 @@ function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]):
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (strarr_expr_unsafe(t.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            for el in t.elements { if (strarr_expr_unsafe(el, name, borrowable)) { return true; } }
             return false;
         },
         parser.ExprStructLit(slz) => {
@@ -32474,14 +32431,12 @@ function darr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]): b
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (darr_expr_unsafe(t.elements[i], name, borrowable)) { return true; } i = i + 1; }
+            for el in t.elements { if (darr_expr_unsafe(el, name, borrowable)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && darr_expr_unsafe(sl.base, name, borrowable)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (darr_expr_unsafe(sl.field_values[i], name, borrowable)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (darr_expr_unsafe(fv, name, borrowable)) { return true; } }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -32620,8 +32575,7 @@ function moves_fields_expr(e: parser.Expr, name: string, nomove: string[]): bool
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (moves_fields_expr(t.elements[i], name, nomove)) { return true; } i = i + 1; }
+            for el in t.elements { if (moves_fields_expr(el, name, nomove)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
@@ -32639,8 +32593,7 @@ function moves_fields_expr(e: parser.Expr, name: string, nomove: string[]): bool
                     _ => { if (moves_fields_expr(sl.base, name, nomove)) { return true; } }
                 }
             }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name, nomove)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (moves_fields_expr(fv, name, nomove)) { return true; } }
             return false;
         },
         parser.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name, nomove); },   // a receiver used inside the closure body
@@ -32733,13 +32686,11 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                match (t.elements[i]) {
+            for el in t.elements {
+                match (el) {
                     parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
-                    _ => { if (struct_box_sink_stored_expr(t.elements[i], name, structs, apretain)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(el, name, structs, apretain)) { return true; } }
                 }
-                i = i + 1;
             }
             return false;
         },
@@ -32759,13 +32710,11 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             // enum arms of the ExprStructLit lowering retain it unconditionally,
             // so the source keeps a claim its own release balances. Not a sink —
             // only nested sinks inside a field value walk.
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                match (sl.field_values[i]) {
+            for fv in sl.field_values {
+                match (fv) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (struct_box_sink_stored_expr(sl.field_values[i], name, structs, apretain)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(fv, name, structs, apretain)) { return true; } }
                 }
-                i = i + 1;
             }
             return false;
         },
@@ -32827,13 +32776,11 @@ function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, struct
 function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                match (sl.field_values[i]) {
+            for fv in sl.field_values {
+                match (fv) {
                     parser.ExprIdent(fid) => { if (fid.name == name) { return true; } },
-                    _ => { if (struct_counted_share_expr(sl.field_values[i], name, structs)) { return true; } }
+                    _ => { if (struct_counted_share_expr(fv, name, structs)) { return true; } }
                 }
-                i = i + 1;
             }
             if (sl.has_base) { return struct_counted_share_expr(sl.base, name, structs); }
             return false;
@@ -32875,8 +32822,7 @@ function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (struct_counted_share_expr(t.elements[i], name, structs)) { return true; } i = i + 1; }
+            for el in t.elements { if (struct_counted_share_expr(el, name, structs)) { return true; } }
             return false;
         },
         _ => { return false; },
@@ -33313,8 +33259,7 @@ function method_result_moved_expr(e: parser.Expr, name: string, method: string, 
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (method_result_moved_expr(t.elements[i], name, method, true, borrowable)) { return true; } i = i + 1; }
+            for el in t.elements { if (method_result_moved_expr(el, name, method, true, borrowable)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl2) => {
@@ -36240,13 +36185,11 @@ function enum_variant_reuse_payload_ok(structs: parser.StructDecl[], vname: stri
 // enum has no variants. The widened donor-init gate for in-arm match reuse.
 function enum_all_variants_reuse_ok(structs: parser.StructDecl[], enum_name: string): boolean {
     var any: boolean = false;
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == enum_name) {
+    for sd in structs {
+        if (sd.enum_owner == enum_name) {
             any = true;
-            if (!enum_variant_reuse_payload_ok(structs, structs[i].name)) { return false; }
+            if (!enum_variant_reuse_payload_ok(structs, sd.name)) { return false; }
         }
-        i = i + 1;
     }
     return any;
 }
@@ -36324,13 +36267,11 @@ function inarm_donor_arrays_are_fresh(body: parser.Stmt[], structs: parser.Struc
 // variants (defensive — never a free candidate then).
 function enum_all_variants_scalar(structs: parser.StructDecl[], enum_name: string): boolean {
     var any: boolean = false;
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == enum_name) {
+    for sd in structs {
+        if (sd.enum_owner == enum_name) {
             any = true;
-            if (!enum_variant_scalar_payload(structs, structs[i].name)) { return false; }
+            if (!enum_variant_scalar_payload(structs, sd.name)) { return false; }
         }
-        i = i + 1;
     }
     return any;
 }
@@ -36996,19 +36937,17 @@ function enum_variant_has_rc_payload(structs: parser.StructDecl[], vname: string
 pub function enum_arr_elems_walk_ok(structs: parser.StructDecl[], ename: string): boolean {
     if (!decl_is_enum(structs, ename)) { return false; }
     var any_arr: boolean = false;
-    var vi: i32 = 0;
-    while (vi < structs.len()) {
-        if (structs[vi].enum_owner == ename) {
-            var n: i32 = decl_field_count(structs, structs[vi].name);
+    for sd in structs {
+        if (sd.enum_owner == ename) {
+            var n: i32 = decl_field_count(structs, sd.name);
             var fi: i32 = 0;
             while (fi < n) {
-                var ft: string = decl_field_type_at(structs, structs[vi].name, fi);
+                var ft: string = decl_field_type_at(structs, sd.name, fi);
                 if (is_leaksafe_array_field(ft)) { any_arr = true; }
                 else if (!is_scalar_type_name(ft)) { return false; }
                 fi = fi + 1;
             }
         }
-        vi = vi + 1;
     }
     return any_arr;
 }
@@ -37036,14 +36975,12 @@ pub function enum_walk_payload_offsets(structs: parser.StructDecl[], vname: stri
 function enum_all_variants_rc_droppable(structs: parser.StructDecl[], enum_name: string): boolean {
     var any: boolean = false;
     var rc: boolean = false;
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == enum_name) {
+    for sd in structs {
+        if (sd.enum_owner == enum_name) {
             any = true;
-            if (!enum_variant_rc_droppable(structs, structs[i].name)) { return false; }
-            if (enum_variant_has_rc_payload(structs, structs[i].name)) { rc = true; }
+            if (!enum_variant_rc_droppable(structs, sd.name)) { return false; }
+            if (enum_variant_has_rc_payload(structs, sd.name)) { rc = true; }
         }
-        i = i + 1;
     }
     return any && rc;
 }
@@ -37679,14 +37616,12 @@ function enum_variant_array_payload_only(structs: parser.StructDecl[], vname: st
 function enum_all_variants_array_payload(structs: parser.StructDecl[], enum_name: string): boolean {
     var any: boolean = false;
     var arr: boolean = false;
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == enum_name) {
+    for sd in structs {
+        if (sd.enum_owner == enum_name) {
             any = true;
-            if (!enum_variant_array_payload_only(structs, structs[i].name)) { return false; }
-            if (enum_variant_has_rc_payload(structs, structs[i].name)) { arr = true; }
+            if (!enum_variant_array_payload_only(structs, sd.name)) { return false; }
+            if (enum_variant_has_rc_payload(structs, sd.name)) { arr = true; }
         }
-        i = i + 1;
     }
     return any && arr;
 }
@@ -37703,14 +37638,12 @@ function enum_all_variants_array_payload(structs: parser.StructDecl[], enum_name
 function enum_all_variants_same_field_count(structs: parser.StructDecl[], enum_name: string): boolean {
     var seen: boolean = false;
     var want: i32 = 0;
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == enum_name) {
-            var fc: i32 = structs[i].fields.len();
+    for sd in structs {
+        if (sd.enum_owner == enum_name) {
+            var fc: i32 = sd.fields.len();
             if (!seen) { want = fc; seen = true; }
             else if (fc != want) { return false; }
         }
-        i = i + 1;
     }
     return seen;
 }
@@ -38423,14 +38356,12 @@ function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, stru
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (optstruct_bind_esc_expr(t.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            for el in t.elements { if (optstruct_bind_esc_expr(el, name, sty, structs)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && optstruct_bind_esc_expr(sl.base, name, sty, structs)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (optstruct_bind_esc_expr(sl.field_values[i], name, sty, structs)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (optstruct_bind_esc_expr(fv, name, sty, structs)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -38592,11 +38523,9 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                if (fieldmove_is_move_value(t.elements[i], name, sty, structs, borrowable)) { return true; }
-                if (fieldmove_expr(t.elements[i], name, sty, structs, borrowable)) { return true; }
-                i = i + 1;
+            for el in t.elements {
+                if (fieldmove_is_move_value(el, name, sty, structs, borrowable)) { return true; }
+                if (fieldmove_expr(el, name, sty, structs, borrowable)) { return true; }
             }
             return false;
         },
@@ -38605,8 +38534,7 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
                 if (fieldmove_is_move_value(sl.base, name, sty, structs, borrowable)) { return true; }
                 if (fieldmove_expr(sl.base, name, sty, structs, borrowable)) { return true; }
             }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
+            for fv in sl.field_values {
                 // A `name.<f>` value of a kind whose construction retain is
                 // GUARANTEED (fieldmove_counted_field_alias's list — nested
                 // struct, enum, leak-safe scalar array, struct array) is a
@@ -38616,10 +38544,9 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
                 // buffer leaked at rc 1 (the construction-retain matrix's
                 // fieldread column, i32[]/struct/struct[] flavors). Call args
                 // and returns keep marking: no retain is guaranteed there.
-                if (!fieldmove_counted_field_alias(sl.field_values[i], name, sty, structs)
-                    && fieldmove_is_move_value(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
-                if (fieldmove_expr(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
-                i = i + 1;
+                if (!fieldmove_counted_field_alias(fv, name, sty, structs)
+                    && fieldmove_is_move_value(fv, name, sty, structs, borrowable)) { return true; }
+                if (fieldmove_expr(fv, name, sty, structs, borrowable)) { return true; }
             }
             return false;
         },
@@ -39947,14 +39874,12 @@ function opttup_arm_expr_escapes(e: parser.Expr, p: string, inner: string, struc
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (opttup_arm_expr_escapes(t.elements[i], p, inner, structs)) { return true; } i = i + 1; }
+            for el in t.elements { if (opttup_arm_expr_escapes(el, p, inner, structs)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && opttup_arm_expr_escapes(sl.base, p, inner, structs)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (opttup_arm_expr_escapes(sl.field_values[i], p, inner, structs)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (opttup_arm_expr_escapes(fv, p, inner, structs)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -41060,7 +40985,7 @@ function optstruct_arm_expr_escapes(e: parser.Expr, p: string, sty: string, stru
         parser.ExprUnary(u) => { return optstruct_arm_expr_escapes(u.operand, p, sty, structs); },
         parser.ExprSlice(sl) => { return optstruct_arm_expr_escapes(sl.array, p, sty, structs) || optstruct_arm_expr_escapes(sl.start, p, sty, structs) || optstruct_arm_expr_escapes(sl.end, p, sty, structs); },
         parser.ExprArray(ar) => { var i: i32 = 0; while (i < ar.elements.len()) { if (optstruct_arm_expr_escapes(ar.elements[i], p, sty, structs)) { return true; } i = i + 1; } return false; },
-        parser.ExprTuple(t) => { var i: i32 = 0; while (i < t.elements.len()) { if (optstruct_arm_expr_escapes(t.elements[i], p, sty, structs)) { return true; } i = i + 1; } return false; },
+        parser.ExprTuple(t) => { for el in t.elements { if (optstruct_arm_expr_escapes(el, p, sty, structs)) { return true; } } return false; },
         parser.ExprStructLit(slb) => {
             if (slb.has_base && optstruct_arm_expr_escapes(slb.base, p, sty, structs)) { return true; }
             var i: i32 = 0;
@@ -41934,7 +41859,7 @@ function optarrarr_arm_expr_escapes(e: parser.Expr, g: string): boolean {
         parser.ExprUnary(u) => { return optarrarr_arm_expr_escapes(u.operand, g); },
         parser.ExprSlice(sl) => { return optarrarr_arm_expr_escapes(sl.array, g) || optarrarr_arm_expr_escapes(sl.start, g) || optarrarr_arm_expr_escapes(sl.end, g); },
         parser.ExprArray(ar) => { var i: i32 = 0; while (i < ar.elements.len()) { if (optarrarr_arm_expr_escapes(ar.elements[i], g)) { return true; } i = i + 1; } return false; },
-        parser.ExprTuple(t) => { var i: i32 = 0; while (i < t.elements.len()) { if (optarrarr_arm_expr_escapes(t.elements[i], g)) { return true; } i = i + 1; } return false; },
+        parser.ExprTuple(t) => { for el in t.elements { if (optarrarr_arm_expr_escapes(el, g)) { return true; } } return false; },
         parser.ExprStructLit(slb) => {
             if (slb.has_base && optarrarr_arm_expr_escapes(slb.base, g)) { return true; }
             var i: i32 = 0;
@@ -42447,14 +42372,12 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, struc
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (arrtup_elem_esc_expr(t.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
+            for el in t.elements { if (arrtup_elem_esc_expr(el, name, ttype, structs)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && arrtup_elem_esc_expr(sl.base, name, ttype, structs)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (arrtup_elem_esc_expr(sl.field_values[i], name, ttype, structs)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (arrtup_elem_esc_expr(fv, name, ttype, structs)) { return true; } }
             return false;
         },
         _ => { return false; }
@@ -43098,8 +43021,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (arrstruct_elem_esc_expr(t.elements[i], name, sty, structs, msites)) { return true; } i = i + 1; }
+            for el in t.elements { if (arrstruct_elem_esc_expr(el, name, sty, structs, msites)) { return true; } }
             return false;
         },
         parser.ExprStructLit(slb) => {
@@ -43267,16 +43189,14 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var ti: i32 = 0;
-            while (ti < t.elements.len()) { if (arrenum_esc_expr(t.elements[ti], name)) { return true; } ti = ti + 1; }
+            for el in t.elements { if (arrenum_esc_expr(el, name)) { return true; } }
             return false;
         },
         parser.ExprIndex(x) => { return arrenum_esc_expr(x.array, name) || arrenum_esc_expr(x.index, name); },
         parser.ExprSlice(sl) => { return arrenum_esc_expr(sl.array, name) || arrenum_esc_expr(sl.start, name) || arrenum_esc_expr(sl.end, name); },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { if (arrenum_esc_expr(sl.base, name)) { return true; } }
-            var fi: i32 = 0;
-            while (fi < sl.field_values.len()) { if (arrenum_esc_expr(sl.field_values[fi], name)) { return true; } fi = fi + 1; }
+            for fv in sl.field_values { if (arrenum_esc_expr(fv, name)) { return true; } }
             return false;
         },
         parser.ExprFieldAccess(fa) => { return arrenum_esc_expr(fa.obj, name); },
@@ -43866,19 +43786,15 @@ function inarm_reuse_payload_type_ok(t: string): boolean {
 // hazard. String / enum / map / option / tuple pointer fields are still excluded
 // (no full-drop wired for them here), so they bail to the alloc path.
 function struct_fields_reusable(structs: parser.StructDecl[], struct_name: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            if (structs[i].fields.len() == 0) { return false; }
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                var t: string = structs[i].fields[fi].type_name;
+    for sd in structs {
+        if (sd.name == struct_name) {
+            if (sd.fields.len() == 0) { return false; }
+            for fld in sd.fields {
+                var t: string = fld.type_name;
                 if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t)) { return false; }
-                fi = fi + 1;
             }
             return true;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -43897,19 +43813,15 @@ function struct_fields_reusable(structs: parser.StructDecl[], struct_name: strin
 // which a parameter does not have.
 function struct_fields_reusable_param(structs: parser.StructDecl[], struct_name: string): boolean {
     if (struct_fields_reusable(structs, struct_name)) { return true; }
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            if (structs[i].fields.len() == 0) { return false; }
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                var t: string = structs[i].fields[fi].type_name;
+    for sd in structs {
+        if (sd.name == struct_name) {
+            if (sd.fields.len() == 0) { return false; }
+            for fld in sd.fields {
+                var t: string = fld.type_name;
                 if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
-                fi = fi + 1;
             }
             return true;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -43927,13 +43839,11 @@ function struct_fields_reusable_param(structs: parser.StructDecl[], struct_name:
 // fields would need per-field retain/release balancing — a later slice).
 function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name: string): boolean {
     if (struct_fields_reusable(structs, struct_name)) { return true; }
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            if (structs[i].fields.len() == 0) { return false; }
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                var t: string = structs[i].fields[fi].type_name;
+    for sd in structs {
+        if (sd.name == struct_name) {
+            if (sd.fields.len() == 0) { return false; }
+            for fld in sd.fields {
+                var t: string = fld.type_name;
                 // Map[K,V] / tuple / Option-Result fields (#4356 divergence 1)
                 // are admitted with NO release, NO carried-copy inc, and NO
                 // freshness gate: all three are leak-only boxes on the IR path
@@ -43973,11 +43883,9 @@ function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name:
                     if (struct_lit_all_scalar(structs, slice_unchecked(t, 0, t.len() - 2))) { bx_ok = true; }
                 } else if (is_enum_array_field_type(structs, t)) { bx_ok = true; }
                 if (!bx_ok && !reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && t != "string[]" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
-                fi = fi + 1;
             }
             return true;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -44077,22 +43985,18 @@ function fresh_struct_lit_types_acc(stmts: parser.Stmt[], name: string, acc: str
 // site is a flat/rc-aware free that admission must keep alias-free by
 // gating the DONOR's original values fresh (donor_enum_fields_fresh).
 function struct_has_enum_field(structs: parser.StructDecl[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == name) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (is_enum_like_name(structs[i].fields[fi].type_name, structs)) { return true; }
-                if (structs[i].fields[fi].type_name == "string") { return true; }
-                if (structs[i].fields[fi].type_name == "string[]") { return true; }
-                if (structs[i].fields[fi].type_name == "fn") { return true; }
-                if (is_struct_array_field_type(structs, structs[i].fields[fi].type_name)) { return true; }
-                if (is_enum_array_field_type(structs, structs[i].fields[fi].type_name)) { return true; }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == name) {
+            for fld in sd.fields {
+                if (is_enum_like_name(fld.type_name, structs)) { return true; }
+                if (fld.type_name == "string") { return true; }
+                if (fld.type_name == "string[]") { return true; }
+                if (fld.type_name == "fn") { return true; }
+                if (is_struct_array_field_type(structs, fld.type_name)) { return true; }
+                if (is_enum_array_field_type(structs, fld.type_name)) { return true; }
             }
             return false;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -47184,14 +47088,12 @@ function trmc_count_self_calls(e: parser.Expr, fname: string): i32 {
             return n;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { n = n + trmc_count_self_calls(t.elements[i], fname); i = i + 1; }
+            for el in t.elements { n = n + trmc_count_self_calls(el, fname); }
             return n;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { n = n + trmc_count_self_calls(sl.base, fname); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { n = n + trmc_count_self_calls(sl.field_values[i], fname); i = i + 1; }
+            for fv in sl.field_values { n = n + trmc_count_self_calls(fv, fname); }
             return n;
         },
         _ => { return 0; }
@@ -47201,10 +47103,8 @@ function trmc_count_self_calls(e: parser.Expr, fname: string): i32 {
 
 // trmc_is_enum_type: `tn` names an enum (some variant struct carries it as owner).
 function trmc_is_enum_type(structs: parser.StructDecl[], tn: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == tn) { return true; }
-        i = i + 1;
+    for sd in structs {
+        if (sd.enum_owner == tn) { return true; }
     }
     return false;
 }
@@ -49324,10 +49224,8 @@ function erased_return_value_ok(e: parser.Expr, names: string[]): boolean {
     match (e) {
         parser.ExprIdent(rid) => { if (util.index_of_str(names, rid.name) >= 0) { return true; } },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                if (!erased_return_value_ok(t.elements[i], names)) { return false; }
-                i = i + 1;
+            for el in t.elements {
+                if (!erased_return_value_ok(el, names)) { return false; }
             }
             return true;
         },
@@ -50463,25 +50361,23 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     }
     unsafe_names = strfld_resolve_deferred(unsafe_names, borrowable);
     var out: string[] = [];
-    var si: i32 = 0;
-    while (si < structs.len()) {
-        var t: string = structs[si].name;
+    for sd in structs {
+        var t: string = sd.name;
         // Any string-fielded struct is a candidate — array-carrying types
         // gain the string arm in their existing __field_reclaim body, and
         // string-ONLY types (slice 3) gain the routing itself (their body is
         // the string arms + the snapshot_dec box free).
         if (struct_has_string_field(structs, t)) {
             var ok: boolean = true;
-            var n: i32 = structs[si].fields.len();
+            var n: i32 = sd.fields.len();
             var fi: i32 = 0;
             while (fi < n) {
-                if (structs[si].fields[fi].type_name == "string"
-                    && util.index_of_str(unsafe_names, structs[si].fields[fi].name) >= 0) { ok = false; }
+                if (sd.fields[fi].type_name == "string"
+                    && util.index_of_str(unsafe_names, sd.fields[fi].name) >= 0) { ok = false; }
                 fi = fi + 1;
             }
             if (ok) { out = out.append(t); }
         }
-        si = si + 1;
     }
     // string[]-FIELD admissions (the string[]-struct-field exit-drop slice),
     // returned as "arr:"-prefixed entries in the SAME list: the lowering asks
@@ -50529,17 +50425,14 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         }
         arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, vis, arr_unsafe);
     }
-    var asi: i32 = 0;
-    while (asi < structs.len()) {
-        var at: string = structs[asi].name;
+    for sd in structs {
+        var at: string = sd.name;
         if (struct_has_strarr_field(structs, at)) {
             var aok: boolean = true;
-            var afi: i32 = 0;
-            while (afi < structs[asi].fields.len()) {
-                if (structs[asi].fields[afi].type_name == "string[]"
-                    && (util.index_of_str(arr_unsafe, at + "." + structs[asi].fields[afi].name) >= 0
-                        || util.index_of_str(arr_unsafe, structs[asi].fields[afi].name) >= 0)) { aok = false; }
-                afi = afi + 1;
+            for fld in sd.fields {
+                if (fld.type_name == "string[]"
+                    && (util.index_of_str(arr_unsafe, at + "." + fld.name) >= 0
+                        || util.index_of_str(arr_unsafe, fld.name) >= 0)) { aok = false; }
             }
             if (aok) { out = out.append("arr:" + at); }
             // The BUFFER-release admission ("arrbuf:"-prefixed), the store half
@@ -50551,11 +50444,9 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
             // refused is an uncounted alias, and dec'ing that frees a buffer
             // another owner still holds.
             var abufok: boolean = true;
-            var abfi: i32 = 0;
-            while (abfi < structs[asi].fields.len()) {
-                if (structs[asi].fields[abfi].type_name == "string[]"
-                    && util.index_of_str(arr_unsafe, "store:" + at + "." + structs[asi].fields[abfi].name) >= 0) { abufok = false; }
-                abfi = abfi + 1;
+            for fld in sd.fields {
+                if (fld.type_name == "string[]"
+                    && util.index_of_str(arr_unsafe, "store:" + at + "." + fld.name) >= 0) { abufok = false; }
             }
             if (abufok) { out = out.append("arrbuf:" + at); }
         }
@@ -50571,25 +50462,20 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         // __struct_drop_<T>'s walk needs neither: at scope exit the box and
         // every buffer that ever aliased its elements are dying together.
         var sa_has: boolean = false;
-        var safi: i32 = 0;
-        while (safi < structs[asi].fields.len()) {
-            if (is_struct_array_field_type(structs, structs[asi].fields[safi].type_name)
-                || is_enum_array_field_type(structs, structs[asi].fields[safi].type_name)) { sa_has = true; }
-            safi = safi + 1;
+        for fld in sd.fields {
+            if (is_struct_array_field_type(structs, fld.type_name)
+                || is_enum_array_field_type(structs, fld.type_name)) { sa_has = true; }
         }
         if (sa_has) {
             var saok: boolean = true;
-            var safj: i32 = 0;
-            while (safj < structs[asi].fields.len()) {
-                var saft: string = structs[asi].fields[safj].type_name;
+            for fld in sd.fields {
+                var saft: string = fld.type_name;
                 if ((is_struct_array_field_type(structs, saft) || is_enum_array_field_type(structs, saft))
-                    && (util.index_of_str(arr_unsafe, at + "." + structs[asi].fields[safj].name) >= 0
-                        || util.index_of_str(arr_unsafe, structs[asi].fields[safj].name) >= 0)) { saok = false; }
-                safj = safj + 1;
+                    && (util.index_of_str(arr_unsafe, at + "." + fld.name) >= 0
+                        || util.index_of_str(arr_unsafe, fld.name) >= 0)) { saok = false; }
             }
             if (saok) { out = out.append("sarr:" + at); }
         }
-        asi = asi + 1;
     }
     // CLOSURE-field admissions ("clo:"-prefixed, threaded exactly like the
     // "arr:" half): a type is admitted iff every fn-typed field name passes
@@ -50602,20 +50488,16 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     for fn in funcs {
         clo_unsafe = clofld_scan_stmts(fn.body, structs, clo_unsafe);
     }
-    var csi: i32 = 0;
-    while (csi < structs.len()) {
-        var ct: string = structs[csi].name;
+    for sd in structs {
+        var ct: string = sd.name;
         if (struct_has_clo_field(structs, ct)) {
             var cok: boolean = true;
-            var cfi: i32 = 0;
-            while (cfi < structs[csi].fields.len()) {
-                if (structs[csi].fields[cfi].type_name == "fn"
-                    && util.index_of_str(clo_unsafe, structs[csi].fields[cfi].name) >= 0) { cok = false; }
-                cfi = cfi + 1;
+            for fld in sd.fields {
+                if (fld.type_name == "fn"
+                    && util.index_of_str(clo_unsafe, fld.name) >= 0) { cok = false; }
             }
             if (cok) { out = out.append("clo:" + ct); }
         }
-        csi = csi + 1;
     }
     return out;
 }
@@ -50648,21 +50530,17 @@ pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: pa
         unsafe_names = structfld_collect_unsafe_stmts(fn.body, unsafe_names, borrowable);
     }
     var out: string[] = [];
-    var si: i32 = 0;
-    while (si < structs.len()) {
+    for sd in structs {
         var has: boolean = false;
         var ok: boolean = true;
-        var fi: i32 = 0;
-        while (fi < structs[si].fields.len()) {
-            var fdt: string = structs[si].fields[fi].type_name;
+        for fld in sd.fields {
+            var fdt: string = fld.type_name;
             if (decl_is_struct(structs, fdt) || decl_is_enum(structs, fdt)) {
                 has = true;
-                if (util.index_of_str(unsafe_names, structs[si].fields[fi].name) >= 0) { ok = false; }
+                if (util.index_of_str(unsafe_names, fld.name) >= 0) { ok = false; }
             }
-            fi = fi + 1;
         }
-        if (has && ok) { out = out.append(structs[si].name); }
-        si = si + 1;
+        if (has && ok) { out = out.append(sd.name); }
     }
     return out;
 }
@@ -50816,14 +50694,12 @@ function structfld_collect_unsafe_assign(target: string, v: parser.Expr, acc: st
     var a: string[] = acc;
     match (v) {
         parser.ExprStructLit(sl) => {
-            var fi: i32 = 0;
-            while (fi < sl.field_values.len()) {
+            for fv in sl.field_values {
                 // Only a DIRECT `target.<f>`: a deeper chain reaches a box the
                 // successor does not supersede (selfrebind_field_alias).
-                if (!selfrebind_field_alias(sl.field_values[fi], target)) {
-                    a = structfld_collect_unsafe(sl.field_values[fi], a, borrowable);
+                if (!selfrebind_field_alias(fv, target)) {
+                    a = structfld_collect_unsafe(fv, a, borrowable);
                 }
-                fi = fi + 1;
             }
             if (sl.has_base) { a = structfld_collect_unsafe(sl.base, a, borrowable); }
             return a;
@@ -50876,17 +50752,13 @@ function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[], bor
 
 // struct_has_strarr_field: does `sty` declare at least one string[] field?
 pub function struct_has_strarr_field(structs: parser.StructDecl[], sty: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == sty) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (structs[i].fields[fi].type_name == "string[]") { return true; }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == sty) {
+            for fld in sd.fields {
+                if (fld.type_name == "string[]") { return true; }
             }
             return false;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -50896,17 +50768,13 @@ pub function struct_has_strarr_field(structs: parser.StructDecl[], sty: string):
 // wraps its value into a `__mkclo$…` env box, so the slot holds an
 // rc-headered closure box at runtime)?
 pub function struct_has_clo_field(structs: parser.StructDecl[], sty: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == sty) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (structs[i].fields[fi].type_name == "fn") { return true; }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == sty) {
+            for fld in sd.fields {
+                if (fld.type_name == "fn") { return true; }
             }
             return false;
         }
-        i = i + 1;
     }
     return false;
 }
@@ -50915,17 +50783,13 @@ pub function struct_has_clo_field(structs: parser.StructDecl[], sty: string): bo
 // the moves_fields exemption list for field-closure calls.
 function clo_field_names_of(structs: parser.StructDecl[], sty: string): string[] {
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == sty) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                if (structs[i].fields[fi].type_name == "fn") { out = out.append(structs[i].fields[fi].name); }
-                fi = fi + 1;
+    for sd in structs {
+        if (sd.name == sty) {
+            for fld in sd.fields {
+                if (fld.type_name == "fn") { out = out.append(fld.name); }
             }
             return out;
         }
-        i = i + 1;
     }
     return out;
 }
@@ -50976,16 +50840,12 @@ function clofld_scan(e: parser.Expr, structs: parser.StructDecl[], acc: string[]
                 a = clofld_scan(sl2.base, structs, a);
                 // A base copy of an fn-fielded type carries the closure box —
                 // mark every fn field of the type unsafe.
-                var bsi: i32 = 0;
-                while (bsi < structs.len()) {
-                    if (structs[bsi].name == sl2.type_name) {
-                        var bfi: i32 = 0;
-                        while (bfi < structs[bsi].fields.len()) {
-                            if (structs[bsi].fields[bfi].type_name == "fn") { a = push_str_unique(a, structs[bsi].fields[bfi].name); }
-                            bfi = bfi + 1;
+                for sd in structs {
+                    if (sd.name == sl2.type_name) {
+                        for fld in sd.fields {
+                            if (fld.type_name == "fn") { a = push_str_unique(a, fld.name); }
                         }
                     }
-                    bsi = bsi + 1;
                 }
             }
             var i: i32 = 0;
@@ -51022,8 +50882,7 @@ function clofld_scan(e: parser.Expr, structs: parser.StructDecl[], acc: string[]
             return a;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { a = clofld_scan(t.elements[i], structs, a); i = i + 1; }
+            for el in t.elements { a = clofld_scan(el, structs, a); }
             return a;
         },
         parser.ExprLambda(lm) => { return clofld_scan_stmts(lm.body, structs, a); },
@@ -51204,8 +51063,7 @@ function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.St
             return a;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { a = fnptr_scan(t.elements[i], funcs, structs, a); i = i + 1; }
+            for el in t.elements { a = fnptr_scan(el, funcs, structs, a); }
             return a;
         },
         parser.ExprLambda(lm) => { return fnptr_scan_stmts(lm.body, funcs, structs, a, false); },
@@ -51540,8 +51398,7 @@ function fnfld_read_expr(e: parser.Expr, structs: parser.StructDecl[], binds: st
             return a;
         },
         parser.ExprTuple(t) => {
-            var ti: i32 = 0;
-            while (ti < t.elements.len()) { a = fnfld_read_expr(t.elements[ti], structs, binds, a); ti = ti + 1; }
+            for el in t.elements { a = fnfld_read_expr(el, structs, binds, a); }
             return a;
         },
         parser.ExprStructLit(sl2) => {
@@ -51591,10 +51448,8 @@ function fnfld_bind(binds: string[], name: string, ty: string, structs: parser.S
         i = i + 2;
     }
     var known: boolean = false;
-    var si: i32 = 0;
-    while (si < structs.len()) {
-        if (structs[si].name == ty) { known = true; }
-        si = si + 1;
+    for sd in structs {
+        if (sd.name == ty) { known = true; }
     }
     if (known) { out = out.append(name); out = out.append(ty); }
     return out;
@@ -51717,18 +51572,14 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                 // for an array field, so both boxes hold the same buffer with
                 // one reference between them: STORE-unsafe for the buffer dec,
                 // whatever the overrides look like.
-                var bfi: i32 = 0;
-                while (bfi < structs.len()) {
-                    if (structs[bfi].name == sl2.type_name) {
-                        var bfj: i32 = 0;
-                        while (bfj < structs[bfi].fields.len()) {
-                            if (structs[bfi].fields[bfj].type_name == "string[]") {
-                                a = push_str_unique(a, "store:" + sl2.type_name + "." + structs[bfi].fields[bfj].name);
+                for sd in structs {
+                    if (sd.name == sl2.type_name) {
+                        for fld in sd.fields {
+                            if (fld.type_name == "string[]") {
+                                a = push_str_unique(a, "store:" + sl2.type_name + "." + fld.name);
                             }
-                            bfj = bfj + 1;
                         }
                     }
-                    bfi = bfi + 1;
                 }
             }
             var i: i32 = 0;
@@ -51808,8 +51659,7 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
             return a;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { a = strarrfld_scan(t.elements[i], structs, binds, str_fresh, strarr_producers, a); i = i + 1; }
+            for el in t.elements { a = strarrfld_scan(el, structs, binds, str_fresh, strarr_producers, a); }
             return a;
         },
         parser.ExprLambda(lm) => { return strarrfld_scan_stmts(lm.body, structs, binds, str_fresh, strarr_producers, a); },
@@ -53361,13 +53211,11 @@ function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body:
             while (ai < a.elements.len()) { var (ea, eb) = ca_classify_expr(a.elements[ai], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ea; okc = okc + eb; ai = ai + 1; }
         },
         parser.ExprTuple(t) => {
-            var ti: i32 = 0;
-            while (ti < t.elements.len()) { var (ea, eb) = ca_classify_expr(t.elements[ti], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ea; okc = okc + eb; ti = ti + 1; }
+            for el in t.elements { var (ea, eb) = ca_classify_expr(el, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ea; okc = okc + eb; }
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { var (ba, bb) = ca_classify_expr(sl.base, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + ba; okc = okc + bb; }
-            var fi: i32 = 0;
-            while (fi < sl.field_values.len()) { var (va, vb) = ca_classify_expr(sl.field_values[fi], fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + va; okc = okc + vb; fi = fi + 1; }
+            for fv in sl.field_values { var (va, vb) = ca_classify_expr(fv, fname, pidx, caller_body, closureset, caset, caller_cparams); seen = seen + va; okc = okc + vb; }
         },
         _ => {}
     }
@@ -53696,14 +53544,12 @@ function elem_read_expr(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (elem_read_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            for el in t.elements { if (elem_read_expr(el, name)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && elem_read_expr(sl.base, name)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (elem_read_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (elem_read_expr(fv, name)) { return true; } }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -53820,14 +53666,12 @@ function param_consumed_expr(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (param_consumed_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            for el in t.elements { if (param_consumed_expr(el, name)) { return true; } }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && param_consumed_expr(sl.base, name)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (param_consumed_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (param_consumed_expr(fv, name)) { return true; } }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -54014,8 +53858,7 @@ function arrparam_use_ok(e: parser.Expr, pn: string, counted: boolean, reg: stri
         },
         parser.ExprTuple(t) => {
             var tcnt: boolean = pfx == "ACNT:";
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (!arrparam_use_ok(t.elements[i], pn, tcnt, reg, pfx, structs, sfok)) { return false; } i = i + 1; }
+            for el in t.elements { if (!arrparam_use_ok(el, pn, tcnt, reg, pfx, structs, sfok)) { return false; } }
             return true;
         },
         parser.ExprStructLit(sl) => {
@@ -54028,8 +53871,7 @@ function arrparam_use_ok(e: parser.Expr, pn: string, counted: boolean, reg: stri
             // free an over-release. Array slots are unconditional and unaffected.
             var scnt: boolean = true;
             if (pfx == "SCNT:" && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (!arrparam_use_ok(sl.field_values[i], pn, scnt, reg, pfx, structs, sfok)) { return false; } i = i + 1; }
+            for fv in sl.field_values { if (!arrparam_use_ok(fv, pn, scnt, reg, pfx, structs, sfok)) { return false; } }
             return true;
         },
         parser.ExprCall(c) => {
@@ -55091,10 +54933,8 @@ function rc_struct_decl_index(structs: parser.StructDecl[], t: string): i32 {
 // rc_enum_has_variants reports whether `t` names a user enum — i.e. at least
 // one variant struct carries enum_owner == t.
 function rc_enum_has_variants(structs: parser.StructDecl[], t: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == t) { return true; }
-        i = i + 1;
+    for sd in structs {
+        if (sd.enum_owner == t) { return true; }
     }
     return false;
 }
@@ -55148,16 +54988,12 @@ function rc_type_string_array_free(t: string, structs: parser.StructDecl[], seen
     if (rc_enum_has_variants(structs, t)) {
         if (rc_seen_has(seen, "e:" + t)) { return true; }
         var seen3: string[] = seen.append("e:" + t);
-        var v: i32 = 0;
-        while (v < structs.len()) {
-            if (structs[v].enum_owner == t) {
-                var p: i32 = 0;
-                while (p < structs[v].fields.len()) {
-                    if (!rc_type_string_array_free(structs[v].fields[p].type_name, structs, seen3)) { return false; }
-                    p = p + 1;
+        for sd in structs {
+            if (sd.enum_owner == t) {
+                for fld in sd.fields {
+                    if (!rc_type_string_array_free(fld.type_name, structs, seen3)) { return false; }
                 }
             }
-            v = v + 1;
         }
         return true;
     }
@@ -55202,16 +55038,12 @@ function rc_consumed_drop_wired(t: string, structs: parser.StructDecl[], seen: s
     if (rc_enum_has_variants(structs, t)) {
         if (rc_seen_has(seen, "e:" + t)) { return true; }
         var seen3: string[] = seen.append("e:" + t);
-        var v: i32 = 0;
-        while (v < structs.len()) {
-            if (structs[v].enum_owner == t) {
-                var p: i32 = 0;
-                while (p < structs[v].fields.len()) {
-                    if (!rc_consumed_drop_wired(structs[v].fields[p].type_name, structs, seen3)) { return false; }
-                    p = p + 1;
+        for sd in structs {
+            if (sd.enum_owner == t) {
+                for fld in sd.fields {
+                    if (!rc_consumed_drop_wired(fld.type_name, structs, seen3)) { return false; }
                 }
             }
-            v = v + 1;
         }
         return true;
     }
@@ -55311,10 +55143,8 @@ function rc_fe_call_ret_type(retreg: SigReg, name: string): string {
 // rc_fe_is_enum_name: `t` names an enum (some variant decl carries it as its
 // enum_owner — the self-host has no standalone enum decl entry).
 function rc_fe_is_enum_name(structs: parser.StructDecl[], t: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].enum_owner == t) { return true; }
-        i = i + 1;
+    for sd in structs {
+        if (sd.enum_owner == t) { return true; }
     }
     return false;
 }
@@ -55633,11 +55463,9 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
     var st: FeState = s;
     match (e) {
         parser.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                st = FeState { ...st, tainted: rc_fe_escape_owned(sl.field_values[i], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
-                st = rc_fe_walk_expr(sl.field_values[i], st, structs, env_n, env_s);
-                i = i + 1;
+            for fv in sl.field_values {
+                st = FeState { ...st, tainted: rc_fe_escape_owned(fv, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };
+                st = rc_fe_walk_expr(fv, st, structs, env_n, env_s);
             }
             if (sl.has_base) { st = rc_fe_walk_expr(sl.base, st, structs, env_n, env_s); }
         },
@@ -56049,8 +55877,7 @@ function rc_ml_count_in_expr(e: parser.Expr, name: string): i32 {
         },
         parser.ExprStructLit(sl) => {
             var n: i32 = 0;
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { n = n + rc_ml_count_in_expr(sl.field_values[i], name); i = i + 1; }
+            for fv in sl.field_values { n = n + rc_ml_count_in_expr(fv, name); }
             if (sl.has_base) { n = n + rc_ml_count_in_expr(sl.base, name); }
             return n;
         },
@@ -56237,8 +56064,7 @@ function rc_ml_expr_has_try(e: parser.Expr): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (rc_ml_expr_has_try(t.elements[i])) { return true; } i = i + 1; }
+            for el in t.elements { if (rc_ml_expr_has_try(el)) { return true; } }
             return false;
         },
         parser.ExprIndex(ix) => { return rc_ml_expr_has_try(ix.array) || rc_ml_expr_has_try(ix.index); },
@@ -58187,8 +58013,7 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (erased_wide_expr(t.elements[i], s)) { return true; } i = i + 1; }
+            for el in t.elements { if (erased_wide_expr(el, s)) { return true; } }
             return false;
         },
         parser.ExprLambda(lm) => { return erased_wide_stmts(lm.body, s); },
@@ -58781,12 +58606,10 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
         parser.ExprStructLit(sl) => {
             var sa: LiftAcc = acc;
             var nvals: parser.Expr[] = [];
-            var vi: i32 = 0;
-            while (vi < sl.field_values.len()) {
-                var vr: LiftExpr = lift_call_arg(sl.field_values[vi], sa, gfns);
+            for fv in sl.field_values {
+                var vr: LiftExpr = lift_call_arg(fv, sa, gfns);
                 sa = vr.acc;
                 nvals = nvals.append(vr.expr);
-                vi = vi + 1;
             }
             var nbase: parser.Expr = sl.base;
             if (sl.has_base) {
@@ -59902,8 +59725,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
         },
         parser.ExprStructLit(sl) => {
             var fvals: parser.Expr[] = [];
-            var fi: i32 = 0;
-            while (fi < sl.field_values.len()) { fvals = fvals.append(subst_fcall_expr(sl.field_values[fi], fname, lname, capargs)); fi = fi + 1; }
+            for fv in sl.field_values { fvals = fvals.append(subst_fcall_expr(fv, fname, lname, capargs)); }
             var nbase: parser.Expr = sl.base;
             if (sl.has_base) { nbase = subst_fcall_expr(sl.base, fname, lname, capargs); }
             return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
@@ -62144,10 +61966,10 @@ function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprBinary(b) => { acc = value_use_idents_expr(b.left, acc); return value_use_idents_expr(b.right, acc); },
         parser.ExprUnary(u) => { return value_use_idents_expr(u.operand, acc); },
         parser.ExprArray(a) => { var i: i32 = 0; while (i < a.elements.len()) { acc = value_use_idents_expr(a.elements[i], acc); i = i + 1; } return acc; },
-        parser.ExprTuple(t) => { var i: i32 = 0; while (i < t.elements.len()) { acc = value_use_idents_expr(t.elements[i], acc); i = i + 1; } return acc; },
+        parser.ExprTuple(t) => { for el in t.elements { acc = value_use_idents_expr(el, acc); } return acc; },
         parser.ExprIndex(x) => { acc = value_use_idents_expr(x.array, acc); return value_use_idents_expr(x.index, acc); },
         parser.ExprSlice(sl) => { acc = value_use_idents_expr(sl.array, acc); acc = value_use_idents_expr(sl.start, acc); return value_use_idents_expr(sl.end, acc); },
-        parser.ExprStructLit(sl) => { if (sl.has_base) { acc = value_use_idents_expr(sl.base, acc); } var i: i32 = 0; while (i < sl.field_values.len()) { acc = value_use_idents_expr(sl.field_values[i], acc); i = i + 1; } return acc; },
+        parser.ExprStructLit(sl) => { if (sl.has_base) { acc = value_use_idents_expr(sl.base, acc); } for fv in sl.field_values { acc = value_use_idents_expr(fv, acc); } return acc; },
         parser.ExprFieldAccess(fa) => { return value_use_idents_expr(fa.obj, acc); },
         parser.ExprLambda(_) => {
             // Every free var of a real (non-inlined) lambda is a value-use,
@@ -62706,16 +62528,14 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
         },
         parser.ExprTuple(t) => {
             var ne: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) { ne = ne.append(box_rewrite_expr(t.elements[i], boxed, btypes)); i = i + 1; }
+            for el in t.elements { ne = ne.append(box_rewrite_expr(el, boxed, btypes)); }
             return parser.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked, ty: x.ty }; },
         parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes), ty: sl.ty, open_end: sl.open_end }; },
         parser.ExprStructLit(sl) => {
             var nv: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { nv = nv.append(box_rewrite_expr(sl.field_values[i], boxed, btypes)); i = i + 1; }
+            for fv in sl.field_values { nv = nv.append(box_rewrite_expr(fv, boxed, btypes)); }
             var nbase: parser.Expr = sl.base;
             if (sl.has_base) { nbase = box_rewrite_expr(sl.base, boxed, btypes); }
             return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
@@ -62825,16 +62645,14 @@ function ident_used_as_value_expr(e: parser.Expr, name: string): boolean {
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (ident_used_as_value_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            for el in t.elements { if (ident_used_as_value_expr(el, name)) { return true; } }
             return false;
         },
         parser.ExprIndex(x) => { return ident_used_as_value_expr(x.array, name) || ident_used_as_value_expr(x.index, name); },
         parser.ExprSlice(sl) => { return ident_used_as_value_expr(sl.array, name) || ident_used_as_value_expr(sl.start, name) || ident_used_as_value_expr(sl.end, name); },
         parser.ExprStructLit(sl) => {
             if (sl.has_base && ident_used_as_value_expr(sl.base, name)) { return true; }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (ident_used_as_value_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            for fv in sl.field_values { if (ident_used_as_value_expr(fv, name)) { return true; } }
             return false;
         },
         parser.ExprFieldAccess(fa) => { return ident_used_as_value_expr(fa.obj, name); },
@@ -63073,10 +62891,9 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
         parser.ExprTuple(t) => {
             var a: WCaps = acc;
             var ne: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                var er: WCapExpr = wcap_expr(t.elements[i], fd, gfns, structs, mfuncs, a, atargets);
-                a = er.caps; ne = ne.append(er.expr); i = i + 1;
+            for el in t.elements {
+                var er: WCapExpr = wcap_expr(el, fd, gfns, structs, mfuncs, a, atargets);
+                a = er.caps; ne = ne.append(er.expr); 
             }
             return WCapExpr { expr: parser.ExprTuple { elements: ne, line: t.line, col: t.col }, caps: a };
         },
@@ -63094,10 +62911,9 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
         parser.ExprStructLit(sl) => {
             var a: WCaps = acc;
             var nv: parser.Expr[] = [];
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                var fr: WCapExpr = wcap_expr(sl.field_values[i], fd, gfns, structs, mfuncs, a, atargets);
-                a = fr.caps; nv = nv.append(fr.expr); i = i + 1;
+            for fv in sl.field_values {
+                var fr: WCapExpr = wcap_expr(fv, fd, gfns, structs, mfuncs, a, atargets);
+                a = fr.caps; nv = nv.append(fr.expr); 
             }
             var nbase: parser.Expr = sl.base;
             if (sl.has_base) {
@@ -63293,20 +63109,16 @@ function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], 
             return false;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                if (has_wide_cap_expr(t.elements[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
-                i = i + 1;
+            for el in t.elements {
+                if (has_wide_cap_expr(el, fd, gfns, structs, mfuncs, atargets)) { return true; }
             }
             return false;
         },
         parser.ExprIndex(x) => { return has_wide_cap_expr(x.array, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(x.index, fd, gfns, structs, mfuncs, atargets); },
         parser.ExprSlice(sl) => { return has_wide_cap_expr(sl.array, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(sl.start, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(sl.end, fd, gfns, structs, mfuncs, atargets); },
         parser.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                if (has_wide_cap_expr(sl.field_values[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
-                i = i + 1;
+            for fv in sl.field_values {
+                if (has_wide_cap_expr(fv, fd, gfns, structs, mfuncs, atargets)) { return true; }
             }
             if (sl.has_base) { return has_wide_cap_expr(sl.base, fd, gfns, structs, mfuncs, atargets); }
             return false;
@@ -63525,8 +63337,7 @@ function box_nested_lambdas(e: parser.Expr, acc: parser.ExprLambda[]): parser.Ex
     match (e) {
         parser.ExprLambda(l) => { return out.append(l); },
         parser.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { out = box_nested_lambdas(sl.field_values[i], out); i = i + 1; }
+            for fv in sl.field_values { out = box_nested_lambdas(fv, out); }
             if (sl.has_base) { out = box_nested_lambdas(sl.base, out); }
             return out;
         },
@@ -63541,8 +63352,7 @@ function box_nested_lambdas(e: parser.Expr, acc: parser.ExprLambda[]): parser.Ex
             return out;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { out = box_nested_lambdas(t.elements[i], out); i = i + 1; }
+            for el in t.elements { out = box_nested_lambdas(el, out); }
             return out;
         },
         parser.ExprBinary(b) => { return box_nested_lambdas(b.right, box_nested_lambdas(b.left, out)); },
@@ -64011,10 +63821,8 @@ function collect_append_recvs_expr(e: parser.Expr, acc: string[]): string[] {
             return acc;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = collect_append_recvs_expr(t.elements[i], acc);
-                i = i + 1;
+            for el in t.elements {
+                acc = collect_append_recvs_expr(el, acc);
             }
             return acc;
         },
@@ -64029,10 +63837,8 @@ function collect_append_recvs_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { acc = collect_append_recvs_expr(sl.base, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = collect_append_recvs_expr(sl.field_values[i], acc);
-                i = i + 1;
+            for fv in sl.field_values {
+                acc = collect_append_recvs_expr(fv, acc);
             }
             return acc;
         },
@@ -64294,8 +64100,7 @@ function mv_violate_expr(e: parser.Expr, fnames: string[], acc: string[]): strin
             return a;
         },
         parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { a = mv_violate_expr(t.elements[i], fnames, a); i = i + 1; }
+            for el in t.elements { a = mv_violate_expr(el, fnames, a); }
             return a;
         },
         parser.ExprIndex(x) => { a = mv_violate_expr(x.array, fnames, a); return mv_violate_expr(x.index, fnames, a); },
@@ -64667,8 +64472,7 @@ function grow_lambda_idents_expr(e: parser.Expr, acc: string[]): string[] {
             return a;
         },
         parser.ExprTuple(t) => {
-            var k: i32 = 0;
-            while (k < t.elements.len()) { a = grow_lambda_idents_expr(t.elements[k], a); k = k + 1; }
+            for el in t.elements { a = grow_lambda_idents_expr(el, a); }
             return a;
         },
         _ => { return a; },
