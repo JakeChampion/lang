@@ -741,6 +741,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// bounds so both checkers actually settle the type.
 		{"slice-full-ok", "function main(): i32 { var s: string = \"hello\"; var t: Option[str] = s[:]; return 0; }\n", nil},
 		{"slice-str-sink", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:3]; return 0; }\n", []string{"E003"}},
+		// E065 through a match-arm payload binding. Since #5634 the slice
+		// is an `Option[str]`, so the unwrap is the only way to name the
+		// view — and an arm binding is not a declared local, which is why
+		// both checkers were blind to it. The param row is the control:
+		// a view of caller-owned backing must stay accepted.
+		{"e065-match-arm-local", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-match-arm-two-step", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); var t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-match-arm-param-ok", "function f(p: string): str { match (p[0:1]) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-slice-unchecked-return", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); return slice_unchecked(s, 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},

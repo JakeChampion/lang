@@ -10115,6 +10115,77 @@ function e065_slice_unchecked_src(c: parser.ExprCall, params: string[], sbacked:
   return false;
 }
 
+// e065_returns_backed_view reports whether a returned expression is a
+// `str` view of function-local backing storage. Mirrors native
+// strViewsLocal's shapes: a bare ident, and `slice_unchecked(src, a, b)`
+// which hands back a view of its source's bytes.
+function e065_returns_backed_view(e: parser.Expr, params: string[], sbacked: string[]): boolean {
+  match (e) {
+    parser.ExprIdent(id) => {
+      return !e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked);
+    },
+    parser.ExprCall(c) => {
+      return e065_slice_unchecked_src(c, params, sbacked);
+    },
+    _ => {}
+  }
+  return false;
+}
+
+// e065_view_source_name names the local whose storage a slice-producing
+// scrutinee views, or "" when it views nothing nameable.
+function e065_view_source_name(e: parser.Expr): string {
+  match (e) {
+    parser.ExprSlice(sl) => {
+      match (sl.array) {
+        parser.ExprIdent(sid) => { return sid.name; },
+        _ => {}
+      }
+    },
+    parser.ExprCall(c) => {
+      var callee_name: string = "";
+      match (c.callee) {
+        parser.ExprIdent(cid) => { callee_name = cid.name; },
+        _ => {}
+      }
+      if (callee_name == "slice_unchecked" && c.args.len() == 3) {
+        match (c.args[0]) {
+          parser.ExprIdent(sid) => { return sid.name; },
+          _ => {}
+        }
+      }
+    },
+    parser.ExprIdent(id) => {
+      // `var t = s[a:b]; match (t)` — the local carries the Option, and
+      // the StmtVar arm above already recorded it as reaching backed
+      // storage, so the name answers for itself.
+      return id.name;
+    },
+    _ => {}
+  }
+  return "";
+}
+
+// e065_with_arm_bindings adds every arm's payload binding names to the
+// backed set. A binding that is not a `str` can only reach the E065 check
+// by being returned from a `str`-returning function, which its type
+// forbids, so naming them all is conservative rather than wrong.
+function e065_with_arm_bindings(sbacked: string[], arms: parser.MatchArm[]): string[] {
+  var out: string[] = sbacked;
+  for arm in arms {
+    match (arm.pattern) {
+      parser.PatVariant(pv) => {
+        if (pv.binding.len() > 0) { out = out.append(pv.binding); }
+        for extra in pv.extra_bindings {
+          if (extra.len() > 0) { out = out.append(extra); }
+        }
+      },
+      _ => {}
+    }
+  }
+  return out;
+}
+
 function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   var cur: Scope = s;
@@ -10157,7 +10228,28 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
                 sbacked = sbacked.append(v.name);
               }
             },
+            parser.ExprSlice(osl) => {
+              // `var t = s[a:b]` binds an `Option[str]`, not a view — but
+              // its PAYLOAD views `s`, and the only way to name that
+              // payload is a match arm. Recording `t` here is what lets
+              // the StmtMatch arm below see through the two-step form.
+              // `t` itself can never trip the return check: its type is
+              // not `str`.
+              match (osl.array) {
+                parser.ExprIdent(osid) => {
+                  if (!e065_ident_in(osid.name, params) && e065_ident_in(osid.name, sbacked)) {
+                    sbacked = sbacked.append(v.name);
+                  }
+                },
+                _ => {}
+              }
+            },
             parser.ExprCall(c) => {
+              // The `slice_unchecked` twin of the arm above, plus the
+              // owned-`string` inference the rest of this branch does.
+              if (e065_slice_unchecked_src(c, params, sbacked)) {
+                sbacked = sbacked.append(v.name);
+              }
               var callee_name: string = "";
               match (c.callee) {
                 parser.ExprIdent(cid) => {
@@ -10182,13 +10274,8 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
         }
       },
       parser.StmtReturn(r) => {
-        match (r.value) {
-          parser.ExprIdent(id) => {
-            if (!e065_ident_in(id.name, params) && e065_ident_in(id.name, sbacked)) {
-              out = out.append(dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", r.line, r.col));
-            }
-          },
-          _ => {}
+        if (e065_returns_backed_view(r.value, params, sbacked)) {
+          out = out.append(dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", r.line, r.col));
         }
       },
       parser.StmtIf(f) => {
@@ -10202,8 +10289,17 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
         out = util.append_diags(out, e065_stmts(fr.body, fname, params, str_ret_names, sbacked, cur));
       },
       parser.StmtMatch(m) => {
+        // A match-arm payload binding is not a declared local, so without
+        // this the arm body cannot tell that `v` in `match (s[a:b]) {
+        // Some(v) => … }` views `s`. Since #5634 made the slice an
+        // `Option[str]`, that unwrap is the only way to name the view.
+        var arm_sb: string[] = sbacked;
+        var msrc: string = e065_view_source_name(m.scrutinee);
+        if (msrc.len() > 0 && !e065_ident_in(msrc, params) && e065_ident_in(msrc, sbacked)) {
+          arm_sb = e065_with_arm_bindings(arm_sb, m.arms);
+        }
         for arm in m.arms {
-          out = util.append_diags(out, e065_stmts(arm.body, fname, params, str_ret_names, sbacked, cur));
+          out = util.append_diags(out, e065_stmts(arm.body, fname, params, str_ret_names, arm_sb, cur));
         }
       },
       parser.StmtDefer(d) => {

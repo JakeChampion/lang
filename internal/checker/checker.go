@@ -8815,13 +8815,21 @@ func (c *checker) sourceIsLocalStorage(src ast.Expr, locals map[string]*ast.Var,
 // is a parameter (caller-owned) or a string literal ('static / immortal). A
 // `str` viewing a function-LOCAL owned `string` outlives storage the RC
 // passes may reclaim at exit — the #4294 corruption class the `str` type
-// exists to prevent. The producers are live: .trim() (P1) and s[a:b] (P2)
-// both yield views, so the rejectable shapes are an ident chain or a slice
-// expression bottoming out at a local `string` binding; the chase mirrors
-// sliceBorrowsLocal (cycle-guarded, params excluded). Like E063, `return`
-// is the only checked escape position for now, and the chase is
-// intraprocedural — a view laundered through a str-returning callee is not
-// chased (same known hole as the slice rule; both tighten together later).
+// exists to prevent.
+//
+// The rejectable shapes bottom out at a local `string` binding through an
+// ident chain, a `slice_unchecked` call, or a match-arm payload binding.
+// That last one carries the slice producer since #5634: `s[a:b]` is an
+// `Option[str]`, so unwrapping it through a match is the only way to name
+// the view, and the arm binding is not a declared local. The chase mirrors
+// sliceBorrowsLocal (cycle-guarded, params excluded).
+//
+// `return` remains the only checked escape position, and the chase is
+// intraprocedural: a view laundered through a `str`-returning callee —
+// `return id(slice_unchecked(s, 0, 1))` — is still accepted. Closing that
+// needs a per-function summary of which params a return may view, computed
+// in dependency order; it is a wider change than this rule and is tracked
+// separately.
 func (c *checker) checkStrEscape(fn *ast.FuncDecl) {
 	if fn.Body == nil {
 		return
@@ -8829,24 +8837,105 @@ func (c *checker) checkStrEscape(fn *ast.FuncDecl) {
 	if _, ok := fn.ReturnType.(ast.StrType); !ok {
 		return
 	}
-	params := map[string]bool{}
+	env := &strEscapeEnv{
+		params:   map[string]bool{},
+		locals:   map[string]*ast.Var{},
+		armViews: map[string]ast.Expr{},
+		visiting: map[string]bool{},
+	}
 	for _, p := range fn.Params {
-		params[p.Name] = true
+		env.params[p.Name] = true
 	}
-	locals := map[string]*ast.Var{}
 	for _, v := range c.info.Locals[fn] {
-		locals[v.Name] = v
+		env.locals[v.Name] = v
 	}
+	// A match-arm payload binding is not a declared local, so the chase
+	// below cannot reach its scrutinee on its own. Record what each `str`
+	// binding views first; since #5634 made `s[a:b]` an `Option[str]`,
+	// unwrapping through a match is the ONLY way to name that view, and
+	// without this the whole producer is invisible to the rule.
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch m := n.(type) {
+		case *ast.Match:
+			for _, arm := range m.Arms {
+				bindArmViews(m.Tag, arm.Bindings, arm.BindingTypes, env)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range m.Arms {
+				bindArmViews(m.Tag, arm.Bindings, arm.BindingTypes, env)
+			}
+		}
+		return true
+	})
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		ret, ok := n.(*ast.Return)
 		if !ok || ret.Value == nil {
 			return true
 		}
-		if c.strViewsLocal(ret.Value, locals, params, map[string]bool{}) {
+		if c.strViewsLocal(ret.Value, env) {
 			c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
 		}
 		return true
 	})
+}
+
+// strEscapeEnv is the scope a returned `str` is resolved against: the
+// function's params and declared locals, plus each match-arm payload
+// binding and the expression whose storage it views.
+type strEscapeEnv struct {
+	params   map[string]bool
+	locals   map[string]*ast.Var
+	armViews map[string]ast.Expr
+	visiting map[string]bool // cycle guard for the binding chase
+}
+
+// bindArmViews records, for every `str` payload binding in one arm, the
+// expression whose bytes that binding views — the scrutinee's SOURCE, not
+// the scrutinee itself, since the scrutinee is the `Option` box around it.
+//
+// Keyed by name and flat, matching the precision of the locals map beside
+// it: two sibling arms binding the same name collapse to one entry. That
+// can only widen what the rule reports, never narrow it, because every
+// entry names storage some arm really does view.
+func bindArmViews(tag ast.Expr, names []string, types []ast.Type, env *strEscapeEnv) {
+	src := viewedSource(tag, env, map[string]bool{})
+	if src == nil {
+		return
+	}
+	for i, name := range names {
+		if i >= len(types) {
+			break
+		}
+		if _, isStr := types[i].(ast.StrType); isStr {
+			env.armViews[name] = src
+		}
+	}
+}
+
+// viewedSource returns the expression whose storage a slice-producing
+// expression views, or nil when it produces no view of anything nameable.
+// `visiting` guards the local-initialiser chase against a cycle.
+func viewedSource(e ast.Expr, env *strEscapeEnv, visiting map[string]bool) ast.Expr {
+	switch x := e.(type) {
+	case *ast.SliceExpr:
+		return x.Source
+	case *ast.Call:
+		if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "slice_unchecked" && len(x.Args) == 3 {
+			return x.Args[0]
+		}
+	case *ast.Ident:
+		// `var t = s[a:b]; match (t) { … }` — the scrutinee is a local
+		// holding the Option, so the view is whatever built it.
+		if visiting[x.Name] {
+			return nil
+		}
+		if v, ok := env.locals[x.Name]; ok && v.Init != nil {
+			visiting[x.Name] = true
+			defer delete(visiting, x.Name)
+			return viewedSource(v.Init, env, visiting)
+		}
+	}
+	return nil
 }
 
 // strViewsLocal reports whether expr evaluates to a `str` view whose viewed
@@ -8856,40 +8945,45 @@ func (c *checker) checkStrEscape(fn *ast.FuncDecl) {
 // owned `string`, a move; the producer flip revisits this together with the
 // slice rule's identical hole). `visiting` guards the binding-chase
 // recursion against cycles, mirroring sliceBorrowsLocal.
-func (c *checker) strViewsLocal(expr ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
+func (c *checker) strViewsLocal(expr ast.Expr, env *strEscapeEnv) bool {
 	switch e := expr.(type) {
 	case *ast.StringLit:
 		return false // 'static / immortal
 	case *ast.SliceExpr:
-		// `s[a:b]` is `Option[str]` (#5634), so it can never be the
-		// value of a `str`-returning `return` — assignability rejects it
-		// before this walk runs. A view unwrapped from the Option and
-		// returned from a match arm is NOT chased: the arm binding is
-		// not a declared local, so this rule does not see which
-		// scrutinee it came from. Same known hole as a view laundered
-		// through a `str`-returning callee.
+		// `s[a:b]` is `Option[str]` (#5634), so it can never be the value
+		// of a `str`-returning `return` — assignability rejects it before
+		// this walk runs. The view it produces reaches a `return` only by
+		// being unwrapped into a match-arm binding, which the Ident arm
+		// resolves through env.armViews.
 		return false
 	case *ast.Call:
 		// `slice_unchecked(s, a, b)` is the unchecked slice producer —
 		// the same byte view `s[a:b]` used to yield — so it escapes
 		// exactly when its source does.
 		if id, ok := e.Callee.(*ast.Ident); ok && id.Name == "slice_unchecked" && len(e.Args) == 3 {
-			return c.strViewsLocal(e.Args[0], locals, params, visiting)
+			return c.strViewsLocal(e.Args[0], env)
 		}
 		return false
 	case *ast.Ident:
-		if params[e.Name] {
+		// A match-arm binding is the innermost scope, so it is resolved
+		// before params and locals: an arm may shadow either name.
+		if src, ok := env.armViews[e.Name]; ok && !env.visiting[e.Name] {
+			env.visiting[e.Name] = true
+			defer delete(env.visiting, e.Name)
+			return c.strViewsLocal(src, env)
+		}
+		if env.params[e.Name] {
 			return false // caller-owned
 		}
-		v, ok := locals[e.Name]
-		if !ok || visiting[e.Name] {
+		v, ok := env.locals[e.Name]
+		if !ok || env.visiting[e.Name] {
 			return false
 		}
 		if _, isStr := v.Type.(ast.StrType); isStr && v.Init != nil {
 			// A local `str` binding views whatever its initializer views.
-			visiting[e.Name] = true
-			defer delete(visiting, e.Name)
-			return c.strViewsLocal(v.Init, locals, params, visiting)
+			env.visiting[e.Name] = true
+			defer delete(env.visiting, e.Name)
+			return c.strViewsLocal(v.Init, env)
 		}
 		if _, isString := v.Type.(ast.StringType); isString {
 			// A locally-declared owned string IS the backing storage.
