@@ -493,6 +493,17 @@ exposed 22 inner loops the first pass could not see — 21 of them convertible, 
 16% bonus on that slice. Re-run the pass until the per-array counts stop moving
 rather than assuming one sweep is complete.
 
+**The binary cost is real, and the per-loop figure is not a unit to plan with.**
+Same tree, same `bin/fern`, `irlower.fern` the only variable: 35,437,500 →
+37,854,140 bytes, **+6.8%** — past `ci-check-driver-sizes`' 5% advisory
+tolerance, as the sixth slice warned the next conversion would be. But the cost
+is strongly sublinear, which the sixth slice's flat per-loop framing does not
+predict: converting only the 42 `t.elements` loops already costs +3.8%
+(31.6 KiB/loop), and the 89 loops after them add 11.6 KiB/loop. So most of a
+slice's growth is a fixed component that the first loops pay, and multiplying a
+per-loop figure by the ~2,400 loops left overestimates by a wide margin. Measure
+per slice; do not budget per loop, in either direction.
+
 **What the bucket-A share actually predicts.** Of the 118 `t.elements` /
 `structs` / `sl.field_values` loops, 110 converted and 8 held back, every one of
 them because the index is used for its own sake — `variant_decl_index` returning
