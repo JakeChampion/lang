@@ -69,13 +69,15 @@ they only looked it.
 | moved element (loop-scoped) | 1000/1000 | 1000/1000 | 1000/1000 |
 | source rebound after the push | 600/200 | **600/500** | 600/600 |
 
+That last row moved again the same day, and not for a good reason: making the
+rebound source keep its credit routed its rebind through `__field_reclaim_<T>`,
+which freed the old box's field buffers with no check on whether a second owner
+held that box — a use-after-free the leak counts could not see. The gate that
+closes it (`2026-08-25-field-reclaim-shared-box.md`) also takes the row to
+600/600.
+
 Pinned by `internal/e2eselfhost/self_host_arrstruct_live_elem_test.go` across
 x86 / arm64 / wasm, with 99 reserved for an over-release.
-
-The last row is the one gap left, and it is not this slice's: a REASSIGNED
-struct local earns no reclaim credit at all, so nothing releases the value it
-holds at the exit. That is the struct-local reassign reclaim — the enum family
-has it (`enum_reassign_reclaim_names`), the struct family does not.
 
 Two rows of `self_host_arrstruct_bound_elem_test.go` changed meaning with this
 slice: `outside-loop-elem-refused` and `read-after-push-refused` are now
