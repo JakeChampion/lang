@@ -1087,11 +1087,110 @@ function name_has_comma(name: string): boolean {
   return false;
 }
 
-// bind_names binds one or more variable names into the scope. A `for
-// (k, v) in m` loop variable and a `var (a, b) = …` tuple destructure are
-// both encoded by the parser as a single comma-joined name ("k,v" /
-// "a,b"); split on the comma and bind each. Types are unknown here (the
-// E001 membership check only needs the names to be in scope).
+// bind_destructure_names binds the names a destructuring `var` / `let`
+// declares. check_stmt binds them under the ONE comma-joined name they are
+// encoded as, so without this a later read of `a` resolves to nothing and
+// infers unknown — which marks the whole function ill-typed, with no
+// diagnostic to say why (`var (a, b) = t; return a + b;` was rejected).
+//
+// Each binding takes its ELEMENT type, not a placeholder: a tuple position
+// from the init's tuple type, a struct field by re-typing the field read the
+// lowering will emit, and the `@` binding the whole value's type. Binding them
+// as unknown would resolve the name and still fail the same strictness check.
+//
+// A plain `var` is left alone — rebinding it here would shadow the precise
+// type check_stmt gave it (lookup is newest-first) and break type-dependent
+// diagnostics downstream. A single-field struct destructure (`let P { x } = e;`)
+// has no comma, so the marker rather than the comma is what says a statement
+// is a destructure.
+function bind_destructure_names(s: Scope, v: parser.StmtVar): Scope {
+  if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) { return s; }
+  var (at, _) = parser.at_marker_split(v.type_name);
+  var whole: Type = check_expr(v.init, s);
+  var out: Scope = s;
+  if (at.len() > 0) { out = out.bind(at, whole); }
+  if (parser.is_struct_destr_marker(v.type_name)) {
+    return bind_struct_destr_fields(out, v, s);
+  }
+  return bind_tuple_destr_names(out, split_pattern_names(v.name), whole);
+}
+
+// bind_struct_destr_fields binds `let P { x, y: b } = e;`. The marker pairs
+// each binding with the FIELD it reads, and the field read is re-typed through
+// check_expr — the same expression the lowering emits — so a renamed binding,
+// a generic struct and an opaque field all type exactly as they would there.
+function bind_struct_destr_fields(out: Scope, v: parser.StmtVar, s: Scope): Scope {
+  var (_, marker) = parser.at_marker_split(v.type_name);
+  var rest: string = slice_unchecked(marker, 4, marker.len()) + "";
+  var colon: i32 = 0 - 1;
+  var ri: i32 = 0;
+  while (ri < rest.len()) {
+    if (rest[ri] == b':' && colon < 0) { colon = ri; }
+    ri = ri + 1;
+  }
+  if (colon < 0) { return bind_names(out, v.name); }
+  var fields: string[] = split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
+  var names: string[] = split_pattern_names(v.name);
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var ft: Type = t_unknown("binding");
+    if (i < fields.len()) {
+      ft = check_expr(parser.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "" }, s);
+    }
+    out = out.bind(names[i], ft);
+    i = i + 1;
+  }
+  return out;
+}
+
+// bind_tuple_destr_names binds `let (a, (b, c)) = t;` against the init's tuple
+// type, recursing into a parenthesised position — which the name encoding
+// carries inline — so an inner binding is typed rather than left dangling.
+function bind_tuple_destr_names(out: Scope, names: string[], whole: Type): Scope {
+  var elems: Type[] = [];
+  match (whole) {
+    TypeTuple(tt) => { elems = tt.elements; },
+    _ => {}
+  }
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var nm: string = names[i];
+    var et: Type = t_unknown("binding");
+    if (i < elems.len()) { et = elems[i]; }
+    if (nm.len() >= 2 && slice_unchecked(nm, 0, 1) == "(") {
+      out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1) + ""), et);
+    } else if (nm.len() > 0) {
+      out = out.bind(nm, et);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// split_pattern_names splits a destructure's comma-joined encoding on
+// TOP-LEVEL commas, so a nested position `(b,c)` stays one entry — the split
+// bind_names does not make, which is why it mis-bound `(b` and `c)`.
+function split_pattern_names(encoded: string): string[] {
+  var out: string[] = [];
+  var start: i32 = 0;
+  var depth: i32 = 0;
+  var i: i32 = 0;
+  while (i <= encoded.len()) {
+    if (i == encoded.len() || (encoded[i] == b',' && depth == 0)) {
+      if (i > start) { out = out.append(slice_unchecked(encoded, start, i) + ""); }
+      start = i + 1;
+    } else if (encoded[i] == b'(') { depth = depth + 1; }
+    else if (encoded[i] == b')') { depth = depth - 1; }
+    i = i + 1;
+  }
+  return out;
+}
+
+// bind_names binds a `for (k, v) in m` loop's variables, encoded by the parser
+// as a single comma-joined name ("k,v"): split on the comma and bind each.
+// Types are unknown here — the E001 membership check only needs the names to
+// be in scope. A destructuring `var` / `let` goes through
+// bind_destructure_names instead, which types each binding.
 function bind_names(s: Scope, name: string): Scope {
   var start: i32 = 0;
   var i: i32 = 0;
@@ -2897,13 +2996,21 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
         _ => {}
       }
       var t: Type = check_expr(v.init, init_scope);
+      // A destructuring `var` / `let` declares its bindings under ONE
+      // comma-joined name, paired with the marker channel — binding that
+      // encoding as if it were a variable leaves every real name unresolved,
+      // and for a single-field struct destructure binds the one real name to
+      // the WHOLE struct. Bind what the pattern actually declares instead.
+      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+        return CheckResult { scope: bind_destructure_names(s, v), ty: t };
+      }
       // If the source carries a `: Type` annotation,
       // resolve it via the scope's struct + union tables
       // and use it as the binding's type. The init type
       // must be assignable to the annotation (so a
       // variant value flows into a union slot via the
       // existing type_assignable widening).
-      if (v.type_name.len() > 0) {
+      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
         var declared: Type = s.resolve_type(v.type_name);
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
@@ -8042,20 +8149,6 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): util.Diag[] {
       _ => {}
     }
     cur = check_stmt(st, cur).scope;
-    // A `var (a, b) = …` tuple destructure is encoded as the single
-    // name "a,b"; check_stmt binds that literal name, so bind the split
-    // names too for subsequent reads of `a` / `b` (E001). ONLY for a
-    // comma name — rebinding a normal var here would shadow the precise
-    // type check_stmt already gave it (lookup is newest-first) and break
-    // type-dependent diagnostics downstream.
-    match (st) {
-      parser.StmtVar(dv) => {
-        if (name_has_comma(dv.name)) {
-          cur = bind_names(cur, dv.name);
-        }
-      },
-      _ => {}
-    }
   }
   return out;
 }
@@ -8236,7 +8329,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
   for st in stmts {
     match (st) {
       parser.StmtVar(v) => {
-        if (v.type_name.len() > 0) {
+        if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
           var declared: Type = cur.resolve_type(v.type_name);
           var initt: Type = check_expr(v.init, cur);
           if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !type_assignable(initt, declared, unions)) {
@@ -8246,14 +8339,9 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
         // E024: a tuple destructure `var (a, b) = E` (the parser
         // encodes the names as "a,b") requires E to be a tuple whose
         // element count matches the number of names.
-        var ncommas: i32 = 0;
-        for ch in v.name {
-          if (ch == b',') {
-            ncommas = ncommas + 1;
-          }
-        }
-        if (ncommas > 0) {
-          var nnames: i32 = ncommas + 1;
+        var positions: string[] = split_pattern_names(v.name);
+        if (positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
+          var nnames: i32 = positions.len();
           var dit: Type = check_expr(v.init, cur);
           match (dit) {
             TypeTuple(dtt) => {
@@ -8336,17 +8424,6 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
     }
     out = util.append_diags(out, assign_stmt_own_lambdas(st, cur, unions));
     cur = check_stmt(st, cur).scope;
-    // Bind a `var (a, b) = …` destructure's split names for subsequent
-    // assignments to `a` / `b` (only for comma names — rebinding a normal
-    // var here would shadow its precise type; see the read walk).
-    match (st) {
-      parser.StmtVar(dv) => {
-        if (name_has_comma(dv.name)) {
-          cur = bind_names(cur, dv.name);
-        }
-      },
-      _ => {}
-    }
   }
   return out;
 }

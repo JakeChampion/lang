@@ -10417,8 +10417,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// init's evaluation and the per-name loads. Name is
 		// uniqued by source position so multiple destructures
 		// in the same function don't collide.
-		tempName := c.destructTempName(n.P)
-		n.TempName = tempName
+		tempName := c.destructHolderName(n, s)
 		tempVar := &ast.Var{P: n.P, Name: tempName, Type: tup}
 		s.names[tempName] = tup
 		c.info.VarTypes[tempVar] = tup
@@ -10451,6 +10450,24 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 	case *ast.FuncDecl:
 		c.checkLocalFunc(n, s)
 	}
+}
+
+// destructHolderName names the local that holds the value between a
+// destructure's init evaluation and its per-name loads, and stamps it onto
+// the node. An `@` binding names it — that local IS the whole value, so the
+// binding needs no slot of its own — and being a name the source wrote, it
+// takes an E013 when the scope already has one rather than being uniqued
+// out of the way like a hidden temp.
+func (c *checker) destructHolderName(n *ast.Destructure, s *scope) string {
+	if n.AtName == "" {
+		n.TempName = c.destructTempName(n.P)
+		return n.TempName
+	}
+	if _, dup := s.names[n.AtName]; dup {
+		c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.AtName)
+	}
+	n.TempName = n.AtName
+	return n.AtName
 }
 
 // destructTempName names the hidden local that holds the value between a
@@ -10512,8 +10529,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 			sub[tp] = st.Args[i]
 		}
 	}
-	tempName := c.destructTempName(n.P)
-	n.TempName = tempName
+	tempName := c.destructHolderName(n, s)
 	tempVar := &ast.Var{P: n.P, Name: tempName, Type: st}
 	s.names[tempName] = st
 	c.info.VarTypes[tempVar] = st

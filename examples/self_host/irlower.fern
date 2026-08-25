@@ -17400,7 +17400,8 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
 function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState {
     // Decode "@sd:<StructName>:<f0,f1,…>" — the struct name runs to the first
     // ':' after the "@sd:" prefix, the rest is the comma-joined field list.
-    var rest: str = slice_unchecked(v.type_name, 4, v.type_name.len());
+    var (at_name, sd_marker) = parser.at_marker_split(v.type_name);
+    var rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
     while (ri < rest.len()) {
@@ -17414,9 +17415,13 @@ function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState 
     var bindings: string[] = split_commas(v.name);
     // Lower E once into a fresh struct-typed temp, so a call-valued init isn't
     // re-evaluated per field and the box is owned/reclaimed like any struct local.
+    // An `@` binding NAMES that temp — it is the whole value the pattern
+    // destructures — so the source reads it under the name it wrote, and the
+    // local is owned and reclaimed exactly as the hidden one was.
     var dt: LowerState = lower_expr(v.init, s);
     if (!dt.ok) { return dt; }
-    var tmp: string = "$sdst" + util.i32_to_string(dt.locals.len());
+    var tmp: string = at_name;
+    if (tmp.len() == 0) { tmp = "$sdst" + util.i32_to_string(dt.locals.len()); }
     dt = dt.add_local(tmp);
     var tmp_slot: i32 = dt.slot_of(tmp);
     dt = dt.mark_struct_type(tmp_slot, struct_name);
@@ -18588,7 +18593,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
     // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
     // whose name is the comma-joined bindings. Expand it into per-field binds.
-    if (v.type_name.len() >= 4 && slice_unchecked(v.type_name, 0, 4) == "@sd:") {
+    if (parser.is_struct_destr_marker(v.type_name)) {
         return lower_struct_destructure(v, s);
     }
     // Binding a SCALAR-element array struct field (`var y = h.items`,
@@ -19112,9 +19117,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             dp = dp + 1;
         }
         var dn: i32 = dnames.len();
+        var (td_at, _) = parser.at_marker_split(v.type_name);
         var dt: LowerState = lower_expr(v.init, s);
         if (!dt.ok) { return dt; }
-        var tmp: string = "$tdst" + util.i32_to_string(dt.locals.len());
+        // An `@` binding names the temp holding the whole tuple, as it does
+        // for the struct form.
+        var tmp: string = td_at;
+        if (tmp.len() == 0) { tmp = "$tdst" + util.i32_to_string(dt.locals.len()); }
         dt = dt.add_local(tmp);
         var tmp_slot: i32 = dt.slot_of(tmp);
         dt = dt.emit(ir.op_store_local(tmp_slot));

@@ -1348,6 +1348,15 @@ function for_binder(var_name: string): string {
     return "(" + join_csv(var_name) + ")";
 }
 
+// drop_first_stmt is `stmts` without its head — the pattern header's
+// destructure, once it has been reprinted as the header itself.
+function drop_first_stmt(stmts: parser.Stmt[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 1;
+    while (i < stmts.len()) { out = out.append(stmts[i]); i = i + 1; }
+    return out;
+}
+
 // print_for_iter renders a StmtFor's iterable. The range forms are carried as
 // a synthetic `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call
 // (parse_for_stmt), which is a parser-internal name no source may write.
@@ -1424,8 +1433,13 @@ function join_csv(csv: string): string {
     return out;
 }
 
-function is_struct_destructure(type_name: string): boolean {
-    return util.str_has_prefix(type_name, "@sd:");
+// destr_at_prefix is the `w @ ` an `@` binding puts in front of a destructuring
+// pattern, or "" when the source wrote none. The binding is a real name the
+// body may read, so a pattern printed without it stops compiling.
+function destr_at_prefix(type_name: string): string {
+    var (at, _) = parser.at_marker_split(type_name);
+    if (at.len() == 0) { return ""; }
+    return at + " @ ";
 }
 
 // print_struct_destructure respells `let Point { x, y } = E;` from the marker
@@ -1433,7 +1447,7 @@ function is_struct_destructure(type_name: string): boolean {
 // with the bound names comma-joined in `name`). A field renamed on binding
 // prints as `field: binding`, which is also how it was written.
 function print_struct_destructure(v: parser.StmtVar): string {
-    return "let " + struct_destr_pattern(v) + " = " + print_expr(v.init) + ";";
+    return "let " + destr_at_prefix(v.type_name) + struct_destr_pattern(v) + " = " + print_expr(v.init) + ";";
 }
 
 // struct_destr_pattern is print_struct_destructure's PATTERN — `Point { x, y }`
@@ -1441,7 +1455,8 @@ function print_struct_destructure(v: parser.StmtVar): string {
 // same pattern in its parameter position, so the two share this rather than
 // each spelling the marker decode (#7338).
 function struct_destr_pattern(v: parser.StmtVar): string {
-    var rest: str = slice_unchecked(v.type_name, 4, v.type_name.len());
+    var (_, sd_marker) = parser.at_marker_split(v.type_name);
+    var rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
     while (ri < rest.len()) {
@@ -1490,7 +1505,7 @@ function param_pattern_from(st: parser.Stmt, holder: string): string {
             // body may read, so the pattern alone would drop it.
             var at: string = "";
             if (!util.str_has_prefix(holder, "__ptuple_")) { at = holder + " @ "; }
-            if (is_struct_destructure(v.type_name)) { return at + struct_destr_pattern(v); }
+            if (parser.is_struct_destr_marker(v.type_name)) { return at + struct_destr_pattern(v); }
             if (util.contains(v.name, ",")) { return at + "(" + join_csv(v.name) + ")"; }
             return "";
         },
@@ -1577,10 +1592,10 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // tags `type_name` with the parser's `@sd:Type:field,field` marker.
             // Printed as a plain `var` they re-parse as something else — or, for
             // the tuple form, do not re-parse at all (#6773).
-            if (is_struct_destructure(v.type_name)) { return (print_struct_destructure(v), f); }
+            if (parser.is_struct_destr_marker(v.type_name)) { return (print_struct_destructure(v), f); }
             if (v.type_name == "@fndecl") { return print_nested_func_decl(v, depth, f); }
             if (util.contains(v.name, ",")) {
-                return ("let (" + join_csv(v.name) + ") = " + print_expr(v.init) + ";", f);
+                return ("let " + destr_at_prefix(v.type_name) + "(" + join_csv(v.name) + ") = " + print_expr(v.init) + ";", f);
             }
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }
@@ -1633,8 +1648,25 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             return print_match(m, depth, f);
         },
         parser.StmtFor(fo) => {
-            var (fb, fg) = print_block(fo.body, depth, f);
-            return (loop_label(fo.label) + "for " + for_binder(fo.var_name) + " in " + print_for_iter(fo.iter) + " " + fb, fg);
+            // A pattern-shaped header desugars to a synthetic `$forpat_`
+            // element plus a destructure of it (parse_for_stmt), so it reprints
+            // from that destructure — writing the synthetic name into the
+            // source instead would make `-fmt -w` permanent.
+            var fo_body: parser.Stmt[] = fo.body;
+            var fo_binder: string = for_binder(fo.var_name);
+            if (util.str_has_prefix(fo.var_name, "$forpat_") && fo.body.len() > 0) {
+                match (fo.body[0]) {
+                    parser.StmtVar(fpv) => {
+                        fo_binder = destr_at_prefix(fpv.type_name);
+                        if (parser.is_struct_destr_marker(fpv.type_name)) { fo_binder = fo_binder + struct_destr_pattern(fpv); }
+                        else { fo_binder = fo_binder + "(" + join_csv(fpv.name) + ")"; }
+                        fo_body = drop_first_stmt(fo.body);
+                    },
+                    _ => { }
+                }
+            }
+            var (fb, fg) = print_block(fo_body, depth, f);
+            return (loop_label(fo.label) + "for " + fo_binder + " in " + print_for_iter(fo.iter) + " " + fb, fg);
         },
         parser.StmtBreak(b) => {
             if (b.label.len() > 0) { return ("break " + b.label + ";", f); }

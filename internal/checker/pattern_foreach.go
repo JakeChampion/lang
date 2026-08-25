@@ -39,6 +39,13 @@ func (c *checker) checkPatternForEach(fe *ast.ForEach, parent *scope) ast.Stmt {
 				"iterating a Map binds a (key, value) pair, but this pattern binds %d", len(fe.Pattern.Names))
 			return &ast.Block{P: fe.P, Stmts: nil, Sugar: fe}
 		}
+		// The key and the value come off the entry cursor in separate
+		// columns, so no whole value exists for an `@` binding to name.
+		if fe.Var != ast.ForEachElemName(fe.ID) {
+			c.errfCode(fe.Pattern.P, "E024",
+				"iterating a Map binds the key and the value separately, so there is no whole value for %q to name — drop the `@` binding", fe.Var)
+			return &ast.Block{P: fe.P, Stmts: nil, Sugar: fe}
+		}
 		// Entries come off a cursor (`m.iter()` / `has_next()` / `key()` /
 		// `value()` / `advance()`), so the walk is insertion-ordered and
 		// allocates nothing per entry.

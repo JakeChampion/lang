@@ -969,7 +969,14 @@ func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 	f.formatLoopLabel(fe.Label)
 	f.b.WriteString("for ")
 	if fe.Pattern != nil {
-		f.formatDestructurePattern(fe.Pattern)
+		// An `@` binding names the element variable, exactly as it names a
+		// destructured parameter's holder; a synthetic element name is the
+		// desugar's and belongs to no source.
+		at := ""
+		if fe.Var != ast.ForEachElemName(fe.ID) {
+			at = fe.Var
+		}
+		f.formatDestructurePattern(fe.Pattern, at)
 	} else {
 		f.b.WriteString(fe.Var)
 	}
@@ -1081,29 +1088,8 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatExpr(x.Init, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Destructure:
-		// Struct mode (Fields set) binds BY FIELD NAME; rendering it as the
-		// positional tuple form would re-parse to a different program.
-		if x.Fields != nil {
-			f.b.WriteString("let ")
-			f.b.WriteString(x.StructName)
-			f.b.WriteString(" { ")
-			for i, field := range x.Fields {
-				if i > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(field)
-				if i < len(x.Names) && x.Names[i] != field {
-					f.b.WriteString(": ")
-					f.b.WriteString(writtenName(x.Names[i]))
-				}
-			}
-			f.b.WriteString(" } = ")
-			f.formatExpr(x.Init, precLowest)
-			f.b.WriteByte(';')
-			break
-		}
 		f.b.WriteString("let ")
-		f.formatDestructurePattern(x)
+		f.formatDestructurePattern(x, "")
 		f.b.WriteString(" = ")
 		f.formatExpr(x.Init, precLowest)
 		f.b.WriteByte(';')
@@ -2061,50 +2047,65 @@ func (f *formatter) formatParamPattern(p ast.Param) {
 	// — and the parser uses that name as the holder instead of minting one. It
 	// is a real binding the body may read, so printing the pattern alone drops
 	// it and the formatted program stops compiling.
+	at := ""
 	if !strings.HasPrefix(p.Name, "__ptuple_") {
-		f.b.WriteString(writtenName(p.Name))
-		f.b.WriteString(" @ ")
+		at = p.Name
 	}
-	d := p.Pattern
-	if d.StructName == "" {
-		f.formatDestructurePattern(d)
-		return
-	}
-	f.b.WriteString(writtenName(d.StructName))
-	f.b.WriteString(" { ")
-	for i, n := range d.Names {
-		if i > 0 {
-			f.b.WriteString(", ")
-		}
-		fld := n
-		if i < len(d.Fields) {
-			fld = d.Fields[i]
-		}
-		// `Point { x }` when the binder matches the field, `Point { x: a }`
-		// when it was renamed — the shorthand is what the source wrote.
-		if fld == n {
-			f.b.WriteString(writtenName(n))
-			continue
-		}
-		f.b.WriteString(writtenName(fld))
-		f.b.WriteString(": ")
-		f.b.WriteString(writtenName(n))
-	}
-	f.b.WriteString(" }")
+	f.formatDestructurePattern(p.Pattern, at)
 }
 
-// formatDestructurePattern renders a tuple destructure's pattern `(a, (b, c))`.
+// formatDestructurePattern renders a destructuring pattern — `(a, (b, c))`
+// for a tuple, `Point { x: a, y }` for a struct — prefixed by `w @ ` when an
+// `@` binding names the whole value. `at` overrides the node's own AtName for
+// the parameter site, whose binding rides on the holder parameter instead.
+//
+// Every binding site renders through here. A site-local copy is how a struct
+// pattern came to reprint as the positional tuple form, silently rebinding by
+// position (#6374) — so the tuple/struct choice is made once, off the Fields
+// discriminator the node documents.
+//
 // A nested position prints as its own pattern rather than as the synthesised
 // binder the parser put in Names — that binder is an implementation detail of
 // the lowering, and printing it would re-parse to a different program.
-func (f *formatter) formatDestructurePattern(x *ast.Destructure) {
+func (f *formatter) formatDestructurePattern(x *ast.Destructure, at string) {
+	if at == "" {
+		at = x.AtName
+	}
+	if at != "" {
+		f.b.WriteString(writtenName(at))
+		f.b.WriteString(" @ ")
+	}
+	if x.Fields != nil {
+		f.b.WriteString(writtenName(x.StructName))
+		f.b.WriteString(" { ")
+		for i, n := range x.Names {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			field := n
+			if i < len(x.Fields) {
+				field = x.Fields[i]
+			}
+			// `Point { x }` when the binder matches the field, `Point { x: a }`
+			// when it was renamed — the shorthand is what the source wrote.
+			if field == n {
+				f.b.WriteString(writtenName(n))
+				continue
+			}
+			f.b.WriteString(writtenName(field))
+			f.b.WriteString(": ")
+			f.b.WriteString(writtenName(n))
+		}
+		f.b.WriteString(" }")
+		return
+	}
 	f.b.WriteByte('(')
 	for i, n := range x.Names {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
 		if i < len(x.Nested) && x.Nested[i] != nil {
-			f.formatDestructurePattern(x.Nested[i])
+			f.formatDestructurePattern(x.Nested[i], "")
 			continue
 		}
 		f.b.WriteString(writtenName(n))

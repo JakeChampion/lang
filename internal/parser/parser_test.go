@@ -1896,7 +1896,8 @@ function h(xs: stream[u8][]): i32 { return 0; }`)
 
 // `let (a, b) = expr;` parses to a *ast.Destructure carrying
 // the identifier list and the source expression — distinct
-// from `let Variant(x) = …` which routes to *ast.LetElse.
+// from `let Variant(x) = …`, whose refutable head routes to
+// the `let … else` desugar instead.
 func TestTupleDestructureParses(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
 		let (a, b) = (1, 2);

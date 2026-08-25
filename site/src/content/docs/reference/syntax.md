@@ -124,10 +124,14 @@ isn't significant.
 - **`for (init; cond; step) { ... }`** — three-part loop.
 - **`for x in expr { ... }`** — foreach over an array, slice, range or
   iterator.
-- **`for (a, b) in expr { ... }`** — foreach with a destructuring binder,
-  the same irrefutable tuple pattern `var (a, b) = e;` takes (nested
-  elements and `_` discards included). Over an array it binds against
-  each element; over a map, against each entry's key and value.
+- **`for Pat in expr { ... }`** — foreach with a destructuring binder,
+  the same irrefutable pattern `var Pat = e;` and a destructuring
+  parameter take: a tuple (nested elements and `_` discards included) or
+  a struct pattern (with renaming and `..`), optionally with an `@`
+  binding for the whole element. Over an array it binds against each
+  element; over a map, against each entry's key and value — a map binds
+  those separately, so there is no whole entry for `@` to name and one is
+  rejected there.
 - **`loop { ... }`** — infinite loop; exit with `break` / `return`.
 - **`label: while … `** / **`label: for … `** / **`label: loop …`** —
   a named loop, so a nested `break label` / `continue label` can target
@@ -140,6 +144,9 @@ isn't significant.
 - **`function f(Pat: T)`** — destructuring parameter, same grammar again
   but irrefutable only (a tuple or struct pattern, optionally with an
   `@` binding for the whole value).
+- **`var Pat = expr;`** / **`let Pat = expr;`** — irrefutable destructure,
+  the third site taking that same pattern. A refutable head belongs to the
+  `let … else` form above, which has a branch for the miss.
 - **`defer expr;`** / **`errdefer expr;`** — schedule expr to run when the
   scope that reached the statement finishes (LIFO): function exit, or the
   end of the iteration for a `defer` in a loop body. `errdefer` runs only
