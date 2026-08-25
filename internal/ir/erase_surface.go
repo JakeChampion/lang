@@ -71,6 +71,31 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 			x.ElemType = eraseStrViewOnly(x.ElemType)
 		case *ast.SliceExpr:
 			x.ElemType = eraseStrViewOnly(x.ElemType)
+		case *ast.Match:
+			// Match-arm payload binding types. The checker resolves them
+			// by substituting the scrutinee's type arguments into the
+			// variant's declared payloads, so an `Option[str]` scrutinee
+			// stamps a raw `str` here that no other slot erases — and the
+			// binding's slot is then classified by TYPE, which the wasm
+			// binary seam rejects outright and the natives silently treat
+			// as a non-string.
+			for _, arm := range x.Arms {
+				eraseStrSlice(arm.BindingTypes)
+				eraseStrTuplePats(arm.TupleElems)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range x.Arms {
+				eraseStrSlice(arm.BindingTypes)
+				eraseStrTuplePats(arm.TupleElems)
+			}
+		case *ast.TryOp:
+			// The `?` success-path payload type, stamped by the checker
+			// from the source enum's type arguments — the same slot shape
+			// as a match arm's binding. An unerased `str` reaches
+			// payloadLayout / payloadLoadOpFor, which classify by type:
+			// `Option[str]?` then read a 4-byte payload at offset 4 out of
+			// a box that stores two words at offset 8.
+			x.Type = eraseStr(x.Type)
 		case *ast.Call:
 			// The third checker-stamped type slot on an expression. For
 			// the rewritten builtin-method calls the checker emits
@@ -123,6 +148,33 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 	for _, ts := range info.VariantCallPayloads {
 		for i := range ts {
 			ts[i] = eraseStr(ts[i])
+		}
+	}
+}
+
+// eraseStrSlice rewrites every entry of a checker-stamped type slice in
+// place.
+func eraseStrSlice(ts []ast.Type) {
+	for i := range ts {
+		ts[i] = eraseStr(ts[i])
+	}
+}
+
+// eraseStrTuplePats walks a tuple pattern's elements, erasing the payload
+// types of variant sub-patterns and of nested tuple patterns, to any depth.
+func eraseStrTuplePats(els []ast.TuplePatElem) {
+	for i := range els {
+		eraseStrTuplePat(&els[i])
+	}
+}
+
+func eraseStrTuplePat(el *ast.TuplePatElem) {
+	eraseStrSlice(el.VariantBindingTypes)
+	eraseStrSlice(el.NestedTypes)
+	eraseStrTuplePats(el.Nested)
+	for _, sub := range el.VariantPayloads {
+		if sub != nil {
+			eraseStrTuplePat(sub)
 		}
 	}
 }
