@@ -5850,6 +5850,8 @@ function (s: string) view(): str { return s; }
 		`function f(): str { var s: string = mk(); return s.view(); }`,
 		// the arm binding from the checked producer, handed to a callee
 		`function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return id_view(v); }, None => { return ""; } } }`,
+		// the laundered view parked in a local before the return
+		`function f(): str { var s: string = mk(); var t: str = id_view(slice_unchecked(s, 0, 1)); return t; }`,
 	} {
 		err := checkSource(t, decls+src)
 		if err == nil {
