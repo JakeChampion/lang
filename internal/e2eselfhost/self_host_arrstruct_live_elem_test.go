@@ -18,14 +18,14 @@ import (
 // nothing but its buffer.
 //
 // The pairing that replaces the move requirement is the one slices 5 and 7
-// established. The append RETAINS at every site the credit stamps ("APRETAIN:",
-// issued by the same pass that grants the walk, so the inc and the dec are the
-// same set of sites); the container's per-element field walk and the source's
-// own release both run under __fern_rc_is_unique; whichever owner reaches rc 1
-// does the deep work and the other takes the box dec. That holds in either
-// order. A MOVED element is excluded from the stamp — it hands its single
-// reference to the buffer and its own release is elided with the retain, so an
-// inc there would strand the element at rc 1 after the walk.
+// established. The credit stamps every element site it owns ("APOWNED:", issued
+// by the same pass that grants the walk, so the inc and the dec are the same set
+// of sites); the container's per-element field walk and the source's own release
+// both run under __fern_rc_is_unique; whichever owner reaches rc 1 does the deep
+// work and the other takes the box dec. That holds in either order. A MOVED
+// element is stamped too but takes no inc — it hands its single reference to the
+// buffer and its own release is elided instead, which the LOWERING site decides
+// from the move analysis. The stamp says who owns the element, not who pays.
 //
 // The source keeps its reclaim credit too: a stamped self-append is no longer a
 // counted-SINK use, which is what the struct escape gate was refusing it for.

@@ -342,7 +342,12 @@ Worth knowing so you do not assume coverage you do not have:
   GENERATED kind × scope × consumption × origin grid and pins each cell's
   verdict pair in `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` —
   that file is the live gap list for the shapes the generator covers, and a
-  shape outside the grid is still ungated. Each compiling cell also re-runs
+  shape outside the grid is still ungated. Two narrower grids pin the struct
+  release protocol the same way, and their `testdata` files are read as gap
+  lists too: `TestSelfHostConstructionRetainMatrixX86_64` (struct-literal FIELD
+  kind × value shape) and `TestSelfHostContainerSinkMatrixX86_64` (which
+  CONTAINER a whole struct box is stored into × what the source local does
+  after the store). Each compiling cell also re-runs
   under `FERN_SANITIZE` (the quarantine + trap), where any exit movement or
   `fern-sanitizer:` finding is a hard failure — the latent class (a stray
   dec, a premature free whose block is then read) that the census reads as
