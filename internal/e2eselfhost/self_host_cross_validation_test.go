@@ -253,7 +253,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"string-len", `function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
 		{"string-concat", `function main(): i32 { var a: string = "ab"; var b: string = "cde"; var c: string = a + b; return c.len(); }`, 5},
 		{"string-index", `function main(): i32 { var s: string = "abc"; return s[1] as i32; }`, 98},
-		{"string-slice", `function main(): i32 { var s: string = "abcdef"; var t: string = s[1:3] + ""; return t.len(); }`, 2},
+		{"string-slice", `function main(): i32 { var s: string = "abcdef"; var t: string = slice_unchecked(s, 1, 3) + ""; return t.len(); }`, 2},
 		{"array-for-sum", `function main(): i32 { var xs: i32[] = [1,2,3,4]; var t = 0; for v in xs { t = t + v; } return t; }`, 10},
 		{"string-array-for", `function main(): i32 { var xs: string[] = ["ab","cde"]; var t = 0; for s in xs { t = t + s.len(); } return t; }`, 5},
 		{"struct-field-read", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 40, y: 2 }; return p.x + p.y; }`, 42},
