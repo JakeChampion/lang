@@ -841,7 +841,9 @@ pub struct Scope {
   // carry it through unchanged — so the index is built once per module,
   // not once per scope.
   sigs: SigTable,
-  structs: StructSig[],
+  // The module's struct table, name-indexed and shared by every scope in the
+  // module exactly as `sigs` is.
+  structs: StructTable,
   unions: UnionSig[],
   methods: MethodSig[],
   // loop_depth tracks nesting depth for break / continue
@@ -991,6 +993,44 @@ function sig_table(sigs: FuncSig[]): SigTable {
   return SigTable { sigs: sigs, head: head, next: next, am_head: am_head, am_next: am_next };
 }
 
+// StructTable is `structs` with a name index over it, built once per module and
+// carried by every scope in that module by reference — the SigTable idiom for
+// the struct table, which lookup_struct scanned end to end per query.
+pub struct StructTable {
+  structs: StructSig[],
+  // head[b] is the first structs index in bucket b (-1 when empty); next[i]
+  // chains to the next index in the same bucket, ascending.
+  head: i32[],
+  next: i32[],
+}
+
+// struct_table indexes `structs` by name. Built backward so each chain ends up
+// in ascending index order, which is the order the scan visited: a duplicate
+// name still answers with the FIRST entry.
+function struct_table(structs: StructSig[]): StructTable {
+  var head: i32[] = [];
+  var b: i32 = 0;
+  var nb: i32 = sig_buckets();
+  while (b < nb) {
+    head = head.append(0 - 1);
+    b = b + 1;
+  }
+  var next: i32[] = [];
+  var j: i32 = 0;
+  while (j < structs.len()) {
+    next = next.append(0 - 1);
+    j = j + 1;
+  }
+  var k: i32 = structs.len() - 1;
+  while (k >= 0) {
+    var bk: i32 = sig_name_bucket(structs[k].name);
+    next = next.with(k, head[bk]);
+    head = head.with(bk, k);
+    k = k - 1;
+  }
+  return StructTable { structs: structs, head: head, next: next };
+}
+
 function new_scope(): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
@@ -998,10 +1038,10 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
-function new_scope_full(st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
+function new_scope_full(st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[]): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
   return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
@@ -1033,7 +1073,7 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
 function (s: Scope) resolve_type(name: string): Type {
-  return type_from_name_erasing_tparams(name, s.tparams, s.structs, s.unions);
+  return type_from_name_erasing_tparams(name, s.tparams, s.structs.structs, s.unions);
 }
 
 // bind_tpvar records that value `name` was declared with the type parameter
@@ -1388,12 +1428,14 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     }
     i = s.sigs.next[i];
   }
-  // Sentinel: empty name + empty param list + unknown ret_type
-  // tells callers the name isn't a function.
+  // Sentinel: empty name + empty param list + unknown ret_type tells callers
+  // the name isn't a function. The reason carries no name because no caller
+  // reads it — every one gates on `name.len()` (or `is_const`) first — and
+  // building one per miss concatenated a string the miss then discarded.
   var empty: Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, type_params: [], param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
+  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function"), type_param_count: 0, type_params: [], param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -1466,10 +1508,8 @@ function e021_type_known(cty: string, at: Type, s: Scope): boolean {
   if (is_primitive_type(at)) {
     return true;
   }
-  for sd in s.structs {
-    if (sd.name == cty) {
-      return true;
-    }
+  if (s.has_struct(cty)) {
+    return true;
   }
   for union in s.unions {
     if (union.name == cty) {
@@ -1496,7 +1536,7 @@ function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_
 // Both sources, because a derive does not synthesise an impl-table entry.
 function map_key_conforms(s: Scope, tyname: string, tr: string): boolean {
   if (e021_scope_has_impl(s.impls, tr, tyname)) { return true; }
-  for sd in s.structs {
+  for sd in s.structs.structs {
     if (sd.name == tyname || sd.enum_owner == tyname) {
       for derive in sd.derives {
         if (parser.derive_simple_name(derive) == tr) { return true; }
@@ -1696,18 +1736,34 @@ function (s: Scope) arr_recv_ret_type(recv_ty: Type, arm: MethodSig): Type {
       var tps: string[] = [elem_param];
       var targs: Type[] = [ra.elem];
       var rref: parser.TypeRef = parser.parse_type_ref(arm.ret_type_name);
-      return type_from_ref_subst(rref, tps, targs, s.structs, s.unions);
+      return type_from_ref_subst(rref, tps, targs, s.structs.structs, s.unions);
     },
     _ => {}
   }
   return arm.ret_type;
 }
 
-function (s: Scope) lookup_struct(name: string): StructSig {
-  for sd in s.structs {
-    if (sd.name == name) {
-      return sd;
+// has_struct is lookup_struct's predicate form, for the callers that only ask
+// whether the name is a struct at all: the miss sentinel is five empty arrays
+// they build and drop.
+function (s: Scope) has_struct(name: string): boolean {
+  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.structs.structs[i].name == name) {
+      return true;
     }
+    i = s.structs.next[i];
+  }
+  return false;
+}
+
+function (s: Scope) lookup_struct(name: string): StructSig {
+  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.structs.structs[i].name == name) {
+      return s.structs.structs[i];
+    }
+    i = s.structs.next[i];
   }
   // Sentinel: empty name signals "no such struct".
   var empty_n: string[] = [];
@@ -2392,7 +2448,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
             var rssig: StructSig = s.lookup_struct(rsn.name);
             if (rssig.name.len() > 0 && rssig.type_params.len() > 0) {
               var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
-              return type_from_ref_subst(rref, rssig.type_params, rsn.args, s.structs, s.unions);
+              return type_from_ref_subst(rref, rssig.type_params, rsn.args, s.structs.structs, s.unions);
             }
           }
         },
@@ -2511,7 +2567,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     var bt: Type[] = [];
     var bpi: i32 = 0;
     while (bpi < sig.param_type_names.len() && bpi < c.args.len()) {
-      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[bpi]), check_expr(c.args[bpi], s), sig.type_params, s.structs, s.unions, bn, bt);
+      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[bpi]), check_expr(c.args[bpi], s), sig.type_params, s.structs.structs, s.unions, bn, bt);
       bn = bn2;
       bt = bt2;
       bpi = bpi + 1;
@@ -2526,7 +2582,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
       }
     }
     if (bn.len() > 0) {
-      var gsubst: Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.structs, s.unions);
+      var gsubst: Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.structs.structs, s.unions);
       if (!type_contains_unknown(gsubst)) {
         return gsubst;
       }
@@ -2896,7 +2952,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
               // erased unknown.
               if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
                 var fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
-                return type_from_ref_subst(fref, fsig.type_params, sn.args, s.structs, s.unions);
+                return type_from_ref_subst(fref, fsig.type_params, sn.args, s.structs.structs, s.unions);
               }
               return fsig.field_types[fai];
             }
@@ -3922,17 +3978,17 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // ret_type (so StmtReturn arms can compare against it), the receiver (for
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
-function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
+function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[]): Scope {
   var s: Scope = new_scope_full(st, structs, unions, methods);
   s = s.with_tparams(fd.type_params, fd.bound_traits);
   if (fd.ret_type.len() > 0) {
-    s = s.with_ret_type(type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions));
+    s = s.with_ret_type(type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs.structs, unions));
   }
   if (fd.receiver_name.len() > 0) {
-    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, fd.type_params, structs, unions));
+    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, fd.type_params, structs.structs, unions));
   }
   for param in fd.params {
-    s = s.bind(param.name, type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
+    s = s.bind(param.name, type_from_name_erasing_tparams(param.type_name, fd.type_params, structs.structs, unions));
     if (util.index_of_str(fd.type_params, param.type_name) >= 0) {
       s = s.bind_tpvar(param.name, param.type_name);
     }
@@ -6588,7 +6644,7 @@ function variant_ctor_diags(vname: string, c: parser.ExprCall, s: Scope): util.D
   if (union_of_variant(vname, s.unions).len() == 0) {
     return out;
   }
-  var want: i32 = variant_payload_count(vname, s.structs);
+  var want: i32 = variant_payload_count(vname, s.structs.structs);
   if (want < 0) {
     return out;
   }
@@ -11756,6 +11812,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
   var st: SigTable = sig_table(sigs);
+  var stt: StructTable = struct_table(structs);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   var body_diags: util.Diag[] = [];
   var ambig: string[] = ambiguous_variants(mod.enums);
@@ -11778,7 +11835,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   var slc_sums: ViewSum[] = [];
   for cfn in mod.funcs {
     slc_fns = slc_fns.append(cfn);
-    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, structs, unions, methods));
+    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, unions, methods));
     var slc_initial: boolean[] = [];
     for slc_pos in view_positions(cfn) {
       slc_initial = slc_initial.append(false);
@@ -11826,7 +11883,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // passes below share one build instead of repeating it per pass. `csc`
     // is the same scope carrying the impl table, which only the call walk
     // (E021) and check_func_body may see — see Scope.impls.
-    var fsc: Scope = build_func_scope(mod.funcs[i], st, structs, unions, methods);
+    var fsc: Scope = build_func_scope(mod.funcs[i], st, stt, unions, methods);
     var csc: Scope = fsc.with_impls(mod.impls, mod.trait_reqs);
     if (!check_func_body(mod.funcs[i], csc)) {
       well_typed = false;
@@ -11910,7 +11967,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var pdi: i32 = 0;
     while (pdi < mod.funcs[i].params.len()) {
       if (mod.funcs[i].params[pdi].has_default) {
-        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, structs, unions, methods), unions, mod.enums), "P002"));
+        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, unions, methods), unions, mod.enums), "P002"));
       }
       pdi = pdi + 1;
     }
@@ -11927,7 +11984,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     i = i + 1;
   }
-  var s: Scope = new_scope_full(st, structs, unions, methods);
+  var s: Scope = new_scope_full(st, stt, unions, methods);
   var top_tys: Type[] = [];
   for top_stmt in mod.top_stmts {
     var r: CheckResult = check_stmt(top_stmt, s);
@@ -11940,7 +11997,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   var dtop: parser.Stmt[] = mod.top_stmts;
   // A BARE module scope, not the `s` above: each pass re-threads the top-level
   // bindings itself, and `s` has already accumulated all of them.
-  var tsc: Scope = new_scope_full(st, structs, unions, methods);
+  var tsc: Scope = new_scope_full(st, stt, unions, methods);
   body_diags = util.append_diags(body_diags, lret_stmts(dtop, tsc, unions));
   body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
   body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, structs));
@@ -12066,7 +12123,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // mkstr's summary. Only `str` returns are REPORTED against.
     if (sfn.ret_str || sfn.ret_type == "string") {
       e065_fns = e065_fns.append(sfn);
-      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, structs, unions, methods));
+      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, unions, methods));
       var initial: boolean[] = [];
       for pos in view_positions(sfn) {
         initial = initial.append(false);
@@ -12101,7 +12158,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
   }
   for xfn in mod.funcs {
-    var xsc: Scope = build_func_scope(xfn, st, structs, unions, methods);
+    var xsc: Scope = build_func_scope(xfn, st, stt, unions, methods);
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
     }
@@ -12163,13 +12220,14 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
   var st: SigTable = sig_table(sigs);
+  var stt: StructTable = struct_table(structs);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   for func in mod.funcs {
-    if (!check_func_body(func, build_func_scope(func, st, structs, unions, methods).with_impls(mod.impls, mod.trait_reqs))) {
+    if (!check_func_body(func, build_func_scope(func, st, stt, unions, methods).with_impls(mod.impls, mod.trait_reqs))) {
       return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", func.line, func.col)];
     }
   }
-  var s: Scope = new_scope_full(st, structs, unions, methods);
+  var s: Scope = new_scope_full(st, stt, unions, methods);
   for top_stmt in mod.top_stmts {
     var r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
@@ -13017,7 +13075,7 @@ function type_to_arrtag(t: Type): string {
 // build_module_tables mirrors the head of check_module (structs → union names →
 // enums → func sigs → methods); it is duplicated rather than shared so the
 // annotate pass cannot perturb check_module's byte-identity-critical body.
-pub struct ModuleTables { structs: StructSig[], unions: UnionSig[], sigs: SigTable, methods: MethodSig[] }
+pub struct ModuleTables { structs: StructTable, unions: UnionSig[], sigs: SigTable, methods: MethodSig[] }
 
 function build_module_tables(mod: parser.Module): ModuleTables {
   var alias_names: string[] = [];
@@ -13035,7 +13093,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
-  return ModuleTables { structs: structs, unions: unions, sigs: sig_table(sigs), methods: methods };
+  return ModuleTables { structs: struct_table(structs), unions: unions, sigs: sig_table(sigs), methods: methods };
 }
 
 // annotate_advance threads the block scope from one statement to the next,
@@ -13178,7 +13236,7 @@ function annotate_for_scope(fr: parser.StmtFor, s: Scope): Scope {
 // that variant, so a dotted name that is not an enum-qualified variant resolves
 // to "" (its payloads stay unbound) rather than to a same-named plain struct.
 function annotate_variant_struct(name: string, s: Scope): string {
-  if (s.lookup_struct(name).name.len() > 0) {
+  if (s.has_struct(name)) {
     return name;
   }
   var d: i32 = dot_index(name);
@@ -13189,7 +13247,7 @@ function annotate_variant_struct(name: string, s: Scope): string {
   if (!is_variant_of(bare, slice_unchecked(name, 0, d) + "", s.unions)) {
     return "";
   }
-  if (s.lookup_struct(bare).name.len() > 0) {
+  if (s.has_struct(bare)) {
     return bare;
   }
   return "";
