@@ -48484,17 +48484,22 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             while (bl < buck.len()) {
                 var ble: i32 = bl;
                 while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
-                var line: string = slice_unchecked(buck, bl, ble) + "";
-                var bpbar: i32 = 0;
-                while (bpbar < line.len() && line[bpbar] != b'|') { bpbar = bpbar + 1; }
-                if (bpbar < line.len()) {
+                // Offsets into `buck`, not a copy of the line: this walk visits
+                // every row of the whole-program registry for every function
+                // lowered, and materialising each row cost an allocation and a
+                // copy per row per function. Only a row that MATCHES is built.
+                var bpbar: i32 = bl;
+                while (bpbar < ble && buck[bpbar] != b'|') { bpbar = bpbar + 1; }
+                if (bpbar < ble) {
                     // A METHOD key is "<Type>.<method>" and the census can only
                     // see the bare method name, so match on the part after the
                     // last '.'. A free function's key holds no '.' (module
                     // mangling uses '__'), so it still compares whole.
                     var bpdot: i32 = bpbar;
-                    while (bpdot > 0 && line[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
-                    if (util.index_of_str(lacs, slice_unchecked(line, bpdot, bpbar)) >= 0) { reclaim = reclaim.append("BORROW:" + line); }
+                    while (bpdot > bl && buck[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
+                    if (util.index_of_str(lacs, slice_unchecked(buck, bpdot, bpbar)) >= 0) {
+                        reclaim = reclaim.append("BORROW:" + slice_unchecked(buck, bl, ble));
+                    }
                 }
                 bl = ble + 1;
             }
