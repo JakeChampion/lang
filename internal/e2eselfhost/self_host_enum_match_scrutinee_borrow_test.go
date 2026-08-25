@@ -144,19 +144,13 @@ function main(): i32 {
 			want: 53, allocs: 120, frees: 120,
 		},
 		{
-			// The SOLE top-level match binding its payload out. That shape takes the
-			// match-consumed branch, which match_arm_binds_rc_payload refuses the
-			// CREDIT for; the free comes from consumed_rcpayload_enum_frees, which
-			// admits the call bind since the "RCE:" registry reached it. The box is
-			// freed; the PAYLOAD is not, and the shortfall is not this branch's:
-			// match_moved_rc_payloads skips the moved field's dec on the theory that
-			// the arm binding took the box's reference, while `keep = xs` RETAINS.
-			// One claim is never balanced, so the payload leaks — a sound leak, and
-			// the identical INLINE-ctor shape has done exactly this all along
-			// (measured 300/200 before and after). Native is 300/300; closing it
-			// means teaching the moved set the difference between a move and a
-			// counted share, which is its own slice.
-			name: "sole_match_binds_payload_out_box_freed",
+			// The SOLE top-level match binding its payload out, now at native parity.
+			// It took two slices: the box free arrived with the "RCE:" call-bind
+			// admission, and the PAYLOAD dec with the moved-set narrowing —
+			// match_moved_rc_payloads had skipped it on the theory that the arm
+			// binding took the box's reference, while `keep = xs` takes a counted
+			// claim of its own, so the dec lands on that claim rather than on zero.
+			name: "sole_match_binds_payload_out_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
     var keep: i32[] = [0];
@@ -164,7 +158,7 @@ function main(): i32 {
     return (keep.len() + keep[0]) % 101;
 }
 ` + escrMain,
-			want: 5, allocs: 300, frees: 200,
+			want: 5, allocs: 300, frees: 300,
 		},
 		{
 			// The single top-level match on an INLINE ctor bind, which takes the

@@ -200,13 +200,14 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 0,
 		},
 		{
-			// A GUARDED arm mixed with a moved payload. consumed_rcpayload_enum_frees
-			// rejects that combination (guarded_move): a guard could divert execution
-			// to an arm that did NOT move the payload, which would make the moved-set
-			// skip a per-call leak — or, run the other way, a free of a payload the
-			// escapee holds. The call admission does not reach past that gate.
-			// 350 / 150 before and after; native is 350 / 350.
-			name: "guarded_move_still_refused",
+			// A GUARDED arm whose payload is stored out. consumed_rcpayload_enum_frees
+			// refuses any candidate mixing a guard with a NON-EMPTY moved set
+			// (guarded_move), because a guard could divert execution to an arm that
+			// did not move the payload. The moved-set narrowing empties the set for
+			// this shape — an rc-guarded array payload stored to an outer local is
+			// not a hand-over — so the candidate is admitted and the free fires.
+			// 350/150 when this row was written; native parity now.
+			name: "guarded_arm_store_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
     var keep: i32[] = [0];
@@ -214,7 +215,7 @@ function round(i: i32): i32 {
     return (keep.len() + keep[0]) % 101;
 }
 ` + recfMain,
-			want: 81, allocs: 350, frees: 150,
+			want: 81, allocs: 350, frees: 350,
 		},
 	}
 }
