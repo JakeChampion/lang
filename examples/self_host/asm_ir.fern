@@ -3655,12 +3655,13 @@ pub function eligible_core_known_impl(mod: parser.Module, known: string[]): bool
     // its OWN eligibility pass (#3425). Once is byte-identical, at O(n).
     var sg: irlower.FnSigs = irlower.fn_sigs_without_ownership(
         irlower.fn_sigs_of(mod.funcs, mod.structs, array_ret_fns(mod)));
+    var freg: irlower.SigReg = module_func_reg(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, mod.structs, known, sg)) {
+        if (!func_eligible(mod.funcs[i], mod, mod.structs, known, sg, freg)) {
             if (strict_ir_on()) {
                 strict_ir_refuse(mod.funcs[i].name
-                    + func_ineligible_reason(mod.funcs[i], mod, mod.structs, known, sg));
+                    + func_ineligible_reason(mod.funcs[i], mod, mod.structs, known, sg, freg));
             }
             return false;
         }
@@ -3728,12 +3729,13 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
     };
+    var freg: irlower.SigReg = module_func_reg(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg)) {
+        if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg, freg)) {
             if (strict_ir_on()) {
                 strict_ir_refuse(mod.funcs[i].name
-                    + func_ineligible_reason(mod.funcs[i], mod, all_structs, known, sg));
+                    + func_ineligible_reason(mod.funcs[i], mod, all_structs, known, sg, freg));
             }
             return false;
         }
@@ -3772,7 +3774,7 @@ function known_includes(known: string[], name: string): boolean {
 // this gate as a separate pass rather than fusing it into emit like x86's
 // emit_module_ir_gated — needed 8.5 GB to compile an empty main importing
 // std/array, against x86's 1.5 GB.
-function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs): boolean {
+function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): boolean {
     // lower_func with the hoisted side-tables (the same set lower_func_for would
     // derive, but computed once by eligible_core — see the hoist note there).
     // `sview` is the struct-decl view lowering resolves field layouts against:
@@ -3786,9 +3788,9 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
+            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) { return false; }
         } else if (o.kind_tag == 6) {  // const_func
-            if (!module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
+            if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
     }
@@ -3814,18 +3816,18 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
 // Only called under strict_ir_on(), so the extra lowering costs nothing on the
 // normal path — which is why func_eligible itself stays a plain boolean and
 // this duplicates its shape rather than the two sharing a richer return.
-function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs): string {
+function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): string {
     var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
     if (!r.ok) { return " (did not lower: " + r.why + ")"; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) {
+            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
                 return " (body lowered, but calls unknown symbol \"" + o.str + "\")";
             }
         } else if (o.kind_tag == 6) {  // const_func
-            if (!module_has_func(mod, o.str) && !known_includes(known, o.str)) {
+            if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
                 return " (body lowered, but references unknown function value \"" + o.str + "\")";
             }
         }
@@ -3888,9 +3890,10 @@ pub function eligibility_report(mod: parser.Module): string {
 // all_eligible_known. An empty `known` reproduces eligibility_report exactly.
 pub function eligibility_report_known(mod: parser.Module, known: string[]): string {
     var out: string = "";
+    var freg: irlower.SigReg = module_func_reg(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        out = out + eligibility_line(mod.funcs[i], mod, known);
+        out = out + eligibility_line(mod.funcs[i], mod, known, freg);
         i = i + 1;
     }
     var verdict: string = "module: AST";
@@ -3901,12 +3904,12 @@ pub function eligibility_report_known(mod: parser.Module, known: string[]): stri
 // eligibility_line is the single-function verdict line ("<name>: ir\n" or
 // "<name>: BAIL <reasons>\n") shared by eligibility_report and its sharded
 // twin. A receiver method is reported as "<Type>.<method>".
-function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[]): string {
+function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg): string {
     var name: string = fd.name;
     if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     var lower_ok: boolean = ir_eligible(fd, mod);
-    var calls_ok: boolean = calls_only_known(fd, mod, known);
-    var cfns_ok: boolean = const_funcs_only_known(fd, mod, known);
+    var calls_ok: boolean = calls_only_known(fd, mod, known, freg);
+    var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, freg);
     if (lower_ok && calls_ok && cfns_ok) {
         return name + ": ir\n";
     }
@@ -3937,8 +3940,9 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
     if (count > 0 && lo + count < hi) { hi = lo + count; }
     var i: i32 = lo;
     var none: string[] = [];
+    var freg: irlower.SigReg = module_func_reg(mod);
     while (i < hi) {
-        out = out + eligibility_line(mod.funcs[i], mod, none);
+        out = out + eligibility_line(mod.funcs[i], mod, none, freg);
         i = i + 1;
     }
     return out;
@@ -3948,40 +3952,50 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
 // (const_func) in fd names a function defined in the module — the function-value
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
 // funcref table slot, so such modules bail.
-function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[]): boolean {
+function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg): boolean {
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
-        if (r.ops[i].kind_tag == 6 && !module_has_func(mod, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }  // const_func
+        if (r.ops[i].kind_tag == 6 && !module_has_func(freg, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }  // const_func
         i = i + 1;
     }
     return true;
 }
 
-// module_has_func reports whether `name` is a function defined in the module.
-function module_has_func(mod: parser.Module, name: string): boolean {
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (mod.funcs[i].name == name) { return true; }
-        // Method-call form "<Type>.<method>": a receiver function whose base
-        // receiver type + name compose to `name` (the irlower dispatch label).
-        if (mod.funcs[i].receiver_type.len() > 0) {
-            if (util.base_type_name(mod.funcs[i].receiver_type) + "." + mod.funcs[i].name == name) { return true; }
+// module_func_reg indexes every name module_has_func answers to: each function's
+// own name, plus the method-call form "<Type>.<method>" (the irlower dispatch
+// label) for a receiver function. Built ONCE per module and threaded, like `sg`
+// above and for the same reason — the eligibility walk asks per call op per
+// function, so deriving it per query is the same quadratic.
+//
+// Composing the dispatch label here rather than at the query is the other half:
+// the scan this replaces built one per RECEIVER FUNCTION on every query, and
+// discarded all but the match.
+function module_func_reg(mod: parser.Module): irlower.SigReg {
+    var rows: string[] = [];
+    for fd in mod.funcs {
+        rows = rows.append(fd.name);
+        if (fd.receiver_type.len() > 0) {
+            rows = rows.append(util.base_type_name(fd.receiver_type) + "." + fd.name);
         }
-        i = i + 1;
     }
-    return false;
+    return irlower.sig_reg_of(rows);
+}
+
+// module_has_func reports whether `name` is a function defined in the module.
+function module_has_func(freg: irlower.SigReg, name: string): boolean {
+    return irlower.sig_reg_has_exact(freg, name);
 }
 
 // calls_only_known reports whether every direct call in fd targets a module
 // function or an IR runtime helper (not a builtin).
-function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[]): boolean {
+function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg): boolean {
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
+            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
     }
@@ -7194,6 +7208,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // Bail on the first function whose body doesn't lower or whose
     // direct calls / function values reference an unknown symbol.
     var cache: irlower.LowerResult[] = [];
+    var freg: irlower.SigReg = module_func_reg(im);
     var i: i32 = 0;
     while (i < im.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], im.structs, sg, false);
@@ -7205,12 +7220,12 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
         while (j < r.ops.len()) {
             var o: ir.Op = r.ops[j];
             if (o.kind_tag == 149) {  // call_direct
-                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) {
+                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
                     if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
                     return "";
                 }
             } else if (o.kind_tag == 6) {  // const_func
-                if (!module_has_func(im, o.str) && !known_includes(known, o.str)) {
+                if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
                     if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (function value " + o.str + " not defined)"); }
                     return "";
                 }
