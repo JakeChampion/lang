@@ -627,6 +627,25 @@ function build_expr(e: parser.Expr, s: BState): BState {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
+                    // slice_unchecked(s, a, b) is the byte slice `s[a:b]` used
+                    // to be (#5634). The subset is untyped and a string is a
+                    // byte array here, so it lowers to the same
+                    // __ssa_arr_slice the ExprSlice arm emits — the two forms
+                    // cannot drift.
+                    if (cid.name == "slice_unchecked" && c.args.len() == 3) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var sua: i32 = s.cur_id();
+                        s = build_expr(c.args[1], s);
+                        if (!s.ok) { return s; }
+                        var sulo: i32 = s.cur_id();
+                        s = build_expr(c.args[2], s);
+                        if (!s.ok) { return s; }
+                        var suhi: i32 = s.cur_id();
+                        s = s.fresh();
+                        var suargs: i32[] = [sua, sulo, suhi];
+                        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: suargs, imm: 0, str: "__ssa_arr_slice" });
+                    }
                     // Indirect call: the callee is a function-VALUE local
                     // (recorded "fnval"), holding a closure BOX — a tuple-style
                     // (fn_addr, cap…). Load fn_addr from slot 0 and call through

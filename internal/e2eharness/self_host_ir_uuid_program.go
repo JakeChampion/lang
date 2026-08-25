@@ -12,7 +12,7 @@ package e2eharness
 // the IR path on every backend (no chr round-trip). main returns 0 on
 // success, or a small non-zero code identifying the failed invariant.
 const UuidV4Program = `
-function hexd(n: i32): string { return "0123456789abcdef"[n : n + 1] + ""; }
+function hexd(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1) + ""; }
 function bh(b: i32): string { return hexd((b >> 4) & 15) + hexd(b & 15); }
 function v4(): string {
   var b: u8[] = random_bytes(16);
