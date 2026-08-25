@@ -37081,16 +37081,68 @@ function binding_escapes_arm_scrut(arm: parser.MatchArm, name: string): boolean 
     return body_unsafe_for_match_borrow(arm.body, name, none, []);
 }
 
+// binding_returns_from_arm: the arm-bound payload `name` reaches a `return` inside
+// the arm. That is the one escape that HANDS OVER the box's reference — the self-host
+// IR path has no return-transfer inc, so the value leaves owning the payload and the
+// post-match drop must not dec it. Every other escape (a store to an outer local, a
+// call argument) leaves the payload's ownership decided by the destination's own
+// counted claim, not by this binding.
+function binding_returns_from_arm(body: parser.Stmt[], name: string): boolean {
+    for stmt in body {
+        match (stmt) {
+            parser.StmtReturn(r) => { if (expr_mentions_name(r.value, name)) { return true; } },
+            parser.StmtIf(f) => { if (binding_returns_from_arm(f.then_body, name) || binding_returns_from_arm(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (binding_returns_from_arm(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (binding_returns_from_arm(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (binding_returns_from_arm(m.arms[a].body, name)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// store_out_takes_counted_claim: storing an arm-bound payload of type `ft` to an
+// outer local RETAINS it, so the payload gains a second counted owner and the
+// post-match dec lands on that claim rather than on zero.
+//
+// Only a plain scalar-element ARRAY payload does. Measured on the emitted asm: an
+// `i32[]` payload's store emits one __fern_rc_inc, a `string` payload's and a
+// nested struct's emit none — those aliases are UNCOUNTED, so the box stays sole
+// owner and a dec at the match frees a value the alias still reads. (The drop
+// helpers are not the reason: __fern_str_free reads rc at box-8 and only decs when
+// rc>1. The missing retain is, and it is its own bug — closing it is what would let
+// these payloads give up the skip too.)
+function store_out_takes_counted_claim(structs: parser.StructDecl[], ft: string): boolean {
+    return is_leaksafe_array_field(ft) && !is_enum_array_field_type(structs, ft);
+}
+
+// moved_skip_applies: given that the arm binding `name` escapes, does the post-match
+// drop have to SKIP this payload's dec? Only when nothing else will hold a counted
+// claim on the payload once the arm is done — either because the escape HANDS THE
+// REFERENCE OVER (a return: no return-transfer inc, so the value leaves owning it),
+// or because the payload's escaping store is UNCOUNTED (store_out_takes_counted_claim).
+//
+// An array payload stored to an outer local or handed to a call keeps its dec: the
+// store's own retain means the dec lands on that claim, and skipping strands it.
+function moved_skip_applies(arm: parser.MatchArm, name: string, ft: string, structs: parser.StructDecl[]): boolean {
+    if (!store_out_takes_counted_claim(structs, ft)) { return true; }
+    return binding_returns_from_arm(arm.body, name);
+}
+
 // match_moved_rc_payloads: the Koka consuming-match MOVED-payload set (#4400)
 // for the consuming rc-payload enum match `st`: every "<Variant>#<field k>"
-// whose rc-droppable payload field is BOUND (non-`_`) by an arm to a name that
-// ESCAPES its arm (binding_escapes_arm — stored to an outer var, returned,
-// passed to a call). The binding inherits the box's counted reference, so the
-// post-match deep-drop must SKIP that field's dec (emit_enum_variant_drops_gated)
-// — the dup the Koka transform would insert and the drop's dec cancel
-// statically. Borrow-only bindings stay OUT of the set: their arm is done with
-// the payload by the time the free runs, so the dec both reclaims it and keeps
-// today's behaviour. Scalar payloads impose nothing (copied, not rc-tracked).
+// whose rc-droppable payload field is BOUND (non-`_`) by an arm to a name whose
+// escape means the post-match deep-drop must SKIP that field's dec
+// (emit_enum_variant_drops_gated). Borrow-only bindings stay OUT: their arm is
+// done with the payload by the time the free runs. Scalar payloads impose
+// nothing (copied, not rc-tracked).
+//
+// Escaping is necessary but NOT sufficient — moved_skip_applies decides. An
+// rc-guarded ARRAY payload escaping by a store or a call argument keeps its dec:
+// the destination takes its own counted claim, so the dec lands on that claim
+// rather than on zero, and skipping it strands one. Measured: such a store was
+// 300 allocs / 200 frees over 100 rounds against native's 300/300, and a
+// borrow-only call argument 200/100 against 200/200.
 //
 // The skip is exact only when the escaping arm ALWAYS runs for its variant — a
 // guard could divert execution to a different arm that did NOT move the
@@ -37115,16 +37167,20 @@ function match_moved_rc_payloads(st: parser.Stmt, structs: parser.StructDecl[]):
                             vc = vc + 1;
                         }
                         if (pv.binding != "" && pv.binding != "_") {
-                            if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, 0))) {
-                                if (binding_escapes_arm(arm, pv.binding, none)) { moved = moved.append(vname + "#0"); }
+                            var ft0: string = decl_field_type_at(structs, vname, 0);
+                            if (enum_field_rc_droppable(structs, ft0)) {
+                                if (binding_escapes_arm(arm, pv.binding, none)
+                                        && moved_skip_applies(arm, pv.binding, ft0, structs)) { moved = moved.append(vname + "#0"); }
                             }
                         }
                         var eb: i32 = 0;
                         while (eb < pv.extra_bindings.len()) {
                             var ebn: string = pv.extra_bindings[eb];
                             if (ebn != "" && ebn != "_") {
-                                if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, eb + 1))) {
-                                    if (binding_escapes_arm(arm, ebn, none)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
+                                var ftk: string = decl_field_type_at(structs, vname, eb + 1);
+                                if (enum_field_rc_droppable(structs, ftk)) {
+                                    if (binding_escapes_arm(arm, ebn, none)
+                                            && moved_skip_applies(arm, ebn, ftk, structs)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
                                 }
                             }
                             eb = eb + 1;
