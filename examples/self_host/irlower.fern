@@ -20581,6 +20581,20 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                     else if (apelslot >= 0 && slot_credit_at(s, apelslot, "SCENUMS:")) {
                                         aps = aps.retain(apelslot, "append-scenum-arg");
                                     }
+                                    // A bare struct ident appended to a container whose
+                                    // ELEMENT WALK is credited, at a site the move
+                                    // analysis did not take over. The walk decs every
+                                    // element once and deep-drops its fields under
+                                    // __fern_rc_is_unique, so a source that outlives the
+                                    // push needs the container to hold a count of its
+                                    // own. "APRETAIN:" is stamped by the same pass that
+                                    // grants the walk, which is what keeps the inc and
+                                    // the dec the same set of sites.
+                                    else if (apelslot >= 0
+                                        && reclaim_has(s.reclaimable_names, "APRETAIN:",
+                                            util.i32_to_string(apel.line) + ":" + util.i32_to_string(apel.col))) {
+                                        aps = aps.retain(apelslot, "append-arrstruct-elem");
+                                    }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
                                 // escapes the same way, against the k_enum dec of the
@@ -32528,32 +32542,34 @@ function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]
 
 // struct_box_sink_stored: `name`'s WHOLE BOX appears as a CONTAINER counted-sink
 // element — an append/with arg, an array or tuple element, or a variant-ctor
-// payload. The routed struct gate refuses such a name, and the refusal is now
-// exactly as wide as the retain is narrow.
+// payload. The routed struct gate refuses such a name, and the refusal is exactly
+// as wide as the retain is narrow.
 //
 // The plan's counted-sink forgiveness assumes the store retains. A struct-literal
 // FIELD does, unconditionally, at the nested-struct / enum arms of the
 // ExprStructLit lowering — so that position is NOT a sink here and the gate takes
-// the forgiveness for it (that is what makes struct__local clean). The container
-// sinks retain only under `slot_is_reclaimable_struct`, which refuses a RETIRED
-// slot, so a block-scoped `var s` appended inside a loop gets no inc while the
-// scoped sweep — reading the retirement-TOLERANT sibling — would still release
-// it. Measured as a use-after-free (the block-scoped escape-into-a-container
-// probe read freed elements) and as exit 99 on the bound-element suites. Closing
-// that asymmetry is the remaining half of the release-protocol port; until the
-// retain and the release agree on retired slots, these sinks stay refused.
+// the forgiveness for it (that is what makes struct__local clean). A SELF-APPEND
+// does too, but only at the sites the ARRSTRUCT pass stamped "APRETAIN:", which
+// is why those stamps are threaded in: a stamp is issued exactly where the
+// container earned its element walk, and it is keyed on the SITE, so a retired
+// slot cannot fall through it the way `slot_is_reclaimable_struct` did.
+//
+// Every other container sink still refuses, and must. An append into an
+// UNCREDITED container stores an element pointer nothing retained and can carry
+// it past the source's scope through a return; `with`, an array or tuple
+// element, and a variant payload have no retain at all.
 //
 // The field-move detectors (moves_fields_* / optstruct_body_moves_field) cannot
 // see this shape — a bare ident is a leaf there. A struct-lit BASE
 // (`T { ...name, … }`) is not a sink either — see the StructLit arm.
-function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[], apretain: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var sink: boolean = false;
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     if ((fa.field == "append" && c.args.len() == 1) || (fa.field == "with" && c.args.len() == 2)) { sink = true; }
-                    if (struct_box_sink_stored_expr(fa.obj, name, structs)) { return true; }
+                    if (struct_box_sink_stored_expr(fa.obj, name, structs, apretain)) { return true; }
                 },
                 parser.ExprIdent(cid) => {
                     if (variant_enum_owner(structs, cid.name).len() > 0) { sink = true; }
@@ -32563,11 +32579,24 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             for arg in c.args {
                 if (sink) {
                     match (arg) {
-                        parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },
+                        parser.ExprIdent(aid) => {
+                            // A self-append the ARRSTRUCT pass STAMPED is a counted
+                            // share, not an uncounted sink: the container earned its
+                            // element walk and the append retains at this exact site,
+                            // so the source keeps a claim of its own to release. Both
+                            // walks are rc-gated, so whichever owner reaches rc 1 does
+                            // the deep work once. Every unstamped sink — an append into
+                            // an uncredited container, `with`, an array or tuple
+                            // element, a variant payload — still refuses.
+                            if (aid.name == name
+                                && !reclaim_has(apretain, "APRETAIN:", util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col))) {
+                                return true;
+                            }
+                        },
                         _ => {}
                     }
                 }
-                if (struct_box_sink_stored_expr(arg, name, structs)) { return true; }
+                if (struct_box_sink_stored_expr(arg, name, structs, apretain)) { return true; }
             }
             return false;
         },
@@ -32576,7 +32605,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             while (i < a.elements.len()) {
                 match (a.elements[i]) {
                     parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
-                    _ => { if (struct_box_sink_stored_expr(a.elements[i], name, structs)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(a.elements[i], name, structs, apretain)) { return true; } }
                 }
                 i = i + 1;
             }
@@ -32587,7 +32616,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             while (i < t.elements.len()) {
                 match (t.elements[i]) {
                     parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
-                    _ => { if (struct_box_sink_stored_expr(t.elements[i], name, structs)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(t.elements[i], name, structs, apretain)) { return true; } }
                 }
                 i = i + 1;
             }
@@ -32602,7 +32631,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             if (sl.has_base) {
                 match (sl.base) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (struct_box_sink_stored_expr(sl.base, name, structs)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(sl.base, name, structs, apretain)) { return true; } }
                 }
             }
             // A bare-ident FIELD VALUE is a COUNTED share: the nested-struct and
@@ -32613,52 +32642,52 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             while (i < sl.field_values.len()) {
                 match (sl.field_values[i]) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (struct_box_sink_stored_expr(sl.field_values[i], name, structs)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(sl.field_values[i], name, structs, apretain)) { return true; } }
                 }
                 i = i + 1;
             }
             return false;
         },
-        parser.ExprBinary(b) => { return struct_box_sink_stored_expr(b.left, name, structs) || struct_box_sink_stored_expr(b.right, name, structs); },
-        parser.ExprUnary(u) => { return struct_box_sink_stored_expr(u.operand, name, structs); },
-        parser.ExprIndex(ix) => { return struct_box_sink_stored_expr(ix.array, name, structs) || struct_box_sink_stored_expr(ix.index, name, structs); },
-        parser.ExprFieldAccess(fa2) => { return struct_box_sink_stored_expr(fa2.obj, name, structs); },
-        parser.ExprLambda(lm) => { return struct_box_sink_stored_stmts(lm.body, name, structs); },
+        parser.ExprBinary(b) => { return struct_box_sink_stored_expr(b.left, name, structs, apretain) || struct_box_sink_stored_expr(b.right, name, structs, apretain); },
+        parser.ExprUnary(u) => { return struct_box_sink_stored_expr(u.operand, name, structs, apretain); },
+        parser.ExprIndex(ix) => { return struct_box_sink_stored_expr(ix.array, name, structs, apretain) || struct_box_sink_stored_expr(ix.index, name, structs, apretain); },
+        parser.ExprFieldAccess(fa2) => { return struct_box_sink_stored_expr(fa2.obj, name, structs, apretain); },
+        parser.ExprLambda(lm) => { return struct_box_sink_stored_stmts(lm.body, name, structs, apretain); },
         _ => { return false; }
     }
     return false;
 }
 
-function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], apretain: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs)) { return true; } },
-            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs)) { return true; } },
-            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs)) { return true; } },
-            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs)) { return true; } },
+            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs, apretain)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs, apretain)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs, apretain)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs, apretain)) { return true; } },
             parser.StmtIf(f) => {
-                if (struct_box_sink_stored_expr(f.cond, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(f.then_body, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(f.else_body, name, structs)) { return true; }
+                if (struct_box_sink_stored_expr(f.cond, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_stmts(f.then_body, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_stmts(f.else_body, name, structs, apretain)) { return true; }
             },
             parser.StmtWhile(w) => {
-                if (struct_box_sink_stored_expr(w.cond, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(w.body, name, structs)) { return true; }
+                if (struct_box_sink_stored_expr(w.cond, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_stmts(w.body, name, structs, apretain)) { return true; }
             },
             parser.StmtFor(fo) => {
-                if (struct_box_sink_stored_expr(fo.iter, name, structs)) { return true; }
-                if (struct_box_sink_stored_stmts(fo.body, name, structs)) { return true; }
+                if (struct_box_sink_stored_expr(fo.iter, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_stmts(fo.body, name, structs, apretain)) { return true; }
             },
             parser.StmtMatch(m) => {
-                if (struct_box_sink_stored_expr(m.scrutinee, name, structs)) { return true; }
+                if (struct_box_sink_stored_expr(m.scrutinee, name, structs, apretain)) { return true; }
                 for arm in m.arms {
-                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs)) { return true; }
-                    if (struct_box_sink_stored_stmts(arm.body, name, structs)) { return true; }
+                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs, apretain)) { return true; }
+                    if (struct_box_sink_stored_stmts(arm.body, name, structs, apretain)) { return true; }
                 }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                if (struct_box_sink_stored_stmts(one, name, structs)) { return true; }
+                if (struct_box_sink_stored_stmts(one, name, structs, apretain)) { return true; }
             },
             _ => {}
         }
@@ -32666,41 +32695,58 @@ function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, struct
     return false;
 }
 
-// struct_field_shared_stmts: `name`'s whole box appears as a bare-ident value at
-// a struct-literal FIELD — the counted-sink position the routed gate forgives
-// (the nested-struct / enum arms of the ExprStructLit lowering retain it
-// unconditionally, so the source keeps a claim its own release must balance).
-// The marker it feeds ("SINKSHARE:") is what narrows the rc-gated field walk to
-// exactly these names; a container sink is not included, because the gate still
-// refuses those outright.
-function struct_field_shared_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+// struct_counted_share_stmts: `name`'s whole box appears as a bare-ident value in
+// a position that RETAINS it — a struct-literal FIELD (the nested-struct / enum
+// arms of the ExprStructLit lowering retain unconditionally) or a self-append
+// into a container whose element walk is credited. Either way the source keeps a
+// claim its own release must balance, and both owners then run their deep field
+// walk under __fern_rc_is_unique so whichever reaches rc 1 does it once. The
+// marker it feeds ("SINKSHARE:") is what narrows the rc-gated field walk to
+// exactly these names.
+function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprStructLit(sl) => {
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
                 match (sl.field_values[i]) {
                     parser.ExprIdent(fid) => { if (fid.name == name) { return true; } },
-                    _ => { if (struct_field_shared_expr(sl.field_values[i], name, structs)) { return true; } }
+                    _ => { if (struct_counted_share_expr(sl.field_values[i], name, structs)) { return true; } }
                 }
                 i = i + 1;
             }
-            if (sl.has_base) { return struct_field_shared_expr(sl.base, name, structs); }
+            if (sl.has_base) { return struct_counted_share_expr(sl.base, name, structs); }
             return false;
         },
         parser.ExprCall(c) => {
-            for arg in c.args { if (struct_field_shared_expr(arg, name, structs)) { return true; } }
+            // `xs.append(name)` — the container sink. The bare ident is not a
+            // struct-literal field, so it only reaches here. No stamp check: this
+            // walk runs only for names the sink gate already admitted, and that
+            // gate admits an appended name only when every one of its appends is
+            // stamped.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "append" && c.args.len() == 1) {
+                        match (c.args[0]) {
+                            parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            for arg in c.args { if (struct_counted_share_expr(arg, name, structs)) { return true; } }
             return false;
         },
-        parser.ExprBinary(b) => { return struct_field_shared_expr(b.left, name, structs) || struct_field_shared_expr(b.right, name, structs); },
-        parser.ExprUnary(u) => { return struct_field_shared_expr(u.operand, name, structs); },
+        parser.ExprBinary(b) => { return struct_counted_share_expr(b.left, name, structs) || struct_counted_share_expr(b.right, name, structs); },
+        parser.ExprUnary(u) => { return struct_counted_share_expr(u.operand, name, structs); },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (struct_field_shared_expr(a.elements[i], name, structs)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (struct_counted_share_expr(a.elements[i], name, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (struct_field_shared_expr(t.elements[i], name, structs)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (struct_counted_share_expr(t.elements[i], name, structs)) { return true; } i = i + 1; }
             return false;
         },
         _ => { return false; },
@@ -32708,36 +32754,36 @@ function struct_field_shared_expr(e: parser.Expr, name: string, structs: parser.
     return false;
 }
 
-function struct_field_shared_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+function struct_counted_share_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtVar(v) => { if (struct_field_shared_expr(v.init, name, structs)) { return true; } },
-            parser.StmtAssign(a) => { if (struct_field_shared_expr(a.value, name, structs)) { return true; } },
-            parser.StmtReturn(r) => { if (struct_field_shared_expr(r.value, name, structs)) { return true; } },
-            parser.StmtExpr(e) => { if (struct_field_shared_expr(e.value, name, structs)) { return true; } },
+            parser.StmtVar(v) => { if (struct_counted_share_expr(v.init, name, structs)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_counted_share_expr(a.value, name, structs)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_counted_share_expr(r.value, name, structs)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_counted_share_expr(e.value, name, structs)) { return true; } },
             parser.StmtIf(f) => {
-                if (struct_field_shared_expr(f.cond, name, structs)) { return true; }
-                if (struct_field_shared_stmts(f.then_body, name, structs)) { return true; }
-                if (struct_field_shared_stmts(f.else_body, name, structs)) { return true; }
+                if (struct_counted_share_expr(f.cond, name, structs)) { return true; }
+                if (struct_counted_share_stmts(f.then_body, name, structs)) { return true; }
+                if (struct_counted_share_stmts(f.else_body, name, structs)) { return true; }
             },
             parser.StmtWhile(w) => {
-                if (struct_field_shared_expr(w.cond, name, structs)) { return true; }
-                if (struct_field_shared_stmts(w.body, name, structs)) { return true; }
+                if (struct_counted_share_expr(w.cond, name, structs)) { return true; }
+                if (struct_counted_share_stmts(w.body, name, structs)) { return true; }
             },
             parser.StmtFor(fo) => {
-                if (struct_field_shared_expr(fo.iter, name, structs)) { return true; }
-                if (struct_field_shared_stmts(fo.body, name, structs)) { return true; }
+                if (struct_counted_share_expr(fo.iter, name, structs)) { return true; }
+                if (struct_counted_share_stmts(fo.body, name, structs)) { return true; }
             },
             parser.StmtMatch(m) => {
-                if (struct_field_shared_expr(m.scrutinee, name, structs)) { return true; }
+                if (struct_counted_share_expr(m.scrutinee, name, structs)) { return true; }
                 for arm in m.arms {
-                    if (arm.has_guard && struct_field_shared_expr(arm.guard, name, structs)) { return true; }
-                    if (struct_field_shared_stmts(arm.body, name, structs)) { return true; }
+                    if (arm.has_guard && struct_counted_share_expr(arm.guard, name, structs)) { return true; }
+                    if (struct_counted_share_stmts(arm.body, name, structs)) { return true; }
                 }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                if (struct_field_shared_stmts(one, name, structs)) { return true; }
+                if (struct_counted_share_stmts(one, name, structs)) { return true; }
             },
             _ => {}
         }
@@ -33373,6 +33419,52 @@ function struct_arg_to_handback(stmts: parser.Stmt[], name: string, handback: st
     return false;
 }
 
+// arrstruct_credit_rows: the ARRSTRUCT / ARRSTRUCTA credit rows and their
+// "APRETAIN:" site stamps. Computed as one unit and BEFORE the struct family's
+// gate, which reads the stamps: whether a self-append is a counted share or an
+// uncounted sink depends on whether the CONTAINER earned its element walk, so
+// the two gates cannot be decided independently.
+function arrstruct_credit_rows(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], msites: string[]): string[] {
+    var out: string[] = [];
+    // Fresh (<struct-with-array-field>)[] locals (#4365): `var ps: P[] = [P { xs: [..] },
+    // ...]` (P routes field-reclaim) — the struct sibling of ARRTUP. Credited
+    // "ARRSTRUCT:" so slot_is_reclaimable_arrstruct routes the loop-rebind + exit sweep
+    // through emit_arrstruct_deep_free (counted element walk: per element the struct-field
+    // deep-drop __struct_drop_<P> + struct box dec, then the outer buffer). Same gates as
+    // ARRTUP: no escape of ps itself, not reassigned, no ELEMENT alias (arrarr_row_escapes),
+    // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
+    // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
+    // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
+    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites);
+    var asti: i32 = 0;
+    while (asti < asts.len()) {
+        // "A|" rows are append-BUILT markers, not candidates.
+        // Site keys here too; the "A|" marker rows are "A|" + the SAME key, so the
+        // self-lookup below stays key-to-key and gets sharper for it — two
+        // same-named bindings no longer share an append-built verdict.
+        var asnm: string = reclaim_site_name(asts[asti]);
+        if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites)
+            && !arrarr_row_escapes(body, asnm)
+            && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites)) {
+            // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
+            // blunt not-reassigned exclusion, validating each rebind
+            // individually (#6535) — the self-append is sanctioned, any other
+            // reassignment still sinks the credit outright.
+            if (util.index_of_str(asts, "A|" + asts[asti]) >= 0) {
+                out = out.append("ARRSTRUCTA:" + asts[asti]);
+            } else {
+                out = out.append("ARRSTRUCT:" + asts[asti]);
+            }
+            var apr: string[] = arrstruct_append_retain_sites(body, asnm, structs, msites, []);
+            var apri: i32 = 0;
+            while (apri < apr.len()) { out = out.append("APRETAIN:" + apr[apri]); apri = apri + 1; }
+        }
+        asti = asti + 1;
+    }
+    return out;
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -33381,6 +33473,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // below still proves non-escape before any is freed.
     var reassigned: string[] = body_assign_targets(body);
     fresh = collect_fresh_ret_call_names(body, structs, fresh_ret, reassigned, fresh);
+    // The array-of-structs rows come FIRST: their "APRETAIN:" stamps say which
+    // self-appends are counted shares, which is what decides whether the struct
+    // gate below reads an append as a sink.
+    var asrows: string[] = arrstruct_credit_rows(body, structs, borrowable, fresh_ret, msites);
     var out: string[] = [];
     var i: i32 = 0;
     while (i < fresh.len()) {
@@ -33438,13 +33534,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // The exit sweep now releases through emit_struct_field_drops_gated,
         // so the field walk runs only for the owner that finds rc 1 and the
         // box dec is what hands the last one its turn. With that in place the
-        // same append-rebind probe is 600/600 against native's 600/600, and
-        // the struct row of the construction-retain matrix is clean end to
-        // end. Native agrees on the analysis half too: a StructLit / TupleLit
-        // slot is an INC-ing sink there and does not taint its source.
+        // struct row of the construction-retain matrix is clean end to end.
+        // Native agrees on the analysis half too: a StructLit / TupleLit slot
+        // is an INC-ing sink there and does not taint its source.
         if (plan_on) {
             st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
-                && !struct_box_sink_stored_stmts(body, fnm, structs);
+                && !struct_box_sink_stored_stmts(body, fnm, structs, asrows);
         }
         else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
         if (st_esc_ok && !reassigned_from_alias(body, fnm)
@@ -33480,7 +33575,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             // the NODEEP alias in place nothing walks the fields (a leak on
             // struct_alias_in_a_conditional), and without it two owners walk them
             // (exit 99 on the same shape).
-            if (struct_field_shared_stmts(body, fnm, structs)) {
+            if (struct_counted_share_stmts(body, fnm, structs)) {
                 out = out.append("SINKSHARE:" + fresh[i]);
             }
         }
@@ -34263,39 +34358,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         ati = ati + 1;
     }
-    // Fresh (<struct-with-array-field>)[] locals (#4365): `var ps: P[] = [P { xs: [..] },
-    // ...]` (P routes field-reclaim) — the struct sibling of ARRTUP. Credited
-    // "ARRSTRUCT:" so slot_is_reclaimable_arrstruct routes the loop-rebind + exit sweep
-    // through emit_arrstruct_deep_free (counted element walk: per element the struct-field
-    // deep-drop __struct_drop_<P> + struct box dec, then the outer buffer). Same gates as
-    // ARRTUP: no escape of ps itself, not reassigned, no ELEMENT alias (arrarr_row_escapes),
-    // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
-    // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
-    // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
-    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites);
-    var asti: i32 = 0;
-    while (asti < asts.len()) {
-        // "A|" rows are append-BUILT markers, not candidates.
-        // Site keys here too; the "A|" marker rows are "A|" + the SAME key, so the
-        // self-lookup below stays key-to-key and gets sharper for it — two
-        // same-named bindings no longer share an append-built verdict.
-        var asnm: string = reclaim_site_name(asts[asti]);
-        if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites)
-            && !arrarr_row_escapes(body, asnm)
-            && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites)) {
-            // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
-            // blunt not-reassigned exclusion, validating each rebind
-            // individually (#6535) — the self-append is sanctioned, any other
-            // reassignment still sinks the credit outright.
-            if (util.index_of_str(asts, "A|" + asts[asti]) >= 0) {
-                out = out.append("ARRSTRUCTA:" + asts[asti]);
-            } else {
-                out = out.append("ARRSTRUCT:" + asts[asti]);
-            }
-        }
-        asti = asti + 1;
-    }
+    var asrowi: i32 = 0;
+    while (asrowi < asrows.len()) { out = out.append(asrows[asrowi]); asrowi = asrowi + 1; }
     // Fresh `MyEnum[]` locals (#5474): `var xs: E[] = [E.A(..), E.B, ..]` — the enum
     // sibling of ARRTUP/ARRSTRUCT, and the last array-of-X element kind that had no
     // element walk at all. Credited "ARRENUM:<local>#<Enum>", the enum riding the
@@ -42238,12 +42302,11 @@ function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): b
 // Two element shapes qualify. A fresh struct LITERAL is the rule
 // arrstruct_lit_is_fresh applies per element — the box is sole-owned exactly as
 // in the literal-built form the deep walk already frees. A BARE IDENT qualifies
-// only when the construction-move analysis names this exact site (#6535): the
-// local is an owned rc local at its LAST USE, so it hands its single reference
-// to the buffer and the deep walk is the one release. Any other bare ident is
-// still refused — the array's deep drop and a live local that outlives the push
-// (one declared outside the loop, appended every iteration) would release the
-// element's field buffers twice.
+// because the append RETAINS it: the container holds a counted reference, and
+// the element walk deep-drops the fields only under __fern_rc_is_unique, so a
+// source that outlives the push keeps its own claim and its own field walk.
+// The retain is gated on this very credit (slot_is_reclaimable_arrstruct at the
+// append), which is what keeps the inc and the dec the same set.
 
 // arrstruct_moved_elem: `e` is a bare ident the move analysis recorded at this
 // source position. Keyed on line:col, not the name, so a local that is moved at
@@ -42275,11 +42338,67 @@ function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parse
             if (!is_self_append) { return false; }
             if (c.args.len() != 1) { return false; }
             if (arrstruct_moved_elem(c.args[0], msites)) { return true; }
+            // ANY bare ident. The credit no longer needs the element to be dead
+            // after the push, because the append RETAINS it and both owners run
+            // their field walk under __fern_rc_is_unique: whichever reaches rc 1
+            // does the deep work, the other takes the box dec. Requiring a MOVE
+            // cost the CONTAINER its element walk on every shape where the source
+            // outlives the push — `ps = ps.append(p); p = P { … }` reads as
+            // neither a move nor a literal, and the whole array then leaked.
+            match (c.args[0]) {
+                parser.ExprIdent(_) => { return true; },
+                _ => {}
+            }
             return is_fresh_struct_init(c.args[0], structs);
         },
         _ => { return false; }
     }
     return false;
+}
+// arrstruct_append_retain_sites: the "line:col" keys of the bare-ident elements
+// `name` is self-appended that the move analysis did NOT take over. Each is a
+// counted share — the source keeps its reference and the container needs one of
+// its own — so the append emits a retain there and the element walk decs it back.
+//
+// Computed HERE, beside the credit it belongs to, and read at the append by
+// site key: the walk and the inc then cannot disagree about which elements are
+// shared. Deriving the inc from the ELEMENT's own credit instead was the bug
+// this replaced — a source with no credit got no inc while the container still
+// dec'd once per push, so a box appended four times was released four times.
+function arrstruct_append_retain_sites(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(as1) => {
+                if (as1.target == name && arrstruct_self_append_elem(as1.value, name, structs, msites)) {
+                    match (as1.value) {
+                        parser.ExprCall(c) => {
+                            match (c.args[0]) {
+                                parser.ExprIdent(eid) => {
+                                    if (!arrstruct_moved_elem(c.args[0], msites)) {
+                                        a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col));
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                a = arrstruct_append_retain_sites(f.then_body, name, structs, msites, a);
+                a = arrstruct_append_retain_sites(f.else_body, name, structs, msites, a);
+            },
+            parser.StmtWhile(w) => { a = arrstruct_append_retain_sites(w.body, name, structs, msites, a); },
+            parser.StmtFor(fo) => { a = arrstruct_append_retain_sites(fo.body, name, structs, msites, a); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { a = arrstruct_append_retain_sites(arm.body, name, structs, msites, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
 }
 function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     for stmt in stmts {
@@ -42573,8 +42692,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 parser.ExprFieldAccess(afa) => {
                     match (afa.obj) {
                         parser.ExprIdent(aid3) => {
-                            if (aid3.name == name && afa.field == "append" && c.args.len() == 1
-                                && (is_fresh_struct_init(c.args[0], structs) || arrstruct_moved_elem(c.args[0], msites))) {
+                            if (aid3.name == name && arrstruct_self_append_elem(e, name, structs, msites)) {
                                 return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites);
                             }
                         },
@@ -43019,7 +43137,11 @@ function emit_arrstruct_deep_free(se: LowerState, slot: i32, sty: string): Lower
     st = st.emit(ir.op_load_local(idxslot));
     st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (struct box ptr)
     st = st.emit(ir.op_store_local(elslot));
-    st = emit_struct_field_drops(st, elslot);        // deep-drop the struct's rc fields
+    // rc-GATED: an element the append RETAINED is shared with a live source, and
+    // only the owner that finds rc 1 may walk its fields. A sole-owned element
+    // (the fresh-literal append, the literal-built array) is rc 1 here, so the
+    // guard costs a branch and changes nothing for them.
+    st = emit_struct_field_drops_gated(st, elslot, true);
     st = st.emit(ir.op_load_local(elslot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the struct box
     st = st.emit(ir.op_drop());

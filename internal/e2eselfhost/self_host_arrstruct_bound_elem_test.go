@@ -14,11 +14,12 @@ import (
 // literal element, so every bound push refused the credit and leaked the whole
 // structure per round.
 //
-// The admission is the construction-move analysis, not the syntax: a bare-ident
-// element qualifies exactly when the analysis names that source position, which
-// means the local is an owned rc local at its LAST USE and was declared inside
-// the loop body doing the pushing. The two refusal cases below are the ones that
-// would double-free if it were widened to "any bare ident".
+// Any bare ident qualifies, because the append RETAINS an element whose source
+// keeps a claim of its own and the buffer's element walk deep-drops the fields
+// only under __fern_rc_is_unique. The two cases at the bottom are the ones that
+// would double-free without that pairing — a box pushed on every iteration of a
+// loop and read afterwards, and a source read after its push — so they pin the
+// counted hand-off rather than a refusal.
 //
 // Exit codes match the sibling reclaim suites: 90 = a live buffer was freed and
 // reused underneath its owner, 91/93 = wrong value, 92 = fresh bytes grew where
@@ -117,13 +118,14 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The refusal that carries the whole safety argument: `v` is declared OUTSIDE
-	// the loop, so the SAME box is pushed on every iteration. Admitting it would
-	// let the buffer's deep walk release that one box four times over, and the
-	// post-loop read of `v.kids` would then read recycled memory. The
-	// declared-in-this-body gate is what refuses it; the reads below report 90 if
-	// it ever stops.
-	{"outside-loop-elem-refused", `struct Val { kind: i32, kids: i32[] }
+	// The case that carries the whole safety argument: `v` is declared OUTSIDE the
+	// loop, so the SAME box is pushed on every iteration and is read again after
+	// it. Each push retains, so the buffer's walk decs the box once per element
+	// and finds it shared every time; `v`'s own release is the one that reaches
+	// rc 1 and walks the fields. Without the counted pairing the walk would
+	// release that one box four times over and the post-loop read of `v.kids`
+	// would see recycled memory — which is what the reads report as 90.
+	{"outside-loop-elem-shared", `struct Val { kind: i32, kids: i32[] }
 function haz(n: i32): i32 {
     var v: Val = Val { kind: 7, kids: [7, 8] };
     var vals: Val[] = [];
@@ -148,10 +150,10 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The other refusal: `v` is READ after the push, so the push is not its last
-	// use and the analysis does not name the site. The buffer's deep walk would
-	// otherwise free `v.kids` before the read.
-	{"read-after-push-refused", `struct Val { kind: i32, kids: i32[] }
+	// The push is not `v`'s last use, so nothing is moved and both owners are
+	// live at the exit sweep. The retain is what makes that safe: whichever
+	// release finds rc 1 walks `v.kids`, the other takes the box dec.
+	{"read-after-push-shared", `struct Val { kind: i32, kids: i32[] }
 function after(k: i32): i32 {
     var vals: Val[] = [];
     var v: Val = Val { kind: k, kids: [k] };
