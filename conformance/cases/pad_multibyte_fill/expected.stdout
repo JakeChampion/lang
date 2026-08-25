@@ -1,0 +1,10 @@
+pad_start=éa len=3 valid=true
+pad_end=aé len=3 valid=true
+center=ßaß len=5 valid=true
+exact=ééab len=6 valid=true
+four_byte=𝄞a𝄞 len=9 valid=true
+zeros=00042 len=5 valid=true
+spaces=ab    len=5 valid=true
+dashes=---x--- len=7 valid=true
+already_long=long len=4 valid=true
+empty_fill=q len=1 valid=true

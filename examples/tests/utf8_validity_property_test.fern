@@ -1,0 +1,204 @@
+import "std/fuzz";
+import "std/test";
+import "std/string";
+import "std/utf8" as utf8;
+
+// examples/tests/utf8_validity_property_test.fern — #5634's closing
+// property: starting from a VALID UTF-8 string, no stdlib string
+// operation hands back an invalid one.
+//
+// The invariant `string` now carries is "well-formed UTF-8". That is
+// only worth anything if the library cannot break it, and the library
+// is where it is easiest to break: every byte-COUNT operation (take,
+// drop, truncate, chunks, pad-to-width) is one off-by-one away from
+// cutting a multibyte character in half.
+//
+// THE EXEMPTIONS ARE PART OF THE PROPERTY. A handful of operations are
+// byte-level by contract and documented as such — `reverse_bytes`,
+// `replace_byte`, `shift_byte`, `without_byte`, `bytes`, and the
+// `slice_unchecked` builtin. They may produce invalid UTF-8; that is
+// what they are for, and it is why they are named after bytes. They
+// are deliberately NOT exercised here, and a new operation that can
+// split a code point belongs in that named group or nowhere.
+//
+// Why the input is not used as the string directly: byte mutation
+// almost never lands on valid multibyte UTF-8, so a target that gated
+// on `utf8.from_bytes` would filter out nearly every input and quietly
+// test almost nothing. Instead each input byte SELECTS a character
+// from an alphabet spanning all four UTF-8 widths, so every iteration
+// runs the operations over a genuinely multibyte string whose shape
+// the fuzzer controls.
+
+// A 1-, 2-, 3- and 4-byte-per-character alphabet, plus the separators
+// the word / line / trim operations key on.
+function alphabet(): string[] {
+    return ["a", "Z", "1", " ", "\n", "_", "é", "ß", "中", "𝄞"];
+}
+
+// build maps each input byte onto one alphabet character, capped so a
+// mutated input cannot make one iteration quadratic.
+function build(input: u8[]): string {
+    var alpha: string[] = alphabet();
+    var out: string = "";
+    var n: i32 = input.len();
+    if (n > 64) { n = 64; }
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + alpha[(input[i] as i32) % alpha.len()];
+        i = i + 1;
+    }
+    return out;
+}
+
+// Each check yields "" when the operation held, or a message naming it
+// — so a counter-example says WHICH operation broke, not merely that
+// something did. Strings rather than TestOutcome so the results can be
+// collected in one list and scanned.
+function ok(name: string, produced: string): string {
+    if (utf8.is_valid_utf8(produced)) { return ""; }
+    return name + " produced invalid UTF-8";
+}
+
+function ok_all(name: string, produced: string[]): string {
+    var i: i32 = 0;
+    for part in produced {
+        if (!utf8.is_valid_utf8(part)) {
+            return name + " produced an invalid UTF-8 element at index " + i.to_string();
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+function first_fail(results: string[]): test.TestOutcome {
+    for m in results {
+        if (m.len() > 0) { return test.fail(m); }
+    }
+    return test.pass();
+}
+
+// The byte-COUNT family — the operations #5634 is actually about. Every
+// one takes a byte length and must snap to a character boundary rather
+// than cut through one. The counts are driven off the input so the
+// fuzzer walks them across every offset of a multibyte character.
+function check_byte_counts(input: u8[]): test.TestOutcome {
+    var s: string = build(input);
+    var n: i32 = 0;
+    if (s.len() > 0) { n = (input.len() * 7) % (s.len() + 1); }
+    let (head, tail) = s.split_at(n);
+    return first_fail([
+        ok("take", s.take(n) + ""),
+        ok("drop", s.drop(n) + ""),
+        ok("slice_snap", s.slice_snap(0, n) + ""),
+        ok("split_at.0", head),
+        ok("split_at.1", tail),
+        ok("truncate", s.truncate(n, "...")),
+        ok("ellipsis", s.ellipsis(n)),
+        ok("repeat_to", s.repeat_to(n)),
+        ok_all("chunks", s.chunks(n + 1)),
+    ]);
+}
+
+// The checked slice expression itself: `s[a:b]` is `Option[str]` since
+// #5634, so the property is that a `Some` payload is always valid — a
+// bound that would have split a character has to come back `None`.
+function check_slice_expression(input: u8[]): test.TestOutcome {
+    var s: string = build(input);
+    var lo: i32 = 0;
+    var hi: i32 = 0;
+    if (s.len() > 0) {
+        lo = (input.len() * 3) % (s.len() + 1);
+        hi = (input.len() * 5) % (s.len() + 1);
+    }
+    if (lo > hi) { return test.pass(); }
+    match (s[lo:hi]) {
+        Some(v) => { return first_fail([ok("s[a:b]", v + "")]); },
+        None => { return test.pass(); }
+    }
+}
+
+// Width-based padding and layout: these pad to a byte width, so a fill
+// character wider than one byte is the hazard.
+function check_width_ops(input: u8[]): test.TestOutcome {
+    var s: string = build(input);
+    var w: i32 = (input.len() * 3) % 24;
+    return first_fail([
+        ok("pad_start", s.pad_start(w, "é")),
+        ok("pad_end", s.pad_end(w, "中")),
+        ok("center", s.center(w, "ß")),
+        ok("indent", s.indent("  ")),
+        ok("wrap", s.wrap("[", "]")),
+    ]);
+}
+
+// Case mapping and the identifier-style converters walk characters, so
+// a decoder that mis-steps produces invalid output.
+function check_case_and_style(input: u8[]): test.TestOutcome {
+    var s: string = build(input);
+    return first_fail([
+        ok("to_upper", s.to_upper()),
+        ok("to_lower", s.to_lower()),
+        ok("swap_case", s.swap_case()),
+        ok("capitalize", s.capitalize()),
+        ok("title_case", s.title_case()),
+        ok("case_fold", s.case_fold()),
+        ok("snake_case", s.snake_case()),
+        ok("kebab_case", s.kebab_case()),
+        ok("camel_case", s.camel_case()),
+        ok("pascal_case", s.pascal_case()),
+        ok("slugify", s.slugify()),
+    ]);
+}
+
+// chars() hands back char[], so each code point is re-encoded to check
+// the round trip through utf8.utf8_encode as well as the split itself.
+function chars_as_strings(s: string): string[] {
+    var out: string[] = [];
+    for c in s.chars() {
+        out = out.append(utf8.utf8_encode(c));
+    }
+    return out;
+}
+
+// Splitters and trimmers: every piece handed back has to be valid, not
+// just the whole.
+function check_split_and_trim(input: u8[]): test.TestOutcome {
+    var s: string = build(input);
+    return first_fail([
+        ok_all("split", s.split("é")),
+        ok_all("lines", s.lines()),
+        ok_all("fields", s.fields()),
+        ok_all("chars", chars_as_strings(s)),
+        ok("trim", s.trim() + ""),
+        ok("trim_start", s.trim_start() + ""),
+        ok("trim_end", s.trim_end() + ""),
+        ok("reverse_words", s.reverse_words()),
+        ok("replace", s.replace("é", "中")),
+        ok("remove_all", s.remove_all("中")),
+    ]);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("utf8 validity is preserved by std/string");
+
+    // Seeds spanning every character width and every separator class,
+    // so the verbatim pass alone already covers the interesting shapes
+    // before any mutation runs.
+    var seeds: u8[][] = [
+        "".bytes(),
+        "a".bytes(),
+        "aZ1 \n_éß中𝄞".bytes(),
+        "ééééé".bytes(),
+        "𝄞𝄞𝄞".bytes(),
+        "a é b 中 c".bytes(),
+        "line one\nline two\n".bytes(),
+    ];
+
+    r = r.fuzz("byte-count operations snap to boundaries", seeds, 200, check_byte_counts);
+    r = r.fuzz("s[a:b] Some payload is always valid", seeds, 200, check_slice_expression);
+    r = r.fuzz("width padding keeps validity", seeds, 150, check_width_ops);
+    r = r.fuzz("case and style conversion keeps validity", seeds, 150, check_case_and_style);
+    r = r.fuzz("splitting and trimming keep validity", seeds, 150, check_split_and_trim);
+
+    return r.finish();
+}
