@@ -401,6 +401,39 @@ function is_integer(t: Type): boolean {
   }
 }
 
+// int_operands_agree: native's commonIntegerWidth, reduced to the one condition
+// that can fail in this checker's type model. Mixed SIGNEDNESS needs an explicit
+// cast — reinterpreting a negative i32 against a small u32 has no well-defined
+// result domain, and getting it silently wrong is worse than asking. Differing
+// WIDTHS at the same signedness auto-widen and are fine.
+//
+// Native's two carve-outs both survive without code here. A polymorphic literal
+// is read at the other operand's width, which is what unsettled_int_literal
+// says on the EXPR (`b + 1` over a u8 stays legal). And `usize` — native's
+// pointer-width case — types to unknown in this checker, so every caller has
+// already skipped the operand before reaching this.
+function int_operands_agree(lt: Type, rt: Type, le: parser.Expr, re: parser.Expr): boolean {
+  if (unsettled_int_literal(le) || unsettled_int_literal(re)) { return true; }
+  return int_is_unsigned(lt) == int_is_unsigned(rt);
+}
+
+function int_is_unsigned(t: Type): boolean {
+  match (t) {
+    TypeI32(i) => { return i.unsigned; },
+    _ => { return false; }
+  }
+}
+
+// mixed_int_diag: the message native emits when both operands ARE integers but
+// cannot share a type. Kept separate from each arm's own "not a number at all"
+// text because native splits them the same way — an `as` cannot help
+// `true < false`, so suggesting one there sends the reader to write a
+// conversion that does not exist.
+function mixed_int_diag(op: string, lt: Type, rt: Type, line: i32, col: i32): util.Diag {
+  return dg_at("E009", "operator \"" + op + "\" requires both operands to share an integer type; got "
+    + type_label(lt) + " and " + type_label(rt) + " — use `as` for explicit conversion", line, col);
+}
+
 // int_result: the type an integer binop yields. An unsuffixed literal is read
 // at the other operand's width, so `n + 1` stays i64 when `n` is; when both
 // sides are settled the operator rules have already required them to agree, so
@@ -7133,10 +7166,15 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
         var pr: Type = check_expr(b.right, s);
         if (!is_unknown(pl) && !is_unknown(pr)) {
           var oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
-          var oki2: boolean = is_integer(pl) && is_integer(pr);
+          var both_int: boolean = is_integer(pl) && is_integer(pr);
+          var oki2: boolean = both_int && int_operands_agree(pl, pr, b.left, b.right);
           var okf2: boolean = type_eq(pl, t_float()) && type_eq(pr, t_float());
           if (!oks && !oki2 && !okf2) {
-            out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
+            if (both_int) {
+              out = out.append(mixed_int_diag(b.op, pl, pr, b.line, b.col));
+            } else {
+              out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
+            }
           }
         }
       }
@@ -7144,10 +7182,15 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
         var alt: Type = check_expr(b.left, s);
         var art: Type = check_expr(b.right, s);
         if (!is_unknown(alt) && !is_unknown(art)) {
-          var oki: boolean = is_integer(alt) && is_integer(art);
+          var a_both_int: boolean = is_integer(alt) && is_integer(art);
+          var oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
           var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
           if (!oki && !okf) {
-            out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
+            if (a_both_int) {
+              out = out.append(mixed_int_diag(b.op, alt, art, b.line, b.col));
+            } else {
+              out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
+            }
           }
         }
       }
@@ -7160,6 +7203,8 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
         if (!is_unknown(qlt) && !is_unknown(qrt)) {
           if (!is_integer(qlt) || !is_integer(qrt)) {
             out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(qlt) + " and " + type_label(qrt), b.line, b.col));
+          } else if (!int_operands_agree(qlt, qrt, b.left, b.right)) {
+            out = out.append(mixed_int_diag(b.op, qlt, qrt, b.line, b.col));
           }
         }
       }
@@ -7171,6 +7216,8 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
         if (!is_unknown(klt) && !is_unknown(krt)) {
           if (!is_integer(klt) || !is_integer(krt)) {
             out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(klt) + " and " + type_label(krt), b.line, b.col));
+          } else if (!int_operands_agree(klt, krt, b.left, b.right)) {
+            out = out.append(mixed_int_diag(b.op, klt, krt, b.line, b.col));
           }
         }
       }
@@ -7185,6 +7232,8 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
           out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(slt), b.line, b.col));
         } else if (!is_unknown(srt) && !is_integer(srt)) {
           out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(srt), b.line, b.col));
+        } else if (!is_unknown(slt) && !is_unknown(srt) && !int_operands_agree(slt, srt, b.left, b.right)) {
+          out = out.append(mixed_int_diag(b.op, slt, srt, b.line, b.col));
         }
       }
       // E009: ordering ops (`<` `>` `<=` `>=`) require both operands to be
@@ -7195,7 +7244,8 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
         var olt: Type = check_expr(b.left, s);
         var ort: Type = check_expr(b.right, s);
         if (!is_unknown(olt) && !is_unknown(ort)) {
-          var oki_o: boolean = is_integer(olt) && is_integer(ort);
+          var o_both_int: boolean = is_integer(olt) && is_integer(ort);
+          var oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
           var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
           var oks_o: boolean = type_eq(olt, t_string()) && type_eq(ort, t_string());
           if (!oki_o && !okf_o && !oks_o) {
@@ -7215,6 +7265,8 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               } else if (s.lookup_method("cmp", ordrecv).name.len() == 0) {
                 out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + util.derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
               }
+            } else if (o_both_int) {
+              out = out.append(mixed_int_diag(b.op, olt, ort, b.line, b.col));
             } else {
               out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric or string operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
             }
