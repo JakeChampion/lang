@@ -2188,15 +2188,53 @@ pub function (s: string) is_uuid(): boolean {
     return true;
 }
 
-// `s.pad_start(n, ch)` / `s.pad_end(n, ch)` — left- and right-
-// pad the string with `ch` (the first byte is used) so the
-// result is at least n bytes long. Already-long strings pass
-// through unchanged. Standard alignment shape for tables, hex
-// dumps, fixed-width column output.
+// `__fill_lead_len(b)` — the byte length of the UTF-8 character a lead
+// byte opens. A continuation byte in lead position is not a character
+// start, so it counts as one byte and the fill stays byte-for-byte what
+// it used to be.
+function __fill_lead_len(b: i32): i32 {
+    if (b < 128) { return 1; }
+    if (b >= 240) { return 4; }
+    if (b >= 224) { return 3; }
+    if (b >= 192) { return 2; }
+    return 1;
+}
+
+// `__fill_bytes(ch, need)` — up to `need` bytes of `ch`'s FIRST
+// character, repeated whole.
 //
-// `ch` is a single-byte string; multibyte fill characters
-// would need codepoint handling we don't have yet. Empty `ch`
-// degenerates to no padding (returns the original).
+// The padding functions used to repeat `ch[0]`, a single BYTE, so a
+// multibyte fill emitted a fragment of one: `"a".pad_start(4, "é")`
+// wrote three copies of 0xC3 and handed back a `string` that was not
+// valid UTF-8 (#5634). A fill that does not divide `need` now leaves
+// the remainder unfilled instead — the result can be up to one
+// character short of `n`, which is the honest answer when the field
+// width is counted in bytes and the fill is not one byte wide.
+// Single-byte fills, which is every caller in this repo, are
+// unchanged: the character length is 1 and `need` is filled exactly.
+function __fill_bytes(ch: string, need: i32): u8[] {
+    var clen: i32 = __fill_lead_len(ch[0] as i32);
+    if (clen > ch.len()) { clen = ch.len(); }
+    var total: i32 = (need / clen) * clen;
+    var buf: u8[] = __alloc_u8(total);
+    var i: i32 = 0;
+    while (i < total) {
+        buf = buf.with(i, ch[i % clen]);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// `s.pad_start(n, ch)` / `s.pad_end(n, ch)` — left- and right-
+// pad the string with `ch` so the result is n bytes long.
+// Already-long strings pass through unchanged. Standard
+// alignment shape for tables, hex dumps, fixed-width column
+// output.
+//
+// `ch`'s first CHARACTER is the fill, repeated whole. A
+// multibyte fill that does not divide the padding leaves the
+// remainder unfilled rather than splitting a character — see
+// __fill_bytes. Empty `ch` degenerates to no padding.
 pub function (s: string) pad_start(n: i32, ch: string): string {
     var sl: i32 = s.len();
     if (sl >= n) { return s; }
@@ -2204,13 +2242,13 @@ pub function (s: string) pad_start(n: i32, ch: string): string {
     // Result is exactly n bytes; fill one buffer (O(n)) instead of the
     // `pad = pad + ch[0:1]` loop, which recopied the growing pad each
     // step (O(need²) — the #4379 hot path). `need` fill bytes, then s.
-    var c: i32 = ch[0] as i32;
-    var need: i32 = n - sl;
-    var buf: u8[] = __alloc_u8(n);
+    var fill: u8[] = __fill_bytes(ch, n - sl);
+    var fl: i32 = fill.len();
+    var buf: u8[] = __alloc_u8(fl + sl);
     var i: i32 = 0;
-    while (i < need) { buf = buf.with(i, c as u8); i = i + 1; }
+    while (i < fl) { buf = buf.with(i, fill[i]); i = i + 1; }
     var j: i32 = 0;
-    while (j < sl) { buf = buf.with(need + j, s[j] as u8); j = j + 1; }
+    while (j < sl) { buf = buf.with(fl + j, s[j] as u8); j = j + 1; }
     return string_from_bytes_unchecked(buf);
 }
 
@@ -2220,13 +2258,13 @@ pub function (s: string) pad_end(n: i32, ch: string): string {
     if (ch.len() == 0) { return s; }
     // Result is exactly n bytes; fill one buffer (O(n)). s, then `need`
     // fill bytes.
-    var c: i32 = ch[0] as i32;
-    var need: i32 = n - sl;
-    var buf: u8[] = __alloc_u8(n);
+    var fill: u8[] = __fill_bytes(ch, n - sl);
+    var fl: i32 = fill.len();
+    var buf: u8[] = __alloc_u8(sl + fl);
     var j: i32 = 0;
     while (j < sl) { buf = buf.with(j, s[j] as u8); j = j + 1; }
     var i: i32 = 0;
-    while (i < need) { buf = buf.with(sl + i, c as u8); i = i + 1; }
+    while (i < fl) { buf = buf.with(sl + i, fill[i]); i = i + 1; }
     return string_from_bytes_unchecked(buf);
 }
 
@@ -2417,17 +2455,18 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
 }
 
 // `s.center(width, ch)` — center s within a width-byte field,
-// padding equally on both sides with the single byte `ch`.
-// Odd-padding splits leave the extra byte on the right. ch
-// is a single-byte string (only first byte used). Already-
-// long strings pass through unchanged.
+// padding equally on both sides with `ch`. Odd-padding splits
+// leave the extra byte on the right. `ch`'s first CHARACTER is
+// the fill, repeated whole (see __fill_bytes), so a multibyte
+// fill is never split. Already-long strings pass through
+// unchanged.
 pub function (s: string) center(width: i32, ch: string): string {
     var sLen: i32 = s.len();
     if (sLen >= width || ch.len() == 0) { return s; }
     var total: i32 = width - sLen;
     var lpad: i32 = total / 2;
     var rpad: i32 = total - lpad;
-    return repeat_char((ch[0] as i32), lpad) + s + repeat_char((ch[0] as i32), rpad);
+    return string_from_bytes_unchecked(__fill_bytes(ch, lpad)) + s + string_from_bytes_unchecked(__fill_bytes(ch, rpad));
 }
 
 // `s.reverse_words()` — split on ASCII whitespace, reverse

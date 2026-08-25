@@ -1,0 +1,41 @@
+// Padding never splits a multibyte fill character.
+//
+// pad_start / pad_end / center repeated the fill's first BYTE, so a
+// multibyte fill emitted a fragment of one: `"a".pad_start(4, "é")`
+// wrote three copies of 0xC3 and returned a `string` that was not valid
+// UTF-8 — the invariant #5634 exists to establish, broken by the
+// standard library itself.
+//
+// The fill is now the first CHARACTER, repeated whole. A fill that does
+// not divide the padding leaves the remainder unfilled, so the result
+// can be up to one character short of the requested byte width; that is
+// the honest answer when the width is counted in bytes and the fill is
+// not one byte wide.
+//
+// Single-byte fills — every caller in this repo — must be byte-for-byte
+// unchanged, which is what the second half pins.
+import "std/string";
+import "std/utf8" as utf8;
+
+function show(label: string, s: string): void {
+    print(label + "=" + s + " len=" + s.len().to_string() + " valid=" + utf8.is_valid_utf8(s).to_string());
+}
+
+function main(): i32 {
+    // multibyte fills: whole characters only, always valid
+    show("pad_start", "a".pad_start(4, "é"));
+    show("pad_end", "a".pad_end(4, "é"));
+    show("center", "a".center(6, "ß"));
+    show("exact", "ab".pad_start(6, "é"));
+    show("four_byte", "a".center(9, "𝄞"));
+
+    // single-byte fills: unchanged, exact width
+    show("zeros", "42".pad_start(5, "0"));
+    show("spaces", "ab".pad_end(5, " "));
+    show("dashes", "x".center(7, "-"));
+
+    // degenerate cases pass through
+    show("already_long", "long".pad_start(2, "0"));
+    show("empty_fill", "q".pad_start(5, ""));
+    return 0;
+}

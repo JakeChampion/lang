@@ -1423,6 +1423,40 @@ func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/utf8_validity_property_test.fern` is #5634's closing
+// property: from a VALID UTF-8 string, no stdlib string operation hands
+// back an invalid one. It is the gate on the invariant `string` now
+// carries, and it earned its keep immediately — the width-padding target
+// failed on first run, because pad_start / pad_end / center repeated the
+// fill's first BYTE and so emitted a fragment of a multibyte character.
+//
+// The exemptions are part of the property: the byte-level operations
+// (`reverse_bytes`, `replace_byte`, `shift_byte`, `without_byte`,
+// `bytes`, and the `slice_unchecked` builtin) may produce invalid UTF-8
+// by contract and are deliberately not exercised. A new operation that
+// can split a code point belongs in that named group or nowhere.
+func TestRunnerUtf8ValidityProperty(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/utf8_validity_property_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - byte-count operations snap to boundaries",
+		"ok 2 - s[a:b] Some payload is always valid",
+		"ok 3 - width padding keeps validity",
+		"ok 4 - case and style conversion keeps validity",
+		"ok 5 - splitting and trimming keep validity",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/fuzz_example_test.fern` exercises the
 // `std/fuzz` harness on three benign properties (always-OK,
 // non-negative length, idempotent to_upper) and one transform
