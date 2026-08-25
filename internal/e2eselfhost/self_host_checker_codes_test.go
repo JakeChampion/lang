@@ -1402,6 +1402,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// — so the `[T]`-vs-`T[]` flag the report filter reads has to ride
 		// along or this stops being reported with no other symptom.
 		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { var local: T[] = [1, 2, 3]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		// Slicing an unbound TEMPORARY. The callee hands back storage it
+		// built, so the CALLER's frame owns it and the slice dangles —
+		// binding it first (`var t = mkarr(); return t[0:1];`) was already
+		// rejected, and the temporary is the same storage without a name.
+		// The param row is the control: a callee handing back its ARGUMENT
+		// is handing back storage that outlives the call.
+		{"e063-sliced-temporary", "function mkarr(): i32[] { var a: i32[] = [1, 2, 3]; return a; }\nfunction f(): [i32] { return mkarr()[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-sliced-temporary-param-ok", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(p: i32[]): [i32] { return idarr(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", nil},
+		// The E065 twin: a view of a string the CALLEE allocated. The
+		// param row and the literal row are the controls — a callee handing
+		// back its argument hands back storage that outlives the call, and
+		// a literal is immortal however many calls it is laundered through.
+		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		// An owned `T[]` return MOVES its storage to the caller, so a
 		// function handing a local array back THROUGH A CALLEE that passes
 		// one through is not returning a view and must stay accepted.
