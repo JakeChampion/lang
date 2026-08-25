@@ -102,7 +102,7 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"slice-empty", "function main(): i32 { var a = [7, 8, 9]; var b = a[0:0]; return b.len() + a[1]; }", 8},
 		// Open-ended high bound `x[lo:]` (parser desugars to `x.len()`).
 		{"slice-open-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[2:]; return b[0] + b[1] + b[2] + b.len(); }", 123},
-		{"slice-open-string-eq", "function main(): i32 { var s = \"as_f64\"; if (s[3:] == \"f64\") { return 7; } return 0; }", 7},
+		{"slice-open-string-eq", "function main(): i32 { var s = \"as_f64\"; if (slice_unchecked(s, 3, s.len()) == \"f64\") { return 7; } return 0; }", 7},
 		// Arrays across calls; returning arrays.
 		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},
 		{"return-array", "function make(): i32[] { return [10, 20, 30]; } function main(): i32 { var a = make(); return a[1]; }", 20},

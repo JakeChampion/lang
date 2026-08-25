@@ -584,7 +584,7 @@ function mk3(t: string, k: i32): Q { return Q { tag: slice_unchecked(t, 0, 3), k
 function main(): i32 {
     var keep: Q[] = [];
     var i: i32 = 0;
-    while (i < 200) { keep = keep.append(mk3("abc" + "abcdefgh"[i % 8 : (i % 8) + 1], i)); i = i + 1; }
+    while (i < 200) { keep = keep.append(mk3("abc" + slice_unchecked("abcdefgh", i % 8, (i % 8) + 1), i)); i = i + 1; }
     var bad: i32 = 0;
     var j: i32 = 0;
     while (j < 200) {

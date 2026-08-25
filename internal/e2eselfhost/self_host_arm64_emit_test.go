@@ -1468,7 +1468,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"string-slice",
-			"function main(): i32 { var s = \"hello world\"; var sub = s[6:11]; write(sub); return sub.len(); }",
+			"function main(): i32 { var s = \"hello world\"; var sub = slice_unchecked(s, 6, 11); write(sub); return sub.len(); }",
 			5,
 			"world",
 		},
