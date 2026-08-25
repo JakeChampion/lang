@@ -19,6 +19,11 @@ The same source, the same target, two compilers:
 | `examples/self_host/fern.fern` → x86-64 asm | **58 s** | **6 m 05 s** | 6.3× |
 | `examples/self_host/checker_run.fern` → x86-64 asm | 3.9 s | 23.3 s | 6.0× |
 
+**Those are the numbers this audit started from and they are history — the gap
+is 3.25x as of §4e** (20.6 s against 66.9 s, measured at 536b3e4). The rest of
+this section describes the compiler as it was at 64213fe; every later section
+re-measures against the tree it was written on.
+
 ```
 time ./bin/fern -target x86-64-linux examples/self_host/fern.fern > /tmp/n.s
 time ./bin/fern-selfhost -target x86-64-linux -emit asm \
@@ -367,10 +372,10 @@ contradict comments in the tree:
 |---|---|---|---|
 | 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
-| 3 | Hash the self-host `Scope` tables — miss-allocation half landed in #6899 | `examples/self_host/checker.fern` | **§4b — 2.5–6%, not §4's 17%** |
+| 3 | ~~Hash the self-host `Scope` tables~~ — **sigs, array-method suffix and structs all indexed**; what is left is `names`, which is per-scope and mutable | `examples/self_host/checker.fern` | §4e — `lookup_struct` was 3.7%, indexed for −5.6% on the self-compile; `lookup` is 2.0% |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
 | 5 | ~~Symbol interning (#4394 lever 1)~~ — **do not scope**: §4d.3 | `lexer.fern`, `flatten.fern` | §4d.3 — `strcmp` is still 21.3%, but 18.5% of the run is one linear scan an INDEX removes |
-| 9 | Index `mfuncs` for the closure-lift predicates | `irlower.fern` `lift_callee_*` | §4d.3 — 74/400 samples under `lift_inline_closures_expr` |
+| 9 | ~~Index `mfuncs` for the closure-lift predicates~~ — **done**, #7008 | `irlower.fern` `lift_callee_*` | §4d.3 — 74/400 samples became 0/400; −6.2% user |
 | 6 | ~~`ir.Inline` on the natives~~ — **done** under a unit-size ceiling; the dead-funcs half landed earlier | `internal/codegen/{x86_64,arm64}` | **−5.0% retired on `examples/bench`, compiler emit byte-identical** — below |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
@@ -380,6 +385,13 @@ contradict comments in the tree:
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
 measuring near its original attribution; 4 is the multi-PR track.
+
+**As of §4e that ordering is spent too, and so is the list.** No item in it is
+worth more than ~4% on the current compiler: the profile's top entry is one
+function's own body at 7.1%, and the largest coherent cost — ~24% — is a SHAPE
+(a linear scan over a module-wide table, plus the sentinel its miss allocates)
+spread over eight sites in three files, none of which the table names. Pick from
+§4e, not from here; this list is now a record of what was fixed.
 
 **Item 6's −9% was measured on the wrong subject**, and the resolution is that
 the subject decides the answer. Both halves are now on the natives: the IR
@@ -1254,6 +1266,65 @@ pointer elements, i.e. 267,081,408 bytes; the shortfall is the `_str` and
 what says the new number is the instrument working rather than a regression. `.github/cliff-baseline.txt` carries both the new
 ceiling and that history.
 
+## 4e. Re-profiled at 536b3e4 — the gap is 3.25x, and the cost is spread
+
+Same workload as §4b (the whole compiler compiling itself, x86-64 asm) but
+**1,609 samples over two runs**, not 200 — and with an instrument that answers
+a question the earlier profiles could not.
+
+**Frame #2 resolves now.** §4b records `??` above every runtime helper, which is
+why it could say copying dominated but not what chose to copy. A `-g` build on
+this tree gives the whole Fern stack, so a helper's cost can be charged to the
+function that asked for it. That changes the method, not just the numbers:
+attribute to the first non-runtime frame, and the ranking below is of Fern code
+rather than of memcpy.
+
+| leaf | share | | first non-runtime frame | share |
+|---|---|---|---|---|
+| `__fern_memcpy` | 19.0% | | `irlower__lower_func` | 7.1% |
+| `__fern_strcmp` | 9.5% | | `Scope.lookup_struct` | 3.7% |
+| `__fern_alloc_rc1` | 4.7% | | `util__index_of_str` | 3.5% |
+| `checker__t_unknown` | 3.1% | | `Scope.lookup_sig` | 3.4% |
+| `Scope.lookup_struct` | 2.2% | | `checker__t_unknown` | 3.1% |
+| `util__index_of_str` | 1.9% | | `irlower__noesc_ret_fns_of` | 3.0% |
+
+**No single item is large any more.** §4's 36.5%, §4b's 27% and §4d.3's 21.3%
+each named one thing worth chasing; the largest here is 7.1%, and it is one
+2,000-line function's own body. What is left is one SHAPE repeated across three
+files:
+
+| site | share | table scanned |
+|---|---|---|
+| `Scope.lookup_struct` | 3.7% | the module's structs, per query |
+| `util__index_of_str` | 3.5% | 24 samples under `noesc_ret_fns_of`, 14 under `noesc_ret_expr_ok` |
+| `Scope.lookup_sig` | 3.4% | indexed — the cost here is its MISS sentinel |
+| `checker__t_unknown` | 3.1% | 39 of 50 samples are miss sentinels: `lookup`, `lookup_sig`, `array_method_ret_type` |
+| `irlower__noesc_ret_fns_of` | 3.0% | a whole-program fixpoint over a ~9,400-row `string[]` set |
+| `irlower__decl_is_struct` | 2.4% | the module's struct decls |
+| `asm_ir__module_has_func` | 2.2% | the module's functions |
+| `Scope.lookup` | 2.0% | the scope's names (per-scope, not module-wide) |
+
+**≈24% in linear scans and the sentinels their misses allocate.** Each is small
+enough that no single fix is a headline and the sum is the largest thing in the
+compiler — which is the opposite of every earlier round of this audit, and the
+reason the ranked list is no longer the right instrument for picking work.
+
+**The end-to-end gap, re-measured on the same commit:**
+
+| input | `bin/fern` (Go) | `bin/fern-selfhost` | ratio |
+|---|---|---|---|
+| `examples/self_host/fern.fern` to x86-64 asm | **20.6 s** | **66.9 s** | **3.25x** |
+
+§1's 6.3x is history: the Go side got faster (#6894's emit reduction) and the
+self-host side roughly halved across #7020/#7026/#7036/#7046/#7048, #7097,
+#7276/#7302 and #7312. Note the two emitters do not produce the same text —
+10.5 M lines from the Go path against 1.79 M from the self-host one — so this
+ratio compares compile TIME for the same input, not work per line.
+
+**System time is still a third of the run** (26.2 s of 66.9 s) and §4d's
+account of it stands: it is the kernel zeroing arena pages, so it tracks bytes
+bumped and no user-code profile will show it.
+
 ## 8. Reproducing any of this
 
 **Build the A/B baseline from the SAME COMMIT, not just before your edit.**
@@ -1282,3 +1353,13 @@ seed-dependent — 0.43% apart, inside its declared 2% tolerance.
 compiler itself, `make selfhost-cli` then the commands in §1; for a profile,
 build with `-g` (which emits `.symtab`) and sample with gdb — there is no
 profiler yet (#5547).
+
+A `-g` self-host binary now backtraces through Fern frames, so a profile can be
+attributed rather than only ranked. Sample a running compile with
+`gdb -p $PID -batch -ex "bt 12"` in a loop until it exits, and charge each sample
+to the first frame that is not a runtime helper (`__fern_*`, `__str*`,
+`__drop_*`); the leaf alone says `memcpy` and tells you nothing about who asked
+for it. Two runs of the self-compile yield ~1,600 samples, which is enough to
+separate a 3% site from a 2% one — §4b's 200 could not, and §4d.3's caveat that
+sample shares over-attribute by ~3x against an A/B clock still applies. Attach
+perturbs wall time (~30% here); it does not perturb which frame is executing.
