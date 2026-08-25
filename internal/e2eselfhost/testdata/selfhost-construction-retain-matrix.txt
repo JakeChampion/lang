@@ -26,10 +26,12 @@
 # The whole `struct` row is clean as of the counted-sink narrowing: a struct
 # handed to a struct-literal FIELD keeps its free-eligibility, because that
 # position retains unconditionally and the exit sweep's field walk is now
-# rc-gated so only the owner that finds rc 1 performs it. CONTAINER sinks (an
-# append arg, an array / tuple element, a variant payload) are still refused —
-# their retain skips retired slots while the scoped sweep does not, so granting
-# them releases a box that was never inc'd.
+# rc-gated so only the owner that finds rc 1 performs it. A SELF-APPEND into a
+# container that earned its element walk is counted the same way, keyed on the
+# append SITE ("APRETAIN:") so a retired slot cannot fall through the gate. The
+# remaining CONTAINER sinks — an append into an uncredited container, `with`, an
+# array or tuple element, a variant payload — are still refused: nothing retains
+# there, so granting them releases a box that was never inc'd.
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
 str__local          clean leak   bare string local: retain gated on slit_reclaim + ownership; P not strfldok-admitted here
 str__param          clean leak   same gate, param origin
