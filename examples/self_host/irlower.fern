@@ -9158,6 +9158,15 @@ pub function lower_arr_str_join(recv: parser.Expr, sep: parser.Expr, s: LowerSta
     return p.emit(ir.op_call_direct("__fern_arr_str_join", 2));
 }
 
+// opt_payload_struct_slot: slot `i` holds a STRUCT box whose type routes a field
+// reclaim — the payload kind whose release is a field walk PLUS a box dec, so the
+// option's co-ownership has to be counted like any other rc payload's.
+function opt_payload_struct_slot(s: LowerState, i: i32): boolean {
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0) { return false; }
+    return s.struct_routes_field_reclaim(sty);
+}
+
 // lower_opt_make_payload lowers `arg` (widening an i64 / f64 payload to its full
 // 8 bytes) and emits the Option/Result box op for `tag` (0 = Some/Ok, 1 = Err).
 // The box is [tag@0, payload@8], type-agnostic. Shared by the bare construction
@@ -9167,20 +9176,27 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     var so: LowerState = s;
     if (ptag == "i64") { so = lower_i64(arg, so); } else { so = lower_expr(arg, so); }
     if (!so.ok) { return so; }
-    // Perceus alias-inc for an ARRAY payload that aliases a local array: the
-    // Option/Result box references the buffer, so retain it (rc_inc) so the exit
-    // dec-sweep doesn't free the source local out from under the returned box.
-    // Without it `Ok(names)` / `Some(items)` over-releases the array — a UAF that
-    // only bites once a later allocation reuses the freed buffer (the match-arm
-    // that extracts the payload already reclaims it at arm exit, so construction
-    // must balance that with an inc). Mirrors the enum-variant construction's
-    // alias-inc (#3720); only a bare ident on an array slot (a fresh-literal
-    // payload isn't a local, so the sweep never frees it). The inc pops + re-pushes
-    // the same pointer, leaving op_opt_make's operand on top. i64/f64 payloads
-    // aren't array slots, so this never fires before the op_opt_make_w paths.
+    // Perceus alias-inc for a payload that aliases a local: the Option/Result box
+    // references the payload, so retain it (rc_inc) so the exit dec-sweep doesn't
+    // free the source local out from under the box. Without it `Ok(names)` /
+    // `Some(items)` over-releases — a UAF that only bites once a later allocation
+    // reuses the freed cell (the match-arm that extracts the payload already
+    // reclaims it at arm exit, so construction must balance that with an inc).
+    // Mirrors the enum-variant construction's alias-inc (#3720); only a bare ident
+    // on a local slot (a fresh-literal payload isn't a local, so the sweep never
+    // frees it). The inc pops + re-pushes the same pointer, leaving op_opt_make's
+    // operand on top. i64/f64 payloads aren't such slots, so this never fires
+    // before the op_opt_make_w paths.
+    //
+    // A STRUCT-BOX payload takes the same retain. It was excluded while the
+    // predicate was slot_is_rc_container, and `Some(p)` over-released p's box for
+    // exactly the reason the array case was fixed: a RETURNED option outlived p's
+    // exit sweep and the next allocation reused the cell, so the payload read back
+    // a clobbered struct.
     match (arg) {
         parser.ExprIdent(paid) => {
-            if (so.slot_is_rc_container(so.slot_of(paid.name))) {
+            var pasl: i32 = so.slot_of(paid.name);
+            if (so.slot_is_rc_container(pasl) || opt_payload_struct_slot(so, pasl)) {
                 so = so.retain_tos("opt-make-payload");
             }
         },
@@ -18404,7 +18420,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // deep-drop the prior iteration's Some payload struct (rc fields via __struct_drop_<P>)
     // + the option box before the store.
     if (slot_is_reclaimable_optstruct(sb, slot)) {
-        return emit_optstruct_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
+        return emit_optstruct_reclaim_store(sb, slot, opt_payload_type(sb.locals[slot].opt_type, "Some"));
     }
     // A reclaimable Option[<scalar-arr-of-arr>] LOOP-LOCAL (#4365): the arr-of-arr sibling —
     // deep-drop the prior iteration's Some payload (inner buffers + outer via
@@ -20974,7 +20990,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_optstr(s, slot)) { return emit_optstr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optarrarr(s, slot)) { return emit_optarrarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optstruct(s, slot)) {
-        return emit_optstruct_reclaim_store(se, slot, opttup_inner_type(s.locals[slot].opt_type));
+        return emit_optstruct_reclaim_store(se, slot, opt_payload_type(s.locals[slot].opt_type, "Some"));
     }
     if (slot_is_reclaimable_opttup(s, slot)) {
         return emit_opttup_reclaim_store(se, slot, opttup_inner_type(s.locals[slot].opt_type));
@@ -26002,7 +26018,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var osj: i32 = st.n_params;
     while (osj < st.locals.len()) {
         if (!slot_list_has(keeps, osj) && slot_is_reclaimable_optstruct(st, osj)) {
-            st = emit_optstruct_deep_free(st, osj, opttup_inner_type(st.locals[osj].opt_type));
+            st = emit_optstruct_deep_free(st, osj, opt_payload_type(st.locals[osj].opt_type, "Some"));
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_store_local(osj));
         }
@@ -33025,6 +33041,14 @@ function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser
                     }
                 },
                 _ => {}
+            }
+            // `Some(name)` / `Ok(name)` / `Err(name)` — lower_opt_make_payload retains
+            // the box here, so the option co-owns it and both releases are live.
+            if (builtin_union_ctor(c.callee) && c.args.len() == 1) {
+                match (c.args[0]) {
+                    parser.ExprIdent(uid) => { if (uid.name == name) { return true; } },
+                    _ => {}
+                }
             }
             for arg in c.args { if (struct_counted_share_expr(arg, name, structs)) { return true; } }
             return false;
@@ -41152,9 +41176,13 @@ function optstruct_payload_reclaimable(structs: parser.StructDecl[], sty: string
         || struct_is_scalar_only(structs, sty);
 }
 
-// optstruct_ann_is: `type_name` is `Option[<struct with a reclaimable field>]`.
+// optstruct_ann_is: `type_name` is `Option[<struct with a reclaimable field>]` or
+// `Result[<same>, E]` — opt_payload_type reads the Some/Ok payload out of either
+// spelling. The two must measure identically: `Ok(p)` and `Some(p)` build the same
+// box through the same lowering, so crediting one and not the other leaves the
+// other's payload stranded for no reason a reader could name.
 function optstruct_ann_is(type_name: string, structs: parser.StructDecl[]): boolean {
-    var inner: string = opttup_inner_type(type_name);
+    var inner: string = opt_payload_type(type_name, "Some");
     if (inner == "") { return false; }
     if (!decl_is_struct(structs, inner)) { return false; }
     return optstruct_payload_reclaimable(structs, inner);
@@ -41162,17 +41190,29 @@ function optstruct_ann_is(type_name: string, structs: parser.StructDecl[]): bool
 
 // optstruct_init_is_fresh: the init is `Some(<fresh struct literal>)` (is_fresh_struct_init
 // — an ExprStructLit of a struct decl; the construction alias-inc balances the per-field
-// __struct_drop) or `None`. A bare-ident/other Some payload aliasing a live struct declines.
+// __struct_drop), `Some(<struct local>)` — lower_opt_make_payload retains that box, so the
+// option is a counted co-owner and its release is balanced whether the source stays live or
+// not — or `None`. `Ok` is the same construction under the Result spelling, and both reach
+// here bare or qualified. The declaration's own annotation fixes the payload type, so the
+// ident needs no further test. `Err` declines: its payload is E, which this class does not
+// release, so a name whose every binding is not a Some/Ok stays uncredited and leaks.
 function optstruct_init_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
+            var ctor: string = "";
             match (c.callee) {
-                parser.ExprIdent(cid) => {
-                    if (cid.name == "Some" && c.args.len() == 1) { return is_fresh_struct_init(c.args[0], structs); }
-                    return false;
-                },
-                _ => { return false; }
+                parser.ExprIdent(cid) => { ctor = cid.name; },
+                parser.ExprFieldAccess(cfa) => { ctor = cfa.field; },
+                _ => {}
             }
+            if ((ctor == "Some" || ctor == "Ok") && c.args.len() == 1) {
+                match (c.args[0]) {
+                    parser.ExprIdent(_) => { return true; },
+                    _ => {}
+                }
+                return is_fresh_struct_init(c.args[0], structs);
+            }
+            return false;
         },
         parser.ExprIdent(nid) => { return nid.name == "None"; },
         _ => { return false; }
@@ -41353,7 +41393,7 @@ function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.Str
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
-                        && !optstruct_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
+                        && !optstruct_payload_escapes(stmts, v.name, opt_payload_type(v.type_name, "Some"), structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
                         a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
@@ -41381,7 +41421,7 @@ function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    var inner: string = opttup_inner_type(s.locals[i].opt_type);
+    var inner: string = opt_payload_type(s.locals[i].opt_type, "Some");
     if (!decl_is_struct(s.structs, inner)) { return false; }
     if (!optstruct_payload_reclaimable(s.structs, inner)) { return false; }
     return slot_credit_at(s, i, "OPTSTRUCT:");
@@ -41410,7 +41450,12 @@ function emit_optstruct_deep_free(se: LowerState, slot: i32, sty: string): Lower
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_opt_payload());               // struct box ptr
     st = st.emit(ir.op_store_local(etslot));
-    st = emit_struct_field_drops(st, etslot);        // free the struct's rc fields
+    // rc-GATED: with a counted payload (`Some(p)`, p's own sweep still pending) two
+    // static walks free every field buffer twice — allocs == frees at live_bytes 0,
+    // and only __rc_underflow_count() dissents. The walk belongs to whichever owner
+    // finds rc 1; the dec below hands the last one its turn, so sweep order stops
+    // mattering.
+    st = emit_struct_field_drops_gated(st, etslot, true);
     st = st.emit(ir.op_load_local(etslot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the struct box
     st = st.emit(ir.op_drop());

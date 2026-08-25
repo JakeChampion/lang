@@ -76,6 +76,21 @@ var csmPositions = []csmPosition{
 	// the bare spelling, which is why that went unnoticed.
 	{"variant_unqual", `var e: E = A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
 	{"option", `var o: Option[P] = Some(p);`, `(match (o) { Some(q) => q.k, None => 0 })`},
+	// The SAME store read back through a match STATEMENT rather than a match
+	// EXPRESSION. The spelling is not cosmetic here: the Option credit is granted
+	// by a consuming-match analysis that scans for a StmtMatch, and a match inside
+	// a `return` is a StmtReturn, so the two cells above measure "no credit at
+	// all" and can never show whether the payload STORE is counted. These cells
+	// isolate that axis; the pair above stays pinned as the separate, wider gap.
+	{"option_stmt", `var o: Option[P] = Some(p);
+    var n: i32 = 0;
+    match (o) { Some(q) => { n = q.k; }, None => { n = 0; } }`, `n`},
+	// `Ok` is the same construction under the Result spelling. Pinned separately
+	// for the reason variant_unqual is: two spellings of one shape drifted apart
+	// unnoticed once already, and only a cell per spelling catches that.
+	{"result_stmt", `var o: Result[P, i32] = Ok(p);
+    var n: i32 = 0;
+    match (o) { Ok(q) => { n = q.k; }, Err(e) => { n = 0; } }`, `n`},
 }
 
 // csmRound wraps a body + read expression in the shared round/main driver.
