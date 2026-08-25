@@ -272,9 +272,9 @@ precompute shape.
   `StructuralOwnership(StrType) = View` — the C1 axis's first surface
   citizen. Coverage: parser + ownership + checker tests, `TestInterpStrView`
   + `TestX86_64StrView` e2e. **Deferred to later A1 slices:** producers
-  (`s[a:b]: str`, `.trim(): str` — the zero-copy flip, gated behind A2), the
-  `own`-param tightening, and self-host compiler acceptance of `str`
-  (native-only surface for now — a #4451 debt entry).
+  (`slice_unchecked(s, a, b): str`, `.trim(): str` — the zero-copy flip,
+  gated behind A2), the `own`-param tightening, and self-host compiler
+  acceptance of `str` (native-only surface for now — a #4451 debt entry).
 - **A2 (#4814, LANDED).** Dangling rule — **E065**, the `str` sibling of
   E063: a `str` view may not escape via `return` unless its source is a
   parameter (caller-owned) or a string literal (`'static` / immortal); a view
@@ -295,13 +295,19 @@ precompute shape.
   consumer). **Landed since (the producer flip):** P1 flipped the
   `.trim()` family (`std/string` trim/trim_start/trim_end return `str`);
   P2 flipped `s[a:b]` itself — slicing an owned `string` returns a `str`
-  sub-view (checker `SliceExpr` case), after two migration batches made
-  every consumer in the tree flip-clean (batch 1: stdlib + examples,
-  #4891; batch 2: the self-host compiler sources, #4900 — 231 sites
-  enumerated as the pristine-vs-flipped checker error delta, read-only
-  bindings annotated `str`, owning sinks materialised via `+ ""`). E065's
-  chase gained the `SliceExpr` case with the flip (returning a slice of a
-  local is a dangling view; slicing a param stays fine). **Remaining
+  sub-view, after two migration batches made every consumer in the tree
+  flip-clean (batch 1: stdlib + examples, #4891; batch 2: the self-host
+  compiler sources, #4900 — 231 sites enumerated as the
+  pristine-vs-flipped checker error delta, read-only bindings annotated
+  `str`, owning sinks materialised via `+ ""`). The expression itself has
+  since become `Option[str]` (#5634 — `None` on an out-of-range or
+  code-point-splitting index), so the `str`-producing slice is
+  `slice_unchecked(s, a, b)` and that is the producer E065's chase
+  follows: returning a slice of a local is a dangling view, slicing a
+  param stays fine. A view unwrapped from the Option inside a match arm
+  is NOT chased — the arm binding is not a declared local, so the rule
+  cannot see which scrutinee it came from, the same shape as the
+  call-result hole below. **Remaining
   A-phase work:** P3 backend zero-copy convergence (native `__str_slice` +
   wasm produce the #4294 view box instead of copying), gated by the
   byte-identity differentials + the per-module run gate; call-result

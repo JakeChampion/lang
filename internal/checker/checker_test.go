@@ -3,6 +3,7 @@ package checker
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -5517,20 +5518,23 @@ func TestSliceEscapeRejected(t *testing.T) {
 
 // TestSliceEscapeAllowed: slices the checker can't prove are local must
 // not be flagged. Slices of a parameter / receiver stay valid as long as
-// the caller's owner does; string slices view param-backed storage (the
-// P2 flip) and materialise into owning sinks explicitly; returning the
-// owned array itself is a move, not a view.
+// the caller's owner does; a string view of a param-backed source is
+// likewise fine, through the unchecked producer or the checked
+// `Option[str]` one; returning the owned array itself is a move, not a
+// view.
 func TestSliceEscapeAllowed(t *testing.T) {
 	for _, src := range []string{
 		// slice of a parameter — caller owns the backing array
 		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
 		// slice of a parameter, bound through a local first
 		`function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }`,
-		// string slice is a view since the P2 flip: returning it as a
-		// str of a param-backed source is fine, and an owning string
-		// return takes an explicit materialisation
-		`function f(s: string): str { return s[0:2]; }`,
-		`function f(s: string): string { return s[0:2] + ""; }`,
+		// a string view of a param-backed source outlives the callee:
+		// `slice_unchecked` hands back the bare `str`, the checked
+		// `s[a:b]` wraps the same view in an Option, and an owning
+		// string return takes an explicit materialisation
+		`function f(s: string): str { return slice_unchecked(s, 0, 2); }`,
+		`function f(s: string): Option[str] { return s[0:2]; }`,
+		`function f(s: string): string { return slice_unchecked(s, 0, 2) + ""; }`,
 		// returning the owned array itself is a move
 		`function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }`,
 		// receiver-backed slice (element-polymorphic method): caller owns
@@ -5661,51 +5665,112 @@ func TestStrEscapeAllowed(t *testing.T) {
 	}
 }
 
-// TestStrSliceProducesView: the #4813 P2 producer flip — s[a:b] on an owned
-// `string` yields a `str` sub-view of its bytes, not a fresh owned string.
-// A slice binds to `str`, returns as a view of a caller-owned param, feeds
-// the read surface (.len(), comparison), and materialises into owning sinks
-// only through an explicit copy.
-func TestStrSliceProducesView(t *testing.T) {
+// TestStrSliceProducesOption: the #5634 checked-slice flip — `s[a:b]`
+// yields `Option[str]`, not a bare `str`. The bounds can be out of range
+// or land inside a code point, and the expression answers `None` for both
+// instead of trapping, so the view only exists once the Option is opened:
+// through a match, through `?`, or through an `Option[str]` sink. The
+// unchecked producer with the old bare-`str` result is
+// `slice_unchecked(s, a, b)`.
+//
+// The rejections are the flip's actual claim. Every one of them was a
+// PASSING program before it, so a regression to the old typing shows up
+// here as six accepted programs rather than as a subtly different type.
+func TestStrSliceProducesOption(t *testing.T) {
 	for _, src := range []string{
-		`function f(): void { var s: string = "abcd"; var v: str = s[1:3]; }`,
-		`function f(s: string): str { return s[1:3]; }`,
-		`function f(): void { var s: string = "abcd"; var o: string = s[1:3] + ""; }`,
-		`function f(s: string): i32 { return s[1:3].len(); }`,
-		`function f(s: string): boolean { return s[0:2] == "ab"; }`,
-		// a view prints as its bytes (print/write/eprint accept str)
-		`function f(s: string): void { print(s[1:3]); }`,
-		`function f(v: str): void { print(v); }`,
+		// binds to an Option sink, annotated or inferred
+		`function f(): void { var s: string = "abcd"; var o: Option[str] = s[1:3]; }`,
+		`function f(): void { var s: string = "abcd"; var o = s[1:3]; }`,
+		// returns as an Option of a caller-owned param's view
+		`function f(s: string): Option[str] { return s[1:3]; }`,
+		// a `str` source slices to the same Option
+		`function f(v: str): Option[str] { return v[0:1]; }`,
+		// the open forms are the same expression
+		`function f(s: string): Option[str] { return s[:3]; }`,
+		`function f(s: string): Option[str] { return s[3:]; }`,
+		// the view comes out through a match...
+		`function f(s: string): i32 { match (s[1:3]) { Some(v) => { return v.len(); }, None => { return 0; } } }`,
+		// ...or through `?`, which the Option result makes legal
+		`function f(s: string): Option[str] { var v: str = s[1:3]?; return Some(v); }`,
+		// the unchecked producer keeps the bare `str` and its read surface
+		`function f(s: string): i32 { return slice_unchecked(s, 1, 3).len(); }`,
+		`function f(s: string): void { print(slice_unchecked(s, 1, 3)); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: expected OK, got %v", src, err)
 		}
 	}
 	for _, src := range []string{
-		// slice → string var init (owning sink, no materialisation)
-		`function f() { var s: string = "abcd"; var o: string = s[1:3]; }`,
-		// slice → string return
+		// slice → str binding: the Option is not a view
+		`function f(): void { var s: string = "abcd"; var v: str = s[1:3]; }`,
+		// slice → str return
+		`function f(s: string): str { return s[1:3]; }`,
+		// slice → string return (owning sink, no materialisation)
 		`function f(s: string): string { return s[1:3]; }`,
+		// the string read surface is behind the Option, not on it
+		`function f(s: string): i32 { return s[1:3].len(); }`,
+		`function f(s: string): boolean { return s[0:2] == "ab"; }`,
+		`function f(s: string): void { print(s[1:3]); }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
 			t.Errorf("%q: expected rejection, got nil", src)
 			continue
 		}
-		if !strings.Contains(err.Error(), "str") {
-			t.Errorf("%q: want the str/string mismatch surfaced, got %v", src, err)
+		if !strings.Contains(err.Error(), "Option[str]") {
+			t.Errorf("%q: want the Option[str] type named in the diagnostic, got %v", src, err)
 		}
 	}
 }
 
-// TestStrSliceEscapeRejected: E065 through the slice producer — s[a:b]
-// views s's bytes, so returning a slice of a function-LOCAL string (bare or
-// through a `str` binding) escapes storage that is reclaimed at exit.
-// Slicing a parameter stays fine (caller-owned backing).
+// TestStrSliceTypesAsOptionStr reads the settled type off the binding
+// rather than inferring it from what the program is allowed to do with
+// it, for both source spellings. An `Option[str]` and an `Option[string]`
+// accept all the same programs — only the stamped type tells them apart,
+// and the `str` argument is what keeps the view borrowed.
+func TestStrSliceTypesAsOptionStr(t *testing.T) {
+	want := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
+	for name, src := range map[string]string{
+		"string source": `function f(s: string): void { var v = s[1:3]; }`,
+		"str source":    `function f(s: str): void { var v = s[1:3]; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			prog, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			found := false
+			for v, ty := range info.VarTypes {
+				if v.Name != "v" {
+					continue
+				}
+				found = true
+				if !reflect.DeepEqual(ty, want) {
+					t.Errorf("type of v = %#v, want %#v", ty, want)
+				}
+			}
+			if !found {
+				t.Fatalf("no VarTypes entry for the slice binding")
+			}
+		})
+	}
+}
+
+// TestStrSliceEscapeRejected: E065 through the slice producer. The bare
+// `s[a:b]` cannot reach a `str`-returning `return` at all since the flip —
+// assignability stops it — so the producer this rule has to see is
+// `slice_unchecked`, which still hands back a view of its source's bytes.
+// Returning one of a function-LOCAL string (bare or through a `str`
+// binding) escapes storage that is reclaimed at exit. Slicing a parameter
+// stays fine (caller-owned backing).
 func TestStrSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); return s[0:1]; }`,
-		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = s[0:1]; return v; }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); return slice_unchecked(s, 0, 1); }`,
+		`function mk(): string { return "a" + "b"; } function f(): str { var s: string = mk(); var v: str = slice_unchecked(s, 0, 1); return v; }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {

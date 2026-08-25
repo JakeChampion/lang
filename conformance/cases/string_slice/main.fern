@@ -1,6 +1,14 @@
-// Half-open string slicing: s[2:5] of "abcdefghij" is "cde".
+// Half-open string slicing: `s[2:5]` of "abcdefghij" is `Some("cde")`.
+//
+// The slice expression is CHECKED — it yields `Option[str]` and answers
+// `None` whenever the bounds are out of range or land inside a code
+// point — so the view has to be unwrapped before it can be printed.
+// `slice_unchecked` is the unguarded form that still yields a bare `str`.
 function main(): i32 {
     var s = "abcdefghij";
-    print(s[2:5]);
+    match (s[2:5]) {
+        Some(v) => { print(v); },
+        None => { print("none"); }
+    }
     return 0;
 }

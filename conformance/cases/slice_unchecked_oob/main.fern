@@ -1,0 +1,21 @@
+// spec: ST-04
+//
+// `slice_unchecked` keeps the trap the checked slice gave up. `s[a:b]`
+// answers `None` for a range outside `0 <= a <= b <= len`; the
+// unchecked form aborts, which is what makes it the form a caller has
+// to have already proved its bounds for.
+//
+// The bounds come through a function call so no constant-folding pass
+// can decide the range statically and turn the abort into a compile
+// error, which would pin something else entirely.
+import "std/i32";
+
+function cut(s: string, a: i32, b: i32): i32 {
+    return slice_unchecked(s, a, b).len();
+}
+
+function main(): i32 {
+    var s: string = "hi";
+    print(cut(s, 1, 9).to_string());
+    return 0;
+}

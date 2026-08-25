@@ -1,4 +1,9 @@
+// A zero-width slice sitting on a code-point boundary is `Some("")`, not
+// `None`: `lo == hi` is in range, and the empty view survives the Option.
 function main(): i32 {
     var s: string = "abcd";
-    return s[2:2].len();
+    match (s[2:2]) {
+        Some(v) => { return v.len(); },
+        None => { return 1; }
+    }
 }

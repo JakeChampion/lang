@@ -257,7 +257,7 @@ func TestUnknownTypeHintOnlyFiresForUnknownNames(t *testing.T) {
     var d: f64 = 1.5;
     var e: string = "hello";
     var g: u8 = 3;
-    var h: str = e[1:3];
+    var h: str = slice_unchecked(e, 1, 3);
     return h.len();
 }`); err != nil {
 		t.Fatalf("str / u8 and every suggested spelling must check clean: %v", err)

@@ -363,7 +363,10 @@ alongside, so sub-i32 and wide slices route through the right
 load/store width without per-instantiation specialisation.
 
 Shipped follow-ups:
-- **String slicing** (`str[a:b]` → freshly-allocated substring).
+- **String slicing** — `s[a:b]` is `Option[str]`: `Some` of a
+  freshly-allocated substring when both indices are in range and
+  on code-point boundaries, `None` otherwise. `slice_unchecked(s,
+  a, b)` is the byte-indexed form that aborts instead.
 - **Mutating slice writes** (`slice[i] = v`) — bounds-checked
   via the same `__slice_idx_N` helper as the read path, then a
   width-aware `i32.store8` / `i32.store16` / `i32.store` /

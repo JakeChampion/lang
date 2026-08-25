@@ -99,6 +99,7 @@ maintained as living documents and a copy would drift:
 | `docs/MODE-LATTICE.md` | The `own` / borrow / view mode lattice. |
 | `docs/MUST-CONSUME.md` | `@must_consume` linear obligations, enforced as `E067`. |
 | `docs/ALLOCATION-OBSERVABLE.md` | What `__heap_bump_bytes()` measures, what is portable about it, and the two allocation-shape claims that can be pinned. |
+| `docs/STRINGS-SOTA.md` | What a string slice yields: the checked `s[a:b]` answers `Option[str]`, `None` for an out-of-range or code-point-splitting endpoint; `slice_unchecked` is the byte-indexed form that aborts instead. |
 
 `semantics.md` is the index that ties these to tests. It extracts the
 claims each doc makes and names the conformance case that pins each one;

@@ -1592,33 +1592,56 @@ func TestWASMSubI32Slices(t *testing.T) {
 // array, which immutability (E056) forbids — slices are read-only views now.
 // Slice reads are covered by TestWASMStringSlice and the slice-read cases.)
 
-// String slicing — `s[a:b]` returns a freshly allocated
-// substring. Bounds checked; default low/high mean 0 and
-// len(s) respectively.
+// The byte slice — `slice_unchecked(s, a, b)` returns a freshly
+// allocated substring on wasm.
 func TestWASMStringSlice(t *testing.T) {
 	src := `function main(): i32 {
     var greeting: string = "hello world";
-    var hello: str = greeting[0:5];
-    var world: str = greeting[6:11];
-    var dot: str = greeting[5:6];
+    var hello: str = slice_unchecked(greeting, 0, 5);
+    var world: str = slice_unchecked(greeting, 6, 11);
+    var dot: str = slice_unchecked(greeting, 5, 6);
     if (hello.len() != 5) { return 1; }
     if (world.len() != 5) { return 2; }
     if (dot.len() != 1) { return 3; }
     if (hello != "hello") { return 4; }
     if (world != "world") { return 5; }
     if (dot != " ") { return 6; }
-    // Open-ended low / high.
-    var prefix: str = greeting[:5];
-    var suffix: str = greeting[6:];
-    if (prefix != "hello") { return 7; }
-    if (suffix != "world") { return 8; }
     // Empty slice.
-    var empty: str = greeting[3:3];
+    var empty: str = slice_unchecked(greeting, 3, 3);
     if (empty.len() != 0) { return 9; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (string slicing)", got)
+	}
+}
+
+// The CHECKED slice — `s[a:b]` yields `Option[str]` (#5634). The wasm
+// leg is where its lowering is most at risk: the guard is a nest of
+// void-typed ifs writing a result slot, and a value pushed outside an
+// if-scope and consumed inside is a validator rejection rather than a
+// wrong answer, so the module has to be built and RUN to know. Both
+// `None` shapes (out of range, split code point) and the open forms
+// have to survive that, as does the abort NOT happening.
+func TestWASMStringSliceOption(t *testing.T) {
+	src := `function main(): i32 {
+    var g: string = "hello world";
+    match (g[0:5]) { Some(v) => { if (v != "hello") { return 1; } }, None => { return 2; } }
+    match (g[:5]) { Some(v) => { if (v != "hello") { return 3; } }, None => { return 4; } }
+    match (g[6:]) { Some(v) => { if (v != "world") { return 5; } }, None => { return 6; } }
+    match (g[3:3]) { Some(v) => { if (v.len() != 0) { return 7; } }, None => { return 8; } }
+    // Out of range is None, not a trap.
+    match (g[1:99]) { Some(v) => { return 9; }, None => {} }
+    match (g[4:2]) { Some(v) => { return 10; }, None => {} }
+    // "héllo" is 68 C3 A9 6C 6C 6F: offset 2 is inside the é.
+    var m: string = "héllo";
+    match (m[1:3]) { Some(v) => { if (v.len() != 2) { return 11; } }, None => { return 12; } }
+    match (m[1:2]) { Some(v) => { return 13; }, None => {} }
+    match (m[2:4]) { Some(v) => { return 14; }, None => {} }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (checked string slicing)", got)
 	}
 }
 
@@ -4809,12 +4832,12 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 // with no extra argv after the module path, so a[2] / a[3]
 // don't exist; we use the runtime-built empty string in a way
 // that always exercises the helper). Easier path: build empties
-// via `__str_slice(s, 0, 0)` on any non-empty string.
+// via `slice_unchecked(s, 0, 0)` on any non-empty string.
 func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "abcd";
-		var a: str = s[0:0];
-		var b: str = s[0:0];
+		var a: str = slice_unchecked(s, 0, 0);
+		var b: str = slice_unchecked(s, 0, 0);
 		var c: string = a + b;
 		return c.len();
 	}`
@@ -4826,7 +4849,7 @@ func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "abcd";
-		var empty: str = s[2:2];
+		var empty: str = slice_unchecked(s, 2, 2);
 		return empty.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -4867,7 +4890,7 @@ func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "world";
-		var empty: str = s[0:0];
+		var empty: str = slice_unchecked(s, 0, 0);
 		var greeting: string = "hello, " + empty + s;
 		return greeting.len();
 	}`
