@@ -750,6 +750,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-match-arm-two-step", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); var t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-match-arm-param-ok", "function f(p: string): str { match (p[0:1]) { Some(v) => { return v; }, None => { return \"\"; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-slice-unchecked-return", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); return slice_unchecked(s, 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		// E065 through a CALLEE that returns a view of one of its own
+		// parameters. Both checkers stopped their chase at a call, so a
+		// one-line identity function laundered the view past the rule; the
+		// per-function summary is what closes it. The last two rows are the
+		// precision controls: a callee that returns a DIFFERENT argument
+		// than the local-backed one, and one that views a param-backed
+		// source, both stay accepted — a summary coarsened to "this
+		// function returns some view" would reject both.
+		{"e065-callee-launder", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { var s: string = mk(); return idv(slice_unchecked(s, 0, 1)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-callee-two-hop", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction hop(s: str): str { return idv(s); }\nfunction f(): str { var s: string = mk(); return hop(slice_unchecked(s, 0, 1)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-callee-method", "function mk(): string { return \"ab\"; }\nfunction (s: string) view(): str { return s; }\nfunction f(): str { var s: string = mk(); return s.view(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-callee-other-arg-ok", "function mk(): string { return \"ab\"; }\nfunction second(a: str, b: str): str { return b; }\nfunction f(): str { var s: string = mk(); return second(slice_unchecked(s, 0, 1), \"lit\"); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-callee-param-ok", "function idv(s: str): str { return s; }\nfunction f(p: string): str { return idv(slice_unchecked(p, 0, 1)); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-callee-var-binding", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { var s: string = mk(); var t: str = idv(slice_unchecked(s, 0, 1)); return t; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		// `x.len()` in METHOD spelling. Both receivers resolve through a
 		// table that is empty without the stdlib in scope, so the
 		// statement typed unknown: check_func_body then marked the module
