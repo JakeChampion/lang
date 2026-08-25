@@ -4032,65 +4032,236 @@ function name_in(name: string, list: string[]): boolean {
   return false;
 }
 
-// slc_src_is_local reports whether `e` names storage owned by the current
-// function (so a slice of it dangles once the frame is reclaimed): an
-// array literal, a local owned-array binding (`localarr`), or a local
-// slice binding that itself views local storage (`tainted`). A sub-slice
-// inherits its source's origin. Parameters / receivers are never added to
-// either list, so membership alone excludes them — the caller owns them.
-function slc_src_is_local(e: parser.Expr, localarr: string[], tainted: string[]): boolean {
-  match (e) {
-    parser.ExprArray(_) => {
-      return true;
-    },
-    parser.ExprSlice(s2) => {
-      return slc_src_is_local(s2.array, localarr, tainted);
-    },
-    parser.ExprIdent(id) => {
-      return name_in(id.name, localarr) || name_in(id.name, tainted);
-    },
-    _ => {
-      return false;
-    }
+// ---- View-escape summaries (shared by E063 and E065) -----------------------
+// Both escape rules stop a dangling view from being RETURNED, and both are
+// laundered the same way: a function that hands back a view of one of its
+// own PARAMETERS passes an escape straight through, so
+// `return id_view(slice_unchecked(s, 0, 1))` and `return id_sl(a[0:2])`
+// dangle exactly when their arguments do. Port of the native ViewRoots /
+// returnViewSummaries pair — a per-function summary of which parameter
+// positions a return may view, iterated to a fixpoint, then consulted at
+// every call site.
+//
+// Positions run over the declared parameters in order with the RECEIVER
+// LAST, matching the order view_positions builds them. The native side
+// gets that ordering for free: by the time its pass runs the checker has
+// rewritten `x.m(a)` into `__method_T_m(x, a)` and the receiver IS
+// argument 0. Here the call is still an ExprFieldAccess with the receiver
+// on the side, so view_callee reassembles the list.
+//
+// A summary is keyed the way str_ret_fns is — bare for a free function,
+// "<BaseType>.<name>" for a method — because a method name can collide
+// across receiver types whose bodies view different things.
+
+pub struct ViewSum { key: string, flags: boolean[] }
+
+// ViewRoots is where a returned view bottoms out: `local` when it views
+// storage the enclosing function owns (what the rules reject), and
+// `params` naming each of that function's parameters whose storage it may
+// view (what a caller's chase needs). Both can be set at once — a
+// conditional returning a param view on one path and a local view on the
+// other.
+pub struct ViewRoots { local: boolean, params: string[] }
+
+// ViewCallee is a call resolved against the summary registry: the key to
+// look it up under and its arguments in position order, receiver last. An
+// empty key means the callee is not a shape the registry can name.
+pub struct ViewCallee { key: string, args: parser.Expr[] }
+
+
+function view_sum_key(fn: parser.FuncDecl): string {
+  if (fn.receiver_type.len() > 0) {
+    return util.base_type_name(fn.receiver_type) + "." + fn.name;
   }
-  return false;
+  return fn.name;
 }
 
-// slc_expr_escapes reports whether `e` evaluates to a `[T]` slice that
-// views function-local storage. A string slice copies into a fresh owned
-// string (`__str_slice`) so it never dangles; a bare reference to a
-// tainted local slice does.
-function slc_expr_escapes(e: parser.Expr, cur: Scope, localarr: string[], tainted: string[]): boolean {
+// view_positions lists a declaration's parameter names in summary position
+// order — declared parameters first, receiver last.
+function view_positions(fn: parser.FuncDecl): string[] {
+  var out: string[] = [];
+  for param in fn.params {
+    out = out.append(param.name);
+  }
+  if (fn.receiver_name.len() > 0) {
+    out = out.append(fn.receiver_name);
+  }
+  return out;
+}
+
+// view_sum_flags is the summary recorded under key, or empty when nothing
+// is — an unsummarised callee views none of its arguments.
+function view_sum_flags(sums: ViewSum[], key: string): boolean[] {
+  for su in sums {
+    if (su.key == key) {
+      return su.flags;
+    }
+  }
+  var none: boolean[] = [];
+  return none;
+}
+
+// view_recv_key names the receiver's base type for a method-call key, or
+// "" when the receiver's type is not one a summary can be keyed by.
+function view_recv_key(obj: parser.Expr, s: Scope): string {
+  match (check_expr(obj, s)) {
+    TypeString(_) => { return "string"; },
+    TypeStruct(sd) => { return util.base_type_name(sd.name); },
+    TypeUnion(u) => { return util.base_type_name(u.name); },
+    _ => {}
+  }
+  return "";
+}
+
+function view_callee(c: parser.ExprCall, s: Scope): ViewCallee {
+  var none: parser.Expr[] = [];
+  match (c.callee) {
+    parser.ExprIdent(cid) => {
+      return ViewCallee { key: cid.name, args: c.args };
+    },
+    parser.ExprFieldAccess(cfa) => {
+      var recv: string = view_recv_key(cfa.obj, s);
+      if (recv.len() == 0) {
+        return ViewCallee { key: "", args: none };
+      }
+      var xs: parser.Expr[] = c.args;
+      return ViewCallee { key: recv + "." + cfa.field, args: xs.append(cfa.obj) };
+    },
+    _ => {}
+  }
+  return ViewCallee { key: "", args: none };
+}
+
+function no_view_roots(): ViewRoots {
+  var none: string[] = [];
+  return ViewRoots { local: false, params: none };
+}
+
+function merge_view_roots(a: ViewRoots, b: ViewRoots): ViewRoots {
+  var ps: string[] = a.params;
+  for n in b.params {
+    if (!e065_ident_in(n, ps)) {
+      ps = ps.append(n);
+    }
+  }
+  return ViewRoots { local: a.local || b.local, params: ps };
+}
+
+// merge_view_names unions two parameter-name lists.
+function merge_view_names(a: string[], b: string[]): string[] {
+  var out: string[] = a;
+  for n in b {
+    if (!e065_ident_in(n, out)) {
+      out = out.append(n);
+    }
+  }
+  return out;
+}
+
+
+// slc_src_roots reports where the storage `e` names bottoms out: an array
+// literal and a local owned-array binding (`localarr`) are the current
+// function's own, a local slice binding that itself views local storage
+// (`tainted`) inherits that, a parameter is the caller's, and a sub-slice
+// inherits its source's origin.
+//
+// A CALL argument arrives here rather than at slc_expr_roots because an
+// owned array passed straight in IS the storage, not a slice of it —
+// `id_sl(a)[0:1]` needs this arm to see `a`.
+function slc_src_roots(e: parser.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): ViewRoots {
+  match (e) {
+    parser.ExprArray(_) => {
+      var none: string[] = [];
+      return ViewRoots { local: true, params: none };
+    },
+    parser.ExprSlice(s2) => {
+      return slc_src_roots(s2.array, cur, params, localarr, tainted, sums);
+    },
+    parser.ExprCall(c2) => {
+      return slc_call_roots(c2, cur, params, localarr, tainted, sums);
+    },
+    parser.ExprIdent(id) => {
+      if (name_in(id.name, params)) {
+        var one: string[] = [];
+        return ViewRoots { local: false, params: one.append(id.name) };
+      }
+      if (name_in(id.name, localarr) || name_in(id.name, tainted)) {
+        var no: string[] = [];
+        return ViewRoots { local: true, params: no };
+      }
+    },
+    _ => {}
+  }
+  return no_view_roots();
+}
+
+// slc_call_roots chases a call: the result views whatever the caller
+// handed to the parameters the callee's summary names, chased as STORAGE
+// (see slc_src_roots).
+function slc_call_roots(c: parser.ExprCall, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): ViewRoots {
+  var out: ViewRoots = no_view_roots();
+  var callee: ViewCallee = view_callee(c, cur);
+  if (callee.key.len() == 0) {
+    return out;
+  }
+  var flags: boolean[] = view_sum_flags(sums, callee.key);
+  var i: i32 = 0;
+  while (i < flags.len() && i < callee.args.len()) {
+    if (flags[i]) {
+      out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// slc_expr_roots reports where the `[T]` slice `e` evaluates to bottoms
+// out. A string slice copies into a fresh owned string (`__str_slice`) so
+// it never dangles; a bare reference to a tainted local slice does.
+function slc_expr_roots(e: parser.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): ViewRoots {
   match (e) {
     parser.ExprSlice(sl) => {
       match (check_expr(sl.array, cur)) {
         TypeString(_) => {
-          return false;
+          return no_view_roots();
         },
         _ => {}
       }
-      return slc_src_is_local(sl.array, localarr, tainted);
+      return slc_src_roots(sl.array, cur, params, localarr, tainted, sums);
+    },
+    parser.ExprCall(c) => {
+      return slc_call_roots(c, cur, params, localarr, tainted, sums);
     },
     parser.ExprIdent(id) => {
-      return name_in(id.name, tainted);
+      if (name_in(id.name, params)) {
+        var one: string[] = [];
+        return ViewRoots { local: false, params: one.append(id.name) };
+      }
+      if (name_in(id.name, tainted)) {
+        var no: string[] = [];
+        return ViewRoots { local: true, params: no };
+      }
     },
-    _ => {
-      return false;
-    }
+    _ => {}
   }
-  return false;
+  return no_view_roots();
 }
 
+// SlcWalk is one E063 walk's result: the diagnostics it found, and the
+// enclosing function's parameter names its returns may view.
+pub struct SlcWalk { diags: util.Diag[], viewed: string[] }
+
 // slc_walk is the E063 body walk: it threads the scope (so a slice's
-// source type resolves) plus two name sets — `localarr` (locals bound to
-// an owned array literal) and `tainted` (locals bound to a slice that
-// views local storage) — and flags every `return` of a slice viewing
-// local storage. Conservative and false-positive-free: a local whose
-// init is a slice of a *parameter* lands in neither set, so returning it
-// (or a sub-slice of it) is not flagged. Mirrors the native checker's
-// checkSliceEscape (internal/checker/checker.go).
-function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: string[]): util.Diag[] {
+// source type resolves) plus `params` and two name sets — `localarr`
+// (locals bound to an owned array literal) and `tainted` (locals bound to
+// a slice that views local storage) — and flags every `return` of a slice
+// viewing local storage. A local whose init is a slice of a *parameter*
+// lands in neither set, so returning it (or a sub-slice of it) is not
+// flagged; `viewed` is what names that parameter for a CALLER's chase.
+// Mirrors the native checker's checkSliceEscapes.
+function slc_walk(stmts: parser.Stmt[], s: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): SlcWalk {
   var out: util.Diag[] = [];
+  var viewed: string[] = [];
   var cur: Scope = s;
   for st in stmts {
     match (st) {
@@ -4100,49 +4271,63 @@ function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: s
             localarr = localarr.append(v.name);
           },
           _ => {
-            if (slc_expr_escapes(v.init, cur, localarr, tainted)) {
+            if (slc_expr_roots(v.init, cur, params, localarr, tainted, sums).local) {
               tainted = tainted.append(v.name);
             }
           }
         }
       },
       parser.StmtReturn(r) => {
-        if (slc_expr_escapes(r.value, cur, localarr, tainted)) {
+        var roots: ViewRoots = slc_expr_roots(r.value, cur, params, localarr, tainted, sums);
+        viewed = merge_view_names(viewed, roots.params);
+        if (roots.local) {
           out = out.append(dg_at("E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when the function returns, leaving a dangling view", r.line, r.col));
         }
       },
       parser.StmtIf(f) => {
-        out = util.append_diags(out, slc_walk(f.then_body, cur, localarr, tainted));
-        out = util.append_diags(out, slc_walk(f.else_body, cur, localarr, tainted));
+        var wt: SlcWalk = slc_walk(f.then_body, cur, params, localarr, tainted, sums);
+        out = util.append_diags(out, wt.diags);
+        viewed = merge_view_names(viewed, wt.viewed);
+        var we: SlcWalk = slc_walk(f.else_body, cur, params, localarr, tainted, sums);
+        out = util.append_diags(out, we.diags);
+        viewed = merge_view_names(viewed, we.viewed);
       },
       parser.StmtWhile(w) => {
-        out = util.append_diags(out, slc_walk(w.body, cur, localarr, tainted));
+        var ww: SlcWalk = slc_walk(w.body, cur, params, localarr, tainted, sums);
+        out = util.append_diags(out, ww.diags);
+        viewed = merge_view_names(viewed, ww.viewed);
       },
       parser.StmtFor(fr) => {
-        out = util.append_diags(out, slc_walk(fr.body, cur, localarr, tainted));
+        var wf: SlcWalk = slc_walk(fr.body, cur, params, localarr, tainted, sums);
+        out = util.append_diags(out, wf.diags);
+        viewed = merge_view_names(viewed, wf.viewed);
       },
       parser.StmtMatch(m) => {
         for arm in m.arms {
-          out = util.append_diags(out, slc_walk(arm.body, cur, localarr, tainted));
+          var wa: SlcWalk = slc_walk(arm.body, cur, params, localarr, tainted, sums);
+          out = util.append_diags(out, wa.diags);
+          viewed = merge_view_names(viewed, wa.viewed);
         }
       },
       parser.StmtDefer(d) => {
         var one: parser.Stmt[] = [d.action];
-        out = util.append_diags(out, slc_walk(one, cur, localarr, tainted));
+        var wd: SlcWalk = slc_walk(one, cur, params, localarr, tainted, sums);
+        out = util.append_diags(out, wd.diags);
+        viewed = merge_view_names(viewed, wd.viewed);
       },
       _ => {}
     }
     cur = check_stmt(st, cur).scope;
   }
-  return out;
+  return SlcWalk { diags: out, viewed: viewed };
 }
 
 // slice_escape_diags is the E063 entry point: seed empty name sets and
 // walk a function body. See slc_walk.
-function slice_escape_diags(stmts: parser.Stmt[], s: Scope): util.Diag[] {
+function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[]): SlcWalk {
   var localarr: string[] = [];
   var tainted: string[] = [];
-  return slc_walk(stmts, s, localarr, tainted);
+  return slc_walk(fn.body, s, view_positions(fn), localarr, tainted, sums);
 }
 
 // ---------------------------------------------------------------------------
@@ -10106,128 +10291,11 @@ function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], varia
 // a string literal is immortal, a parameter caller-owned; a local owned
 // `string` IS the backing storage; a local `str` binding (StmtVar.is_str)
 // views whatever its initializer views; and a call views whatever its
-// callee's summary says it hands back (see E065Sum below). `sbacked`
+// callee's summary says it hands back (see ViewSum below). `sbacked`
 // accumulates locals known to be (views of) local string storage.
-//
-// The call route is what makes the rule whole-module rather than
-// per-function: a `str`-returning function that hands back a view of one
-// of its own PARAMETERS passes an escape straight through, so
-// `return id_view(slice_unchecked(s, 0, 1))` dangles exactly when `s`
-// does. Port of the native strViewRoots / returnViewSummaries pair — a
-// per-function summary of which parameter positions a return may view,
-// iterated to a fixpoint, then consulted at every call site.
-//
-// Positions run over the declared parameters in order with the RECEIVER
-// LAST, matching the order e065_positions and e065_diags build them. A
-// summary is keyed the way str_ret_fns is — bare for a free function,
-// "<BaseType>.<name>" for a method — because a method name can collide
-// across receiver types whose bodies view different things.
-pub struct E065Sum { key: string, flags: boolean[] }
-
-// E065Roots is where a returned `str` bottoms out: `local` when it views
-// storage the enclosing function owns (what E065 rejects), and `params`
-// naming each of that function's parameters whose storage it may view
-// (what a caller's chase needs). Both can be set at once — a conditional
-// returning a param view on one path and a local view on the other.
-pub struct E065Roots { local: boolean, params: string[] }
-
-// E065Callee is a call resolved against the summary registry: the key to
-// look it up under and its arguments in position order, receiver last. An
-// empty key means the callee is not a shape the registry can name.
-pub struct E065Callee { key: string, args: parser.Expr[] }
-
 // E065Walk is one statement walk's result: the diagnostics it found, and
 // the enclosing function's parameter names its returns may view.
 pub struct E065Walk { diags: util.Diag[], viewed: string[] }
-
-function e065_sum_key(fn: parser.FuncDecl): string {
-  if (fn.receiver_type.len() > 0) {
-    return util.base_type_name(fn.receiver_type) + "." + fn.name;
-  }
-  return fn.name;
-}
-
-// e065_positions lists a declaration's parameter names in summary position
-// order — declared parameters first, receiver last.
-function e065_positions(fn: parser.FuncDecl): string[] {
-  var out: string[] = [];
-  for param in fn.params {
-    out = out.append(param.name);
-  }
-  if (fn.receiver_name.len() > 0) {
-    out = out.append(fn.receiver_name);
-  }
-  return out;
-}
-
-// e065_sum_flags is the summary recorded under key, or empty when nothing
-// is — an unsummarised callee views none of its arguments.
-function e065_sum_flags(sums: E065Sum[], key: string): boolean[] {
-  for su in sums {
-    if (su.key == key) {
-      return su.flags;
-    }
-  }
-  var none: boolean[] = [];
-  return none;
-}
-
-// e065_recv_key names the receiver's base type for a method-call key, or
-// "" when the receiver's type is not one a summary can be keyed by.
-function e065_recv_key(obj: parser.Expr, s: Scope): string {
-  match (check_expr(obj, s)) {
-    TypeString(_) => { return "string"; },
-    TypeStruct(sd) => { return util.base_type_name(sd.name); },
-    TypeUnion(u) => { return util.base_type_name(u.name); },
-    _ => {}
-  }
-  return "";
-}
-
-function e065_callee(c: parser.ExprCall, s: Scope): E065Callee {
-  var none: parser.Expr[] = [];
-  match (c.callee) {
-    parser.ExprIdent(cid) => {
-      return E065Callee { key: cid.name, args: c.args };
-    },
-    parser.ExprFieldAccess(cfa) => {
-      var recv: string = e065_recv_key(cfa.obj, s);
-      if (recv.len() == 0) {
-        return E065Callee { key: "", args: none };
-      }
-      var xs: parser.Expr[] = c.args;
-      return E065Callee { key: recv + "." + cfa.field, args: xs.append(cfa.obj) };
-    },
-    _ => {}
-  }
-  return E065Callee { key: "", args: none };
-}
-
-function e065_no_roots(): E065Roots {
-  var none: string[] = [];
-  return E065Roots { local: false, params: none };
-}
-
-function e065_merge_roots(a: E065Roots, b: E065Roots): E065Roots {
-  var ps: string[] = a.params;
-  for n in b.params {
-    if (!e065_ident_in(n, ps)) {
-      ps = ps.append(n);
-    }
-  }
-  return E065Roots { local: a.local || b.local, params: ps };
-}
-
-// e065_merge_names unions two parameter-name lists.
-function e065_merge_names(a: string[], b: string[]): string[] {
-  var out: string[] = a;
-  for n in b {
-    if (!e065_ident_in(n, out)) {
-      out = out.append(n);
-    }
-  }
-  return out;
-}
 
 function e065_ident_in(name: string, xs: string[]): boolean {
   for elem in xs {
@@ -10243,16 +10311,16 @@ function e065_ident_in(name: string, xs: string[]): boolean {
 // parameter or local-backed storage, `slice_unchecked(src, a, b)` which
 // hands back a view of its source's bytes, and any other call, which
 // hands back a view of whatever its summary names.
-function e065_return_roots(e: parser.Expr, params: string[], sbacked: string[], sums: E065Sum[], s: Scope): E065Roots {
+function e065_return_roots(e: parser.Expr, params: string[], sbacked: string[], sums: ViewSum[], s: Scope): ViewRoots {
   match (e) {
     parser.ExprIdent(id) => {
       if (e065_ident_in(id.name, params)) {
         var one: string[] = [];
-        return E065Roots { local: false, params: one.append(id.name) };
+        return ViewRoots { local: false, params: one.append(id.name) };
       }
       if (e065_ident_in(id.name, sbacked)) {
         var none: string[] = [];
-        return E065Roots { local: true, params: none };
+        return ViewRoots { local: true, params: none };
       }
     },
     parser.ExprCall(c) => {
@@ -10260,13 +10328,13 @@ function e065_return_roots(e: parser.Expr, params: string[], sbacked: string[], 
     },
     _ => {}
   }
-  return e065_no_roots();
+  return no_view_roots();
 }
 
 // e065_call_roots chases a call: `slice_unchecked` hands back a view of
 // its source, and any other callee hands back a view of whichever
 // arguments its summary names.
-function e065_call_roots(c: parser.ExprCall, params: string[], sbacked: string[], sums: E065Sum[], s: Scope): E065Roots {
+function e065_call_roots(c: parser.ExprCall, params: string[], sbacked: string[], sums: ViewSum[], s: Scope): ViewRoots {
   var direct: string = "";
   match (c.callee) {
     parser.ExprIdent(cid) => { direct = cid.name; },
@@ -10275,16 +10343,16 @@ function e065_call_roots(c: parser.ExprCall, params: string[], sbacked: string[]
   if (direct == "slice_unchecked" && c.args.len() == 3) {
     return e065_return_roots(c.args[0], params, sbacked, sums, s);
   }
-  var out: E065Roots = e065_no_roots();
-  var callee: E065Callee = e065_callee(c, s);
+  var out: ViewRoots = no_view_roots();
+  var callee: ViewCallee = view_callee(c, s);
   if (callee.key.len() == 0) {
     return out;
   }
-  var flags: boolean[] = e065_sum_flags(sums, callee.key);
+  var flags: boolean[] = view_sum_flags(sums, callee.key);
   var i: i32 = 0;
   while (i < flags.len() && i < callee.args.len()) {
     if (flags[i]) {
-      out = e065_merge_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, s));
+      out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, s));
     }
     i = i + 1;
   }
@@ -10345,7 +10413,7 @@ function e065_with_arm_bindings(sbacked: string[], arms: parser.MatchArm[]): str
   return out;
 }
 
-function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], sums: E065Sum[], s: Scope): E065Walk {
+function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], sums: ViewSum[], s: Scope): E065Walk {
   var out: util.Diag[] = [];
   var viewed: string[] = [];
   var cur: Scope = s;
@@ -10438,8 +10506,8 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
         }
       },
       parser.StmtReturn(r) => {
-        var roots: E065Roots = e065_return_roots(r.value, params, sbacked, sums, cur);
-        viewed = e065_merge_names(viewed, roots.params);
+        var roots: ViewRoots = e065_return_roots(r.value, params, sbacked, sums, cur);
+        viewed = merge_view_names(viewed, roots.params);
         if (roots.local) {
           out = out.append(dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", r.line, r.col));
         }
@@ -10447,20 +10515,20 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
       parser.StmtIf(f) => {
         var wt: E065Walk = e065_stmts(f.then_body, fname, params, str_ret_names, sbacked, sums, cur);
         out = util.append_diags(out, wt.diags);
-        viewed = e065_merge_names(viewed, wt.viewed);
+        viewed = merge_view_names(viewed, wt.viewed);
         var we: E065Walk = e065_stmts(f.else_body, fname, params, str_ret_names, sbacked, sums, cur);
         out = util.append_diags(out, we.diags);
-        viewed = e065_merge_names(viewed, we.viewed);
+        viewed = merge_view_names(viewed, we.viewed);
       },
       parser.StmtWhile(w) => {
         var ww: E065Walk = e065_stmts(w.body, fname, params, str_ret_names, sbacked, sums, cur);
         out = util.append_diags(out, ww.diags);
-        viewed = e065_merge_names(viewed, ww.viewed);
+        viewed = merge_view_names(viewed, ww.viewed);
       },
       parser.StmtFor(fr) => {
         var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, cur);
         out = util.append_diags(out, wf.diags);
-        viewed = e065_merge_names(viewed, wf.viewed);
+        viewed = merge_view_names(viewed, wf.viewed);
       },
       parser.StmtMatch(m) => {
         // A match-arm payload binding is not a declared local, so without
@@ -10475,14 +10543,14 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
         for arm in m.arms {
           var wa: E065Walk = e065_stmts(arm.body, fname, params, str_ret_names, arm_sb, sums, cur);
           out = util.append_diags(out, wa.diags);
-          viewed = e065_merge_names(viewed, wa.viewed);
+          viewed = merge_view_names(viewed, wa.viewed);
         }
       },
       parser.StmtDefer(d) => {
         var one: parser.Stmt[] = [d.action];
         var wd: E065Walk = e065_stmts(one, fname, params, str_ret_names, sbacked, sums, cur);
         out = util.append_diags(out, wd.diags);
-        viewed = e065_merge_names(viewed, wd.viewed);
+        viewed = merge_view_names(viewed, wd.viewed);
       },
       _ => {}
     }
@@ -10491,8 +10559,8 @@ function e065_stmts(stmts: parser.Stmt[], fname: string, params: string[], str_r
   return E065Walk { diags: out, viewed: viewed };
 }
 
-function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: E065Sum[], s: Scope): E065Walk {
-  var params: string[] = e065_positions(efn);
+function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum[], s: Scope): E065Walk {
+  var params: string[] = view_positions(efn);
   var none: string[] = [];
   return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, s);
 }
@@ -11442,6 +11510,45 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   // parse-time-synthesised bodies to skip (derive_body_suppressed). The
   // diagnostics themselves are folded into `dd` below, unchanged.
   let (derive_diags, derive_keys) = e021_derive_field_diags(mod);
+  // E063's callee route needs to know which parameter positions each
+  // slice-returning function's returns may view before it can chase a
+  // call into its arguments, so the summaries settle to a fixpoint
+  // first. Every function is summarised rather than only the ones whose
+  // declared return spelling looks like a slice: an inferred-return body
+  // can hand one back too, which is why the walk below runs unfiltered.
+  var slc_fns: parser.FuncDecl[] = [];
+  var slc_scopes: Scope[] = [];
+  var slc_sums: ViewSum[] = [];
+  for cfn in mod.funcs {
+    slc_fns = slc_fns.append(cfn);
+    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, structs, unions, methods));
+    var slc_initial: boolean[] = [];
+    for slc_pos in view_positions(cfn) {
+      slc_initial = slc_initial.append(false);
+    }
+    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: slc_initial });
+  }
+  var slc_changed: boolean = true;
+  while (slc_changed) {
+    slc_changed = false;
+    var sj: i32 = 0;
+    while (sj < slc_fns.len()) {
+      var sjw: SlcWalk = slice_escape_diags(slc_fns[sj], slc_scopes[sj], slc_sums);
+      var slc_positions: string[] = view_positions(slc_fns[sj]);
+      var slc_cur: ViewSum = slc_sums[sj];
+      var slc_next: boolean[] = slc_cur.flags;
+      var sp: i32 = 0;
+      while (sp < slc_positions.len() && sp < slc_next.len()) {
+        if (!slc_next[sp] && name_in(slc_positions[sp], sjw.viewed)) {
+          slc_next = slc_next.with(sp, true);
+          slc_changed = true;
+        }
+        sp = sp + 1;
+      }
+      slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next });
+      sj = sj + 1;
+    }
+  }
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (derive_body_suppressed(mod.funcs[i], derive_keys)) {
@@ -11484,7 +11591,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // E063: returning a `[T]` slice that views function-local storage
     // (a use-after-free once the frame is reclaimed). Runs for every
     // function — a slice can escape from an inferred-return body too.
-    body_diags = util.append_diags(body_diags, slice_escape_diags(dbody, fsc));
+    body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums).diags);
     // E067: a value of a @must_consume struct/enum type must be consumed
     // on every path before its binding leaves scope (the native
     // checkMustConsume — docs/MUST-CONSUME.md).
@@ -11673,16 +11780,16 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   // laundering function converges rather than looping.
   var e065_fns: parser.FuncDecl[] = [];
   var e065_scopes: Scope[] = [];
-  var e065_sums: E065Sum[] = [];
+  var e065_sums: ViewSum[] = [];
   for sfn in mod.funcs {
     if (sfn.ret_str) {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(build_func_scope(sfn, st, structs, unions, methods));
       var initial: boolean[] = [];
-      for pos in e065_positions(sfn) {
+      for pos in view_positions(sfn) {
         initial = initial.append(false);
       }
-      e065_sums = e065_sums.append(E065Sum { key: e065_sum_key(sfn), flags: initial });
+      e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: initial });
     }
   }
   var e065_changed: boolean = true;
@@ -11691,8 +11798,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var si: i32 = 0;
     while (si < e065_fns.len()) {
       var sw: E065Walk = e065_diags(e065_fns[si], str_ret_names, e065_sums, e065_scopes[si]);
-      var positions: string[] = e065_positions(e065_fns[si]);
-      var cur_sum: E065Sum = e065_sums[si];
+      var positions: string[] = view_positions(e065_fns[si]);
+      var cur_sum: ViewSum = e065_sums[si];
       var next_flags: boolean[] = cur_sum.flags;
       var pi: i32 = 0;
       while (pi < positions.len() && pi < next_flags.len()) {
@@ -11702,7 +11809,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         }
         pi = pi + 1;
       }
-      e065_sums = e065_sums.with(si, E065Sum { key: cur_sum.key, flags: next_flags });
+      e065_sums = e065_sums.with(si, ViewSum { key: cur_sum.key, flags: next_flags });
       si = si + 1;
     }
   }

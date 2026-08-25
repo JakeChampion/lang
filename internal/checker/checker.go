@@ -8866,26 +8866,30 @@ func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Ex
 // Like E065 the chase runs through calls: a slice laundered through a
 // callee that returns a view of one of its parameters — `return
 // id_sl(a[0:2])` — views whatever the caller passed to that parameter.
-// The summary sliceViewSummaries computes says which those are.
+// The summary returnViewSummaries computes says which those are.
 func (c *checker) checkSliceEscapes(prog *ast.Program) {
-	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool {
-		_, ok := t.(ast.SliceType)
-		return ok
-	})
+	// Every function with a body is summarised, not just the ones whose
+	// declared return is a `[T]`: a `T[]`-returning function that hands
+	// back a parameter moves the CALLER's array, so slicing the result
+	// views the caller's storage — `idarr(a)[0:1]` needs idarr's summary
+	// to reach `a`. Which functions are reported against is separate;
+	// see below.
+	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool { return true })
 	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]map[int]bool) viewRoots {
 		return c.sliceViewRoots(ret, envs[fn], sums)
 	})
-	// Every function is reported against, not just the summarised ones: a
-	// `T[]`-returning function whose body returns a slice expression is a
-	// type error reported elsewhere, but a lambda or a generic body can
-	// still put a borrowing return in a signature that is not SliceType.
+	// Only a `[T]` return is REPORTED against, even though every function
+	// is summarised: an owned `T[]` return MOVES its storage to the
+	// caller, so it cannot dangle, and a slice does not coerce into one
+	// (that is an E002). Reporting on both flags every `T[]`-returning
+	// function that hands back a local array — a move, and legal.
 	for _, fn := range prog.Funcs {
 		env, ok := envs[fn]
 		if !ok {
-			env = c.escapeEnv(fn)
-			if env == nil {
-				continue
-			}
+			continue
+		}
+		if _, isSlice := fn.ReturnType.(ast.SliceType); !isSlice {
+			continue
 		}
 		forEachReturn(fn, func(ret *ast.Return) {
 			if c.sliceViewRoots(ret.Value, env, sums).local {

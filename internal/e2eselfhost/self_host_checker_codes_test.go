@@ -1387,6 +1387,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e063-string-slice-ok", "function f(s: string): str { return slice_unchecked(s, 0, 2); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-return-owned-array-ok", "function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-slice-local-not-returned-ok", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s[0]; }\nfunction main(): i32 { return 0; }\n", nil},
+		// E063 through a CALLEE that hands back a view of one of its own
+		// parameters — the same laundering route E065 has, in the sibling
+		// rule. The owned-array row is the one a slice-value chase misses:
+		// `a` passed straight in IS the storage, not a slice of it. The
+		// param row is the precision control.
+		{"e063-callee-launder", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(): [i32] { var a: i32[] = [1, 2, 3]; return idsl(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-callee-two-hop", "function idsl(x: [i32]): [i32] { return x; }\nfunction hop(x: [i32]): [i32] { return idsl(x); }\nfunction f(): [i32] { var a: i32[] = [1, 2, 3]; return hop(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-callee-owned-array-arg", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(): [i32] { var a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-callee-other-arg-ok", "function second(a: [i32], b: [i32]): [i32] { return b; }\nfunction f(p: i32[]): [i32] { var a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-callee-param-ok", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(p: i32[]): [i32] { return idsl(p[0:2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E023 (unknown enum): an unknown-BASE generic annotation survives
 		// type resolution as an "unknown enum" (native resolveType keeps
 		// ast.EnumType), so a match / if-let on the value draws E023 at the
