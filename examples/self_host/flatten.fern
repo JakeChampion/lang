@@ -386,7 +386,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 array: rewrite_expr(sl.array, ctx),
                 start: rewrite_expr(sl.start, ctx),
                 end: rewrite_expr(sl.end, ctx),
-                ty: sl.ty
+                ty: sl.ty,
+                open_end: sl.open_end
             };
         },
         parser.ExprTuple(t) => {

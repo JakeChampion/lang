@@ -1820,17 +1820,27 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             if (is_err(av)) { return av; }
             var sv: Value = eval_expr(sl.start, env);
             if (is_err(sv)) { return sv; }
-            var ev: Value = eval_expr(sl.end, env);
-            if (is_err(ev)) { return ev; }
             var sb: i32 = 0;
             var eb: i32 = 0;
             match (sv) {
                 VInt(i) => { sb = i.v; },
                 _ => { return v_err("slice start must be i32"); }
             }
-            match (ev) {
-                VInt(i) => { eb = i.v; },
-                _ => { return v_err("slice end must be i32"); }
+            if (sl.open_end) {
+                // `x[lo:]` — the bound is the receiver's own length, read off
+                // the value already evaluated above. sl.end is a placeholder.
+                match (av) {
+                    VString(oes) => { eb = oes.v.len(); },
+                    VArr(oea) => { eb = oea.elements.len(); },
+                    _ => { return v_err("can only slice array or string"); }
+                }
+            } else {
+                var ev: Value = eval_expr(sl.end, env);
+                if (is_err(ev)) { return ev; }
+                match (ev) {
+                    VInt(i) => { eb = i.v; },
+                    _ => { return v_err("slice end must be i32"); }
+                }
             }
             match (av) {
                 VString(s) => {

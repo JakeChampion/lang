@@ -12502,7 +12502,7 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
       return parser.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)) };
     },
     parser.ExprSlice(sl) => {
-      return parser.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
+      return parser.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)), open_end: sl.open_end };
     },
     parser.ExprArray(a) => {
       var na: parser.Expr[] = [];

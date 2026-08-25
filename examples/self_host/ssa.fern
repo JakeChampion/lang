@@ -1318,9 +1318,23 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = build_expr(sl.start, s);
             if (!s.ok) { return s; }
             var sllo: i32 = s.cur_id();
-            s = build_expr(sl.end, s);
-            if (!s.ok) { return s; }
-            var slhi: i32 = s.cur_id();
+            var slhi: i32 = 0;
+            if (sl.open_end) {
+                // `a[lo:]` — the bound is the receiver's length, which in this
+                // subset is element 0 of the array (see the ExprIndex arm's
+                // `index+1` load). sl.end is an unevaluated placeholder, and
+                // reading the length off `slarr` keeps the base evaluated once.
+                s = s.kconst(0);
+                var slz: i32 = s.cur_id();
+                s = s.fresh();
+                var sllargs: i32[] = [slarr, slz];
+                s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: sllargs, imm: 0, str: "" });
+                slhi = s.cur_id();
+            } else {
+                s = build_expr(sl.end, s);
+                if (!s.ok) { return s; }
+                slhi = s.cur_id();
+            }
             s = s.fresh();
             var slargs: i32[] = [slarr, sllo, slhi];
             return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: slargs, imm: 0, str: "__ssa_arr_slice" });
