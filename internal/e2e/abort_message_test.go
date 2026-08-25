@@ -26,8 +26,11 @@ var abortCases = []abortCase{
 		wantErr:  "array index out of range",
 	},
 	{
+		// The trap lives in the UNCHECKED producer since #5634: the
+		// checked `s[1:9]` answers None instead of aborting, so
+		// `slice_unchecked` is the only route left to this message.
 		name:     "string_slice_oob",
-		src:      `function main(): i32 { var s: string = "hi"; var t: str = s[1:9]; return t.len(); }`,
+		src:      `function main(): i32 { var s: string = "hi"; var t: str = slice_unchecked(s, 1, 9); return t.len(); }`,
 		wantExit: 134,
 		wantErr:  "string index out of range",
 	},

@@ -32,7 +32,7 @@ function main(): i32 { return f(3); }`, "abs"},
 		// here too or that fix would have moved the dead end rather than
 		// removed it.
 		{"str", `import "std/string";
-function f(t: string): i32 { return t[0:3].bogusmethod(); }
+function f(t: string): i32 { return slice_unchecked(t, 0, 3).bogusmethod(); }
 function main(): i32 { return f("abcdef"); }`, "as_bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

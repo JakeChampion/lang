@@ -99,7 +99,11 @@ function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
     var s: string = "Hello, World";
     print(s.len().to_string());
-    print(s[0:5]);
+    print(slice_unchecked(s, 0, 5));
+    // The checked slice is Option-shaped, so the matrix compares the
+    // variant as well as the bytes.
+    match (s[0:5]) { Some(v) => { print(v); }, None => { print("none"); } }
+    match (s[1:99]) { Some(v) => { print(v); }, None => { print("none"); } }
     print(s + "!");
     print(s.index_of("World").to_string());
     print(pb(s.starts_with("Hello")));

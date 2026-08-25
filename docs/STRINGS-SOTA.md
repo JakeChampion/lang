@@ -49,7 +49,8 @@ below proposes changing it.
 |---|---|
 | `s.len()` | bytes |
 | `s[i]` | byte, as `u8` (the byte type — distinct from `i32`, #5629) |
-| `s[a:b]` | **fresh copy**, no codepoint-boundary check — can split a codepoint |
+| `s[a:b]` | **`Option[str]`** — `Some` of a fresh copy when `0 <= a <= b <= len` and both indices are code-point boundaries, `None` otherwise |
+| `slice_unchecked(s, a, b)` | **`str`**, fresh copy — byte-indexed, no boundary check, aborts (exit 134) out of range |
 | `==` | byte equality |
 | `.to_upper()` / `.to_lower()` | ASCII byte fold (A–Z ↔ a–z), everything ≥ 0x80 passes through |
 | `(b: i32) .to_upper()` / `.is_alpha()` / `.is_digit()` | ASCII byte classes on a bare `i32` |
@@ -781,35 +782,40 @@ any more; the `string_from_bytes_unchecked` bridges in `std/tcp` /
 
 Costs, stated honestly:
 
-- **`s[a:b]` must stop being able to split a code point.** Today it
-  can. Options: error (Rust panics), snap to the nearest boundary
-  (`floor_char_boundary`), or return `Option[str]`. Recommend
-  `Option[str]` — Fern already prefers `Option` over trapping, and the
-  hazard becomes visible in the type.
+- **`s[a:b]` cannot split a code point.** It yields `Option[str]`:
+  `Some` of the byte view when `0 <= a <= b <= len` AND both indices
+  are code-point boundaries, `None` otherwise. Out of range is `None`
+  too — the expression does not abort at all any more. The three
+  options considered were error (Rust panics), snap to the nearest
+  boundary (`floor_char_boundary`), and `Option[str]`; `Option[str]`
+  won because Fern already prefers `Option` over trapping and it makes
+  the hazard visible in the type. `spec/semantics.md` pins the rule as
+  `ST-01` / `ST-02`.
 
   The snapping half of this **has landed** (#5634 slice 1):
   `std/utf8` ships `is_char_boundary` / `floor_char_boundary` /
-  `ceil_char_boundary`. They are additive and say nothing yet about
-  what `s[a:b]` does — a caller can snap safely today, but nothing
-  forces one to. `floor` never grows an index and `ceil` never shrinks
-  one, so snapping a pair widens the slice to whole characters rather
-  than truncating it, and both are total (0 and `len` are always
-  boundaries) rather than `Option`-returning.
+  `ceil_char_boundary`. They are additive and say nothing about what
+  `s[a:b]` does — they are how a caller reaches the boundary the
+  expression now requires. `floor` never grows an index and `ceil`
+  never shrinks one, so snapping a pair widens the slice to whole
+  characters rather than truncating it, and both are total (0 and `len`
+  are always boundaries) rather than `Option`-returning.
 
   The primitive/wrapper split for the flip **has landed too** (#5634
-  slice 3, PR 1): builtin `slice_unchecked(s, a, b): str` is `s[a:b]`
-  under its honest name (byte-indexed, exit-134 trap on OOB, no
-  boundary check — the caller guarantees both indices are boundaries),
+  slice 3, PR 1): builtin `slice_unchecked(s, a, b): str` is the OLD
+  `s[a:b]` under its honest name (byte-indexed, exit-134 trap on OOB,
+  no boundary check — the caller guarantees both indices are
+  boundaries),
   and `std/string.slice_snap(a, b)` is the total sibling that clamps
   to `[0, len]` and snaps INWARD (`a` forward, `b` backward, `""` when
   they cross — identity on boundary indices, hence on all ASCII).
   Unlike the utf8 pair-snapping above, `slice_snap` never returns
-  bytes outside the requested range. The plan: migrate the
-  boundary-safe bulk of today's `s[a:b]` callers to these two names
-  under unchanged semantics, then flip the expression itself to
-  `Option[str]` (`None` on OOB or a non-boundary index) in one
-  coordinated PR. The IR lowers the builtin onto the same `__str_slice`
-  path as the expression, so no backend carries new code for it.
+  bytes outside the requested range. The boundary-safe bulk of the
+  old `s[a:b]` callers moved to these two names under unchanged
+  semantics, and the expression itself then flipped to `Option[str]`.
+  The IR lowers the builtin onto the same `__str_slice` path as the
+  expression's `Some` arm, so no backend carries new code for it, and
+  `slice_unchecked` is now the only route to the exit-134 trap.
 
   The `std/string` byte-count helpers no longer split code points
   either (#5634 slice 3, PR 2): `take` / `drop` / `split_at` floor a

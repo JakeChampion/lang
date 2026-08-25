@@ -43,7 +43,7 @@ func TestStringParamByteReadIsCounted(t *testing.T) {
 		{"index in a loop", `var n: i32 = 0; var i: i32 = 0;
              while (i < p.len()) { if (p[i] == 97) { n = n + 1; } i = i + 1; }
              return n;`},
-		{"slice source", `return p[0:2].len();`},
+		{"slice source", `return slice_unchecked(p, 0, 2).len();`},
 		{"len only, the case that already worked", `return p.len();`},
 	}
 	for _, c := range cases {

@@ -878,31 +878,34 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			want: 20,
 		},
 		{
-			// String slice s[a:b] via __str_slice — allocates a fresh substring.
-			// len("hello world"[6:11]) = len("world") = 5.
+			// The byte slice via __str_slice — allocates a fresh substring.
+			// len(slice_unchecked("hello world", 6, 11)) = len("world") = 5.
 			name: "string_slice_len",
 			src: `function main(): i32 {
   var s: string = "hello world";
-  return s[6:11].len();
+  return slice_unchecked(s, 6, 11).len();
 }`,
 			want: 5,
 		},
 		{
-			// Slice content check: the first byte of s[6:11] ("world") is 'w' = 119,
-			// confirming the copied bytes (not just the length) are correct.
+			// Slice content check: the first byte of the 6..11 window of
+			// "hello world" is 'w' = 119, confirming the copied bytes (not
+			// just the length) are correct.
 			name: "string_slice_content",
 			src: `function main(): i32 {
   var s: string = "hello world";
-  var w: str = s[6:11];
+  var w: str = slice_unchecked(s, 6, 11);
   return w[0] as i32;
 }`,
 			want: 119,
 		},
 		{
-			// Out-of-range slice traps with exit 134 (high > src_len), matching the
-			// native backend's bounds trap rather than a silent miscompile.
+			// Out-of-range slice_unchecked traps with exit 134 (high > src_len),
+			// matching the native backend's bounds trap rather than a silent
+			// miscompile. The checked `s[a:b]` answers None instead, so the
+			// trap is only reachable through the unchecked producer.
 			name: "string_slice_oob_trap",
-			src:  `function main(): i32 { var s: string = "abc"; return s[1:9].len(); }`,
+			src:  `function main(): i32 { var s: string = "abc"; return slice_unchecked(s, 1, 9).len(); }`,
 			want: 134,
 		},
 		{

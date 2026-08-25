@@ -1,5 +1,6 @@
 // Differential coverage for `slice_unchecked(s, a, b): str` (#5634, D9,
-// slice 3) — the byte slice s[a:b] under its honest name: half-open,
+// slice 3) — the byte slice the expression `s[a:b]` used to be, under
+// its honest name: half-open,
 // byte-indexed, trapping (exit 134) on a < 0 || b > s.len() || a > b, and
 // deliberately NOT checking UTF-8 char boundaries — and its total
 // std/string sibling `s.slice_snap(a, b)`, which clamps both bounds to

@@ -56,7 +56,7 @@ function main(): i32 {
     if (bracket_depth("[[a") != 2) { return 5; }
 
     // The same read through a `str` view.
-    var v: str = s[0:4];
+    var v: str = slice_unchecked(s, 0, 4);
     if (v[1] != b'[') { return 6; }
 
     // Byte escapes, including the full 0..255 range `\xNN` reaches.

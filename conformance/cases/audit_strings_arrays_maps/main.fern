@@ -17,8 +17,14 @@ function main(): i32 {
     if (("ab" + "cde").len() != 5) { print("FAIL str-concat-len"); return 13; }
     if (!("abc" == "abc") || !("abc" != "abd")) { print("FAIL str-eq"); return 14; }
     if ("ABC"[0] != 65 || "ABC"[2] != 67) { print("FAIL str-index"); return 15; }
-    var sl: str = "hello"[1:4];
-    if (sl != "ell" || sl.len() != 3) { print("FAIL str-slice"); return 16; }
+    // `s[a:b]` is checked: `Option[str]`, `None` on a bad range or a
+    // split code point.
+    match ("hello"[1:4]) {
+        Some(sl) => {
+            if (sl != "ell" || sl.len() != 3) { print("FAIL str-slice"); return 16; }
+        },
+        None => { print("FAIL str-slice"); return 16; }
+    }
 
     // --- arrays ---
     var a: i32[] = [10, 20, 30];

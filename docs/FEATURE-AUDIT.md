@@ -105,7 +105,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Float types `f32 f64` arithmetic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+ * /`, f32 + f64 |
 | Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `< > <= >= == !=` + IEEE NaN: every ordered compare with a NaN is false, only `!=` (incl. `NaN != NaN`) true. Self-host IR pin `TestSelfHostFloatNanIR` (x86-64 + wasm) — x86-64 `ucomisd`+`setcc` folds the unordered/parity flag correctly; wasm `f64.*` is IEEE-direct |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
-| `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
+| `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `.len()`, and slicing: `s[i:j]` is `Option[str]` (`None` out of range or on a split code point), `slice_unchecked(s, i, j)` the byte-indexed `str` that aborts instead |
 | String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | f-strings / interpolation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `f"...{e}..."` desugars (parser) to literal parts + `(e).to_string()` folded with `+`. Native: `TestWASMFStringInterpolation` + closure-capture f-string mirrors. Self-host IR pin (x86-64 + wasm): `TestSelfHostFStringIR` — i32 + string interpolants (the two `to_string` receivers the importless IR path lowers), literal/empty parts, byte offsets, equality |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
@@ -4242,7 +4242,8 @@ all of the above. All pass on the self-hosted compiler.
 
 **Native arm (all four backends):** new fixture
 `conformance/cases/audit_strings_arrays_maps` — string `.len()` /
-concat / `==`/`!=` / byte index / slice `s[i:j]`; array literal / index / `.len()`
+concat / `==`/`!=` / byte index / slice `s[i:j]` (an `Option[str]` since
+#5634, unwrapped through a match); array literal / index / `.len()`
 / `.with` / iteration; `Map` `insert` / `get_or` / `has` / `len` with i32 and
 string keys. ✅ on interp / x86-64 / arm64 / wasm.
 

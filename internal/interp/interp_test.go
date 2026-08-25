@@ -711,3 +711,123 @@ func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
 		t.Fatalf("bytes payload = %#v, want 2-byte array", res.Payloads[0])
 	}
 }
+
+// evalSliceOption evaluates `main` for a program whose only statement is
+// `return <slice>;`, returning the Option the interpreter produced.
+func evalSliceOption(t *testing.T, decl, expr string) *Enum {
+	t.Helper()
+	v := evalProgramValue(t, "function f(): Option[str] { "+decl+" return "+expr+"; }\n"+
+		"function main(): Option[str] { return f(); }")
+	e, ok := v.(*Enum)
+	if !ok {
+		t.Fatalf("%s: got %#v, want an Option enum", expr, v)
+	}
+	if e.EnumName != "Option" {
+		t.Fatalf("%s: enum is %q, want Option", expr, e.EnumName)
+	}
+	return e
+}
+
+// A string slice is `Option[str]` in the interpreter too (#5634). The
+// interpreter is the differential oracle, so all three verdicts have to
+// agree with the compiled backends: a well-formed range is `Some` of the
+// bytes, an endpoint inside a code point is `None`, and an out-of-range
+// endpoint is `None` rather than the error the array leg still raises.
+func TestStringSliceYieldsSome(t *testing.T) {
+	for _, tc := range []struct{ expr, want string }{
+		{`s[2:5]`, "cde"},
+		{`s[:3]`, "abc"},
+		{`s[7:]`, "hij"},
+		{`s[0:0]`, ""},
+		{`s[10:10]`, ""}, // empty AT the length, the permissive edge
+		{`s[0:10]`, "abcdefghij"},
+	} {
+		e := evalSliceOption(t, `var s: string = "abcdefghij";`, tc.expr)
+		if e.VariantName != "Some" || e.Index != 0 {
+			t.Fatalf("%s: got %s, want Some", tc.expr, e.VariantName)
+		}
+		got, ok := e.Payloads[0].(String)
+		if !ok {
+			t.Fatalf("%s: payload %#v is not a String", tc.expr, e.Payloads[0])
+		}
+		if string(got) != tc.want {
+			t.Errorf("%s = %q, want %q", tc.expr, got, tc.want)
+		}
+	}
+}
+
+// "héllo" is 68 C3 A9 6C 6C 6F, so offsets 1 and 3 are boundaries and
+// offset 2 sits inside the é. Either endpoint landing there is None.
+func TestStringSliceSplitCodePointYieldsNone(t *testing.T) {
+	for _, expr := range []string{`m[1:2]`, `m[2:4]`, `m[2:2]`, `m[0:2]`} {
+		e := evalSliceOption(t, `var m: string = "héllo";`, expr)
+		if e.VariantName != "None" || e.Index != 1 {
+			t.Errorf("%s: got %s(%v), want None", expr, e.VariantName, e.Payloads)
+		}
+	}
+	// The same string sliced ON the boundaries still yields the é.
+	e := evalSliceOption(t, `var m: string = "héllo";`, `m[1:3]`)
+	if e.VariantName != "Some" {
+		t.Fatalf(`m[1:3]: got %s, want Some`, e.VariantName)
+	}
+	if got := e.Payloads[0].(String); string(got) != "é" {
+		t.Errorf(`m[1:3] = %q, want "é"`, got)
+	}
+}
+
+// Out of range is None, NOT the abort it used to be. The trap survives
+// only in slice_unchecked, whose error is asserted below so the two
+// producers cannot quietly converge.
+func TestStringSliceOutOfRangeYieldsNone(t *testing.T) {
+	for _, expr := range []string{
+		`s[1:99]`,    // high past the end
+		`s[0 - 1:3]`, // negative low
+		`s[4:2]`,     // low > high
+		`s[11:11]`,   // both past the end
+	} {
+		e := evalSliceOption(t, `var s: string = "abcdefghij";`, expr)
+		if e.VariantName != "None" || e.Index != 1 {
+			t.Errorf("%s: got %s(%v), want None", expr, e.VariantName, e.Payloads)
+		}
+	}
+}
+
+// The array leg is unchanged: an out-of-range array slice is still an
+// error, so moving the bounds check inside the type switch did not take
+// the array rule with it.
+func TestArraySliceOutOfRangeStillErrors(t *testing.T) {
+	src := `function main(): i32 { var xs: i32[] = [1, 2, 3]; var s: [i32] = xs[1:9]; return s.len(); }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	i := New()
+	for _, fn := range prog.Funcs {
+		i.Register(fn)
+	}
+	if _, err := i.CallByName("main", nil); err == nil {
+		t.Fatal("an out-of-range ARRAY slice must still be an error")
+	} else if !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("got %v, want an out-of-range error", err)
+	}
+}
+
+// slice_unchecked keeps the trap: it is the interpreter's stand-in for
+// the exit-134 abort the compiled backends raise.
+func TestSliceUncheckedStillTraps(t *testing.T) {
+	if _, err := builtinSliceUnchecked(nil, []Value{String("hi"), Number(1), Number(9)}); err == nil {
+		t.Fatal("slice_unchecked out of range must be an error")
+	}
+	// In range it hands back the bytes, boundary or not: "héllo"[1:2] is
+	// half of the é and slice_unchecked does not object.
+	v, err := builtinSliceUnchecked(nil, []Value{String("héllo"), Number(1), Number(2)})
+	if err != nil {
+		t.Fatalf("slice_unchecked: %v", err)
+	}
+	if s, ok := v.(String); !ok || len(string(s)) != 1 {
+		t.Errorf("got %#v, want the single byte", v)
+	}
+}

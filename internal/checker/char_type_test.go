@@ -221,7 +221,7 @@ func TestCharAndByteLiteralsAccepted(t *testing.T) {
 		{"byte literal against a string index",
 			`function main(): i32 { var s: string = "a[b]"; if (s[1] == b'[') { return 1; } return 0; }`},
 		{"byte literal against a str view index",
-			`function main(): i32 { var s: string = "a[b]"; var v: str = s[0:2]; if (v[1] == b'[') { return 1; } return 0; }`},
+			`function main(): i32 { var s: string = "a[b]"; var v: str = slice_unchecked(s, 0, 2); if (v[1] == b'[') { return 1; } return 0; }`},
 		{"byte literal in a u8 var and match",
 			`function main(): i32 { var b: u8 = b'\n'; match (b) { b'\n' => { return 1; }, _ => { return 0; } } return 0; }`},
 		{"char literal in a char var and match",

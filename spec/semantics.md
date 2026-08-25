@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**35 of 38** claims are pinned by a conformance case. The remaining
+**39 of 42** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -81,8 +81,8 @@ of them.
 | `AB-01` | `docs/ARRAY-BOUNDS.md` | Reading an array past its end aborts | `oob_index_read` |
 | `AB-02` | `docs/ARRAY-BOUNDS.md` | A negative index aborts | `oob_index_negative` |
 | `AB-03` | `docs/ARRAY-BOUNDS.md` | Writing past the end (`xs.with(i, v)`) aborts | `oob_index_write` |
-| `AB-04` | `docs/ARRAY-BOUNDS.md` | Slice construction outside `0 <= lo <= hi <= len` aborts | `oob_slice_range` |
-| `AB-05` | `docs/ARRAY-BOUNDS.md` | `lo == hi == len` is a legal empty slice | `slice_at_length` |
+| `AB-04` | `docs/ARRAY-BOUNDS.md` | Array slice construction outside `0 <= lo <= hi <= len` aborts (a string slice answers `None` — `ST-01`) | `oob_slice_range` |
+| `AB-05` | `docs/ARRAY-BOUNDS.md` | `lo == hi == len` is a legal empty array slice | `slice_at_length` |
 | `IS-01` | `docs/INTEGER-SEMANTICS.md` | `+ - * <<` wrap at the operand's width | `int_wrap` |
 | `IS-02` | `docs/INTEGER-SEMANTICS.md` | Shift counts are masked (`& 31` / `& 63`) | `int_shift_count_masked` |
 | `IS-03` | `docs/INTEGER-SEMANTICS.md` | `>>` is arithmetic for signed operands, logical for unsigned | `int_shift_count_masked` |
@@ -116,6 +116,10 @@ of them.
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 | `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |
 | `AL-04` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that only READS a container — a map lookup, hit or miss — reclaims what the read allocated | `alloc_flat_map_get` |
+| `ST-01` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint is out of range, rather than aborting | `string_slice_option` |
+| `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
+| `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |
+| `ST-04` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` aborts when its bounds are out of range | `slice_unchecked_oob` |
 
 ## Every gap this index opened with is now closed
 
