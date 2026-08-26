@@ -549,6 +549,12 @@ pub struct LowerState {
     // dead_alias_ok: the dead-alias-cancelled bind-site keys (#4402 opt 1,
     // dead_alias_of) — arr_dead_alias_bind's pure half. Threaded read-only.
     dead_alias_ok: string[],
+    // spread_sites: this function's base-spread rows (spread_sites_of). A
+    // `T { ...base }` copies every field pointer into a fresh box with NO inc, so a
+    // counted field share of a type it copies would sit behind one release too many.
+    // Seeded once per function because the share is decided mid-expression, with no
+    // body in reach.
+    spread_sites: string[],
     // fn_dyn / fn_sig / fn_ret: the fn-typed value signature sidecars
     // (#5276/#6282/#6862), one concept split by what an indirect call needs:
     // "<name>|<positions>" dyn-boxed argument indices, "<name>|<sigtag>" the
@@ -750,6 +756,16 @@ pub function (s: LowerState) drop_reclaim_row(row: string): LowerState {
         i = i + 1;
     }
     return LowerState { ...s, reclaimable_names: out };
+}
+
+// add_reclaim_row appends one credit row. The inverse of drop_reclaim_row, for a
+// lowering decision that flips a pre-pass verdict rather than merely revoking it:
+// "NODEEP:" and "FLDCHECKED:" are the two arms of one either/or, so replacing the
+// first with the second is what turning a box-only slot back into a deep-dropping
+// one takes.
+pub function (s: LowerState) add_reclaim_row(row: string): LowerState {
+    if (util.index_of_str(s.reclaimable_names, row) >= 0) { return s; }
+    return LowerState { ...s, reclaimable_names: s.reclaimable_names.append(row) };
 }
 
 // with_selfrebind marks (or clears, with "") the local whose self-rebind literal
@@ -3970,6 +3986,47 @@ pub function scalar_arr_field_type(e: parser.Expr, s: LowerState): string {
             var ft: string = decl_field_type(s.structs, oty, fa.field);
             if (is_leaksafe_array_field(ft)) { return ft; }
             return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// enum_arr_field_share_read: `fv` is a bare-ident FIELD READ that aliases an
+// array buffer into a struct-literal field of declared type `cfft`, for the
+// element kinds the construction admission gate above does not name — an
+// enum-array (or union-array) `P { f: q.f }`. Returns the source holder's local
+// name, or "" when the shape does not qualify.
+//
+// ONE predicate, consulted by three sites that must agree exactly: the retain in
+// the ExprStructLit lowering, and the two marker flips in bind_var_slot. They
+// agree by construction because they ask this, not because three separate
+// conditions happen to line up — which matters because the two markers exist for
+// good reasons and flipping either without the retain is a double free.
+function enum_arr_field_share_read(fv: parser.Expr, cfft: string, s: LowerState): string {
+    if (!is_array_type_name(cfft)) { return ""; }
+    // The gate above already retains these two kinds; this is only for what it
+    // leaves out, so it must not double-fire on them.
+    if (is_leaksafe_array_field(cfft)) { return ""; }
+    if (is_struct_array_field_type(s.structs, cfft)) { return ""; }
+    // A `T { ...base }` anywhere in this function that copies a field of this very
+    // type mints a THIRD owner with no inc, and both this share's rc-gated walks
+    // then run against a count of two. The census reads that as a flat 700 allocs /
+    // 700 frees while __rc_underflow_count fires — the same precondition the
+    // arrstruct and arrenum credits gate on, asked by field type because the base
+    // may name a local with no slot yet.
+    if (util.index_of_str(s.spread_sites, "FT:" + cfft) >= 0) { return ""; }
+    match (fv) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    var ost: string = s.struct_type_of_slot(s.slot_of(oid.name));
+                    if (ost.len() == 0) { return ""; }
+                    if (decl_field_type(s.structs, ost, fa.field) != cfft) { return ""; }
+                    return oid.name;
+                },
+                _ => { return ""; }
+            }
         },
         _ => { return ""; }
     }
@@ -13078,7 +13135,19 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             parser.ExprIdent(aaid) => {
                                 if (s.is_arr_slot(s.slot_of(aaid.name))) { fav_alias_inc = true; }
                             },
-                            _ => {}
+                            // The FIELD-READ spelling of the same aliasing, for an
+                            // enum- or union-array field. The read lowers via
+                            // struct_get to the SOURCE box's buffer, so the new box
+                            // co-owns it. Retained here rather than by widening the
+                            // admission gate above: this arm sets only fav_alias_inc,
+                            // never fav_ok, so it cannot reach that gate's s.fail().
+                            // That matters because is_enum_array_field_type bottoms out
+                            // in a negative test a `type A | B` union passes, putting
+                            // parser.Stmt[] — and so every statement block in the
+                            // compiler — inside the same class.
+                            _ => {
+                                if (enum_arr_field_share_read(slit.field_values[found], cfft, s).len() > 0) { fav_alias_inc = true; }
+                            }
                         }
                     }
                     // A DIRECT nested-struct field (`inner: Inner`, decl_is_struct,
@@ -17930,6 +17999,56 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // (#7272). Two `var t` in sibling blocks are two slots under one name; the
     // tuple class credits are keyed on this instead, so each resolves its own.
     sb = sb.mark_reclaim_site(slot, reclaim_site_key_of(v.name, v.line, v.col));
+    // A COUNTED enum-array field share (`var p: P = P { f: q.f, … }`) hands both
+    // holders a claim on one buffer, and the credit pass marks BOTH box-only for
+    // it — `p` because its field value reads as an un-retained borrow
+    // (struct_lit_unretained_borrow_field, whose exclusion list has no enum-array
+    // entry), and `q` because a field read in a struct-literal field is a positive
+    // MOVE position (optstruct_body_moves_field). Both verdicts are right while the
+    // read is uncounted, and both are wrong once it is retained: the whole structure
+    // then leaks from both ends, which is the enum_arr__fieldread cell (600 allocs /
+    // 300 frees).
+    //
+    // The verdicts are flipped HERE rather than by teaching those two predicates
+    // about the retain, because they run pre-lowering and cannot see the slot types
+    // the retain turns on: an exclusion wider than the retain flips a marker with no
+    // inc behind it, which is a double free in a class where the census, the
+    // underflow counter and the arm64 stage-2 leg are all blind. Flipping at the
+    // bind that emitted the retain makes the two sets identical by construction.
+    //
+    // FLIPPING means writing "FLDCHECKED:" as well as dropping "NODEEP:" — the two
+    // are arms of one either/or, and a BLOCK-SCOPED slot deep-drops only on the
+    // second witness (#6127). Revoking the marker alone leaves such a slot with
+    // neither, and it then leaks its whole payload while the identical top-level
+    // binding is clean.
+    //
+    // Both walks are already buffer-is_unique-gated (__enum_arr_elems_drop on the
+    // field side, emit_arrenum_deep_free on the local side), so with rc 2 the first
+    // sweep declines and decs, and the second finds rc 1 and frees. Exactly the
+    // counted-share protocol the struct sibling uses.
+    match (v.init) {
+        parser.ExprStructLit(nsl) => {
+            var nfi: i32 = 0;
+            while (nfi < nsl.field_values.len()) {
+                if (nfi < nsl.field_names.len()) {
+                    var nft: string = decl_field_type(sb.structs, nsl.type_name, nsl.field_names[nfi]);
+                    var nsrc: string = enum_arr_field_share_read(nsl.field_values[nfi], nft, se);
+                    if (nsrc.len() > 0) {
+                        var nkey: string = reclaim_site_key_of(v.name, v.line, v.col);
+                        sb = sb.drop_reclaim_row("NODEEP:" + nkey);
+                        sb = sb.add_reclaim_row("FLDCHECKED:" + nkey);
+                        var nssl: i32 = se.slot_of(nsrc);
+                        if (nssl >= 0) {
+                            sb = sb.drop_reclaim_row("NODEEP:" + se.reclaim_site_key(nssl));
+                            sb = sb.add_reclaim_row("FLDCHECKED:" + se.reclaim_site_key(nssl));
+                        }
+                    }
+                }
+                nfi = nfi + 1;
+            }
+        },
+        _ => {}
+    }
     // A tuple-fresh-ret CALL binding whose callee carries "ARRF:" flags:
     // record the flagged positions as element kinds, so the "TUP:" sweep's
     // give-back (and the loop-rebind reclaim store) frees the arrays the
@@ -43678,68 +43797,105 @@ function arrstruct_counted_share_holders(stmts: parser.Stmt[], name: string, str
 function arrstruct_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     var holders: string[] = arrstruct_counted_share_holders(stmts, name, structs, msites, []);
     if (holders.len() == 0) { return false; }
-    return body_spreads_any(stmts, holders);
+    return body_spreads_any(stmts, structs, holders);
+}
+
+// spread_sites_of / expr_spread_sites: every `T { ...base, … }` in a body, recorded
+// twice — "N:<base>" when the base is a bare ident, and one "FT:<type>" per field
+// `T` declares. A base spread copies each field pointer into a fresh box with NO
+// inc, so it mints an uncounted co-owner, and every counted-share credit has to
+// refuse in its presence. The two rows answer the two shapes of that question:
+//
+//   - by NAME, for a credit that knows which locals hold the share
+//     (arrstruct/arrenum_share_holder_respread).
+//   - by FIELD TYPE, for one that does not — enum_arr_field_share_read decides
+//     mid-expression, when the dangerous spread may name a local with no slot yet
+//     (`var p: P = P { f: q.f }; var z: P = P { ...p }`).
+function spread_sites_of(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { a = expr_spread_sites(v.init, structs, a); },
+            parser.StmtAssign(asg) => { a = expr_spread_sites(asg.value, structs, a); },
+            parser.StmtReturn(r) => { a = expr_spread_sites(r.value, structs, a); },
+            parser.StmtExpr(e) => { a = expr_spread_sites(e.value, structs, a); },
+            parser.StmtIf(f) => {
+                a = expr_spread_sites(f.cond, structs, a);
+                a = spread_sites_of(f.then_body, structs, a);
+                a = spread_sites_of(f.else_body, structs, a);
+            },
+            parser.StmtWhile(w) => {
+                a = expr_spread_sites(w.cond, structs, a);
+                a = spread_sites_of(w.body, structs, a);
+            },
+            parser.StmtFor(fo) => {
+                a = expr_spread_sites(fo.iter, structs, a);
+                a = spread_sites_of(fo.body, structs, a);
+            },
+            parser.StmtMatch(m) => {
+                a = expr_spread_sites(m.scrutinee, structs, a);
+                for arm in m.arms { a = spread_sites_of(arm.body, structs, a); }
+            },
+            parser.StmtDefer(d) => { a = spread_sites_of([d.action], structs, a); },
+            _ => {}
+        }
+    }
+    return a;
+}
+function expr_spread_sites(e: parser.Expr, structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) {
+                for sd in structs {
+                    if (sd.name == sl.type_name) {
+                        for fld in sd.fields { a = push_str_unique(a, "FT:" + fld.type_name); }
+                    }
+                }
+                match (sl.base) {
+                    parser.ExprIdent(bid) => { a = push_str_unique(a, "N:" + bid.name); },
+                    _ => { a = expr_spread_sites(sl.base, structs, a); }
+                }
+            }
+            for fv in sl.field_values { a = expr_spread_sites(fv, structs, a); }
+        },
+        parser.ExprCall(c) => {
+            a = expr_spread_sites(c.callee, structs, a);
+            for ar in c.args { a = expr_spread_sites(ar, structs, a); }
+        },
+        parser.ExprArray(arr) => { for el in arr.elements { a = expr_spread_sites(el, structs, a); } },
+        parser.ExprTuple(tp) => { for el in tp.elements { a = expr_spread_sites(el, structs, a); } },
+        parser.ExprMapLit(ml) => {
+            for k in ml.keys { a = expr_spread_sites(k, structs, a); }
+            for mv in ml.vals { a = expr_spread_sites(mv, structs, a); }
+        },
+        parser.ExprFString(fs) => { for fe in fs.exprs { a = expr_spread_sites(fe, structs, a); } },
+        parser.ExprBinary(b) => {
+            a = expr_spread_sites(b.left, structs, a);
+            a = expr_spread_sites(b.right, structs, a);
+        },
+        parser.ExprUnary(u) => { a = expr_spread_sites(u.operand, structs, a); },
+        parser.ExprIndex(ix) => {
+            a = expr_spread_sites(ix.array, structs, a);
+            a = expr_spread_sites(ix.index, structs, a);
+        },
+        parser.ExprSlice(sx) => {
+            a = expr_spread_sites(sx.array, structs, a);
+            a = expr_spread_sites(sx.start, structs, a);
+            a = expr_spread_sites(sx.end, structs, a);
+        },
+        parser.ExprFieldAccess(fa) => { a = expr_spread_sites(fa.obj, structs, a); },
+        parser.ExprLambda(lm) => { a = spread_sites_of(lm.body, structs, a); },
+        _ => {}
+    }
+    return a;
 }
 
 // body_spreads_any: any struct literal in the body whose functional-update base
 // is a bare ident naming one of `names`.
-function body_spreads_any(stmts: parser.Stmt[], names: string[]): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            parser.StmtVar(v) => { if (expr_spreads_any(v.init, names)) { return true; } },
-            parser.StmtAssign(asg) => { if (expr_spreads_any(asg.value, names)) { return true; } },
-            parser.StmtReturn(r) => { if (expr_spreads_any(r.value, names)) { return true; } },
-            parser.StmtExpr(e) => { if (expr_spreads_any(e.value, names)) { return true; } },
-            parser.StmtIf(f) => {
-                if (expr_spreads_any(f.cond, names)) { return true; }
-                if (body_spreads_any(f.then_body, names) || body_spreads_any(f.else_body, names)) { return true; }
-            },
-            parser.StmtWhile(w) => {
-                if (expr_spreads_any(w.cond, names)) { return true; }
-                if (body_spreads_any(w.body, names)) { return true; }
-            },
-            parser.StmtFor(fo) => {
-                if (expr_spreads_any(fo.iter, names)) { return true; }
-                if (body_spreads_any(fo.body, names)) { return true; }
-            },
-            parser.StmtMatch(m) => {
-                if (expr_spreads_any(m.scrutinee, names)) { return true; }
-                for arm in m.arms { if (body_spreads_any(arm.body, names)) { return true; } }
-            },
-            parser.StmtDefer(d) => { if (body_spreads_any([d.action], names)) { return true; } },
-            _ => {}
-        }
-    }
-    return false;
-}
-function expr_spreads_any(e: parser.Expr, names: string[]): boolean {
-    match (e) {
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) {
-                match (sl.base) {
-                    parser.ExprIdent(bid) => { if (util.index_of_str(names, bid.name) >= 0) { return true; } },
-                    _ => { if (expr_spreads_any(sl.base, names)) { return true; } }
-                }
-            }
-            for fv in sl.field_values { if (expr_spreads_any(fv, names)) { return true; } }
-            return false;
-        },
-        parser.ExprCall(c) => {
-            if (expr_spreads_any(c.callee, names)) { return true; }
-            for a in c.args { if (expr_spreads_any(a, names)) { return true; } }
-            return false;
-        },
-        parser.ExprArray(arr) => {
-            for el in arr.elements { if (expr_spreads_any(el, names)) { return true; } }
-            return false;
-        },
-        parser.ExprBinary(b) => { return expr_spreads_any(b.left, names) || expr_spreads_any(b.right, names); },
-        parser.ExprUnary(u) => { return expr_spreads_any(u.operand, names); },
-        parser.ExprIndex(ix) => { return expr_spreads_any(ix.array, names) || expr_spreads_any(ix.index, names); },
-        parser.ExprFieldAccess(fa) => { return expr_spreads_any(fa.obj, names); },
-        parser.ExprLambda(lm) => { return body_spreads_any(lm.body, names); },
-        _ => { return false; }
-    }
+function body_spreads_any(stmts: parser.Stmt[], structs: parser.StructDecl[], names: string[]): boolean {
+    var sites: string[] = spread_sites_of(stmts, structs, []);
+    for n in names { if (util.index_of_str(sites, "N:" + n) >= 0) { return true; } }
     return false;
 }
 
@@ -44539,7 +44695,7 @@ function arrenum_counted_share_holders(stmts: parser.Stmt[], name: string, struc
 function arrenum_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     var holders: string[] = arrenum_counted_share_holders(stmts, name, structs, msites, []);
     if (holders.len() == 0) { return false; }
-    return body_spreads_any(stmts, holders);
+    return body_spreads_any(stmts, structs, holders);
 }
 
 // arrenum_append_escapes: arrenum_escapes with exactly one sanctioned use — the
@@ -50275,7 +50431,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -59812,7 +59968,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
