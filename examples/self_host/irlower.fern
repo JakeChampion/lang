@@ -52787,6 +52787,11 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     for fn in funcs {
         if (fn_returns_fresh_strarr(fn, arr_str_fresh)) { arr_producers = arr_producers.append(fn.name); }
     }
+    // string[]-field FORWARDERS, whose reads move from the forwarding return to
+    // the call sites (#7417). Whole-program, like every other row here: the
+    // exemption is only sound while every call is visible, which is the same
+    // condition the partial-funcs paths already satisfy by passing [] funcs.
+    var arr_fwd: string[] = strarrfld_forwarders_of(funcs, structs);
     for fn in funcs {
         // Drop any producer name THIS frame shadows — a local or parameter of
         // that name holds an unknown body, not the registered declaration.
@@ -52798,7 +52803,7 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
             }
             vk = vk + 1;
         }
-        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, vis, arr_unsafe);
+        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, vis, arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
     }
     for sd in structs {
         var at: string = sd.name;
@@ -53885,16 +53890,220 @@ function strarrfld_transient_elem_recv(cfa: parser.ExprFieldAccess, structs: par
     return false;
 }
 
-function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], acc: string[]): string[] {
+// strarrfld_fwd_param_own: `name` is an `own` parameter of `fn` — a struct it
+// CONSUMES, so a field read out of it is not a borrow anyone else still holds.
+function strarrfld_fwd_param_own(fn: parser.FuncDecl, name: string): boolean {
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        if (fn.params[i].name == name) { return fn.params[i].own; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// strarrfld_fwd_ret_key: the `"<T>.<field>"` one return value hands out of a
+// BORROWED receiver or struct parameter, "" for anything else.
+function strarrfld_fwd_ret_key(e: parser.Expr, fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (strarrfld_fwd_param_own(fn, oid.name)) { return ""; }
+                    var oty: string = arrown_obj_struct_type(fn, oid.name, structs);
+                    if (oty.len() == 0) { return ""; }
+                    if (decl_field_type(structs, oty, fa.field) != "string[]") { return ""; }
+                    return oty + "." + fa.field;
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// strarrfld_fwd_ret_keys: strarrfld_fwd_ret_key for every return in `stmts`,
+// one entry per return — including the "" a non-forwarding return contributes,
+// so the caller sees that it disagrees. Lambda bodies are not walked: a return
+// inside one belongs to the lambda.
+function strarrfld_fwd_ret_keys(stmts: parser.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => { a = a.append(strarrfld_fwd_ret_key(r.value, fn, structs)); },
+            parser.StmtIf(f) => {
+                a = strarrfld_fwd_ret_keys(f.then_body, fn, structs, a);
+                a = strarrfld_fwd_ret_keys(f.else_body, fn, structs, a);
+            },
+            parser.StmtWhile(w) => { a = strarrfld_fwd_ret_keys(w.body, fn, structs, a); },
+            parser.StmtFor(fo) => { a = strarrfld_fwd_ret_keys(fo.body, fn, structs, a); },
+            parser.StmtMatch(m) => {
+                var i: i32 = 0;
+                while (i < m.arms.len()) { a = strarrfld_fwd_ret_keys(m.arms[i].body, fn, structs, a); i = i + 1; }
+            },
+            parser.StmtDefer(_) => {},
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// strarrfld_fwd_field_of: the `"<T>.<field>"` EVERY return of `fn` hands out,
+// or "" when `fn` is not a string[]-field forwarder. All-or-nothing and
+// single-valued — a body whose returns forward two different fields, or one
+// that returns anything else on some path, is not one.
+//
+// A forwarder is why declaring `(h: Holder) get(): string[] { return h.xs; }`
+// stranded every `Holder` in the program (#7417): `h.xs` is a read the
+// admission walk marks, and the mark is keyed on the TYPE, so one declaration
+// refused the field reclaim for every instance in every function — whether or
+// not the method was ever called. The verdict belongs at the forwarder's CALL
+// sites (strarrfld_fwd_marks), and the forwarding return is exempt there.
+function strarrfld_fwd_field_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    if (fn.ret_type != "string[]") { return ""; }
+    if (!body_has_return(fn.body)) { return ""; }
+    var seed: string[] = [];
+    var keys: string[] = strarrfld_fwd_ret_keys(fn.body, fn, structs, seed);
+    if (keys.len() == 0) { return ""; }
+    var k0: string = keys[0];
+    if (k0.len() == 0) { return ""; }
+    var i: i32 = 1;
+    while (i < keys.len()) {
+        if (keys[i] != k0) { return ""; }
+        i = i + 1;
+    }
+    return k0;
+}
+
+// strarrfld_forwarders_of: the whole program's string[]-field forwarders, as
+// registry rows the call-site probe reads with tagged_value_of:
+//
+//   "m:<Recv>.<method>|<T>.<field>"  a method, for a call whose receiver type
+//                                    fnfld_obj_type resolves
+//   "n:<method>|<field>"             the same method by NAME alone, for a call
+//                                    whose receiver type it does not — the mark
+//                                    is the bare field name, which the
+//                                    admission reads as poisoning that field in
+//                                    every type
+//   "f:<name>|<T>.<field>"           a free function
+//
+// A free-function row is NOT filtered against the names a frame shadows, the
+// way the fresh-array producers are. The two registries answer opposite
+// questions: a producer row ADMITS a store, so a shadowed name must drop out or
+// an unknown body gets credited; a forwarder row MARKS a read, so a shadowed
+// name marks a field that was never handed out — over-marking, the direction
+// this whole scan already errs in.
+function strarrfld_forwarders_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        var k: string = strarrfld_fwd_field_of(fn, structs);
+        if (k.len() > 0) {
+            if (fn.receiver_name.len() > 0) {
+                out = push_str_unique(out, "m:" + util.base_type_name(fn.receiver_type) + "." + fn.name + "|" + k);
+                var dot: i32 = 0;
+                while (dot < k.len() && k[dot] != b'.') { dot = dot + 1; }
+                out = push_str_unique(out, "n:" + fn.name + "|" + slice_unchecked(k, dot + 1, k.len()));
+            } else {
+                out = push_str_unique(out, "f:" + fn.name + "|" + k);
+            }
+        }
+    }
+    return out;
+}
+
+// strarrfld_fwd_values: every <value> under "<pfx><name>|" in `names`. The
+// tagged_value_of sibling for a key more than one row can answer — two types
+// may declare the same method name, and a call whose receiver will not resolve
+// has to mark what all of them forward.
+function strarrfld_fwd_values(names: string[], pfx: string, name: string, acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var e: string = names[i];
+        var st: i32 = tagged_value_start(e, pfx, name);
+        if (st >= 0 && st < e.len()) { a = push_str_unique(a, slice_unchecked(e, st, e.len()) + ""); }
+        i = i + 1;
+    }
+    return a;
+}
+
+// strarrfld_fwd_marks: the field marks a CALL of a registered forwarder makes.
+// Empty when the call is not one, which is also how the callers test for it.
+function strarrfld_fwd_marks(c: parser.ExprCall, structs: parser.StructDecl[], binds: string[], forwarders: string[]): string[] {
+    var out: string[] = [];
+    if (forwarders.len() == 0) { return out; }
+    match (c.callee) {
+        parser.ExprFieldAccess(cfa) => {
+            var oty: string = fnfld_obj_type(cfa.obj, structs, binds);
+            if (oty.len() > 0) {
+                var v: string = tagged_value_of(forwarders, "m:", oty + "." + cfa.field);
+                if (v.len() > 0) { out = out.append(v); }
+                return out;
+            }
+            return strarrfld_fwd_values(forwarders, "n:", cfa.field, out);
+        },
+        parser.ExprIdent(cid) => {
+            var fv: string = tagged_value_of(forwarders, "f:", cid.name);
+            if (fv.len() > 0) { out = out.append(fv); }
+            return out;
+        },
+        _ => { return out; }
+    }
+    return out;
+}
+
+// strarrfld_scan_under_call: everything beneath a call but not the call itself
+// — its receiver expression and its arguments. Used where the call IS a borrow
+// the scan tolerates, so it must make no mark of its own while what it is
+// applied to still walks.
+function strarrfld_scan_under_call(c: parser.ExprCall, structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (c.callee) {
+        parser.ExprFieldAccess(cfa) => { a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); },
+        _ => {}
+    }
+    for arg in c.args { a = strarrfld_scan(arg, structs, binds, str_fresh, strarr_producers, forwarders, a); }
+    return a;
+}
+
+// strarrfld_ret_is_fwd: `e` is exactly the forwarding read `<recv>.<field>`
+// that `key` names — the one read a forwarder's own body is exempt from.
+function strarrfld_ret_is_fwd(e: parser.Expr, structs: parser.StructDecl[], binds: string[], key: string): boolean {
+    if (key.len() == 0) { return false; }
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(_) => {
+                    var oty: string = fnfld_obj_type(fa.obj, structs, binds);
+                    if (oty.len() == 0) { return false; }
+                    return oty + "." + fa.field == key;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         parser.ExprFieldAccess(fa) => {
             var oty: string = fnfld_obj_type(fa.obj, structs, binds);
             if (oty.len() > 0) { a = push_str_unique(a, oty + "." + fa.field); }
             else { a = push_str_unique(a, fa.field); }
-            return strarrfld_scan(fa.obj, structs, binds, str_fresh, strarr_producers, a);
+            return strarrfld_scan(fa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a);
         },
         parser.ExprCall(c) => {
+            // A registered FORWARDER call is a READ of the field it hands out,
+            // made HERE rather than at the `return h.xs` inside the forwarder —
+            // that is the whole of #7417. Everything but a `.len()` receiver
+            // binds or escapes the buffer, and the `.len()` case is skipped one
+            // frame up, where that receiver is the visible node.
+            var fwdm: string[] = strarrfld_fwd_marks(c, structs, binds, forwarders);
+            var fwi: i32 = 0;
+            while (fwi < fwdm.len()) { a = push_str_unique(a, fwdm[fwi]); fwi = fwi + 1; }
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
                     // The transient ELEMENT receiver is tested FIRST: `.len()` is
@@ -53911,9 +54120,9 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                         // index expression and everything beneath the field.
                         match (cfa.obj) {
                             parser.ExprIndex(cix) => {
-                                a = strarrfld_scan(cix.index, structs, binds, str_fresh, strarr_producers, a);
+                                a = strarrfld_scan(cix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
                                 match (cix.array) {
-                                    parser.ExprFieldAccess(ffa2) => { a = strarrfld_scan(ffa2.obj, structs, binds, str_fresh, strarr_producers, a); },
+                                    parser.ExprFieldAccess(ffa2) => { a = strarrfld_scan(ffa2.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); },
                                     _ => {}
                                 }
                             },
@@ -53923,25 +54132,36 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                         // `x.f.len()` is the other tolerated borrow: skip marking
                         // the receiver FIELD, but keep walking beneath it.
                         match (cfa.obj) {
-                            parser.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, a); },
-                            _ => { a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, a); }
+                            parser.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); },
+                            // `x.get().len()` — a FORWARDER borrowed for its
+                            // length, the same borrow one line up reached
+                            // through a call. Walk beneath it so the call makes
+                            // no mark of its own.
+                            parser.ExprCall(fc) => {
+                                if (strarrfld_fwd_marks(fc, structs, binds, forwarders).len() > 0) {
+                                    a = strarrfld_scan_under_call(fc, structs, binds, str_fresh, strarr_producers, forwarders, a);
+                                } else {
+                                    a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a);
+                                }
+                            },
+                            _ => { a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); }
                         }
                     } else {
-                        a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, a);
+                        a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a);
                     }
                 },
-                _ => { a = strarrfld_scan(c.callee, structs, binds, str_fresh, strarr_producers, a); }
+                _ => { a = strarrfld_scan(c.callee, structs, binds, str_fresh, strarr_producers, forwarders, a); }
             }
-            for arg in c.args { a = strarrfld_scan(arg, structs, binds, str_fresh, strarr_producers, a); }
+            for arg in c.args { a = strarrfld_scan(arg, structs, binds, str_fresh, strarr_producers, forwarders, a); }
             return a;
         },
-        parser.ExprBinary(b) => { return strarrfld_scan(b.right, structs, binds, str_fresh, strarr_producers, strarrfld_scan(b.left, structs, binds, str_fresh, strarr_producers, a)); },
-        parser.ExprUnary(u) => { return strarrfld_scan(u.operand, structs, binds, str_fresh, strarr_producers, a); },
-        parser.ExprIndex(ix) => { return strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, strarrfld_scan(ix.array, structs, binds, str_fresh, strarr_producers, a)); },
-        parser.ExprSlice(sl) => { return strarrfld_scan(sl.end, structs, binds, str_fresh, strarr_producers, strarrfld_scan(sl.start, structs, binds, str_fresh, strarr_producers, strarrfld_scan(sl.array, structs, binds, str_fresh, strarr_producers, a))); },
+        parser.ExprBinary(b) => { return strarrfld_scan(b.right, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(b.left, structs, binds, str_fresh, strarr_producers, forwarders, a)); },
+        parser.ExprUnary(u) => { return strarrfld_scan(u.operand, structs, binds, str_fresh, strarr_producers, forwarders, a); },
+        parser.ExprIndex(ix) => { return strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(ix.array, structs, binds, str_fresh, strarr_producers, forwarders, a)); },
+        parser.ExprSlice(sl) => { return strarrfld_scan(sl.end, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(sl.start, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(sl.array, structs, binds, str_fresh, strarr_producers, forwarders, a))); },
         parser.ExprStructLit(sl2) => {
             if (sl2.has_base) {
-                a = strarrfld_scan(sl2.base, structs, binds, str_fresh, strarr_producers, a);
+                a = strarrfld_scan(sl2.base, structs, binds, str_fresh, strarr_producers, forwarders, a);
                 // A functional-update BASE copies every field the literal does
                 // not override, pointer-for-pointer. The copy takes no retain
                 // for an array field, so both boxes hold the same buffer with
@@ -54023,31 +54243,44 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                         a = push_str_unique(a, "store:" + sl2.type_name + "." + sl2.field_names[i]);
                     }
                 }
-                a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, a);
+                a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, forwarders, a);
                 i = i + 1;
             }
             return a;
         },
         parser.ExprArray(av2) => {
             var i: i32 = 0;
-            while (i < av2.elements.len()) { a = strarrfld_scan(av2.elements[i], structs, binds, str_fresh, strarr_producers, a); i = i + 1; }
+            while (i < av2.elements.len()) { a = strarrfld_scan(av2.elements[i], structs, binds, str_fresh, strarr_producers, forwarders, a); i = i + 1; }
             return a;
         },
         parser.ExprTuple(t) => {
-            for el in t.elements { a = strarrfld_scan(el, structs, binds, str_fresh, strarr_producers, a); }
+            for el in t.elements { a = strarrfld_scan(el, structs, binds, str_fresh, strarr_producers, forwarders, a); }
             return a;
         },
-        parser.ExprLambda(lm) => { return strarrfld_scan_stmts(lm.body, structs, binds, str_fresh, strarr_producers, a); },
+        // A map literal and an f-string carry ordinary sub-expressions, which
+        // every sibling walk in this file visits and this one did not: an
+        // unwalked `f"{h.xs[0]}"` is an element handed to a formatter with
+        // nothing marked.
+        parser.ExprMapLit(ml) => {
+            for k in ml.keys { a = strarrfld_scan(k, structs, binds, str_fresh, strarr_producers, forwarders, a); }
+            for v in ml.vals { a = strarrfld_scan(v, structs, binds, str_fresh, strarr_producers, forwarders, a); }
+            return a;
+        },
+        parser.ExprFString(fs) => {
+            for x in fs.exprs { a = strarrfld_scan(x, structs, binds, str_fresh, strarr_producers, forwarders, a); }
+            return a;
+        },
+        parser.ExprLambda(lm) => { return strarrfld_scan_stmts(lm.body, structs, binds, str_fresh, strarr_producers, forwarders, "", a); },
         _ => { return a; }
     }
 }
-function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], acc: string[]): string[] {
+function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], fwd_exempt: string, acc: string[]): string[] {
     var a: string[] = acc;
     var b: string[] = binds;
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                a = strarrfld_scan(v.init, structs, b, str_fresh, strarr_producers, a);
+                a = strarrfld_scan(v.init, structs, b, str_fresh, strarr_producers, forwarders, a);
                 // `var r: R = …` binds by annotation, `var r = R { … }` by the
                 // literal; anything else drops the name, so a shadowing rebind
                 // never inherits the old type. Same rule as fnfld_read_stmts.
@@ -54055,30 +54288,38 @@ function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[]
                 if (vty.len() == 0) { vty = fnfld_lit_type(v.init); }
                 b = fnfld_bind(b, v.name, vty, structs);
             },
-            parser.StmtAssign(as2) => { a = strarrfld_scan(as2.value, structs, b, str_fresh, strarr_producers, a); },
-            parser.StmtExpr(ex) => { a = strarrfld_scan(ex.value, structs, b, str_fresh, strarr_producers, a); },
-            parser.StmtReturn(r) => { a = strarrfld_scan(r.value, structs, b, str_fresh, strarr_producers, a); },
-            parser.StmtIf(iff) => {
-                a = strarrfld_scan(iff.cond, structs, b, str_fresh, strarr_producers, a);
-                a = strarrfld_scan_stmts(iff.then_body, structs, b, str_fresh, strarr_producers, a);
-                a = strarrfld_scan_stmts(iff.else_body, structs, b, str_fresh, strarr_producers, a);
-            },
-            parser.StmtWhile(w) => {
-                a = strarrfld_scan(w.cond, structs, b, str_fresh, strarr_producers, a);
-                a = strarrfld_scan_stmts(w.body, structs, b, str_fresh, strarr_producers, a);
-            },
-            parser.StmtFor(fo) => {
-                a = strarrfld_scan(fo.iter, structs, b, str_fresh, strarr_producers, a);
-                a = strarrfld_scan_stmts(fo.body, structs, b, str_fresh, strarr_producers, a);
-            },
-            parser.StmtMatch(m) => {
-                a = strarrfld_scan(m.scrutinee, structs, b, str_fresh, strarr_producers, a);
-                for arm in m.arms {
-                    if (arm.has_guard) { a = strarrfld_scan(arm.guard, structs, b, str_fresh, strarr_producers, a); }
-                    a = strarrfld_scan_stmts(arm.body, structs, b, str_fresh, strarr_producers, a);
+            parser.StmtAssign(as2) => { a = strarrfld_scan(as2.value, structs, b, str_fresh, strarr_producers, forwarders, a); },
+            parser.StmtExpr(ex) => { a = strarrfld_scan(ex.value, structs, b, str_fresh, strarr_producers, forwarders, a); },
+            parser.StmtReturn(r) => {
+                // A forwarder's own forwarding return: handing the field out is
+                // its contract, and its CALL sites carry the verdict. Marking
+                // it here refused the type program-wide on the declaration
+                // alone, called or not (#7417).
+                if (!strarrfld_ret_is_fwd(r.value, structs, b, fwd_exempt)) {
+                    a = strarrfld_scan(r.value, structs, b, str_fresh, strarr_producers, forwarders, a);
                 }
             },
-            parser.StmtDefer(d) => { a = strarrfld_scan_stmts([d.action], structs, b, str_fresh, strarr_producers, a); },
+            parser.StmtIf(iff) => {
+                a = strarrfld_scan(iff.cond, structs, b, str_fresh, strarr_producers, forwarders, a);
+                a = strarrfld_scan_stmts(iff.then_body, structs, b, str_fresh, strarr_producers, forwarders, fwd_exempt, a);
+                a = strarrfld_scan_stmts(iff.else_body, structs, b, str_fresh, strarr_producers, forwarders, fwd_exempt, a);
+            },
+            parser.StmtWhile(w) => {
+                a = strarrfld_scan(w.cond, structs, b, str_fresh, strarr_producers, forwarders, a);
+                a = strarrfld_scan_stmts(w.body, structs, b, str_fresh, strarr_producers, forwarders, fwd_exempt, a);
+            },
+            parser.StmtFor(fo) => {
+                a = strarrfld_scan(fo.iter, structs, b, str_fresh, strarr_producers, forwarders, a);
+                a = strarrfld_scan_stmts(fo.body, structs, b, str_fresh, strarr_producers, forwarders, fwd_exempt, a);
+            },
+            parser.StmtMatch(m) => {
+                a = strarrfld_scan(m.scrutinee, structs, b, str_fresh, strarr_producers, forwarders, a);
+                for arm in m.arms {
+                    if (arm.has_guard) { a = strarrfld_scan(arm.guard, structs, b, str_fresh, strarr_producers, forwarders, a); }
+                    a = strarrfld_scan_stmts(arm.body, structs, b, str_fresh, strarr_producers, forwarders, fwd_exempt, a);
+                }
+            },
+            parser.StmtDefer(d) => { a = strarrfld_scan_stmts([d.action], structs, b, str_fresh, strarr_producers, forwarders, fwd_exempt, a); },
             _ => {}
         }
     }
