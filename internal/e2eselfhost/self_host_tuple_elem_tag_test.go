@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -30,18 +28,7 @@ func TestSelfHostTupleElemTag(t *testing.T) {
 		t.Skip("tuple_elem_tag_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{
-		"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern",
-		"irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "tuple_elem_tag_run.fern", "tuple_elem_tag_run")
 
 	const want = "ok  (i32, i32)[-1]=<empty>\n" +

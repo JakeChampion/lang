@@ -36,15 +36,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
-		src, rerr := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if rerr != nil {
-			t.Fatalf("read %s: %v", name, rerr)
-		}
-		if werr := os.WriteFile(filepath.Join(dir, name), src, 0o644); werr != nil {
-			t.Fatalf("write %s: %v", name, werr)
-		}
-	}
+	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	for _, tc := range []struct {
