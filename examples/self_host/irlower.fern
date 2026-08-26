@@ -34152,7 +34152,7 @@ function arrstruct_credit_rows(body: parser.Stmt[], structs: parser.StructDecl[]
         if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
             && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites)
             && !arrarr_row_escapes(body, asnm)
-            && !arrstruct_share_holder_respread(body, asnm, structs)
+            && !arrstruct_share_holder_respread(body, asnm, structs, msites)
             && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
@@ -43488,7 +43488,18 @@ function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs:
 //
 // A `{ ...base }` update is refused: the copied fields carry no inc, so the new
 // box would co-own the buffer with no count behind it.
-function arrstruct_counted_field_share(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+//
+// A MOVED share is refused for the same reason, one step further on. The retain
+// is move-gated (#6726): where the analysis says the construction moves the
+// local, the box takes over its reference and BOTH the inc and the sweep dec
+// that cancels it are dropped (note_moved_elided pairs them). This credit does
+// not route that plain sweep dec — it routes emit_arrstruct_deep_free — so
+// granting it at a moved site frees a buffer whose ownership left the frame. It
+// is the shape `return T { f: src, … }` has, because the return is src's last
+// use: measured as gen2 segfaulting under qemu on the arm64 stage-2 fixpoint,
+// with every x86-64 gate, both matrices and all three x86-64 fixpoints green.
+// The credit therefore asks exactly the question the retain asks.
+function arrstruct_counted_field_share(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     match (e) {
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { return false; }
@@ -43499,6 +43510,7 @@ function arrstruct_counted_field_share(e: parser.Expr, name: string, structs: pa
                     parser.ExprIdent(fid) => {
                         if (fid.name == name) {
                             if (!is_struct_array_field_type(structs, decl_field_type(structs, sl.type_name, sl.field_names[i]))) { return false; }
+                            if (moved_ident_at(sl.field_values[i], msites)) { return false; }
                             seen = true;
                         }
                     },
@@ -43515,17 +43527,17 @@ function arrstruct_counted_field_share(e: parser.Expr, name: string, structs: pa
 
 // arrstruct_counted_share_holders: the locals bound from a struct literal that
 // took a counted share of `name` (arrstruct_counted_field_share).
-function arrstruct_counted_share_holders(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], acc: string[]): string[] {
+function arrstruct_counted_share_holders(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
-            parser.StmtVar(v) => { if (arrstruct_counted_field_share(v.init, name, structs)) { a = push_str_unique(a, v.name); } },
-            parser.StmtAssign(asg) => { if (arrstruct_counted_field_share(asg.value, name, structs)) { a = push_str_unique(a, asg.target); } },
-            parser.StmtIf(f) => { a = arrstruct_counted_share_holders(f.then_body, name, structs, a); a = arrstruct_counted_share_holders(f.else_body, name, structs, a); },
-            parser.StmtWhile(w) => { a = arrstruct_counted_share_holders(w.body, name, structs, a); },
-            parser.StmtFor(fo) => { a = arrstruct_counted_share_holders(fo.body, name, structs, a); },
+            parser.StmtVar(v) => { if (arrstruct_counted_field_share(v.init, name, structs, msites)) { a = push_str_unique(a, v.name); } },
+            parser.StmtAssign(asg) => { if (arrstruct_counted_field_share(asg.value, name, structs, msites)) { a = push_str_unique(a, asg.target); } },
+            parser.StmtIf(f) => { a = arrstruct_counted_share_holders(f.then_body, name, structs, msites, a); a = arrstruct_counted_share_holders(f.else_body, name, structs, msites, a); },
+            parser.StmtWhile(w) => { a = arrstruct_counted_share_holders(w.body, name, structs, msites, a); },
+            parser.StmtFor(fo) => { a = arrstruct_counted_share_holders(fo.body, name, structs, msites, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = arrstruct_counted_share_holders(arm.body, name, structs, a); }
+                for arm in m.arms { a = arrstruct_counted_share_holders(arm.body, name, structs, msites, a); }
             },
             _ => {}
         }
@@ -43544,8 +43556,8 @@ function arrstruct_counted_share_holders(stmts: parser.Stmt[], name: string, str
 // hazard the walk could guard against. Measured as exit 99 at a perfectly flat
 // census: 600 allocs, 600 frees, live_bytes 0, and only __rc_underflow_count()
 // dissenting.
-function arrstruct_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
-    var holders: string[] = arrstruct_counted_share_holders(stmts, name, structs, []);
+function arrstruct_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+    var holders: string[] = arrstruct_counted_share_holders(stmts, name, structs, msites, []);
     if (holders.len() == 0) { return false; }
     return body_spreads_any(stmts, holders);
 }
@@ -43625,15 +43637,15 @@ function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: st
 function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[], msites: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => {
-            if (arrstruct_counted_field_share(v.init, name, structs)) { return false; }
+            if (arrstruct_counted_field_share(v.init, name, structs, msites)) { return false; }
             return expr_unsafe_for(v.init, name, borrowable, []);
         },
         parser.StmtReturn(r) => {
-            if (arrstruct_counted_field_share(r.value, name, structs)) { return false; }
+            if (arrstruct_counted_field_share(r.value, name, structs, msites)) { return false; }
             return expr_unsafe_for(r.value, name, borrowable, []);
         },
         parser.StmtExpr(e) => {
-            if (arrstruct_counted_field_share(e.value, name, structs)) { return false; }
+            if (arrstruct_counted_field_share(e.value, name, structs, msites)) { return false; }
             return expr_unsafe_for(e.value, name, borrowable, []);
         },
         parser.StmtAssign(a) => {
@@ -43641,7 +43653,7 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
                 if (arrstruct_self_store_elem(a.value, name, structs, msites)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
-            if (arrstruct_counted_field_share(a.value, name, structs)) { return false; }
+            if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
             return expr_unsafe_for(a.value, name, borrowable, []);
         },
         parser.StmtIf(f) => {
@@ -44035,7 +44047,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
             // elements' owned fields are reachable from exactly the two owners
             // whose walks are both is_unique-gated. Refusing it here sank the
             // credit even once arrstruct_unsafe_for admitted the share.
-            if (arrstruct_counted_field_share(e, name, structs)) { return false; }
+            if (arrstruct_counted_field_share(e, name, structs, msites)) { return false; }
             if (slb.has_base && arrstruct_elem_esc_expr(slb.base, name, sty, structs, msites)) { return true; }
             var i: i32 = 0;
             while (i < slb.field_values.len()) { if (arrstruct_elem_esc_expr(slb.field_values[i], name, sty, structs, msites)) { return true; } i = i + 1; }

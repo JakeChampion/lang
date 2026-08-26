@@ -48,6 +48,34 @@ field whose declared type takes the alias-inc". Both gates take it:
 Part 2 without part 1 is an over-release, and part 1 without part 2 changes
 nothing. That pairing is the whole content of this slice.
 
+## The SECOND precondition, and what caught it
+
+The first version of this shipped to CI and **segfaulted gen2** on
+`TestSelfHostStage2FixpointArm64/lexer`. Nothing on x86-64 saw it: both
+matrices, `TestSelfHostRcPlanDiff`, the whole probe corpus and all three
+x86-64 fixpoints were green. That is exactly the blind spot
+`docs/TEST-GATES.md` names, and the reason the arm64 stage-2 leg exists — it
+runs the whole compiler through its own output.
+
+The cause: **the retain is MOVE-gated** (#6726). Where the analysis says the
+construction moves the local, the box takes over its reference and BOTH the inc
+and the sweep dec that cancels it are dropped (`note_moved_elided` pairs them).
+This credit does not route that plain sweep dec — it routes
+`emit_arrstruct_deep_free` — so granting it at a moved site frees a buffer whose
+ownership left the frame.
+
+`return T { f: src, … }` is precisely that shape, because the return is `src`'s
+last use. Two sites in the compiler's own source hit it — `ModuleTables.methods`
+in `build_module_tables` (a call-init local the FIRST commit had just made
+creditable) and `OwnCtx.ofuncs`. Bisecting found it in four runs: commit 1
+clean, the buffer gate alone clean, the exception disabled clean, the return
+position alone the culprit.
+
+The fix is not to refuse the return position — that would be a narrowing that
+happens to work. `arrstruct_counted_field_share` now takes `msites` and refuses
+a share whose ident is at a MOVE site, so **the credit asks exactly the question
+the retain asks**. The return position stays admitted for a non-moved share.
+
 ## The precondition the guard could not carry
 
 Granting the share took `P { ...q, … }` to **exit 99 at a perfectly flat census**
@@ -73,6 +101,7 @@ struct-literal base.
 | `sibling_alias` (two same-named `src`) | 400/300, 4000 B | **400/400** |
 | `always` (share every round) | 500/500 | 500/500 |
 | `respread` | 600/600 | 600/600, and 99 without the fourth gate |
+| `moved_ret` | 500/100 | 500/100, refused by the move gate |
 
 Every exit code matches native and interp. Nothing exits 99.
 
@@ -94,6 +123,11 @@ origin has no credit to keep.
   qualifying literal; nested inside a call it falls back to the shared walker.
 
 ## Gates
+
+**`TestSelfHostStage2FixpointArm64` is the gate that mattered here** and is now
+part of the pre-push set for anything touching an exit-sweep credit — 105 s
+locally, against the ~170 s the whole targeted x86-64 set costs, so there is no
+excuse for skipping it.
 
 `TestSelfHostArrStructFieldShareX86_64` (new), `TestSelfHostArrStructProducerX86_64`,
 `TestSelfHostConstructionRetainMatrixX86_64` (re-pinned), `TestSelfHostContainerSinkMatrixX86_64`,
