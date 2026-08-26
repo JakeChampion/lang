@@ -9554,6 +9554,25 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!si.ok) { return si; }
         return si.emit(ir.op_call_direct("__fern_rc_inc", 1));
     }
+    // __fern_str_eq(a, b): compare two string BOXES by value, given as raw
+    // pointers. The surface `a == b` on two `string`s already lowers to
+    // op_str_eq, but a runtime helper written on the raw floor holds its
+    // strings as i32 box pointers, where `==` is an integer compare — so
+    // there is no other spelling that reaches the comparison. Same shape as
+    // the RC hooks above: a RUNTIME SYMBOL accepted as surface syntax, for
+    // sources only the self-host compiles.
+    //
+    // Both operands lower plainly rather than through
+    // lower_view_borrowed_parked: that path exists to release borrowed string
+    // TEMPORARIES, and a raw pointer is not RC-tracked, so there is nothing
+    // parked to free.
+    if (cid.name == "__fern_str_eq" && c.args.len() == 2) {
+        var seqL: LowerState = lower_expr(c.args[0], s);
+        if (!seqL.ok) { return seqL; }
+        var seqR: LowerState = lower_expr(c.args[1], seqL);
+        if (!seqR.ok) { return seqR; }
+        return seqR.emit(ir.op_str_eq());
+    }
     // __rc_underflow_count() / __rc_underflow(): read the
     // over-release counter. `__rc_underflow_count` is the
     // NATIVE spelling (internal/checker/checker.go registers
