@@ -154,6 +154,26 @@ fall-through.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **Anything outside the FIXED corpus bounds, on a pull request.** Every
+  fernsmith sweep that runs per-PR is a fixed prefix — 2048 exit-byte seeds,
+  1024 printable — and both per-PR coverage-guided lanes get 60 seconds from a
+  COLD corpus (nothing under `testdata/fuzz/` is committed, so each run
+  rediscovers the same shallow inputs and discards what it learned).
+  `nightly-fuzz.yml` is what moves past that: a fresh deterministic seed
+  window per run (`DIFF_ORACLE_SEED_BASE`, derived from the run number — no
+  committed cursor, and any past window is recomputable) plus long
+  coverage-guided runs against a cached, compounding corpus.
+
+  Its two halves are not equal. The seed window is cheap breadth and nothing
+  more: `GenMain` draws from a fixed distribution, so a high seed is just
+  another sample of the same shape space, and seed → program is only stable
+  for one generator revision — a window that came back green proves nothing
+  after the next edit to a production table. The coverage-guided half is where
+  the yield is, and its minimised failing input is the only durable output of
+  either half. **A nightly failure is not resolved by noting the seed** —
+  commit the minimised entry under the target's `testdata/fuzz/`, which is
+  what keeps the case covered once the generator moves.
+
 - **No differential emits a float math call at all** — `pow`, `log`, `exp`,
   `sin`, `cos` and `sqrt` each appear ZERO times in both
   `internal/e2e/numeric_property_test.go` and

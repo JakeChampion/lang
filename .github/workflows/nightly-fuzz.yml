@@ -1,0 +1,241 @@
+name: Nightly fuzz
+
+# The unbounded-search lane. Everything that runs on a pull request is a
+# FIXED corpus — the differential oracles sweep fernsmith seeds 0..2047,
+# and the two per-PR fuzz lanes get 60 seconds each from a cold corpus —
+# so past those bounds nothing is ever explored and the fuzzers never
+# accumulate anything. This workflow is where the search actually moves.
+#
+# Two halves, deliberately different in kind:
+#
+#   1. `differential` sweeps a FRESH window of deterministic seeds. The
+#      window is `run_number * SEED_WINDOW`, derived rather than stored:
+#      no committed cursor, no CI pushing to main, no race with a real
+#      merge, and any past night's range is recomputable — re-run it
+#      locally with DIFF_ORACLE_SEED_BASE=<n> and nothing else.
+#
+#      Note what this half is NOT: `GenMain(seed)` draws from a fixed
+#      distribution, so seed 5,000,000 is not more interesting than seed
+#      5,000 — it is another independent sample of the same shape space,
+#      and yield per seed decays once the shallow shapes saturate. It is
+#      also not durable: seed -> program is only stable for one generator
+#      revision, so a window that came back green proves nothing after
+#      the next edit to a production table. Cheap breadth, nothing more.
+#
+#   2. `fuzz` runs the coverage-guided targets for a long budget against
+#      a CACHED corpus. This is where the yield is: mutation plus
+#      coverage feedback steers toward new code paths instead of
+#      resampling, the corpus compounds across nights, and fernsmith's
+#      minimisation contract (RUN_SHRINK_PROPERTY, test-fernsmith.yml)
+#      means a failure reduces to a small repro.
+#
+# When either half fails, the durable output is the failing INPUT, not
+# the seed number: commit the minimised corpus entry the fuzz job
+# uploads under `testdata/fuzz/<Target>/`, so the per-PR lane covers it
+# forever. A corpus entry survives a generator revision; a seed index
+# does not.
+
+on:
+  schedule:
+    # 03:17 UTC. Off the hour because scheduled runs across all of
+    # GitHub queue at :00 and get delayed.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seed_base:
+        description: >
+          First fernsmith seed of the differential window. Empty =
+          derive it from the run number. Set this to re-run a past
+          night's window.
+        required: false
+        default: ""
+      fuzztime:
+        description: "Per-target budget for the coverage-guided lane."
+        required: false
+        default: "20m"
+
+permissions:
+  contents: read
+  issues: write
+
+# Never cancel a nightly in favour of a newer one, and never let two
+# overlap: a long fuzz job that is still writing to its corpus cache
+# should finish rather than lose the night's findings.
+concurrency:
+  group: nightly-fuzz
+  cancel-in-progress: false
+
+env:
+  # How far the differential window advances per run. Matches
+  # `diffOracleSeedCount`, so consecutive runs tile the seed space with
+  # no gap and no overlap. The printable sweep is half that (1024), so
+  # it covers the lower half of each window.
+  #
+  # `run_number` is per-workflow-FILE and restarts at 1 if this file is
+  # renamed, which would replay windows already swept. Set `seed_base`
+  # by hand on the first dispatch after any rename.
+  SEED_WINDOW: 2048
+
+jobs:
+  # Forks inherit the schedule but not the runners anyone wants to spend.
+  window:
+    if: github.repository == 'JakeChampion/lang'
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.pick.outputs.base }}
+    steps:
+      - id: pick
+        run: |
+          base="${{ inputs.seed_base }}"
+          if [ -z "$base" ]; then
+            base=$(( ${{ github.run_number }} * SEED_WINDOW ))
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Differential window: seeds $base..$(( base + SEED_WINDOW - 1 ))" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reproduce locally: DIFF_ORACLE_SEED_BASE=$base go test -run '^TestDifferential' ./internal/e2e/" >> "$GITHUB_STEP_SUMMARY"
+
+  differential:
+    needs: window
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same per-arch split as test-e2e-differential.yml: each runner
+        # natively exercises its own register backend plus wasm and skips
+        # the other, and `require` makes a lost toolchain fail here rather
+        # than hollow the sweep out into a green no-op (#7310).
+        host:
+          - { runner: ubuntu-latest,    name: x86_64,  require: "x86_64,wasmbin"      }
+          - { runner: ubuntu-24.04-arm, name: aarch64, require: "arm64-linux,wasmbin" }
+        shard: [0, 1]
+    name: nightly-differential-${{ matrix.host.name }}-shard${{ matrix.shard }}
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+          gotestsum: "true"
+      - name: go test (seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
+        env:
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          FERN_REQUIRE_DIFF_BACKENDS: "${{ matrix.host.require }}"
+          DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/fern-diff-failures"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=25m \
+            -run '^TestDifferential_(LangsmithMain|PrintableStdout)$' ./internal/e2e/
+
+      - name: Upload failing-seed artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-diff-failures-${{ matrix.host.name }}-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/fern-diff-failures
+          if-no-files-found: ignore
+          retention-days: 30
+
+  fuzz:
+    if: github.repository == 'JakeChampion/lang'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Explicit list rather than a cross product: the two toolchain-
+        # free targets are not worth a second arch, and only the e2e
+        # ones need wasmtime.
+        include:
+          - { runner: ubuntu-latest,    host: x86_64,  slug: exec,    pkg: ./internal/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
+          - { runner: ubuntu-24.04-arm, host: aarch64, slug: exec,    pkg: ./internal/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: stdout,  pkg: ./internal/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
+          - { runner: ubuntu-24.04-arm, host: aarch64, slug: stdout,  pkg: ./internal/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: gen,     pkg: ./internal/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
+          - { runner: ubuntu-24.04-arm, host: aarch64, slug: gen,     pkg: ./internal/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: parse,   pkg: ./internal/parser,     target: FuzzParse,                    wasmtime: "false" }
+          - { runner: ubuntu-latest,    host: x86_64,  slug: check,   pkg: ./internal/checker,    target: FuzzCheck,                    wasmtime: "false" }
+    name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: ${{ matrix.wasmtime }}
+          gotestsum: "true"
+
+      # Go keeps the generated corpus under $GOCACHE/fuzz, so this sits
+      # inside the build cache setup-fern already restored — hence the
+      # ordering: build cache first, corpus layered on top. The two do
+      # not fight over the save either, because setup-fern's key is
+      # content-derived and already exists, so that cache is hit-only
+      # and never writes the corpus back under its own key.
+      #
+      # The key carries run_id so every night saves what it learned;
+      # the restore-key picks up the most recent previous night. This
+      # is what makes the lane compound instead of restarting cold the
+      # way the 60-second per-PR lanes do.
+      - name: Restore fuzz corpus
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzzcorpus-${{ matrix.slug }}-${{ matrix.host }}-${{ github.run_id }}
+          restore-keys: |
+            fuzzcorpus-${{ matrix.slug }}-${{ matrix.host }}-
+
+      - name: go test -fuzz=${{ matrix.target }}
+        env:
+          FUZZTIME: ${{ inputs.fuzztime || '20m' }}
+        run: |
+          gotestsum --format testname -- -timeout=40m \
+            -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -run=^$ ${{ matrix.pkg }}
+
+      # The minimised failing input Go writes into the package's
+      # testdata/fuzz/. This is the durable artifact of the whole
+      # workflow — commit it as a corpus entry and the per-PR lane
+      # covers the case forever, whatever the generator does next.
+      - name: Upload minimised corpus entry
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-fuzz-repro-${{ matrix.slug }}-${{ matrix.host }}
+          path: ${{ matrix.pkg }}/testdata/fuzz
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # A nightly nobody looks at is a nightly that does not exist. Failures
+  # land on one long-lived issue rather than a fresh one per night, so a
+  # week of the same break is a thread and not eight duplicates.
+  report:
+    needs: [window, differential, fuzz]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          SEED_BASE: ${{ needs.window.outputs.base }}
+        with:
+          script: |
+            const title = 'Nightly fuzz failures'
+            const base = process.env.SEED_BASE || '(not computed)'
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const body = [
+              `Nightly run failed: ${url}`,
+              ``,
+              `Differential window: seeds \`${base}\` onward.`,
+              `Reproduce: \`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential' ./internal/e2e/\``,
+              ``,
+              `If the coverage-guided half failed, download its`,
+              `\`nightly-fuzz-repro-*\` artifact and commit the minimised`,
+              `entry under the target's \`testdata/fuzz/\` — that is what`,
+              `keeps the case covered once the generator changes.`,
+            ].join('\n')
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo, state: 'open', per_page: 100,
+            })
+            const existing = open.find(i => !i.pull_request && i.title === title)
+            if (existing) {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: existing.number, body,
+              })
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body })
+            }
