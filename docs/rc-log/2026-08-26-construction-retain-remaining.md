@@ -17,17 +17,22 @@ remains, so the next attempt starts from measurements rather than a reading.
 |---|---|---|
 | `str` | `__local` `__param` `__fieldread` | retain gated on slit_reclaim + the whole-program STRFLDOK verdict |
 | `str_arr` | `__local` `__param` `__fieldread` | the same verdict, string-array flavour |
-| `enum` | `__param` | param enum bare ident |
-| `enum_arr` | `__param` | |
-| `struct_arr` | `__param` | |
+| `enum` | `__param` | the callee's field STORE, not the param slot |
+| `enum_arr` | `__param` | same store; its borrowing-ARGUMENT half is closed |
+| `struct_arr` | `__param` | same store, plus the borrowing-argument half still open |
 
 Two natural groupings, and both are bigger than one cell:
 
-- **The four `__param` cells** (`enum`, `enum_arr`, `struct_arr`, plus the `str`
-  ones). `slot_is_reclaimable_arrstruct` refuses a slot index below `s.n_params`
-  outright, and `slot_is_reclaimable_arrenum` reads a credit no param slot
-  carries. Probably one shared question — a param is the caller's, so any credit
-  here is really about ownership transfer — and probably larger than it looks.
+- **The five `__param` cells.** This entry used to blame
+  `slot_is_reclaimable_arrstruct` refusing a slot below `s.n_params`. Measurement
+  says otherwise: the callee's param slot is not involved, and what leaks is the
+  CALLER's local — a constant two objects however many times the callee runs.
+  They split into two causes, neither of them one credit:
+  `enum_arr` / `struct_arr` lose their element walk merely by being PASSED to a
+  borrowing callee (`2026-08-26-arrenum-borrowed-argument.md` closes the enum
+  half; the struct half is the same shape behind its own escape walker), while
+  `str` / `str_arr` / `enum` are fine as arguments and leak only once the callee
+  STORES the param in a struct field — which needs the store to retain.
 - **`str` / `str_arr`, 6 of the 9**, hang off the whole-program STRFLDOK
   verdict, which `struct_routes_field_reclaim_at`'s header calls out as the thing
   every analysis deciding a string-field store must consult. Widest group; wants
