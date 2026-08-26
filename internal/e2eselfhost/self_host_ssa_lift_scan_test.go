@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -29,20 +28,7 @@ func TestSelfHostSSALiftCoverageScan(t *testing.T) {
 	// The scanner's import closure plus the module it scans (lexer.fern, a small
 	// real module that imports util) and the pieces load_imports / merge_builtins
 	// pull in.
-	for _, name := range []string{
-		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
-		"flatten.fern", "modloader.fern", "fern_toml.fern", "ir.fern", "ssa.fern",
-		"ssa_lift.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "checker.fern", "builtins.fern",
-		"treeshake.fern", "ssa_lift_scan_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostFiles(t, dir, "util.fern", "lexer.fern", "parser.fern", "astwalk.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "ir.fern", "ssa.fern", "ssa_lift.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "checker.fern", "builtins.fern", "treeshake.fern", "ssa_lift_scan_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ssa_lift_scan_run.fern", "ssa_lift_scan_run")
 
 	out, err := exec.Command(bin, filepath.Join(dir, "lexer.fern")).CombinedOutput()

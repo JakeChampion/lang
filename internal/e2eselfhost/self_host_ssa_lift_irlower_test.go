@@ -49,19 +49,7 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{
-		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
-		"ir.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern",
-		"irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ssa_lift.fern", "ssa_lift_irlower_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostFiles(t, dir, "util.fern", "lexer.fern", "parser.fern", "astwalk.fern", "ir.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ssa_lift.fern", "ssa_lift_irlower_run.fern")
 	bin := buildSelfHostBin(t, x86gcc, dir, "ssa_lift_irlower_run.fern", "ssa_lift_irlower_run")
 
 	// emit feeds the source to the driver on stdin and returns the emitted asm.

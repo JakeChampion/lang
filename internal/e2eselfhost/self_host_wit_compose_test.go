@@ -190,10 +190,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 
 	// Build the self-host emitter and a driver that composes from the user world.
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
-		b, _ := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		_ = os.WriteFile(filepath.Join(dir, name), b, 0o644)
-	}
+	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	var src strings.Builder
