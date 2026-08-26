@@ -16,7 +16,7 @@
 //
 // # Why the inventory is a SECOND record
 //
-// asm_ir.is_fern_helper already answers "does the emitter provide this?", and
+// ircore.is_fern_helper already answers "does the emitter provide this?", and
 // this file could call it. It deliberately does not — for the reason native's
 // verifyprovided.go gives:
 //

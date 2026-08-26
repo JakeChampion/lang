@@ -26,6 +26,7 @@ import "./parser";
 import "./asm_ir";
 import "./asm_arm64_ir";
 import "./irlower";
+import "./ircore";
 
 // main wraps `run` in the shared rc-over-release guard: this driver is
 // exactly where #6021 hid — a native-compiler rc bug that corrupted the
@@ -113,7 +114,7 @@ function run(): i32 {
         eprint(fnfld_errs);
         return 1;
     }
-    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    var lm: parser.Module = ircore.lift_lambdas(mod);
     // Build the whole-program signature view: this module's own funcs/structs
     // plus every -ir-sigs sibling's. Each module is run through
     // infer_ret_types_module FIRST so the side-tables (derived over all_funcs)
@@ -133,7 +134,7 @@ function run(): i32 {
             Err(e) => { sok = false; },
         }
         if (sok) {
-            var smod: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(parser.parse_module(lexer.tokenize(ssrc))));
+            var smod: parser.Module = parser.infer_ret_types_module(ircore.lift_lambdas(parser.parse_module(lexer.tokenize(ssrc))));
             var sf: i32 = 0;
             while (sf < smod.funcs.len()) { all_funcs = all_funcs.append(smod.funcs[sf]); sf = sf + 1; }
             var sc: i32 = 0;
@@ -144,7 +145,7 @@ function run(): i32 {
     // `-ir-probe`: report the IR-eligibility frontier instead of emitting asm —
     // a per-function breakdown of what lowers vs what bails.
     if (probe) {
-        print(asm_ir.eligibility_report_known(lm, known));
+        print(ircore.eligibility_report_known(lm, known));
         return 0;
     }
     // `-ir-needs`: report the module's closed runtime-need set, one per line.
@@ -163,7 +164,7 @@ function run(): i32 {
     // The unit/extern/sigs flags are x86-64-only and ignored here, matching
     // the old mirror driver (which ignored unknown flags).
     if (target == "arm64-linux") {
-        if (use_ir && asm_ir.all_eligible(lm)) {
+        if (use_ir && ircore.all_eligible(lm)) {
             print(asm_arm64_ir.emit_module_ir(lm, false));
         } else {
             // IR-or-error (#3457 slice 5): no AST fallback. With this the `-ir`-off

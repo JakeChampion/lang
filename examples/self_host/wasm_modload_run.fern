@@ -33,7 +33,6 @@ import "./parser";
 import "./flatten";
 import "./wasm_ir";
 import "./irlower";
-import "./asm_ir";
 import "./modloader";
 import "./wasm_objfile";
 

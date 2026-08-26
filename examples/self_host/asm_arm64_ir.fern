@@ -9,13 +9,13 @@
 // Op[] produces a compatible layout; only the instruction selection differs.
 //
 // Reuse: the backend-INDEPENDENT analysis (eligibility, array-return tracking,
-// the helper-name map, the control-flow label resolver) lives in asm_ir and is
-// shared from there (asm_ir.all_eligible / ir_eligible / array_ret_fns /
-// is_fern_helper / ir_helper_symbol / br_target). The heap / RC / alloc runtime
-// is reused verbatim from asm_arm64.emit_runtime (asm_arm64 does NOT import
-// this file, so there is no cycle — unlike x86, where asm.fern imports asm_ir
-// and the runtime had to be duplicated). This file is therefore ONLY the arm64
-// codegen for the op stream.
+// the helper-name map, the control-flow label resolver) is ircore's
+// (ircore.all_eligible / ir_eligible / array_ret_fns / is_fern_helper /
+// ir_helper_symbol / br_target), and the GAS text this backend emits
+// identically to x86 — the literal / shape labels, their `.data` blocks, the
+// runtime `.globl` list, the peephole byte scanners — is asmcore's. Nothing
+// here imports asm_ir. This file is therefore ONLY the arm64 codegen for the
+// op stream.
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
 // driver (asm_ir_run -target arm64-linux) — asm_arm64.fern and the arm64 bootstrap stay
@@ -28,8 +28,8 @@ import "./ir";
 import "./irlower";
 import "./irverify";
 import "./irverifygate";
-import "./asm_ir";
 import "./lexer";
+import "./ircore";
 
 // fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
 // (always <= 0 — locals live below the frame pointer). Inlined copies of
@@ -661,9 +661,9 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 153) {  // loop
             s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else if (o.kind_tag == 157) {  // br
-            s = s.write("    b " + asm_ir.br_target(r.ops, lp, i, o.i32_imm) + "\n");
+            s = s.write("    b " + ircore.br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind_tag == 158) {  // brif
-            s = s.write("    ldr x0, [sp], #16\n    cbnz x0, " + asm_ir.br_target(r.ops, lp, i, o.i32_imm) + "\n");
+            s = s.write("    ldr x0, [sp], #16\n    cbnz x0, " + ircore.br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind_tag == 87) {  // arr_make
             // n element values on the operand stack (element n-1 on top).
             // __fern_arr_box(cap=n) → data ptr in x0; element i at [data+(i+1)*8].
@@ -776,7 +776,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern the bytes in .rodata and push the address of
-            // its STATIC box (asm_ir.emit_str_box_data_from). box = [rc=-1][data][len],
+            // its STATIC box (asmcore.emit_str_box_data_from). box = [rc=-1][data][len],
             // so data@box+0 / len@box+8 are what __fern_str_concat / _eq already
             // read, and the immortal rc makes every reclaim path a no-op (#7080).
             //
@@ -790,7 +790,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.mark_heap();
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
-            var boxlbl: string = asm_ir.str_box_label(s, lo.idx);
+            var boxlbl: string = asmcore.str_box_label(s, lo.idx);
             s = s.write("    adrp x0, " + boxlbl + "\n");
             s = s.write("    add x0, x0, :lo12:" + boxlbl + "\n");
             s = s.write("    str x0, [sp, #-16]!\n");
@@ -1426,7 +1426,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // overwrite it with the shape pointer, leaving cap@data-16 intact.
             s = s.mark_heap();
             var nf: i32 = o.i32_imm;
-            var smlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            var smlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
             s = smlo.state;
             s = s.write("    mov x0, #" + util.i32_to_string(nf + 1) + "\n    bl __fern_arr_box\n");
             s = s.write("    adrp x1, " + smlo.label + "\n");
@@ -1443,7 +1443,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // block and push the block's address. No allocation, no field stores
             // — where struct_make emits an __fern_arr_box call plus nf pops, this
             // is one adrp/add pair. The block itself is written by the SHARED
-            // asm_ir.emit_const_agg_data (identical layout and directives on both
+            // asmcore.emit_const_agg_data (identical layout and directives on both
             // register backends).
             //
             // This needed a data relocation in the in-process arm64 assembler
@@ -1454,7 +1454,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // on the constant fall through (four union fixtures returned 0
             // instead of their value). arm64_gas_numeric_tok now separates a
             // number from a symbol, and arm64_gas_link resolves the queued slot.
-            var kshp: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, ir.const_struct_type(o.str));
+            var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(o.str));
             s = kshp.state;
             var kpack: string = kshp.label + "|";
             var kvals: string[] = ir.const_struct_values(o.str);
@@ -1496,7 +1496,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // SAME .S label struct_make writes / variant_is compares) at offset 0.
             // Leaves the box on the stack. Used by the enum-donor in-place reuse to
             // re-shape a dead scalar-enum box as a same-size struct.
-            var sslo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            var sslo: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
             s = sslo.state;
             s = s.write("    ldr x0, [sp]\n");
             s = s.write("    adrp x1, " + sslo.label + "\n");
@@ -1505,7 +1505,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 145) {  // variant_is
             // pop variant box; shape ptr @0; compare to the interned variant name
             // (pointer equality). Push 1 if equal, else 0.
-            var vlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
             s = vlo.state;
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n");
             s = s.write("    adrp x1, " + vlo.label + "\n");
@@ -1534,7 +1534,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string(o.i32_imm * 8) + "]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 159) {  // drop
             s = s.write("    add sp, sp, #16\n");
-        } else if (o.kind_tag == 149 && asm_ir.is_fern_helper(o.str)) {  // call_direct
+        } else if (o.kind_tag == 149 && ircore.is_fern_helper(o.str)) {  // call_direct
             // Runtime RC helper — asm_arm64's stack-arg ABI + symbols (drop-in):
             // the arg(s) are already on the rt-stack (the helper reads [sp]);
             // call, caller-clean the args, push the result (helpers return the
@@ -1622,12 +1622,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // fields yet (leak-safe pass-through); still needs the heap runtime.
             // (__fern_snapshot_dec — the shallow consume-rebind free — IS real on
             // arm64 now; only the per-type deep-drop helpers remain pass-throughs.)
-            if (asm_ir.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + asm_ir.field_reclaim_type(o.str)); }
+            if (ircore.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
             // __struct_drop_<T> (#3457): record the type so emit_module_ir_unit_arm64
             // emits a per-type pass-through body (leak-safe; arm64 does NOT deep-drop
             // yet, mirroring __field_reclaim). Still needs the heap runtime.
-            if (asm_ir.is_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("struct_drop:" + asm_ir.struct_drop_type(o.str)); }
-            s = s.write("    bl " + asm_ir.ir_helper_symbol(o.str) + "\n");
+            if (ircore.is_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
+            s = s.write("    bl " + ircore.ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(o.i32_imm * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 149) {  // call_direct
@@ -1639,7 +1639,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // (emitted by asm_arm64.emit_runtime). Register its need so the body
             // is emitted; the shim reads its params off the arm64 stack ABI and
             // marshals them into the AAPCS64 arg registers.
-            if (asm_ir.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
+            if (ircore.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
             var h: i32 = 0;
             while (h < argc / 2) {
                 var lo: i32 = h * 16;
@@ -1678,7 +1678,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
                         && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
                     var dbn: string = ddbn;
-                    var dlit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, dbn);
+                    var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
                     s = dlit.state;
                     var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
                     s = s.write("    adrp x2, " + dlit.label + "\n");
@@ -1724,7 +1724,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                     var dvi: i32 = 0;
                     while (dvi < s.struct_decls.len()) {
                         if (s.struct_decls[dvi].enum_owner == ddbn) {
-                            var vlit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, s.struct_decls[dvi].name);
+                            var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
                             s = vlit.state;
                             s = s.write("    adrp x2, " + vlit.label + "\n");
                             s = s.write("    add x2, x2, :lo12:" + vlit.label + "\n");
@@ -1765,7 +1765,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // the shape; cap@data-16 drives the free size). The value (one word)
             // waits on the operand stack (memory, callee-preserved) across the
             // alloc and is popped after — opt_make's alloc-then-store discipline.
-            var dbl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            var dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
             s = dbl.state;
             s = s.mark_heap();
             s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");  // x0 = cell ptr
@@ -1784,7 +1784,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // value rides the operand stack (which __fern_alloc preserves)
             // across the alloc, so the hit path reloads it as the Some payload.
             s = s.mark_heap();
-            var dcl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
             s = dcl.state;
             var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
             var dcend: string = lp + "dcend" + util.i32_to_string(i);
@@ -1996,7 +1996,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 // emit_runtime and materialises the output. Keeping the runtime on the caller
 // side is what lets asm_arm64 import this module (for the use_ir dispatch)
 // without a cycle: asm_arm64_ir never imports asm_arm64. Caller must ensure
-// asm_ir.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
+// ircore.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
 // emit_ir_start writes the program entry: capture argc / argv / envp, push a
 // frame, call __fn_main, exit with its result. Both IR emitters use it — the
 // whole-program emit_body and the per-module emit_module_ir_unit_arm64, which
@@ -2174,7 +2174,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // them per function is O(n^2) and OOMs the bump heap on a large module.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, mod.structs, asm_ir.array_ret_fns(mod), bparams), mod.trait_reqs),
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, mod.structs, ircore.array_ret_fns(mod), bparams), mod.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
         // Struct returns resolve against the EmitState's struct view, which on
         // this path is wider than the module's own decls.
@@ -2216,7 +2216,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_for_borrow(fns, all_structs, asm_ir.array_ret_fns_of(fns), bparams),
+        ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
         opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls)),
@@ -2231,17 +2231,17 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
         i = i + 1;
     }
     if (s.const_aggs.len() > agg0) {
-        s = asm_ir.emit_const_agg_data_from(s, agg0);
+        s = asmcore.emit_const_agg_data_from(s, agg0);
         s = s.write("    .text\n");
     }
     if (s.string_lits.len() > lit0) {
         s = s.write("    .section .rodata\n");
         var li: i32 = lit0;
         while (li < s.string_lits.len()) {
-            s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            s = s.write(asmcore.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
-        s = asm_ir.emit_str_box_data_from(s, lit0);
+        s = asmcore.emit_str_box_data_from(s, lit0);
         s = s.write("    .text\n");
     }
     return s;
@@ -2744,7 +2744,7 @@ function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): 
         if (s.struct_decls[vi].enum_owner == ety) {
             var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls[vi].name);
             if (offs.len() > 0) {
-                var vlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, s.struct_decls[vi].name);
+                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[vi].name);
                 s = vlo.state;
                 var vls: string = util.i32_to_string(vlabel);
                 s = s.write("    ldr x0, [x21]\n");             // shape ptr @0
@@ -2824,7 +2824,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
         s = s.write("    .section .rodata\n");
         var li: i32 = 0;
         while (li < s.string_lits.len()) {
-            s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            s = s.write(asmcore.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
     }
@@ -2849,13 +2849,13 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     // starting in it reads zeroes as a block header.
     if (reloc) { s = s.write("    .align 8\n.Lfern_sbox_begin:\n"); }
     if (s.string_lits.len() > 0) {
-        s = asm_ir.emit_str_box_data_from(s, 0);
+        s = asmcore.emit_str_box_data_from(s, 0);
     }
     if (reloc) { s = s.write("    .section .data\n.Lfern_sbox_end:\n"); }
     // .data: one block per static aggregate constant (#6149), after the string
     // pool because a block's first word is a shape POINTER into it.
     if (reloc) { s = s.write("    .align 8\n.Lfern_cagg_begin:\n"); }
-    s = asm_ir.emit_const_agg_data(s);
+    s = asmcore.emit_const_agg_data(s);
     if (reloc) { s = s.write("    .section .data\n.Lfern_cagg_end:\n"); }
     if (s.shape_lits.len() > 0) {
         s = s.write("    .section .rodata\n");
@@ -4675,7 +4675,7 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 // wait4 260→7). The BSD WIFEXITED/WTERMSIG status encoding matches Linux, so
 // the decode below is the same one the Fern helper does.
 function emit_rt_subprocess(s: asmcore.EmitState): asmcore.EmitState {
-    var prLitA: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "ProcessResult");
+    var prLitA: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
     s = prLitA.state;
     s = s.write(".globl __fn___fern_subprocess\n");
     s = s.write(".type __fn___fern_subprocess, %function\n");
@@ -5089,26 +5089,26 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 
 function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     if (s.has_need("heap")) {
-        var fsPre: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "FileStat");
+        var fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
         s = fsPre.state;
-        var prPre: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "ProcessResult");
+        var prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
         s = prPre.state;
         // IoError variant shapes for __fern_io_error (#4624, the arm64 leg
         // of #4370) — interned early for the same reason as FileStat above.
-        var ioe1: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "NotFound");
+        var ioe1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");
         s = ioe1.state;
-        var ioe2: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "PermissionDenied");
+        var ioe2: asmcore.ShapeRefOut = asmcore.shape_ref(s, "PermissionDenied");
         s = ioe2.state;
-        var ioe3: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "AlreadyExists");
+        var ioe3: asmcore.ShapeRefOut = asmcore.shape_ref(s, "AlreadyExists");
         s = ioe3.state;
-        var ioe4: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Interrupted");
+        var ioe4: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Interrupted");
         s = ioe4.state;
-        var ioe5: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Other");
+        var ioe5: asmcore.ShapeRefOut = asmcore.shape_ref(s, "Other");
         s = ioe5.state;
         // InvalidUtf8 is constructed by rt_src_read_file's D9 validation
         // (#5714) — the one IoError variant no compiler user-code names, so
         // it needs the same early intern as the rest.
-        var ioe6: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "InvalidUtf8");
+        var ioe6: asmcore.ShapeRefOut = asmcore.shape_ref(s, "InvalidUtf8");
         s = ioe6.state;
     }
     // .rodata: emit each interned string literal as a
@@ -6561,7 +6561,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // which is what makes that emitter deletable. Declines stay diagnosable:
 // FERN_STRICT_IR=1 makes the shared gate exit(3) naming the bail site, so a
 // regression says WHICH construct left the subset rather than merely that one
-// did. The gate itself is `asm_ir.all_eligible` — the SAME eligibility the x86
+// did. The gate itself is `ircore.all_eligible` — the SAME eligibility the x86
 // path uses — so a program's routing does not differ between the backends; only
 // the instruction selection does.
 //
@@ -6589,9 +6589,9 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
     // slice 5 a script on arm64 simply failed all_eligible (no main) and fell
     // through to the AST emitter — which is exactly the fall-through this
     // function removes, so without the normalise every script became an error.
-    var lm: parser.Module = asm_ir.script_normalized(asm_ir.lift_lambdas(mod));
-    if (asm_ir.all_eligible(lm)) { return emit_module_ir(lm, darwin); }
-    asm_ir.eprint_ir_ineligible();
+    var lm: parser.Module = ircore.script_normalized(ircore.lift_lambdas(mod));
+    if (ircore.all_eligible(lm)) { return emit_module_ir(lm, darwin); }
+    ircore.eprint_ir_ineligible();
     exit(1);
     return "";
 }
@@ -6637,14 +6637,14 @@ function peephole_push_pop_arm64(asm: string): string {
             var bs: i32 = ln;
             while (bs < i && asm[bs] == 32) { bs = bs + 1; }
             var folded: boolean = false;
-            if (push_at >= 0 && asm_ir.pp_at(asm, bs, i, "ldr ")) {
+            if (push_at >= 0 && asmcore.pp_at(asm, bs, i, "ldr ")) {
                 // `ldr DST, [sp], #16` — DST runs from bs+4 to the comma.
                 var dlo: i32 = bs + 4;
                 var dhi: i32 = dlo;
                 while (dhi < i && asm[dhi] != 44) { dhi = dhi + 1; }
-                if (asm_ir.pp_at(asm, dhi, i, ", [sp], #16") && dhi + 11 == i && !pp_arm64_marker_reg(asm, dlo, dhi)) {
+                if (asmcore.pp_at(asm, dhi, i, ", [sp], #16") && dhi + 11 == i && !pp_arm64_marker_reg(asm, dlo, dhi)) {
                     if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
-                    if (!asm_ir.pp_eq_bytes(asm, src_lo, src_hi, dlo, dhi)) {
+                    if (!asmcore.pp_eq_bytes(asm, src_lo, src_hi, dlo, dhi)) {
                         strbuf_append("    mov ");
                         strbuf_append(slice_unchecked(asm, dlo, dhi));
                         strbuf_append(", ");
@@ -6656,7 +6656,7 @@ function peephole_push_pop_arm64(asm: string): string {
                     folded = true;
                 }
             }
-            if (!folded && push_at >= 0 && asm_ir.pp_at(asm, bs, i, "add sp, sp, #16")
+            if (!folded && push_at >= 0 && asmcore.pp_at(asm, bs, i, "add sp, sp, #16")
                     && bs + 15 == i && !pp_arm64_marker_reg(asm, src_lo, src_hi)) {
                 // The push is dead: this line discards exactly what it wrote.
                 // `add sp, sp, #16` is what a `drop` lowers to, and the length
@@ -6670,12 +6670,12 @@ function peephole_push_pop_arm64(asm: string): string {
             }
             if (!folded) {
                 push_at = 0 - 1;
-                if (asm_ir.pp_at(asm, bs, i, "str ")) {
+                if (asmcore.pp_at(asm, bs, i, "str ")) {
                     // `str SRC, [sp, #-16]!` — SRC runs from bs+4 to the comma.
                     var slo: i32 = bs + 4;
                     var shi: i32 = slo;
                     while (shi < i && asm[shi] != 44) { shi = shi + 1; }
-                    if (asm_ir.pp_at(asm, shi, i, ", [sp, #-16]!") && shi + 13 == i) {
+                    if (asmcore.pp_at(asm, shi, i, ", [sp, #-16]!") && shi + 13 == i) {
                         push_at = ln;
                         src_lo = slo;
                         src_hi = shi;
@@ -6755,13 +6755,13 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // __fern_arr_box / …) `.globl` so sibling library units' `bl __fern_*`
     // externs resolve against the single copy it emits. Target-independent
     // symbol list — reused from asm_ir.
-    if (is_entry && globl_defs) { s = asm_ir.emit_runtime_globls(s); }
+    if (is_entry && globl_defs) { s = asmcore.emit_runtime_globls(s); }
     // Derived ONCE over the whole-program all_funcs (#3454) — per-fn derivation
     // is O(n^2) and OOMs the bump heap (mirrors emit_body / x86
     // emit_module_funcs).
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_for_borrow(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs), bparams),
+        ...irlower.fn_sigs_for_borrow(all_funcs, all_structs, ircore.array_ret_fns_of(all_funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
         // These two stay scoped to THIS module rather than the whole program.
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
