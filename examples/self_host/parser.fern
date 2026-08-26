@@ -19497,8 +19497,15 @@ function main(): i32 {
 
     // Struct-pattern parameters, both spellings (#7306). The pattern head
     // desugars to a holder param of the annotated type plus a leading
-    // struct-destructure StmtVar carrying the `@sd:` marker — the same shape
-    // `let Point { x, y } = e;` produces, so it rides the existing lowering.
+    // struct-destructure StmtVar, so it rides the existing lowering.
+    //
+    // Its marker carries `@pp;` ahead of the `@sd:` tag. That is the ONE
+    // thing separating this prelude from the `let Point { x, y } = p;` a
+    // programmer writes over a parameter, which is otherwise identical —
+    // same binding list, same `@sd:` tag, same holder initialiser — and
+    // without it `-fmt` folded the body's own destructure into the
+    // signature (#7523). Pinning the full marker here is what keeps the two
+    // distinguishable.
     //
     // The NAMED-function assertion is the load-bearing one: before this
     // landed the parser took `{ x, y }` for the function BODY, so the failure
@@ -19518,7 +19525,7 @@ function main(): i32 {
     match (modSP.funcs[0].body[0]) {
         StmtVar(v) => {
             if (v.name != "x,y") { return 1157; }
-            if (v.type_name != "@sd:Point:x,y") { return 1158; }
+            if (v.type_name != "@pp;@sd:Point:x,y") { return 1158; }
             match (v.init) {
                 ExprIdent(id) => { if (id.name != spHolder) { return 1159; } },
                 _ => { return 1160; }
@@ -19535,7 +19542,7 @@ function main(): i32 {
     match (modSPR.funcs[0].body[0]) {
         StmtVar(v) => {
             if (v.name != "a,y") { return 1166; }
-            if (v.type_name != "@sd:Point:x,y") { return 1167; }
+            if (v.type_name != "@pp;@sd:Point:x,y") { return 1167; }
         },
         _ => { return 1168; }
     }
@@ -19549,7 +19556,7 @@ function main(): i32 {
     if (modSPA.funcs[0].params[0].name != "w") { return 1172; }
     match (modSPA.funcs[0].body[0]) {
         StmtVar(v) => {
-            if (v.type_name != "@sd:Point:x,y") { return 1173; }
+            if (v.type_name != "@pp;@sd:Point:x,y") { return 1173; }
             match (v.init) {
                 ExprIdent(id) => { if (id.name != "w") { return 1174; } },
                 _ => { return 1175; }
@@ -19575,7 +19582,7 @@ function main(): i32 {
                     match (lm.body[0]) {
                         StmtVar(dv) => {
                             if (dv.name != "x,y") { return 1185; }
-                            if (dv.type_name != "@sd:Point:x,y") { return 1186; }
+                            if (dv.type_name != "@pp;@sd:Point:x,y") { return 1186; }
                             match (dv.init) {
                                 ExprIdent(id) => { if (id.name != lm.params[0].name) { return 1187; } },
                                 _ => { return 1188; }
@@ -19597,7 +19604,7 @@ function main(): i32 {
                     if (lm.body.len() != 2) { return 1193; }
                     match (lm.body[0]) {
                         StmtVar(dv) => {
-                            if (dv.type_name != "@sd:Point:x,y") { return 1194; }
+                            if (dv.type_name != "@pp;@sd:Point:x,y") { return 1194; }
                         },
                         _ => { return 1195; }
                     }
