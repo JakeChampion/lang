@@ -416,6 +416,18 @@ is deleted from `runtime_need_deps` and its `has_need`/OR-gate from the
 emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
 `has_need` and the wasm `module_uses_*` couplings are deleted outright.
 
+Until then the machinery has an ordering rule that is easy to get wrong,
+because breaking it produces no diagnostic: **a route seeds needs, then closes,
+then gates.** `close_needs` is what turns a root into its declared deps — a gate
+reading the set before it sees a subset of what the runtime actually emits.
+arm64 had `_start` (which gates its envp save on `heap`) ahead of the closure on
+both routes; it stayed latent only because every op site that seeds a
+heap-implying root marks `heap` alongside it, so `heap` never arrived by the
+closure alone. `internal/sourcelint` now pins the order, deriving the
+"volatile" need set — the names `runtime_need_deps` can add — from the table
+itself. An emitted-asm test cannot cover this: the fix is byte-neutral against
+every program that compiles today, which is the same property that hid the bug.
+
 ## Constraints the migration must hold
 
 - **Byte-identical self-host fixpoint.** `TestSelfHostLoadFixpointX86_64` /

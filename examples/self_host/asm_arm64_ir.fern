@@ -2179,6 +2179,11 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
         s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
         fi = fi + 1;
     }
+    // Ahead of _start, which gates its envp save on the heap need. close_needs
+    // is what turns a root like str_concat into that heap need, so reading it
+    // first would leave __fern_envp null in a program that still gets the heap
+    // runtime.
+    s = s.close_needs();
     return emit_ir_start(s, darwin);
 }
 
@@ -6785,10 +6790,10 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    // emit_body takes the runtime-dependency closure itself, ahead of the _start
+    // it ends with. The seeds below are marker needs with no declared deps, so
+    // they need no second pass.
     s = emit_body(mod, s, darwin);
-    // Expand the declarative runtime-dependency closure (see emit_module's IR
-    // dispatch) before emit_runtime gates each helper on has_need.
-    s = s.close_needs();
     // #4355: replaced-STRING-field admission — this driver route is
     // single-module whole-program, so mod.funcs IS the full read scope.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
@@ -6895,12 +6900,13 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // args() need. Inert (empty) on the single-unit path.
     var en: i32 = 0;
     while (en < extra_needs.len()) { s = s.need(extra_needs[en]); en = en + 1; }
+    // Before _start, which gates its envp save on the closed heap need.
+    s = s.close_needs();
     // _start belongs only to the entry (one program entry point). This path is
     // Linux-only — see the `emit_ir_runtime(s, false)` below.
     if (is_entry) {
         s = emit_ir_start(s, false);
     }
-    s = s.close_needs();
     // The entry emits the single shared __fern_* runtime (its helpers are already
     // `.globl`, so sibling `bl __fern_*` externs resolve against it) AND its own
     // .rodata pools (emit_runtime calls emit_rodata_pools_arm64). A non-entry
