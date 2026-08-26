@@ -1576,3 +1576,75 @@ E038 E040 E041 E042 E044 E051 E052 E064
 E038's count also drops with the same fix (the collision typed a generic
 parameter as the struct, so every call against it mismatched), but it still
 false-positives elsewhere and stays excluded.
+
+## 2026-08-26 — E043 says what to write, and the advice gap gets counted (#7442)
+
+`#7380` / PR `#7440` fixed the E043 build-gate half and left the text. Native
+named the method set it checked against and the import that would supply it;
+this checker emitted the same code at the same position with no advice at all.
+
+### The population count, done behaviourally
+
+The issue asked whether E043 was alone or a class, and asked for the answer to
+come from running both binaries rather than reading their sources — three
+population counts in this repo were done by text search and all three were
+wrong. 750 error programs (every `src` in the `self_host_checker_*_test.go`
+corpora) through `fern -check` and `fern -interp checker_codes_run.fern`,
+diffing message text per code:
+
+| code | messages whose native advice the self-host did not reproduce | kind |
+| --- | --- | --- |
+| E049 | 12 | phrasing — native names the captured variable |
+| E038 | 8 | **content** — `(<unknown>) => i32` vs `fn` |
+| E063 | 8 | phrasing — native names the function |
+| E043 | 7 | **absent** — no advice at all |
+| E021 | 3 | content — native gives expected/got signatures |
+| E036 | 3 | phrasing |
+| E014 | 2 | absent — no "did you mean" |
+| E034 | 1 | **content** — `expected i32` vs `expected f64` |
+| E055 | 1 | phrasing |
+| E069 | 1 | phrasing |
+
+So it is a class, and a three-way one: E043 and E014 say nothing, E034/E038/E021
+say something *different* (which is a checker bug rather than a hint gap), and
+the rest differ in prose. Only E043 is closed here.
+
+### What landed
+
+`unknown_method_advice` / `unknown_method_message` in `checker.fern` are the
+port of native's `unknownMethodMessage` plus the scalar-module path above it.
+Both E043 sites reach it — the method-call arms (i32 / f64 / string / array) and
+the field-READ arm, which had a second message for the same mistake. `Scope`
+gained the module's `imports` (paths as written): the advice is conditional on
+the reader's own import list, and telling someone to add an import they already
+have is unfollowable in the same way a wrong module name is. `util.fern` gained
+`levenshtein` / `suggest`, the byte-indexed port of `internal/diag`'s, so the two
+suggest from the same budget.
+
+E043 divergences over the 750-probe corpus: **7 → 0**, with every other code's
+count unchanged.
+
+### The one branch that is deliberately not reproduced
+
+Native's `(it has: …)` list is filtered by the receiver's ELEMENT type —
+`methodsFor` → `boundsAdmitReceiver`. With `std/array` imported the lists are
+74 names for `i32[]` and 71 for `string[]`, disjoint by 16 and 13 names
+respectively, and this checker has no bound solver to reproduce that with.
+So the list is emitted only for a namespace whose methods all declare a
+CONCRETE receiver (`namespace_is_exact`): the builtins, and every scalar and
+string method. An array namespace with any module-supplied method falls back to
+`no method "x" on i32[]` with no list, because the unfiltered list would
+advertise an API the receiver does not have — which native's own note calls
+worse than the bare typo.
+
+### Gate note
+
+The six new `hintTextCases` rows were run against the UNFIXED checker first and
+all six went red, so none of them passes for a reason unrelated to the rule —
+the `dyn-unsafe-assoc-fn` failure mode the issue warns about. None is parked in
+`hintTextDivergences`; that table is unchanged.
+
+The stdin-fed `checker_codes_run.fern` driver does not resolve imports, so no
+row here can exercise an imported method surface. The import-dependent halves
+(the string list with `std/string` present, the array fallback with `std/array`
+present) are reachable only through the modload driver and are unpinned.

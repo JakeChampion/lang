@@ -914,6 +914,11 @@ pub struct Scope {
   structs: StructTable,
   unions: UnionSig[],
   methods: MethodSig[],
+  // The module's own `import` paths, as written ("std/string"). Shared by
+  // every scope in the module exactly as `sigs` and `structs` are. The
+  // unresolved-method hint reads it: telling a reader to add an import they
+  // already have is unfollowable, and doing what it says changes nothing.
+  imports: string[],
   // loop_depth tracks nesting depth for break / continue
   // validation. Incremented inside StmtWhile / StmtFor
   // bodies. break / continue at depth 0 surface t_unknown.
@@ -1106,32 +1111,32 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: us, methods: ms, imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
-function new_scope_full(st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[]): Scope {
+function new_scope_full(st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[], imports: string[]): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
   var ns: string[] = s.names.append(name);
   var ts: Type[] = s.types.append(t);
-  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // with_impls attaches the module's impl table + trait requirement records
 // to a scope so call_diags can run the E021 generic-bound conformance
 // check (#4842). Applied to the func-body scope in check_module.
 function (s: Scope) with_impls(impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
 // trait bounds. Read by assoc_call_req to resolve `T.zero()`.
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // resolve_type resolves a type SPELLING as written in this scope: the enclosing
@@ -1150,7 +1155,7 @@ function (s: Scope) resolve_type(name: string): Type {
 function (s: Scope) bind_tpvar(name: string, tp: string): Scope {
   var vs: string[] = s.tpvars.append(name);
   var ps: string[] = s.tpvar_tps.append(tp);
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: vs, tpvar_tps: ps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: vs, tpvar_tps: ps };
 }
 
 // tpvar_of returns the type parameter a value binding was declared with, or ""
@@ -1468,11 +1473,11 @@ function for_iter_is_range(iter: parser.Expr): boolean {
 }
 
 function (s: Scope) enter_loop(): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 function (s: Scope) with_ret_type(rt: Type): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -2031,6 +2036,202 @@ function (s: Scope) has_sig(name: string): boolean {
 
 // has_array_recv_method is array_recv_method's predicate form, same rules,
 // without the sentinel MethodSig its miss allocates.
+// --- E043 unknown-method advice (the native unknownMethodMessage port) -------
+//
+// Native names the method set it checked against and the import that would
+// supply it; this checker emitted the same code at the same position and said
+// nothing at all (#7442). Three of native's four branches are reproduced
+// exactly. The fourth — the "(it has: …)" list — is emitted only for a
+// namespace whose methods all declare a CONCRETE receiver type, where the two
+// checkers provably build the same set. Native filters an element-polymorphic
+// namespace by the receiver's element type (`Array` holds `sum` for i32[] and
+// `join` for string[] side by side) and this checker has no bound solver to do
+// it with; the unfiltered list would advertise an API the receiver does not
+// have, which native's own note calls worse than the bare typo.
+
+// retired_collection_spelling: the value-returning name that replaced a
+// mutable-looking collection method removed by the pure-collection API, or ""
+// for a name that was never one. They resolve to nothing now, so the reader is
+// left guessing at a rename they never saw.
+function retired_collection_spelling(ns: string, method: string): string {
+  if (ns == "Array" && method == "push") { return "append"; }
+  if (ns == "Array" && method == "set") { return "with"; }
+  if (ns == "Map" && method == "set") { return "insert"; }
+  if (ns == "Map" && method == "delete") { return "without"; }
+  if (ns == "Map" && method == "clear") { return "cleared"; }
+  return "";
+}
+
+// scalar_module_for: the stdlib module carrying a scalar type's method surface,
+// "" for a type whose methods are not in one. u8 rides std/i32, not std/u32 —
+// every `pub function (b: u8) …` in the stdlib is declared there, so naming
+// std/u32 made the hint unfollowable.
+function scalar_module_for(t: Type): string {
+  match (t) {
+    TypeI32(it) => {
+      var lb: string = int_label(it);
+      if (lb == "u64") { return "std/u64"; }
+      if (lb == "u8") { return "std/i32"; }
+      if (lb == "u32" || lb == "u16") { return "std/u32"; }
+      if (lb == "i64") { return "std/i64"; }
+      if (lb == "char") { return ""; }
+      return "std/i32";
+    },
+    TypeFloat(_) => { return "std/float"; },
+    TypeString(_) => { return "std/string"; },
+    _ => { return ""; }
+  }
+  return "";
+}
+
+// scalar_method_module: scalar_module_for narrowed to the names that module
+// actually defines for every scalar. to_string is the f-string desugar target
+// and the case that motivates this; keeping the set tight is what stops the
+// hint naming a module that would not help.
+function scalar_method_module(t: Type, method: string): string {
+  var mod: string = scalar_module_for(t);
+  if (mod.len() == 0) { return ""; }
+  if (method == "to_string" || method == "to_string_radix" || method == "to_string_padded"
+      || method == "to_string_with_sep" || method == "to_string_prec") { return mod; }
+  return "";
+}
+
+// module_imported: the module being checked names `path` in its own import
+// list. Direct imports only — reaching a module transitively does not put its
+// methods in scope, so a transitive match would suppress the hint for exactly
+// the reader who still needs it.
+function (s: Scope) module_imported(path: string): boolean {
+  return util.index_of_str(s.imports, path) >= 0;
+}
+
+// methods_in_namespace: the method names registered on `ns`, sorted so a
+// suggestion is deterministic when two candidates tie on edit distance. The
+// unconditional builtins are named here rather than read out of a table: this
+// checker resolves them at their use sites, where native keeps them in the same
+// Info.Methods map it lists from.
+function (s: Scope) methods_in_namespace(ns: string): string[] {
+  var out: string[] = [];
+  if (ns == "Array") { out = ["append", "len", "with"]; }
+  if (ns == "string") { out = ["as_bytes", "len"]; }
+  for method in s.methods {
+    if (method.receiver_type == ns) { out = push_str_unique_sorted(out, method.name); }
+  }
+  return out;
+}
+
+// namespace_is_exact: every method on `ns` declares a concrete receiver, so
+// this checker's set is the one native would list. An array namespace with any
+// module-supplied method fails it — that is the element-polymorphic case, and
+// `__method_Array_<name>` free functions carry no receiver spelling to test.
+function (s: Scope) namespace_is_exact(ns: string): boolean {
+  if (ns != "Array") { return true; }
+  for method in s.methods {
+    var rt: string = method.receiver_type;
+    if (rt.len() > 2 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") { return false; }
+  }
+  return !s.has_any_array_module_method();
+}
+
+// has_any_array_module_method: some `__method_Array_<name>` free function is in
+// scope, i.e. std/array (or another array-method provider) was imported. The
+// bare and bundler-mangled spellings both count, as they do in has_array_method.
+function (s: Scope) has_any_array_module_method(): boolean {
+  var target: string = "__method_Array_";
+  var tn: i32 = target.len();
+  for sig in s.sigs.sigs {
+    var nm: string = sig.name;
+    var at: i32 = 0;
+    while (at + tn <= nm.len()) {
+      if (slice_unchecked(nm, at, at + tn) == target) { return true; }
+      at = at + 1;
+    }
+  }
+  return false;
+}
+
+// push_str_unique_sorted inserts `v` in sorted position, dropping a duplicate.
+function push_str_unique_sorted(xs: string[], v: string): string[] {
+  var out: string[] = [];
+  var placed: boolean = false;
+  for x in xs {
+    if (x == v) { return xs; }
+    if (!placed && v < x) { out = out.append(v); placed = true; }
+    out = out.append(x);
+  }
+  if (!placed) { out = out.append(v); }
+  return out;
+}
+
+// unknown_method_message: the E043 text for a method call on a receiver whose
+// namespace has no such method. `ns` is the namespace its methods register
+// under ("Array", "string", "i32"), `label` the receiver as the reader spelled
+// it.
+function (s: Scope) unknown_method_message(ns: string, method: string, label: string, recv: Type): string {
+  var base: string = "no method \"" + method + "\" on " + label;
+  var repl: string = retired_collection_spelling(ns, method);
+  if (repl.len() > 0) {
+    return base + " — the in-place spelling was removed; use \"" + repl
+        + "\", which returns the updated " + ns + " (assign the result back)";
+  }
+  var exact: boolean = s.namespace_is_exact(ns);
+  var names: string[] = s.methods_in_namespace(ns);
+  if (exact) {
+    var did: string = util.suggest(method, names);
+    if (did.len() > 0) { return base + " — did you mean \"" + did + "\"?"; }
+  }
+  var mod: string = scalar_module_for(recv);
+  if (mod.len() > 0 && !s.module_imported(mod)) {
+    return base + " — if it comes from " + mod + ", add `import \"" + mod + "\"`";
+  }
+  if (exact && names.len() > 0) {
+    var listed: string = "";
+    for n in names {
+      if (listed.len() > 0) { listed = listed + ", "; }
+      listed = listed + n;
+    }
+    return base + " (it has: " + listed + ")";
+  }
+  return base;
+}
+
+// unknown_method_advice: the E043 text for a method call on a non-struct
+// receiver — native's two paths at this site, with the bare message as the
+// fallback both fall through to.
+function (s: Scope) unknown_method_advice(ns: string, method: string, recv: Type): string {
+  var label: string = type_label(recv);
+  // A scalar whose defining stdlib module was not imported. The bare message
+  // actively misleads here: it talks about struct field access on code the
+  // reader may not have written at all, because an f-string desugars `f"{n}"`
+  // to `n.to_string()`.
+  var smod: string = scalar_method_module(recv, method);
+  if (smod.len() > 0) {
+    var note: string = "";
+    if (method == "to_string") { note = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"; }
+    return "no method \"" + method + "\" on " + label + " — add `import \"" + smod + "\"`" + note;
+  }
+  // A receiver with a method namespace of its own reaching here means the
+  // method does not exist. Say so, and say what does.
+  if (s.methods_in_namespace(ns).len() > 0) {
+    return s.unknown_method_message(ns, method, label, recv);
+  }
+  return "field access on non-struct value of type " + label;
+}
+
+// method_namespace_of: the name a receiver's methods register under — "Array"
+// for any array, the scalar's own label, "" for a type with no namespace of its
+// own. A field READ on such a receiver is the same mistake as a method call on
+// it, and native says the same thing at both.
+function method_namespace_of(t: Type): string {
+  match (t) {
+    TypeArray(_) => { return "Array"; },
+    TypeString(_) => { return "string"; },
+    TypeI32(it) => { return int_label(it); },
+    TypeFloat(_) => { return "f64"; },
+    _ => { return ""; }
+  }
+  return "";
+}
+
 function (s: Scope) has_array_recv_method(field: string): boolean {
   for method in s.methods {
     var rt: string = method.receiver_type;
@@ -4065,8 +4266,8 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // ret_type (so StmtReturn arms can compare against it), the receiver (for
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
-function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[]): Scope {
-  var s: Scope = new_scope_full(st, structs, unions, methods);
+function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[], imports: string[]): Scope {
+  var s: Scope = new_scope_full(st, structs, unions, methods, imports);
   s = s.with_tparams(fd.type_params, fd.bound_traits);
   if (fd.ret_type.len() > 0) {
     s = s.with_ret_type(type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs.structs, unions));
@@ -7201,12 +7402,12 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               // A declared method, and string / array / map receivers
               // (whose builtin methods route elsewhere), stay clean.
               if (s.lookup_method(mfa.field, int_label(it)).name.len() == 0) {
-                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
               }
             },
             TypeFloat(_) => {
               if (s.lookup_method(mfa.field, "f64").name.len() == 0) {
-                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                out = out.append(dg_at("E043", s.unknown_method_advice("f64", mfa.field, recv), mfa.line, mfa.col));
               }
             },
             TypeString(_) => {
@@ -7219,7 +7420,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               // non-existent method — same shape as the numeric-
               // scalar case above.
               if (mfa.field != "len" && mfa.field != "as_bytes" && s.lookup_method(mfa.field, "string").name.len() == 0) {
-                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                out = out.append(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col));
               }
             },
             TypeArray(ar) => {
@@ -7257,7 +7458,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
               // receiver form exists — Go rejects a concrete element
               // type (E021) — so there is no per-element match to make.
               if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len" && !s.has_array_method(mfa.field)) {
-                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                out = out.append(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col));
               }
               // E004 (array builtin arity): the three unconditional array
               // builtins take a fixed number of arguments — `len()` none,
@@ -7801,7 +8002,7 @@ function call_diags(e: parser.Expr, s: Scope): util.Diag[] {
           // genuine read; method calls (`x.m()`) are an ExprCall callee and
           // never reach here.
           if (!is_unknown(ot)) {
-            out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(ot), fa.line, fa.col));
+            out = out.append(dg_at("E043", s.unknown_method_advice(method_namespace_of(ot), fa.field, ot), fa.line, fa.col));
           }
         }
       }
@@ -11885,6 +12086,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   for alias in mod.aliases {
     alias_names = alias_names.append(alias.name);
   }
+  var import_paths: string[] = import_paths_of(mod);
   var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
   var struct_names: string[] = [];
   for sd in structs {
@@ -11929,7 +12131,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   var slc_sums: ViewSum[] = [];
   for cfn in mod.funcs {
     slc_fns = slc_fns.append(cfn);
-    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, unions, methods));
+    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, unions, methods, import_paths));
     var slc_initial: boolean[] = [];
     for slc_pos in view_positions(cfn) {
       slc_initial = slc_initial.append(false);
@@ -11977,7 +12179,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // passes below share one build instead of repeating it per pass. `csc`
     // is the same scope carrying the impl table, which only the call walk
     // (E021) and check_func_body may see — see Scope.impls.
-    var fsc: Scope = build_func_scope(mod.funcs[i], st, stt, unions, methods);
+    var fsc: Scope = build_func_scope(mod.funcs[i], st, stt, unions, methods, import_paths);
     var csc: Scope = fsc.with_impls(mod.impls, mod.trait_reqs);
     if (!check_func_body(mod.funcs[i], csc)) {
       well_typed = false;
@@ -12061,7 +12263,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var pdi: i32 = 0;
     while (pdi < mod.funcs[i].params.len()) {
       if (mod.funcs[i].params[pdi].has_default) {
-        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, unions, methods), unions, mod.enums), "P002"));
+        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, unions, methods, import_paths), unions, mod.enums), "P002"));
       }
       pdi = pdi + 1;
     }
@@ -12078,7 +12280,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     i = i + 1;
   }
-  var s: Scope = new_scope_full(st, stt, unions, methods);
+  var s: Scope = new_scope_full(st, stt, unions, methods, import_paths);
   var top_tys: Type[] = [];
   for top_stmt in mod.top_stmts {
     var r: CheckResult = check_stmt(top_stmt, s);
@@ -12091,7 +12293,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   var dtop: parser.Stmt[] = mod.top_stmts;
   // A BARE module scope, not the `s` above: each pass re-threads the top-level
   // bindings itself, and `s` has already accumulated all of them.
-  var tsc: Scope = new_scope_full(st, stt, unions, methods);
+  var tsc: Scope = new_scope_full(st, stt, unions, methods, import_paths);
   body_diags = util.append_diags(body_diags, lret_stmts(dtop, tsc, unions));
   body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
   body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, structs));
@@ -12217,7 +12419,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // mkstr's summary. Only `str` returns are REPORTED against.
     if (sfn.ret_str || sfn.ret_type == "string") {
       e065_fns = e065_fns.append(sfn);
-      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, unions, methods));
+      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, unions, methods, import_paths));
       var initial: boolean[] = [];
       for pos in view_positions(sfn) {
         initial = initial.append(false);
@@ -12252,7 +12454,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
   }
   for xfn in mod.funcs {
-    var xsc: Scope = build_func_scope(xfn, st, stt, unions, methods);
+    var xsc: Scope = build_func_scope(xfn, st, stt, unions, methods, import_paths);
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
     }
@@ -12299,6 +12501,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
 // expression (at its declaration), else the first offending top-level
 // statement, else a module-level note.
 pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
+  var import_paths: string[] = import_paths_of(mod);
   var alias_names: string[] = [];
   for alias in mod.aliases {
     alias_names = alias_names.append(alias.name);
@@ -12317,11 +12520,11 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var stt: StructTable = struct_table(structs);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   for func in mod.funcs {
-    if (!check_func_body(func, build_func_scope(func, st, stt, unions, methods).with_impls(mod.impls, mod.trait_reqs))) {
+    if (!check_func_body(func, build_func_scope(func, st, stt, unions, methods, import_paths).with_impls(mod.impls, mod.trait_reqs))) {
       return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", func.line, func.col)];
     }
   }
-  var s: Scope = new_scope_full(st, stt, unions, methods);
+  var s: Scope = new_scope_full(st, stt, unions, methods, import_paths);
   for top_stmt in mod.top_stmts {
     var r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
@@ -13169,7 +13372,15 @@ function type_to_arrtag(t: Type): string {
 // build_module_tables mirrors the head of check_module (structs → union names →
 // enums → func sigs → methods); it is duplicated rather than shared so the
 // annotate pass cannot perturb check_module's byte-identity-critical body.
-pub struct ModuleTables { structs: StructTable, unions: UnionSig[], sigs: SigTable, methods: MethodSig[] }
+pub struct ModuleTables { structs: StructTable, unions: UnionSig[], sigs: SigTable, methods: MethodSig[], imports: string[] }
+
+// import_paths_of: the module's `import` paths exactly as written in source
+// ("std/string"), which is the spelling a hint tells the reader to add.
+function import_paths_of(mod: parser.Module): string[] {
+    var out: string[] = [];
+    for im in mod.imports { out = out.append(im.path); }
+    return out;
+}
 
 function build_module_tables(mod: parser.Module): ModuleTables {
   var alias_names: string[] = [];
@@ -13187,7 +13398,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
-  return ModuleTables { structs: struct_table(structs), unions: unions, sigs: sig_table(sigs), methods: methods };
+  return ModuleTables { structs: struct_table(structs), unions: unions, sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod) };
 }
 
 // annotate_advance threads the block scope from one statement to the next,
@@ -13415,7 +13626,7 @@ function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
 }
 
 function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
-  var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods);
+  var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports);
   return parser.FuncDecl { ...fd, body: annotate_block(fd.body, s) };
 }
 
@@ -13432,6 +13643,6 @@ pub function annotate_module(mod: parser.Module): parser.Module {
   for func in mod.funcs {
     nfuncs = nfuncs.append(annotate_func(func, mt));
   }
-  var ntop: parser.Stmt[] = annotate_block(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods));
+  var ntop: parser.Stmt[] = annotate_block(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
   return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: ntop, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }

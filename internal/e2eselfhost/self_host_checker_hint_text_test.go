@@ -199,6 +199,64 @@ function main(): i32 { var m = Map { K { a: 1 }: 1 }; return 0; }`,
 		spelling: "did you mean `string`?",
 	},
 	{
+		// #7417's sibling: a method that does not exist on an ARRAY. The
+		// bare "field access on non-struct value of type i32[]" names
+		// neither the method nor the receiver's actual API, which is the
+		// worst case for the two situations that produce it — a typo and a
+		// spelling that was deliberately retired (#7442).
+		name:     "E043 unknown array method lists the API",
+		src:      `function main(): i32 { var a: i32[] = [1]; return a.sum(); }`,
+		code:     "E043",
+		spelling: "it has: append, len, with",
+	},
+	{
+		// The retired in-place spelling. `push` resolves to nothing now, so
+		// without the replacement name the reader is left guessing at a
+		// rename they never saw.
+		name:     "E043 retired collection spelling names the replacement",
+		src:      `function main(): i32 { var a: i32[] = [1]; a.push(2); return a.len(); }`,
+		code:     "E043",
+		spelling: `use "append"`,
+	},
+	{
+		// The typo half of the same message, which needs the candidate SET
+		// and not just the receiver — the two checkers have to agree on
+		// what they are suggesting from, not only on the suggester.
+		name:     "E043 near-miss method name suggests the real one",
+		src:      `function main(): i32 { var a: i32[] = [1]; return a.lenn(); }`,
+		code:     "E043",
+		spelling: `did you mean "len"?`,
+	},
+	{
+		// The scalar receiver whose module was not imported, reached
+		// WITHOUT a method call in the source: an f-string desugars
+		// `f"{n}"` to `n.to_string()`, so the bare message talked about
+		// struct field access on code the reader never wrote.
+		name:     "E043 f-string to_string names the import",
+		src:      `function main(): i32 { var n: i32 = 1; var s: string = f"x{n}y"; return s.len(); }`,
+		code:     "E043",
+		spelling: "add `import \"std/i32\"`",
+	},
+	{
+		// The string receiver, where the advice is conditional on the
+		// reader's own import list: with std/string present the message
+		// lists the surface instead, so a checker that cannot see its
+		// imports cannot say either thing correctly.
+		name:     "E043 unknown string method names the import",
+		src:      `function main(): i32 { var s: string = "ab"; return s.frobnicate(); }`,
+		code:     "E043",
+		spelling: "if it comes from std/string, add `import \"std/string\"`",
+	},
+	{
+		// A field READ rather than a method call. Native says the same
+		// thing at both sites; this checker had two messages for one
+		// mistake.
+		name:     "E043 field read on a non-struct gets the method advice",
+		src:      `function main(): i32 { var s = "a"; return s.foo; }`,
+		code:     "E043",
+		spelling: "if it comes from std/string, add `import \"std/string\"`",
+	},
+	{
 		// The type NAME a message renders is advice to write as much as a
 		// hint is: the self-host used to print its internal "bool" tag here,
 		// naming a type the reader cannot spell. e042_ret_label patched
