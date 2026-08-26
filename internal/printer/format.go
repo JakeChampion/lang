@@ -1326,7 +1326,10 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 		}
 		f.b.WriteString(el.VariantName)
 		open, close := "(", ")"
-		if el.VariantFieldNames != nil {
+		// A trailing `..` is only spellable in the named-field form, so it
+		// selects the braces on its own: `P { .. }` lists no field, which
+		// leaves VariantFieldNames nil.
+		if el.VariantFieldNames != nil || el.RestWritten {
 			open, close = " { ", " }"
 		}
 		f.b.WriteString(open)
