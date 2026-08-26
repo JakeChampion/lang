@@ -82,13 +82,14 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   `-target arm64-linux -backend ssa` and match the interpreter, with no skips
   left on either leg (`diffOracleSSAMinRunRatio` is 1.0 accordingly).
 
-  The examples corpus reaches past what the generator writes, and it is where
-  the remaining gap is measured: 278 of 286 programs compile under
-  `-target arm64-linux -backend ssa` and behave identically to the flat
-  backend, 0 diverge, 5 are rejected by the flat backend too
-  (`TestArm64SSABackendDifferential`). Three refusals are left, all the same
-  one: `stat`, whose flat implementation decodes a 192-byte `fstatat` buffer
-  behind the string-path and io-error machinery.
+  The examples corpus reaches past what the generator writes, and it is now
+  closed too: **all 281** of the 286 programs the flat backend can build also
+  build under `-target arm64-linux -backend ssa` and behave identically —
+  0 refused, 0 diverged, the other 5 rejected by the flat backend as well
+  (`TestArm64SSABackendDifferential`, whose floor is the full 281 accordingly).
+  So there is no measured coverage gap left on arm64 against either the
+  generator or the corpus; what remains for Phase 4 is the default flip and
+  the binary-size number it exists to produce.
 - **Perceus / RC ordering.** The IR carries reference-counting ops; the SSA path
   must preserve them and the allocator must not reorder across the points they
   assume. Confirm whether RC insertion happens before or after the SSA lift.
@@ -455,9 +456,10 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
 - [~] Phase 4 — arm64 SSA emit + default. The emit path ships as
   `-target arm64-linux -backend ssa` (`internal/codegen/arm64ssa`), not as a
   separate target, so the target descriptor and its E066 capability
-  enforcement still apply. Both fernsmith corpora sweep clean through it (see
-  the coverage-parity hazard above). Remaining: flipping the default, and the
-  binary-size measurement that flip is for.
+  enforcement still apply. Coverage is done: both fernsmith corpora and the
+  whole examples corpus sweep clean through it (see the coverage-parity
+  hazard above). Remaining: flipping the default, and the binary-size
+  measurement that flip is for.
 - [ ] Phase 5 — retire the stack-machine backends
 
 ## Emit-quality phase — results

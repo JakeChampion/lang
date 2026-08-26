@@ -674,6 +674,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
 	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
 	"__slice_idx_16":                emitSliceIdxHelper("__slice_idx_16", 4),
+	"stat":                          emitStatHelper,
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
@@ -2000,6 +2001,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"write_file":                    {"__fern_io_error"},
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
+	"stat":                          {"__fern_io_error"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
 	"remove_file":                   {"__fern_io_error"},
 	"create_dir_all":                {"__fern_io_error"},
@@ -2033,6 +2035,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_cow_inplace_str":    true,
 	"__fern_heap_bump_bytes":        true,
 	"__method_string_as_bytes":      true,
+	"stat":                          true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,
@@ -4579,6 +4582,134 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tb .Lssa_apg_cp")
 	w(".Lssa_apg_done:")
 	w("\tmov x0, x11") // return new_data
+	w("\tret")
+}
+
+// emitStatHelper writes stat(path) -> Result[FileStat, IoError]: fstatat the
+// path and report its kind and size. x0 = path (single-word string).
+//
+// Linux-only, like the rest of this emitter, so there are none of the flat
+// backend's darwin branches: fstatat is syscall 79, AT_FDCWD is -100, and the
+// two fields read out of the 128-byte struct stat are st_mode (u32 @ +16) and
+// st_size (i64 @ +48).
+//
+// Shape follows read_file exactly — the NUL-terminated path copy, the frame
+// statbuf, and the two boxed results — because they are the same contract:
+// a Result box is {rc=1, tag, payload@+8} with the payload one word, and Err
+// dispatches errno + path through __fern_io_error. The Ok payload here is a
+// FileStat box laid out {is_file@+0, is_dir@+4, size@+8}, matching the flat
+// backend's.
+func emitStatHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("stat"))
+	w("\tstp x29, x30, [sp, #-256]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tmov x19, x0") // path
+	// NUL-terminate the path into a heap buffer (x24).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w7, #0")
+	w(".Lssa_stat_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_stat_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_stat_cp")
+	w(".Lssa_stat_cpd:")
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x24, x4") // path_nul
+	// fstatat(AT_FDCWD, path_nul, statbuf@sp+64, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD
+	w("\tmov x1, x24")
+	w("\tadd x2, sp, #64")
+	w("\tmov x3, #0")
+	w("\tmov x8, #79") // fstatat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_stat_err")
+	w("\tldr w9, [sp, #80]")   // st_mode (u32 @ statbuf+16)
+	w("\tldr x22, [sp, #112]") // st_size (i64 @ statbuf+48)
+	w("\tmov w11, #61440")     // S_IFMT
+	w("\tand w9, w9, w11")
+	w("\tmov x20, #0")     // is_file
+	w("\tmov w10, #32768") // S_IFREG
+	w("\tcmp w9, w10")
+	w("\tb.ne .Lssa_stat_nf")
+	w("\tmov x20, #1")
+	w(".Lssa_stat_nf:")
+	w("\tmov x21, #0")     // is_dir
+	w("\tmov w10, #16384") // S_IFDIR
+	w("\tcmp w9, w10")
+	w("\tb.ne .Lssa_stat_nd")
+	w("\tmov x21, #1")
+	w(".Lssa_stat_nd:")
+	// FileStat box: {rc=1, is_file@+0, is_dir@+4, size@+8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")    // rc = 1
+	w("\tadd x23, x4, #8") // FileStat data
+	w("\tstr w20, [x23]")
+	w("\tstr w21, [x23, #4]")
+	w("\tstr x22, [x23, #8]")
+	// Result.Ok(FileStat): box {rc=1, tag=0, filestat@+8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]") // rc = 1
+	w("\tadd x0, x4, #8")
+	w("\tstr wzr, [x0]") // tag = 0 (Ok)
+	w("\tstr x23, [x0, #8]")
+	w("\tb .Lssa_stat_ret")
+	w(".Lssa_stat_err:")
+	w("\tneg x0, x0")  // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	// Result.Err(IoError): box {rc=1, tag=1, ioerr@+8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]") // rc = 1
+	w("\tadd x0, x4, #8")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_stat_ret:")
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #256")
 	w("\tret")
 }
 
