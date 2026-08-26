@@ -130,13 +130,28 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 7, allocs: 80, frees: 80,
 		},
 		{
-			// BORROWED PARAMS, still refused: `var q: string = p; q = o;` where p
-			// and o are both params. Whether the release may fire depends on
-			// whether the slot's CURRENT value is owned or borrowed, and the slot
-			// is a LOCAL so the `slot >= n_params` guard does not cover it —
-			// releasing a borrowed param's value is a use-after-free the caller
-			// sees. 80/0, a sound leak, pinned as the gap it is.
-			name: "borrowed_param_reassign_still_refused",
+			// BORROWED PARAMS, and the gap this row pinned is now closed. `var q:
+			// string = p; q = o;` where p and o are both params used to leave the
+			// CALLER refusing its own release — 80/0, a sound leak — because
+			// aliasing a param marked that param non-borrowable. The param verdict
+			// now takes the same alias forgiveness the local credit does, so both
+			// callers' strings are reclaimed.
+			//
+			// wantFrees moved 0 -> 80 and the row still guards the same thing, from
+			// the other side: releasing a borrowed param's value is a use-after-free
+			// only the CALLER can see, so it shows here as frees running AHEAD of
+			// what the caller owns, not as a leak.
+			//
+			// Checked rather than assumed, because 0 -> 80 is also the direction an
+			// over-release moves in. The answer is unchanged at 63,
+			// __rc_underflow_count() is 0, -sanitize reports neither a
+			// use-after-free nor a double free, and the settling form has `round`
+			// read BOTH a and b back after the call with three fresh strings
+			// allocated in between: 400/320 -> 400/400, answer 17 either way and
+			// matching native. Native's counts are no oracle for this shape — it
+			// const-folds and SSOs these literals to 0 allocs here, and on the
+			// churn form it leaks 40 boxes of its own where the self-host is clean.
+			name: "borrowed_param_reassign_borrowed",
 			src: `function consume(p: string, o: string): i32 {
     var q: string = p;
     q = o;
@@ -148,7 +163,7 @@ function round(i: i32): i32 {
     return consume(a, b) + a.len() - a.len();
 }
 ` + strarMain,
-			want: 63, allocs: 80, frees: 0,
+			want: 63, allocs: 80, frees: 80,
 		},
 	}
 }
@@ -182,9 +197,9 @@ func TestSelfHostStrAliasReassignX86_64(t *testing.T) {
 			}
 			if frees != tc.frees {
 				t.Errorf("%s: %s — want frees=%d. FEWER means the STRALIASSRC: "+
-					"forgiveness stopped applying; MORE on the accumulator or the "+
-					"refused param row means the new collector claimed a shape whose "+
-					"reassign carries no retain", tc.name, summary, tc.frees)
+					"forgiveness stopped applying; MORE on the accumulator row means "+
+					"the collector claimed a shape whose reassign carries no retain",
+					tc.name, summary, tc.frees)
 			}
 		})
 	}

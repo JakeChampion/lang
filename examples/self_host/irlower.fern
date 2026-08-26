@@ -56385,6 +56385,117 @@ function borrowable_key(fn: parser.FuncDecl): string {
 // conservative `borrowable_params_of`: they only check op-kind presence, and the
 // only op a precise drop adds (__fern_arr_dec) is already emitted by the
 // function-exit dec-sweep, so no inspection result can flip.
+// param_local_decl_site: the `var` binding-site key for local `name` in `stmts`,
+// or "". Needed because an ASSIGNMENT carries only the target's name, while the
+// alias_ok forgiveness is keyed on binding sites.
+function param_local_decl_site(stmts: parser.Stmt[], name: string): string {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (v.name == name) { return reclaim_site_key_of(v.name, v.line, v.col); } },
+            parser.StmtIf(f) => {
+                var t1: string = param_local_decl_site(f.then_body, name);
+                if (t1.len() > 0) { return t1; }
+                var e1: string = param_local_decl_site(f.else_body, name);
+                if (e1.len() > 0) { return e1; }
+            },
+            parser.StmtWhile(w) => { var t2: string = param_local_decl_site(w.body, name); if (t2.len() > 0) { return t2; } },
+            parser.StmtFor(fo) => { var t3: string = param_local_decl_site(fo.body, name); if (t3.len() > 0) { return t3; } },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    var t4: string = param_local_decl_site(m.arms[ai].body, name);
+                    if (t4.len() > 0) { return t4; }
+                    ai = ai + 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    return "";
+}
+
+// param_alias_reassign_sites: the sites of locals REASSIGNED from a bare `src`
+// (`t = src`). The assign sibling of param_alias_bind_sites, and the reason the
+// param verdict needs both: `var q = p; q = o;` escapes `p` through the bind and
+// `o` through the assignment, and forgiving only one leaves the other's caller
+// still refusing its release (measured 80/40 with the bind arm alone).
+//
+// The local must be safe in its own right under the current registry, which is
+// what still refuses `q = o; return q;`.
+function param_alias_reassign_sites(stmts: parser.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(asg) => {
+                if let parser.ExprIdent(rid) = asg.value {
+                    if (rid.name == src && asg.target != src
+                            && !body_unsafe_for(body, asg.target, borrowable, recv_borrow)) {
+                        var site: string = param_local_decl_site(body, asg.target);
+                        if (site.len() > 0) { a = push_str_unique(a, site); }
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                a = param_alias_reassign_sites(f.then_body, src, borrowable, recv_borrow, body, a);
+                a = param_alias_reassign_sites(f.else_body, src, borrowable, recv_borrow, body, a);
+            },
+            parser.StmtWhile(w) => { a = param_alias_reassign_sites(w.body, src, borrowable, recv_borrow, body, a); },
+            parser.StmtFor(fo) => { a = param_alias_reassign_sites(fo.body, src, borrowable, recv_borrow, body, a); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = param_alias_reassign_sites(m.arms[ai].body, src, borrowable, recv_borrow, body, a); ai = ai + 1; }
+            },
+            parser.StmtDefer(d) => {
+                if let parser.StmtWhile(dw) = d.action { a = param_alias_reassign_sites(dw.body, src, borrowable, recv_borrow, body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// param_alias_bind_sites: the binding sites of locals bound from a bare `name`,
+// for the PARAM borrowability question only. This is alias_bind_sites_of WITHOUT
+// its reassigned-target exclusion, and the difference is deliberate.
+//
+// That exclusion protects a LOCAL's reclaim credit: a slot later reassigned holds
+// something else by the time it is swept, so crediting it off the alias would
+// release the wrong box. The question here is narrower and different — does the
+// PARAM escape? — and `var q = p; q = o;` answers it plainly: q briefly aliases p,
+// then stops naming it. p is not referenced afterwards, so p does not escape.
+//
+// The local still has to be safe in its own right (body_unsafe_for under the
+// current registry), which is what refuses `var q = p; return q;`.
+function param_alias_bind_sites(stmts: parser.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                if let parser.ExprIdent(aid) = v.init {
+                    if (aid.name == src && !body_unsafe_for(body, v.name, borrowable, recv_borrow)) {
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                a = param_alias_bind_sites(f.then_body, src, borrowable, recv_borrow, body, a);
+                a = param_alias_bind_sites(f.else_body, src, borrowable, recv_borrow, body, a);
+            },
+            parser.StmtWhile(w) => { a = param_alias_bind_sites(w.body, src, borrowable, recv_borrow, body, a); },
+            parser.StmtFor(fo) => { a = param_alias_bind_sites(fo.body, src, borrowable, recv_borrow, body, a); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = param_alias_bind_sites(m.arms[ai].body, src, borrowable, recv_borrow, body, a); ai = ai + 1; }
+            },
+            parser.StmtDefer(d) => {
+                if let parser.StmtWhile(dw) = d.action { a = param_alias_bind_sites(dw.body, src, borrowable, recv_borrow, body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
 pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     // Greatest-fixpoint FROM ABOVE (the native `inferParamEscapes`, ir.go): start
     // OPTIMISTIC — EVERY param borrowable — then repeatedly re-run the escape
@@ -56442,8 +56553,31 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     // param_match_binding_escapes has to rule out. Widening the set
                     // keeps this pass monotone-decreasing: it only ever withholds a
                     // 1->0 flip, so the convergence test is unaffected.
+                    // A param ALIASED into a local that never escapes is still a
+                    // BORROW. This call passes an EMPTY alias_ok, so the walker
+                    // reads `var q = p` as a bare-ident escape and the param flips
+                    // off — and every CALLER then refuses its own release, which is
+                    // where the whole cost lands. Measured against one caller: a
+                    // callee reading `p.len()` directly leaves it flat at 80/80, the
+                    // same callee with `var q: string = p` costs it 80/40, and
+                    // adding `q = o` costs the other half at 80/0. The callee
+                    // releases nothing in any of the three.
+                    //
+                    // The two readings are a UNION of independent proofs, not a
+                    // relaxation of either: the first forgives a bare-ident match
+                    // scrutinee and stays strict on aliases, the second forgives
+                    // non-escaping aliases and stays strict on scrutinees. A body
+                    // with BOTH satisfies neither and stays refused.
+                    //
+                    // Both run under the CURRENT registry `reg`, so this shrinks
+                    // monotonically with the rest of the from-above fixpoint.
+                    var ip_psal: string[] = param_alias_bind_sites(fn.body, fn.params[pj].name, reg, [], fn.body, []);
+                    ip_psal = param_alias_reassign_sites(fn.body, fn.params[pj].name, reg, [], fn.body, ip_psal);
+                    var ip_borrow: boolean = !body_unsafe_for_match_borrow(fn.body, fn.params[pj].name, reg, [])
+                        || (ip_psal.len() > 0
+                            && !body_unsafe_for_alias(fn.body, fn.params[pj].name, reg, [], ip_psal));
                     if (!param_consumed_in_body(fn.body, fn.params[pj].name, ip_reasgn)
-                        && !body_unsafe_for_match_borrow(fn.body, fn.params[pj].name, reg, [])
+                        && ip_borrow
                         && !param_match_binding_escapes(fn.body, fn.params[pj].name)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;

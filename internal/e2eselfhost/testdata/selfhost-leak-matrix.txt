@@ -112,12 +112,12 @@ arr_i32__if_block__alias_param                clean  clean  clean on both sides
 str__fnscope__alias_local                     clean  clean  clean on both sides
 str__if_block__alias_local                    clean  clean  clean on both sides
 str__loop_local__alias_local                  clean  clean  clean on both sides
-str__fnscope__alias_param                     clean  leak   call-arg escape taints main's keep; constant-size, not per-round. Native's clean is VACUOUS (x86 const-fold + SSO: keep never allocates); native's real verdict for an allocating shape is also refuse (paramCountedRetain declines the callee's param alias; leak-at-worst by design)
-str__if_block__alias_param                    clean  leak   same as the fnscope cell, vacuous native column included
+str__fnscope__alias_param                     clean  clean  #7553: the callee only ALIASES its param, so the param stays borrowable and main's keep keeps its own release. Native's clean here is VACUOUS (x86 const-fold + SSO: keep never allocates), so the arm64 file is the one that says the self-host now reclaims this shape
+str__if_block__alias_param                    clean  clean  same as the fnscope cell, vacuous native column included
 str_arr__fnscope__alias_local                 clean  clean  #7391: alias shares the "SARR:" credit; __fern_str_arr_free's rc gate walks elements once, at the last owner
 str_arr__if_block__alias_local                clean  clean  same #7391 alias credit, block-scoped site
-str_arr__fnscope__alias_param                 clean  leak   constant keep-sweep refusal, string[] flavor
-str_arr__if_block__alias_param                clean  leak   same as fnscope
+str_arr__fnscope__alias_param                 clean  clean  #7553: the aliased-param borrow, string[] flavor — the constant keep-sweep refusal is gone
+str_arr__if_block__alias_param                clean  clean  same as fnscope
 struct_arr_field__fnscope__alias_local        clean  clean  clean on both sides
 struct_arr_field__fnscope__alias_reuse        clean  clean  clean on both sides
 struct_arr_field__if_block__alias_local       clean  clean  clean on both sides
