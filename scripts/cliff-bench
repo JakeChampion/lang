@@ -56,12 +56,27 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# The tally is printed on the ABORT path too, so a compile that died still
+# emits a well-formed report line — just one covering the fraction of the
+# module it got through. At 0fb17b6, where the self-host compiler rejected
+# checker.fern with E063, that read as 23.5 MB against a 381.8 MB predecessor
+# and would have been annotated as a 94% improvement. The status is the only
+# thing that separates the two, so the run is not allowed to fail.
+set +e
 FERN_CLIFF_REPORT=1 ./bin/fern-selfhost -target "$TARGET" "$SUBJECT" \
-  > /dev/null 2> "$work/cliff" || true
+  > /dev/null 2> "$work/cliff"
+status=$?
+set -e
+if [ "$status" -ne 0 ]; then
+  echo "cliff-bench: the self-host compiler failed on $SUBJECT (exit $status);" \
+       "any tally below covers only the part it compiled" >&2
+  sed -n '1,20p' "$work/cliff" >&2
+  exit 1
+fi
 
 # The line is `fern: arr_push_shared_count=N arr_push_shared_bytes=N`. A missing
-# line means the run died or the diagnostic was compiled out; either way the
-# gate must fail loudly rather than report a green zero.
+# line means the diagnostic was compiled out, so the gate fails loudly rather
+# than report a green zero.
 count="$(sed -n 's/.*arr_push_shared_count=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
 bytes="$(sed -n 's/.*arr_push_shared_bytes=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
 if [ -z "$count" ] || [ -z "$bytes" ]; then
