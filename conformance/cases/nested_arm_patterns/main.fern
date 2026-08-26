@@ -1,0 +1,163 @@
+// Arm-position patterns nest freely, and arms stay FLAT (#7524).
+//
+// The parse-time merge this replaces collapsed a contiguous run of
+// same-variant arms into one arm plus an inner match on a temp. That shape
+// forced four P001s — one nested slot per arm, all arms of a variant nesting
+// at the SAME slot, those arms being contiguous, and no nesting inside an
+// or-pattern — and none of them could be lifted by widening the merge: the
+// inner match's wildcard was the OUTER `_`, so "the next arm of the outer
+// match" did not survive it.
+//
+// Arms are now flat and tried in source order, so a sub-pattern that fails
+// falls to the NEXT ARM. Every function below is a shape that did not parse
+// before; `fall_through` is the one that pins the semantics.
+
+import "std/i32";
+
+enum In { Ok2(i32), Er2(i32) }
+
+enum Out { P(In, In), Q(i32) }
+
+enum One { W(In) }
+
+// THE headline. Both `P` arms match at slot 0 and differ at slot 1, so
+// `P(Ok2 _, Er2 _)` must run arm 2 — not the outer `_`. Under the merge arm 2
+// had been folded into arm 1's inner match, whose wildcard was that `_`.
+function fall_through(v: Out): i32 {
+    match (v) {
+        P(Ok2(a), Ok2(b)) => { return a + b; },
+        P(Ok2(a), _) => { return 100 + a; },
+        P(_, Ok2(b)) => { return 200 + b; },
+        _ => { return 0; },
+    }
+}
+
+// (a) more than one nested slot in one arm.
+function two_slots(v: Out): i32 {
+    match (v) {
+        P(Ok2(a), Er2(b)) => { return a * 10 + b; },
+        _ => { return 0; },
+    }
+}
+
+// (b) arms of one variant nesting at DIFFERENT slots.
+function different_columns(v: Out): i32 {
+    match (v) {
+        P(Ok2(a), _) => { return 10 + a; },
+        P(_, Ok2(b)) => { return 20 + b; },
+        _ => { return 0; },
+    }
+}
+
+// (c) arms of a nesting variant separated by another variant's arm.
+function non_contiguous(v: Out): i32 {
+    match (v) {
+        P(Ok2(a), _) => { return a; },
+        Q(n) => { return 1000 + n; },
+        P(Er2(a), _) => { return 0 - a; },
+        _ => { return 0; },
+    }
+}
+
+// (d) a nested pattern inside an or-pattern alternative.
+function nested_in_or(v: Out): i32 {
+    match (v) {
+        P(Ok2(a), _) | P(_, Ok2(a)) => { return a; },
+        _ => { return 0; },
+    }
+}
+
+// A guard runs after every binding the sub-patterns introduced, and a
+// guard-false still falls to the next arm.
+function guarded(v: Out): i32 {
+    match (v) {
+        P(Ok2(a), Ok2(b)) when a > b => { return a; },
+        P(Ok2(a), Ok2(b)) => { return b; },
+        _ => { return 0; },
+    }
+}
+
+// A literal and a range in a payload slot, beside a binder.
+function scalar_slots(v: Out): i32 {
+    match (v) {
+        P(Ok2(0), Ok2(b)) => { return 900 + b; },
+        Q(1..5) => { return 1; },
+        Q(7..=9) => { return 2; },
+        _ => { return 0; },
+    }
+}
+
+// Depth two.
+function deep(w: One): i32 {
+    match (w) {
+        W(Ok2(n)) => { return n; },
+        W(Er2(n)) => { return 0 - n; },
+    }
+}
+
+// The expression form takes the same path, through a value local.
+function as_expression(v: Out): i32 {
+    var r = match (v) {
+        P(Ok2(a), Ok2(b)) => a + b,
+        P(Ok2(a), _) => 100 + a,
+        _ => 0,
+    };
+    return r;
+}
+
+// The other binding sites reach the same lowering.
+function via_if_let(v: Out): i32 {
+    if let P(Ok2(a), Ok2(b)) = v { return a + b; }
+    return 0;
+}
+
+function via_let_else(v: Out): i32 {
+    let P(Ok2(a), Ok2(b)) = v else { return 0; };
+    return a + b;
+}
+
+function main(): i32 {
+    print(fall_through(P(Ok2(1), Ok2(2))).to_string());
+    print(fall_through(P(Ok2(1), Er2(9))).to_string());
+    print(fall_through(P(Er2(9), Ok2(2))).to_string());
+    print(fall_through(P(Er2(9), Er2(9))).to_string());
+    print(fall_through(Q(5)).to_string());
+
+    print(two_slots(P(Ok2(3), Er2(4))).to_string());
+    print(two_slots(P(Ok2(3), Ok2(4))).to_string());
+
+    print(different_columns(P(Ok2(1), Er2(0))).to_string());
+    print(different_columns(P(Er2(0), Ok2(2))).to_string());
+    print(different_columns(P(Er2(0), Er2(0))).to_string());
+
+    print(non_contiguous(P(Ok2(7), Er2(0))).to_string());
+    print(non_contiguous(Q(3)).to_string());
+    print(non_contiguous(P(Er2(7), Er2(0))).to_string());
+
+    print(nested_in_or(P(Ok2(4), Er2(0))).to_string());
+    print(nested_in_or(P(Er2(0), Ok2(5))).to_string());
+    print(nested_in_or(P(Er2(0), Er2(0))).to_string());
+
+    print(guarded(P(Ok2(9), Ok2(2))).to_string());
+    print(guarded(P(Ok2(2), Ok2(9))).to_string());
+    print(guarded(P(Er2(0), Ok2(9))).to_string());
+
+    print(scalar_slots(P(Ok2(0), Ok2(5))).to_string());
+    print(scalar_slots(P(Ok2(1), Ok2(5))).to_string());
+    print(scalar_slots(Q(3)).to_string());
+    print(scalar_slots(Q(8)).to_string());
+    print(scalar_slots(Q(50)).to_string());
+
+    print(deep(W(Ok2(6))).to_string());
+    print(deep(W(Er2(6))).to_string());
+
+    print(as_expression(P(Ok2(1), Ok2(2))).to_string());
+    print(as_expression(P(Ok2(1), Er2(9))).to_string());
+    print(as_expression(Q(0)).to_string());
+
+    print(via_if_let(P(Ok2(1), Ok2(2))).to_string());
+    print(via_if_let(P(Ok2(1), Er2(2))).to_string());
+    print(via_let_else(P(Ok2(3), Ok2(4))).to_string());
+    print(via_let_else(P(Er2(3), Ok2(4))).to_string());
+    return 0;
+}
