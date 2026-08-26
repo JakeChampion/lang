@@ -655,18 +655,31 @@ At 6.41 caller-saved values live across the average call plus ten callee-saved
 registers, the average call has around 16 values live across it and 10 places to
 put them for free. Rearranging which six spill is not where the ops are.
 
-**The ops are in how each save is spelled.** The call-save area is one
-`str`/`ldr` per register (`callLines` in `internal/codegen/arm64ssa/gas.go`),
-into consecutive 8-byte slots at `8*(callSaveBase+k)` — precisely the shape
-`stp`/`ldp` exists for. Pairing them halves 1,127,158 ops to roughly 565,000:
-**about 24% of the whole program's instructions**, from an emitter peephole that
-changes no allocator semantics.
+**The ops were in how each save is spelled.** The call-save area went out one
+`str`/`ldr` per register into consecutive 8-byte slots at `8*(callSaveBase+k)`
+— precisely the shape `stp`/`ldp` addresses. Emitting the pair form is a
+peephole over an already-correct sequence: allocation is untouched, the frame
+layout is untouched, every register still lands in the slot it always did.
 
-Two things to get right. The scaled `imm7` offset caps a pair at `[sp, #504]`,
-so a function with a deep spill area needs the unpaired form beyond that. And
-`PairLoadStore` in `internal/native/arm64/arm64.go` computes `imm7` as
-`uint32(byteOffset/8) & 0x7f` with no range check — an out-of-range offset
-encodes silently as the wrong one, so the check belongs there too.
+| `checker_modload_run` | instructions | sp-relative mem | call-save ops | per call |
+|---|---|---|---|---|
+| before | 2,311,859 | 1,231,903 | 1,127,158 | 6.41 |
+| paired | 2,066,651 | 986,695 | 870,157 | 4.95 |
+
+**−245,208 instructions, −10.6%**, and −13.4% across the 281-program examples
+corpus (45.3% → 39.2% of the flat backend's `.text`) with no program in it
+larger than before. The largest win in this epic after the callee-saved
+partition itself, and unlike that one it cost no allocator complexity.
+
+Not the halving a naive count suggests: the average call saves about three
+registers, so pairing removes one instruction per side rather than half of six.
+The saving is one per pair, not one per op.
+
+The pair forms scale a signed 7-bit offset by 8, so a slot past `[sp, #504]`
+falls back to the single form. `PairLoadStore` in
+`internal/native/arm64/arm64.go` masked its `imm7` with no range check, so an
+out-of-range offset would have encoded silently as a valid instruction against
+the wrong slot; `asmPair` rejects it now.
 
 ### The interval approximation, and what sizing it missed
 
