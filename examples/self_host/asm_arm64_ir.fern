@@ -1316,12 +1316,19 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = map_eqfn_x5(s, o.str);
             s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 130) {  // map_delete
-            // [map, key] -> __fern_map_delete(x0=map, x1=key, x2=keykind) -> the
-            // [map, existed] tuple box (`m.without(k)`); runtime below.
+            // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
+            // the (map, existed) tuple box (`m.without(k)`). The helper is Fern
+            // now (#2649), so this is the stack ABI: arguments pushed in
+            // REVERSE, leaving arg0 (the map) on top, four 16-byte slots
+            // dropped after.
             s = s.need("maps");
+            s = s.need("map_delete");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
             s = map_eqfn_x5(s, o.str);
-            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_delete\n    str x0, [sp, #-16]!\n");
+            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n");
+            s = s.write("    str x5, [sp, #-16]!\n    str x2, [sp, #-16]!\n");
+            s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_map_delete\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 129) {  // map_get_or
             s = s.need("maps");
             var golbl: string = lp + "go" + util.i32_to_string(i);
@@ -3042,6 +3049,12 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     // internals (all set x0=A/x1=B before the call).
     if (s.has_need("str_eq")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), s.struct_decls, s);
+    }
+    // __fern_map_delete (#2649): `m.without(k)` as a Fern helper rather than
+    // hand-asm, the same single source the x86 backend emits. Gated on its own
+    // need rather than on `maps` — see the x86 twin for why.
+    if (s.has_need("map_delete")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), s.struct_decls, s);
     }
     // __fern_str_cmp is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_cmp, lowered through asm_arm64's normal function
@@ -5381,108 +5394,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_set, .-__fern_map_set\n");
 
-        // __fern_map_delete(x0 = mapbox, x1 = key, x2 = keykind,
-        // x5 = derived K.eq or 0) →
-        // tuple box [mapbox, existed]. Order-preserving shift-remove of the
-        // parallel keys[]/values[]; x19-x26 survive __fern_str_eq, the derived
-        // eq call and __fern_alloc (callee-saved). Mirror of the x86-64 helper.
-        s = s.write(".globl __fern_map_delete\n");
-        s = s.write(".type __fern_map_delete, %function\n");
-        s = s.write("__fern_map_delete:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    stp x23, x24, [sp, #-16]!\n");
-        s = s.write("    stp x25, x26, [sp, #-16]!\n");
-        s = s.write("    mov x25, x5\n");           // derived K.eq for a struct/enum key, or 0
-        s = s.write("    mov x19, x0\n");           // mapbox
-        s = s.write("    mov x20, x1\n");           // key
-        s = s.write("    mov x21, x2\n");           // keykind (1 = i32)
-        s = s.write("    ldr x22, [x19]\n");        // keys arr
-        s = s.write("    mov x23, #0\n");           // i
-        s = s.write("    cbnz x25, .Lmd_loop_struct\n"); // struct/enum key? (eq fn present)
-        s = s.write("    cbnz x21, .Lmd_loop_i32\n");
-        s = s.write(".Lmd_loop:\n");                 // string-key search
-        s = s.write("    ldr x9, [x22]\n");         // keys.len
-        s = s.write("    cmp x23, x9\n");
-        s = s.write("    b.ge .Lmd_notfound\n");
-        s = s.write("    add x9, x23, #1\n");
-        s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1]
-        s = s.write("    mov x1, x20\n");
-        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
-        s = s.write("    cbnz x0, .Lmd_found\n");
-        s = s.write("    add x23, x23, #1\n");
-        s = s.write("    b .Lmd_loop\n");
-        s = s.write(".Lmd_loop_i32:\n");             // i32-key search
-        s = s.write("    ldr x9, [x22]\n");
-        s = s.write("    cmp x23, x9\n");
-        s = s.write("    b.ge .Lmd_notfound\n");
-        s = s.write("    add x9, x23, #1\n");
-        s = s.write("    ldr x9, [x22, x9, lsl #3]\n");
-        s = s.write("    cmp x9, x20\n");
-        s = s.write("    b.eq .Lmd_found\n");
-        s = s.write("    add x23, x23, #1\n");
-        s = s.write("    b .Lmd_loop_i32\n");
-        s = s.write(".Lmd_loop_struct:\n");          // struct/enum-key search via the derived eq
-        s = s.write("    ldr x9, [x22]\n");         // keys.len
-        s = s.write("    cmp x23, x9\n");
-        s = s.write("    b.ge .Lmd_notfound\n");
-        s = s.write("    add x9, x23, #1\n");
-        s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1] = self
-        s = s.write("    mov x1, x20\n");                // other = the lookup key
-        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    blr x25\n    add sp, sp, #32\n");
-        s = s.write("    cbnz x0, .Lmd_found\n");
-        s = s.write("    add x23, x23, #1\n");
-        s = s.write("    b .Lmd_loop_struct\n");
-        s = s.write(".Lmd_found:\n");
-        s = s.write("    ldr x22, [x19]\n");         // keys arr
-        s = s.write("    ldr x21, [x22]\n");         // n (keykind no longer needed)
-        s = s.write("    mov x10, x23\n");           // j = i
-        s = s.write(".Lmd_kshift:\n");
-        s = s.write("    sub x9, x21, #1\n");        // n-1
-        s = s.write("    cmp x10, x9\n");
-        s = s.write("    b.ge .Lmd_kdone\n");
-        s = s.write("    add x9, x10, #2\n");        // j+2
-        s = s.write("    ldr x11, [x22, x9, lsl #3]\n");
-        s = s.write("    add x9, x10, #1\n");        // j+1
-        s = s.write("    str x11, [x22, x9, lsl #3]\n");
-        s = s.write("    add x10, x10, #1\n");
-        s = s.write("    b .Lmd_kshift\n");
-        s = s.write(".Lmd_kdone:\n");
-        s = s.write("    sub x9, x21, #1\n");
-        s = s.write("    str x9, [x22]\n");          // keys.len = n-1
-        s = s.write("    ldr x22, [x19, #8]\n");     // values arr
-        s = s.write("    mov x10, x23\n");           // j = i
-        s = s.write(".Lmd_vshift:\n");
-        s = s.write("    sub x9, x21, #1\n");
-        s = s.write("    cmp x10, x9\n");
-        s = s.write("    b.ge .Lmd_vdone\n");
-        s = s.write("    add x9, x10, #2\n");
-        s = s.write("    ldr x11, [x22, x9, lsl #3]\n");
-        s = s.write("    add x9, x10, #1\n");
-        s = s.write("    str x11, [x22, x9, lsl #3]\n");
-        s = s.write("    add x10, x10, #1\n");
-        s = s.write("    b .Lmd_vshift\n");
-        s = s.write(".Lmd_vdone:\n");
-        s = s.write("    sub x9, x21, #1\n");
-        s = s.write("    str x9, [x22]\n");          // values.len = n-1
-        s = s.write("    mov x24, #1\n");            // existed = 1
-        s = s.write("    b .Lmd_build\n");
-        s = s.write(".Lmd_notfound:\n");
-        s = s.write("    mov x24, #0\n");            // existed = 0
-        s = s.write(".Lmd_build:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");          // 2-slot tuple box
-        s = s.write("    str x19, [x0]\n");          // tuple[0] = mapbox
-        s = s.write("    str x24, [x0, #8]\n");      // tuple[1] = existed
-        s = s.write("    ldp x25, x26, [sp], #16\n");
-        s = s.write("    ldp x23, x24, [sp], #16\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_map_delete, .-__fern_map_delete\n");
+        // __fern_map_delete is now a Fern runtime function (#2649): see
+        // asmcore.rt_src_map_delete, the same single source the x86 backend
+        // emits, lowered here as __fn___fern_map_delete. The op site passes the
+        // derived-eq address as an ordinary stack argument rather than in x5.
 
         // __fern_map_get(x0 = mapbox, x1 = key, x2 = keykind,
         // x5 = derived K.eq or 0) → Option[V]:

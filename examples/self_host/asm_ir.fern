@@ -3426,127 +3426,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_has, .-__fern_map_has\n");
-    // __fern_map_delete (transcribed from asm.fern) — `m.without(k)`. Mutates the
-    // parallel keys[]/values[] in place (order-preserving left-shift over the hit
-    // slot, both lengths decremented) and returns a 2-slot tuple [mapbox, existed].
-    s = s.write(".globl __fern_map_delete\n");
-    s = s.write(".type __fern_map_delete, @function\n");
-    s = s.write("__fern_map_delete:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    pushq %r14\n");
-    s = s.write("    pushq %r15\n");
-    s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -48(%rbp), or 0
-    s = s.write("    movq %rdi, %r12\n");
-    s = s.write("    movq %rsi, %r13\n");
-    s = s.write("    movq %rdx, %r14\n");
-    s = s.write("    movq (%r12), %r15\n");
-    s = s.write("    movq $0, %rbx\n");
-    s = s.write("    testq %r8, %r8\n");            // struct/enum key? (eq fn present)
-    s = s.write("    jnz .Lmd_loop_struct\n");
-    s = s.write("    testq %r14, %r14\n");
-    s = s.write("    jnz .Lmd_loop_i32\n");
-    s = s.write("    jmp .Lmd_loop\n");            // string case skips the struct loop below
-    s = s.write(".Lmd_loop_struct:\n");            // struct/enum-key loop: derived eq via call *
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmd_notfound\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rcx\n");  // keys[i+1] = self
-    s = s.write("    pushq %r13\n");               // arg1 = other (lookup key); stack ABI
-    s = s.write("    pushq %rcx\n");               // arg0 = self (on top, at 16(%rbp))
-    s = s.write("    call *-48(%rbp)\n");          // __fn_<K>__eq(self, other) -> bool
-    s = s.write("    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lmd_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmd_loop_struct\n");
-    s = s.write(".Lmd_loop:\n");
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmd_notfound\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rdi\n");
-    s = s.write("    movq %r13, %rsi\n");
-    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lmd_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmd_loop\n");
-    s = s.write(".Lmd_loop_i32:\n");
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmd_notfound\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rax\n");
-    s = s.write("    cmpq %r13, %rax\n");
-    s = s.write("    je .Lmd_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmd_loop_i32\n");
-    s = s.write(".Lmd_found:\n");
-    s = s.write("    movq (%r12), %r15\n");
-    s = s.write("    movq (%r15), %r14\n");
-    s = s.write("    movq %rbx, %rcx\n");
-    s = s.write(".Lmd_kshift:\n");
-    s = s.write("    movq %r14, %rax\n");
-    s = s.write("    decq %rax\n");
-    s = s.write("    cmpq %rax, %rcx\n");
-    s = s.write("    jge .Lmd_kdone\n");
-    s = s.write("    movq %rcx, %rax\n");
-    s = s.write("    addq $2, %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rdx\n");
-    s = s.write("    movq %rcx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq %rdx, (%r15,%rax,8)\n");
-    s = s.write("    incq %rcx\n");
-    s = s.write("    jmp .Lmd_kshift\n");
-    s = s.write(".Lmd_kdone:\n");
-    s = s.write("    movq %r14, %rax\n");
-    s = s.write("    decq %rax\n");
-    s = s.write("    movq %rax, (%r15)\n");
-    s = s.write("    movq 8(%r12), %r15\n");
-    s = s.write("    movq %rbx, %rcx\n");
-    s = s.write(".Lmd_vshift:\n");
-    s = s.write("    movq %r14, %rax\n");
-    s = s.write("    decq %rax\n");
-    s = s.write("    cmpq %rax, %rcx\n");
-    s = s.write("    jge .Lmd_vdone\n");
-    s = s.write("    movq %rcx, %rax\n");
-    s = s.write("    addq $2, %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rdx\n");
-    s = s.write("    movq %rcx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq %rdx, (%r15,%rax,8)\n");
-    s = s.write("    incq %rcx\n");
-    s = s.write("    jmp .Lmd_vshift\n");
-    s = s.write(".Lmd_vdone:\n");
-    s = s.write("    movq %r14, %rax\n");
-    s = s.write("    decq %rax\n");
-    s = s.write("    movq %rax, (%r15)\n");
-    s = s.write("    movq $1, %r13\n");
-    s = s.write("    jmp .Lmd_build\n");
-    s = s.write(".Lmd_notfound:\n");
-    s = s.write("    movq $0, %r13\n");
-    s = s.write(".Lmd_build:\n");
-    s = s.write("    movq $16, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    movq %r12, (%rax)\n");
-    s = s.write("    movq %r13, 8(%rax)\n");
-    s = s.write("    addq $8, %rsp\n");             // discard saved eq fn ptr
-    s = s.write("    popq %r15\n");
-    s = s.write("    popq %r14\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_map_delete, .-__fern_map_delete\n");
+    // __fern_map_delete is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_map_delete, lowered through the IR pipeline as
+    // __fn___fern_map_delete. The op site passes the derived-eq address as an
+    // ordinary stack argument rather than in %r8.
     }
 
     // __fern_i32_to_string is now a Fern runtime function (#2649): emitted
@@ -4413,7 +4296,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
         "__fn___fern_open_fd",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
-        "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
+        "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
         // scalar / string keys()/values() snapshots (#4353): a library
         // module's kind 131/132 flag-0/flag-2 read calls these; the entry
         // owns the definitions.
@@ -5595,10 +5478,17 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
         } else if (o.kind_tag == 130) {  // map_delete
-            // [map, key] -> __fern_map_delete(rdi=map, rsi=key, rdx=keykind) -> map.
+            // [map, key] -> __fn___fern_map_delete(map, key, keykind, eqfn) ->
+            // the (map, existed) tuple box. The helper is Fern now (#2649), so
+            // this is the stack ABI: arguments pushed in REVERSE, leaving arg0
+            // (the map) on top, and the caller drops all four slots after.
+            s = s.need("map_delete");
             s = s.write("    popq %rsi\n    popq %rdi\n");
-            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_delete\n    pushq %rax\n");
+            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n"); } else { s = s.write("    xorq %rax, %rax\n"); }
+            s = s.write("    pushq %rax\n");
+            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_map_delete\n    addq $32, %rsp\n    pushq %rax\n");
         } else if (o.kind_tag == 129) {  // map_get_or
             // [map, k, default] -> __fern_map_get, then Some payload or default.
             // The Option box __fern_map_get allocates is consumed RIGHT HERE —
@@ -7763,6 +7653,16 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("str_eq")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), all_structs, s);
+    }
+    // __fern_map_delete (#2649): `m.without(k)`. A Fern helper rather than
+    // hand-asm — the last of the map ops to move. Gated on its OWN need, not on
+    // `maps`: the Fern body is markedly larger than the hand-asm it replaces,
+    // and most map programs never delete. (The hand-asm rode the whole maps
+    // bundle, so this also stops emitting it for programs that never call
+    // `.without`.) Its declared dep on `maps` carries str_eq for the string arm.
+    if (s.has_need("map_delete")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), all_structs, s);
     }
     // ASCII case transforms (to_upper / to_lower) — heap-dependent, so the heap
     // runtime is already present; emitted on their own str_case need.
