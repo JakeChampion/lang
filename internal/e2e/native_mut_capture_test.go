@@ -58,6 +58,20 @@ func TestNativeMutScalarCapture(t *testing.T) {
 		// outer reads the shared result → 7. Guards that skipping CoW on the cell
 		// keeps the outer write and the closure write on the SAME buffer.
 		{"outer-and-inner", `function main(): i32 { var x = 0; var f = function (): i32 { x = x + 4; return 0; }; x = 3; f(); return x; }`, 7},
+		// A BOXED capture read inside an f-string. Only `n.Desugared`
+		// reaches the IR, and the box rewrite walked `n.Parts`, so a
+		// bare-name operand lowered the raw Ident and produced the
+		// CELL POINTER: f"{x}" was "268435472" on both natives and
+		// "2120" on wasm, against "74". The length is the i32 that
+		// pins it — 2 for the value, 9 or 4 for a pointer.
+		{"fstring-boxed-read", `import "std/i32"; function main(): i32 { var x = 0; x = 74; var f = function (): i32 { return x; }; var s: string = f"{x}"; return s.len(); }`, 2},
+		// The same read with STRUCTURE around the name. A part and its
+		// counterpart in Desugared are one node, so this one was already
+		// correct — the composite cases rewrite in place, which both
+		// slots see. It guards against fixing the bare name by walking
+		// Desugared as well as Parts: that rewrites this operand twice
+		// and indexes the cell as `c[0][0]`, which segfaults.
+		{"fstring-boxed-read-expr", `import "std/i32"; function main(): i32 { var x = 0; x = 70; var f = function (): i32 { return x; }; var s: string = f"{x + 4i32}"; return s.len(); }`, 2},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -115,6 +129,11 @@ func TestNativeMutPointerCapture(t *testing.T) {
 		{"string-alias-no-underflow", `function main(): i32 { var keep: string = "abcdefgh"; var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = keep; s = "abc"; s = keep; var x: i32 = f() + keep.len(); if (x != 16) { return 100; } return __rc_underflow_count(); }`, 0},
 		// A loop that grows the captured string 40 times: cell stays shared → 42.
 		{"loop-string-grow", `function main(): i32 { var s: string = "x"; var f: () => i32 = function (): i32 { return s.len(); }; var i: i32 = 0; while (i < 40) { s = s + "y"; i = i + 1; } return f() + 1; }`, 42},
+		// The f-string read of a boxed POINTER capture, mirroring
+		// fstring-boxed-read in the scalar table: the cell holds the
+		// reassigned string and f"{s}" must print through it, not the
+		// cell itself.
+		{"fstring-boxed-read", `import "std/string"; function main(): i32 { var s: string = "aa"; var f: () => i32 = function (): i32 { return s.len(); }; s = "bb"; var t: string = f"{s}"; return t.len(); }`, 2},
 	}
 	for _, tc := range cases {
 		tc := tc
