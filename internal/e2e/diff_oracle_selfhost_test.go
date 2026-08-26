@@ -142,15 +142,10 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	shardIdx, shardCount := diffOracleShard(t)
-	seedCount := selfHostDiffSeeds(t)
 	known := loadKnownDivergences(t, selfHostDiffKnownFile)
 
 	var sampled, ran int64
-	for seed := uint64(0); seed < seedCount; seed++ {
-		if seed%shardCount != shardIdx {
-			continue
-		}
+	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
 		seed := seed
 		sampled++
 		key := strconv.FormatUint(seed, 10)

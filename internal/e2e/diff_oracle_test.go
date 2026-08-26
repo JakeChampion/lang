@@ -345,12 +345,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 	tally := newLegTally(available, diffOracleMinRunRatio)
 	t.Cleanup(func() { tally.check(t) })
 
-	shardIdx, shardCount := diffOracleShard(t)
-	seedCount := diffOracleSeeds(t)
-	for seed := uint64(0); seed < seedCount; seed++ {
-		if seed%shardCount != shardIdx {
-			continue
-		}
+	for _, seed := range diffOracleWindow(t, diffOracleSeeds(t)) {
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
@@ -438,6 +433,53 @@ func diffOracleShard(t *testing.T) (uint64, uint64) {
 		t.Fatalf("DIFF_ORACLE_SHARD=%q: require 0 <= I < N and N > 0", raw)
 	}
 	return idx, count
+}
+
+// diffOracleSeedBase reads the optional `DIFF_ORACLE_SEED_BASE` env
+// var: the first seed of the sweep, defaulting to 0. The nightly
+// workflow derives it from the run number so each night sweeps a
+// window the fixed PR corpus never reaches, without any committed
+// cursor — the window is a function of the run, so any past night's
+// range is recomputable and re-runnable with one env var.
+//
+// The seed-keyed known-divergence tables in this package only
+// describe base-0 programs; a shifted window simply never matches
+// them, which is what you want — a row names one specific program,
+// not an index.
+func diffOracleSeedBase(t *testing.T) uint64 {
+	t.Helper()
+	raw := os.Getenv("DIFF_ORACLE_SEED_BASE")
+	if raw == "" {
+		return 0
+	}
+	base, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		t.Fatalf("DIFF_ORACLE_SEED_BASE=%q: parse: %v", raw, err)
+	}
+	return base
+}
+
+// diffOracleWindow returns the seeds this run should sweep: count
+// seeds from the base, keeping the ones this shard claims
+// (`seed % N == I`). Every fernsmith seed sweep in the package goes
+// through here, so the base and the shard split are defined once.
+//
+// The shard filter is applied to the absolute seed, so a given seed
+// lands on the same shard whatever the base is — a failure found in
+// shard 1 of a nightly window reproduces in shard 1 of a re-run.
+func diffOracleWindow(t *testing.T, count uint64) []uint64 {
+	t.Helper()
+	base := diffOracleSeedBase(t)
+	shardIdx, shardCount := diffOracleShard(t)
+	seeds := make([]uint64, 0, count/shardCount+1)
+	for i := uint64(0); i < count; i++ {
+		seed := base + i
+		if seed%shardCount != shardIdx {
+			continue
+		}
+		seeds = append(seeds, seed)
+	}
+	return seeds
 }
 
 // FuzzGenerate_ExecutionAgrees is the same oracle as the table
