@@ -24776,6 +24776,80 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
     return false;
 }
 
+// struct_lit_str_field_retained: `src` occurs in `sl` exactly once, at a
+// `string` FIELD, as a bare ident the construction RETAINS.
+//
+// The retain is what the forgiveness is buying, so the move site is the gate
+// that matters: a store the move analysis claims takes over `src`'s reference
+// outright and emits no inc (moves_local_at at the lowering site), which makes
+// a release of `src` as well an over-release rather than a leak. Any second
+// occurrence anywhere in the literal — another field, the base — refuses: that
+// one is some other use the retain does not cover.
+function struct_lit_str_field_retained(sl: parser.ExprStructLit, src: string, structs: parser.StructDecl[], msites: string[]): boolean {
+    var ok: boolean = false;
+    var hits: i32 = 0;
+    var other: boolean = false;
+    var i: i32 = 0;
+    while (i < sl.field_values.len()) {
+        match (sl.field_values[i]) {
+            parser.ExprIdent(fid) => {
+                if (fid.name == src) {
+                    hits = hits + 1;
+                    if (i < sl.field_names.len()
+                        && decl_field_type(structs, sl.type_name, sl.field_names[i]) == "string"
+                        && util.index_of_str(msites, util.i32_to_string(fid.line) + ":" + util.i32_to_string(fid.col)) < 0) { ok = true; }
+                }
+            },
+            _ => { if (expr_mentions_name(sl.field_values[i], src)) { other = true; } }
+        }
+        i = i + 1;
+    }
+    if (sl.has_base && expr_mentions_name(sl.base, src)) { other = true; }
+    return ok && hits == 1 && !other;
+}
+
+// str_counted_field_sites: the binding SITES of every `var p: T = T { .., f: src, .. }`
+// where the field store is a COUNTED share of `src`'s box. Handed to the escape
+// walker as "SFLD:" entries so the source's bare-ident use there is read as the
+// share it is rather than as a store into a container.
+//
+// Three conditions, one per way the pair could come apart. `p` must have earned
+// its own struct credit (`credited`), or nothing runs the field drop that gives
+// the retain back. T must route field reclaim, or __struct_drop_T carries no
+// string arm to reach the field with. And the store must retain rather than move
+// (struct_lit_str_field_retained).
+function str_counted_field_sites(stmts: parser.Stmt[], src: string, structs: parser.StructDecl[], sfok: string[], msites: string[], credited: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprStructLit(sl) => {
+                        var vs: string = reclaim_site_key_of(v.name, v.line, v.col);
+                        if (util.index_of_str(credited, vs) >= 0
+                            && struct_routes_field_reclaim_at(structs, sfok, sl.type_name)
+                            && struct_lit_str_field_retained(sl, src, structs, msites)) {
+                            a = push_str_unique(a, vs);
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => {
+                a = str_counted_field_sites(f.then_body, src, structs, sfok, msites, credited, a);
+                a = str_counted_field_sites(f.else_body, src, structs, sfok, msites, credited, a);
+            },
+            parser.StmtWhile(w) => { a = str_counted_field_sites(w.body, src, structs, sfok, msites, credited, a); },
+            parser.StmtFor(fo) => { a = str_counted_field_sites(fo.body, src, structs, sfok, msites, credited, a); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { a = str_counted_field_sites(arm.body, src, structs, sfok, msites, credited, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
 // stmt_unsafe_for / body_unsafe_for lift expr_unsafe_for over statements,
 // special-casing `for x in name` (a borrow iteration, safe) and recursing into
 // nested control-flow bodies. A reassignment of `name` is handled separately by
@@ -24837,6 +24911,24 @@ function body_unsafe_for_clo_alias(stmts: parser.Stmt[], name: string, borrowabl
                         // local's free.
                         if (util.index_of_str(clo_ok, "TUPE:" + vsite) >= 0
                             && tuple_bare_ident_sole_use(v.init, name)) { skip = true; }
+                    },
+                    // The struct-lit FIELD twin of the two interlocks above, one
+                    // construction shape over and the same arithmetic: the literal
+                    // retains the string field (rc 2), the struct's field drop decs
+                    // the box's reference and this sweep's string loop decs the
+                    // local's. "SFLD:" is credited only for a `var p: T = T { .. }`
+                    // that earned its own struct credit, whose T routes field
+                    // reclaim, and whose store is not a move — so __struct_drop_T
+                    // reaches the string arm and the retain has something to give it
+                    // back (str_counted_field_sites).
+                    //
+                    // Ordering makes a classifier mismatch a sound leak rather than a
+                    // double free, as it does for the closure and tuple interlocks:
+                    // the exit sweep's struct loop runs BEFORE its string loop, so
+                    // the field drop always precedes the local's free.
+                    parser.ExprStructLit(_) => {
+                        var svsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+                        if (util.index_of_str(clo_ok, "SFLD:" + svsite) >= 0) { skip = true; }
                     },
                     _ => {}
                 }
@@ -34172,7 +34264,7 @@ function arrstruct_credit_rows(body: parser.Stmt[], structs: parser.StructDecl[]
     return out;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: parser.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -34649,8 +34741,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var sal_all: string[] = sal;
         var sri: i32 = 0;
         while (sri < sra.len()) { sal_all = push_str_unique(sal_all, sra[sri]); sri = sri + 1; }
+        // A struct-literal string FIELD is the third counted share this credit
+        // survives, alongside the alias bind and the alias reassign: the
+        // construction retains the box and the holder's field drop decs it, so
+        // the source keeps the claim its own release balances. Tagged per
+        // candidate rather than seeded into clo_ok once, because the move gate
+        // inside is a question about THIS name's use at THIS literal.
+        var sfsites: string[] = str_counted_field_sites(body, snm, structs, sfok, msites, out, []);
+        var str_clo_ok: string[] = clo_ok;
+        var sfi: i32 = 0;
+        while (sfi < sfsites.len()) { str_clo_ok = str_clo_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
         if (util.index_of_str(reassigned, snm) < 0
-            && !body_unsafe_for_clo_alias(body, snm, borrowable, clo_ok, recv_borrow, sal_all)) {
+            && !body_unsafe_for_clo_alias(body, snm, borrowable, str_clo_ok, recv_borrow, sal_all)) {
             out = out.append("STR:" + strs[si]);
             out = credit_alias_sites(out, "STR:", sal_all);
             if (sra.len() > 0) {
@@ -49741,7 +49843,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
     if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow

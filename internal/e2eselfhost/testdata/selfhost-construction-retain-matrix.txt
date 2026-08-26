@@ -34,7 +34,7 @@
 # still refused: nothing retains there, so granting them releases a box that was
 # never inc'd. TestSelfHostContainerSinkMatrixX86_64 is the grid for that axis.
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
-str__local          clean leak   bare string local: retain gated on slit_reclaim + ownership; P not strfldok-admitted here
+str__local          clean clean  counted: the struct-lit field retain fires whenever the store is not a MOVE, and the source now keeps the "STR:" credit that balances it
 str__param          clean leak   same gate, param origin
 str__fieldread      clean leak   string field read: retain gated on strfldok admission, not granted here
 str__call           clean clean  producer result is Owned
