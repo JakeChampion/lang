@@ -35253,13 +35253,16 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // emit_arrenum_reclaim_store is already cow-guarded — but the two blunt
         // gates have to sanction the self-append rebind, which is the one
         // reassignment and the one non-`len()` use the class permits.
-        var aeappend: boolean = util.index_of_str(aens, "A|" + aens[aeni]) >= 0;
+        // ONE pair of gates for both the literal/producer and the append-built
+        // candidate. The append exception costs the former nothing — a candidate
+        // that is not append-built has no reassignment at all, because the
+        // collector's `reassigned` check already refused it — so the two paths
+        // that used to be branched here answer identically, and branching them
+        // only risked their exceptions drifting apart.
         var aeenum: string = arrenum_entry_enum(aens[aeni]);
-        var aeblocked: boolean = arrenum_escapes(body, aename) || body_unsafe_for(body, aename, borrowable, recv_borrow);
-        if (aeappend) {
-            aeblocked = arrenum_append_escapes(body, aename, structs, aeenum, false)
-                || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum);
-        }
+        var aeblocked: boolean = arrenum_append_escapes(body, aename, structs, aeenum, msites, false)
+            || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum, msites)
+            || arrenum_share_holder_respread(body, aename, structs, msites);
         if (!(aens[aeni].len() > 2 && aens[aeni][0] == b'A' && aens[aeni][1] == b'|')
             && aesite.len() > 0 && !aeblocked) {
             out = out.append("ARRENUM:" + aens[aeni]);
@@ -44452,12 +44455,90 @@ function arrenum_name_is_appended(stmts: parser.Stmt[], name: string, structs: p
     return false;
 }
 
+// arrenum_counted_field_share: `e` is a struct literal that mentions `name` ONLY
+// as the bare-ident value of a field whose declared type is an ARRAY OF ENUMS.
+// The construction retains such a field — `is_array_type_name` covers `E[]` in the
+// ExprStructLit fallback arm, so the alias-inc fires even though the gate above it
+// names only scalar- and struct-arrays — so the field holds a COUNTED share, and
+// reading it as an escape sank the source's whole reclaim.
+//
+// Both releases are rc-gated, which is what makes granting this safe rather than a
+// double free: the holder's walk is __enum_arr_elems_drop_<E>, which is_unique-gates
+// the buffer, and the source's is emit_arrenum_deep_free, now gated the same way.
+// The stakes are higher than the struct sibling's — this walk FREES each element
+// box — so both halves are a hard requirement, not an optimisation.
+//
+// Refused for a `{ ...base }` update (the copied fields carry no inc) and for a
+// MOVED share. The move refusal is the one the struct sibling learned from a gen2
+// segfault: the retain is move-gated (#6726), so at a move site the box takes over
+// the local's reference and both the inc and the sweep dec are dropped — and this
+// credit routes emit_arrenum_deep_free rather than that plain dec, so granting it
+// there frees a buffer whose ownership left the frame. `return T { f: xs, … }` is
+// that shape, because the return is the source's last use.
+function arrenum_counted_field_share(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { return false; }
+            var seen: boolean = false;
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                match (sl.field_values[i]) {
+                    parser.ExprIdent(fid) => {
+                        if (fid.name == name) {
+                            if (!is_enum_array_field_type(structs, decl_field_type(structs, sl.type_name, sl.field_names[i]))) { return false; }
+                            if (moved_ident_at(sl.field_values[i], msites)) { return false; }
+                            seen = true;
+                        }
+                    },
+                    _ => { if (arrenum_esc_expr(sl.field_values[i], name)) { return false; } }
+                }
+                i = i + 1;
+            }
+            return seen;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrenum_counted_share_holders / arrenum_share_holder_respread: the same
+// precondition the struct sibling needs. A holder that took a counted share and is
+// then used as a struct-literal BASE copies the buffer pointer into a third box
+// with NO inc, so three owners sit at rc 2 and the first two sweeps free it between
+// them. The share count being complete is what the credit rests on, so this is a
+// gate on the credit rather than something the walk could guard against.
+function arrenum_counted_share_holders(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (arrenum_counted_field_share(v.init, name, structs, msites)) { a = push_str_unique(a, v.name); } },
+            parser.StmtAssign(asg) => { if (arrenum_counted_field_share(asg.value, name, structs, msites)) { a = push_str_unique(a, asg.target); } },
+            parser.StmtIf(f) => { a = arrenum_counted_share_holders(f.then_body, name, structs, msites, a); a = arrenum_counted_share_holders(f.else_body, name, structs, msites, a); },
+            parser.StmtWhile(w) => { a = arrenum_counted_share_holders(w.body, name, structs, msites, a); },
+            parser.StmtFor(fo) => { a = arrenum_counted_share_holders(fo.body, name, structs, msites, a); },
+            parser.StmtMatch(m) => { for arm in m.arms { a = arrenum_counted_share_holders(arm.body, name, structs, msites, a); } },
+            _ => {}
+        }
+    }
+    return a;
+}
+function arrenum_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+    var holders: string[] = arrenum_counted_share_holders(stmts, name, structs, msites, []);
+    if (holders.len() == 0) { return false; }
+    return body_spreads_any(stmts, holders);
+}
+
 // arrenum_append_escapes: arrenum_escapes with exactly one sanctioned use — the
 // self-append rebind. Only the assign case differs; everything else delegates, so
 // the class keeps its deliberately tight "only xs.len()" rule everywhere else.
-function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string, allow_ret: boolean): boolean {
+function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string, msites: string[], allow_ret: boolean): boolean {
     for stmt in stmts {
         match (stmt) {
+            parser.StmtVar(v) => {
+                if (!arrenum_counted_field_share(v.init, name, structs, msites)) {
+                    if (arrenum_esc_expr(v.init, name)) { return true; }
+                }
+            },
             parser.StmtReturn(r) => {
                 // `return name` is a move-out, safe when the caller is asking the
                 // PRODUCER question (arrenum_producer_ret_local). For the local
@@ -44467,32 +44548,38 @@ function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: par
                     parser.ExprIdent(rid) => { ret_ok = allow_ret && rid.name == name; },
                     _ => {}
                 }
-                if (!ret_ok && arrenum_esc_expr(r.value, name)) { return true; }
+                if (!ret_ok && !arrenum_counted_field_share(r.value, name, structs, msites)
+                    && arrenum_esc_expr(r.value, name)) { return true; }
+            },
+            parser.StmtExpr(e) => {
+                if (!arrenum_counted_field_share(e.value, name, structs, msites)
+                    && arrenum_esc_expr(e.value, name)) { return true; }
             },
             parser.StmtAssign(a) => {
                 if (a.target == name) {
                     if (!arrenum_self_append_elem(a.value, name, structs, ename)) { return true; }
                 }
-                else if (arrenum_esc_expr(a.value, name)) { return true; }
+                else if (!arrenum_counted_field_share(a.value, name, structs, msites)
+                    && arrenum_esc_expr(a.value, name)) { return true; }
             },
             parser.StmtIf(f) => {
                 if (arrenum_esc_expr(f.cond, name)) { return true; }
-                if (arrenum_append_escapes(f.then_body, name, structs, ename, allow_ret)) { return true; }
-                if (arrenum_append_escapes(f.else_body, name, structs, ename, allow_ret)) { return true; }
+                if (arrenum_append_escapes(f.then_body, name, structs, ename, msites, allow_ret)) { return true; }
+                if (arrenum_append_escapes(f.else_body, name, structs, ename, msites, allow_ret)) { return true; }
             },
             parser.StmtWhile(w) => {
                 if (arrenum_esc_expr(w.cond, name)) { return true; }
-                if (arrenum_append_escapes(w.body, name, structs, ename, allow_ret)) { return true; }
+                if (arrenum_append_escapes(w.body, name, structs, ename, msites, allow_ret)) { return true; }
             },
             parser.StmtFor(fo) => {
                 if (arrenum_esc_expr(fo.iter, name)) { return true; }
-                if (arrenum_append_escapes(fo.body, name, structs, ename, allow_ret)) { return true; }
+                if (arrenum_append_escapes(fo.body, name, structs, ename, msites, allow_ret)) { return true; }
             },
             parser.StmtMatch(m) => {
                 if (arrenum_esc_expr(m.scrutinee, name)) { return true; }
                 for arm in m.arms {
                     if (arm.has_guard && arrenum_esc_expr(arm.guard, name)) { return true; }
-                    if (arrenum_append_escapes(arm.body, name, structs, ename, allow_ret)) { return true; }
+                    if (arrenum_append_escapes(arm.body, name, structs, ename, msites, allow_ret)) { return true; }
                 }
             },
             _ => { if (arrenum_esc_stmt(stmt, name)) { return true; } }
@@ -44504,23 +44591,36 @@ function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: par
 // arrenum_append_unsafe_for: body_unsafe_for with the same one exception. The
 // blunt gate flags any reassignment of the candidate, and the self-append IS a
 // reassignment.
-function arrenum_append_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], structs: parser.StructDecl[], ename: string): boolean {
+function arrenum_append_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], structs: parser.StructDecl[], ename: string, msites: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
+            parser.StmtVar(v) => {
+                if (!arrenum_counted_field_share(v.init, name, structs, msites)
+                    && expr_unsafe_for(v.init, name, borrowable, recv_borrow)) { return true; }
+            },
+            parser.StmtReturn(r) => {
+                if (!arrenum_counted_field_share(r.value, name, structs, msites)
+                    && expr_unsafe_for(r.value, name, borrowable, recv_borrow)) { return true; }
+            },
+            parser.StmtExpr(e) => {
+                if (!arrenum_counted_field_share(e.value, name, structs, msites)
+                    && expr_unsafe_for(e.value, name, borrowable, recv_borrow)) { return true; }
+            },
             parser.StmtAssign(a) => {
                 if (a.target == name) {
                     if (!arrenum_self_append_elem(a.value, name, structs, ename)) { return true; }
                 }
-                else if (expr_unsafe_for(a.value, name, borrowable, recv_borrow)) { return true; }
+                else if (!arrenum_counted_field_share(a.value, name, structs, msites)
+                    && expr_unsafe_for(a.value, name, borrowable, recv_borrow)) { return true; }
             },
             parser.StmtIf(f) => {
                 if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
-                if (arrenum_append_unsafe_for(f.then_body, name, borrowable, recv_borrow, structs, ename)) { return true; }
-                if (arrenum_append_unsafe_for(f.else_body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+                if (arrenum_append_unsafe_for(f.then_body, name, borrowable, recv_borrow, structs, ename, msites)) { return true; }
+                if (arrenum_append_unsafe_for(f.else_body, name, borrowable, recv_borrow, structs, ename, msites)) { return true; }
             },
             parser.StmtWhile(w) => {
                 if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
-                if (arrenum_append_unsafe_for(w.body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+                if (arrenum_append_unsafe_for(w.body, name, borrowable, recv_borrow, structs, ename, msites)) { return true; }
             },
             parser.StmtFor(fo) => {
                 var iter_unsafe: boolean = true;
@@ -44529,13 +44629,13 @@ function arrenum_append_unsafe_for(stmts: parser.Stmt[], name: string, borrowabl
                     _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
                 }
                 if (iter_unsafe) { return true; }
-                if (arrenum_append_unsafe_for(fo.body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+                if (arrenum_append_unsafe_for(fo.body, name, borrowable, recv_borrow, structs, ename, msites)) { return true; }
             },
             parser.StmtMatch(m) => {
                 if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
                 for arm in m.arms {
                     if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, recv_borrow)) { return true; }
-                    if (arrenum_append_unsafe_for(arm.body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+                    if (arrenum_append_unsafe_for(arm.body, name, borrowable, recv_borrow, structs, ename, msites)) { return true; }
                 }
             },
             _ => { if (stmt_unsafe_for(stmt, name, borrowable, recv_borrow)) { return true; } }
@@ -44679,11 +44779,23 @@ function slot_is_reclaimable_arrenum(s: LowerState, i: i32): boolean {
 // NO per-element __fern_rc_dec: emit_enum_variant_drops already frees the box and
 // zeroes the slot. That is the one place this differs from its ARRTUP/ARRSTRUCT
 // siblings, and copying their trailing dec double-frees every element.
+//
+// The element loop is rc-gated on the BUFFER, not just per element: a buffer this
+// frame shares with a co-owner still holds elements at rc 1, so nothing inside the
+// loop can see the sharing. __enum_arr_elems_drop_<E>, the walk a struct FIELD of
+// the same type takes, is_unique-gates the buffer for exactly that reason; this is
+// the local-slot side of the same rule. It matters more here than it does for the
+// struct sibling because this walk FREES each element box rather than deccing it,
+// so two owners both walking is a double free rather than a double dec. Only the
+// buffer dec stays unconditional — it is the release every owner must perform.
 function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("ne", 0, false));         // arr != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
     st = st.emit(ir.op_if(0));
     var idxn: string = "$aeni" + util.i32_to_string(st.locals.len());
     st = st.add_local(idxn);
@@ -44713,6 +44825,7 @@ function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): Lower
     st = st.emit(ir.op_br(0));                       // back-edge
     st = st.emit(ir.op_end());                       // end loop
     st = st.emit(ir.op_end()).exit_loop();           // end block
+    st = st.emit(ir.op_end());                       // end if-buffer-unique
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the outer buffer box
     st = st.emit(ir.op_drop());
@@ -51588,7 +51701,7 @@ function arrenum_producer_enum(fn: parser.FuncDecl, structs: parser.StructDecl[]
 function arrenum_producer_ret_local(fnbody: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string): boolean {
     if (!arrenum_local_empty_init(fnbody, name)) { return false; }
     if (!arrenum_name_is_appended(fnbody, name, structs, ename)) { return false; }
-    return !arrenum_append_escapes(fnbody, name, structs, ename, true);
+    return !arrenum_append_escapes(fnbody, name, structs, ename, [], true);
 }
 
 // arrenum_local_empty_init: `name` is declared IN this body from `[]`. Requiring

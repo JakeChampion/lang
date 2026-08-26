@@ -59,7 +59,7 @@ enum__param         clean leak   param enum bare ident
 enum__fieldread     clean clean  q.f read retained; the holder's own ctor-call is ENUM:-owned, both decs balance
 enum__call          clean clean  strict-fresh enum call result ("ENUM:" registry) owned outright
 enum_arr__fresh     clean clean  fresh [E.A(..)] literal: __enum_arr_elems_drop walks the payloads
-enum_arr__local     clean leak   bare enum-array ident: handover uncounted, source claim strands
+enum_arr__local     clean clean  counted: the field share keeps the source its rc-gated walk
 enum_arr__param     clean leak   param enum-array, same uncounted handover
 enum_arr__fieldread clean leak   q.f enum-array read: no construction retain granted yet
 enum_arr__call      clean clean  producer result owned, payload walk releases it
