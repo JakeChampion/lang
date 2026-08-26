@@ -36,7 +36,7 @@
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
 str__local          clean clean  counted: the struct-lit field retain fires whenever the store is not a MOVE, and the source now keeps the "STR:" credit that balances it
 str__param          clean leak   same gate, param origin
-str__fieldread      clean leak   string field read: retain gated on strfldok admission, not granted here
+str__fieldread      clean clean  counted share: str_field_share_read retains the read and flips both holders to FLDCHECKED
 str__call           clean clean  producer result is Owned
 str_arr__fresh      clean clean  fresh string[] literal owned by the holder
 str_arr__local      clean clean  counted: the field store retains whenever it is not a MOVE, and the source keeps the DEEP "SARR:" credit so its element walk survives a path that never builds the holder

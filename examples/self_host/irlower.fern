@@ -4033,6 +4033,54 @@ function enum_arr_field_share_read(fv: parser.Expr, cfft: string, s: LowerState)
     return "";
 }
 
+// str_field_share_read: the STRING limb of the counted-share question
+// enum_arr_field_share_read answers for arrays — `P { f: q.f }`, a bare-ident
+// field read handed straight into a struct-literal string field. Returns the
+// source holder's local name, or "" when the shape does not qualify.
+//
+// The read lowers through struct_get to the SOURCE box's buffer, so the new box
+// co-owns it. Both holders are marked box-only while that share is uncounted —
+// the source because a field read in a struct-literal field is a positive MOVE
+// position, the target because its literal borrows a string it did not retain —
+// and those markers are what withhold __struct_drop_<T> from each, so neither
+// holder frees the string at all. Neither marker may be flipped without the
+// construction retain: one box under two rc-aware k_str decs frees on the first
+// and dangles on the second.
+//
+// Hoisting the same read to a local (`var t = q.f; P { f: t }`) is already clean —
+// strfld_safe_operand forgives a direct field-read init and the #4768 read-side
+// retain counts it. This is that spelling written inline.
+//
+// BOTH holders' types must route field reclaim: the flip only grants a drop the
+// backend will emit, and a source whose type does not route would keep leaking
+// while the target released a box it now co-owns.
+function str_field_share_read(fv: parser.Expr, cfft: string, lit_type: string, s: LowerState): string {
+    if (cfft != "string") { return ""; }
+    // The same verdict the construction-side retain is gated on (slit_reclaim), so
+    // the retained set and the flipped set cannot drift apart (#7253).
+    if (!s.struct_routes_field_reclaim(lit_type)) { return ""; }
+    // A `T { ...base }` copying a field of this type mints a THIRD owner with no
+    // inc, and both rc-gated walks then run against a count of two. Asked by FIELD
+    // TYPE because the base may name a local with no slot yet.
+    if (util.index_of_str(s.spread_sites, "FT:" + cfft) >= 0) { return ""; }
+    match (fv) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    var ost: string = s.struct_type_of_slot(s.slot_of(oid.name));
+                    if (ost.len() == 0) { return ""; }
+                    if (decl_field_type(s.structs, ost, fa.field) != cfft) { return ""; }
+                    if (!s.struct_routes_field_reclaim(ost)) { return ""; }
+                    return oid.name;
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // struct_arr_field_read_type returns the field type of an ARRAY-OF-STRUCT struct
 // field read (`v.params` where params: P[], P a struct) — the struct-array twin
 // of scalar_arr_field_type. Returns "" for scalar-array / enum-array fields and
@@ -13309,6 +13357,15 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             && slit_own[found] != 3) {
                         fav_alias_inc = true;
                     }
+                    // The counted-share read `P { f: q.f }`. Already retained by the
+                    // ownership test above (a field read is Borrowed, never Owned or
+                    // Static), but asked HERE through the same predicate the marker
+                    // flips use, so the retained set and the flipped set stay identical
+                    // by construction rather than by two conditions agreeing (#7253).
+                    if (!fav_alias_inc
+                            && str_field_share_read(slit.field_values[found], cfft, slit.type_name, s).len() > 0) {
+                        fav_alias_inc = true;
+                    }
                     // COMPACT: load the copied result box UNDER the value so struct_set
                     // (pops [box, value]) can write this overridden field in place. The
                     // struct_copy above already seeded every field from the base; only
@@ -18095,6 +18152,12 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                 if (nfi < nsl.field_names.len()) {
                     var nft: string = decl_field_type(sb.structs, nsl.type_name, nsl.field_names[nfi]);
                     var nsrc: string = enum_arr_field_share_read(nsl.field_values[nfi], nft, se);
+                    // The string limb of the same share. Kept as a separate
+                    // predicate rather than widened into the array one: that one
+                    // bottoms out in array-ness tests a `type A | B` union passes.
+                    if (nsrc.len() == 0) {
+                        nsrc = str_field_share_read(nsl.field_values[nfi], nft, nsl.type_name, se);
+                    }
                     if (nsrc.len() > 0) {
                         var nkey: string = reclaim_site_key_of(v.name, v.line, v.col);
                         sb = sb.drop_reclaim_row("NODEEP:" + nkey);
