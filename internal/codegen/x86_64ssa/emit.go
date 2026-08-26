@@ -532,6 +532,22 @@ func (e *emitter) coalesceDst(result ssa.Value, avoid int) int {
 	return e.s2
 }
 
+// callResultDst names the register a call should deliver its result into: the
+// result's own register home when it has one, else the given staging scratch
+// (from which place() stores it to its slot, or drops it when the result is
+// dead).
+//
+// A call renderer writes Dst only AFTER restoring the caller-saved registers,
+// so naming a home here is safe whatever that home is — it removes the separate
+// place() copy, not an ordering constraint. Capturing INTO Dst ahead of those
+// restores is the renderers' own further step, and is guarded there.
+func (e *emitter) callResultDst(result ssa.Value, staging int) int {
+	if l, ok := e.loc(result.ID); ok && l.IsReg {
+		return l.Reg
+	}
+	return staging
+}
+
 func (e *emitter) emitOp(op *ssa.Op) error {
 	switch op.Kind {
 	case ssa.OpConstInt, ssa.OpConstBool:
@@ -701,8 +717,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			argLocs = append(argLocs, l)
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
-		e.push(Inst{Op: Call, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
-		e.place(op.Result, e.s2)
+		dst := e.callResultDst(op.Result, e.s2)
+		e.push(Inst{Op: Call, Dst: dst, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.place(op.Result, dst)
 		return nil
 
 	case ssa.OpCallPair:
@@ -718,9 +735,11 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			argLocs = append(argLocs, l)
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
-		e.push(Inst{Op: CallPair, Dst: e.s2, Dst2: e.s3, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
-		e.place(op.Result, e.s2)
-		e.place(op.Result2, e.s3)
+		dst := e.callResultDst(op.Result, e.s2)
+		dst2 := e.callResultDst(op.Result2, e.s3)
+		e.push(Inst{Op: CallPair, Dst: dst, Dst2: dst2, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.place(op.Result, dst)
+		e.place(op.Result2, dst2)
 		return nil
 
 	case ssa.OpCallIndirect:
@@ -743,8 +762,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			argLocs = append(argLocs, l)
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
-		e.push(Inst{Op: CallIndirect, Dst: e.s2, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
-		e.place(op.Result, e.s2)
+		dst := e.callResultDst(op.Result, e.s2)
+		e.push(Inst{Op: CallIndirect, Dst: dst, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.place(op.Result, dst)
 		return nil
 
 	case ssa.OpMakeEnv, ssa.OpMakeClosure:
@@ -786,8 +806,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			argLocs = append(argLocs, l)
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
-		e.push(Inst{Op: BoxDyn, Dst: e.s2, ArgLocs: argLocs, SaveRegs: saveRegs, SaveRegsSet: saveSet})
-		e.place(op.Result, e.s2)
+		dst := e.callResultDst(op.Result, e.s2)
+		e.push(Inst{Op: BoxDyn, Dst: dst, ArgLocs: argLocs, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.place(op.Result, dst)
 		return nil
 
 	case ssa.OpCallDyn:
@@ -805,8 +826,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			argLocs = append(argLocs, l)
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
-		e.push(Inst{Op: CallDyn, Dst: e.s2, ArgLocs: argLocs, Imm: op.Imm, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
-		e.place(op.Result, e.s2)
+		dst := e.callResultDst(op.Result, e.s2)
+		e.push(Inst{Op: CallDyn, Dst: dst, ArgLocs: argLocs, Imm: op.Imm, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.place(op.Result, dst)
 		return nil
 
 	case ssa.OpAlloc:
