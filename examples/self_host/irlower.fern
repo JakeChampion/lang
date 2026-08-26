@@ -37101,8 +37101,72 @@ function consuming_match_of(st: parser.Stmt, name: string): parser.Stmt[] {
             if (util.index_of_str(ws, name) >= 0) { return []; }
             return sole_match_only_use_of(w.body, name);
         },
+        // `return (match (name) { .. })` — a match EXPRESSION, which the parser
+        // desugars to a zero-arg IIFE. lower_iife lowers that INLINE
+        // (lower_value_stmt for the single-statement body the match desugar
+        // produces), so `name` is read in THIS frame and the return-path sweep
+        // already runs after the value is computed: the free needs no new
+        // placement, only this arm to see the match at all.
+        //
+        // Returned as the inner StmtMatch, like the two arms above, so the arm
+        // analyses read the match rather than the return — the blind spot this
+        // function's header warns about, and the reason a version that handed back
+        // the RETURN left a box per round unreleased.
+        parser.StmtReturn(r) => {
+            // `name` must appear ONCE in the whole returned expression, and the
+            // match below accounts for it. The IIFE is often only part of the
+            // value — `return (match (o) { .. }) + p.xs[0]` is an ExprBinary — so
+            // the search descends, and without this count a second mention in a
+            // sibling operand (`(match (o) { .. }) + o.k`) would read the box after
+            // the free the caller places at the end of this statement.
+            if (rc_ml_count_in_expr(r.value, name) != 1) { return []; }
+            return iife_consuming_match_of(r.value, name);
+        },
         _ => { return []; }
     }
+}
+
+// iife_consuming_match_of: the `match (name)` inside a value-position IIFE
+// anywhere in `e`, or []. A zero-arg call of a zero-param lambda is the match
+// EXPRESSION desugar's shape; sole_match_only_use_of applies the same
+// only-mention rule the nested arms use, so a lambda body that touches `name`
+// anywhere but the scrutinee declines.
+//
+// The descent covers the operand shapes a returned value takes. Anything else
+// answers [] — a miss costs the credit, which is a leak, where a false hit would
+// free a box the rest of the expression still reads.
+function iife_consuming_match_of(e: parser.Expr, name: string): parser.Stmt[] {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lm) => {
+                        if (lm.params.len() == 0) { return sole_match_only_use_of(lm.body, name); }
+                    },
+                    _ => {}
+                }
+            }
+            for a in c.args {
+                var ca: parser.Stmt[] = iife_consuming_match_of(a, name);
+                if (ca.len() == 1) { return ca; }
+            }
+            return [];
+        },
+        parser.ExprBinary(b) => {
+            var bl: parser.Stmt[] = iife_consuming_match_of(b.left, name);
+            if (bl.len() == 1) { return bl; }
+            return iife_consuming_match_of(b.right, name);
+        },
+        parser.ExprUnary(u) => { return iife_consuming_match_of(u.operand, name); },
+        parser.ExprIndex(ix) => {
+            var ia: parser.Stmt[] = iife_consuming_match_of(ix.array, name);
+            if (ia.len() == 1) { return ia; }
+            return iife_consuming_match_of(ix.index, name);
+        },
+        parser.ExprFieldAccess(fa) => { return iife_consuming_match_of(fa.obj, name); },
+        _ => {}
+    }
+    return [];
 }
 
 // sole_consuming_match_idx: sole_top_level_match_idx widened to the nested
@@ -41655,9 +41719,18 @@ function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.Str
                     && optstruct_init_is_fresh(v.init, structs)
                     && (util.index_of_str(reassigned, v.name) < 0
                         || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs))) {
-                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
-                    if (match_idx > vi
-                        && !match_arms_use_name(stmts[match_idx], v.name)
+                    // The consuming match may sit one block deeper, or be a match
+                    // EXPRESSION in a `return` (#6319 + the IIFE arm) — the same
+                    // reader the OPTTUP sibling already uses, which OPTSTRUCT was
+                    // left behind by. Liveness and escape take the enclosing
+                    // statement; the arm check takes the match itself, because
+                    // match_arms_use_name answers "no use" for a statement it
+                    // cannot parse and that reads as a proof.
+                    var match_idx: i32 = sole_consuming_match_idx(stmts, v.name);
+                    var msv: parser.Stmt[] = [];
+                    if (match_idx > vi) { msv = consuming_match_of(stmts[match_idx], v.name); }
+                    if (match_idx > vi && msv.len() == 1
+                        && !match_arms_use_name(msv[0], v.name)
                         && !optstruct_payload_escapes(stmts, v.name, opt_payload_type(v.type_name, "Some"), structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
