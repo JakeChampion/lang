@@ -35138,7 +35138,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // block). The escape gate is deliberately much tighter than its siblings' — only
     // `xs.len()` — because an element extraction here risks a double-free rather than
     // a leak; arrenum_esc_expr says why.
-    var aens: string[] = collect_fresh_arrenum_names(body, structs, []);
+    var aens: string[] = collect_fresh_arrenum_names(body, body, structs, fresh_ret, []);
     var aeni: i32 = 0;
     while (aeni < aens.len()) {
         // The entry is "<site key>#<Enum>"; the site key half is what the credit is
@@ -35146,7 +35146,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // contain '#', so the split is unambiguous either way.
         var aesite: string = arrenum_entry_name(aens[aeni]);
         var aename: string = reclaim_site_name(aesite);
-        if (aesite.len() > 0 && !arrenum_escapes(body, aename) && !body_unsafe_for(body, aename, borrowable, recv_borrow)) {
+        // "A|" rows are append-BUILT markers, not candidates. The marked entry
+        // takes the same "ARRENUM:" credit — the release path is identical and
+        // emit_arrenum_reclaim_store is already cow-guarded — but the two blunt
+        // gates have to sanction the self-append rebind, which is the one
+        // reassignment and the one non-`len()` use the class permits.
+        var aeappend: boolean = util.index_of_str(aens, "A|" + aens[aeni]) >= 0;
+        var aeenum: string = arrenum_entry_enum(aens[aeni]);
+        var aeblocked: boolean = arrenum_escapes(body, aename) || body_unsafe_for(body, aename, borrowable, recv_borrow);
+        if (aeappend) {
+            aeblocked = arrenum_append_escapes(body, aename, structs, aeenum, false)
+                || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum);
+        }
+        if (!(aens[aeni].len() > 2 && aens[aeni][0] == b'A' && aens[aeni][1] == b'|')
+            && aesite.len() > 0 && !aeblocked) {
             out = out.append("ARRENUM:" + aens[aeni]);
         }
         aeni = aeni + 1;
@@ -36525,6 +36538,14 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         }
         if (fn_returns_fresh_arrstruct(fn, structs)) {
             out = out.append("ARRSTRUCTF:" + fn.name);
+        }
+        // "ARENUMF:<name>|<Enum>" — the array-of-ENUM sibling of the two above,
+        // the last element kind with no producer registry at all. The enum rides
+        // the row because an `E[]` slot records its element type nowhere, the
+        // same reason the "ARRENUM:" credit carries it.
+        var aef: string = arrenum_producer_enum(fn, structs);
+        if (aef.len() > 0) {
+            out = out.append("ARENUMF:" + fn.name + "|" + aef);
         }
         // "STRFLDF:<name>" / "STRFLDF:<Base>.<method>" — the field-read half: a
         // strict-fresh struct producer whose every `string` field is fresh, and
@@ -44244,31 +44265,261 @@ function arrenum_escapes(stmts: parser.Stmt[], name: string): boolean {
     return false;
 }
 
+// ── the APPEND-BUILT half of the arrenum class ───────────────────────────────
+//
+// `var xs: E[] = []` grown by `xs = xs.append(E.A(..))`. arrenum_lit_enum rejects
+// `[]` (no elements to prove fresh), which was right for a literal-only credit
+// but left every append-built enum array uncredited and leaking its whole
+// structure — the shape any code that computes its elements has to use.
+//
+// The per-element rule is the SAME one the literal applies
+// (fresh_rcpayload_enum_init): a bare ident element would alias a live enum box
+// the element walk could dangle, and this class's walk frees the element box
+// itself. So the credit granted is the same "ARRENUM:" — there is no extra
+// condition on the append form the way slot_is_reclaimable_structarr has one, and
+// emit_arrenum_reclaim_store is already cow-guarded (old != new), which is the
+// piece that makes a self-append rebind safe.
+//
+// `with` is NOT admitted here, unlike arrstruct's: it REPLACES, so the superseded
+// element has to be released at the store, and this class's element release is a
+// variant dispatch that frees the box rather than a dec. That is its own slice.
+
+// arrenum_lit_is_empty: `e` is the `[]` an append-built array starts from.
+function arrenum_lit_is_empty(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(arr) => { return arr.elements.len() == 0; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrenum_self_append_elem: `e` is `name.append(<fresh ctor of ename>)`, and the
+// appended element mentions `name` nowhere (so `xs.append(E.A(xs[0]))` is refused
+// by the same walk the escape gate uses).
+function arrenum_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[], ename: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "append") { return false; }
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            if (rid.name != name) { return false; }
+                            if (arrenum_esc_expr(c.args[0], name)) { return false; }
+                            return fresh_rcpayload_enum_init(c.args[0], structs, [], [], false) == ename;
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrenum_name_is_appended: at least one sanctioned self-append of `name`.
+function arrenum_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(a) => { if (a.target == name && arrenum_self_append_elem(a.value, name, structs, ename)) { return true; } },
+            parser.StmtIf(f) => {
+                if (arrenum_name_is_appended(f.then_body, name, structs, ename)) { return true; }
+                if (arrenum_name_is_appended(f.else_body, name, structs, ename)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrenum_name_is_appended(w.body, name, structs, ename)) { return true; } },
+            parser.StmtFor(fo) => { if (arrenum_name_is_appended(fo.body, name, structs, ename)) { return true; } },
+            parser.StmtMatch(m) => { for arm in m.arms { if (arrenum_name_is_appended(arm.body, name, structs, ename)) { return true; } } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// arrenum_append_escapes: arrenum_escapes with exactly one sanctioned use — the
+// self-append rebind. Only the assign case differs; everything else delegates, so
+// the class keeps its deliberately tight "only xs.len()" rule everywhere else.
+function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string, allow_ret: boolean): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => {
+                // `return name` is a move-out, safe when the caller is asking the
+                // PRODUCER question (arrenum_producer_ret_local). For the local
+                // credit it is an escape like any other and delegates below.
+                var ret_ok: boolean = false;
+                match (r.value) {
+                    parser.ExprIdent(rid) => { ret_ok = allow_ret && rid.name == name; },
+                    _ => {}
+                }
+                if (!ret_ok && arrenum_esc_expr(r.value, name)) { return true; }
+            },
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    if (!arrenum_self_append_elem(a.value, name, structs, ename)) { return true; }
+                }
+                else if (arrenum_esc_expr(a.value, name)) { return true; }
+            },
+            parser.StmtIf(f) => {
+                if (arrenum_esc_expr(f.cond, name)) { return true; }
+                if (arrenum_append_escapes(f.then_body, name, structs, ename, allow_ret)) { return true; }
+                if (arrenum_append_escapes(f.else_body, name, structs, ename, allow_ret)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (arrenum_esc_expr(w.cond, name)) { return true; }
+                if (arrenum_append_escapes(w.body, name, structs, ename, allow_ret)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (arrenum_esc_expr(fo.iter, name)) { return true; }
+                if (arrenum_append_escapes(fo.body, name, structs, ename, allow_ret)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (arrenum_esc_expr(m.scrutinee, name)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && arrenum_esc_expr(arm.guard, name)) { return true; }
+                    if (arrenum_append_escapes(arm.body, name, structs, ename, allow_ret)) { return true; }
+                }
+            },
+            _ => { if (arrenum_esc_stmt(stmt, name)) { return true; } }
+        }
+    }
+    return false;
+}
+
+// arrenum_append_unsafe_for: body_unsafe_for with the same one exception. The
+// blunt gate flags any reassignment of the candidate, and the self-append IS a
+// reassignment.
+function arrenum_append_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], recv_borrow: string[], structs: parser.StructDecl[], ename: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    if (!arrenum_self_append_elem(a.value, name, structs, ename)) { return true; }
+                }
+                else if (expr_unsafe_for(a.value, name, borrowable, recv_borrow)) { return true; }
+            },
+            parser.StmtIf(f) => {
+                if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
+                if (arrenum_append_unsafe_for(f.then_body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+                if (arrenum_append_unsafe_for(f.else_body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
+                if (arrenum_append_unsafe_for(w.body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                var iter_unsafe: boolean = true;
+                match (fo.iter) {
+                    parser.ExprIdent(_) => { iter_unsafe = false; },
+                    _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
+                }
+                if (iter_unsafe) { return true; }
+                if (arrenum_append_unsafe_for(fo.body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, recv_borrow)) { return true; }
+                    if (arrenum_append_unsafe_for(arm.body, name, borrowable, recv_borrow, structs, ename)) { return true; }
+                }
+            },
+            _ => { if (stmt_unsafe_for(stmt, name, borrowable, recv_borrow)) { return true; } }
+        }
+    }
+    return false;
+}
+
+// arrenum_append_built_enum: the element enum of an append-built candidate `name`
+// declared in `stmts` — `var name: E[] = []` grown by sanctioned self-appends and
+// by nothing else. "" when it is not that shape.
+function arrenum_append_built_enum(stmts: parser.Stmt[], name: string, tname: string, structs: parser.StructDecl[]): string {
+    if (tname.len() < 3) { return ""; }
+    if (slice_unchecked(tname, tname.len() - 2, tname.len()) != "[]") { return ""; }
+    var ename: string = slice_unchecked(tname, 0, tname.len() - 2) + "";
+    if (!enum_arr_elems_walk_ok(structs, ename)) { return ""; }
+    if (!arrenum_name_is_appended(stmts, name, structs, ename)) { return ""; }
+    return ename;
+}
+
 // collect_fresh_arrenum_names returns "<local>#<Enum>" for every `var xs: E[] = [ctor, …]`
 // binding whose name is never reassigned. The enum rides the entry so the release side
 // gets it without a slot column; the escape gate is applied by the caller, which owns
 // the whole function body (a nested binding's uses can sit in the enclosing tail).
-function collect_fresh_arrenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_fresh_arrenum_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
                 var owner: string = arrenum_lit_enum(v.init, structs);
+                // A producer CALL earns the same credit the literal it returns
+                // would: the "ARENUMF:" registry proved every returned element
+                // box is the callee's own, and the ANNOTATION supplies the
+                // element enum, which an `E[]` slot records nowhere.
+                if (owner.len() == 0) { owner = arrenum_call_producer_enum(v.init, v.type_name, body, fresh_ret); }
                 if (owner.len() > 0 && util.index_of_str(reassigned, v.name) < 0) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col) + "#" + owner);
                 }
+                // APPEND-BUILT: `var xs: E[] = []` grown by self-append. The
+                // `reassigned` exclusion above cannot apply — the self-append IS
+                // the reassignment — so this arm brings its own gates, marked
+                // "A|" so the crediting loop knows to use them.
+                else if (owner.len() == 0 && arrenum_lit_is_empty(v.init)) {
+                    var aeb: string = arrenum_append_built_enum(stmts, v.name, v.type_name, structs);
+                    if (aeb.len() > 0) {
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col) + "#" + aeb);
+                        a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col) + "#" + aeb);
+                    }
+                }
             },
-            parser.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, structs, a); a = collect_fresh_arrenum_names(f.else_body, structs, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, structs, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, structs, a); },
+            parser.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, body, structs, fresh_ret, a); a = collect_fresh_arrenum_names(f.else_body, body, structs, fresh_ret, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, body, structs, fresh_ret, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, body, structs, fresh_ret, a); },
             parser.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_arrenum_names(arm.body, structs, a); }
+                for arm in m.arms { a = collect_fresh_arrenum_names(arm.body, body, structs, fresh_ret, a); }
             },
             _ => {},
         }
     }
     return a;
+}
+
+// arrenum_call_producer_enum: `e` is a direct call to an "ARENUMF:" producer that
+// the body does not shadow with a local of the same name, and `tname` annotates
+// the binding as that producer's `E[]`. Returns the element enum, else "".
+//
+// The annotation is required, not a convenience: the credit carries the element
+// enum in its own entry because an `E[]` slot records it in neither arrarr_elem
+// nor struct_type, and an unannotated binding leaves nothing to carry.
+function arrenum_call_producer_enum(e: parser.Expr, tname: string, body: parser.Stmt[], fresh_ret: string[]): string {
+    if (tname.len() < 3) { return ""; }
+    if (slice_unchecked(tname, tname.len() - 2, tname.len()) != "[]") { return ""; }
+    var ename: string = slice_unchecked(tname, 0, tname.len() - 2) + "";
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (util.index_of_str(fresh_ret, "ARENUMF:" + cid.name + "|" + ename) >= 0
+                        && !body_declares_name(body, cid.name)) { return ename; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// arrenum_entry_enum returns the "<Enum>" half of a "<local>#<Enum>" entry, or "".
+function arrenum_entry_enum(entry: string): string {
+    var i: i32 = 0;
+    while (i < entry.len()) {
+        if (entry[i] == b'#') { return slice_unchecked(entry, i + 1, entry.len()) + ""; }
+        i = i + 1;
+    }
+    return "";
 }
 
 // arrenum_entry_name returns the "<local>" half of a "<local>#<Enum>" entry, or "".
@@ -51190,6 +51441,85 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
         }
     }
     return out;
+}
+
+// arrenum_producer_enum: the element enum of an array-of-enums producer, or "".
+// The return type is `E[]` for an enum the element walk admits
+// (enum_arr_elems_walk_ok — every payload a scalar or a leak-safe array, the one
+// kind whose construction counting is guaranteed), and EVERY return is a fresh
+// `[E.A(..), …]` literal of that same enum.
+//
+// Literal-only, like ARRSTRUCTF: was before the append-built arm: a returned
+// container's co-owner would be a local of the frame being left, so soleness needs
+// the fresh-literal evidence rather than a count. The append-built shape is the
+// next slice and needs the ARRENUMA: local credit first — a self-append is a
+// reassignment, which collect_fresh_arrenum_names excludes outright today.
+function arrenum_producer_enum(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    if (fn.receiver_type.len() > 0) { return ""; }
+    var rt: string = fn.ret_type;
+    if (rt.len() < 3) { return ""; }
+    if (slice_unchecked(rt, rt.len() - 2, rt.len()) != "[]") { return ""; }
+    var ename: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
+    if (!enum_arr_elems_walk_ok(structs, ename)) { return ""; }
+    if (!body_has_return(fn.body)) { return ""; }
+    if (body_has_nonfresh_arrenum_return(fn.body, fn.body, structs, ename)) { return ""; }
+    return ename;
+}
+
+// arrenum_producer_ret_local: `name` is a local this body builds by self-append
+// and hands back. The strictness the producer registry needs is already in
+// arrenum_self_append_elem, which admits only a fresh ctor element — there is no
+// bare-ident laxity here for a returned container's co-owner to exploit, so the
+// same predicate serves both questions.
+function arrenum_producer_ret_local(fnbody: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string): boolean {
+    if (!arrenum_local_empty_init(fnbody, name)) { return false; }
+    if (!arrenum_name_is_appended(fnbody, name, structs, ename)) { return false; }
+    return !arrenum_append_escapes(fnbody, name, structs, ename, true);
+}
+
+// arrenum_local_empty_init: `name` is declared IN this body from `[]`. Requiring
+// the declaration to be here is what keeps the soleness proof local — a param, or
+// a name from an enclosing scope, is already owned by someone else.
+function arrenum_local_empty_init(stmts: parser.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (v.name == name) { return arrenum_lit_is_empty(v.init); } },
+            parser.StmtIf(f) => {
+                if (arrenum_local_empty_init(f.then_body, name)) { return true; }
+                if (arrenum_local_empty_init(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrenum_local_empty_init(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (arrenum_local_empty_init(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { for arm in m.arms { if (arrenum_local_empty_init(arm.body, name)) { return true; } } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// body_has_nonfresh_arrenum_return: any return whose value is NOT an
+// array-of-enums the callee owns outright — a fresh literal of `ename`, or a
+// local this body built by self-append. `fnbody` stays the whole function body so
+// a return nested in a block can still find that local's declaration.
+function body_has_nonfresh_arrenum_return(stmts: parser.Stmt[], fnbody: parser.Stmt[], structs: parser.StructDecl[], ename: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtReturn(r) => {
+                if (arrenum_lit_enum(r.value, structs) != ename) {
+                    match (r.value) {
+                        parser.ExprIdent(rid) => { if (!arrenum_producer_ret_local(fnbody, rid.name, structs, ename)) { return true; } },
+                        _ => { return true; }
+                    }
+                }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrenum_return(f.then_body, fnbody, structs, ename) || body_has_nonfresh_arrenum_return(f.else_body, fnbody, structs, ename)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrenum_return(w.body, fnbody, structs, ename)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrenum_return(fo.body, fnbody, structs, ename)) { return true; } },
+            parser.StmtMatch(m) => { for arm in m.arms { if (body_has_nonfresh_arrenum_return(arm.body, fnbody, structs, ename)) { return true; } } },
+            _ => {}
+        }
+    }
+    return false;
 }
 
 // --- fresh ROW producers, "ARC:" (#6102) -------------------------------------
