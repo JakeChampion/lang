@@ -62,9 +62,20 @@ freeze:
 # surfaces as a build-step failure in a job named for something else (#7317).
 # Depends on bin/fern because the stdlib is embedded: a stale binary checks
 # the previously embedded std/*.fern, not the tree.
+#
+# The feature census rides along because it asks the same question — is the
+# self-host SOURCE in good shape — and answers it by reading the files as
+# text: no compiler, no qemu, 2 s. It is filed in internal/e2eselfhost, which
+# scripts/unit-test-packages excludes for costing 90 minutes unsharded, so it
+# ran only on pull requests and only against whatever base each branch was cut
+# from. Its wildcard-arm ratchet drifted 2563 to 2807 that way and stood red on
+# main with nothing to report it (#7570). Two lanes run this target — lint.yml
+# on PRs, check-sources.yml on push to main — so putting it here rather than in
+# either workflow is what keeps them from diverging.
 check-sources: bin/fern
 	./bin/fern -check examples/self_host/fern.fern
 	./tools/stdlib_check.sh
+	go test ./internal/e2eselfhost/ -run 'TestSelfHostFeatureCensus$$' -count=1
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host
 # behaviour can be checked locally in seconds instead of only in CI.
