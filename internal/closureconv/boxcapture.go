@@ -360,11 +360,17 @@ func rewriteBoxedExpr(e ast.Expr, boxed map[string]ast.Type) ast.Expr {
 		x.Inner = rewriteBoxedExpr(x.Inner, boxed)
 		return x
 	case *ast.FString:
-		for i := range x.Parts {
-			if x.Parts[i].Expr != nil {
-				x.Parts[i].Expr = rewriteBoxedExpr(x.Parts[i].Expr, boxed)
-			}
-		}
+		// Desugared is the ONLY thing the IR lowers (ir.go's FString
+		// case); Parts survives so the formatter can rebuild the
+		// surface syntax. Rewriting Parts is therefore useless to
+		// codegen and wrong for the formatter — and rewriting BOTH is
+		// worse, because a part and its counterpart in Desugared are
+		// the SAME node. The Ident case above returns a replacement
+		// while every composite case mutates in place, so walking both
+		// left a bare name rewritten once (the box POINTER printed,
+		// since only Parts' slot took the replacement) and a composite
+		// rewritten twice, indexing the cell as `c[0][0]` — a segfault.
+		x.Desugared = rewriteBoxedExpr(x.Desugared, boxed)
 		return x
 	case *ast.ArrayLit:
 		for i := range x.Elems {
