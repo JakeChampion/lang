@@ -1404,10 +1404,6 @@ pub function (s: EmitState) mark_arr_i32_index_of(): EmitState {
     return s.need("arr_i32_index_of");
 }
 
-pub function (s: EmitState) mark_arr_reverse(): EmitState {
-    return s.need("heap").need("arr_reverse");
-}
-
 // mark_str_from_bytes gates the Fern __fern_string_from_bytes runtime function
 // (#2649) on its own str_from_bytes need. The AST call sites previously only
 // marked heap (the hand-asm body rode the always-emitted heap block); the Fern
@@ -1423,10 +1419,6 @@ pub function (s: EmitState) mark_str_from_bytes(): EmitState {
 // __raw_store8 keeps its low byte. Heap is its sole dep. Empty array → "".
 pub function rt_src_string_from_bytes(): string {
     return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
-}
-
-pub function (s: EmitState) mark_arr_concat(): EmitState {
-    return s.need("heap").need("arr_concat");
 }
 
 pub function (s: EmitState) mark_arr_str_index_of(): EmitState {
@@ -1558,32 +1550,13 @@ pub function (s: EmitState) mark_i32_lcm(): EmitState {
     return s.need("i32_gcd").need("i32_lcm");
 }
 
-// rt_src_arr_reverse / rt_src_arr_concat back `xs.reverse()` / `xs.concat(ys)`
-// (#2649) — the first ARRAY-producing helpers written in Fern, over the
-// __raw_arr_box + __raw_array pair. Both are raw 8-byte SLOT copies, which is
-// why one `i32[]`-typed body serves every element type: a string / struct
-// element is a pointer in the same slot, and neither helper inspects it.
-//
-// That slot copy is also deliberately SHALLOW — no element refcount traffic,
-// exactly as the hand-asm they replace did, and typing the parameters `i32[]` is
-// what keeps the RC insertion agreeing with that. The parameters are read-only,
-// so borrowable_params_interproc marks them borrowed and the caller's array
-// survives; the fresh box comes back at rc=1 from __fern_arr_box.
-//
-// Element i lives at slot i+1 (slot 0 is the length), which is the index
-// __raw_store_ptr scales, so the body never names the box layout. Arch-
-// independent: one source for x86-64 and arm64 alike, no target parameter.
-pub function rt_src_arr_reverse(): string {
-    return "function __fern_arr_reverse(a: i32[]): i32[] { var n: i32 = a.len(); var p: i32 = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(p, i + 1, a[n - 1 - i]); i = i + 1; } return __raw_array(p); }";
-}
-
-pub function rt_src_arr_concat(): string {
-    return "function __fern_arr_concat(a: i32[], b: i32[]): i32[] { var an: i32 = a.len(); var bn: i32 = b.len(); var p: i32 = __raw_arr_box(an + bn); var i: i32 = 0; while (i < an) { __raw_store_ptr(p, i + 1, a[i]); i = i + 1; } var j: i32 = 0; while (j < bn) { __raw_store_ptr(p, an + j + 1, b[j]); j = j + 1; } return __raw_array(p); }";
-}
-
-// rt_src_arr_slice backs `a[start:end]` (#2649), the third and last array
-// helper to move. Same shallow 8-byte slot copy as its two siblings, over the
-// same __raw_arr_box + __raw_array pair.
+// rt_src_arr_slice backs `a[start:end]` (#2649), the one array helper written
+// in Fern: a shallow 8-byte SLOT copy over the __raw_arr_box + __raw_array
+// pair, which is why one `i32[]`-typed body serves every element type — a
+// string / struct element is a pointer in the same slot and the body never
+// inspects it. The parameter is read-only, so borrowable_params_interproc
+// marks it borrowed and the caller's array survives; the fresh box comes back
+// at rc=1 from __fern_arr_box.
 //
 // It came last because its construction-time bounds check (#5419) traps, and
 // "abort" is not a Fern expression. It does not need one: the hand-asm's
@@ -3590,8 +3563,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "chr" || name == "args" || name == "read_file" || name == "read_file_bytes"
         || name == "random_bytes"
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
-        || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
-        || name == "arr_concat"
+        || name == "arr_push" || name == "arr_slice"
         || name == "str_case" || name == "str_repeat"
         || name == "str_reverse" || name == "str_replace"
         || name == "poll") {
@@ -4982,7 +4954,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
         // call resolves against the entry module's single definition, exactly
         // like the heap helpers above.
-        "__fn___fern_arr_reverse", "__fn___fern_arr_concat", "__fn___fern_arr_slice",
+        "__fn___fern_arr_slice",
         "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",

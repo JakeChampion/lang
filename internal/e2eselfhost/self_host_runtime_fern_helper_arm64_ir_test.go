@@ -110,11 +110,6 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	asm := string(out)
 
 	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
-		// arr_reverse / arr_concat are NOT asserted. Their intercepts fire only
-		// when no `__method_Array_*` helper is in scope, which is exactly the
-		// condition under which the checker raises E043 — so since #7380 no
-		// program the compiler accepts reaches them. #7451 deletes the dead
-		// intercepts; asserting the shape of unreachable code proves nothing.
 		"arr_slice",
 		// The clocks (#2649): now_unix_ms / now_ns are Fern on every native
 		// target. monotonic_ns is NOT in this list — it is Fern on Linux but
@@ -229,8 +224,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// env has no syscall at all: it reads __fern_envp through the __raw_environ
 	// op. The .bss slot must still be emitted — _start's save is gated on `heap`,
 	// not on `env`, so a heap program that never calls env() stores here too.
-	// arr_reverse / arr_concat / arr_slice allocate their fresh box through
-	// __raw_arr_box, which is the one array primitive that stays a call.
+	// arr_slice allocates its fresh box through __raw_arr_box, which is the one
+	// array primitive that stays a call.
 	if !strings.Contains(asm, "bl __fern_arr_box") {
 		t.Error("__raw_arr_box did not emit the __fern_arr_box call")
 	}

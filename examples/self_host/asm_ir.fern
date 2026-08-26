@@ -2526,11 +2526,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
     // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
     // emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
-    // All three array helpers — __fern_arr_reverse, __fern_arr_concat and
-    // __fern_arr_slice — are Fern runtime functions now (#2649):
-    // asmcore.rt_src_arr_reverse / rt_src_arr_concat / rt_src_arr_slice, emitted
+    // __fern_arr_slice is a Fern runtime function now (#2649):
+    // asmcore.rt_src_arr_slice, emitted
     // need-gated in the migrated-helpers section over the __raw_arr_box +
-    // __raw_array pair. One source each replaces the two hand-asm copies (this
+    // __raw_array pair. One source replaces the two hand-asm copies (this
     // one and asm_arm64_ir's) — they were raw slot copies with nothing
     // target-specific in them, which is what made them worth moving. arr_slice
     // came last because its bounds check (#5419) traps: it spells the trap with
@@ -3959,21 +3958,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
             s = emit_str_op(o, s);
-        } else if (o.kind_tag == 214) {  // arr_reverse
-            // [arr] IS param[0]; call the Fern-compiled __fn___fern_arr_reverse
-            // (asmcore.rt_src_arr_reverse, #2649) via the stack ABI.
-            s = s.write("    call __fn___fern_arr_reverse\n    addq $8, %rsp\n    pushq %rax\n");
-            s = s.mark_arr_reverse();
-        } else if (o.kind_tag == 215) {  // arr_concat
-            // operand stack [A, B] (B on top); the stack ABI wants param[0]=A on
-            // top, so re-push the two popped operands in reverse — the same
-            // shuffle the two-arg string helpers do.
-            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_arr_concat\n    addq $16, %rsp\n    pushq %rax\n");
-            s = s.mark_arr_concat();
         } else if (o.kind_tag == 96) {  // arr_slice
             // operand stack [arr, start, end] (end on top); the stack ABI wants
             // param[0]=arr on top, so re-push the three popped operands in
-            // reverse — the three-operand form of the arr_concat shuffle.
+            // reverse, the way the two-arg string helpers do.
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_arr_slice\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.mark_arr_slice();
         } else if (o.kind_tag == 185) {  // random_bytes
@@ -6538,21 +6526,11 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), all_structs, s);
     }
-    // xs.reverse() / xs.concat(ys) — Fern runtime functions (#2649) over the
-    // __raw_arr_box + __raw_array pair: allocate the fresh box, copy the 8-byte
-    // slots, hand it back. Heap-dependent (present above), and arch-independent,
-    // so asm_arm64_ir emits the identical source.
-    if (s.has_need("arr_reverse")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_reverse(), all_structs, s);
-    }
-    if (s.has_need("arr_concat")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), all_structs, s);
-    }
-    // a[start:end] — the third array helper (#2649). Unlike its two siblings it
-    // takes a target, because its bounds trap is exit(134) through __syscall3
-    // and the exit number is per-target (asmcore.sysno picks 60 here).
+    // a[start:end] — a Fern runtime function (#2649) over the __raw_arr_box +
+    // __raw_array pair: allocate the fresh box, copy the 8-byte slots, hand it
+    // back. Heap-dependent (present above). It takes a target, because its
+    // bounds trap is exit(134) through __syscall3 and the exit number is
+    // per-target (asmcore.sysno picks 60 here).
     if (s.has_need("arr_slice")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice("x86_64"), all_structs, s);

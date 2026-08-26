@@ -845,8 +845,8 @@ pub function all_runtime_need_roots(): string[] {
         // "arg_at" gates __fern_arg_at_rc, which lives inside the "args" block
         // (it reads __fern_argv) — both roots are listed so the per-module entry
         // emits the helper for a sibling unit that calls it.
-        "alloc_u8", "arg_at", "args", "arr_concat", "arr_i32_index_of", "arr_i32_min_max", "arr_i32_min_max_opt",
-        "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_reverse", "arr_slice",
+        "alloc_u8", "arg_at", "args", "arr_i32_index_of", "arr_i32_min_max", "arr_i32_min_max_opt",
+        "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_slice",
         "arr_str_index_of", "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",

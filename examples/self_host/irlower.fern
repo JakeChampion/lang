@@ -12172,30 +12172,6 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // asm.fern's own comment at this intercept says the same — "push
     // args right-to-left (target then array) so the array is param[0]".
     // `contains` is `index_of(...) >= 0`. Same receiver guard as below.
-    // The string[] sibling, backed by __fern_arr_str_index_of
-    // (asmcore.rt_src_arr_str_index_of): a linear scan comparing
-    // elements with str_eq, so CONTENT equality matches even when
-    // two .rodata slots differ — which is why it cannot share the
-    // i32 helper's pointer compare. Same reverse push order, same
-    // `>= 0` for contains. Both operands go through temp locals so
-    // the RECEIVER is evaluated before the argument (source order,
-    // matching the AST emitter, which emits receiver-then-arg and
-    // re-orders on the stack) while still being pushed second —
-    // the lower_arr_str_join shape.
-    //
-    // DEFERS to an in-scope std/array helper, unlike its i32
-    // sibling. std/array really does define
-    // `__method_Array_index_of(arr: string[], s: string)` and its
-    // `contains` wrapper, with identical semantics (linear scan,
-    // -1 sentinel) — so a program importing std/array already
-    // lowered through the find_arr_method dispatch below, and
-    // shadowing it would rewrite that program's codegen for no
-    // behavioural gain. The gap #3457 needs closed is the
-    // driver-dialect program that imports nothing.
-    if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
-        && expr_is_strarr(fa.obj, s) && s.find_arr_method(fa.field).len() == 0) {
-        return lower_call_index_of(c, fa, s);
-    }
     if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
         && arr_i32_recv(fa.obj, s)) {
         var pidx: LowerState = lower_expr(c.args[0], s);
@@ -12235,49 +12211,6 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         if (!pmm.ok) { return pmm; }
         if (fa.field == "min") { return pmm.emit(ir.op_call_direct("__fern_arr_i32_min_opt", 1)); }
         return pmm.emit(ir.op_call_direct("__fern_arr_i32_max_opt", 1));
-    }
-    // xs.reverse() / xs.concat(ys) — fresh arrays with the
-    // elements copied, backed by the same __fern_arr_reverse /
-    // __fern_arr_concat runtime helpers the AST emitters call
-    // (op_arr_reverse / op_arr_concat, modelled on op_arr_slice).
-    // Using the SAME helpers is what makes the IR answer
-    // byte-for-byte the AST answer, including the raw-slot copy's
-    // treatment of rc-tracked elements.
-    //
-    // Both DEFER to an in-scope std/array helper, like the string[]
-    // index_of intercept above: `reverse` and `concat` are both
-    // generic array METHODS that monomorphize rewrites to
-    // `__arrm_reverse(xs)` / `__arrm_concat(xs, ys)` before lowering
-    // (so with std/array imported they normally never reach here at
-    // all — see TestSelfHostArrayConcatMethodIR).
-    // The gap #3457 needs closed is the driver-dialect program that
-    // imports nothing.
-    //
-    // f64[] / i64[] receivers are excluded: the register helpers
-    // copy 8-byte slots regardless, but the wasm twins copy the
-    // 4-byte element stride, so an 8-byte element would need the
-    // op_arr_slice-style width flag and a second WAT helper. Same
-    // exclusion, same reason, as the other array builtins here.
-    if ((fa.field == "reverse" && c.args.len() == 0)
-        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s))
-        && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)
-        && s.find_arr_method("reverse").len() == 0) {
-        var prv: LowerState = lower_expr(fa.obj, s);
-        if (!prv.ok) { return prv; }
-        return prv.emit(ir.op_arr_reverse());
-    }
-    if ((fa.field == "concat" && c.args.len() == 1)
-        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s))
-        && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)
-        && s.find_arr_method("concat").len() == 0) {
-        // Natural operand order (receiver then argument) — the op_*
-        // convention, unlike the reverse-push op_call_direct ABI the
-        // Fern-source helpers use.
-        var pcc: LowerState = lower_expr(fa.obj, s);
-        if (!pcc.ok) { return pcc; }
-        pcc = lower_expr(c.args[0], pcc);
-        if (!pcc.ok) { return pcc; }
-        return pcc.emit(ir.op_arr_concat());
     }
     // xs.first() / xs.last() — O(1) element reads the AST emitter
     // open-coded as raw loads off the array header. Lowered as the
