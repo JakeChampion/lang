@@ -6796,9 +6796,36 @@ pub function destr_marker(at: string, rest_written: boolean, tag: string): strin
     return out;
 }
 
-pub function destr_marker_split(marker: string): DestrMarker {
+// pp_marker tags a destructure StmtVar as the PRELUDE a destructuring
+// PARAMETER was lowered to, rather than a destructure the programmer wrote —
+// the leading component of the marker channel, ahead of any `@at:` / `@rest;`
+// / `@sd:`.
+//
+// The printer reverses that lowering, spelling the parameter as its pattern
+// and dropping the prelude. Nothing else in the statement distinguishes the
+// two: a hand-written `let P { x, y } = p;` whose `p` is a parameter has the
+// same binding list, the same marker and the same holder initialiser, so
+// without this tag the body's own destructure was folded into the signature.
+pub function pp_marker(rest: string): string {
+    return "@pp;" + rest;
+}
+
+// is_param_prelude_marker reports whether the channel carries that tag.
+pub function is_param_prelude_marker(type_name: string): boolean {
+    return util.str_has_prefix(type_name, "@pp;");
+}
+
+// strip_pp_marker drops a leading `@pp;`, leaving the rest of the channel.
+pub function strip_pp_marker(marker: string): string {
+    if (!util.str_has_prefix(marker, "@pp;")) { return marker; }
+    return slice_unchecked(marker, 4, marker.len()) + "";
+}
+
+// A leading `@pp;` is transparent here, so every other reader of the channel
+// is unaffected by the tag.
+pub function destr_marker_split(marker0: string): DestrMarker {
     var at: string = "";
-    var m: string = marker;
+    var m: string = strip_pp_marker(marker0);
     if (util.str_has_prefix(m, "@at:")) {
         var i: i32 = 4;
         while (i < m.len()) {
@@ -6826,7 +6853,8 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-    return util.str_has_prefix(type_name, "@at:")
+    return util.str_has_prefix(type_name, "@pp;")
+        || util.str_has_prefix(type_name, "@at:")
         || util.str_has_prefix(type_name, "@rest;")
         || util.str_has_prefix(type_name, "@sd:");
 }
@@ -6913,7 +6941,7 @@ function prepend_param_destrs(body: Stmt[], destrs: ParamDestr[]): Stmt[] {
     var i: i32 = 0;
     while (i < destrs.len()) {
         var d: ParamDestr = destrs[i];
-        out = out.append(s_var_at(d.names, d.marker, e_ident_at(d.synth, d.line, d.col), d.line, d.col));
+        out = out.append(s_var_at(d.names, pp_marker(d.marker), e_ident_at(d.synth, d.line, d.col), d.line, d.col));
         i = i + 1;
     }
     var j: i32 = 0;

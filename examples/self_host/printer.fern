@@ -1580,6 +1580,15 @@ function struct_destr_pattern(v: parser.StmtVar): string {
 // prelude, which is what stops a body's OWN destructuring being mistaken for
 // the desugar's and swallowed into a parameter list.
 //
+// The prelude is identified by the `@pp;` tag on its marker channel, and only
+// by that: a hand-written `let P { x, y } = p;` whose `p` is a parameter has
+// the same binding list, the same `@sd:` marker and the same holder
+// initialiser. Testing the holder name instead only separates a MINTED
+// `__ptuple_` holder, and a parameter written `p @ P { x, y }: P` keeps the
+// source's name as its holder — so that test passed the body's own
+// destructure through, rewriting the function's signature under `-fmt -w`
+// (#7523).
+//
 // Recovered rather than retained, unlike native, which carries the written
 // pattern on ast.Param. ParamDecl is spelled at 41 sites across the self-host
 // and the printer already decodes structure from these markers, so reading the
@@ -1589,6 +1598,7 @@ function struct_destr_pattern(v: parser.StmtVar): string {
 function param_pattern_from(st: parser.Stmt, holder: string): string {
     match (st) {
         parser.StmtVar(v) => {
+            if (!parser.is_param_prelude_marker(v.type_name)) { return ""; }
             var from_holder: boolean = false;
             match (v.init) {
                 parser.ExprIdent(id) => { if (id.name == holder) { from_holder = true; } },
