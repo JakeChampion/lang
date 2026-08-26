@@ -39,7 +39,7 @@ str__param          clean leak   same gate, param origin
 str__fieldread      clean leak   string field read: retain gated on strfldok admission, not granted here
 str__call           clean clean  producer result is Owned
 str_arr__fresh      clean clean  fresh string[] literal owned by the holder
-str_arr__local      clean leak   bare string[] local into the field: uncounted (the documented hole)
+str_arr__local      clean clean  counted: the field store retains whenever it is not a MOVE, and the source keeps the DEEP "SARR:" credit so its element walk survives a path that never builds the holder
 str_arr__param      clean leak   same, param origin
 str_arr__fieldread  clean leak   the RewriteCtx shape, string[] flavor
 str_arr__call       clean clean  producer result owned
