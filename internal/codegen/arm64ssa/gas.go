@@ -673,7 +673,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
 	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
 	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
-	"__slice_idx_16":                emitSliceIdxHelper("__slice_idx_16", 4),
+	"__slice_make":                  emitSliceMakeHelper,
+	"__slice_range":                 emitSliceRangeHelper,
 	"stat":                          emitStatHelper,
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
@@ -2002,6 +2003,7 @@ var runtimeHelperDeps = map[string][]string{
 	"write_file":                    {"__fern_io_error"},
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
 	"stat":                          {"__fern_io_error"},
+	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
 	"remove_file":                   {"__fern_io_error"},
 	"create_dir_all":                {"__fern_io_error"},
@@ -2034,7 +2036,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_cow_inplace_ptr":    true,
 	"__fern_arr_cow_inplace_str":    true,
 	"__fern_heap_bump_bytes":        true,
-	"__method_string_as_bytes":      true,
+	"__slice_make":                  true,
 	"stat":                          true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
@@ -4726,10 +4728,15 @@ func emitStatHelper(w func(string, ...any)) {
 // this emitter's array path already reports it this way.
 //
 // No `_nc` variants: unlike the array helpers, the IR emits no
-// bounds-check-elided slice form.
+// bounds-check-elided slice form. And no `_16`: that stride is a two-word
+// string element, which only exists at ptrW=4 — at this emitter's ptrW=8 a
+// `[string]` slice indexes through `__slice_idx_8`.
 func emitSliceIdxHelper(name string, shift int) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
-		ok := fmt.Sprintf(".Lssa_sliceidx%d_ok", shift)
+		// Keyed on the NAME, not the stride: two helpers can share a shift
+		// (__slice_idx and a stride-4 spelling of it both want 2), and the
+		// assembler silently keeps the last definition of a duplicate label.
+		ok := fmt.Sprintf(".Lssa_%s_ok", strings.TrimPrefix(fnLabel(name), "fn_"))
 		w("")
 		w("%s:", fnLabel(name))
 		w("\tldr w2, [x0, #8]") // len, past the 8-byte data pointer
@@ -4749,28 +4756,52 @@ func emitSliceIdxHelper(name string, shift int) func(w func(string, ...any)) {
 	}
 }
 
-// emitStringAsBytesHelper writes __method_string_as_bytes(s) -> slice: the
-// non-copying `.as_bytes()` view — a 16-byte {data_ptr, len} header aliasing the
-// receiver's bytes. Layout matches the flat backend's __fern_slice_make exactly
-// (8-byte data pointer at +0, i32 len at +8, 4 bytes trailing pad), because the
-// IR reads the len at [slice + ptrW] and __slice_idx_* dereference the same
-// fields.
+// emitSliceRangeHelper writes __slice_range(lo, hi, len) -> i32: the
+// slice-construction bounds check, returning the new length hi - lo. Leaf, no
+// heap. w0 = lo, w1 = hi, w2 = len.
 //
-// It reads the length itself rather than tail-calling a slice_make with an
-// incoming (data, len) pair, which is what the flat backend does: that one runs
-// the TWO-word string ABI, where the receiver already arrives as (x0=data,
-// x1=len) — it panics outright on the single-word ABI. This path is single-word
-// (buildArm64SSA never sets ast.TwoWordOverride, and __str_len here is
-// `ldur w0, [x0, #-4]`), so the receiver is one pointer and the length lives at
-// [data-4].
+// The comparisons are UNSIGNED, which folds four conditions into two branches:
+// a negative bound reads as a huge unsigned value, so `hi > len` also catches
+// hi < 0 and `lo > hi` also catches lo < 0.
 //
-// The header is a raw bump allocation with NO rc header, matching the flat
-// backend's __fern_alloc: a slice is a view, and nothing drops it. x0 = string
-// data pointer; returns the header address in x0.
-func emitStringAsBytesHelper(w func(string, ...any)) {
+// The sxtw normalises a bound that reaches the helper with dirty bits above 31,
+// mirroring the flat backend's #5294 fix, so the unsigned compares see the
+// value the caller meant. It is belt-and-braces at this emitter's width
+// discipline rather than load-bearing: maskFix sign-extends every narrow
+// result, so bounds already arrive sign-extended, and on a value that fits i32
+// zero-extension would decide identically (both turn a negative into a large
+// unsigned). Keep it — the cost is three instructions and it stops the helper
+// depending on an invariant maintained somewhere else.
+func emitSliceRangeHelper(w func(string, ...any)) {
 	w("")
-	w("%s:", fnLabel("__method_string_as_bytes"))
-	w("\tldur w1, [x0, #-4]") // len
+	w("%s:", fnLabel("__slice_range"))
+	w("\tsxtw x0, w0")
+	w("\tsxtw x1, w1")
+	w("\tsxtw x2, w2")
+	w("\tcmp x1, x2")
+	w("\tb.hi .Lssa_slicerange_trap") // hi > len
+	w("\tcmp x0, x1")
+	w("\tb.hi .Lssa_slicerange_trap") // lo > hi
+	w("\tsub w0, w1, w0")
+	w("\tret")
+	w(".Lssa_slicerange_trap:")
+	w("\tmov x0, #134")
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
+}
+
+// emitSliceMakeHelper writes __slice_make(data, len) -> slice: the 16-byte
+// {data_ptr@+0, i32 len@+8} view header, 4 bytes of trailing pad. x0 = data
+// (full 64 bits — a `str w` here would truncate a heap pointer, since this
+// arena is based above 4 GiB), w1 = len.
+//
+// The layout is forced, not chosen: the IR lowers `.len()` to a load at
+// [slice + ptrW] and `slice as usize` to a pointer-width load at [slice + 0],
+// and __slice_idx_* dereference the same two fields. No rc header — a slice is
+// a view over someone else's bytes and nothing drops it.
+func emitSliceMakeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__slice_make"))
 	w("\tadrp x8, %s", heapPtrSym)
 	w("\tadd x8, x8, #:lo12:%s", heapPtrSym)
 	w("\tldr x9, [x8]")
@@ -4779,10 +4810,27 @@ func emitStringAsBytesHelper(w func(string, ...any)) {
 	w("\tadd x10, x9, #16")
 	w("\tstr x10, [x8]")
 	emitHeapGuardCall(w)
-	w("\tstr x0, [x9]")     // [+0] data pointer (full 8 bytes)
+	w("\tstr x0, [x9]")     // [+0] data pointer
 	w("\tstr w1, [x9, #8]") // [+8] len (i32)
 	w("\tmov x0, x9")
 	w("\tret")
+}
+
+// emitStringAsBytesHelper writes __method_string_as_bytes(s) -> slice: the
+// non-copying `.as_bytes()` view over the receiver's own bytes.
+//
+// It reads the length itself rather than taking an incoming (data, len) pair,
+// which is what the flat backend's version does: that one runs the TWO-word
+// string ABI, and it panics outright on the single-word ABI. This path is
+// single-word — buildArm64SSA never sets ast.TwoWordOverride, and __str_len
+// here is `ldur w0, [x0, #-4]` — so the receiver is one pointer with its
+// length at [data-4]. Past that it IS __slice_make, so it tail-branches there
+// rather than laying the header down a second time.
+func emitStringAsBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_string_as_bytes"))
+	w("\tldur w1, [x0, #-4]") // len
+	w("\tb %s", fnLabel("__slice_make"))
 }
 
 // emitHeapBumpBytesHelper writes __fern_heap_bump_bytes() -> i64: the bump

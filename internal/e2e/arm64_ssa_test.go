@@ -1448,6 +1448,30 @@ function main(): i32 {
 }`,
 			want: 11,
 		},
+		{
+			// `a[lo:hi]` — slice CONSTRUCTION, which no corpus program does,
+			// so the differential lane cannot see it. Covers the three
+			// element strides the IR emits at this ptr-width (1 for u8, 4 for
+			// i32, 8 for i64 and for a one-word string), the length the
+			// bounds check returns, and a sub-slice of a slice.
+			name: "slice_construction",
+			src: `function main(): i32 {
+  var a: u8[] = [1u8, 2u8, 3u8, 4u8];
+  var sa: [u8] = a[1:4];
+  var b: i32[] = [10, 20, 30];
+  var sb: [i32] = b[1:3];
+  var c: i64[] = [100i64, 200i64];
+  var sc: [i64] = c[1:2];
+  var d: string[] = ["ab", "cde"];
+  var sd: [string] = d[1:2];
+  var sub: [u8] = sa[1:3];
+  return (sa[0] as i32) + sb[0] + (sc[0] as i32) + sd[0].len()
+       + sa.len() + sub.len() + (sub[0] as i32);
+}`,
+			// sa[0]=2, sb[0]=20, sc[0]=200, sd[0].len()=3, sa.len()=3,
+			// sub.len()=2, sub[0]=3  ->  233
+			want: 233,
+		},
 	}
 
 	for _, c := range cases {
