@@ -35,8 +35,23 @@ Two natural groupings, and both are bigger than one cell:
   (`2026-08-26-arrenum-borrowed-argument.md`,
   `2026-08-26-arrstruct-borrowed-argument.md`) — while `str` / `str_arr` /
   `enum` are fine as arguments and leak only once the callee STORES the param in
-  a struct field. **What is left in all five is that store**, which has to
-  retain; the argument half is no longer part of the question.
+  a struct field. The argument half is no longer part of the question.
+
+  **The store is not the thing to fix.** Measured after the arrstruct slice, on
+  both flavours: give the callee a LOCAL source instead of a param and the same
+  store is already flat — `var src = mkv(i); var p = P { f: src, n: i }` runs
+  500/500 at live 0, and the string twin 400/400. So the store retains and the
+  holder's drop releases; the callee is balanced every round. Swap the source to
+  a param and it is 104/102 (80 bytes) and 103/101 (32 bytes) — a constant two
+  objects over 100 rounds, and they are the CALLER's, not the callee's.
+
+  What is left is therefore a CALLER-side rule, the one both borrowed-argument
+  slices deliberately declined to widen: admit a param whose only use is a field
+  store into a holder that provably dies in the callee. `"ELB:"` refuses it
+  statically today because the class's element rule is `len()`-only, so the
+  caller emits a bare buffer dec whatever the callee does with its own share.
+  One question for all five cells, and it wants the arm-binding analysis those
+  slices name.
 - **`str` / `str_arr`, 6 of the 9**, hang off the whole-program STRFLDOK
   verdict, which `struct_routes_field_reclaim_at`'s header calls out as the thing
   every analysis deciding a string-field store must consult. Widest group; wants
