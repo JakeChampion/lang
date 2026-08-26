@@ -869,6 +869,17 @@ function print_tup_arm(a: parser.TupArm): string {
     return pat;
 }
 
+// rest_suffix is the `..` a partial pattern wrote, with the separator it needs
+// after `n` already-printed fields. The `..` binds nothing — a named-field
+// pattern binds only the fields it lists — so it survives only by being
+// carried to here, and dropping it made `-fmt -w` delete what the author
+// wrote.
+function rest_suffix(rest_written: boolean, n: i32): string {
+    if (!rest_written) { return ""; }
+    if (n > 0) { return ", .."; }
+    return "..";
+}
+
 // print_struct_arm renders one struct-match arm's pattern `P { x, y: b }`,
 // using the same field kinds build_struct_match encodes (0 = bind, 2 =
 // literal, 3 = sub-pattern). A field bound to its own name prints shorthand.
@@ -887,6 +898,7 @@ function print_struct_arm(a: parser.StructArm): string {
         else if (a.binds[i] != a.fields[i]) { out = out + ": " + a.binds[i]; }
         i = i + 1;
     }
+    out = out + rest_suffix(a.rest_written, a.fields.len());
     out = out + " }";
     if (a.at_binding.len() > 0) { return a.at_binding + " @ " + out; }
     return out;
@@ -1520,7 +1532,7 @@ function join_csv(csv: string): string {
 // pattern, or "" when the source wrote none. The binding is a real name the
 // body may read, so a pattern printed without it stops compiling.
 function destr_at_prefix(type_name: string): string {
-    var (at, _) = parser.at_marker_split(type_name);
+    var at: string = parser.destr_marker_split(type_name).at;
     if (at.len() == 0) { return ""; }
     return at + " @ ";
 }
@@ -1538,7 +1550,7 @@ function print_struct_destructure(v: parser.StmtVar): string {
 // same pattern in its parameter position, so the two share this rather than
 // each spelling the marker decode (#7338).
 function struct_destr_pattern(v: parser.StmtVar): string {
-    var (_, sd_marker) = parser.at_marker_split(v.type_name);
+    var sd_marker: string = parser.destr_marker_split(v.type_name).tag;
     var rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
@@ -1558,6 +1570,7 @@ function struct_destr_pattern(v: parser.StmtVar): string {
         if (i < binds.len() && binds[i] != fields[i]) { out = out + ": " + binds[i]; }
         i = i + 1;
     }
+    out = out + rest_suffix(parser.destr_marker_split(v.type_name).rest_written, fields.len());
     return out + " }";
 }
 

@@ -1269,6 +1269,12 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 				}
 				f.b.WriteString(b)
 			}
+			if arm.RestWritten {
+				if len(arm.Bindings) > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString("..")
+			}
 			f.b.WriteString(" }")
 		} else if len(arm.Bindings) > 0 {
 			f.b.WriteByte('(')
@@ -1372,6 +1378,7 @@ func stmtShapedArm(arm *ast.MatchExprArm) *ast.MatchArm {
 		Bindings:       arm.Bindings,
 		NamedFields:    arm.NamedFields,
 		FieldNames:     arm.FieldNames,
+		RestWritten:    arm.RestWritten,
 		IsWildcard:     arm.IsWildcard,
 		Literal:        arm.Literal,
 		RangeHi:        arm.RangeHi,
@@ -2095,6 +2102,12 @@ func (f *formatter) formatDestructurePattern(x *ast.Destructure, at string) {
 			f.b.WriteString(writtenName(field))
 			f.b.WriteString(": ")
 			f.b.WriteString(writtenName(n))
+		}
+		if x.RestWritten {
+			if len(x.Names) > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString("..")
 		}
 		f.b.WriteString(" }")
 		return
