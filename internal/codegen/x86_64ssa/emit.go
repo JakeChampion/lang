@@ -449,18 +449,67 @@ func (e *emitter) edgeMoves(b, s *ssa.Block) []move {
 	return moves
 }
 
-// emitParallelMoves realises a set of simultaneous copies. To handle arbitrary
-// cycles/swaps simply and correctly, it reads every source into a temp slot
-// first, then writes every destination from its temp — so all reads precede all
-// writes. The temp slots are reused across edges. (A later slice can replace
-// this with a minimal-move sequentialisation for fewer instructions.)
+// emitParallelMoves realises a set of simultaneous copies, ordering them so
+// that each is emitted only once nothing else still needs to read its
+// destination. Destinations are distinct (a value has one home), so the only
+// thing that can stall the ordering is a cycle, and only a cycle needs a temp.
+//
+// Routing every move through a temp slot instead — read all, then write all —
+// is also correct, and is what this did before. But it costs a store and a load
+// per move where a single copy would do, on every loop back edge, and phi edges
+// are dense in loop-shaped code: that was the largest single source of the SSA
+// backend's remaining memory traffic (docs/SSA-REGALLOC-PLAN.md).
 func (e *emitter) emitParallelMoves(moves []move) {
-	for i, m := range moves {
-		e.moveLoc(Loc{Slot: e.phiTempBase + i}, m.src)
+	for _, m := range sequentialMoves(moves, e.phiTempBase) {
+		e.moveLoc(m.dst, m.src)
 	}
-	for i, m := range moves {
-		e.moveLoc(m.dst, Loc{Slot: e.phiTempBase + i})
+}
+
+// sequentialMoves orders a parallel copy into a sequence of ordinary ones,
+// inserting a park into a temp slot (from tempBase upward) only where a cycle
+// leaves no move that can go first. Pure, so the ordering can be tested without
+// running instruction selection.
+func sequentialMoves(moves []move, tempBase int) []move {
+	var out []move
+	pending := append([]move(nil), moves...)
+	// readsFrom reports whether any pending move other than the one at skip
+	// still needs to read loc.
+	readsFrom := func(loc Loc, skip int) bool {
+		for i, m := range pending {
+			if i != skip && m.src.eq(loc) {
+				return true
+			}
+		}
+		return false
 	}
+	temp := 0
+	for len(pending) > 0 {
+		moved := false
+		for i := 0; i < len(pending); {
+			if readsFrom(pending[i].dst, i) {
+				i++
+				continue
+			}
+			out = append(out, pending[i])
+			pending = append(pending[:i], pending[i+1:]...)
+			moved = true
+		}
+		if len(pending) == 0 || moved {
+			continue
+		}
+		// Every remaining move is blocked, so the rest is cycles. Park one
+		// destination's current value in a temp and let whoever needed it read
+		// the temp instead; that frees the destination and the cycle unrolls.
+		park := Loc{Slot: tempBase + temp}
+		temp++
+		out = append(out, move{dst: park, src: pending[0].dst})
+		for i := range pending {
+			if i != 0 && pending[i].src.eq(pending[0].dst) {
+				pending[i].src = park
+			}
+		}
+	}
+	return out
 }
 
 // moveLoc emits dst <- src for any reg/slot combination, staging through the s3
