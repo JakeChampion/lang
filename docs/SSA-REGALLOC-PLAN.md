@@ -630,12 +630,43 @@ spills. Two consequences, both measured:
   change's +366,057 instruction regression. Reducing spills and reducing
   caller-save traffic pull against each other in call-dense code.
 
-So the next thing worth measuring is the allocation of the callee-saved
-registers themselves. `crosses` in `ssa.LinearScan` is a boolean — a value
-either crosses some call or does not — and the ten callee-saved registers go to
-whoever asks first. Ranking candidates by how many calls each one actually
-spans, and giving the scarce registers to the values that span the most, is a
-small change to an existing preference rather than a new allocator.
+**Ranking the callee-saved registers by call count: measured, ~0.** `crosses`
+in `ssa.LinearScan` is a boolean, and the ten callee-saved registers go to
+whoever linear scan reaches first — so a value spanning one call can hold one
+while a value spanning forty pays a store and a load at each of its forty.
+Ranking by span looked like the obvious next lever. It is not:
+
+| `checker_modload_run` | instructions | call-save ops | per call |
+|---|---|---|---|
+| main | 2,311,859 | 1,127,158 | 6.41 |
+| ranked by calls spanned | 2,311,978 | 1,129,263 | 6.43 |
+
++0.005%. Two shapes were measured. Gating the preference — mark only the
+top-ranked crossers, leave the rest to the caller-saved half — is much worse
+(+43% instructions): the preference is a steer, not a cap, so denying it pushes
+a call-crosser into a caller-saved register even when a callee-saved one is
+free. Swapping instead — when the callee-saved registers are all busy, the
+newcomer takes one from the active holder crossing fewest calls, and that holder
+takes the newcomer's caller-saved register — is sound and does nothing.
+
+The reason is in the quantity. How many values are live across a call is a
+liveness fact; allocation only chooses which register class each one lands in.
+At 6.41 caller-saved values live across the average call plus ten callee-saved
+registers, the average call has around 16 values live across it and 10 places to
+put them for free. Rearranging which six spill is not where the ops are.
+
+**The ops are in how each save is spelled.** The call-save area is one
+`str`/`ldr` per register (`callLines` in `internal/codegen/arm64ssa/gas.go`),
+into consecutive 8-byte slots at `8*(callSaveBase+k)` — precisely the shape
+`stp`/`ldp` exists for. Pairing them halves 1,127,158 ops to roughly 565,000:
+**about 24% of the whole program's instructions**, from an emitter peephole that
+changes no allocator semantics.
+
+Two things to get right. The scaled `imm7` offset caps a pair at `[sp, #504]`,
+so a function with a deep spill area needs the unpaired form beyond that. And
+`PairLoadStore` in `internal/native/arm64/arm64.go` computes `imm7` as
+`uint32(byteOffset/8) & 0x7f` with no range check — an out-of-range offset
+encodes silently as the wrong one, so the check belongs there too.
 
 ### The interval approximation, and what sizing it missed
 
