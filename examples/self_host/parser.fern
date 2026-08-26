@@ -4517,10 +4517,21 @@ function parse_pattern(p: Par): (Pattern, Par) {
         // ident stays a plain binder, so `Some(x)` is unchanged.
         var bn: i32 = 0;
         while (p.peek_punct() != ")" && !p.at_end()) {
-            if (bn == 0 && p.peek_ident().len() > 0
+            if (p.peek_ident().len() > 0
                 && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
+                // The slot binds a synthetic temp and `nested` records the
+                // pattern the temp is matched against — the same shape the
+                // literal slot below uses, so a sub-pattern works at ANY
+                // position rather than only the first (#7524). `nested` runs
+                // parallel to the payload list, padded with wildcards at the
+                // slots that are plain binders.
+                var sub_line: i32 = p.peek_line();
+                var sub_col: i32 = p.peek_col();
                 var (sub_pat, sub_p) = parse_pattern(p);
                 p = sub_p;
+                var nslot: string = "__np" + dl_itoa(sub_line) + "_" + dl_itoa(sub_col) + "_" + dl_itoa(bn);
+                if (bn == 0) { binding = nslot; } else { extra_bindings = extra_bindings.append(nslot); }
+                while (nested.len() < bn) { nested = nested.append(p_wildcard()); }
                 nested = nested.append(sub_pat);
                 bn = bn + 1;
             } else if (bn == 0 && p.peek_punct() == "(") {
@@ -4565,6 +4576,11 @@ function parse_pattern(p: Par): (Pattern, Par) {
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
+        // Keep `nested` exactly as long as the payload list when any slot
+        // carries a pattern, so index i always addresses slot i.
+        if (nested.len() > 0) {
+            while (nested.len() < bn) { nested = nested.append(p_wildcard()); }
+        }
     }
     return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: field_names, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits, tup_pats: tup_pats }, p);
 }
