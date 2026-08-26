@@ -13987,6 +13987,17 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         if (ts.slot_is_rc_container(ts.slot_of(teid.name))) {
                             ts = ts.retain_tos("tuplit-elem");
                         }
+                        // A STRUCT box is not in slot_is_rc_container — its release
+                        // is a field walk plus a box dec, not a box dec — so it
+                        // needs its own clause, the same one the array literal and
+                        // the variant ctor grew. SKIPPED at a move site: there the
+                        // tuple takes over the local's reference and its walk is the
+                        // one release, which is what makes tuple__moved clean.
+                        else if (decl_is_struct(ts.structs, tek)
+                            && ts.struct_type_of_slot(ts.slot_of(teid.name)).len() > 0
+                            && !ts.moves_local_at(teid.name, teid.line, teid.col)) {
+                            ts = ts.retain_tos("tuplit-struct-elem");
+                        }
                     },
                     _ => {}
                 }
@@ -18355,13 +18366,15 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
                             // comes from the slot's tuple tags, so the kinds string
                             // stays one char per position.
                             //
-                            // A source that stays LIVE is NOT recorded. The store
-                            // holds no counted reference to it, so freeing it here
-                            // would dangle rather than leak. That position waits on
-                            // the tuple credit stamping its element sites, which is
-                            // what let the array family count a live element.
-                            else if (kslot >= 0 && sb.moves_local_at(kid.name, kid.line, kid.col)
-                                && decl_is_struct(sb.structs, sb.tuple_elem_tag(slot, tki))) {
+                            // A LIVE source is recorded too, now that the tuple
+                            // literal RETAINS a struct element: the tuple holds a
+                            // counted reference, so this release is balanced whether
+                            // or not the source outlives the store. Both walks run
+                            // under __fern_rc_is_unique (emit_tup_struct_elem_release
+                            // passes shared=true, and the source's own sweep is
+                            // SINKSHARE-gated), so whichever owner finds rc 1 does
+                            // the deep work and the order stops mattering.
+                            else if (kslot >= 0 && decl_is_struct(sb.structs, sb.tuple_elem_tag(slot, tki))) {
                                 kc = "t";
                                 tkany = true;
                             }
@@ -32985,7 +32998,14 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
         parser.ExprTuple(t) => {
             for el in t.elements {
                 match (el) {
-                    parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
+                    // A tuple element the literal RETAINED is a counted share, not
+                    // an uncounted sink — the same rule as the array literal's
+                    // element and the variant ctor's payload. A MOVED element still
+                    // refuses: there the tuple is sole owner and its walk is the one
+                    // release, which is what tuple__moved measures.
+                    parser.ExprIdent(eid) => {
+                        if (eid.name == name && moved_ident_at(el, msites)) { return true; }
+                    },
                     _ => { if (struct_box_sink_stored_expr(el, name, structs, apretain, msites)) { return true; } }
                 }
             }
@@ -33154,7 +33174,16 @@ function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser
             return false;
         },
         parser.ExprTuple(t) => {
-            for el in t.elements { if (struct_counted_share_expr(el, name, structs)) { return true; } }
+            // `var tp: (i32, P) = (i, name)` — the tuple literal retains a struct
+            // element, so the source keeps a claim of its own and both walks have to
+            // be rc-gated. Recursing past a BARE ident (as this arm did) reaches only
+            // nested containers, and a bare ident is the whole shape here.
+            for el in t.elements {
+                match (el) {
+                    parser.ExprIdent(tid) => { if (tid.name == name) { return true; } },
+                    _ => { if (struct_counted_share_expr(el, name, structs)) { return true; } }
+                }
+            }
             return false;
         },
         _ => { return false; },
