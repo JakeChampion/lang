@@ -669,6 +669,11 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_cow_inplace_ptr":    emitAliasHelper("__fern_arr_cow_inplace_ptr", "__fern_arr_cow_inplace"),
 	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
 	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
+	"__method_string_as_bytes":      emitStringAsBytesHelper,
+	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
+	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
+	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
+	"__slice_idx_16":                emitSliceIdxHelper("__slice_idx_16", 4),
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
@@ -2027,6 +2032,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_cow_inplace_ptr":    true,
 	"__fern_arr_cow_inplace_str":    true,
 	"__fern_heap_bump_bytes":        true,
+	"__method_string_as_bytes":      true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,
@@ -4573,6 +4579,78 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tb .Lssa_apg_cp")
 	w(".Lssa_apg_done:")
 	w("\tmov x0, x11") // return new_data
+	w("\tret")
+}
+
+// emitSliceIdxHelper writes __slice_idx / _1 / _8 / _16 (slice, idx) -> address:
+// the bounds-checked element address for a slice view, one per element stride
+// (shift is the stride's log2). The array siblings above take the buffer
+// pointer directly and read the length from its header at [base-4]; a slice is
+// one indirection further out — a {data_ptr, len} header — so the length comes
+// from [slice+8] and the data pointer has to be loaded from [slice+0] before
+// the stride-shifted add.
+//
+// Out of range exits 134, matching emitArrIdxHelperNChecked rather than the
+// flat backend's message-printing abort: the exit code is the observable, and
+// this emitter's array path already reports it this way.
+//
+// No `_nc` variants: unlike the array helpers, the IR emits no
+// bounds-check-elided slice form.
+func emitSliceIdxHelper(name string, shift int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		ok := fmt.Sprintf(".Lssa_sliceidx%d_ok", shift)
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tldr w2, [x0, #8]") // len, past the 8-byte data pointer
+		w("\tcmp w1, w2")
+		w("\tb.lo %s", ok) // idx < len (unsigned)
+		w("\tmov x0, #134")
+		w("\tmov x8, #94") // exit_group
+		w("\tsvc #0")
+		w("%s:", ok)
+		w("\tldr x0, [x0]") // data_ptr
+		if shift == 0 {
+			w("\tadd x0, x0, x1")
+		} else {
+			w("\tadd x0, x0, x1, lsl #%d", shift)
+		}
+		w("\tret")
+	}
+}
+
+// emitStringAsBytesHelper writes __method_string_as_bytes(s) -> slice: the
+// non-copying `.as_bytes()` view — a 16-byte {data_ptr, len} header aliasing the
+// receiver's bytes. Layout matches the flat backend's __fern_slice_make exactly
+// (8-byte data pointer at +0, i32 len at +8, 4 bytes trailing pad), because the
+// IR reads the len at [slice + ptrW] and __slice_idx_* dereference the same
+// fields.
+//
+// It reads the length itself rather than tail-calling a slice_make with an
+// incoming (data, len) pair, which is what the flat backend does: that one runs
+// the TWO-word string ABI, where the receiver already arrives as (x0=data,
+// x1=len) — it panics outright on the single-word ABI. This path is single-word
+// (buildArm64SSA never sets ast.TwoWordOverride, and __str_len here is
+// `ldur w0, [x0, #-4]`), so the receiver is one pointer and the length lives at
+// [data-4].
+//
+// The header is a raw bump allocation with NO rc header, matching the flat
+// backend's __fern_alloc: a slice is a view, and nothing drops it. x0 = string
+// data pointer; returns the header address in x0.
+func emitStringAsBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_string_as_bytes"))
+	w("\tldur w1, [x0, #-4]") // len
+	w("\tadrp x8, %s", heapPtrSym)
+	w("\tadd x8, x8, #:lo12:%s", heapPtrSym)
+	w("\tldr x9, [x8]")
+	w("\tadd x9, x9, #7")
+	w("\tand x9, x9, #-8") // header base, 8-aligned
+	w("\tadd x10, x9, #16")
+	w("\tstr x10, [x8]")
+	emitHeapGuardCall(w)
+	w("\tstr x0, [x9]")     // [+0] data pointer (full 8 bytes)
+	w("\tstr w1, [x9, #8]") // [+8] len (i32)
+	w("\tmov x0, x9")
 	w("\tret")
 }
 
