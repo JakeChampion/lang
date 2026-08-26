@@ -222,6 +222,50 @@ statically owns. The declarative table made that edge *declared* and
 *transitively closed*, but it is still a parallel artifact that can drift
 from the asm, and the wasm side still couples helpers with ad-hoc `if`s.
 
+### What the wasm half is actually blocked on
+
+Not the `module_uses_*` coupling — that reads worse than it is. Every helper
+bundle in `emit_ir_module_units` is `need(...)`-gated, and the gates that look
+too narrow are not: the ones missing from the heap disjunction all imply a
+string op, and `module_allocates` folds `module_uses_strings` in. wasm's
+per-helper gating is in better shape than either register backend's was.
+
+What blocks it is that **wasm has no instruction selection for the raw-memory
+floor.** `raw_alloc`, `raw_store8`, `raw_load8`, `raw_string`, `raw_addr`,
+`raw_arr_box` and the `syscall*` family have no arm in the selector — they
+reach the terminal `else` and refuse. Since almost every `rt_src_*` body is
+written on that floor, **52 of the 73 sources cannot be compiled for wasm at
+all**, including every one worth having (`i32_to_string`, `chr`, `str_concat`,
+the case converters, all I/O).
+
+Intersecting the sources that avoid the floor with the single-parameter ones
+(the #5666 argument order transposes anything wider, since wasm's hand-written
+WAT signatures are reversed to match the register push order) and then with the
+ones contributing no literals leaves exactly three, of which only
+`__fern_str_to_i32` is a clean 1:1 replacement for an existing bundle.
+
+So the wasm mechanism is buildable, but its reach is one helper until the floor
+is selected — and selecting it is a semantic change, not wiring: `__raw_string`
+on the register backends builds a box POINTING AT the raw bytes, while a wasm
+string is a single inline rc-headered block, so the same helper source would
+need one more allocation and a different aliasing contract. It also makes
+`wasm_unsupported_builtin`'s justification ("wasm has neither a raw address
+space nor syscalls") false, so the refusal gate has to move in lockstep. That
+is its own change, and the syscall half is probably permanently out — wasm's
+I/O is WASI imports, not a syscall number.
+
+Two traps worth recording for whoever builds the mechanism, both found by
+review rather than by a failing test. The runtime unit must be added to `units`
+at the three CALL SITES, before the heap base is taken — injecting it inside
+`emit_ir_module_units` leaves `rc_bodies` carrying a stale, lower base while the
+data section is laid out against the real one, and the gap between them is
+exactly the injected unit's literals. A pointer into it passes
+`$__field_reclaim_<T>`'s admission check and gets dec'd as if it were a heap
+box: silent static-data corruption, not a trap. And the unit's lowered needs
+must NOT be unioned into the module's needs — `@allocates` comes back for
+essentially every candidate, which would drag the heap and RC runtime into
+allocation-free modules.
+
 The principled end-state: **write the helpers as ordinary Fern functions in a
 `runtime` module compiled through the same pipeline.** Then
 
@@ -580,10 +624,23 @@ remainder splits three ways:
   need-gated it, so every allocating arm64 program reserved 64 MiB for three
   bodies nothing branched to.
 
-  That pairing is now three for three (the Reader leaves, `subprocess`, strbuf):
-  **a hand-written body that outlived its AST emitter tends to carry both a
-  headerless box and a missing gate.** Checking those two things is cheaper than
-  finding them, and worth doing on any body before migrating it. `subprocess`
+  That pairing is now **four for four** — the Reader leaves, `subprocess`,
+  strbuf, and `$__fern_build_io_error` on wasm: **a hand-written body that
+  outlived its AST emitter tends to carry a headerless box, a missing gate, or
+  both.** Checking those two things is cheaper than finding them, and worth
+  doing on any body before migrating it. All four were found by looking, none
+  by a failing test.
+
+  The wasm one is the sharpest illustration of why the check is worth running
+  even on a body that looks reviewed. Six of `$__fern_build_io_error`'s seven
+  arms box through `$__fern_str_box`; only the default `Other(path, "")` arm
+  built its MESSAGE with a bare `$__fern_alloc(4)`. Nothing about it looks
+  irregular in isolation — it is one line in the middle of six correct
+  siblings. And it is not shielded the way a low address would be: a bump-heap
+  address clears the `i32.lt_u ... heap_base` guard in `$__fern_arr_dec` and
+  `$__fern_rc_dec`, so each reads the last word of the preceding allocation.
+  Native wasmbin sidesteps it by storing a null message; the register backends
+  use a real empty-string literal. Only this body allocated one bare. `subprocess`
   **has since moved** on both Linux targets — the first composite rather than a
   leaf, and the one that showed the composites were never a separate category.
   Its 31 traps are pipes, a fork, three dup3s, six closes, three execve

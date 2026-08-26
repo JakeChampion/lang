@@ -4836,8 +4836,13 @@ pub function build_io_error_func(slot: i32): string {
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("InvalidUtf8") + "))\n";
     o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
-    // default -> Other(path, "") — the empty message is a valid [len=0] block.
-    o = o + "    (local.set $e (call $__fern_alloc (i32.const 4)))\n";
+    // default -> Other(path, ""). The empty message goes through $__fern_str_box
+    // like every arm above it, NOT a bare $__fern_alloc: a bare block has no rc
+    // word at [e-8], and $__fern_alloc returns a bump-heap address, so it clears
+    // the low-address guard in $__fern_arr_dec / $__fern_rc_dec and each reads
+    // the last word of the PRECEDING allocation instead. [e] = len stays at
+    // offset 0, so no consumer moves.
+    o = o + "    (local.set $e (call $__fern_str_box (i32.const 4)))\n";
     o = o + "    (i32.store (local.get $e) (i32.const 0))\n";
     o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(2, slot) + ")))\n";
     o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
