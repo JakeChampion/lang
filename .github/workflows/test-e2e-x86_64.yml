@@ -36,7 +36,15 @@ jobs:
         # trailing underscore is in the test names themselves
         # (TestX86_64ExitCode, etc) so the regex is unambiguous
         # against TestX86 prefixes.
-        run: gotestsum --format pkgname-and-test-fails -- -run '^TestX86_64' ./internal/e2e/
+        #
+        # -timeout is EXPLICIT because this suite had outgrown Go's 10m0s
+        # default: three consecutive runs measured 9m51s, 10m19s and 8m29s, so
+        # the run-to-run spread was an order of magnitude larger than the
+        # headroom and a timeout was a coin flip. It does not fail like a
+        # timeout, either — the panic names whichever test was in flight when
+        # the alarm fired, which reads as that test hanging and sent one PR
+        # chasing a TRMC deep-stack test that passes in 0.20s.
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestX86_64' -timeout 25m ./internal/e2e/
 
   # The pure-Go in-process assembler+linker (internal/native/x86_64 +
   # internal/native/elf) is the DEFAULT assemble+link path for
