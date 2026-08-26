@@ -20,6 +20,10 @@ enum Out { P(In, In), Q(i32) }
 
 enum One { W(In) }
 
+struct Pt { x: i32, y: i32, z: i32 }
+
+enum Holds { S(Pt), N(i32) }
+
 // THE headline. Both `P` arms match at slot 0 and differ at slot 1, so
 // `P(Ok2 _, Er2 _)` must run arm 2 — not the outer `_`. Under the merge arm 2
 // had been folded into arm 1's inner match, whose wildcard was that `_`.
@@ -116,6 +120,28 @@ function via_let_else(v: Out): i32 {
     return a + b;
 }
 
+// A payload slot may hold a STRUCT pattern, not just a variant one — the two
+// are spelled alike and only the slot's TYPE separates them. A struct has one
+// shape, so the slot carries no test of its own and stays irrefutable: `S`
+// is covered by this arm alone. The trailing `..` binds nothing and exists
+// only for the printer.
+function struct_slot(h: Holds): i32 {
+    match (h) {
+        S(Pt { x, .. }) => { return x; },
+        N(n) => { return n; },
+    }
+}
+
+// A struct slot is refutable only THROUGH a field, so these two arms are
+// distinct and `S(Pt { y: 5, … })` falls past the first.
+function struct_slot_field(h: Holds): i32 {
+    match (h) {
+        S(Pt { x: 1, y, .. }) => { return 1000 + y; },
+        S(Pt { x, .. }) => { return x; },
+        N(n) => { return n; },
+    }
+}
+
 function main(): i32 {
     print(fall_through(P(Ok2(1), Ok2(2))).to_string());
     print(fall_through(P(Ok2(1), Er2(9))).to_string());
@@ -159,5 +185,11 @@ function main(): i32 {
     print(via_if_let(P(Ok2(1), Er2(2))).to_string());
     print(via_let_else(P(Ok2(3), Ok2(4))).to_string());
     print(via_let_else(P(Er2(3), Ok2(4))).to_string());
+
+    print(struct_slot(S(Pt { x: 7, y: 1, z: 2 })).to_string());
+    print(struct_slot(N(9)).to_string());
+    print(struct_slot_field(S(Pt { x: 1, y: 5, z: 0 })).to_string());
+    print(struct_slot_field(S(Pt { x: 4, y: 5, z: 0 })).to_string());
+    print(struct_slot_field(N(8)).to_string());
     return 0;
 }

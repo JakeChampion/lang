@@ -3029,6 +3029,17 @@ type TuplePatElem struct {
 	// AtBinding is the `n` in `n @ <pattern>` at this position: the whole
 	// value here is also bound to `n`, alongside whatever the pattern binds.
 	AtBinding string
+	// IsStruct marks a VariantName that named a STRUCT rather than an enum
+	// variant — `A(P { x })` on an `A(P)` payload. The two are spelled the
+	// same, so only the position's type tells them apart; the checker
+	// resolves it and sets this, and the IR and interpreter then project
+	// fields instead of testing a tag. A struct position carries no tag
+	// test: it is refutable only through its own sub-patterns.
+	IsStruct bool
+	// RestWritten records a named-field pattern's trailing `..` at this
+	// position. It binds nothing, so it reaches only the printer — see
+	// MatchArm.RestWritten.
+	RestWritten bool
 }
 
 // MatchArm is one pattern → body pair. The Bindings are the

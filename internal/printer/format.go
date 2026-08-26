@@ -1334,19 +1334,31 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 			if j > 0 {
 				f.b.WriteString(", ")
 			}
+			hasSub := j < len(el.VariantPayloads) && el.VariantPayloads[j] != nil
 			if j < len(el.VariantFieldNames) {
 				f.b.WriteString(el.VariantFieldNames[j])
-				if el.VariantFieldNames[j] != vb {
+				// A named field carrying a sub-pattern spells it after the
+				// colon, the same place a rename's local goes.
+				if hasSub {
+					f.b.WriteString(": ")
+					f.formatTuplePatElem(*el.VariantPayloads[j])
+				} else if el.VariantFieldNames[j] != vb {
 					f.b.WriteString(": ")
 					f.b.WriteString(vb)
 				}
 				continue
 			}
-			if j < len(el.VariantPayloads) && el.VariantPayloads[j] != nil {
+			if hasSub {
 				f.formatTuplePatElem(*el.VariantPayloads[j])
 				continue
 			}
 			f.b.WriteString(vb)
+		}
+		if el.RestWritten {
+			if len(el.VariantBindings) > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString("..")
 		}
 		f.b.WriteString(close)
 	default:

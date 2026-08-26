@@ -10669,6 +10669,16 @@ func armPayloadsRefutable(payloads []*ast.TuplePatElem) bool {
 }
 
 func patElemRefutable(el ast.TuplePatElem) bool {
+	if el.IsStruct {
+		// A struct has one shape, so the position itself never fails —
+		// only a field carrying its own sub-pattern can.
+		for _, sub := range el.VariantPayloads {
+			if sub != nil && patElemRefutable(*sub) {
+				return true
+			}
+		}
+		return false
+	}
 	if el.VariantName != "" || el.Literal != nil {
 		return true
 	}
@@ -10797,6 +10807,11 @@ func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, 
 		return c.checkTuplePatNestedElem(pos, el, k, elT, s, armScope, seen)
 	}
 	if el.VariantName != "" {
+		// `A(P { x })` and `A(Ok(n))` are the same spelling; only the
+		// position's type says which. A struct here projects fields.
+		if st, isStruct := elT.(ast.StructType); isStruct {
+			return c.checkTuplePatStructElem(pos, el, k, st, s, armScope, seen)
+		}
 		c.checkTuplePatVariantElem(pos, el, k, elT, s, armScope, seen)
 		return true
 	}
@@ -10847,6 +10862,83 @@ func (c *checker) checkTuplePatNestedElem(pos ast.Position, el *ast.TuplePatElem
 		if c.checkTuplePatElem(pos, el.Nested, el.NestedTypes, j, tup.Elems[j], s, armScope, seen) {
 			refutable = true
 		}
+	}
+	return refutable
+}
+
+// checkTuplePatStructElem validates a STRUCT pattern at pattern position k
+// (`A(P { x, .. })`) and binds its fields into armScope. A struct has one
+// shape, so the position carries no test of its own: it is refutable only
+// when one of its fields carries a refutable sub-pattern.
+func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem, k int, st ast.StructType, s, armScope *scope, seen map[string]bool) bool {
+	if el.VariantFieldNames == nil {
+		c.errfCode(pos, "E035", "struct pattern on element %d must name its fields — `%s { … }`", k, st.Name)
+		return true
+	}
+	if el.VariantName != st.Name {
+		c.errfCode(pos, "E035", "struct pattern names %s, but element %d has type %s", el.VariantName, k, st.Name)
+		return true
+	}
+	sd, known := c.info.Structs[st.Name]
+	if !known {
+		c.errfCode(pos, "E043", "unknown struct type %q", st.Name)
+		return true
+	}
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	el.IsStruct = true
+	el.VariantBindingTypes = make([]ast.Type, len(el.VariantBindings))
+	refutable := false
+	for i, b := range el.VariantBindings {
+		field := b
+		if i < len(el.VariantFieldNames) && el.VariantFieldNames[i] != "" {
+			field = el.VariantFieldNames[i]
+		}
+		var ft ast.Type
+		found := false
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				ft = f.Type
+				if sub != nil {
+					ft = substituteType(ft, sub)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			declared := make([]string, 0, len(sd.Fields))
+			for _, df := range sd.Fields {
+				declared = append(declared, df.Name)
+			}
+			c.errUnknownField(pos, pos, st.Name, field, declared)
+			refutable = true
+			continue
+		}
+		el.VariantBindingTypes[i] = ft
+		if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
+			slot := []ast.TuplePatElem{*el.VariantPayloads[i]}
+			types := []ast.Type{ft}
+			if c.checkTuplePatElem(pos, slot, types, 0, ft, s, armScope, seen) {
+				refutable = true
+			}
+			*el.VariantPayloads[i] = slot[0]
+			continue
+		}
+		if b == "" {
+			continue
+		}
+		if seen[b] {
+			c.errfCode(pos, "E013", "variable %q already declared in this scope", b)
+			continue
+		}
+		seen[b] = true
+		armScope.names[b] = ft
 	}
 	return refutable
 }
@@ -11091,15 +11183,6 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if covered[arm.VariantName] {
 			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}
-		// Guarded arms don't fully cover the variant: the guard
-		// might be false at runtime, in which case the match
-		// falls through. Leaving `covered[...]` clear means a
-		// later unguarded arm for the same variant (or a
-		// wildcard) is required for exhaustiveness — and is no
-		// longer flagged as a duplicate.
-		if arm.Guard == nil && !armPayloadsRefutable(arm.Payloads) {
-			covered[arm.VariantName] = true
-		}
 		// Bind names in a fresh scope so they don't leak into
 		// sibling arms. Payload types get the type-parameter
 		// substitution applied so `Some(v)` on `Option[number]`
@@ -11137,6 +11220,15 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			armScope.names[arm.AtBinding] = et
 		}
 		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
+		// Guarded arms don't fully cover the variant: the guard might be
+		// false at runtime, in which case the match falls through. Leaving
+		// `covered[...]` clear means a later unguarded arm for the same
+		// variant (or a wildcard) is required for exhaustiveness — and is
+		// no longer flagged as a duplicate. Decided AFTER the payloads are
+		// bound, which is what tells a struct position from a variant one.
+		if arm.Guard == nil && !armPayloadsRefutable(arm.Payloads) {
+			covered[arm.VariantName] = true
+		}
 		// Guard runs in the bindings-in-scope frame so it can
 		// reference the payload names. Required to be bool.
 		if arm.Guard != nil {
@@ -11879,9 +11971,6 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		if covered[arm.VariantName] {
 			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}
-		if arm.Guard == nil && !armPayloadsRefutable(arm.Payloads) {
-			covered[arm.VariantName] = true
-		}
 		if arm.NamedFields {
 			renamed := false
 			for i := range arm.Bindings {
@@ -11912,6 +12001,15 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			armScope.names[arm.AtBinding] = et
 		}
 		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
+		// Guarded arms don't fully cover the variant: the guard might be
+		// false at runtime, in which case the match falls through. Leaving
+		// `covered[...]` clear means a later unguarded arm for the same
+		// variant (or a wildcard) is required for exhaustiveness — and is
+		// no longer flagged as a duplicate. Decided AFTER the payloads are
+		// bound, which is what tells a struct position from a variant one.
+		if arm.Guard == nil && !armPayloadsRefutable(arm.Payloads) {
+			covered[arm.VariantName] = true
+		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {

@@ -3375,6 +3375,14 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 			return false, nil
 		}
 		return i.tupleElemsMatch(el.Nested, sub, e)
+	case el.IsStruct:
+		// A struct position never fails on its own shape — only its fields'
+		// own sub-patterns can, which is what structArmMatches walks.
+		st, isStruct := v.(*Struct)
+		if !isStruct {
+			return false, nil
+		}
+		return i.structArmMatches(el.VariantBindings, el.VariantFieldNames, el.VariantPayloads, st, e)
 	case el.VariantName != "":
 		if !tupleElemVariantMatches(v, el.VariantName) {
 			return false, nil
@@ -3514,6 +3522,12 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 			if k < len(sub) {
 				bindTupleElem(armEnv, nel, sub[k])
 			}
+		}
+		return
+	}
+	if el.IsStruct {
+		if st, isStruct := v.(*Struct); isStruct {
+			_ = bindStructArm(armEnv, el.VariantBindings, el.VariantFieldNames, el.VariantPayloads, st)
 		}
 		return
 	}

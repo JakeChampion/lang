@@ -3843,6 +3843,7 @@ func patElem(pat matchPattern) ast.TuplePatElem {
 		el.VariantBindings = pat.Bindings
 		el.VariantFieldNames = fieldNamesOf(pat)
 		el.VariantPayloads = payloadElems(pat)
+		el.RestWritten = pat.restWritten
 	default:
 		el.Literal = pat.Literal
 		el.RangeHi = pat.RangeHi

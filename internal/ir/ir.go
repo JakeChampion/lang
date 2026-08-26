@@ -7268,6 +7268,31 @@ func (b *builder) collectTupTestAt(el ast.TuplePatElem, path []tupPathStep, dept
 	if el.VariantName == "" {
 		return nil
 	}
+	if el.IsStruct {
+		// A struct has one shape, so the position carries no test of its
+		// own — only the fields' sub-patterns do.
+		st, isStruct := path[len(path)-1].t.(ast.StructType)
+		if !isStruct {
+			return fmt.Errorf("ir: struct pattern on non-struct tuple position (compiler bug)")
+		}
+		offs, err := b.structElemOffsets(st, el)
+		if err != nil {
+			return err
+		}
+		// Same depth, not depth+1: the depth levels exist to test a tag
+		// before loading what it guards, and a struct field load needs no
+		// such guard. Stepping here would leave this level with no test.
+		for i, sub := range el.VariantPayloads {
+			if sub == nil || i >= len(offs) {
+				continue
+			}
+			ft := tupPayloadType(el, i)
+			if err := b.collectTupTestAt(*sub, tupPath(path, offs[i], ft), depth, levels); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	et, isEnum := path[len(path)-1].t.(ast.EnumType)
 	if !isEnum {
 		return fmt.Errorf("ir: variant pattern on non-enum tuple position (compiler bug)")
@@ -7283,6 +7308,30 @@ func (b *builder) collectTupTestAt(el ast.TuplePatElem, path []tupPathStep, dept
 		}
 	}
 	return nil
+}
+
+// structElemOffsets is the byte offset of each field a STRUCT pattern position
+// projects, in the pattern's own binding order — the same offMap a top-level
+// struct arm reads, resolved for a position nested inside another pattern.
+func (b *builder) structElemOffsets(st ast.StructType, el ast.TuplePatElem) ([]int32, error) {
+	sd, known := b.info.Structs[st.Name]
+	if !known {
+		return nil, fmt.Errorf("ir: unknown struct %s in pattern (compiler bug)", st.Name)
+	}
+	offMap, _ := structFieldLayout(sd.Fields, b.ptrW)
+	offs := make([]int32, len(el.VariantBindings))
+	for i, name := range el.VariantBindings {
+		field := name
+		if i < len(el.VariantFieldNames) && el.VariantFieldNames[i] != "" {
+			field = el.VariantFieldNames[i]
+		}
+		off, ok := offMap[field]
+		if !ok {
+			return nil, fmt.Errorf("ir: struct pattern field %q not in %s layout (compiler bug)", field, st.Name)
+		}
+		offs[i] = off
+	}
+	return offs, nil
 }
 
 // tupPayloadType is the declared type of a variant element's payload slot i,
@@ -7417,6 +7466,34 @@ func (b *builder) tupleMatchBindAt(el ast.TuplePatElem, elT ast.Type, tm *tupMat
 	if el.Nested != nil {
 		noffs, _ := tupleElemLayout(el.NestedTypes, b.ptrW)
 		b.tupleMatchBindLevel(el.Nested, el.NestedTypes, tm, noffs, path, restores)
+		return
+	}
+	if el.IsStruct {
+		st, isStruct := elT.(ast.StructType)
+		if !isStruct {
+			return
+		}
+		offs, err := b.structElemOffsets(st, el)
+		if err != nil {
+			return
+		}
+		for i, name := range el.VariantBindings {
+			if i >= len(offs) {
+				continue
+			}
+			ft := tupPayloadType(el, i)
+			if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
+				b.tupleMatchBindAt(*el.VariantPayloads[i], ft, tm, tupPath(path, offs[i], ft), restores)
+				continue
+			}
+			if name == "" {
+				continue
+			}
+			slot, restore := b.bindingSlotScoped(name, ft)
+			*restores = append(*restores, restore)
+			b.emitTupPath(tm.ptrSlot, tupPath(path, offs[i], ft))
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
 		return
 	}
 	if el.VariantName != "" {
