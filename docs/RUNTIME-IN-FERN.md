@@ -541,7 +541,49 @@ remainder splits three ways:
   builtin's name rather than an IR op's. The refusal stays as the backstop for an
   op with no builtin name to report.
 
-- **Composites, not leaves**: `map_delete` and `strbuf_append`. `subprocess`
+- **Composites, not leaves**: `map_delete` and the strbuf family.
+
+  **strbuf is deferred, and the reason is storage, not length.** Its three
+  helpers are trivial — set a word, copy bytes and bump a word, drain into a
+  fresh box — but all three operate on a NAMED 64 MiB `.bss` buffer and a
+  persistent global length word, and the floor has no first-class static
+  storage. `__raw_scratch` is not it: both backends DISCARD its size operand and
+  push `&__fern_scratch`, a single shared 256-byte object that `stat`, the
+  clocks, `poll`, `timer_fd`, the sockets, `putchar`, `print_int` and `read_int`
+  all borrow. An accumulator has to survive arbitrary intervening execution, so
+  sharing that buffer would let any `write_file` mid-emit clobber it.
+
+  There IS a composition that reaches a persistent global word today, and it is
+  worth recording so nobody re-derives it and thinks it settles the question: a
+  string literal's box is emitted to `.data`, not `.rodata` (it holds a relocated
+  pointer), so `__raw_store_ptr(lit, 1, v)` writes a statically-addressed word
+  that survives every call. It works. It is also a literal's LENGTH field, so the
+  price is a string whose `.len()` is a lie — a side channel, not a capability,
+  and not what the compiler's own output accumulator should be built on. The
+  honest options are a real static-storage primitive or an arena buffer whose
+  pointer lives in one, and that is a floor decision rather than a migration.
+
+  Hotness is the independent reason: `EmitState.write` is strbuf_append, so this
+  is the compiler's own output path, which puts it beside `arr_push` rather than
+  beside the leaves.
+
+  **Two defects were fixed there without waiting for any of that.**
+  `__fern_strbuf_take` built its result with a bare `__fern_alloc(16)`, so the
+  drained string carried no refcount header — the #6921 hazard again, except
+  this one was not merely latent for want of a dec: `strbuf_take()` IS an owned
+  fresh string, so a dropped result reached `__fn___fern_str_free`, which reads
+  the refcount at box-8 and therefore read the last word of the preceding
+  allocation, the tail of the text just copied out. Native had used an
+  rc-headered allocation since `RC-STRINGS-PLAN.md`; the self-host was the last
+  producer left unconverted. And arm64 emitted the whole bundle — the 64 MiB
+  reservation included — inside the bare `heap` gate where x86-64 had always
+  need-gated it, so every allocating arm64 program reserved 64 MiB for three
+  bodies nothing branched to.
+
+  That pairing is now three for three (the Reader leaves, `subprocess`, strbuf):
+  **a hand-written body that outlived its AST emitter tends to carry both a
+  headerless box and a missing gate.** Checking those two things is cheaper than
+  finding them, and worth doing on any body before migrating it. `subprocess`
   **has since moved** on both Linux targets — the first composite rather than a
   leaf, and the one that showed the composites were never a separate category.
   Its 31 traps are pipes, a fork, three dup3s, six closes, three execve
