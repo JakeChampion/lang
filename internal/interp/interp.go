@@ -3108,16 +3108,21 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if ev, ok := tag.(*Enum); ok {
 			for _, arm := range x.Arms {
 				if arm.IsWildcard || arm.VariantName == ev.VariantName {
+					if !arm.IsWildcard && arm.Payloads != nil {
+						ok, err := i.armPayloadsMatch(arm.Payloads, ev, e)
+						if err != nil {
+							return result{}, err
+						}
+						if !ok {
+							continue
+						}
+					}
 					armEnv := newEnv(e)
 					if arm.AtBinding != "" {
 						armEnv.declare(arm.AtBinding, tag)
 					}
 					if !arm.IsWildcard {
-						for j, name := range arm.Bindings {
-							if j < len(ev.Payloads) {
-								armEnv.declare(name, ev.Payloads[j])
-							}
-						}
+						bindArmPayloads(armEnv, arm.Bindings, arm.Payloads, ev)
 					}
 					// Guard runs with bindings in scope; on false,
 					// fall through to the next arm.
@@ -3157,16 +3162,15 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 					if arm.AtBinding != "" {
 						armEnv.declare(arm.AtBinding, st)
 					}
-					for k, b := range arm.Bindings {
-						field := b
-						if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
-							field = arm.FieldNames[k]
-						}
-						fv, ok := st.Fields[field]
-						if !ok {
-							return result{}, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, field)
-						}
-						armEnv.declare(b, fv)
+					ok, err := i.structArmMatches(arm.Bindings, arm.FieldNames, arm.Payloads, st, e)
+					if err != nil {
+						return result{}, err
+					}
+					if !ok {
+						continue
+					}
+					if err := bindStructArm(armEnv, arm.Bindings, arm.FieldNames, arm.Payloads, st); err != nil {
+						return result{}, err
 					}
 				}
 				if arm.Guard != nil {
@@ -3371,6 +3375,14 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 			return false, nil
 		}
 		return i.tupleElemsMatch(el.Nested, sub, e)
+	case el.IsStruct:
+		// A struct position never fails on its own shape — only its fields'
+		// own sub-patterns can, which is what structArmMatches walks.
+		st, isStruct := v.(*Struct)
+		if !isStruct {
+			return false, nil
+		}
+		return i.structArmMatches(el.VariantBindings, el.VariantFieldNames, el.VariantPayloads, st, e)
 	case el.VariantName != "":
 		if !tupleElemVariantMatches(v, el.VariantName) {
 			return false, nil
@@ -3389,6 +3401,11 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 			}
 		}
 	case el.Literal != nil:
+		// A range position (`V(1..5)`) tests the bound pair the same way a
+		// scalar arm does; a plain literal tests equality.
+		if el.RangeHi != nil {
+			return i.armMatchesScalar(el.Literal, el.RangeHi, el.RangeInclusive, v, e)
+		}
 		lv, err := i.evalExpr(el.Literal, e)
 		if err != nil {
 			return false, err
@@ -3400,11 +3417,102 @@ func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, e
 	return true, nil
 }
 
+// structArmMatches reports whether a struct arm's field SUB-PATTERNS match.
+// A field with no sub-pattern is a binder and always matches, which is why a
+// plain `S { x, y }` arm is irrefutable; a failing sub-pattern falls through
+// to the next arm.
+func (i *Interp) structArmMatches(bindings, fieldNames []string, payloads []*ast.TuplePatElem, st *Struct, e *env) (bool, error) {
+	for k, sub := range payloads {
+		if sub == nil {
+			continue
+		}
+		field := structArmField(bindings, fieldNames, k)
+		fv, ok := st.Fields[field]
+		if !ok {
+			return false, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, field)
+		}
+		m, err := i.tupleElemMatches(*sub, fv, e)
+		if err != nil || !m {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// bindStructArm declares what a struct arm binds: the field itself for a
+// binder, or whatever its sub-pattern binds.
+func bindStructArm(armEnv *env, bindings, fieldNames []string, payloads []*ast.TuplePatElem, st *Struct) error {
+	for k, b := range bindings {
+		field := structArmField(bindings, fieldNames, k)
+		fv, ok := st.Fields[field]
+		if !ok {
+			return fmt.Errorf("interp: struct %s has no field %q", st.TypeName, field)
+		}
+		if k < len(payloads) && payloads[k] != nil {
+			bindTupleElem(armEnv, *payloads[k], fv)
+			continue
+		}
+		armEnv.declare(b, fv)
+	}
+	return nil
+}
+
+// structArmField is the field a struct arm projects at position k: the rename
+// target when one was written, else the binder's own name.
+func structArmField(bindings, fieldNames []string, k int) string {
+	if k < len(fieldNames) && fieldNames[k] != "" {
+		return fieldNames[k]
+	}
+	if k < len(bindings) {
+		return bindings[k]
+	}
+	return ""
+}
+
+// armPayloadsMatch reports whether an enum arm's payload SUB-PATTERNS all
+// match the scrutinee's payloads. A slot with no sub-pattern is a binder and
+// always matches. A failing sub-pattern falls through to the NEXT ARM, which
+// is what makes `P(Ok2(a))` and `P(Er2(a))` distinct arms of one match.
+func (i *Interp) armPayloadsMatch(payloads []*ast.TuplePatElem, ev *Enum, e *env) (bool, error) {
+	for idx, sub := range payloads {
+		if sub == nil || idx >= len(ev.Payloads) {
+			continue
+		}
+		ok, err := i.tupleElemMatches(*sub, ev.Payloads[idx], e)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// bindArmPayloads declares whatever an enum arm's payload sub-patterns bind.
+// Runs only after armPayloadsMatch said yes, so every position it reads is
+// one the pattern already proved present.
+func bindArmPayloads(armEnv *env, bindings []string, payloads []*ast.TuplePatElem, ev *Enum) {
+	for j, name := range bindings {
+		if j >= len(ev.Payloads) {
+			continue
+		}
+		if j < len(payloads) && payloads[j] != nil {
+			bindTupleElem(armEnv, *payloads[j], ev.Payloads[j])
+			continue
+		}
+		if name == "" {
+			continue
+		}
+		armEnv.declare(name, ev.Payloads[j])
+	}
+}
+
 // bindTupleElem declares whatever a tuple-pattern element binds: the element
 // itself for a binder, the named variant's payloads for a sub-pattern, or
 // whatever a nested tuple pattern binds, recursively. Literal and `_` elements
 // bind nothing.
 func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
+	if el.AtBinding != "" {
+		armEnv.declare(el.AtBinding, v)
+	}
 	if el.Nested != nil {
 		sub, isArr := v.(Array)
 		if !isArr {
@@ -3414,6 +3522,12 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 			if k < len(sub) {
 				bindTupleElem(armEnv, nel, sub[k])
 			}
+		}
+		return
+	}
+	if el.IsStruct {
+		if st, isStruct := v.(*Struct); isStruct {
+			_ = bindStructArm(armEnv, el.VariantBindings, el.VariantFieldNames, el.VariantPayloads, st)
 		}
 		return
 	}
@@ -3974,16 +4088,21 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				if !arm.IsWildcard && arm.VariantName != ev.VariantName {
 					continue
 				}
+				if !arm.IsWildcard && arm.Payloads != nil {
+					ok, err := i.armPayloadsMatch(arm.Payloads, ev, env)
+					if err != nil {
+						return nil, err
+					}
+					if !ok {
+						continue
+					}
+				}
 				armEnv := newEnv(env)
 				if arm.AtBinding != "" {
 					armEnv.declare(arm.AtBinding, tag)
 				}
 				if !arm.IsWildcard {
-					for j, name := range arm.Bindings {
-						if j < len(ev.Payloads) {
-							armEnv.declare(name, ev.Payloads[j])
-						}
-					}
+					bindArmPayloads(armEnv, arm.Bindings, arm.Payloads, ev)
 				}
 				if arm.Guard != nil {
 					gv, err := i.evalExpr(arm.Guard, armEnv)
@@ -4011,16 +4130,15 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 					if arm.AtBinding != "" {
 						armEnv.declare(arm.AtBinding, st)
 					}
-					for k, b := range arm.Bindings {
-						field := b
-						if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
-							field = arm.FieldNames[k]
-						}
-						fv, ok := st.Fields[field]
-						if !ok {
-							return nil, fmt.Errorf("interp: struct %s has no field %q", st.TypeName, field)
-						}
-						armEnv.declare(b, fv)
+					ok, err := i.structArmMatches(arm.Bindings, arm.FieldNames, arm.Payloads, st, env)
+					if err != nil {
+						return nil, err
+					}
+					if !ok {
+						continue
+					}
+					if err := bindStructArm(armEnv, arm.Bindings, arm.FieldNames, arm.Payloads, st); err != nil {
+						return nil, err
 					}
 				}
 				if arm.Guard != nil {

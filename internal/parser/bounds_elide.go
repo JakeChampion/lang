@@ -304,13 +304,13 @@ func bindsIdent(n ast.Node, name string) bool {
 			}
 		case *ast.Match:
 			for _, a := range x.Arms {
-				if armBinds(a.Bindings, a.TupleElems, name) {
+				if armBinds(a.Bindings, a.TupleElems, a.Payloads, name) {
 					found = true
 				}
 			}
 		case *ast.MatchExpr:
 			for _, a := range x.Arms {
-				if armBinds(a.Bindings, a.TupleElems, name) {
+				if armBinds(a.Bindings, a.TupleElems, a.Payloads, name) {
 					found = true
 				}
 			}
@@ -322,9 +322,14 @@ func bindsIdent(n ast.Node, name string) bool {
 
 // armBinds reports whether a match-arm's payload bindings or tuple-pattern
 // element binders include `name`.
-func armBinds(bindings []string, tupleElems []ast.TuplePatElem, name string) bool {
+func armBinds(bindings []string, tupleElems []ast.TuplePatElem, payloads []*ast.TuplePatElem, name string) bool {
 	for _, b := range bindings {
 		if b == name {
+			return true
+		}
+	}
+	for _, sub := range payloads {
+		if sub != nil && tupleElemsBind([]ast.TuplePatElem{*sub}, name) {
 			return true
 		}
 	}

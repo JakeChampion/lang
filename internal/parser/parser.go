@@ -3634,33 +3634,15 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	sugar := sugarStmtArms(raw)
-	arms, err := p.desugarNestedStmtArms(raw)
-	if err != nil {
-		return nil, err
-	}
-	m.Arms = arms
-	m.Sugar = sugar
+	m.Arms = flatStmtArms(raw)
 	return m, nil
 }
 
-// sugarStmtArms snapshots the arms as written, for the printer, when the parse
-// consumed something into the lowering: a nested sub-pattern, so `-fmt`
-// reprints `Some(Ok(n)) => …` instead of the merged arm and its inner match,
-// or an or-pattern, whose alternatives are already one cloned arm each. nil
-// when neither happened, which is every ordinary match: the desugar is a no-op
-// there and the lowered arms ARE the written ones.
-func sugarStmtArms(raw []stmtRawArm) []*ast.MatchArm {
-	lowered := false
-	for i := range raw {
-		if raw[i].pat.hasNestedSub() || raw[i].altCont {
-			lowered = true
-			break
-		}
-	}
-	if !lowered {
-		return nil
-	}
+// flatStmtArms maps the parsed alternatives one-to-one onto arms. Arms stay
+// flat and in source order at every stage: a nested payload rides on the arm
+// as Payloads, so a sub-pattern that fails falls to the NEXT ARM rather than
+// to whatever an inner match's wildcard happened to be (#7524).
+func flatStmtArms(raw []stmtRawArm) []*ast.MatchArm {
 	out := make([]*ast.MatchArm, len(raw))
 	for i := range raw {
 		out[i] = stmtArmFromPattern(raw[i].pat, raw[i].guard, raw[i].body)
@@ -3669,18 +3651,8 @@ func sugarStmtArms(raw []stmtRawArm) []*ast.MatchArm {
 	return out
 }
 
-// sugarExprArms is sugarStmtArms for the expression form.
-func sugarExprArms(raw []exprRawArm) []*ast.MatchExprArm {
-	lowered := false
-	for i := range raw {
-		if raw[i].pat.hasNestedSub() || raw[i].altCont {
-			lowered = true
-			break
-		}
-	}
-	if !lowered {
-		return nil
-	}
+// flatExprArms is flatStmtArms for the expression form.
+func flatExprArms(raw []exprRawArm) []*ast.MatchExprArm {
 	out := make([]*ast.MatchExprArm, len(raw))
 	for i := range raw {
 		out[i] = exprArmFromPattern(raw[i].pat, raw[i].guard, raw[i].body)
@@ -3719,9 +3691,6 @@ func (p *parser) parseStmtRawArms() ([]stmtRawArm, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := p.rejectNestedInOrPattern(pats); err != nil {
-		return nil, err
-	}
 	out := make([]stmtRawArm, len(pats))
 	for i, pat := range pats {
 		g, b := guard, body
@@ -3734,22 +3703,6 @@ func (p *parser) parseStmtRawArms() ([]stmtRawArm, error) {
 		out[i] = stmtRawArm{pat: pat, guard: g, body: b, altCont: i > 0}
 	}
 	return out, nil
-}
-
-// rejectNestedInOrPattern enforces the or-pattern restriction shared by
-// every binding site: an or-pattern binds one shared name set, which a
-// nested sub-pattern would violate. Single-alternative heads are exempt.
-func (p *parser) rejectNestedInOrPattern(pats []matchPattern) error {
-	if len(pats) < 2 {
-		return nil
-	}
-	for _, pt := range pats {
-		if pt.hasNestedSub() {
-			return p.errorfCode(pt.P, "P001",
-				"or-patterns (`|`) may not contain nested patterns — use separate arms")
-		}
-	}
-	return nil
 }
 
 // parseIfLet parses `if let P1 | P2 | … = <expr> <then> [else <else>]`
@@ -3812,9 +3765,6 @@ func (p *parser) parseOrPatterns() ([]matchPattern, error) {
 		}
 		pats = append(pats, nxt)
 	}
-	if err := p.rejectNestedInOrPattern(pats); err != nil {
-		return nil, err
-	}
 	return pats, nil
 }
 
@@ -3834,12 +3784,7 @@ func (p *parser) buildPatternBindingMatch(pos ast.Position, pats []matchPattern,
 		raw = append(raw, stmtRawArm{pat: pat, body: b})
 	}
 	raw = append(raw, stmtRawArm{pat: matchPattern{P: pos, IsWildcard: true}, body: els})
-	sugar := sugarStmtArms(raw)
-	arms, err := p.desugarNestedStmtArms(raw)
-	if err != nil {
-		return nil, err
-	}
-	return &ast.Match{P: pos, Tag: src, Arms: arms, Origin: origin, Sugar: sugar}, nil
+	return &ast.Match{P: pos, Tag: src, Arms: flatStmtArms(raw), Origin: origin}, nil
 }
 
 // stmtAsBlock adapts a single statement to the *ast.Block a match arm
@@ -3861,34 +3806,53 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
-		RestWritten:    pat.restWritten,
-		SlotBinderName: pat.slotBinder, Sub: subStmtArms(pat), Guard: guard, Body: body,
+		RestWritten: pat.restWritten,
+		Payloads:    payloadElems(pat), Guard: guard, Body: body,
 	}
 }
 
-// subStmtArms lifts a pattern's nested payload sub-patterns onto the AST so
-// the printer can reprint them — nil for the common flat pattern. Recursive,
-// so `Some(Ok(Some(x)))` survives at every depth. The sub-arms carry no body:
-// nothing runs them, and the desugar has already produced the arms that do.
-func subStmtArms(pat matchPattern) []*ast.MatchArm {
+// payloadElems lifts a pattern's nested payload sub-patterns onto the arm,
+// parallel to Bindings — nil for the common flat pattern. Each slot becomes a
+// TuplePatElem, the same recursive node a tuple element is, so nesting has no
+// depth limit and the arm and tuple paths share one representation.
+func payloadElems(pat matchPattern) []*ast.TuplePatElem {
 	if !pat.hasNestedSub() {
 		return nil
 	}
-	out := make([]*ast.MatchArm, len(pat.subPats))
+	out := make([]*ast.TuplePatElem, len(pat.subPats))
 	for i, sp := range pat.subPats {
 		if sp != nil {
-			out[i] = stmtArmFromPattern(*sp, nil, nil)
+			el := patElem(*sp)
+			out[i] = &el
 		}
 	}
 	return out
 }
 
-// freshNestName mints a unique synthetic temp name for a nested-pattern
-// payload slot.
-func (p *parser) freshNestName() string {
-	n := p.nestN
-	p.nestN++
-	return fmt.Sprintf("__nest%d", n)
+// patElem converts one parsed sub-pattern into the TuplePatElem the rest of
+// the compiler matches with. Total over the forms parseMatchPattern can
+// produce in a payload slot: `_`, a literal or range, a tuple, or a variant
+// whose own payload slots recurse through here again.
+func patElem(pat matchPattern) ast.TuplePatElem {
+	el := ast.TuplePatElem{AtBinding: pat.atBinding}
+	switch {
+	case pat.IsWildcard:
+		el.IsWildcard = true
+	case pat.TupleElems != nil:
+		el.Nested = pat.TupleElems
+	case pat.VariantName != "":
+		el.VariantName = pat.VariantName
+		el.VariantModule = pat.VariantModule
+		el.VariantBindings = pat.Bindings
+		el.VariantFieldNames = fieldNamesOf(pat)
+		el.VariantPayloads = payloadElems(pat)
+		el.RestWritten = pat.restWritten
+	default:
+		el.Literal = pat.Literal
+		el.RangeHi = pat.RangeHi
+		el.RangeInclusive = pat.RangeInclusive
+	}
+	return el
 }
 
 // freshDestructureName names the binder a NESTED tuple element gets in a
@@ -3902,177 +3866,6 @@ func (p *parser) freshDestructureName() string {
 	return fmt.Sprintf("__destruct_nest%d", n)
 }
 
-// desugarNestedStmtArms rewrites arms carrying nested sub-patterns
-// (`Some(Ok(n))`) into flat arms whose body re-matches the payload — so
-// every downstream stage (checker, IR) sees only ordinary flat arms plus
-// an inner match, needing no notion of pattern nesting. Arms of an outer
-// variant that has nested sub-patterns are grouped (they must be
-// contiguous) into one merged arm `V(__nest…) => match __nest… { … }`.
-// Recurses so `Some(Ok(Some(x)))` desugars at every depth.
-func (p *parser) desugarNestedStmtArms(raw []stmtRawArm) ([]*ast.MatchArm, error) {
-	// An unguarded trailing `_` arm is the outer fallthrough: a value whose
-	// outer variant matches a nested group but whose payload matches none of
-	// that group's inner patterns must run this body (e.g. `Some(Ok(n)) => A,
-	// _ => B` where B catches `Some(Err(_))`). Grouping consumes the whole
-	// outer variant, so the body is copied into each merged inner match as
-	// its wildcard arm; the outer `_` stays for the other variants.
-	var fall *ast.Block
-	if n := len(raw); n > 0 && raw[n-1].pat.IsWildcard && raw[n-1].guard == nil {
-		fall = raw[n-1].body
-	}
-	var out []*ast.MatchArm
-	anyMerged := false
-	i := 0
-	for i < len(raw) {
-		a := raw[i]
-		if a.pat.VariantName == "" { // wildcard / literal / tuple — never nests
-			out = append(out, stmtArmFromPattern(a.pat, a.guard, a.body))
-			i++
-			continue
-		}
-		V, mod := a.pat.VariantName, a.pat.VariantModule
-		j := i
-		for j < len(raw) && raw[j].pat.VariantName == V && raw[j].pat.VariantModule == mod {
-			j++
-		}
-		group := raw[i:j]
-		anyNested := false
-		for k := range group {
-			if group[k].pat.hasNestedSub() {
-				anyNested = true
-			}
-		}
-		if !anyNested {
-			for k := range group {
-				out = append(out, stmtArmFromPattern(group[k].pat, group[k].guard, group[k].body))
-			}
-			i = j
-			continue
-		}
-		for k := j; k < len(raw); k++ {
-			if raw[k].pat.VariantName == V && raw[k].pat.VariantModule == mod {
-				return nil, p.errorfCode(raw[k].pat.P, "P001",
-					"arms for `%s` with nested patterns must be contiguous", V)
-			}
-		}
-		merged, err := p.buildMergedStmtArm(V, mod, group, fall)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, merged)
-		anyMerged = true
-		i = j
-	}
-	// The trailing `_` body now also lives inside each merged arm's inner
-	// match. Flag it so reachability does not call it unreachable when a
-	// merged arm's own pattern covers every value — see ast.FallConsumed.
-	if anyMerged && fall != nil && len(out) > 0 {
-		if last := out[len(out)-1]; last.IsWildcard && last.Guard == nil {
-			last.FallConsumed = true
-		}
-	}
-	return out, nil
-}
-
-// nestedPos returns the single payload index that carries a nested
-// sub-pattern across the group, or an error when an arm nests more than
-// one position or different arms nest different positions (both out of
-// the v1 scope: exactly one nested payload slot per variant group).
-func (p *parser) nestedPos(group []stmtRawArm) (int, error) {
-	pos := -1
-	for k := range group {
-		sps := group[k].pat.subPats
-		cnt := 0
-		local := -1
-		for idx, sp := range sps {
-			if sp != nil {
-				cnt++
-				local = idx
-			}
-		}
-		if cnt > 1 {
-			return -1, p.errorfCode(group[k].pat.P, "P001",
-				"only one nested pattern per payload is supported — use a nested `match`")
-		}
-		if local >= 0 {
-			if pos == -1 {
-				pos = local
-			} else if pos != local {
-				return -1, p.errorfCode(group[k].pat.P, "P001",
-					"nested patterns for the same variant must all be at the same payload position")
-			}
-		}
-	}
-	return pos, nil
-}
-
-// buildMergedStmtArm collapses one contiguous run of same-variant arms —
-// at least one of which nests at payload position `pos` — into a single
-// flat arm `V(__nest0, …) => match __nestPos { <inner arms> }`. Plain
-// payload slots (and a flat sibling arm's whole-payload binder) are
-// rebound with `var name = __nestK;` at the head of each inner body, so
-// the original binding names stay in scope.
-func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast.Block) (*ast.MatchArm, error) {
-	pos, err := p.nestedPos(group)
-	if err != nil {
-		return nil, err
-	}
-	if err := p.sameFieldList(group); err != nil {
-		return nil, err
-	}
-	arity := len(group[0].pat.Bindings)
-	tmps := make([]string, arity)
-	for k := range tmps {
-		tmps[k] = p.freshNestName()
-	}
-	gp := group[0].pat.P
-	var inner []stmtRawArm
-	hasInnerWild := false
-	for k := range group {
-		g := group[k]
-		var innerPat matchPattern
-		if g.pat.subPats[pos] != nil {
-			innerPat = *g.pat.subPats[pos]
-		} else {
-			// A flat sibling (`Some(x)`): matches any payload here — an inner
-			// wildcard that rebinds the whole slot to the sibling's name. The
-			// name rides along so the checker can still tell whether it was
-			// meant as a variant rather than a binder.
-			innerPat = matchPattern{P: g.pat.P, IsWildcard: true, slotBinder: slotBinderOf(g.pat, pos)}
-		}
-		if coversEveryValue(innerPat) && g.guard == nil {
-			hasInnerWild = true
-		}
-		body := p.rebindStmtBody(g.pat, tmps, g.body)
-		inner = append(inner, stmtRawArm{pat: innerPat, guard: p.rebindGuard(g.pat, tmps, g.guard), body: body})
-	}
-	// Route the outer fallthrough into this inner match so a payload matching
-	// none of the inner patterns runs the outer `_` body, not a non-exhaustive
-	// bail. Skipped when a flat sibling already supplied an inner catch-all.
-	if !hasInnerWild && fall != nil {
-		inner = append(inner, stmtRawArm{pat: matchPattern{P: gp, IsWildcard: true}, body: ast.CloneBlock(fall)})
-	}
-	innerArms, err := p.desugarNestedStmtArms(inner)
-	if err != nil {
-		return nil, err
-	}
-	innerMatch := &ast.Match{P: gp, Tag: &ast.Ident{P: gp, Name: tmps[pos]}, Arms: innerArms}
-	return &ast.MatchArm{
-		P:             gp,
-		VariantName:   V,
-		VariantModule: mod,
-		Bindings:      tmps,
-		// A named-field group keeps its shape: the merged arm still projects
-		// by FIELD, with the synthetic temps standing in for the binders.
-		// Dropping this would leave a struct arm looking positional, which
-		// the checker rejects (E035) and whose temps nothing would bind.
-		NamedFields: group[0].pat.NamedFields,
-		FieldNames:  fieldNamesOf(group[0].pat),
-		RestWritten: group[0].pat.restWritten,
-		Body:        &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
-	}, nil
-}
-
 // fieldNamesOf returns a named-field pattern's projected field names, nil
 // for a positional one.
 func fieldNamesOf(pat matchPattern) []string {
@@ -4080,63 +3873,6 @@ func fieldNamesOf(pat matchPattern) []string {
 		return nil
 	}
 	return append([]string(nil), pat.fieldNames...)
-}
-
-// sameFieldList rejects a nested-pattern group whose named-field arms do not
-// all project the same fields in the same order. The merged arm carries ONE
-// field list (group[0]'s) and one temp per slot, so arms listing different
-// fields would bind the wrong values — a positional group cannot hit this
-// because a variant's payload arity is fixed.
-func (p *parser) sameFieldList(group []stmtRawArm) error {
-	if !group[0].pat.NamedFields {
-		return nil
-	}
-	want := group[0].pat.fieldNames
-	for k := 1; k < len(group); k++ {
-		got := group[k].pat.fieldNames
-		same := len(got) == len(want)
-		for i := 0; same && i < len(want); i++ {
-			same = got[i] == want[i]
-		}
-		if !same {
-			return p.errorfCode(group[k].pat.P, "P001",
-				"arms for `%s` with nested field patterns must list the same fields in the same order — this arm lists {%s}, the group lists {%s}",
-				group[k].pat.VariantName, strings.Join(got, ", "), strings.Join(want, ", "))
-		}
-	}
-	return nil
-}
-
-// slotBinderOf is the name a flat sibling arm bound the merged slot to, or
-// "" when it bound nothing there (`Some(_)`).
-func slotBinderOf(pat matchPattern, pos int) string {
-	if pos >= len(pat.Bindings) {
-		return ""
-	}
-	if name := pat.Bindings[pos]; name != "_" {
-		return name
-	}
-	return ""
-}
-
-// rebindStmtBody prepends `var name = __nestK;` binders for every payload
-// slot the original arm named — every slot except the nested one (whose
-// sub-pattern introduces its own bindings). A flat sibling arm names the
-// nested slot too, so that slot is rebound as well.
-func (p *parser) rebindStmtBody(pat matchPattern, tmps []string, body *ast.Block) *ast.Block {
-	var binds []ast.Stmt
-	for k, name := range pat.Bindings {
-		nested := k < len(pat.subPats) && pat.subPats[k] != nil
-		if nested || name == "" || name == "_" {
-			continue
-		}
-		binds = append(binds, &ast.Var{P: pat.P, Name: name, Init: &ast.Ident{P: pat.P, Name: tmps[k]}})
-	}
-	if len(binds) == 0 {
-		return body
-	}
-	stmts := append(binds, body.Stmts...)
-	return &ast.Block{P: body.P, Stmts: stmts}
 }
 
 // parseNamedFieldPattern parses a named-field variant pattern body
@@ -4255,10 +3991,6 @@ type matchPattern struct {
 	// restWritten records the trailing `..` of a named-field pattern. It
 	// binds nothing, so it reaches only the printer — see namedFieldPattern.
 	restWritten bool
-	// slotBinder is set on the inner wildcard the merge desugar builds for a
-	// flat sibling arm: the name that sibling bound the whole payload slot
-	// to. See ast.MatchArm.SlotBinderName.
-	slotBinder string
 }
 
 // hasNestedSub reports whether any payload slot of this pattern is a
@@ -4270,28 +4002,6 @@ func (mp *matchPattern) hasNestedSub() bool {
 		}
 	}
 	return false
-}
-
-// coversEveryValue reports whether an inner sub-pattern matches anything the
-// slot can hold, so appending the outer fallthrough after it would produce an
-// arm the checker calls unreachable. A `_` obviously covers; so does a tuple
-// pattern whose elements are all binders or `_`, which is decidable here
-// because a literal or variant element is the only thing that can make one
-// fail. Struct patterns are NOT included: the parser cannot tell a struct from
-// an enum's record-form variant, and only the former is irrefutable.
-func coversEveryValue(mp matchPattern) bool {
-	if mp.IsWildcard {
-		return true
-	}
-	if mp.TupleElems == nil {
-		return false
-	}
-	for _, el := range mp.TupleElems {
-		if el.Literal != nil || el.VariantName != "" {
-			return false
-		}
-	}
-	return true
 }
 
 // isNestedPatternStart reports whether the token(s) at the cursor begin
@@ -4673,13 +4383,7 @@ func (p *parser) parseMatchExpr() (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	sugar := sugarExprArms(raw)
-	arms, err := p.desugarNestedExprArms(raw)
-	if err != nil {
-		return nil, err
-	}
-	m.Arms = arms
-	m.Sugar = sugar
+	m.Arms = flatExprArms(raw)
 	return m, nil
 }
 
@@ -4721,14 +4425,6 @@ func (p *parser) parseExprRawArms() ([]exprRawArm, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pats) > 1 {
-		for _, pt := range pats {
-			if pt.hasNestedSub() {
-				return nil, p.errorfCode(pt.P, "P001",
-					"or-patterns (`|`) may not contain nested patterns — use separate arms")
-			}
-		}
-	}
 	out := make([]exprRawArm, len(pats))
 	for i, pat := range pats {
 		g, b := guard, body
@@ -4751,178 +4447,9 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
-		RestWritten:    pat.restWritten,
-		SlotBinderName: pat.slotBinder, Sub: subExprArms(pat), Guard: guard, Body: body,
+		RestWritten: pat.restWritten,
+		Payloads:    payloadElems(pat), Guard: guard, Body: body,
 	}
-}
-
-// subExprArms is subStmtArms for the expression form.
-func subExprArms(pat matchPattern) []*ast.MatchExprArm {
-	if !pat.hasNestedSub() {
-		return nil
-	}
-	out := make([]*ast.MatchExprArm, len(pat.subPats))
-	for i, sp := range pat.subPats {
-		if sp != nil {
-			out[i] = exprArmFromPattern(*sp, nil, nil)
-		}
-	}
-	return out
-}
-
-// desugarNestedExprArms is the expression-form twin of
-// desugarNestedStmtArms: nested arms group by outer variant into one
-// merged arm whose body is an inner MatchExpr.
-func (p *parser) desugarNestedExprArms(raw []exprRawArm) ([]*ast.MatchExprArm, error) {
-	var fall ast.Expr
-	if n := len(raw); n > 0 && raw[n-1].pat.IsWildcard && raw[n-1].guard == nil {
-		fall = raw[n-1].body
-	}
-	var out []*ast.MatchExprArm
-	anyMerged := false
-	i := 0
-	for i < len(raw) {
-		a := raw[i]
-		if a.pat.VariantName == "" {
-			out = append(out, exprArmFromPattern(a.pat, a.guard, a.body))
-			i++
-			continue
-		}
-		V, mod := a.pat.VariantName, a.pat.VariantModule
-		j := i
-		for j < len(raw) && raw[j].pat.VariantName == V && raw[j].pat.VariantModule == mod {
-			j++
-		}
-		group := raw[i:j]
-		anyNested := false
-		for k := range group {
-			if group[k].pat.hasNestedSub() {
-				anyNested = true
-			}
-		}
-		if !anyNested {
-			for k := range group {
-				out = append(out, exprArmFromPattern(group[k].pat, group[k].guard, group[k].body))
-			}
-			i = j
-			continue
-		}
-		for k := j; k < len(raw); k++ {
-			if raw[k].pat.VariantName == V && raw[k].pat.VariantModule == mod {
-				return nil, p.errorfCode(raw[k].pat.P, "P001",
-					"arms for `%s` with nested patterns must be contiguous", V)
-			}
-		}
-		merged, err := p.buildMergedExprArm(V, mod, group, fall)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, merged)
-		anyMerged = true
-		i = j
-	}
-	// See desugarNestedStmtArms: the trailing `_` value now also lives inside
-	// each merged arm's inner match.
-	if anyMerged && fall != nil && len(out) > 0 {
-		if last := out[len(out)-1]; last.IsWildcard && last.Guard == nil {
-			last.FallConsumed = true
-		}
-	}
-	return out, nil
-}
-
-// buildMergedExprArm is buildMergedStmtArm for the expression form: the
-// merged arm's body is an inner MatchExpr, and plain-slot rebinds wrap the
-// inner arm body in a BlockExpr (`{ var name = __nestK; <body> }`).
-func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.Expr) (*ast.MatchExprArm, error) {
-	stmtGroup := make([]stmtRawArm, len(group))
-	for k := range group {
-		stmtGroup[k] = stmtRawArm{pat: group[k].pat}
-	}
-	pos, err := p.nestedPos(stmtGroup)
-	if err != nil {
-		return nil, err
-	}
-	if err := p.sameFieldList(stmtGroup); err != nil {
-		return nil, err
-	}
-	arity := len(group[0].pat.Bindings)
-	tmps := make([]string, arity)
-	for k := range tmps {
-		tmps[k] = p.freshNestName()
-	}
-	gp := group[0].pat.P
-	var inner []exprRawArm
-	hasInnerWild := false
-	for k := range group {
-		g := group[k]
-		var innerPat matchPattern
-		if g.pat.subPats[pos] != nil {
-			innerPat = *g.pat.subPats[pos]
-		} else {
-			innerPat = matchPattern{P: g.pat.P, IsWildcard: true, slotBinder: slotBinderOf(g.pat, pos)}
-		}
-		if coversEveryValue(innerPat) && g.guard == nil {
-			hasInnerWild = true
-		}
-		body := p.rebindExprBody(g.pat, tmps, g.body)
-		inner = append(inner, exprRawArm{pat: innerPat, guard: p.rebindGuard(g.pat, tmps, g.guard), body: body})
-	}
-	if !hasInnerWild && fall != nil {
-		inner = append(inner, exprRawArm{pat: matchPattern{P: gp, IsWildcard: true}, body: ast.CloneExpr(fall)})
-	}
-	innerArms, err := p.desugarNestedExprArms(inner)
-	if err != nil {
-		return nil, err
-	}
-	innerMatch := &ast.MatchExpr{P: gp, Tag: &ast.Ident{P: gp, Name: tmps[pos]}, Arms: innerArms}
-	return &ast.MatchExprArm{
-		P:             gp,
-		VariantName:   V,
-		VariantModule: mod,
-		Bindings:      tmps,
-		// See buildMergedStmtArm: a named-field group keeps projecting by
-		// FIELD, with the temps standing in for the binders.
-		NamedFields: group[0].pat.NamedFields,
-		FieldNames:  fieldNamesOf(group[0].pat),
-		RestWritten: group[0].pat.restWritten,
-		Body:        innerMatch,
-	}, nil
-}
-
-// rebindGuard puts the plain payload slots in scope for a merged arm's GUARD.
-//
-// The guard runs BEFORE the inner arm's body, and rebindStmtBody/rebindExprBody
-// prepend the `var name = __nestK;` binders to that body — so a guard naming a
-// sibling slot (`Wrap(Ok2(n), m) when n > m`) resolved to nothing and drew
-// E001 on `m`. Wrapping the guard in the same BlockExpr the value form already
-// uses fixes it with the existing mechanism rather than a second one, and
-// because that is a real scope a lambda inside the guard still shadows
-// normally — which renaming the identifiers would have got wrong.
-func (p *parser) rebindGuard(pat matchPattern, tmps []string, guard ast.Expr) ast.Expr {
-	if guard == nil {
-		return nil
-	}
-	return p.rebindExprBody(pat, tmps, guard)
-}
-
-// rebindExprBody wraps an inner arm's value expression in a BlockExpr that
-// first rebinds each named plain payload slot (`var name = __nestK;`),
-// leaving the tail as the original value. Returns body unchanged when
-// there is nothing to rebind.
-func (p *parser) rebindExprBody(pat matchPattern, tmps []string, body ast.Expr) ast.Expr {
-	var binds []ast.Stmt
-	for k, name := range pat.Bindings {
-		nested := k < len(pat.subPats) && pat.subPats[k] != nil
-		if nested || name == "" || name == "_" {
-			continue
-		}
-		binds = append(binds, &ast.Var{P: pat.P, Name: name, Init: &ast.Ident{P: pat.P, Name: tmps[k]}})
-	}
-	if len(binds) == 0 {
-		return body
-	}
-	return &ast.BlockExpr{P: pat.P, Stmts: binds, Tail: body}
 }
 
 func (p *parser) parseBreakContinue(isBreak bool) (ast.Stmt, error) {

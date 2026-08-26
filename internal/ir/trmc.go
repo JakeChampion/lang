@@ -476,7 +476,7 @@ func (b *builder) detectTrmc() *trmcShape {
 		// Plain variant arms and the bare `_` wildcard only — no literal /
 		// range / tuple pattern, and no `@` binding (the TRMC arm binds
 		// payloads by hand and has nowhere to put the whole-value name).
-		if arm.Literal != nil || arm.RangeHi != nil || arm.TupleElems != nil || arm.AtBinding != "" {
+		if arm.Literal != nil || arm.RangeHi != nil || arm.TupleElems != nil || arm.AtBinding != "" || arm.Payloads != nil {
 			return nil
 		}
 		if !arm.IsWildcard && arm.VariantName == "" {

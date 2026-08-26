@@ -82,11 +82,21 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 			for _, arm := range x.Arms {
 				eraseStrSlice(arm.BindingTypes)
 				eraseStrTuplePats(arm.TupleElems)
+				for _, sub := range arm.Payloads {
+					if sub != nil {
+						eraseStrTuplePat(sub)
+					}
+				}
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
 				eraseStrSlice(arm.BindingTypes)
 				eraseStrTuplePats(arm.TupleElems)
+				for _, sub := range arm.Payloads {
+					if sub != nil {
+						eraseStrTuplePat(sub)
+					}
+				}
 			}
 		case *ast.TryOp:
 			// The `?` success-path payload type, stamped by the checker
