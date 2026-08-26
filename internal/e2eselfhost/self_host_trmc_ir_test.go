@@ -20,10 +20,12 @@ import (
 // per element) and completes post-port.
 //
 // Recursive arms may build DIFFERENT variants (#5334) as long as they agree on
-// payload arity, which is what makes the tail index a single constant. Arms whose
-// ctors disagree on arity, `when` guards, tree-shaped bodies (two self-calls),
-// multi-statement arm bodies and non-last-hole shapes keep the plain recursion —
-// the detector bails, which countSelfCalls witnesses.
+// the hole's PAYLOAD POSITION, which is what makes the link's field index a
+// single constant. Since #5334 the detector also admits `when` guards, a `_`
+// arm, statements before the match and before an arm's tail, a tail `if`/`else`,
+// a bare tail self-call, and a hole that is not the last payload. Tree-shaped
+// bodies (two self-calls) and ctors whose holes sit at different positions keep
+// the plain recursion — the detector bails, which countSelfCalls witnesses.
 func TestSelfHostTrmcIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -124,10 +126,11 @@ function main(): i32 { var t: Tree = Node(Leaf(1), Node(Leaf(2), Leaf(3))); var 
 	// traversal) while the node built over it is a two-payload `A`.
 	run(t, mixedScrutArityProg(), "trmc-mixed-ctor-narrow-scrutinee", 0)
 
-	// EXCLUDED — recursive ctors of different payload ARITY. The hole is filled by
-	// an op_struct_set at a compile-time field index, so the tail cannot sit at
-	// index 1 in one iteration and index 0 in the next; the detector bails and the
-	// self-calls stay in the asm.
+	// EXCLUDED — recursive ctors whose holes sit at different payload POSITIONS.
+	// The hole is filled by an op_struct_set at a compile-time field index, so the
+	// tail cannot sit at index 1 in one iteration and index 0 in the next; the
+	// detector bails and the self-calls stay in the asm. (Differing ARITY is fine
+	// now, as long as the hole index agrees — that is what trmc_hole_index pins.)
 	asm := run(t, `enum List { Cons(i32, List), Wrap(List), Nil }
 function step(xs: List): List {
     match (xs) {
@@ -138,16 +141,17 @@ function step(xs: List): List {
 }
 function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Wrap(t) => { acc = acc + 100; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 { var xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(step(xs)) != 105) { return 1; } return __rc_underflow(); }`,
-		"trmc-mixed-arity-not-rewritten", 0)
+		"trmc-mixed-hole-pos-not-rewritten", 0)
 	if n := countSelfCalls(asm, "step"); n < 2 {
-		t.Errorf("trmc-mixed-arity-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire on mixed arities)", n)
+		t.Errorf("trmc-mixed-hole-pos-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire when the hole position differs between arms)", n)
 	}
 
-	// EXCLUDED — a `when` guard. The loop's per-arm skip falls through to the next
-	// arm, and off the LAST arm it leaves the loop with the hole never filled, so
-	// admitting guards needs a coverage argument the detector cannot make: with a
-	// guard in play "every variant has an arm" no longer means "some arm runs".
-	// Native refuses them for the same reason.
+	// GUARDED arms (#5334). A failing guard falls through to the next arm exactly
+	// as in ordinary match lowering, so what the detector must establish is that
+	// the UNGUARDED arms alone still cover every variant — off the last arm the
+	// loop would otherwise re-enter with the scrutinee unchanged, a hang rather
+	// than a wrong answer. Here the guarded `Cons` has an unguarded `Cons` sibling,
+	// so the chain is total. `1, 0, 3` exercises both arms: 2 + 0 + 4 = 6.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 function step(xs: List): List {
     match (xs) {
@@ -158,15 +162,15 @@ function step(xs: List): List {
 }
 function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 { var xs: List = Cons(1, Cons(0, Cons(3, Nil))); if (score(step(xs)) != 6) { return 1; } return __rc_underflow(); }`,
-		"trmc-guarded-arm-not-rewritten", 0)
-	if n := countSelfCalls(asm, "step"); n < 2 {
-		t.Errorf("trmc-guarded-arm-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire on a guarded arm)", n)
+		"trmc-guarded-arm", 0)
+	if n := countSelfCalls(asm, "step"); n != 1 {
+		t.Errorf("trmc-guarded-arm: %d call sites to step in the asm, want 1 (main's) — TRMC must fire on a guarded arm whose variant has an unguarded sibling", n)
 	}
 
-	// EXCLUDED — a multi-statement arm body. Native's detectTrmc requires the arm
-	// to be a single `return` too; admitting leading statements means lowering
-	// them inside a body that deliberately runs without the RC sweeps, so it waits
-	// on the sibling native widening (#5344) rather than diverging here.
+	// MULTI-STATEMENT arm body (#5334), matching native #5344. Only rc-NEUTRAL
+	// statements qualify: the loop returns through its own `return`, which
+	// bypasses the RC sweeps, so anything that could bind a reference-counted
+	// value declines the transform instead of leaking it.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 function step(xs: List): List {
     match (xs) {
@@ -177,9 +181,96 @@ function step(xs: List): List {
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 { if (sum(step(build(50))) != 1275) { return 1; } return __rc_underflow(); }`,
-		"trmc-multi-statement-arm-not-rewritten", 0)
-	if n := countSelfCalls(asm, "step"); n < 2 {
-		t.Errorf("trmc-multi-statement-arm-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire on a multi-statement arm)", n)
+		"trmc-multi-statement-arm", 0)
+	if n := countSelfCalls(asm, "step"); n != 1 {
+		t.Errorf("trmc-multi-statement-arm: %d call sites to step in the asm, want 1 (main's) — TRMC must fire on a scalar-only multi-statement arm", n)
+	}
+
+	// SETUP STATEMENTS before the match, one of them an early `return`. They are
+	// emitted INSIDE the loop, because the recursion re-enters them: hoisting them
+	// out would freeze `lim` at its first-call value while the loop advances `n`
+	// underneath it, and `take` would never terminate its take-count.
+	// build(6) = [5,4,3,2,1,0]; take 3, +1 each = [6,5,4] = 15.
+	asm = run(t, `enum List { Cons(i32, List), Nil }
+function take(xs: List, n: i32): List {
+    var lim: i32 = n;
+    if (lim <= 0) { return Nil; }
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, take(t, lim - 1)); },
+        Nil => { return Nil; },
+    }
+}
+function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function main(): i32 { if (sum(take(build(6), 3)) != 15) { return 1; } return __rc_underflow(); }`,
+		"trmc-setup-statements", 0)
+	if n := countSelfCalls(asm, "take"); n != 1 {
+		t.Errorf("trmc-setup-statements: %d call sites to take in the asm, want 1 (main's)", n)
+	}
+
+	// A `_` arm as the base case, and a guard clause INSIDE an arm body whose
+	// `return` has to reach the hole machinery rather than the function's real
+	// return. `stop_at_zero` over [3,0,4] keeps only the leading 3.
+	asm = run(t, `enum List { Cons(i32, List), Nil }
+function stop_at_zero(xs: List): List {
+    match (xs) {
+        Cons(h, t) => { if (h == 0) { return Nil; } return Cons(h, stop_at_zero(t)); },
+        _ => { return Nil; },
+    }
+}
+function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function main(): i32 { var xs: List = Cons(3, Cons(0, Cons(4, Nil))); if (sum(stop_at_zero(xs)) != 3) { return 1; } return __rc_underflow(); }`,
+		"trmc-wildcard-and-inner-guard", 0)
+	if n := countSelfCalls(asm, "stop_at_zero"); n != 1 {
+		t.Errorf("trmc-wildcard-and-inner-guard: %d call sites in the asm, want 1 (main's)", n)
+	}
+
+	// TAIL if/else whose true leaf is a BARE self-call — the filter shape, where
+	// the hole stays put and only the params advance. Dropping the negatives from
+	// [-5,4,-3,2,-1,0] leaves [4,2,0] = 6. 200k cells also pins that the mixed
+	// cons/self loop still holds the stack flat.
+	asm = run(t, `enum List { Cons(i32, List), Nil }
+function drop_neg(xs: List): List {
+    match (xs) {
+        Cons(h, t) => { if (h < 0) { return drop_neg(t); } else { return Cons(h, drop_neg(t)); } },
+        Nil => { return Nil; },
+    }
+}
+function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; var s: i32 = 1; while (i < n) { acc = Cons(i * s, acc); s = 0 - s; i = i + 1; } return acc; }
+function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function main(): i32 { if (sum(drop_neg(build(6))) != 6) { return 1; } return __rc_underflow(); }`,
+		"trmc-branch-tail-self-call", 0)
+	if n := countSelfCalls(asm, "drop_neg"); n != 1 {
+		t.Errorf("trmc-branch-tail-self-call: %d call sites in the asm, want 1 (main's)", n)
+	}
+	run(t, `enum List { Cons(i32, List), Nil }
+function drop_neg(xs: List): List {
+    match (xs) {
+        Cons(h, t) => { if (h < 0) { return drop_neg(t); } else { return Cons(h + 1, drop_neg(t)); } },
+        Nil => { return Nil; },
+    }
+}
+function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function main(): i32 { if (sum(drop_neg(build(200000))) != 400000) { return 1; } return __rc_underflow(); }`,
+		"trmc-branch-tail-deep", 0)
+
+	// The hole in the FIRST payload rather than the last: the link's field index
+	// is trmc_hole_index's answer, not "the last field".
+	asm = run(t, `enum List { Cons(i32, List), Nil }
+enum Rev { Node(Rev, i32), End }
+function to_rev(xs: List): Rev {
+    match (xs) {
+        Cons(h, t) => { return Node(to_rev(t), h + 1); },
+        Nil => { return End; },
+    }
+}
+function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
+function sum_rev(r: Rev): i32 { var acc: i32 = 0; var cur: Rev = r; var go: boolean = true; while (go) { match (cur) { Node(nx, v) => { acc = acc + v; cur = nx; }, End => { go = false; } } } return acc; }
+function main(): i32 { if (sum_rev(to_rev(build(6))) != 21) { return 1; } return __rc_underflow(); }`,
+		"trmc-hole-first-payload", 0)
+	if n := countSelfCalls(asm, "to_rev"); n != 1 {
+		t.Errorf("trmc-hole-first-payload: %d call sites in the asm, want 1 (main's)", n)
 	}
 }
 
