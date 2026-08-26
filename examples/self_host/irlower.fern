@@ -20374,6 +20374,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // above, one container out: leaving it unclassified made
                 // `xs[i](args)` bare-call the box pointer as code.
                 parser.ExprLambda(_) => { if (cac.args.len() == 0 && iife_callee_closurearr_arms(cac.callee, se)) { is_closurearr = true; } },
+                // `var w = fns.with(i, f)` / `fns.append(f)`: the clone those
+                // produce carries the RECEIVER's element ABI, so it inherits the
+                // receiver's closure-array mark. Without it `w[i](args)`
+                // bare-calls a box pointer as code — SIGSEGV, the same failure
+                // the closure-returning-call arm above answers one construction
+                // site over.
+                parser.ExprFieldAccess(cwfa) => {
+                    if ((cwfa.field == "with" && cac.args.len() == 2) || (cwfa.field == "append" && cac.args.len() == 1)) {
+                        match (cwfa.obj) {
+                            parser.ExprIdent(cwid) => { if (se.is_closurearr_slot(se.slot_of(cwid.name))) { is_closurearr = true; } },
+                            _ => { if (field_access_is_closurearr(cwfa.obj, se) || expr_is_closure_array(cwfa.obj, se)) { is_closurearr = true; } }
+                        }
+                    }
+                },
                 _ => { }
             }
         },
@@ -62803,6 +62817,102 @@ function array_holds_fn_value(arr: parser.ExprArray, mfuncs: MFuncs): boolean {
     return false;
 }
 
+// fd_bound_names is fd's params plus every name its body binds — the shadowing
+// set a bare ident must MISS to read as an unshadowed module function.
+function fd_bound_names(fd: parser.FuncDecl): string[] {
+    var acc: string[] = [];
+    var p: i32 = 0;
+    while (p < fd.params.len()) { acc = acc.append(fd.params[p].name); p = p + 1; }
+    return astwalk.collect_bound_stmts(fd.body, acc);
+}
+
+// arr_with_value_of collects the VALUE argument of every `xs.with(i, v)` /
+// `xs.append(v)` an expression tree reaches. The walk visitor for
+// fd_stores_fn_value_array below.
+function arr_with_value_of(e: parser.Expr, acc: parser.Expr[]): parser.Expr[] {
+    if let parser.ExprCall(c) = e {
+        if let parser.ExprFieldAccess(fa) = c.callee {
+            if (fa.field == "with" && c.args.len() == 2) { return acc.append(c.args[1]); }
+            if (fa.field == "append" && c.args.len() == 1) { return acc.append(c.args[0]); }
+        }
+    }
+    return acc;
+}
+
+// fd_stores_fn_value_array reports whether `fd` writes a fn VALUE into an array
+// through `.with(i, v)` / `.append(v)`. Those clone the receiver and store one
+// element into the copy, so the stored value has to carry the receiver's element
+// ABI — and the lift, which has no receiver type to read, boxes a fn value at
+// every method-argument position (lift_method_arg_is_fn). Answering yes puts the
+// function's fn-value array LITERALS on that same env-box ABI, so the receiver
+// the store clones and the value it stores agree by construction. #5071's
+// uniformity rule, one container out — the `.with` sibling of
+// fd_returns_boxed_fn_array. `bound` carries fd's params + body binders so a
+// LOCAL shadowing a module function name is not read as a fn value.
+function fd_stores_fn_value_array(fd: parser.FuncDecl, mfuncs: MFuncs, bound: string[]): boolean {
+    var vals: parser.Expr[] = [];
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        vals = astwalk.fold_stmt(fd.body[si], vals, arr_with_value_of);
+        si = si + 1;
+    }
+    var i: i32 = 0;
+    while (i < vals.len()) {
+        if (with_value_is_fn_value(vals[i], fd, mfuncs, bound)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// with_value_is_fn_value reports whether a `.with`/`.append` VALUE is a fn
+// value: an inline lambda, an unshadowed module-function name, or a local that
+// already holds one (an fn-typed param, or a name bound to a lambda — both of
+// which the lift materialises as an env BOX).
+function with_value_is_fn_value(v: parser.Expr, fd: parser.FuncDecl, mfuncs: MFuncs, bound: string[]): boolean {
+    if let parser.ExprLambda(_) = v { return true; }
+    if let parser.ExprIdent(vid) = v {
+        if (util.index_of_str(bound, vid.name) < 0) { return lift_module_fn_arity(mfuncs, vid.name) >= 1; }
+        var p: i32 = 0;
+        while (p < fd.params.len()) {
+            if (fd.params[p].name == vid.name && fd.params[p].type_name == "fn") { return true; }
+            p = p + 1;
+        }
+        return body_binds_lambda(fd.body, vid.name);
+    }
+    return false;
+}
+
+// body_binds_lambda reports whether `body` binds `name` to a lambda, at any
+// nesting depth — the shape the lift holds as an env box.
+function body_binds_lambda(body: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if let parser.ExprLambda(_) = v.init { return true; }
+                }
+            },
+            parser.StmtIf(bif) => {
+                if (body_binds_lambda(bif.then_body, name)) { return true; }
+                if (body_binds_lambda(bif.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(bwh) => { if (body_binds_lambda(bwh.body, name)) { return true; } },
+            parser.StmtFor(bfr) => { if (body_binds_lambda(bfr.body, name)) { return true; } },
+            parser.StmtMatch(bmt) => {
+                var a: i32 = 0;
+                while (a < bmt.arms.len()) {
+                    if (body_binds_lambda(bmt.arms[a].body, name)) { return true; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // lift_callee_param_is_fn reports whether free function / method `callee`'s
 // param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
 // LowerState.callee_param_is_fn / asmcore.callee_param_is_fn, reading the module
@@ -63069,11 +63179,32 @@ function lift_arg_is_fn_value_declared(arg: parser.Expr, mfuncs: MFuncs): boolea
 //     existing path (bare dispatch / AST-bail). Converting those to the env-box
 //     ABI destabilises the byte-identical self-host fixpoint, so the full
 //     uniform-ABI unification for user-method fn-args stays a deferred slice.
-// Only an inline lambda qualifies (a bare fn-name to a builtin value slot is not
-// a shape that arises for map values and would need the deferred work). #3445.
+// Only an inline lambda qualifies. A bare fn-NAME reaching a builtin value slot
+// is a shape the array stores do have, and lift_arr_store_arg_is_fn_name answers
+// it for `.with`/`.append`; the map-value slot has no such shape. #3445.
 function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfuncs: MFuncs): boolean {
     match (arg) {
         parser.ExprLambda(_) => { return !lift_callee_param_is_fn(mfuncs, mfield, idx); },
+        _ => {}
+    }
+    return false;
+}
+
+// lift_arr_store_arg_is_fn_name reports whether a `.with(i, v)` / `.append(v)`
+// VALUE argument is a bare UNSHADOWED module-function name. The store deposits
+// one element into a clone of the receiver, and fd_stores_fn_value_array has
+// already put that receiver's literal on the env-box ABI, so the name has to be
+// wrapped into a `$wrapN` trampoline box exactly as a fn-name array ELEMENT is —
+// otherwise the clone holds a bare code pointer among boxes and the read side
+// dereferences it. A zero-arg receiver-less fn is a `const` desugar whose VALUE
+// must flow, so arity 1+ is required (mirrors the array/tuple ident rule).
+function lift_arr_store_arg_is_fn_name(arg: parser.Expr, mfield: string, idx: i32, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+    if (!((mfield == "with" && idx == 1) || (mfield == "append" && idx == 0))) { return false; }
+    match (arg) {
+        parser.ExprIdent(aid) => {
+            if (lift_module_fn_arity(mfuncs, aid.name) < 1) { return false; }
+            return util.index_of_str(fd_bound_names(fd), aid.name) < 0;
+        },
         _ => {}
     }
     return false;
@@ -63725,7 +63856,9 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // bare-called (#6466 records what that costs when it is not).
                     var gr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = gr.funcs; ct = gr.counter; nargs = nargs.append(gr.expr);
-                } else if (mfield.len() > 0 && (lift_callee_param_is_fn(mfuncs, mfield, ai) || lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs))) {
+                } else if (mfield.len() > 0 && (lift_callee_param_is_fn(mfuncs, mfield, ai)
+                           || lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs)
+                           || lift_arr_store_arg_is_fn_name(call.args[ai], mfield, ai, fd, mfuncs))) {
                     // Method-call fn-value argument (`m.set(1, <lambda>)`): wrap into
                     // the env box so the stored / called value is a uniform box. #3445.
                     var mr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
@@ -63878,22 +64011,22 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 }
                 sc = sc + 1;
             }
-            // #6555: a sibling `return` of this function yields a boxed fn
-            // array, so this literal boxes too — the returns share the caller's
-            // binding and a binding gets one dispatch ABI.
-            if (!has_cap_lam && array_holds_fn_value(arr, mfuncs) && fd_returns_boxed_fn_array(fd, mfuncs)) {
-                has_cap_lam = true;
-            }
             // Bound names in this function's scope (params + body binders): a
             // bare fn-name ELEMENT is only an unshadowed module fn when it names
-            // no local/param — mirrors the tuple case's `tbound`. Only needed on
-            // the mixed (has_cap_lam) path.
+            // no local/param — mirrors the tuple case's `tbound`. Needed only
+            // for a literal the uniformity rule can reach at all.
+            var afnval: boolean = array_holds_fn_value(arr, mfuncs);
             var abound: string[] = [];
-            if (has_cap_lam) {
-                var abp: i32 = 0;
-                while (abp < fd.params.len()) { abound = abound.append(fd.params[abp].name); abp = abp + 1; }
-                var abs: i32 = 0;
-                while (abs < fd.body.len()) { abound = astwalk.collect_bound_stmt(fd.body[abs], abound); abs = abs + 1; }
+            if (has_cap_lam || afnval) { abound = fd_bound_names(fd); }
+            // #6555: a sibling `return` of this function yields a boxed fn
+            // array, so this literal boxes too — the returns share the caller's
+            // binding and a binding gets one dispatch ABI. A `.with`/`.append`
+            // storing a fn value into an array forces the same promotion, one
+            // container further out again: the store boxes its value, and the
+            // array it clones is this literal.
+            if (!has_cap_lam && afnval
+                    && (fd_returns_boxed_fn_array(fd, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound))) {
+                has_cap_lam = true;
             }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
@@ -63978,11 +64111,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             var tfs: parser.FuncDecl[] = funcs;
             var tct: i32 = counter;
             var tnelems: parser.Expr[] = [];
-            var tbound: string[] = [];
-            var tbp: i32 = 0;
-            while (tbp < fd.params.len()) { tbound = tbound.append(fd.params[tbp].name); tbp = tbp + 1; }
-            var tbs: i32 = 0;
-            while (tbs < fd.body.len()) { tbound = astwalk.collect_bound_stmt(fd.body[tbs], tbound); tbs = tbs + 1; }
+            var tbound: string[] = fd_bound_names(fd);
             var tei: i32 = 0;
             while (tei < tl.elements.len()) {
                 var twrapped: boolean = false;
