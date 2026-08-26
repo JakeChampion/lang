@@ -5455,8 +5455,8 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 	if call {
 		w("\tstr x30, [sp, #%d]", 8*lrSlot)
 	}
-	for k, r := range csSaved {
-		w("\tstr %s, [sp, #%d]", xreg(r), 8*(csBase+k))
+	for _, l := range slotSaveLines(csSaved, csBase) {
+		w("\t%s", l)
 	}
 	// Parameter ABI: move each incoming argument register into its param's home.
 	// Must follow the frame setup (slot-homed params store to [sp]) and the
@@ -5472,8 +5472,8 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 		if call {
 			w("\tldr x30, [sp, #%d]", 8*lrSlot)
 		}
-		for k, r := range csSaved {
-			w("\tldr %s, [sp, #%d]", xreg(r), 8*(csBase+k))
+		for _, l := range slotRestoreLines(csSaved, csBase) {
+			w("\t%s", l)
 		}
 		if frame > 0 {
 			w("\tadd sp, sp, #%d", frame)
@@ -5670,9 +5670,7 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 	// assumption about a pass in another package.
 	direct := !inSaveSet(saved, in.Dst) && (in.Op != x86.CallPair || !inSaveSet(saved, in.Dst2))
 	var out []string
-	for k, r := range saved {
-		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
-	}
+	out = append(out, slotSaveLines(saved, callSaveBase)...)
 	out = append(out, argMoveLines(in.ArgLocs)...)
 	// ir.CodegenAlias resolves a Map/MapIter call target onto the stdlib `_impl`
 	// that implements it. Applied HERE, where the callee becomes a label, so
@@ -5681,9 +5679,7 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 	// either and the assembler reports the same dangling label.
 	out = append(out, fmt.Sprintf("bl %s", fnLabel(ir.CodegenAlias(in.Callee))))
 	restore := func() {
-		for k := len(saved) - 1; k >= 0; k-- {
-			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
-		}
+		out = append(out, slotRestoreLines(saved, callSaveBase)...)
 	}
 	if direct {
 		// AArch64 returns in x0 (tag) / x1 (payload), which are abstract registers
@@ -5737,6 +5733,40 @@ func pairRetMoves(tagReg, payReg int) [][2]int {
 		moves = append(moves, [2]int{1, payReg})
 	}
 	return moves
+}
+
+// maxPairOffset is the deepest slot an stp/ldp can reach: the pair forms scale a
+// signed 7-bit immediate by 8, so [sp, #504] is the last one.
+const maxPairOffset = 504
+
+// slotSaveLines and slotRestoreLines emit the stores and loads that move regs
+// through the contiguous 8-byte slots starting at slotBase.
+//
+// Consecutive slots are what stp/ldp address, so two registers cost one
+// instruction instead of two. The call-save area is the backend's largest
+// single block of emitted traffic — 92% of its stack memory ops on
+// compiler-shaped input — and pairing it takes 10% off the whole program
+// (docs/SSA-REGALLOC-PLAN.md).
+//
+// A slot past maxPairOffset falls back to a single str/ldr; the assembler
+// rejects a pair beyond that rather than truncating the offset.
+func slotSaveLines(regs []int, slotBase int) []string { return slotLines("st", regs, slotBase) }
+
+func slotRestoreLines(regs []int, slotBase int) []string { return slotLines("ld", regs, slotBase) }
+
+func slotLines(op string, regs []int, slotBase int) []string {
+	out := make([]string, 0, len(regs))
+	for k := 0; k < len(regs); {
+		off := 8 * (slotBase + k)
+		if k+1 < len(regs) && off <= maxPairOffset {
+			out = append(out, fmt.Sprintf("%sp %s, %s, [sp, #%d]", op, xreg(regs[k]), xreg(regs[k+1]), off))
+			k += 2
+			continue
+		}
+		out = append(out, fmt.Sprintf("%sr %s, [sp, #%d]", op, xreg(regs[k]), off))
+		k++
+	}
+	return out
 }
 
 // callSavedSet returns the caller-saved allocatable registers to preserve across
@@ -5930,17 +5960,13 @@ func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error
 	)
 	// Preserve the caller-saved registers live across the call.
 	saved := callSavedSet(in, numAlloc)
-	for k, r := range saved {
-		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
-	}
+	out = append(out, slotSaveLines(saved, callSaveBase)...)
 	// Move the explicit args plus the env (as the final argument) into x0..x{n}.
 	argsWithEnv := append(append([]x86.Loc{}, in.ArgLocs...), x86.Loc{IsReg: true, Reg: s0})
 	out = append(out, argMoveLines(argsWithEnv)...)
 	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
-	for k := len(saved) - 1; k >= 0; k-- {
-		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
-	}
+	out = append(out, slotRestoreLines(saved, callSaveBase)...)
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
 	out = append(out, maskFix(in.Dst, in.W)...)
 	return out, nil
@@ -6026,16 +6052,12 @@ func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
 	}
 	// Preserve the caller-saved registers live across the call.
 	saved := callSavedSet(in, numAlloc)
-	for k, r := range saved {
-		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
-	}
+	out = append(out, slotSaveLines(saved, callSaveBase)...)
 	// Move [data, method-args...] into x0..x{n-1} and dispatch.
 	out = append(out, argMoveLines(callArgs)...)
 	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
-	for k := len(saved) - 1; k >= 0; k-- {
-		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
-	}
+	out = append(out, slotRestoreLines(saved, callSaveBase)...)
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
 	out = append(out, maskFix(in.Dst, in.W)...)
 	return out, nil
