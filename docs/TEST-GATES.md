@@ -120,6 +120,17 @@ bytes over every (fixture, target) pair will — three per fixture, 1,521 of the
 at the 507 fixtures of 2026-08-25. **~28 minutes per side** (measured
 2026-08-22 over 1,491 pairs; this said ~8, from a smaller corpus again).
 
+**What it does NOT catch: a change that is byte-identical on the corpus and
+expensive on the compiler.** The fixtures are small programs; the compiler is
+not, so a change whose cost scales with a pattern only the self-host carries
+passes this gate clean. `perf(#6911)` (`a94c97ae5`, `internal/ir/rc_analysis.go`)
+added **1.11 MB, +10.3%,** to `irlower_run.fern` while leaving `ackermann`,
+`map_string_key` and a bare `main` byte-for-byte unchanged — this gate would
+call it PURE. It is a MISCOMPILE gate, not a cost gate: green here means the
+output is the same, never that the change was free. For anything touching
+`internal/ir` or a hot path in the self-host, link a driver before and after and
+compare sizes as well (#7519).
+
 **Any change to `examples/self_host/*.fern` must run
 `TestSelfHostFeatureCensus`, whatever the change is about.** Every other gate
 here is chosen by what the code TOUCHES; the census triggers on what the code is
