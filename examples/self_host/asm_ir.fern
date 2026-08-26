@@ -5984,12 +5984,11 @@ pub function emit_module_or_error(mod: parser.Module): string {
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var sm: parser.Module = ircore.script_normalized(mod);
-    // Module-level gates, mirroring eligible_core_known_impl's pre-checks: no
-    // functions falls back. The merged-bundle SIZE budget that stood here is
-    // gone with its twin in eligible_core_known_impl — see the note there for
-    // why (#3425's large-tier freelist is fixed, and since #5972 the budget was
-    // a wall rather than a fallback).
-    if (sm.funcs.len() == 0) { return ""; }
+    // The merged-bundle SIZE budget that stood here is gone with its twin in
+    // eligible_core_known_impl — see the note there for why (#3425's large-tier
+    // freelist is fixed, and since #5972 the budget was a wall rather than a
+    // fallback). So is the function-less refusal, for the reason given there.
+    //
     // A main-less module is admitted now: emit_module_ir_unit's `_start` exits 0
     // instead of calling a __fn_main that does not exist (see its has_main branch).
     // Was a blanket refusal, which is what kept the bootstrap smoke test's

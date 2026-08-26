@@ -373,7 +373,10 @@ pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], al
 // callers want the same answer. The flag and its two `has_main` checks are
 // deleted rather than left inert (#3457 slice 5).
 pub function eligible_core_known_impl(mod: parser.Module, known: string[]): boolean {
-    if (mod.funcs.len() == 0) { return false; }
+    // A function-less module is eligible, as in eligible_core_known_view_impl:
+    // emit_module_ir_unit's `_start` exits 0 when there is no main, so a
+    // types-only unit lowers to the preamble and that stub.
+    //
     // The 512-function module-size budget is GONE (#3457). It existed because
     // emit_module_ir's per-function ir.Op lists grow past the runtime's 2048 B
     // "large" freelist tier, and that tier did not recycle — so a merged
@@ -461,7 +464,8 @@ pub function strict_ir_refuse(what: string): i32 {
 // array_ret_fns / borrowable_params_of (vs the _of / _interproc forms emit
 // uses); this variant tracks emit, not that legacy gate, by design.
 pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
-    if (mod.funcs.len() == 0) { return false; }
+    // A function-less module is eligible: a types-only module (ast.fern) has
+    // nothing that could fail to lower, and its unit is the preamble alone.
     // No 512-function size budget here: a per-module unit is a SINGLE module
     // (the largest, irlower, is ~350 funcs), so the merged-bundle OOM the budget
     // guards against (eligible_core_known_impl) can't arise — each module is
