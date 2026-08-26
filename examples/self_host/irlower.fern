@@ -13602,6 +13602,29 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         || decl_field_type(s.structs, sty, fa.field) == "string")) {
                 fsrecv = freshself_call_recv_slot(fa.obj, s);
             }
+            // A fresh struct LITERAL receiver — `(P { … }).k`. The box is a
+            // temporary nothing else can reach, exactly like the strict-fresh
+            // producer call above, so the same release applies: read the field,
+            // deep-drop the rc fields while the box still owns them, then dec it.
+            //
+            // Gated on the field READ being a SCALAR, which is a different
+            // question from the producer arm's. There is no callee here to ask
+            // about borrowing; the hazard is that the read RESULT could alias a
+            // field the drop frees. A scalar result cannot, so the drop is
+            // unconditionally safe. An rc-field read (`(A { … }).xs`) stays
+            // refused — admitting it needs a retain this read cannot prove.
+            var falit: boolean = false;
+            if (faown == "" && fsrecv < 0
+                    && owned_scalar_field_type(decl_field_type(s.structs, sty, fa.field))) {
+                match (fa.obj) {
+                    parser.ExprStructLit(fsl) => {
+                        if (!fsl.has_base
+                            && (struct_lit_all_scalar(s.structs, fsl.type_name)
+                                || struct_fields_reusable(s.structs, fsl.type_name))) { falit = true; }
+                    },
+                    _ => {}
+                }
+            }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
             if (fsrecv >= 0) {
@@ -13621,7 +13644,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 so = emit_freshself_release(so, fsslot, fsrecv);
                 return so.emit(ir.op_load_local(fsvslot));
             }
-            if (faown != "") {
+            if (faown != "" || falit) {
                 var fan: string = "$ocfld" + util.i32_to_string(so.locals.len());
                 so = so.add_local(fan);
                 var faslot: i32 = so.slot_of(fan);

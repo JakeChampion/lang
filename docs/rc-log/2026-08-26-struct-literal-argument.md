@@ -68,10 +68,12 @@ String / enum / map / tuple / option fields keep `struct_fields_reusable` false
 and so keep the documented safe-leak floor the statement arm states. Nothing here
 widens it.
 
-## Still open
+## The third position
 
-The third position — an intermediate FIELD READ, `(S { … }).a` — is unchanged at
-100/0. It has no existing stash to extend and is its own slice.
+An intermediate FIELD READ, `(S { … }).a`, was left at 100/0 here and is closed
+by `2026-08-26-struct-literal-field-read.md`. Its gate is NOT this slice's: there
+is no callee to ask about borrowing, so it keys on the field being read being a
+scalar instead.
 
 ## Verification
 
