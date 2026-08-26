@@ -506,6 +506,34 @@ Worth knowing so you do not assume coverage you do not have:
    qemu-user), which sets `FERN_REQUIRE_CROSS_BACKENDS=1` so a lane that loses a
    toolchain goes RED instead of quietly back to skipping.
 
+13. **Pick the gate by the fixture's SHAPE, not by the test's NAME.**
+   `internal/e2eselfhost` holds ~1980 test functions, and the ones pinning a
+   given rc shape are not named after it. Two stale pins reached CI on #7553 for
+   exactly this reason: a change to the aliased-param verdict was gated on
+   `TestSelfHostContainerAliasBind` and a `Str|String|Struct|Alias` name sweep,
+   while the rows that actually moved lived in `TestSelfHostLeakMatrix*` (both
+   arches) and in `TestSelfHostStrAliasReassign`'s
+   `borrowed_param_reassign_still_refused` — none of which the name pattern
+   reaches, and all of which pinned the shape being changed.
+
+   Grep for the shape instead. For a string-field reclaim change that is the
+   files declaring a struct with a `string` field AND pinning `frees` counts:
+
+   ```
+   for f in internal/e2eselfhost/*_test.go; do
+     grep -qE 'struct [A-Z][A-Za-z0-9_]* \{[^}]*: string' "$f" \
+       && grep -q 'frees' "$f" && echo "$f"
+   done
+   ```
+
+   48 files, 94 tests, ~4 minutes — and it catches both misses on the first run.
+   The generated matrices deserve their own mention: they ARE the goal-2 gap
+   list, so any change that closes a gap moves a row in
+   `selfhost-leak-matrix.txt` and `selfhost-leak-matrix-arm64.txt`. Run both.
+   A leak→clean move is progress and belongs to the change that earns it, but
+   the gate reports it as a failure either way, so it is never "someone else's
+   row".
+
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 
 Route a probe program through the single-program path-probe driver
