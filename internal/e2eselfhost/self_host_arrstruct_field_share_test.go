@@ -38,13 +38,29 @@ import (
 // without refusing that took it to exit 99 at 600 allocs, 600 frees,
 // live_bytes 0 — nothing in the census dissented.
 //
+// `moved_ret` is the second such precondition, and it cost a red CI to find. The
+// retain is MOVE-gated (#6726): where the analysis says the construction moves
+// the local, the box takes over its reference and both the inc and the sweep dec
+// that cancels it are dropped. This credit does not route that plain sweep dec —
+// it routes emit_arrstruct_deep_free — so granting it at a moved site frees a
+// buffer whose ownership left the frame. `return P { f: src, … }` is exactly
+// that, because the return is src's last use.
+//
+// Nothing on x86-64 saw it. Both matrices, TestSelfHostRcPlanDiff, the whole
+// probe corpus and all three x86-64 fixpoints were green; it surfaced as gen2
+// SEGFAULTING under qemu on TestSelfHostStage2FixpointArm64/lexer — the
+// whole-compiler leg, and the blind spot docs/TEST-GATES.md names. The credit
+// now asks exactly the question the retain asks, so this case stays the leak it
+// was, which is why it opts out of the balance assertion.
+//
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
 
 type arrstructShareCase struct {
-	name string
-	src  string
-	want int
+	name    string
+	src     string
+	want    int
+	balance bool // assert allocs == frees at live_bytes 0
 }
 
 const arrstructShareMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
@@ -69,7 +85,7 @@ func arrstructShareCases() []arrstructShareCase {
     if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = p.f.len() + p.f[0].k + p.n; }
     return t % 101;
 }` + arrstructShareMain,
-			want: 18,
+			want: 18, balance: true,
 		},
 		{
 			// The share always runs and the source outlives it. Clean before this
@@ -82,7 +98,7 @@ func arrstructShareCases() []arrstructShareCase {
     var p: P = P { f: src, n: i };
     return (p.f.len() + p.f[0].k + p.n + src.len()) % 101;
 }` + arrstructShareMain,
-			want: 70,
+			want: 70, balance: true,
 		},
 		{
 			// THE OVER-RELEASE GUARD. `P { ...q, … }` copies q's buffer pointer
@@ -96,7 +112,7 @@ func arrstructShareCases() []arrstructShareCase {
     var p: P = P { ...q, n: i + 1 };
     return (p.f.len() + p.n + q.n) % 101;
 }` + arrstructShareMain,
-			want: 70,
+			want: 70, balance: true,
 		},
 		{
 			// The holder is handed to a callee that may keep it. The share is
@@ -111,7 +127,22 @@ function round(i: i32): i32 {
     if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = keepit(p); }
     return (t + src.len()) % 101;
 }` + arrstructShareMain,
-			want: 27,
+			want: 27, balance: true,
+		},
+		{
+			// THE MOVE GUARD. The holder is RETURNED, so the share is src's last
+			// use and the construction MOVES rather than retains — no inc, and
+			// the sweep dec elided with it. A credit granted here deep-frees a
+			// buffer the returned struct owns: on x86-64 that reads as a plain
+			// leak, and on the arm64 stage-2 fixpoint it segfaulted gen2.
+			// Refused, so this stays the leak it was before the widening.
+			name: "moved_ret",
+			src: arrstructShareDecl + `function hold(i: i32): P {
+    var src: Inner[] = mkv(i);
+    return P { f: src, n: i };
+}
+function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.f[0].k + p.n) % 101; }` + arrstructShareMain,
+			want: 53,
 		},
 		{
 			// Two same-named `src` in sibling blocks, one sharing into a holder
@@ -125,7 +156,7 @@ function round(i: i32): i32 {
     if (i % 2 == 1) { var src: Inner[] = [Inner { xs: [i], k: i }]; t = t + src.len() + src[0].k; }
     return t % 101;
 }` + arrstructShareMain,
-			want: 70,
+			want: 70, balance: true,
 		},
 	}
 }
@@ -159,10 +190,9 @@ func TestSelfHostArrStructFieldShareX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			// Every case here balances, including the ones the credit refuses:
-			// refusing costs the source its walk only where the holder's walk
-			// covers the same buffer.
-			if live != 0 || allocs != frees {
+			// Every case balances except the one the move gate refuses, where
+			// the source correctly keeps no walk at all.
+			if tc.balance && (live != 0 || allocs != frees) {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 		})
