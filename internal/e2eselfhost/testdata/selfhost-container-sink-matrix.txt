@@ -22,8 +22,8 @@ append__live          clean clean
 append__rebound       clean clean  the stamp says who OWNS the element; the move analysis says who pays
 append__blockscoped   clean clean  a retired source: the site key cannot fall through the way a slot predicate did
 
-with__live            clean leak   refused: arr_set stores no counted reference
-with__moved           clean leak   refused: `with` is not a sanctioned arrstruct rebind either
+with__live            clean clean  a counted element, and the SUPERSEDED one is released at the store
+with__moved           clean clean  `with` is a sanctioned self-store rebind now, so the container earns its walk
 tuple__moved          clean clean  a MOVED struct element: the tuple is sole owner, so its walk is the one release
 tuple__live           clean clean  the literal retains a struct element, so both owners release under the rc gate
 variant__moved        clean clean  a MOVED struct payload: the enum's rc-gated payload drop is the one release

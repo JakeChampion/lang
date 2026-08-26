@@ -20597,6 +20597,16 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                             if (slot_is_reclaimable_strarr(s, slot)) {
                                 return lower_strarr_with_store(wc.args[0], wc.args[1], slot, s);
                             }
+                            // A reclaimable (<struct-with-rc-field>)[]: the same
+                            // superseded-element problem one element kind over, and
+                            // the element's release is a field walk plus a box dec
+                            // rather than one free helper.
+                            if (slot_is_reclaimable_arrstruct(s, slot)) {
+                                var awsty: string = s.struct_type_of_slot(slot);
+                                if (awsty.len() > 0) {
+                                    return emit_arrstruct_with_store(wc.args[0], wc.args[1], slot, awsty, s);
+                                }
+                            }
                             var ws: LowerState = s.emit(ir.op_load_local(slot));
                             ws = lower_expr(wc.args[0], ws);
                             if (!ws.ok) { return ws; }
@@ -23113,6 +23123,86 @@ function lower_strarr_with_store(idx: parser.Expr, val: parser.Expr, slot: i32, 
     st = st.emit(ir.op_arr_get(32));
     st = st.emit(ir.op_call_direct(strarr_elem_free_helper(st, slot), 1));
     st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(islot));
+    st = st.emit(ir.op_load_local(vslot));
+    return st.emit(ir.op_arr_set(32));
+}
+
+// emit_arrstruct_with_store lowers `ps = ps.with(i, v)` for a slot whose ELEMENT
+// WALK is credited (slot_is_reclaimable_arrstruct). The struct sibling of
+// lower_strarr_with_store, and it exists for the same reason: `with` REPLACES, so
+// the bare arr_set drops the superseded element pointer on the floor and the exit
+// sweep's walk never sees it again.
+//
+// Three steps, in this order:
+//   - retain the stored element when the container OWNS it and the store does not
+//     MOVE it, exactly as the self-append arm does — the stamp says who owns the
+//     element, the move analysis says whether this store had to pay for it;
+//   - release the superseded element, guarded on `old != new` so `ps.with(3, ps[5])`
+//     does not free a live one, and on `old != 0` for a never-written slot. Its
+//     field walk is rc-GATED: with the stored element counted, two owners can reach
+//     a walk, and two static walks free every field buffer twice (allocs == frees at
+//     live_bytes 0, only __rc_underflow_count() dissenting);
+//   - store the new element.
+//
+// NOT reached on the cow path: an aliased or borrowed receiver routes to
+// lower_arr_with_value ABOVE this, which clones into a sole-owned buffer and leaves
+// the aliased one holding the old element — releasing it there would free a value
+// the original array still reads.
+function emit_arrstruct_with_store(idx: parser.Expr, val: parser.Expr, slot: i32, sty: string, s: LowerState): LowerState {
+    var iname: string = "$awi" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(iname);
+    var islot: i32 = st.slot_of(iname);
+    var vname: string = "$awv" + util.i32_to_string(st.locals.len());
+    st = st.add_local(vname);
+    var vslot: i32 = st.slot_of(vname);
+    var oname: string = "$awo" + util.i32_to_string(st.locals.len());
+    st = st.add_local(oname);
+    var oslot: i32 = st.slot_of(oname);
+    st = st.mark_struct_type(oslot, sty);            // so the gated walk routes __struct_drop_<sty>
+
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(islot));
+
+    st = lower_expr(val, st);
+    if (!st.ok) { return st; }
+    match (val) {
+        parser.ExprIdent(vid) => {
+            var velslot: i32 = st.slot_of(vid.name);
+            if (velslot >= 0
+                && reclaim_has(st.reclaimable_names, "APOWNED:",
+                    util.i32_to_string(vid.line) + ":" + util.i32_to_string(vid.col))) {
+                if (st.moves_local_at(vid.name, vid.line, vid.col)) { st = st.note_moved_elided(velslot); }
+                else { st = st.retain_tos("arrstruct-with-elem"); }
+            }
+        },
+        _ => {}
+    }
+    st = st.emit(ir.op_store_local(vslot));
+
+    // old = ps[i]
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(islot));
+    st = st.emit(ir.op_arr_get(32));
+    st = st.emit(ir.op_store_local(oslot));
+    // if (old != 0 && old != new) { <gated field walk>; dec old }
+    st = st.emit(ir.op_load_local(oslot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(oslot));
+    st = st.emit(ir.op_load_local(vslot));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = emit_struct_field_drops_gated(st, oslot, true);
+    st = st.emit(ir.op_load_local(oslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
     st = st.emit(ir.op_end());
 
     st = st.emit(ir.op_load_local(slot));
@@ -33116,6 +33206,19 @@ function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser
                             _ => {}
                         }
                     }
+                    // `ps = ps.with(i, name)` stores the box under the same counted
+                    // retain the self-append takes (emit_arrstruct_with_store), so
+                    // the source keeps a claim and its sweep must be rc-gated too.
+                    // Without this the source walks its fields STATICALLY while the
+                    // container's element walk is gated, and both free every buffer:
+                    // 500/500 with allocs == frees at live_bytes 0, and only
+                    // __rc_underflow_count() dissenting.
+                    if (cfa.field == "with" && c.args.len() == 2) {
+                        match (c.args[1]) {
+                            parser.ExprIdent(wid) => { if (wid.name == name) { return true; } },
+                            _ => {}
+                        }
+                    }
                 },
                 _ => {}
             }
@@ -43034,7 +43137,7 @@ function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[], ba
     return false;
 }
 
-// arrstruct_self_append_elem / arrstruct_name_is_appended / arrstruct_unsafe_for:
+// arrstruct_self_store_elem / arrstruct_name_is_appended / arrstruct_unsafe_for:
 // the append-built half of this class (#6535), transcribed from the shallow
 // STRUCTARR siblings #6127 introduced. The literal-built credit refused any
 // REASSIGNED name, and `vals = vals.append(Val { .. })` is a reassignment — so
@@ -43067,24 +43170,45 @@ function moved_ident_at(e: parser.Expr, msites: string[]): boolean {
     }
     return false;
 }
-function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+// arrstruct_self_store_elem_index: the ARGUMENT index of the element in a
+// self-store `name = name.append(x)` (0) or `name = name.with(i, x)` (1), or -1
+// when `e` is neither. One reader for both shapes, so the credit gate, the stamping
+// pass and the lowering cannot disagree about which operand is the element.
+function arrstruct_self_store_elem_index(e: parser.Expr, name: string): i32 {
     match (e) {
         parser.ExprCall(c) => {
-            var is_self_append: boolean = false;
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "append") {
-                        match (fa.obj) {
-                            parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
-                            _ => {}
-                        }
+                    var self_recv: boolean = false;
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => { self_recv = rid.name == name; },
+                        _ => {}
                     }
+                    if (!self_recv) { return 0 - 1; }
+                    if (fa.field == "append" && c.args.len() == 1) { return 0; }
+                    if (fa.field == "with" && c.args.len() == 2) { return 1; }
                 },
                 _ => {}
             }
-            if (!is_self_append) { return false; }
-            if (c.args.len() != 1) { return false; }
-            if (moved_ident_at(c.args[0], msites)) { return true; }
+        },
+        _ => {}
+    }
+    return 0 - 1;
+}
+
+// arrstruct_self_store_elem: `e` is a sanctioned self-store rebind of the credited
+// container `name`, whose element is one the container may own.
+//
+// `with` joins `append` here because both store an element the container's walk
+// then releases. It differs in one way that costs a release rather than a credit:
+// `with` REPLACES, so the superseded element has to be freed at the store
+// (emit_arrstruct_with_store) — `append` displaces nothing.
+function arrstruct_self_store_elem(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var eidx: i32 = arrstruct_self_store_elem_index(e, name);
+            if (eidx < 0) { return false; }
+            if (moved_ident_at(c.args[eidx], msites)) { return true; }
             // ANY bare ident. The credit no longer needs the element to be dead
             // after the push, because the append RETAINS it and both owners run
             // their field walk under __fern_rc_is_unique: whichever reaches rc 1
@@ -43092,11 +43216,11 @@ function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parse
             // cost the CONTAINER its element walk on every shape where the source
             // outlives the push — `ps = ps.append(p); p = P { … }` reads as
             // neither a move nor a literal, and the whole array then leaked.
-            match (c.args[0]) {
+            match (c.args[eidx]) {
                 parser.ExprIdent(_) => { return true; },
                 _ => {}
             }
-            return is_fresh_struct_init(c.args[0], structs);
+            return is_fresh_struct_init(c.args[eidx], structs);
         },
         _ => { return false; }
     }
@@ -43129,10 +43253,10 @@ function arrstruct_owned_elem_sites(stmts: parser.Stmt[], name: string, structs:
                 if (v.name == name) { a = arrstruct_lit_elem_sites(v.init, a); }
             },
             parser.StmtAssign(as1) => {
-                if (as1.target == name && arrstruct_self_append_elem(as1.value, name, structs, msites)) {
+                if (as1.target == name && arrstruct_self_store_elem(as1.value, name, structs, msites)) {
                     match (as1.value) {
                         parser.ExprCall(c) => {
-                            match (c.args[0]) {
+                            match (c.args[arrstruct_self_store_elem_index(as1.value, name)]) {
                                 parser.ExprIdent(eid) => {
                                     a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col));
                                 },
@@ -43179,7 +43303,7 @@ function arrstruct_lit_elem_sites(e: parser.Expr, acc: string[]): string[] {
 function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_append_elem(a.value, name, structs, msites)) { return true; } },
+            parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_store_elem(a.value, name, structs, msites)) { return true; } },
             parser.StmtIf(f) => {
                 if (arrstruct_name_is_appended(f.then_body, name, structs, msites)) { return true; }
                 if (arrstruct_name_is_appended(f.else_body, name, structs, msites)) { return true; }
@@ -43207,7 +43331,7 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_append_elem(a.value, name, structs, msites)) { return false; }
+                if (arrstruct_self_store_elem(a.value, name, structs, msites)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             return expr_unsafe_for(a.value, name, borrowable, []);
@@ -43468,7 +43592,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 parser.ExprFieldAccess(afa) => {
                     match (afa.obj) {
                         parser.ExprIdent(aid3) => {
-                            if (aid3.name == name && arrstruct_self_append_elem(e, name, structs, msites)) {
+                            if (aid3.name == name && arrstruct_self_store_elem(e, name, structs, msites)) {
                                 return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites);
                             }
                         },
