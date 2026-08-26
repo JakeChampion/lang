@@ -211,11 +211,51 @@ function tail_expr(st: parser.Stmt): parser.Expr {
 // The tuple- and struct-pattern desugars carry their value in a local instead
 // (IfChain.value_local), so their bodies are three statements and fall through
 // to the ordinary call rendering.
+// iife_value_local names the local a value-producing chain assigns, when the
+// first and last statements of an IIFE body are its declaration and its
+// return. "" when the body is any other shape.
+function iife_value_local(first: parser.Stmt, last: parser.Stmt): string {
+    var name: string = "";
+    match (first) {
+        parser.StmtVar(v) => { name = v.name; },
+        _ => { return ""; }
+    }
+    if (name.len() == 0) { return ""; }
+    match (last) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprIdent(id) => { if (id.name == name) { return name; } },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 function print_expr_iife(c: parser.ExprCall): string {
     if (c.args.len() != 0) { return ""; }
     match (c.callee) {
         parser.ExprLambda(lm) => {
-            if (lm.params.len() != 0 || lm.body.len() != 1) { return ""; }
+            if (lm.params.len() != 0) { return ""; }
+            // The VALUE-LOCAL shape: a chain cannot `return` an arm's value the
+            // way a match arm does, so the desugar declares a local, lets the
+            // chain assign it, and returns it — three statements, not one.
+            // `arm_expr_value` reads each arm's body back through that local.
+            if (lm.body.len() == 3) {
+                var vl: string = iife_value_local(lm.body[0], lm.body[2]);
+                if (vl.len() > 0) {
+                    match (lm.body[1]) {
+                        // "" not `vl`: the carrier holds the arms as WRITTEN,
+                        // whose bodies still `return` their value — only the
+                        // LOWERED arms were rewritten to assign the local.
+                        parser.StmtIf(vf) => { return print_sugared_match_expr(vf.sugar, ""); },
+                        _ => { return ""; }
+                    }
+                }
+                return "";
+            }
+            if (lm.body.len() != 1) { return ""; }
             match (lm.body[0]) {
                 parser.StmtMatch(m) => {
                     // The WRITTEN arms when the parse consumed something into

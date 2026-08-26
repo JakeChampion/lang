@@ -4182,6 +4182,20 @@ function parse_match_expr(p: Par): IfChain {
         }
         return IfChain { par: p, stmt: s_match_sugared(sr_expr, desugar_nested_arms(ntarms, 0, ""), esugar, mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
     }
+    // Arms with payload sub-patterns take the flag chain here too. The chain
+    // is statements, not a match whose arms `return`, so the arm values route
+    // through a value local exactly as the tuple-sub-pattern branch above does.
+    if (arms_take_flag_chain(arms)) {
+        var naval: string = "__na" + dl_itoa(mkline) + "_" + dl_itoa(mkcol) + "_r";
+        var naarms: MatchArm[] = [];
+        var nai: i32 = 0;
+        while (nai < arms.len()) {
+            var naa: MatchArm = arms[nai];
+            naarms = naarms.append(MatchArm { ...naa, body: value_arm_body(naa.body, naval) });
+            nai = nai + 1;
+        }
+        return IfChain { par: p, stmt: build_nested_arm_match(sr_expr, naarms, ewritten, mkline, mkcol), rt: rt, needs_default_return: false, value_local: naval };
+    }
     arms = desugar_nested_arms(arms, 0, "");
     return IfChain { par: p, stmt: s_match_sugared(sr_expr, arms, esugar, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
 }
@@ -5924,6 +5938,14 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             // desugar_nested_arms copies into the inner match, so a payload
             // matching no inner pattern runs the else rather than falling off
             // a non-exhaustive inner match.
+            // A head with payload sub-patterns takes the flag chain, so a
+            // multi-slot head (`if let P(Ok2(a), Ok2(b)) = v`) and an
+            // or-pattern whose alternatives nest both work; the merge read
+            // only the first slot. The origin tag keeps `-fmt` reprinting the
+            // `if let` rather than the chain.
+            if (arms_take_flag_chain(ilarms)) {
+                return (with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, 0, 0), "if_let"), p);
+            }
             ilarms = desugar_nested_arms(ilarms, 0, "");
             var ilsugar: MatchArm[] = [];
             if (arms_have_written_form(ilwritten)) { ilsugar = ilwritten; }
@@ -6121,6 +6143,13 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     var lsp_wild: MatchArm = MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false };
                     lsp_arms = lsp_arms.append(lsp_wild);
                     lsp_written = lsp_written.append(lsp_wild);
+                    // A head with payload sub-patterns takes the flag chain —
+                    // see the `if let` site. The success arm is the rest of the
+                    // enclosing block either way, so the bindings stay live for
+                    // it.
+                    if (arms_take_flag_chain(lsp_arms)) {
+                        return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else"), p);
+                    }
                     lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
                     // A nested payload (`let Wrap(A(v)) = w else …`) leaves the
                     // synthesised `__nest` temp as the arm's only pattern, so
