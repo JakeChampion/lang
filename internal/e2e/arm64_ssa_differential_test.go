@@ -84,11 +84,20 @@ const (
 	// arm64SSADiffMinCompared is the floor on programs that actually built
 	// under BOTH backends and ran. This is the number the leg's value is
 	// proportional to: a regression that widened the SSA bail set would
-	// otherwise turn the lane green by testing almost nothing. Measured
-	// 2026-08-26 over 286 corpus programs: 278 compared, 3 ssa-refused,
-	// 5 baseline-rejected. The only refusals left are the three programs
-	// that call `stat`.
-	arm64SSADiffMinCompared = 270
+	// otherwise turn the lane green by testing almost nothing.
+	//
+	// It is every program the flat backend can build, because measured
+	// 2026-08-26 over 286 corpus programs there is no SSA coverage gap left
+	// at all: 281 compared, 0 ssa-refused, 5 baseline-rejected (two
+	// deliberately-invalid probes and three that need `subprocess`, which no
+	// compiled target provides). So a single refusal is now a regression and
+	// the floor says so.
+	//
+	// A NEW corpus program that legitimately needs an unported helper lands
+	// here as a failure, which is the point: port the helper, or move this
+	// number with the measurement that justifies it. Do not widen it to make
+	// a gap quiet.
+	arm64SSADiffMinCompared = 281
 
 	// arm64SSADiffRunTimeout bounds one execution. The heaviest corpus
 	// program (examples/bench/struct_drop.fern) takes ~0.9 s under
