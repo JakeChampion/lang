@@ -147,3 +147,75 @@ func TestArmRunStat(t *testing.T) {
 		t.Errorf(`stat("/") tag = %d, want 0 (Ok)`, got)
 	}
 }
+
+// sliceOver builds `__slice_make(data, len)` — the header a `a[lo:hi]`
+// expression ends at — over a caller-supplied buffer.
+func sliceOver(f *ssa.Func, b *ssa.Block, data ssa.Value, length int64) ssa.Value {
+	return addrCallOp(f, b, "__slice_make", data, constOp(f, b, length))
+}
+
+// The stride of each __slice_idx_* variant, pinned one element in so a wrong
+// shift lands on a different value rather than on the same first element.
+//
+// Every one of these is reachable now that `a[lo:hi]` compiles: at this
+// emitter's ptr-width the IR emits __slice_idx_1 for a byte slice,
+// __slice_idx for i32, and __slice_idx_8 for i64 AND for string (a one-word
+// element here), which is why there is no _16.
+func TestArmRunSliceIdxStrides(t *testing.T) {
+	cases := []struct {
+		helper string
+		stride int64
+		store  ssa.OpKind
+	}{
+		{"__slice_idx_1", 1, ssa.OpStore8},
+		{"__slice_idx", 4, ssa.OpStore32},
+		{"__slice_idx_8", 8, ssa.OpStore},
+	}
+	for _, c := range cases {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		// A two-element buffer holding {7, 9} at the helper's stride.
+		buf := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 64))
+		st := f.AddOpNoResult(e, c.store, buf, constOp(f, e, 7))
+		st.Imm = 0
+		st = f.AddOpNoResult(e, c.store, buf, constOp(f, e, 9))
+		st.Imm = c.stride
+		// Index element 1 through the helper: a wrong shift reads element 0
+		// (or past the buffer) and cannot answer 9.
+		at := addrCallOp(f, e, c.helper, sliceOver(f, e, buf, 2), constOp(f, e, 1))
+		f.SetRet(e, load8u(f, e, at, 0))
+		if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12); got != 9 {
+			t.Errorf("%s: element 1 of {7,9} at stride %d = %d, want 9", c.helper, c.stride, got)
+		}
+	}
+}
+
+// __slice_range(lo, hi, len) returns the new length and traps on any bound that
+// would let the view escape its source. The negative cases are the ones that
+// need the sign-extension: compared as raw 32-bit values a negative low bound
+// looks small and passes.
+func TestArmRunSliceRange(t *testing.T) {
+	rangeOf := func(lo, hi, length int64) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		f.SetRet(e, callOp(f, e, "__slice_range",
+			constOp(f, e, lo), constOp(f, e, hi), constOp(f, e, length)))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 12)
+	}
+	for _, c := range []struct {
+		lo, hi, len int64
+		want        int
+	}{
+		{1, 3, 4, 2},    // in range
+		{0, 4, 4, 4},    // the whole source
+		{2, 2, 4, 0},    // empty
+		{0, 5, 4, 134},  // hi > len
+		{3, 1, 4, 134},  // lo > hi
+		{-1, 3, 4, 134}, // lo < 0
+		{0, -1, 4, 134}, // hi < 0
+	} {
+		if got := rangeOf(c.lo, c.hi, c.len); got != c.want {
+			t.Errorf("__slice_range(%d, %d, %d) = %d, want %d", c.lo, c.hi, c.len, got, c.want)
+		}
+	}
+}
