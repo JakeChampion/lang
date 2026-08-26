@@ -616,19 +616,20 @@ remainder splits three ways:
   builtin's name rather than an IR op's. The refusal stays as the backstop for an
   op with no builtin name to report.
 
-- **Composites, not leaves**: `map_delete` and the strbuf family. Both are
-  blocked, and on different things — neither on length.
+- **Composites, not leaves**: `map_delete` and the strbuf family. strbuf is
+  blocked; `map_delete` is not, though it looks it.
 
-  **`map_delete` is blocked on how a function pointer crosses into Fern.** Its
+  **`map_delete` turns on how a function pointer crosses into Fern.** Its
   find loop has three arms keyed on `keykind`: string (`__fern_str_eq`), i32
   (a register compare), and struct/enum, which calls the key type's derived
   `__fn_<K>__eq` through a pointer the op site puts in `%r8`. The first two
-  arms are ordinary floor work. The third cannot be written in Fern today,
-  and the reason is an ABI mismatch rather than a missing primitive.
+  arms are ordinary floor work. The third is the one that looks impossible and
+  is not — worth reading, because the obvious spelling of it silently
+  miscompiles.
 
-  Fern has exactly one indirect-call lowering, and it is env-first. Every
-  `fn`-typed parameter is unconditionally marked a closure local
-  (`irlower.fern`, in the param loop of the function-entry lowering), and
+  Fern's indirect-call lowering has two branches, and the env-first one is
+  tested first. Every `fn`-typed parameter is unconditionally marked a closure
+  local (`irlower.fern`, in the param loop of the function-entry lowering), and
   `is_closure_local` is tested BEFORE the plain-indirect branch, so `eqfn(a, b)`
   lowers to: push the param as an `i32[]` env box, read `box[0]` as the target
   (bounds-checked against the box's length word), and `call_indirect` with
@@ -638,20 +639,23 @@ remainder splits three ways:
   `<fn>$wrap0` at `box[0]`, and that wrapper takes `(__env, a, b)` and discards
   `__env`.
 
-  A bare code address in `%r8` is none of those things. Handing one to a Fern
-  helper reads the callee's own first instruction word as a target and its
-  second as an array length. To close the gap the EMITTER would have to
-  allocate a one-element box and emit a three-argument `$clo` wrapper per key
-  type — more hand-asm, plus an allocation on every delete, in order to delete
-  some hand-asm. That is a net loss, so `map_delete` waits on either a raw
-  indirect-call primitive (`__raw_call2`) or a decision to give derived `__eq`
-  the closure calling convention. Both are floor/ABI decisions, not migrations.
+  A bare code address in `%r8` is none of those things: handing one to an
+  `fn`-typed parameter reads the callee's own first instruction word as a
+  target and its second as an array length.
 
-  Splitting it the way `read_int` and `read_all_stdin` were split off the
-  Option-returning readers does NOT apply here: those were separate symbols,
-  whereas these are three arms of ONE symbol, so migrating two of them leaves
-  `__fern_map_delete` with a hand-asm dispatch into a Fern body — two
-  implementations where there is now one.
+  **The parameter simply must not be `fn`-typed.** `is_closure_local` is keyed
+  on the declared type, so a parameter declared `i32` misses the closure branch
+  and takes the plain-indirect one below it, which emits `load_local` +
+  `call_indirect` — the bare address straight from the parameter, no env box
+  and no arity+1. Measured: `function callraw(f: i32, x: i32, y: i32): boolean
+  { return f(x, y); }` emits `movq -8(%rbp), %r11` / `call *%r11` with the two
+  arguments reversed into stack-ABI order and `addq $16, %rsp` after, which is
+  exactly the sequence the hand-asm writes by hand.
+
+  So `map_delete` needs no floor primitive and no ABI change — the helper takes
+  `eqfn: i32`. What it does need is the op site passing that address as an
+  ordinary stack argument rather than in `%r8`, which is the same conversion
+  every other migrated helper's op site already went through.
 
   **strbuf is deferred, and the reason is storage, not length.** Its three
   helpers are trivial — set a word, copy bytes and bump a word, drain into a
