@@ -120,13 +120,21 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 	// with the file-based asm driver. The loader resolves `import "std/io"`
 	// to the vendored flat io.fern (basename fallback), so the driver source
 	// is used unmodified — no ///MODULE bundle, no import rewrite.
+	// Derived from the driver's own imports rather than listed: a hand-written
+	// set goes stale the moment one of these modules gains an import, and this
+	// bundle is a map rather than a project dir, so the copy helpers that guard
+	// that elsewhere do not reach it (#6993).
 	files := map[string]string{}
-	for _, m := range []string{"util", "lexer", "parser", "astwalk", "checker"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
-		if err != nil {
-			t.Fatalf("read %s.fern: %v", m, err)
+	for _, p := range selfHostImportClosureFiles(t, driverFile) {
+		base := filepath.Base(p)
+		if base == driverFile {
+			continue // staged below as main.fern
 		}
-		files[m+".fern"] = string(src)
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", base))
+		if err != nil {
+			t.Fatalf("read %s: %v", base, err)
+		}
+		files[base] = string(src)
 	}
 	if withFlatten {
 		src, err := os.ReadFile("../../examples/self_host/flatten.fern")
