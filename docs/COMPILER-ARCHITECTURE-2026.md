@@ -85,19 +85,16 @@ plan, and it is the correct place for architectural effort right now.
 The IR side is value-based and ID-shaped; the AST side is not, and
 `IMMUTABILITY-MIGRATION-PLAN.md` covers the rest.
 
-**#15/#16 Interning and hash-consed types.** Designed, not built:
-`SELFHOST-SYMBOL-INTERNING.md` (#4394 lever 1) is unblocked and specified
-down to the `SymTab` threading. The motivation there is stronger than the
-checklist's "huge speedup" — `IR-SELFCOMPILE-OOM-FINDINGS.md` identifies
-`Op.kind`/`Op.str` strings in persistent op arrays as the dominant surviving
-self-compile memory, and lever 1 turns them into i32 ids. This is a memory
-fix that happens to also be the checklist's item. **Buy it.** Lever 2
-(int op-tags for `Op.kind`) is the same argument.
-
-Note the sequencing constraint that made this tractable: interning
-identifiers required SH-021 first, because type names are identifiers, and
-the type system used to decode type-name *strings* by hand. That's now
-routed through structured `TypeRef`.
+**#15/#16 Interning and hash-consed types.** Built and measured; **do not
+buy it**. `SELFHOST-SYMBOL-INTERNING.md` (#4394 lever 1) records the result:
+strings of 7 bytes or fewer are SSO-inline, so 91% of identifier occurrences
+never touch the heap, and interning the rest removes 0.02% of the
+allocations on a `checker.fern` compile and no peak RSS at all. The
+`Op.str` half was already retired on its own evidence — helper names are
+`.rodata`, mangled bodies are deduped (#4612), and the residual is the
+pointer *slot*, reclaimable only by an IR-representation change. Lever 2
+(int op-tags for `Op.kind`) shipped and is a different argument: it shrank
+the op box rather than the strings it points at.
 
 **#20/#21/#22 ABI layer, unified target description, legalization split.**
 Partial and uneven. `Op.Width` carries a `WidthPtr` sentinel each backend

@@ -514,21 +514,23 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     return NumResult { lex: l, tok: tok };
 }
 
-// scan_ident reads the identifier run + classifies as keyword or
-// plain identifier.
-function scan_ident(l: Lex, start_line: i32, start_col: i32): NumResult {
-    var begin: i32 = l.i;
+// ident_end returns the offset just past the identifier run starting at l.i.
+function ident_end(l: Lex): i32 {
     var e: i32 = l.i;
     while (e < l.n && is_alnum((l.src[e] as i32))) {
         e = e + 1;
     }
-    l = l.advance_to(e);
-    var text: str = slice_unchecked(l.src, begin, l.i);
-    var tok: Token = ident_tok(text, start_line, start_col);
-    if (is_keyword(text)) {
-        tok = keyword_tok(text, start_line, start_col);
+    return e;
+}
+
+// ident_or_keyword classifies a scanned identifier run. Split from the scan so
+// the pair yields a Token directly: the scan_ident this replaces returned a
+// NumResult, and boxing that struct cost a heap allocation per identifier token.
+function ident_or_keyword(name: string, start_line: i32, start_col: i32): Token {
+    if (is_keyword(name)) {
+        return keyword_tok(name, start_line, start_col);
     }
-    return NumResult { lex: l, tok: tok };
+    return ident_tok(name, start_line, start_col);
 }
 
 // apply_escape decodes a C-style escape whose escape byte `esc` has
@@ -992,9 +994,10 @@ function tokenize_impl(src: string, keep: boolean): LexResult {
             continue;
         }
         if (is_alpha(b)) {
-            var ri = scan_ident(l, start_line, start_col);
-            l = ri.lex;
-            out = out.append(ri.tok);
+            var e: i32 = ident_end(l);
+            var tok: Token = ident_or_keyword(slice_unchecked(l.src, l.i, e), start_line, start_col);
+            l = l.advance_to(e);
+            out = out.append(tok);
             after_dot = false;
             continue;
         }

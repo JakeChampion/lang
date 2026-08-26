@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# selfhost-alloc-bench — measure how much the SELF-HOST COMPILER ALLOCATES
+# compiling a real module, and write a metrics report scripts/ci-check-perf can
+# compare against a baseline.
+#
+# Usage: selfhost-alloc-bench [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout).
+#
+# WHY THIS EXISTS. docs/IR-SELFCOMPILE-OOM-FINDINGS.md pins the self-compile's
+# binding constraint on allocation PERFORMED, and docs/SELFHOST-SYMBOL-INTERNING.md
+# gates every slice of that work on "peak RSS on the self-compile" — a number
+# that had no harness, so slices were deferred rather than measured. The traps it
+# records, all still true:
+#
+#   - `getrusage`/`ru_maxrss` reports ~the size of the pre-reserved arena, not
+#     the workload. 100x20 and 1000x20 come back identical. Useless here.
+#   - Sampling `/proc/<pid>/status:VmHWM` misses a sub-second transient peak, so
+#     a bigger workload can sample LOWER than a smaller one.
+#
+# So the two metrics here are the ones that survive:
+#
+#   .allocs / .frees   Heap events the compiler performed, from FERN_LEAKCHECK
+#                      (read at EMIT time, so the compiler measured must itself
+#                      be built with it set — this script does that). Exact and
+#                      host-independent: this is the churn number.
+#   .peak_rss_bytes    Kernel-tracked peak RSS, read out of a scratch cgroup the
+#                      compile runs in. OPTIONAL — emitted only where cgroup
+#                      delegation lets us create one, since a runner without it
+#                      has no trustworthy peak at all (see the traps above).
+#                      Do not compare it across hosts: transparent_hugepage
+#                      alone spreads the same allocation 12x
+#                      (docs/LOCAL-DEV-LOOP.md).
+#
+# The alloc counts are deterministic for a given commit — they count events the
+# program performed, not time it took — so a 1% move is signal, not noise. Peak
+# RSS is deterministic to about a megabyte on one host.
+#
+# One trap when A/B-ing a WORKING TREE rather than comparing against a baseline:
+# the subject imports the compiler's own front end (checker.fern pulls in
+# parser.fern pulls in lexer.fern), so editing those changes what is compiled as
+# well as what compiles it. Point FERN_ALLOC_SUBJECT at something outside the
+# edit, or compare two compiler binaries against one fixed checkout.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+REPORT="${1:-/dev/stdout}"
+
+# The module compiled to produce the numbers. checker.fern is the workload
+# scripts/cliff-bench and docs/LOCAL-DEV-LOOP.md both quote, so keep it unless
+# the baseline is regenerated in the same commit.
+SUBJECT="${FERN_ALLOC_SUBJECT:-examples/self_host/checker.fern}"
+
+case "$(uname -m)" in
+  x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
+  aarch64 | arm64) ARCH=aarch64; TARGET=arm64-linux ;;
+  *) echo "selfhost-alloc-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
+esac
+
+if [ ! -x bin/fern ]; then
+  echo "selfhost-alloc-bench: building bin/fern" >&2
+  go build -o bin/fern ./cmd/fern
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# FERN_LEAKCHECK is read when the compiler EMITS a program, so the counters have
+# to be baked into this build of the self-host compiler. It is therefore its own
+# binary, never bin/fern-selfhost, which callers expect to be the plain one.
+echo "selfhost-alloc-bench: building the instrumented self-host compiler" >&2
+FERN_LEAKCHECK=1 ./bin/fern -target "$TARGET" -o "$work/fern-selfhost-lc" \
+  examples/self_host/fern.fern
+chmod +x "$work/fern-selfhost-lc"
+
+# A compile that died still prints a tally, covering only the fraction of the
+# module it reached — which would read as a large improvement. The status is the
+# only thing separating the two, so the run is not allowed to fail.
+set +e
+"$work/fern-selfhost-lc" -target "$TARGET" -emit asm "$PWD/$SUBJECT" \
+  "$PWD/internal/stdlib" -o "$work/out.s" > /dev/null 2> "$work/lc"
+status=$?
+set -e
+if [ "$status" -ne 0 ]; then
+  echo "selfhost-alloc-bench: the self-host compiler failed on $SUBJECT (exit $status);" \
+       "any tally below covers only the part it compiled" >&2
+  sed -n '1,20p' "$work/lc" >&2
+  exit 1
+fi
+
+# The line is `leakcheck: allocs=N frees=N live_bytes=N`. A missing line means
+# the diagnostic was compiled out, so fail loudly rather than report a green zero.
+allocs="$(sed -n 's/.*allocs=\([0-9]*\).*/\1/p' "$work/lc" | head -1)"
+frees="$(sed -n 's/.*frees=\([0-9]*\).*/\1/p' "$work/lc" | head -1)"
+if [ -z "$allocs" ] || [ -z "$frees" ]; then
+  echo "selfhost-alloc-bench: no leakcheck report from the self-host compiler on $SUBJECT" >&2
+  sed -n '1,20p' "$work/lc" >&2
+  exit 1
+fi
+
+# Peak RSS, if this host delegates cgroups. The uninstrumented compiler is the
+# one measured: the leakcheck counters themselves cost memory.
+# Peak RSS, if this host delegates cgroups. Two things make the difference
+# between a steady number and a drifting one, both learned by watching it
+# drift: the cgroup is FRESH per run (a v1 memory cgroup charges page cache to
+# whoever faulted it in, so a reused one keeps climbing across runs), and the
+# emitted asm goes to /dev/null (8 MB of it is otherwise charged as cache).
+# The uninstrumented compiler is the one measured — the leakcheck counters cost
+# memory themselves. Deterministic to a megabyte across runs on one host.
+peak=""
+cgbase=""
+for base in /sys/fs/cgroup/memory /sys/fs/cgroup; do
+  [ -d "$base" ] && [ -w "$base" ] && cgbase="$base" && break
+done
+if [ -n "$cgbase" ]; then
+  cg="$cgbase/fern-alloc-bench.$$"
+  if mkdir -p "$cg" 2>/dev/null; then
+    ./bin/fern -target "$TARGET" -o "$work/fern-selfhost" examples/self_host/fern.fern
+    chmod +x "$work/fern-selfhost"
+    bash -c 'echo $$ > "$1/cgroup.procs"; shift; exec "$@"' _ "$cg" \
+      "$work/fern-selfhost" -target "$TARGET" -emit asm "$PWD/$SUBJECT" \
+      "$PWD/internal/stdlib" -o /dev/null > /dev/null 2>&1 || true
+    for f in memory.peak memory.max_usage_in_bytes; do
+      [ -f "$cg/$f" ] && peak="$(cat "$cg/$f" 2>/dev/null || true)" && break
+    done
+    rmdir "$cg" 2>/dev/null || true
+  fi
+fi
+
+{
+  echo "# scripts/selfhost-alloc-bench report — arch $ARCH, subject $SUBJECT"
+  printf '%s/checker.allocs\t%s\n' "$ARCH" "$allocs"
+  printf '%s/checker.frees\t%s\n' "$ARCH" "$frees"
+  if [ -n "$peak" ] && [ "$peak" != "0" ]; then
+    printf '%s/checker.peak_rss_bytes\t%s\n' "$ARCH" "$peak"
+  else
+    echo "selfhost-alloc-bench: no delegated cgroup — peak RSS not reported" >&2
+  fi
+} > "$REPORT"
