@@ -2970,13 +2970,6 @@ type Match struct {
 	// it back to re-render the original form.
 	// Mirrors the self-host parser's StmtMatch.origin.
 	Origin string
-	// Sugar records the arms as the PROGRAMMER wrote them, kept when the
-	// nested-pattern desugar rewrote them into merged arms plus an inner
-	// match. Read by the printer only — the role Block.Sugar plays for
-	// `for … in …` — and nil when no arm nested, so an ordinary match
-	// carries nothing extra. The walk skips it: every body it holds is the
-	// same node the lowered arms already carry.
-	Sugar []*MatchArm
 }
 
 // TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
@@ -3005,6 +2998,11 @@ type TuplePatElem struct {
 	// per-payload load width.
 	VariantBindings     []string
 	VariantBindingTypes []Type
+	// VariantFieldNames runs parallel to VariantBindings for a
+	// named-field variant sub-pattern (`Some(Rect { w, h })`): the field
+	// projected for each binding. nil for the positional form. Mirrors
+	// MatchArm.FieldNames, which is the same list at the arm position.
+	VariantFieldNames []string
 	// VariantPayloads runs parallel to VariantBindings: a non-nil entry is
 	// a SUB-PATTERN matched against that payload rather than a binder —
 	// `(A(Ok(n)), y)`. The slot's VariantBindings entry is then empty and
@@ -3022,6 +3020,15 @@ type TuplePatElem struct {
 	// IR picks the right per-element load width. Nil for the other forms.
 	Nested      []TuplePatElem
 	NestedTypes []Type
+	// RangeHi / RangeInclusive carry a range pattern `lo..hi` / `lo..=hi`
+	// on this position, with Literal as the low bound — see
+	// MatchArm.RangeHi. A payload slot has always accepted one; sharing the
+	// node gives a tuple element the same spelling (#7524).
+	RangeHi        Expr
+	RangeInclusive bool
+	// AtBinding is the `n` in `n @ <pattern>` at this position: the whole
+	// value here is also bound to `n`, alongside whatever the pattern binds.
+	AtBinding string
 }
 
 // MatchArm is one pattern → body pair. The Bindings are the
@@ -3094,33 +3101,22 @@ type MatchArm struct {
 	// matched value is also bound to `n` (with the scrutinee's type) in the
 	// arm scope, alongside whatever <pattern> binds. Empty for plain patterns.
 	AtBinding string
-	// SlotBinderName is set only on the synthetic inner-match wildcard arm
-	// the nested-pattern desugar builds for a flat sibling (`Wrap(x)` beside
-	// `Wrap(Ok2(n))`): it is the name that sibling bound the whole payload
-	// slot to. Carried so the checker can apply the payload-less-variant
-	// rule to it — a merged sibling reaches the checker as a wildcard, not
-	// as a payload binding. Inert everywhere else.
-	SlotBinderName string
-	// FallConsumed marks a trailing unguarded `_` arm whose body the
-	// nested-pattern desugar also COPIED into a preceding merged arm's
-	// inner match, as that match's wildcard. When the merged arm's own
-	// pattern covers every value — a struct pattern always does, a struct
-	// having one shape — this arm is then dead by construction of the
-	// desugar rather than by anything the programmer wrote, so the
-	// reachability check must not call it unreachable. It still counts
-	// for exhaustiveness: the copy is what makes the inner match total.
-	FallConsumed bool
-	// Sub runs parallel to Bindings: a non-nil entry is the SUB-PATTERN
-	// matched against that payload slot rather than a binder —
-	// `Some(Ok(n))` — and Bindings[i] is then the synthetic temp the
-	// nested-pattern desugar binds the slot to. Recursive, so
-	// `Some(Ok(Some(x)))` is expressible at every depth.
+	// Payloads runs parallel to Bindings: a non-nil entry is the
+	// SUB-PATTERN matched against that payload slot rather than a binder —
+	// `Some(Ok(n))`. Bindings[i] is then the empty name, and the
+	// sub-pattern supplies whatever the slot binds.
 	//
-	// Read by the PRINTER only, which is the whole reason it exists: the
-	// desugar has already turned the nesting into flat arms plus an inner
-	// match for every other stage, and without this the formatter had
-	// nothing left to reprint but that lowering — writing `__nest0` into
-	// the user's source, permanently under `-fmt -w`. The walk skips it.
+	// A payload slot is a TuplePatElem, the same recursive pattern node a
+	// tuple element is, so a slot can be a binder, `_`, a literal, a
+	// variant with its own payload sub-patterns, or a tuple, to any depth.
+	// Sharing that node is what lets the arm and tuple paths share their
+	// test/bind machinery instead of each growing a notion of nesting.
+	//
+	// Arms stay FLAT and are tried in source order, so a sub-pattern that
+	// fails falls to the NEXT ARM. That is what the parse-time merge this
+	// replaced could not express: it collapsed a run of same-variant arms
+	// into one arm plus an inner match, whose wildcard was the outer `_`,
+	// so "the next arm" did not survive (#7524).
 	// EnumName and VariantIndex are the arm's RESOLUTION: the enum the
 	// pattern's variant belongs to, and its ordinal in that enum's
 	// declaration. Stamped by the checker, which computes both while
@@ -3135,15 +3131,14 @@ type MatchArm struct {
 	// or a tuple / struct / literal pattern — never "not yet resolved".
 	EnumName     string
 	VariantIndex int
-	Sub          []*MatchArm
+	Payloads     []*TuplePatElem
 	// AltCont marks an arm that continues the previous one's or-pattern
 	// alternative list: `A | B => …` parses to one arm per alternative,
 	// with the guard and body CLONED into each, and nothing else records
 	// that they were written as one arm.
 	//
-	// Set on Match.Sugar's arms only — never on the lowered arms, which
-	// are independent by construction — so like Sugar itself it is read by
-	// the printer and skipped by the walk.
+	// Read by the printer, which rejoins the alternatives; the arms
+	// themselves are independent by construction.
 	AltCont bool
 	Body    *Block
 }
@@ -3168,9 +3163,6 @@ type MatchExpr struct {
 	// StructMatch mirrors Match.StructMatch: the scrutinee struct type
 	// name when the arms are struct patterns `S { x, y }`. Empty otherwise.
 	StructMatch string
-	// Sugar mirrors Match.Sugar: the arms as written, kept when the
-	// nested-pattern desugar rewrote them. Printer-only, walk-skipped.
-	Sugar []*MatchExprArm
 }
 
 // MatchExprArm is the expression-form arm. Body is an Expr; all
@@ -3197,31 +3189,15 @@ type MatchExprArm struct {
 	Guard      Expr
 	// AtBinding — the `n` in `n @ <pattern>`; see MatchArm.AtBinding.
 	AtBinding string
-	// SlotBinderName is set only on the synthetic inner-match wildcard arm
-	// the nested-pattern desugar builds for a flat sibling (`Wrap(x)` beside
-	// `Wrap(Ok2(n))`): it is the name that sibling bound the whole payload
-	// slot to. Carried so the checker can apply the payload-less-variant
-	// rule to it — a merged sibling reaches the checker as a wildcard, not
-	// as a payload binding. Inert everywhere else.
-	SlotBinderName string
-	// FallConsumed marks a trailing unguarded `_` arm whose body the
-	// nested-pattern desugar also COPIED into a preceding merged arm's
-	// inner match, as that match's wildcard. When the merged arm's own
-	// pattern covers every value — a struct pattern always does, a struct
-	// having one shape — this arm is then dead by construction of the
-	// desugar rather than by anything the programmer wrote, so the
-	// reachability check must not call it unreachable. It still counts
-	// for exhaustiveness: the copy is what makes the inner match total.
-	FallConsumed bool
 	// EnumName / VariantIndex mirror MatchArm's — see there. Stamped by
 	// the checker on the expression form's arms for the same reason.
 	EnumName     string
 	VariantIndex int
-	// Sub mirrors MatchArm.Sub: the payload sub-patterns as written,
-	// parallel to Bindings. Printer-only, walk-skipped.
-	Sub []*MatchExprArm
+	// Payloads mirrors MatchArm.Payloads: the payload sub-patterns,
+	// parallel to Bindings. See there.
+	Payloads []*TuplePatElem
 	// AltCont mirrors MatchArm.AltCont: this arm continues the previous
-	// one's `|` alternative list. Set on MatchExpr.Sugar's arms only.
+	// one's `|` alternative list.
 	AltCont bool
 	Body    Expr
 }

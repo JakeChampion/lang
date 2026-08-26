@@ -1670,12 +1670,13 @@ function f(p: P): i32 { return match (p) { P { x: 0, y } => y, P { x, y } => x +
 	}
 }
 
-// The merged arm carries ONE field list and one temp per slot, so arms in a
-// nested-field group that project different fields would bind wrong values.
-// That is a diagnostic, not a silent miscompile — a positional group cannot
-// hit it because a variant's payload arity is fixed.
-func TestStructFieldSubPatternFieldListsMustAgree(t *testing.T) {
-	_, err := Parse(`struct P { x: i32, y: i32 }
+// Arms of one struct match may project DIFFERENT field lists. The merge
+// desugar could not express that — it carried one field list and one temp per
+// slot for the whole group, so differing arms would have bound wrong values
+// and were rejected. Flat arms each carry their own list, so the restriction
+// is gone with the desugar (#7524).
+func TestStructArmsMayProjectDifferentFieldLists(t *testing.T) {
+	f, err := Parse(`struct P { x: i32, y: i32 }
 function f(p: P): i32 {
     match (p) {
         P { x: 0, y } => { return y; },
@@ -1683,11 +1684,24 @@ function f(p: P): i32 {
         _ => { return 0; },
     }
 }`)
-	if err == nil {
-		t.Fatal("want a diagnostic for mismatched field lists, got none")
+	if err != nil {
+		t.Fatalf("should parse: %v", err)
 	}
-	if !strings.Contains(err.Error(), "same fields in the same order") {
-		t.Errorf("want the field-list diagnostic, got: %v", err)
+	m, ok := f.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Match; got %T", f.Funcs[0].Body.Stmts[0])
+	}
+	if len(m.Arms) != 3 {
+		t.Fatalf("want 3 flat arms, got %d", len(m.Arms))
+	}
+	if got := m.Arms[0].FieldNames; len(got) != 2 {
+		t.Errorf("arm 0 should project both fields, got %v", got)
+	}
+	if got := m.Arms[1].FieldNames; len(got) != 1 || got[0] != "x" {
+		t.Errorf("arm 1 should project only x, got %v", got)
+	}
+	if m.Arms[0].Payloads == nil || m.Arms[0].Payloads[0] == nil {
+		t.Error("arm 0 field x should carry a literal sub-pattern")
 	}
 }
 
@@ -3874,18 +3888,23 @@ function f(w: Nest): i32 {
 		t.Error("bare form must not desugar to an inner match — the parser cannot tell binder from variant")
 	}
 
+	// The paren form IS a sub-pattern: the slot binds nothing and the arm
+	// carries the pattern on Payloads. The body stays the body — the nesting
+	// no longer becomes an inner match (#7524).
 	paren := armOf(t, `match (w) { Wrap(Err2()) => { return 9; }, _ => { return 1; } }`)
-	if len(paren.Bindings) != 1 || paren.Bindings[0] == "Err2" {
-		t.Errorf("paren form Bindings = %v, want a single synthetic temp", paren.Bindings)
+	if len(paren.Bindings) != 1 || paren.Bindings[0] != "" {
+		t.Errorf("paren form Bindings = %v, want one empty name (the sub-pattern binds instead)", paren.Bindings)
+	}
+	if len(paren.Payloads) != 1 || paren.Payloads[0] == nil {
+		t.Fatalf("paren form should carry a payload sub-pattern, got %v", paren.Payloads)
+	}
+	if got := paren.Payloads[0]; got.VariantName != "Err2" || len(got.VariantBindings) != 0 {
+		t.Errorf("sub-pattern = %q/%v, want the payload-less variant Err2", got.VariantName, got.VariantBindings)
 	}
 	if len(paren.Body.Stmts) != 1 {
-		t.Fatalf("paren form body should be the inner match alone, got %d stmts", len(paren.Body.Stmts))
+		t.Fatalf("paren form body should be the arm body unchanged, got %d stmts", len(paren.Body.Stmts))
 	}
-	inner, ok := paren.Body.Stmts[0].(*ast.Match)
-	if !ok {
-		t.Fatalf("paren form body should re-match the payload; got %T", paren.Body.Stmts[0])
-	}
-	if inner.Arms[0].VariantName != "Err2" || len(inner.Arms[0].Bindings) != 0 {
-		t.Errorf("inner arm = %q/%v, want the payload-less variant Err2", inner.Arms[0].VariantName, inner.Arms[0].Bindings)
+	if _, nested := paren.Body.Stmts[0].(*ast.Match); nested {
+		t.Error("paren form must not desugar to an inner match any more")
 	}
 }

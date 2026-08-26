@@ -6489,6 +6489,157 @@ func anyArmAtBinding(arms []*ast.MatchArm) bool {
 	return false
 }
 
+// structArmPayloads emits a struct arm's field SUB-PATTERN tests and binds
+// what they bind, branching to armEndD — the next arm — when one fails.
+// Returns the bind restore. Shares collectTupTestAt / tupleMatchBindAt with
+// the tuple and enum-arm paths: a field position is the same pattern grammar.
+func (b *builder) structArmPayloads(pos ast.Position, payloads []*ast.TuplePatElem, bindingTypes []ast.Type, offs []int32, scrSlot, armEndD int32) (func(), error) {
+	tm := &tupMatch{ptrSlot: scrSlot, scratch: map[string]string{}}
+	var levels [][]tupTest
+	for i, el := range payloads {
+		if el == nil || i >= len(offs) {
+			continue
+		}
+		if err := b.collectTupTestAt(*el, tupPath(nil, offs[i], armPayloadType(bindingTypes, i)), 0, &levels); err != nil {
+			return func() {}, err
+		}
+	}
+	if len(levels) > 0 {
+		ok := b.allocSlot()
+		b.locals[fmt.Sprintf("__struct_arm_ok_%d", ok)] = ok
+		b.scratchType[ok] = ast.BoolType{}
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: ok})
+		for _, lv := range levels {
+			if err := b.emitTupTestLevel(pos, tm, lv, false); err != nil {
+				return func() {}, err
+			}
+			b.openIf(BlockTypeVoid)
+		}
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.emit(Op{Kind: OpStoreLocal, I32: ok})
+		for range levels {
+			b.closeScope()
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: ok})
+		b.emit(Op{Kind: OpNot})
+		b.brTo(armEndD, true)
+	}
+	var restores []func()
+	for i, el := range payloads {
+		if el == nil || i >= len(offs) {
+			continue
+		}
+		bt := armPayloadType(bindingTypes, i)
+		b.tupleMatchBindAt(*el, bt, tm, tupPath(nil, offs[i], bt), &restores)
+	}
+	return func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
+	}, nil
+}
+
+// anyArmPayloads reports whether any arm carries a payload SUB-PATTERN.
+//
+// It forces the heap-form scrutinee, the way an `@` binding does: a
+// sub-pattern addresses bytes INSIDE the payload, and the pair-form fast path
+// splits the scrutinee into a (tag, payload) register pair with no box pointer
+// to address from.
+func anyArmPayloads(arms []*ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Payloads != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func anyArmPayloadsExpr(arms []*ast.MatchExprArm) bool {
+	for _, arm := range arms {
+		if arm.Payloads != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// armPayloadTest emits the tests for an arm's payload SUB-PATTERNS, leaving
+// one i32 boolean on the operand stack, and reports whether it emitted
+// anything (false = every slot is a plain binder, so the tag test alone
+// decides the arm).
+//
+// The payloads are addressed from the scrutinee box exactly as a tuple
+// pattern's elements are addressed from the tuple box, so this shares
+// collectTupTestAt / emitTupTestLevel with the tuple path rather than growing
+// a second notion of nesting. Depth 0 here is the payload itself: the caller
+// has already tested the tag, which is what licenses reading those bytes.
+func (b *builder) armPayloadTest(pos ast.Position, payloads []*ast.TuplePatElem, bindingTypes []ast.Type, tm *tupMatch) (bool, error) {
+	offs, _ := payloadLayout(bindingTypes, len(bindingTypes), b.ptrW)
+	var levels [][]tupTest
+	for i, el := range payloads {
+		if el == nil || i >= len(offs) {
+			continue
+		}
+		if err := b.collectTupTestAt(*el, tupPath(nil, offs[i], armPayloadType(bindingTypes, i)), 0, &levels); err != nil {
+			return false, err
+		}
+	}
+	if len(levels) == 0 {
+		return false, nil
+	}
+	if len(levels) == 1 {
+		return true, b.emitTupTestLevel(pos, tm, levels[0], false)
+	}
+	ok := b.allocSlot()
+	b.locals[fmt.Sprintf("__arm_match_ok_%d", ok)] = ok
+	b.scratchType[ok] = ast.BoolType{}
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: ok})
+	for _, lv := range levels {
+		if err := b.emitTupTestLevel(pos, tm, lv, false); err != nil {
+			return false, err
+		}
+		b.openIf(BlockTypeVoid)
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: ok})
+	for range levels {
+		b.closeScope()
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: ok})
+	return true, nil
+}
+
+// armPayloadBind extracts whatever an arm's payload sub-patterns bind. Runs
+// only after armPayloadTest passed, so every position it reads is one the
+// pattern already proved present.
+func (b *builder) armPayloadBind(payloads []*ast.TuplePatElem, bindingTypes []ast.Type, tm *tupMatch) func() {
+	offs, _ := payloadLayout(bindingTypes, len(bindingTypes), b.ptrW)
+	var restores []func()
+	for i, el := range payloads {
+		if el == nil || i >= len(offs) {
+			continue
+		}
+		bt := armPayloadType(bindingTypes, i)
+		b.tupleMatchBindAt(*el, bt, tm, tupPath(nil, offs[i], bt), &restores)
+	}
+	return func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
+	}
+}
+
+// armPayloadType is the declared type of payload slot i, defaulting to i32
+// when the checker left it unset.
+func armPayloadType(bindingTypes []ast.Type, i int) ast.Type {
+	if i < len(bindingTypes) && bindingTypes[i] != nil {
+		return bindingTypes[i]
+	}
+	return ast.NumberType{}
+}
+
 // emitStructMatch lowers a `match` on a struct-typed scrutinee (the checker
 // stamped n.StructMatch). Each arm is a struct pattern `S { x, y }` that
 // binds the named fields irrefutably, so the match is an if-chain: cache the
@@ -6553,11 +6704,8 @@ func (b *builder) emitStructMatch(n *ast.Match) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
 			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
 		}
+		fieldOffs := make([]int32, len(arm.Bindings))
 		for i, name := range arm.Bindings {
-			bt := ast.Type(ast.NumberType{})
-			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
-				bt = arm.BindingTypes[i]
-			}
 			field := name
 			if i < len(arm.FieldNames) && arm.FieldNames[i] != "" {
 				field = arm.FieldNames[i]
@@ -6566,6 +6714,26 @@ func (b *builder) emitStructMatch(n *ast.Match) error {
 			if !ok {
 				return fmt.Errorf("ir: struct match field %q not in %s layout (compiler bug)", field, st.Name)
 			}
+			fieldOffs[i] = off
+		}
+		restoreFieldPats := func() {}
+		if arm.Payloads != nil {
+			r, err := b.structArmPayloads(arm.P, arm.Payloads, arm.BindingTypes, fieldOffs, scrSlot, armEndD)
+			if err != nil {
+				return err
+			}
+			restoreFieldPats = r
+		}
+		for i, name := range arm.Bindings {
+			// A field carrying a sub-pattern bound through structArmPayloads.
+			if i < len(arm.Payloads) && arm.Payloads[i] != nil {
+				continue
+			}
+			bt := ast.Type(ast.NumberType{})
+			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				bt = arm.BindingTypes[i]
+			}
+			off := fieldOffs[i]
 			slot, restore := b.bindingSlotScoped(name, bt)
 			armRestores = append(armRestores, restore)
 			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
@@ -6587,6 +6755,7 @@ func (b *builder) emitStructMatch(n *ast.Match) error {
 		for i := len(armRestores) - 1; i >= 0; i-- {
 			armRestores[i]()
 		}
+		restoreFieldPats()
 		b.brTo(matchEndD, false)
 		b.closeScope()
 	}
@@ -6839,11 +7008,8 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
 			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
 		}
+		fieldOffs := make([]int32, len(arm.Bindings))
 		for i, name := range arm.Bindings {
-			bt := ast.Type(ast.NumberType{})
-			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
-				bt = arm.BindingTypes[i]
-			}
 			field := name
 			if i < len(arm.FieldNames) && arm.FieldNames[i] != "" {
 				field = arm.FieldNames[i]
@@ -6852,6 +7018,26 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 			if !ok {
 				return fmt.Errorf("ir: struct match-expr field %q not in %s layout (compiler bug)", field, st.Name)
 			}
+			fieldOffs[i] = off
+		}
+		restoreFieldPats := func() {}
+		if arm.Payloads != nil {
+			r, err := b.structArmPayloads(arm.P, arm.Payloads, arm.BindingTypes, fieldOffs, scrSlot, armEndD)
+			if err != nil {
+				return err
+			}
+			restoreFieldPats = r
+		}
+		for i, name := range arm.Bindings {
+			// A field carrying a sub-pattern bound through structArmPayloads.
+			if i < len(arm.Payloads) && arm.Payloads[i] != nil {
+				continue
+			}
+			bt := ast.Type(ast.NumberType{})
+			if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				bt = arm.BindingTypes[i]
+			}
+			off := fieldOffs[i]
 			slot, restore := b.bindingSlotScoped(name, bt)
 			armRestores = append(armRestores, restore)
 			b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
@@ -6874,6 +7060,7 @@ func (b *builder) emitStructMatchExpr(n *ast.MatchExpr) error {
 		for i := len(armRestores) - 1; i >= 0; i-- {
 			armRestores[i]()
 		}
+		restoreFieldPats()
 		b.brTo(matchEndD, false)
 		b.closeScope()
 	}
@@ -7007,6 +7194,12 @@ type tupTest struct {
 	lit      ast.Expr
 	variant  string
 	enumName string
+	// hi / inclusive turn the literal half into a RANGE test — `lit` is then
+	// the low bound and the position matches `lo <= v < hi` (`<=` when
+	// inclusive), the same compound bound emitLiteralMatch builds for a
+	// `lo..hi` arm. nil for a plain equality test.
+	hi        ast.Expr
+	inclusive bool
 }
 
 // tupleMatchArmTest emits the arm's element test, leaving one i32 boolean on
@@ -7078,7 +7271,7 @@ func (b *builder) collectTupTestAt(el ast.TuplePatElem, path []tupPathStep, dept
 		return b.collectTupTests(el.Nested, el.NestedTypes, noffs, path, depth, levels)
 	}
 	if el.Literal != nil {
-		addTupTest(levels, depth, tupTest{path: path, lit: el.Literal})
+		addTupTest(levels, depth, tupTest{path: path, lit: el.Literal, hi: el.RangeHi, inclusive: el.RangeInclusive})
 		return nil
 	}
 	if el.VariantName == "" {
@@ -7130,14 +7323,33 @@ func (b *builder) emitTupTestLevel(arm ast.Position, tm *tupMatch, tests []tupTe
 			continue
 		}
 		elT := t.path[len(t.path)-1].t
-		eq := ast.Expr(&ast.Binary{
-			P:           arm,
-			Op:          "==",
-			Left:        &ast.Ident{P: arm, Name: b.tupleMatchElemIdent(tm, t.path, cache)},
-			Right:       t.lit,
-			IsStringCmp: isStringType(elT),
-			IsFloat:     isFloatType(elT),
-		})
+		name := b.tupleMatchElemIdent(tm, t.path, cache)
+		var eq ast.Expr
+		if t.hi != nil {
+			// `lo..hi` / `lo..=hi` → `v >= lo && v <op> hi`, the bound pair
+			// emitLiteralMatch builds for a range arm.
+			hiOp := "<"
+			if t.inclusive {
+				hiOp = "<="
+			}
+			eq = &ast.Binary{
+				P:  arm,
+				Op: "&&",
+				Left: &ast.Binary{P: arm, Op: ">=",
+					Left: &ast.Ident{P: arm, Name: name}, Right: t.lit, IsFloat: isFloatType(elT)},
+				Right: &ast.Binary{P: arm, Op: hiOp,
+					Left: &ast.Ident{P: arm, Name: name}, Right: t.hi, IsFloat: isFloatType(elT)},
+			}
+		} else {
+			eq = &ast.Binary{
+				P:           arm,
+				Op:          "==",
+				Left:        &ast.Ident{P: arm, Name: name},
+				Right:       t.lit,
+				IsStringCmp: isStringType(elT),
+				IsFloat:     isFloatType(elT),
+			}
+		}
 		if cond == nil {
 			cond = eq
 		} else {
@@ -8220,7 +8432,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// An `@` binding needs the whole scrutinee box, so it forces the
 		// heap-form path (the pair-form fast path splits the value into a
 		// (tag, payload) pair with no single box pointer to bind).
-		pairFormScrutinee := b.isPairFormScrutinee(n.Tag) && !anyArmAtBinding(n.Arms)
+		pairFormScrutinee := b.isPairFormScrutinee(n.Tag) && !anyArmAtBinding(n.Arms) && !anyArmPayloads(n.Arms)
 		var (
 			ptrSlot, tagSlot, payloadSlot int32
 		)
@@ -8374,6 +8586,24 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.brTo(b.depth, true) // br 0 = exit inner = match
 			b.brTo(outerArmD, false)
 			b.closeScope() // end inner — matched path lands here
+			// Payload SUB-PATTERNS are tested here: after the tag test that
+			// licenses reading the payload's bytes, and before any binding.
+			// A failure branches to outerArmD — the NEXT ARM — which is what
+			// keeping arms flat buys, and what the parse-time merge this
+			// replaced could not express (#7524).
+			restoreArmPayloads := func() {}
+			if arm.Payloads != nil {
+				ptm := &tupMatch{ptrSlot: ptrSlot, scratch: map[string]string{}}
+				tested, terr := b.armPayloadTest(arm.P, arm.Payloads, arm.BindingTypes, ptm)
+				if terr != nil {
+					return terr
+				}
+				if tested {
+					b.emit(Op{Kind: OpNot})
+					b.brTo(outerArmD, true)
+				}
+				restoreArmPayloads = b.armPayloadBind(arm.Payloads, arm.BindingTypes, ptm)
+			}
 			// Bind payload locals. arm.BindingTypes is filled by
 			// the checker with the substituted concrete type (so
 			// generic enums instantiated at `Option[number]` give
@@ -8392,6 +8622,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 			payReleaseSlot := int32(-1)
 			var payReleaseType ast.Type
 			for i, name := range arm.Bindings {
+				// A slot carrying a sub-pattern binds nothing itself — its
+				// pattern did, in armPayloadBind above — and its Bindings
+				// entry is the empty name, which must not reach the binder
+				// path: that would declare a nameless local.
+				if i < len(arm.Payloads) && arm.Payloads[i] != nil {
+					continue
+				}
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
@@ -8550,6 +8787,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			for i := len(armRestores) - 1; i >= 0; i-- {
 				armRestores[i]()
 			}
+			restoreArmPayloads()
 			b.brTo(matchEndD, false) // jump past remaining arms
 			b.closeScope()           // end outer per-arm block
 		}
@@ -9180,9 +9418,31 @@ func (b *builder) expr(e ast.Expr) error {
 			b.brTo(b.depth, true)
 			b.brTo(outerArmD, false)
 			b.closeScope() // matched path lands here
+			// Payload sub-patterns — see the statement form. A failure
+			// branches to outerArmD, the next arm.
+			restoreArmPayloads := func() {}
+			if arm.Payloads != nil {
+				ptm := &tupMatch{ptrSlot: ptrSlot, scratch: map[string]string{}}
+				tested, terr := b.armPayloadTest(arm.P, arm.Payloads, arm.BindingTypes, ptm)
+				if terr != nil {
+					return terr
+				}
+				if tested {
+					b.emit(Op{Kind: OpNot})
+					b.brTo(outerArmD, true)
+				}
+				restoreArmPayloads = b.armPayloadBind(arm.Payloads, arm.BindingTypes, ptm)
+			}
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			exprArmRestores := []func(){}
 			for i, name := range arm.Bindings {
+				// A slot carrying a sub-pattern binds nothing itself — its
+				// pattern did, in armPayloadBind above — and its Bindings
+				// entry is the empty name, which must not reach the binder
+				// path: that would declare a nameless local.
+				if i < len(arm.Payloads) && arm.Payloads[i] != nil {
+					continue
+				}
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
@@ -9217,6 +9477,7 @@ func (b *builder) expr(e ast.Expr) error {
 			for i := len(exprArmRestores) - 1; i >= 0; i-- {
 				exprArmRestores[i]()
 			}
+			restoreArmPayloads()
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 			b.brTo(matchEndD, false)
 			b.closeScope()

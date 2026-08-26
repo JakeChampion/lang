@@ -1119,14 +1119,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		// re-renders as the binding form the source spelled: the leading
 		// arms are the pattern alternatives, the trailing wildcard arm is
 		// the else.
-		// Sugar holds the arms as written, when the nested-pattern desugar
-		// rewrote them into a merged arm plus an inner match. Reprinting the
-		// lowering instead would put the desugar's `__nest` temps into the
-		// user's source — permanently, under `-fmt -w`.
 		arms := x.Arms
-		if x.Sugar != nil {
-			arms = x.Sugar
-		}
 		if x.Origin != "" && len(arms) >= 2 {
 			success, els := arms[0].Body, arms[len(arms)-1].Body
 			if x.Origin == ast.OriginLetElse {
@@ -1251,14 +1244,13 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 					f.b.WriteString(", ")
 				}
 				// A field carrying a SUB-PATTERN prints `field: <pat>`; the
-				// binder in Bindings[i] is the desugar's temp, not a name the
-				// source spelled.
-				if sub := armSub(arm, i); sub != nil {
+				// slot's Bindings entry is empty, the pattern binds instead.
+				if i < len(arm.Payloads) && arm.Payloads[i] != nil {
 					if i < len(arm.FieldNames) {
 						f.b.WriteString(arm.FieldNames[i])
 						f.b.WriteString(": ")
 					}
-					f.formatArmPattern(sub)
+					f.formatTuplePatElem(*arm.Payloads[i])
 					continue
 				}
 				// `S { field: local }` renames; the shorthand `S { x }`
@@ -1282,8 +1274,8 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 				if i > 0 {
 					f.b.WriteString(", ")
 				}
-				if sub := armSub(arm, i); sub != nil {
-					f.formatArmPattern(sub)
+				if i < len(arm.Payloads) && arm.Payloads[i] != nil {
+					f.formatTuplePatElem(*arm.Payloads[i])
 					continue
 				}
 				f.b.WriteString(b)
@@ -1291,15 +1283,6 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 			f.b.WriteByte(')')
 		}
 	}
-}
-
-// armSub returns the sub-pattern this arm matches against payload slot i, or
-// nil when the slot is a plain binder.
-func armSub(arm *ast.MatchArm, i int) *ast.MatchArm {
-	if i >= len(arm.Sub) {
-		return nil
-	}
-	return arm.Sub[i]
 }
 
 // formatTuplePatElems renders a tuple pattern `(p0, p1, …)`.
@@ -1318,6 +1301,10 @@ func (f *formatter) formatTuplePatElems(elems []ast.TuplePatElem) {
 // a variant's payload slot are both the same grammar, so `(a, (b, c))` and
 // `(A(Ok(n)), y)` round-trip at any depth.
 func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
+	if el.AtBinding != "" {
+		f.b.WriteString(el.AtBinding)
+		f.b.WriteString(" @ ")
+	}
 	switch {
 	case el.Nested != nil:
 		f.formatTuplePatElems(el.Nested)
@@ -1325,16 +1312,35 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 		f.b.WriteByte('_')
 	case el.Literal != nil:
 		f.formatExpr(el.Literal, precLowest)
+		if el.RangeHi != nil {
+			f.b.WriteString("..")
+			if el.RangeInclusive {
+				f.b.WriteByte('=')
+			}
+			f.formatExpr(el.RangeHi, precLowest)
+		}
 	case el.VariantName != "":
 		if el.VariantModule != "" {
 			f.b.WriteString(el.VariantModule)
 			f.b.WriteByte('.')
 		}
 		f.b.WriteString(el.VariantName)
-		f.b.WriteByte('(')
+		open, close := "(", ")"
+		if el.VariantFieldNames != nil {
+			open, close = " { ", " }"
+		}
+		f.b.WriteString(open)
 		for j, vb := range el.VariantBindings {
 			if j > 0 {
 				f.b.WriteString(", ")
+			}
+			if j < len(el.VariantFieldNames) {
+				f.b.WriteString(el.VariantFieldNames[j])
+				if el.VariantFieldNames[j] != vb {
+					f.b.WriteString(": ")
+					f.b.WriteString(vb)
+				}
+				continue
 			}
 			if j < len(el.VariantPayloads) && el.VariantPayloads[j] != nil {
 				f.formatTuplePatElem(*el.VariantPayloads[j])
@@ -1342,7 +1348,7 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 			}
 			f.b.WriteString(vb)
 		}
-		f.b.WriteByte(')')
+		f.b.WriteString(close)
 	default:
 		f.b.WriteString(el.Name)
 	}
@@ -1358,18 +1364,11 @@ func (f *formatter) formatExprArmPattern(arm *ast.MatchExprArm) {
 }
 
 // stmtShapedArm adapts an expression-form arm's PATTERN half to the statement
-// shape the one renderer takes. Recursive through Sub, so a payload
-// sub-pattern reaches the same renderer the statement form uses.
+// shape the one renderer takes. Payloads needs no translation: a payload slot
+// is a TuplePatElem in both forms.
 func stmtShapedArm(arm *ast.MatchExprArm) *ast.MatchArm {
 	if arm == nil {
 		return nil
-	}
-	var sub []*ast.MatchArm
-	if arm.Sub != nil {
-		sub = make([]*ast.MatchArm, len(arm.Sub))
-		for i := range arm.Sub {
-			sub[i] = stmtShapedArm(arm.Sub[i])
-		}
 	}
 	return &ast.MatchArm{
 		P:              arm.P,
@@ -1385,7 +1384,7 @@ func stmtShapedArm(arm *ast.MatchExprArm) *ast.MatchArm {
 		RangeInclusive: arm.RangeInclusive,
 		TupleElems:     arm.TupleElems,
 		AtBinding:      arm.AtBinding,
-		Sub:            sub,
+		Payloads:       arm.Payloads,
 	}
 }
 
@@ -1778,11 +1777,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") { ")
-		// See the statement form: Sugar is the arms as written.
 		exprArms := x.Arms
-		if x.Sugar != nil {
-			exprArms = x.Sugar
-		}
 		for i := 0; i < len(exprArms); i++ {
 			arm := exprArms[i]
 			if i > 0 {
