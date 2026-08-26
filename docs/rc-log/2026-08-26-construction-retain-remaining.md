@@ -7,8 +7,10 @@ updated when the enum-array group closed at 9. The per-slice records are
 `2026-08-26-arrstruct-append-built-producer.md`,
 `2026-08-26-arrstruct-counted-field-share.md`,
 `2026-08-26-arrenum-producer-and-append.md`,
-`2026-08-26-arrenum-counted-field-share.md` and
-`2026-08-26-arrenum-fieldread-share.md`. This one carries the map of what
+`2026-08-26-arrenum-counted-field-share.md`,
+`2026-08-26-arrenum-fieldread-share.md`,
+`2026-08-26-arrenum-borrowed-argument.md` and
+`2026-08-26-arrstruct-borrowed-argument.md`. This one carries the map of what
 remains, so the next attempt starts from measurements rather than a reading.
 
 ## The 9 remaining cells
@@ -19,7 +21,7 @@ remains, so the next attempt starts from measurements rather than a reading.
 | `str_arr` | `__local` `__param` `__fieldread` | the same verdict, string-array flavour |
 | `enum` | `__param` | the callee's field STORE, not the param slot |
 | `enum_arr` | `__param` | same store; its borrowing-ARGUMENT half is closed |
-| `struct_arr` | `__param` | same store, plus the borrowing-argument half still open |
+| `struct_arr` | `__param` | same store; its borrowing-ARGUMENT half is closed too |
 
 Two natural groupings, and both are bigger than one cell:
 
@@ -28,11 +30,13 @@ Two natural groupings, and both are bigger than one cell:
   says otherwise: the callee's param slot is not involved, and what leaks is the
   CALLER's local — a constant two objects however many times the callee runs.
   They split into two causes, neither of them one credit:
-  `enum_arr` / `struct_arr` lose their element walk merely by being PASSED to a
-  borrowing callee (`2026-08-26-arrenum-borrowed-argument.md` closes the enum
-  half; the struct half is the same shape behind its own escape walker), while
-  `str` / `str_arr` / `enum` are fine as arguments and leak only once the callee
-  STORES the param in a struct field — which needs the store to retain.
+  `enum_arr` / `struct_arr` lost their element walk merely by being PASSED to a
+  borrowing callee — both halves are now closed
+  (`2026-08-26-arrenum-borrowed-argument.md`,
+  `2026-08-26-arrstruct-borrowed-argument.md`) — while `str` / `str_arr` /
+  `enum` are fine as arguments and leak only once the callee STORES the param in
+  a struct field. **What is left in all five is that store**, which has to
+  retain; the argument half is no longer part of the question.
 - **`str` / `str_arr`, 6 of the 9**, hang off the whole-program STRFLDOK
   verdict, which `struct_routes_field_reclaim_at`'s header calls out as the thing
   every analysis deciding a string-field store must consult. Widest group; wants
@@ -47,6 +51,14 @@ past the enum-array group and are worth carrying into the `__param` and
 - **A base spread `T { ...base }` mints an uncounted co-owner**, so every counted
   share has to refuse in its presence. `LowerState.spread_sites` answers that
   both by holder name and by field type.
+- **The probe suite and the fixpoint have DISJOINT blind spots here, so neither
+  one being green is evidence.** `2026-08-26-arrstruct-borrowed-argument.md` is
+  the case: eleven hand-built probes, both oracles, and the whole `Arr*` sweep
+  all passed on a borrow question that segfaults gen2 in three fixpoint
+  programs. Reading `emit_arrstruct_deep_free` argued for the weaker question
+  and the argument was sound as far as it went — the gap was a handout the
+  compiler's own sources make and no probe reproduces. Run both instruments, and
+  when they disagree believe the failing one.
 - **`"NODEEP:"` and `"FLDCHECKED:"` are two arms of one verdict.** A block-scoped
   slot deep-drops only on the second, so flipping a box-only slot to a
   deep-dropping one means writing the witness, not merely revoking the marker.
