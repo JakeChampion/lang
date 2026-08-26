@@ -179,3 +179,51 @@ func TestSelfHostStrbufTakeReclaimLoop(t *testing.T) {
 		t.Errorf("strbuf take/drop loop exited %d, want 16 (the last drained length)", got)
 	}
 }
+
+// TestSelfHostMapRuntimeNeedGatedArm64 pins the same defect shape one bundle
+// over. arm64 marked `maps` at every map op site and then never read it: the
+// seven-helper bundle was keyed on `arr_push && str_eq` instead, which are
+// `maps`'s own declared dependencies. That proxy can never UNDER-emit, so it
+// was never a link failure — it over-emits, and any program that appends to an
+// array and compares two strings carried the whole map runtime with no map in
+// it. x86-64 has gated on `has_need("maps")` all along.
+func TestSelfHostMapRuntimeNeedGatedArm64(t *testing.T) {
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+
+	// Appends to an array AND compares two strings — the exact proxy condition
+	// the old gate keyed on — with no map anywhere.
+	const noMap = `function main(): i32 {
+    var xs: string[] = [];
+    xs = xs.append("a");
+    xs = xs.append("b");
+    if (xs[0] == xs[1]) { return 1; }
+    return xs.len() - 2;
+}`
+	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(noMap+"\n"), "-target", "arm64-linux"))
+	for _, proxy := range []string{"__fern_arr_push", "__fn___fern_str_eq"} {
+		if !strings.Contains(asm, proxy) {
+			t.Fatalf("the no-map program did not emit %s — the proxy condition is not met, so this test proves nothing", proxy)
+		}
+	}
+	for _, unwanted := range []string{"__fern_map_new:", "__fern_map_set:", "__fern_map_delete:"} {
+		if strings.Contains(asm, unwanted) {
+			t.Errorf("a program with no map still emits %s", unwanted)
+		}
+	}
+
+	// The other direction: a map-using program still gets the bundle.
+	const usesMap = `function main(): i32 {
+    var m: Map[string, i32] = Map {};
+    m = m.insert("k", 7);
+    return m.get_or("k", 0) - 7;
+}`
+	asm2 := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(usesMap+"\n"), "-target", "arm64-linux"))
+	for _, want := range []string{"__fern_map_new:", "__fern_map_set:", "__fern_map_get:"} {
+		if !strings.Contains(asm2, want) {
+			t.Errorf("a map-using arm64 program is missing %q — the need is not reaching the bundle", want)
+		}
+	}
+}

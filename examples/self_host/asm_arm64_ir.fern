@@ -5147,7 +5147,14 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
 // the fold helpers), the map helpers, the integer-math helpers, the remaining
 // string builtins, argv, random, and the subprocess primitives.
 function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-    if (s.has_need("arr_push") && s.has_need("str_eq")) {
+    // The map runtime, gated on the need its op sites mark — as x86-64 gates it.
+    // arm64 marked `maps` at every one of those sites and then never read it,
+    // keying the bundle on `arr_push && str_eq` instead. Those are `maps`'s own
+    // declared dependencies (runtime_need_deps), so the proxy could never
+    // under-emit — but it over-emits: any program that appends to an array and
+    // compares two strings carried the whole seven-helper bundle with no map
+    // anywhere in it.
+    if (s.has_need("maps")) {
         // __fern_map_new(x0 = capacity hint, ignored) → empty map box.
         s = s.write(".globl __fern_map_new\n");
         s = s.write(".type __fern_map_new, %function\n");
