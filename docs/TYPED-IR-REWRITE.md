@@ -133,7 +133,11 @@ leaves every `ty` empty and gets the structural walk unchanged.
 | `ExprFieldAccess.ty` | #5986 | `fa_type_tag` — the single leaf behind `expr_struct_type`, `expr_map_type_tag`, `infer_expr_width` and `expr_is_f64` / `_f32` / `_u32` / `_u64`; plus `cap_type_expr` at lift time |
 | `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
 | `ExprSlice.ty` | #5986 | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
-| `ExprIdent.ty` | this slice | `id_type_tag` — the leaf behind the `ExprIdent` arms of `expr_is_str` / `_bool` / `_f64` / `_u32` / `_u64` and `infer_expr_width`, plus `lower_i64`'s ExprIdent LOAD site |
+| `ExprIdent.ty` | #5986 | `id_type_tag` — the leaf behind the `ExprIdent` arms of `expr_is_str` / `_bool` / `_f64` / `_u32` / `_u64` and `infer_expr_width`, plus `lower_i64`'s ExprIdent LOAD site |
+| `ExprBinary.ty` / `ExprUnary.ty` | this slice | the composite operator-overload paths: `lower_expr`'s overload desugar (which now also stamps the ExprCall it builds), `lower_i64`'s binary and unary LOAD sites, and the binary / unary arms of `expr_is_str` / `_bool` / `_f64` / `_u32` / `_u64` and `infer_expr_width` |
+
+**Phase A's carrier set is complete** with these two — every node type #5986's
+table proposed now carries the checker's answer.
 
 ### What `ExprIdent.ty` is for: the half no slot carries
 
@@ -362,6 +366,72 @@ The tag stays valid across cloning because annotation runs on the ERASED form �
 a bare type parameter stamps `""`, so only concrete tags survive to be copied,
 which is the same reason `subst_expr` already carried it. Pinned by
 `TestSelfHostAnnotateIndexMonoIR_X86_64`.
+
+### The last carrier was blocked one level down, and the block was the point
+
+`ExprBinary` is the one carrier in #5986's table with no defect behind it, and
+the reason is worth stating: irlower's binary arms are **compositional**. They
+recurse into the operands (`expr_is_f64(b.left) || expr_is_f64(b.right)`), so
+they carry no name-keyed registry and have no missing-arm class. Ordinary
+arithmetic needs no tag and the tag is inert on it.
+
+The exception is a **composite operator overload**, where both operands are
+structs and the result is whatever the method returns:
+
+```fern
+struct V { x: f64, y: f64 }
+function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
+var d: f64 = p * q;               // f64 — and no walk over p / q can say so
+```
+
+Every scalar-returning overload — `f64`, `i64`, `string`, `boolean`, and the
+unary `neg` sibling — **bailed the IR path on both backends**, while native
+compiled them and the interpreter ran them. Two layers were responsible, and
+finding the lower one before building is what kept this slice honest:
+
+1. **irlower** asked `struct_ret_fns` whether the method existed. That registry
+   records only STRUCT returns, so a scalar-returning overload read `""` there
+   and the guard took it for "no such method" — refusing a valid program. The
+   `""` meant "a return I do not record", not "nothing is there". This is the
+   issue's thesis in its purest form: a registry that answers one kind of
+   question being read as though it answered all of them.
+2. **The self-host checker had no operator-overload arm at all.** `p * q` on
+   struct operands typed unknown and was rejected `E009`. So the obvious move —
+   add the carrier, read `b.ty` — would have stamped `""` on exactly the
+   expression whose type was missing and changed nothing.
+
+Point 2 is the one that matters for anyone extending this migration: **probe
+the checker before adding a carrier.** The check costs one `-check` run against
+the self-host binary and it is decisive. Here it turned a mechanical 36-site
+field addition into a checker fix plus a carrier, which is a different piece of
+work with a different risk profile.
+
+The checker fix mirrors what comparison operators already did: `==` and `<` on
+a composite have resolved through `Eq` / `Ord` via `cmp_method_receiver` for a
+long time, and arithmetic was simply the missing sibling. `binop_overload_ret` /
+`unop_overload_ret` reuse that same receiver resolution, and — deliberately —
+are the SINGLE place both `check_expr` and the `E009` diagnostic walk ask the
+question. That walk's own comment promises it "fires only where check_expr
+already rejects the operands", which holds only while the two read one rule;
+two copies of it is the drift this file documents everywhere else.
+
+Two further notes on the wiring:
+
+- **The registry stays.** A struct-returning overload still resolves through
+  `struct_ret_fns`, and the guard is `registry == "" && tag == ""`. That keeps
+  the unannotated build (`asm_ir_run`, the native compiler) byte-identical, and
+  the struct case is pinned by its own control so the tag cannot quietly
+  displace the walk.
+- **The predicate wiring is additive** (`walk || tag`), never tag-first. An
+  unsuffixed literal types `i32` in the self-host checker, so a tag-first width
+  leaf would NARROW a binary the operand walk had already widened to 64 — the
+  same hazard §"A carrier is only as good as the checker behind it" records for
+  `ExprIndex`, reached from a different direction.
+
+And the load-site rule from `ExprIndex.ty` bit once more, exactly as predicted:
+wiring `infer_expr_width` alone left `(p + q) % 100i64` reporting width 64 while
+`lower_i64`'s binary arm still recursed into the struct operands and bailed at
+the enclosing `as i32`. Both halves read the same tag now.
 
 ### A carrier is only as good as the checker behind it
 

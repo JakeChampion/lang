@@ -369,11 +369,12 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 left: rewrite_expr(b.left, ctx),
                 right: rewrite_expr(b.right, ctx),
                 line: b.line,
-                col: b.col
+                col: b.col,
+                ty: b.ty
             };
         },
         parser.ExprUnary(u) => {
-            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col };
+            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col, ty: u.ty };
         },
         parser.ExprIndex(x) => {
             return parser.ExprIndex {

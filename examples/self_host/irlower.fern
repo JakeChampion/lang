@@ -5083,7 +5083,9 @@ function expr_is_bool(e: parser.Expr, s: LowerState): boolean {
         // element WIDTH, and boolean-ness is not a width). #6117.
         parser.ExprIndex(ix) => { return expr_is_boolarr(ix.array, s) || ix.ty == "boolean"; },
         parser.ExprBinary(b) => {
-            return b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||";
+            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") { return true; }
+            // An arithmetic operator overload can return boolean too (#5986).
+            return b.ty == "boolean";
         },
         parser.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) { return false; }
@@ -5860,8 +5862,11 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             return id_type_tag(id, s) == "string";
         },
         parser.ExprBinary(b) => {
-            if (b.op == "+") { return expr_is_str(b.left, s) || expr_is_str(b.right, s); }
-            return false;
+            if (b.op == "+" && (expr_is_str(b.left, s) || expr_is_str(b.right, s))) { return true; }
+            // A composite operator overload returning string (#5986): the
+            // operand walk cannot see it — both operands are structs — so the
+            // checker's tag for the whole binary is the only carrier.
+            return b.ty == "string";
         },
         parser.ExprCall(c) => {
             // typed-IR (#5531): the annotate pass stamps c.ty with the checker's
@@ -7419,7 +7424,7 @@ pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: p
 // cast with the `as_u8` unary (how the parser desugars `x as u8`).
 function to_json_append_stmt(on: string, byte: parser.Expr): parser.Stmt {
     var oref: parser.Expr = parser.ExprIdent { name: on, line: 0, col: 0, ty: "" };
-    var casted: parser.Expr = parser.ExprUnary { op: "as_u8", operand: byte, line: 0, col: 0 };
+    var casted: parser.Expr = parser.ExprUnary { op: "as_u8", operand: byte, line: 0, col: 0, ty: "" };
     var app: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: oref, field: "append", line: 0, col: 0, ty: "" }, args: [casted], line: 0, col: 0, type_argc: 0, ty: "" };
     return parser.StmtAssign { target: on, value: app, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
@@ -7433,10 +7438,10 @@ function to_json_bytecopy_stmt(on: string, sn: string, kn: string): parser.Stmt 
     var kref: parser.Expr = parser.ExprIdent { name: kn, line: 0, col: 0, ty: "" };
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
-    var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0 };
+    var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0, ty: "" };
     var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref, unchecked: false, ty: "" };
     var app: parser.Stmt = to_json_append_stmt(on, elem);
-    var inc: parser.Stmt = parser.StmtAssign { target: kn, value: parser.ExprBinary { op: "+", left: kref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var inc: parser.Stmt = parser.StmtAssign { target: kn, value: parser.ExprBinary { op: "+", left: kref, right: one, line: 0, col: 0, ty: "" }, line: 0, col: 0, target_line: 0, target_col: 0 };
     return parser.StmtWhile { cond: cond, body: [app, inc], label: "", line: 0, is_loop: false };
 }
 
@@ -7457,8 +7462,8 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     var comma: parser.Expr = parser.ExprNumber { text: "44", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
-    var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0 };
-    var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0 };
+    var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0, ty: "" };
+    var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0, ty: "" };
     var noelse: parser.Stmt[] = [];
     var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" };
     // var $s = aref[$i].to_json();
@@ -7468,7 +7473,7 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     // var $k = 0;
     var dk: parser.Stmt = parser.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_str: false, fn_ret: "" };
     var copyl: parser.Stmt = to_json_bytecopy_stmt(on, sn, kn);
-    var inc: parser.Stmt = parser.StmtAssign { target: inm, value: parser.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var inc: parser.Stmt = parser.StmtAssign { target: inm, value: parser.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0, ty: "" }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var body: parser.Stmt[] = [ifc, dvs, dk, copyl, inc];
     return parser.StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false };
 }
@@ -7970,12 +7975,16 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprBinary(b) => {
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-                return expr_is_f64(b.left, s) || expr_is_f64(b.right, s);
+                if (expr_is_f64(b.left, s) || expr_is_f64(b.right, s)) { return true; }
             }
-            return false;
+            // A composite operator overload returning f64 — a dot product
+            // `function (a: V) mul(b: V): f64` (#5986). Both operands are
+            // structs, so the walk above answers false and only the binary's
+            // own tag names the result.
+            return b.ty == "f64";
         },
         parser.ExprUnary(u) => {
-            if (u.op == "-") { return expr_is_f64(u.operand, s); }
+            if (u.op == "-") { return expr_is_f64(u.operand, s) || u.ty == "f64"; }
             // `x as f64` evaluates to f64 (a float→int cast yields i32, so only
             // the to-float casts propagate float-ness).
             if (u.op == "as_f64" || u.op == "as_f32" || u.op == "as_float") { return true; }
@@ -8167,9 +8176,10 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
         parser.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return false; }
             // A shift's result type follows the LEFT (shifted) operand; arithmetic
-            // / bitwise is u32 if either side is.
-            if (b.op == "<<" || b.op == ">>") { return expr_is_u32(b.left, s); }
-            return expr_is_u32(b.left, s) || expr_is_u32(b.right, s);
+            // / bitwise is u32 if either side is. A composite overload returning
+            // u32 is reachable only through the binary's own tag (#5986).
+            if (b.op == "<<" || b.op == ">>") { return expr_is_u32(b.left, s) || b.ty == "u32"; }
+            return expr_is_u32(b.left, s) || expr_is_u32(b.right, s) || b.ty == "u32";
         },
         // A u32-returning CALL directly chained in an unsigned-sensitive op
         // (`f(a) >> 1`, `p.get() / 7`, `q.w() > x`) is a u32 value: a clean u32 in
@@ -8289,8 +8299,8 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return false; }
-            if (b.op == "<<" || b.op == ">>") { return expr_is_u64(b.left, s); }
-            return expr_is_u64(b.left, s) || expr_is_u64(b.right, s);
+            if (b.op == "<<" || b.op == ">>") { return expr_is_u64(b.left, s) || b.ty == "u64"; }
+            return expr_is_u64(b.left, s) || expr_is_u64(b.right, s) || b.ty == "u64";
         },
         // An erased-generic fn whose return mirrors argument i (`id[T](x: T): T`)
         // is u64 exactly when that argument is. infer_expr_width already tracks
@@ -8481,6 +8491,11 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         parser.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return 32; }
             if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) { return 64; }
+            // A composite overload returning i64 / u64 (#5986). Additive only:
+            // the operand walk decides width wherever it resolves, so an
+            // unsuffixed literal the checker types i32 cannot NARROW a binary
+            // the walk already widened.
+            if (b.ty == "i64" || b.ty == "u64") { return 64; }
             return 32;
         },
         parser.ExprUnary(u) => {
@@ -8492,7 +8507,13 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             // answered 2147483648 rather than i32::MIN (#6396). An `: i64`
             // binding is unaffected: StmtVar tests the annotation first.
             if (u.op == "-" && lit_is_i32_min_magnitude(u.operand)) { return 32; }
-            if (u.op == "-") { return infer_expr_width(u.operand, s); }
+            if (u.op == "-") {
+                if (infer_expr_width(u.operand, s) == 64) { return 64; }
+                // A composite `neg` overload returning i64 / u64 (#5986) — the
+                // operand is a struct, so the recursion above cannot see it.
+                if (u.ty == "i64" || u.ty == "u64") { return 64; }
+                return 32;
+            }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
             // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
             // unannotated `var x = inner?` width-tracks i64 (StmtVar routes width-64
@@ -8751,6 +8772,11 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") {
+                // A composite `neg` returning i64 / u64 — the binary arm's
+                // sibling, and lower_expr holds that desugar too.
+                if ((u.ty == "i64" || u.ty == "u64") && decl_is_struct(s.structs, expr_struct_type(u.operand, s))) {
+                    return lower_expr(e, s);
+                }
                 var sz: LowerState = s.emit(ir.op_const_i64_text("0"));
                 var sx: LowerState = lower_i64(u.operand, sz);
                 if (!sx.ok) { return sx; }
@@ -8811,6 +8837,19 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!satw.ok) { return satw; }
                 if (infer_expr_width(e, s) == 64) { return satw; }
                 return satw.emit(ir.op_int_extend(expr_is_u32(e, s) || expr_subword_kind(e, s) != ""));
+            }
+            // A composite operator overload (#2706) whose method returns i64 /
+            // u64 is an i64 VALUE: the desugar to `a.<m>(b)` lives in
+            // lower_expr, and that call pushes a full-width result. Without
+            // this the arithmetic path below recursed into the STRUCT operands
+            // and bailed. This is the load-site half of ExprBinary.ty, the rule
+            // ExprIndex.ty needed too (#6165): infer_expr_width already reports
+            // 64 here off the same tag, so the load has to agree or the two
+            // halves disagree and the module fails to validate.
+            if ((b.ty == "i64" || b.ty == "u64")
+                && binop_overload_method(b.op) != ""
+                && decl_is_struct(s.structs, expr_struct_type(b.left, s))) {
+                return lower_expr(e, s);
             }
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
@@ -11628,7 +11667,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         var iszero: parser.Expr = parser.ExprBinary {
             op: "==", left: lenc,
             right: parser.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: c.line, col: c.col },
-            line: c.line, col: c.col,
+            line: c.line, col: c.col, ty: "",
         };
         return lower_expr(iszero, s);
     }
@@ -13474,12 +13513,25 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // lowering below, NOT be treated as a composite (#2706 regression).
                 if (decl_is_struct(s.structs, blt)) {
                     var ovm: string = binop_overload_method(b.op);
-                    // Only a defined (struct-returning) overload method lowers.
-                    // Without one this is an invalid program (native rejects it
-                    // E009), so bail rather than mis-lower the struct pointers
-                    // as scalar arithmetic.
-                    if (s.struct_ret_type(blt + "." + ovm) == "") { return s.fail(); }
-                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col, ty: "" }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
+                    // The method must exist — without one this is an invalid
+                    // program (native rejects it E009), so bail rather than
+                    // mis-lower the struct pointers as scalar arithmetic.
+                    //
+                    // Two registries answer that, because neither alone covers
+                    // it: struct_ret_fns records only STRUCT returns, so a
+                    // scalar-returning overload (a dot product
+                    // `function (a: V) mul(b: V): f64`) reads "" there and was
+                    // refused as though no method existed — a valid program
+                    // native compiles and the interpreter runs. The typed-IR
+                    // tag names the checker's result type for the whole binary
+                    // (#5986), which is non-empty exactly when the checker
+                    // resolved the overload, so it covers the non-struct
+                    // returns the registry cannot record.
+                    if (s.struct_ret_type(blt + "." + ovm) == "" && b.ty == "") { return s.fail(); }
+                    // The desugared call inherits the binary's tag: `a * b` and
+                    // `a.mul(b)` are the same value, and ExprCall.ty is what the
+                    // method-call lowering below reads to type its result.
+                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col, ty: "" }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: b.ty };
                     return lower_expr(ovcall, s);
                 }
             }
@@ -13738,8 +13790,11 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // rather than negating a struct pointer as a scalar.
                 var ust: string = expr_struct_type(u.operand, s);
                 if (decl_is_struct(s.structs, ust)) {
-                    if (s.struct_ret_type(ust + ".neg") == "") { return s.fail(); }
-                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col, ty: "" }, args: [], line: u.line, col: u.col, type_argc: 0, ty: "" };
+                    // Both registries, for the binary arm's reason: struct_ret_fns
+                    // records only STRUCT returns, so a scalar-returning `neg`
+                    // read "" there and was refused as though the type had none.
+                    if (s.struct_ret_type(ust + ".neg") == "" && u.ty == "") { return s.fail(); }
+                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col, ty: "" }, args: [], line: u.line, col: u.col, type_argc: 0, ty: u.ty };
                     return lower_expr(negcall, s);
                 }
                 // -x  ==  0 - x  : push 0, push x, sub.
@@ -59412,11 +59467,11 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
         parser.ExprBinary(b) => {
             var blr: LiftExpr = lift_expr_walk(b.left, acc, gfns);
             var brr: LiftExpr = lift_expr_walk(b.right, blr.acc, gfns);
-            return LiftExpr { expr: parser.ExprBinary { op: b.op, left: blr.expr, right: brr.expr, line: b.line, col: b.col }, acc: brr.acc };
+            return LiftExpr { expr: parser.ExprBinary { op: b.op, left: blr.expr, right: brr.expr, line: b.line, col: b.col, ty: b.ty }, acc: brr.acc };
         },
         parser.ExprUnary(u) => {
             var uor: LiftExpr = lift_expr_walk(u.operand, acc, gfns);
-            return LiftExpr { expr: parser.ExprUnary { op: u.op, operand: uor.expr, line: u.line, col: u.col }, acc: uor.acc };
+            return LiftExpr { expr: parser.ExprUnary { op: u.op, operand: uor.expr, line: u.line, col: u.col, ty: u.ty }, acc: uor.acc };
         },
         parser.ExprIndex(ix) => {
             var ixar: LiftExpr = lift_expr_walk(ix.array, acc, gfns);
@@ -60481,10 +60536,10 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             return parser.ExprCall { callee: rc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprBinary(b) => {
-            return parser.ExprBinary { op: b.op, left: subst_fcall_expr(b.left, fname, lname, capargs), right: subst_fcall_expr(b.right, fname, lname, capargs), line: b.line, col: b.col };
+            return parser.ExprBinary { op: b.op, left: subst_fcall_expr(b.left, fname, lname, capargs), right: subst_fcall_expr(b.right, fname, lname, capargs), line: b.line, col: b.col, ty: b.ty };
         },
         parser.ExprUnary(u) => {
-            return parser.ExprUnary { op: u.op, operand: subst_fcall_expr(u.operand, fname, lname, capargs), line: u.line, col: u.col };
+            return parser.ExprUnary { op: u.op, operand: subst_fcall_expr(u.operand, fname, lname, capargs), line: u.line, col: u.col, ty: u.ty };
         },
         parser.ExprIndex(ix) => {
             return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked, ty: ix.ty };
@@ -62701,11 +62756,11 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
         parser.ExprBinary(b) => {
             var lr: InlineCloRes = lift_inline_closures_expr(b.left, fd, funcs, counter, gfns, structs, mfuncs);
             var rr: InlineCloRes = lift_inline_closures_expr(b.right, fd, lr.funcs, lr.counter, gfns, structs, mfuncs);
-            return InlineCloRes { expr: parser.ExprBinary { op: b.op, left: lr.expr, right: rr.expr, line: b.line, col: b.col }, funcs: rr.funcs, counter: rr.counter };
+            return InlineCloRes { expr: parser.ExprBinary { op: b.op, left: lr.expr, right: rr.expr, line: b.line, col: b.col, ty: b.ty }, funcs: rr.funcs, counter: rr.counter };
         },
         parser.ExprUnary(u) => {
             var ur: InlineCloRes = lift_inline_closures_expr(u.operand, fd, funcs, counter, gfns, structs, mfuncs);
-            return InlineCloRes { expr: parser.ExprUnary { op: u.op, operand: ur.expr, line: u.line, col: u.col }, funcs: ur.funcs, counter: ur.counter };
+            return InlineCloRes { expr: parser.ExprUnary { op: u.op, operand: ur.expr, line: u.line, col: u.col, ty: u.ty }, funcs: ur.funcs, counter: ur.counter };
         },
         parser.ExprIndex(ix) => {
             var ar: InlineCloRes = lift_inline_closures_expr(ix.array, fd, funcs, counter, gfns, structs, mfuncs);
@@ -63295,8 +63350,8 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             }
             return e;
         },
-        parser.ExprBinary(b) => { return parser.ExprBinary { op: b.op, left: box_rewrite_expr(b.left, boxed, btypes), right: box_rewrite_expr(b.right, boxed, btypes), line: b.line, col: b.col }; },
-        parser.ExprUnary(u) => { return parser.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes), line: u.line, col: u.col }; },
+        parser.ExprBinary(b) => { return parser.ExprBinary { op: b.op, left: box_rewrite_expr(b.left, boxed, btypes), right: box_rewrite_expr(b.right, boxed, btypes), line: b.line, col: b.col, ty: b.ty }; },
+        parser.ExprUnary(u) => { return parser.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes), line: u.line, col: u.col, ty: u.ty }; },
         parser.ExprCall(c) => {
             var nargs: parser.Expr[] = [];
             for arg in c.args { nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes)); }
@@ -63619,11 +63674,11 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
         parser.ExprBinary(b) => {
             var l: WCapExpr = wcap_expr(b.left, fd, gfns, structs, mfuncs, acc, atargets);
             var r: WCapExpr = wcap_expr(b.right, fd, gfns, structs, mfuncs, l.caps, atargets);
-            return WCapExpr { expr: parser.ExprBinary { op: b.op, left: l.expr, right: r.expr, line: b.line, col: b.col }, caps: r.caps };
+            return WCapExpr { expr: parser.ExprBinary { op: b.op, left: l.expr, right: r.expr, line: b.line, col: b.col, ty: b.ty }, caps: r.caps };
         },
         parser.ExprUnary(u) => {
             var o: WCapExpr = wcap_expr(u.operand, fd, gfns, structs, mfuncs, acc, atargets);
-            return WCapExpr { expr: parser.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col }, caps: o.caps };
+            return WCapExpr { expr: parser.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col, ty: u.ty }, caps: o.caps };
         },
         parser.ExprCall(c) => {
             // An IMMEDIATELY-INVOKED lambda never reaches the env box, so its
