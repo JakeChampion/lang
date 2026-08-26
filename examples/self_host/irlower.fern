@@ -34095,6 +34095,7 @@ function arrstruct_credit_rows(body: parser.Stmt[], structs: parser.StructDecl[]
         if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
             && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites)
             && !arrarr_row_escapes(body, asnm)
+            && !arrstruct_share_holder_respread(body, asnm, structs)
             && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
@@ -43391,8 +43392,151 @@ function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs:
     }
     return false;
 }
+// arrstruct_counted_field_share: `e` is a struct literal that mentions `name`
+// ONLY as the bare-ident value of a field whose declared type takes the
+// construction alias-inc — the ExprStructLit ident arm in lower_expr, which
+// retains an array-of-struct field source unconditionally. The field therefore
+// holds a COUNTED share, and reading it as an escape sank the source's whole
+// reclaim: `var p: P = P { f: src, … }` left `src` with the generic buffer dec,
+// freeing the outer array while every element box and element array field
+// stranded. Measured 88 bytes per round on a one-element `Inner[]`, and only on
+// the path where the share did NOT run — with the share live the holder's
+// rc-gated field walk did the work and the census was flat.
+//
+// Both releases are rc-gated, which is what makes granting this safe rather than
+// a double free: the holder's walk is __struct_arr_elems_drop_<E>, which
+// is_unique-gates the buffer, and the source's is emit_arrstruct_deep_free,
+// gated the same way. Whichever finds rc 1 walks; the other takes the buffer dec.
+//
+// A `{ ...base }` update is refused: the copied fields carry no inc, so the new
+// box would co-own the buffer with no count behind it.
+function arrstruct_counted_field_share(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { return false; }
+            var seen: boolean = false;
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                match (sl.field_values[i]) {
+                    parser.ExprIdent(fid) => {
+                        if (fid.name == name) {
+                            if (!is_struct_array_field_type(structs, decl_field_type(structs, sl.type_name, sl.field_names[i]))) { return false; }
+                            seen = true;
+                        }
+                    },
+                    _ => { if (expr_unsafe_for(sl.field_values[i], name, [], [])) { return false; } }
+                }
+                i = i + 1;
+            }
+            return seen;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrstruct_counted_share_holders: the locals bound from a struct literal that
+// took a counted share of `name` (arrstruct_counted_field_share).
+function arrstruct_counted_share_holders(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (arrstruct_counted_field_share(v.init, name, structs)) { a = push_str_unique(a, v.name); } },
+            parser.StmtAssign(asg) => { if (arrstruct_counted_field_share(asg.value, name, structs)) { a = push_str_unique(a, asg.target); } },
+            parser.StmtIf(f) => { a = arrstruct_counted_share_holders(f.then_body, name, structs, a); a = arrstruct_counted_share_holders(f.else_body, name, structs, a); },
+            parser.StmtWhile(w) => { a = arrstruct_counted_share_holders(w.body, name, structs, a); },
+            parser.StmtFor(fo) => { a = arrstruct_counted_share_holders(fo.body, name, structs, a); },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { a = arrstruct_counted_share_holders(arm.body, name, structs, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// arrstruct_share_holder_respread: a holder that took a counted share of `name`
+// is itself used as a struct-literal BASE (`P { ...q, … }`). That copy carries
+// the buffer pointer into a third box with NO inc — the design point
+// expr_unsafe_for's ExprStructLit arm records — so the buffer has three owners
+// at rc 2 and the first two sweeps to run free it between them.
+//
+// The share count being complete is the precondition of granting `name` its
+// rc-gated walk at all, so this is a gate on the credit rather than a
+// hazard the walk could guard against. Measured as exit 99 at a perfectly flat
+// census: 600 allocs, 600 frees, live_bytes 0, and only __rc_underflow_count()
+// dissenting.
+function arrstruct_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var holders: string[] = arrstruct_counted_share_holders(stmts, name, structs, []);
+    if (holders.len() == 0) { return false; }
+    return body_spreads_any(stmts, holders);
+}
+
+// body_spreads_any: any struct literal in the body whose functional-update base
+// is a bare ident naming one of `names`.
+function body_spreads_any(stmts: parser.Stmt[], names: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => { if (expr_spreads_any(v.init, names)) { return true; } },
+            parser.StmtAssign(asg) => { if (expr_spreads_any(asg.value, names)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_spreads_any(r.value, names)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_spreads_any(e.value, names)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_spreads_any(f.cond, names)) { return true; }
+                if (body_spreads_any(f.then_body, names) || body_spreads_any(f.else_body, names)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_spreads_any(w.cond, names)) { return true; }
+                if (body_spreads_any(w.body, names)) { return true; }
+            },
+            parser.StmtFor(fo) => {
+                if (expr_spreads_any(fo.iter, names)) { return true; }
+                if (body_spreads_any(fo.body, names)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_spreads_any(m.scrutinee, names)) { return true; }
+                for arm in m.arms { if (body_spreads_any(arm.body, names)) { return true; } }
+            },
+            parser.StmtDefer(d) => { if (body_spreads_any([d.action], names)) { return true; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+function expr_spreads_any(e: parser.Expr, names: string[]): boolean {
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) {
+                match (sl.base) {
+                    parser.ExprIdent(bid) => { if (util.index_of_str(names, bid.name) >= 0) { return true; } },
+                    _ => { if (expr_spreads_any(sl.base, names)) { return true; } }
+                }
+            }
+            for fv in sl.field_values { if (expr_spreads_any(fv, names)) { return true; } }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            if (expr_spreads_any(c.callee, names)) { return true; }
+            for a in c.args { if (expr_spreads_any(a, names)) { return true; } }
+            return false;
+        },
+        parser.ExprArray(arr) => {
+            for el in arr.elements { if (expr_spreads_any(el, names)) { return true; } }
+            return false;
+        },
+        parser.ExprBinary(b) => { return expr_spreads_any(b.left, names) || expr_spreads_any(b.right, names); },
+        parser.ExprUnary(u) => { return expr_spreads_any(u.operand, names); },
+        parser.ExprIndex(ix) => { return expr_spreads_any(ix.array, names) || expr_spreads_any(ix.index, names); },
+        parser.ExprFieldAccess(fa) => { return expr_spreads_any(fa.obj, names); },
+        parser.ExprLambda(lm) => { return body_spreads_any(lm.body, names); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // body_unsafe_for with exactly one sanctioned reassignment — the self-append
-// rebind. Only the assign case differs; everything else delegates, which is
+// rebind, and one sanctioned escape — the counted struct-literal field share.
+// Only the assign and var cases differ; everything else delegates, which is
 // sound because this class's own element hazards (an element alias, an element
 // field-payload extraction) are checked separately by arrarr_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
@@ -43402,11 +43546,24 @@ function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: st
 }
 function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[], msites: string[]): boolean {
     match (st) {
+        parser.StmtVar(v) => {
+            if (arrstruct_counted_field_share(v.init, name, structs)) { return false; }
+            return expr_unsafe_for(v.init, name, borrowable, []);
+        },
+        parser.StmtReturn(r) => {
+            if (arrstruct_counted_field_share(r.value, name, structs)) { return false; }
+            return expr_unsafe_for(r.value, name, borrowable, []);
+        },
+        parser.StmtExpr(e) => {
+            if (arrstruct_counted_field_share(e.value, name, structs)) { return false; }
+            return expr_unsafe_for(e.value, name, borrowable, []);
+        },
         parser.StmtAssign(a) => {
             if (a.target == name) {
                 if (arrstruct_self_store_elem(a.value, name, structs, msites)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
+            if (arrstruct_counted_field_share(a.value, name, structs)) { return false; }
             return expr_unsafe_for(a.value, name, borrowable, []);
         },
         parser.StmtIf(f) => {
@@ -43795,6 +43952,12 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
             return false;
         },
         parser.ExprStructLit(slb) => {
+            // The counted field share is not an element-payload escape either:
+            // the field holds a counted reference to the SAME buffer, so the
+            // elements' owned fields are reachable from exactly the two owners
+            // whose walks are both is_unique-gated. Refusing it here sank the
+            // credit even once arrstruct_unsafe_for admitted the share.
+            if (arrstruct_counted_field_share(e, name, structs)) { return false; }
             if (slb.has_base && arrstruct_elem_esc_expr(slb.base, name, sty, structs, msites)) { return true; }
             var i: i32 = 0;
             while (i < slb.field_values.len()) { if (arrstruct_elem_esc_expr(slb.field_values[i], name, sty, structs, msites)) { return true; } i = i + 1; }
@@ -44180,11 +44343,22 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
 // alias-inc) then frees the struct box, and finally decs the outer buffer. Consumes no
 // operand; leaves the slot dangling. The element hidden local is marked struct_type=sty
 // so emit_struct_field_drops routes the per-type drop.
+//
+// The element loop is rc-gated on the BUFFER, not just per element: a buffer this
+// frame shares with a co-owner still holds elements at rc 1, so the per-element
+// gate inside the loop cannot see the sharing and every element box would be
+// freed under the co-owner. __struct_arr_elems_drop_<E>, the walk a struct FIELD
+// of the same type takes, is_unique-gates the buffer for exactly that reason;
+// this is the local-slot side of the same rule. Only the buffer dec stays
+// unconditional — it is the release that must happen for every owner.
 function emit_arrstruct_deep_free(se: LowerState, slot: i32, sty: string): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("ne", 0, false));         // arr != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
     st = st.emit(ir.op_if(0));
     var idxn: string = "$astri" + util.i32_to_string(st.locals.len());
     st = st.add_local(idxn);
@@ -44222,6 +44396,7 @@ function emit_arrstruct_deep_free(se: LowerState, slot: i32, sty: string): Lower
     st = st.emit(ir.op_br(0));                       // back-edge
     st = st.emit(ir.op_end());                       // end loop
     st = st.emit(ir.op_end()).exit_loop();           // end block
+    st = st.emit(ir.op_end());                       // end if-buffer-unique
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the outer buffer box
     st = st.emit(ir.op_drop());

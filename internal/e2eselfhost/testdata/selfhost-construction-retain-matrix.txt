@@ -64,7 +64,7 @@ enum_arr__param     clean leak   param enum-array, same uncounted handover
 enum_arr__fieldread clean leak   q.f enum-array read: no construction retain granted yet
 enum_arr__call      clean clean  producer result owned, payload walk releases it
 struct_arr__fresh   clean clean  fresh [Inner{..}] literal owned, deep-dropped
-struct_arr__local   clean leak   bare Inner[] ident
+struct_arr__local   clean clean  counted: the field share keeps the source its rc-gated walk
 struct_arr__param   clean leak   param Inner[]
 struct_arr__fieldread clean clean counted: array-of-struct retain + kept source drop
 struct_arr__call    clean clean  producer result owned
