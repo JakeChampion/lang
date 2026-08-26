@@ -135,6 +135,56 @@ function main(): i32 {
     return bad;
 }`
 
+// rcQualifiedVariantPayloadUAF: #3720's bug, live on the spelling its fix never
+// reached. `Variant(args)` and `Enum.Variant(args)` build the same box through the
+// same op_struct_make but reached lower_expr on different arms, and the qualified
+// arm — added later, to keep a module IR-eligible — lowered its args with no
+// Perceus alias-inc at all. So `E.A(items)` handed the caller a box over memory
+// the source local's exit sweep had already freed, and `clobber`'s allocation
+// reused it.
+//
+// Both spellings run here against the same expectation, because measuring them
+// apart is what let them diverge: the bare form returned 0 while the qualified
+// form returned 100 (every round read the clobber value).
+const rcQualifiedVariantPayloadUAF = `enum E { A(i32[]), B }
+
+function qual_of(i: i32): E {
+    var items: i32[] = [i, i + 1, i + 2];
+    var e: E = E.A(items);
+    return e;
+}
+
+function bare_of(i: i32): E {
+    var items: i32[] = [i, i + 1, i + 2];
+    var e: E = A(items);
+    return e;
+}
+
+function clobber(i: i32): i32 {
+    var junk: i32[] = [7777, 7777, 7777];
+    return junk[0];
+}
+
+function round(i: i32): i32 {
+    var q: E = qual_of(i);
+    var b: E = bare_of(i);
+    var j: i32 = clobber(i);
+    var m: i32 = 0;
+    var n: i32 = 0;
+    match (q) { A(xs) => { m = xs[0]; }, B => { m = 0 - 1; } }
+    match (b) { A(ys) => { n = ys[0]; }, B => { n = 0 - 1; } }
+    if (m != i) { return 1; }
+    if (n != i) { return 1; }
+    return 0;
+}
+
+function main(): i32 {
+    var bad: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { bad = bad + round(r); r = r + 1; }
+    return bad;
+}`
+
 func compileAndRunSelfHostIR(t *testing.T, gcc string, runner []string, dir, driverBin, name, src string) int {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -190,6 +240,15 @@ func TestSelfHostMatchPayloadRC(t *testing.T) {
 	t.Run("struct_payload_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_optstruct_uaf", rcOptStructPayloadUAF); code != 0 {
 			t.Errorf("returned option carrying a struct local exited %d, want 0 "+
+				"(each nonzero round read a clobbered payload)", code)
+		}
+	})
+
+	// The two variant-ctor spellings take the same payload retains (#3720 reached
+	// only the bare one).
+	t.Run("qualified_variant_payload_across_alloc", func(t *testing.T) {
+		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_qualvariant_uaf", rcQualifiedVariantPayloadUAF); code != 0 {
+			t.Errorf("returned variant carrying an array local exited %d, want 0 "+
 				"(each nonzero round read a clobbered payload)", code)
 		}
 	})
