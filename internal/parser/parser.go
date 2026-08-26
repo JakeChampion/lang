@@ -3858,6 +3858,7 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
+		RestWritten:    pat.restWritten,
 		SlotBinderName: pat.slotBinder, Sub: subStmtArms(pat), Guard: guard, Body: body,
 	}
 }
@@ -4064,6 +4065,7 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 		// the checker rejects (E035) and whose temps nothing would bind.
 		NamedFields: group[0].pat.NamedFields,
 		FieldNames:  fieldNamesOf(group[0].pat),
+		RestWritten: group[0].pat.restWritten,
 		Body:        &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
 	}, nil
 }
@@ -4141,9 +4143,9 @@ func (p *parser) rebindStmtBody(pat matchPattern, tmps []string, body *ast.Block
 // error when the next token isn't `{` (a positional or payloadless arm).
 // Returns parallel field / binding lists: for the shorthand `S { x }` the
 // two are equal; `S { x: nx }` renames field x to local nx.
-func (p *parser) parseNamedFieldPattern() (fields, bindings []string, subs []*matchPattern, ok bool, err error) {
+func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err error) {
 	if _, isBrace := p.accept(lexer.Punct, "{"); !isBrace {
-		return nil, nil, nil, false, nil
+		return out, false, nil
 	}
 	if !p.match(lexer.Punct, "}") {
 		for {
@@ -4153,11 +4155,12 @@ func (p *parser) parseNamedFieldPattern() (fields, bindings []string, subs []*ma
 			// it and stop. Matches the destructure form and the self-host.
 			if p.match(lexer.Punct, "..") {
 				p.advance()
+				out.rest = true
 				break
 			}
 			fieldTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
-				return nil, nil, nil, false, err
+				return out, false, err
 			}
 			bind := fieldTok.Text
 			var sub *matchPattern
@@ -4171,7 +4174,7 @@ func (p *parser) parseNamedFieldPattern() (fields, bindings []string, subs []*ma
 				if p.isNestedPatternStart() {
 					sp, err := p.parseMatchPattern()
 					if err != nil {
-						return nil, nil, nil, false, err
+						return out, false, err
 					}
 					sub = &sp
 					// A sub-pattern introduces its own bindings; the slot
@@ -4180,14 +4183,14 @@ func (p *parser) parseNamedFieldPattern() (fields, bindings []string, subs []*ma
 				} else {
 					bindTok, err := p.expect(lexer.Ident, "")
 					if err != nil {
-						return nil, nil, nil, false, err
+						return out, false, err
 					}
 					bind = bindTok.Text
 				}
 			}
-			fields = append(fields, fieldTok.Text)
-			bindings = append(bindings, bind)
-			subs = append(subs, sub)
+			out.fields = append(out.fields, fieldTok.Text)
+			out.bindings = append(out.bindings, bind)
+			out.subs = append(out.subs, sub)
 			if _, c := p.accept(lexer.Punct, ","); c {
 				if p.match(lexer.Punct, "}") {
 					break
@@ -4198,9 +4201,22 @@ func (p *parser) parseNamedFieldPattern() (fields, bindings []string, subs []*ma
 		}
 	}
 	if _, e := p.expect(lexer.Punct, "}"); e != nil {
-		return nil, nil, nil, false, e
+		return out, false, e
 	}
-	return fields, bindings, subs, true, nil
+	return out, true, nil
+}
+
+// namedFieldPattern is what a `{ … }` pattern body binds: the field
+// projected for each binding, the binding itself, an optional sub-pattern
+// matched against that field, and whether the source wrote the trailing
+// `..`. The `..` binds nothing — a named-field pattern already binds only
+// the fields it lists — so only the printer reads it, to put back what the
+// author wrote.
+type namedFieldPattern struct {
+	fields   []string
+	bindings []string
+	subs     []*matchPattern
+	rest     bool
 }
 
 // matchPattern is the pattern half of a match arm — the fields that
@@ -4233,6 +4249,9 @@ type matchPattern struct {
 	// fieldNames runs parallel to Bindings for a named-field pattern:
 	// the field projected for each binding (== Bindings for shorthand).
 	fieldNames []string
+	// restWritten records the trailing `..` of a named-field pattern. It
+	// binds nothing, so it reaches only the printer — see namedFieldPattern.
+	restWritten bool
 	// slotBinder is set on the inner wildcard the merge desugar builds for a
 	// flat sibling arm: the name that sibling bound the whole payload slot
 	// to. See ast.MatchArm.SlotBinderName.
@@ -4553,13 +4572,14 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return pat, err
 			}
-		} else if fields, bindings, subs, ok, err := p.parseNamedFieldPattern(); err != nil {
+		} else if nf, ok, err := p.parseNamedFieldPattern(); err != nil {
 			return pat, err
 		} else if ok {
 			pat.NamedFields = true
-			pat.Bindings = bindings
-			pat.fieldNames = fields
-			pat.subPats = subs
+			pat.Bindings = nf.bindings
+			pat.fieldNames = nf.fields
+			pat.subPats = nf.subs
+			pat.restWritten = nf.rest
 		}
 	} else {
 		return pat, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
@@ -4728,6 +4748,7 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
+		RestWritten:    pat.restWritten,
 		SlotBinderName: pat.slotBinder, Sub: subExprArms(pat), Guard: guard, Body: body,
 	}
 }
@@ -4861,6 +4882,7 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 		// FIELD, with the temps standing in for the binders.
 		NamedFields: group[0].pat.NamedFields,
 		FieldNames:  fieldNamesOf(group[0].pat),
+		RestWritten: group[0].pat.restWritten,
 		Body:        innerMatch,
 	}, nil
 }
@@ -5402,7 +5424,7 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 		if len(pat.fieldNames) == 0 {
 			return nil, p.errorfCode(pos, "P001", "struct destructure needs at least one field")
 		}
-		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos, tag), Fields: pat.fieldNames, StructName: pat.VariantName}, nil
+		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos, tag), Fields: pat.fieldNames, StructName: pat.VariantName, RestWritten: pat.restWritten}, nil
 	case pat.VariantName != "":
 		return nil, p.refutableBindErr(pos, "an enum variant pattern", site)
 	case pat.Literal != nil:

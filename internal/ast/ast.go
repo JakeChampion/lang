@@ -2898,7 +2898,10 @@ type Destructure struct {
 	Names      []string
 	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
-	Init       Expr
+	// RestWritten records the pattern's trailing `..`, for the printer.
+	// See MatchArm.RestWritten — it binds nothing at either site.
+	RestWritten bool
+	Init        Expr
 	// AtName is the `@` binding naming the WHOLE value beside the pattern —
 	// `w @ Point { x, y }`. Parser-set; empty when the source wrote none.
 	// The checker binds the holding local under it instead of minting a
@@ -3063,8 +3066,14 @@ type MatchArm struct {
 	// (Rename is supported for struct matches; enum named-field variant
 	// patterns stay shorthand — the checker rejects a rename there.)
 	FieldNames []string
-	IsWildcard bool // `_ => …`
-	Literal    Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	// RestWritten records the trailing `..` of a named-field pattern
+	// (`Rect { w, .. }`). A named-field pattern binds only the fields it
+	// lists either way, so the `..` is documentation and reaches only the
+	// printer — which has to put it back, or `-fmt -w` deletes what the
+	// author wrote.
+	RestWritten bool
+	IsWildcard  bool // `_ => …`
+	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
 	// RangeHi, when non-nil, marks a range pattern `lo..hi => …` /
 	// `lo..=hi => …` on a scalar scrutinee: Literal holds the low bound,
 	// RangeHi the high bound, and RangeInclusive distinguishes `..=`
@@ -3175,6 +3184,7 @@ type MatchExprArm struct {
 	BindingTypes  []Type
 	NamedFields   bool     // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	FieldNames    []string // parallel to Bindings for named-field patterns — see MatchArm.FieldNames
+	RestWritten   bool     // trailing `..`, for the printer — see MatchArm.RestWritten
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see

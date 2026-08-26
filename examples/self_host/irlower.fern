@@ -17521,7 +17521,9 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
 function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState {
     // Decode "@sd:<StructName>:<f0,f1,…>" — the struct name runs to the first
     // ':' after the "@sd:" prefix, the rest is the comma-joined field list.
-    var (at_name, sd_marker) = parser.at_marker_split(v.type_name);
+    var sd_dm: parser.DestrMarker = parser.destr_marker_split(v.type_name);
+    var at_name: string = sd_dm.at;
+    var sd_marker: string = sd_dm.tag;
     var rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
     var colon: i32 = 0 - 1;
     var ri: i32 = 0;
@@ -19240,7 +19242,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             dp = dp + 1;
         }
         var dn: i32 = dnames.len();
-        var (td_at, _) = parser.at_marker_split(v.type_name);
+        var td_at: string = parser.destr_marker_split(v.type_name).at;
         var dt: LowerState = lower_expr(v.init, s);
         if (!dt.ok) { return dt; }
         // An `@` binding names the temp holding the whole tuple, as it does

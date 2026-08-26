@@ -563,6 +563,32 @@ var t @ (p, q) = ts[0];
 return acc + v.x + x + y + t.0 + p + q;
 }
 `},
+	// A struct pattern's trailing `..` binds nothing — the pattern binds only
+	// the fields it lists — so it survives a reprint only by being carried to
+	// the printer. Both compilers dropped it, so both deleted it under
+	// `-fmt -w`; they now have to agree on putting it back, at every site that
+	// takes a struct pattern.
+	{"struct-pattern-rest", `struct Point { x: i32, y: i32, z: i32 }
+function param(Point { x, .. }: Point): i32 {
+return x;
+}
+function main(): i32 {
+var p: Point = Point { x: 1, y: 2, z: 3 };
+var ps: Point[] = [p];
+var acc = 0;
+let Point { x, .. } = p;
+let w @ Point { y, .. } = p;
+for Point { z, .. } in ps {
+acc = acc + z;
+}
+match (p) {
+Point { x: mx, .. } => {
+acc = acc + mx;
+}
+}
+return acc + x + w.z + param(p);
+}
+`},
 	// Surfaced by the two cases above: FuncDecl.type_params carried only the
 	// BOUNDED parameters (the unbounded ones are erased and the monomorphiser
 	// has no use for their names), so a formatted `each[T, U]` lost both and

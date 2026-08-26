@@ -1213,7 +1213,7 @@ function name_has_comma(name: string): boolean {
 // is a destructure.
 function bind_destructure_names(s: Scope, v: parser.StmtVar): Scope {
   if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) { return s; }
-  var (at, _) = parser.at_marker_split(v.type_name);
+  var at: string = parser.destr_marker_split(v.type_name).at;
   var whole: Type = check_expr(v.init, s);
   var out: Scope = s;
   if (at.len() > 0) { out = out.bind(at, whole); }
@@ -1228,7 +1228,7 @@ function bind_destructure_names(s: Scope, v: parser.StmtVar): Scope {
 // check_expr — the same expression the lowering emits — so a renamed binding,
 // a generic struct and an opaque field all type exactly as they would there.
 function bind_struct_destr_fields(out: Scope, v: parser.StmtVar, s: Scope): Scope {
-  var (_, marker) = parser.at_marker_split(v.type_name);
+  var marker: string = parser.destr_marker_split(v.type_name).tag;
   var rest: string = slice_unchecked(marker, 4, marker.len()) + "";
   var colon: i32 = 0 - 1;
   var ri: i32 = 0;

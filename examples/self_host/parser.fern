@@ -730,20 +730,23 @@ function parse_destructure_names(p: Par): (string, i32, boolean, Par) {
 // BINDING names and the comma-joined FIELD names — the two differ exactly where
 // a field is renamed on binding — and ok=false when a non-ident token stands
 // where a field name belongs. A trailing `..` marks intentionally-omitted
-// fields (partial bind). Shared by the statement form (`let P { x } = E;`) and
-// the parameter form (`P { x }: P`), which encode the same binding.
-function parse_struct_pattern_fields(p: Par): (string, string, boolean, Par) {
+// fields (partial bind); it binds nothing, so it comes back as its own flag
+// for the printer to put back rather than joining either list. Shared by the
+// statement form (`let P { x } = E;`) and the parameter form (`P { x }: P`),
+// which encode the same binding.
+function parse_struct_pattern_fields(p: Par): (string, string, boolean, boolean, Par) {
     p = p.advance(); // consume `{`
     var bindings: string = "";
     var fields: string = "";
+    var rest_written: boolean = false;
     var first: boolean = true;
     while (p.peek_punct() != "}" && !p.at_end()) {
-        if (p.peek_punct() == "..") { p = p.advance(); break; }
+        if (p.peek_punct() == "..") { p = p.advance(); rest_written = true; break; }
         var fld: string = p.peek_ident();
         // Same finiteness argument as the tuple loop: nothing below consumes
         // a non-ident field token, so it has to end the parse.
         if (fld.len() == 0) {
-            return ("", "", false, p);
+            return ("", "", false, false, p);
         }
         p = p.advance();
         var bind: string = fld;
@@ -759,7 +762,7 @@ function parse_struct_pattern_fields(p: Par): (string, string, boolean, Par) {
         if (p.peek_punct() == ",") { p = p.advance(); }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (bindings, fields, true, p);
+    return (bindings, fields, rest_written, true, p);
 }
 
 // parse_struct_destructure consumes `{ x, y: b, .. } = E;` with the cursor
@@ -770,7 +773,7 @@ function parse_struct_pattern_fields(p: Par): (string, string, boolean, Par) {
 // lower_struct_destructure decodes it into per-field `var bind = tmp.field;`
 // binds.
 function parse_struct_destructure(p: Par, struct_name: string, at: string, line: i32, col: i32): (Stmt, Par) {
-    var (bindings, fields, fields_ok, fields_p) = parse_struct_pattern_fields(p);
+    var (bindings, fields, fields_rest, fields_ok, fields_p) = parse_struct_pattern_fields(p);
     p = fields_p;
     if (!fields_ok) {
         return (s_unknown("a struct destructuring pattern binds field names"), p);
@@ -779,7 +782,7 @@ function parse_struct_destructure(p: Par, struct_name: string, at: string, line:
     var (init_expr, ip) = parse_expr(p);
     p = ip;
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (s_var_at(bindings, at_marker(at, "@sd:" + struct_name + ":" + fields), init_expr, line, col), p);
+    return (s_var_at(bindings, destr_marker(at, fields_rest, "@sd:" + struct_name + ":" + fields), init_expr, line, col), p);
 }
 function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
 // s_return_at carries the `return` keyword position so E002 / E012 point at it.
@@ -3377,7 +3380,16 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
 // parse-time literal desugar), 3 = variant sub-pattern (the arm's matched path
 // nests inside a match on the field). A slot carrying a sub-pattern binds
 // nothing itself — its pattern introduces the bindings.
-pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+// StructArmPattern is what a struct-match arm's `P { … }` head binds: the
+// field projected for each position, the binding, the kind of that position
+// (0 = bind, 2 = literal, 3 = sub-pattern) with its literal / sub-pattern, and
+// whether the source wrote the trailing `..`. Returned as one value rather
+// than as an eighth positional result.
+pub struct StructArmPattern { binds: string[], fields: string[], kinds: i32[], lits: Expr[], pats: Pattern[], rest_written: boolean, ok: boolean }
+
+// rest_written records the arm pattern's trailing `..` — see
+// PatVariant.rest_written; it binds nothing at either site.
+pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, rest_written: boolean, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields) or
 // `S { x: a, y: b }` (renamed: field `x` bound to local `a`); a trailing
@@ -3385,17 +3397,18 @@ pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fie
 // parallel binding + field name lists (fields[i] is the projected field,
 // binds[i] the local it binds). The struct name is not retained — the
 // scrutinee's type drives field resolution at lowering.
-function parse_struct_arm_pattern(p: Par): (string[], string[], i32[], Expr[], Pattern[], boolean, Par) {
+function parse_struct_arm_pattern(p: Par): (StructArmPattern, Par) {
     var binds: string[] = [];
     var fields: string[] = [];
     var kinds: i32[] = [];
     var lits: Expr[] = [];
     var pats: Pattern[] = [];
     var ok: boolean = true;
+    var rest_written: boolean = false;
     if (p.peek_ident().len() > 0) { p = p.advance(); } // struct name
     if (p.peek_punct() == "{") { p = p.advance(); }
     while (p.peek_punct() != "}" && !p.at_end()) {
-        if (p.peek_punct() == "..") { p = p.advance(); break; }
+        if (p.peek_punct() == "..") { p = p.advance(); rest_written = true; break; }
         var fld: string = p.peek_ident();
         // Nothing below consumes a non-ident field token, so the loop stops on
         // one or it spins. The arm is malformed, and `ok` is what says so —
@@ -3442,7 +3455,7 @@ function parse_struct_arm_pattern(p: Par): (string[], string[], i32[], Expr[], P
         if (p.peek_punct() == ",") { p = p.advance(); }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (binds, fields, kinds, lits, pats, ok, p);
+    return (StructArmPattern { binds: binds, fields: fields, kinds: kinds, lits: lits, pats: pats, rest_written: rest_written, ok: ok }, p);
 }
 
 // struct_field_variant_start reports whether the cursor (just past a
@@ -3588,6 +3601,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
         var s_wild: boolean = false;
         var s_binds: string[] = [];
         var s_fields: string[] = [];
+        var s_rest: boolean = false;
         var s_field_kinds: i32[] = [];
         var s_field_lits: Expr[] = [];
         var s_field_pats: Pattern[] = [];
@@ -3609,10 +3623,17 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             // and never needs it); the printer does need it, and the cursor
             // is on it here.
             s_type = p.peek_ident();
-            var (spb, spf, spkinds, splits, sppats, spok, spp) = parse_struct_arm_pattern(p);
+            var (sap, spp) = parse_struct_arm_pattern(p);
+            var spb: string[] = sap.binds;
+            var spf: string[] = sap.fields;
+            var spkinds: i32[] = sap.kinds;
+            var splits: Expr[] = sap.lits;
+            var sppats: Pattern[] = sap.pats;
+            var spok: boolean = sap.ok;
             p = spp;
             s_binds = spb;
             s_fields = spf;
+            s_rest = sap.rest_written;
             s_field_kinds = spkinds;
             s_field_lits = splits;
             s_field_pats = sppats;
@@ -3648,7 +3669,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             sbody = sblk_body;
         }
         if (first) { rt = sbrt; first = false; }
-        arms = arms.append(StructArm { is_wild: s_wild, type_name: s_type, binds: s_binds, fields: s_fields, field_kinds: s_field_kinds, field_lits: s_field_lits, field_pats: s_field_pats, at_binding: s_at, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
+        arms = arms.append(StructArm { is_wild: s_wild, type_name: s_type, binds: s_binds, fields: s_fields, field_kinds: s_field_kinds, field_lits: s_field_lits, field_pats: s_field_pats, at_binding: s_at, rest_written: s_rest, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -5274,16 +5295,16 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
             if (!fpok || fpcount < 2) {
                 return (s_unknown("for pattern needs at least 2 binders"), p);
             }
-            fpre = [s_var_at(fpnames, at_marker(fp_at, ""), fp_init, fp_line, fp_col)];
+            fpre = [s_var_at(fpnames, destr_marker(fp_at, false, ""), fp_init, fp_line, fp_col)];
         } else {
             var fp_struct: string = p.peek_ident();
             p = p.advance();
-            var (fpbinds, fpfields, fpfields_ok, fpfields_p) = parse_struct_pattern_fields(p);
+            var (fpbinds, fpfields, fpfields_rest, fpfields_ok, fpfields_p) = parse_struct_pattern_fields(p);
             p = fpfields_p;
             if (!fpfields_ok || fpbinds.len() == 0) {
                 return (s_unknown("a struct destructuring pattern binds field names"), p);
             }
-            fpre = [s_var_at(fpbinds, at_marker(fp_at, "@sd:" + fp_struct + ":" + fpfields), fp_init, fp_line, fp_col)];
+            fpre = [s_var_at(fpbinds, destr_marker(fp_at, fpfields_rest, "@sd:" + fp_struct + ":" + fpfields), fp_init, fp_line, fp_col)];
         }
         fvar = fp_elem;
     } else {
@@ -5547,7 +5568,13 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     p = p.advance();
                 }
                 var ils_type: string = p.peek_ident();
-                var (ils_binds, ils_fields, ils_field_kinds, ils_field_lits, ils_field_pats, ils_ok, ils_pp) = parse_struct_arm_pattern(p);
+                var (ils_sap, ils_pp) = parse_struct_arm_pattern(p);
+                var ils_binds: string[] = ils_sap.binds;
+                var ils_fields: string[] = ils_sap.fields;
+                var ils_field_kinds: i32[] = ils_sap.kinds;
+                var ils_field_lits: Expr[] = ils_sap.lits;
+                var ils_field_pats: Pattern[] = ils_sap.pats;
+                var ils_ok: boolean = ils_sap.ok;
                 p = ils_pp;
                 if (!ils_ok) { return (s_unknown("a struct pattern binds field names"), p); }
                 if (p.peek_punct() == "=") { p = p.advance(); }
@@ -5564,13 +5591,13 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     ils_else = ils_eb;
                 }
                 var ils_arms: StructArm[] = [];
-                ils_arms = ils_arms.append(StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
+                ils_arms = ils_arms.append(StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, rest_written: ils_sap.rest_written, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
                 var ils_nb: string[] = [];
                 var ils_no_pats: Pattern[] = [];
                 var ils_no_kinds: i32[] = [];
                 var ils_no_lits: Expr[] = [];
                 var ils_nf: string[] = [];
-                ils_arms = ils_arms.append(StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
+                ils_arms = ils_arms.append(StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
                 return (with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p);
             }
             // A TUPLE-pattern head (`if let (a, b) = t`) takes the same
@@ -5800,7 +5827,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var (tdinit_expr, tdinit_p) = parse_expr(p);
             p = tdinit_p;
             if (p.peek_punct() == ";") { p = p.advance(); }
-            return (s_var_at(tdnames, at_marker(at_bind, ""), tdinit_expr, vline, vcol), p);
+            return (s_var_at(tdnames, destr_marker(at_bind, false, ""), tdinit_expr, vline, vcol), p);
         }
         // `let 3 = n else { … };` — a LITERAL or RANGE head, including
         // `|` alternatives (`let 1 | 2 = n else …`). A binding needs a name,
@@ -6749,40 +6776,59 @@ function at_pattern_head(p: Par): boolean {
     return p.peek_ident_at(i).len() > 0 && p.peek_punct_at(i + 1) == "{";
 }
 
-// at_marker encodes an `@` binding — the source's name for the WHOLE value
-// beside a destructuring pattern — as the leading component of a destructure
-// StmtVar's marker channel: `@at:<name>;`. A struct destructure's `@sd:…`
-// marker follows it; a tuple destructure carries the `@at:` component alone.
-// Encoded rather than given a StmtVar field of its own because every stage
-// already reads the marker channel to tell the destructure forms apart.
-pub function at_marker(at: string, rest: string): string {
-    if (at.len() == 0) { return rest; }
-    return "@at:" + at + ";" + rest;
+// DestrMarker is what a destructure StmtVar's marker channel carries beside
+// its comma-joined bindings: the `@` binding naming the WHOLE value, whether
+// the pattern wrote a trailing `..`, and the struct form's
+// `@sd:<Struct>:<fields>` tag (empty for the tuple form).
+//
+// Encoded into the channel rather than given StmtVar fields of their own
+// because every stage already reads it to tell the destructure forms apart —
+// and the alternative is three more fields on 66 literals that none of them
+// would read.
+pub struct DestrMarker { at: string, rest_written: boolean, tag: string }
+
+// destr_marker writes the channel; destr_marker_split reads it back. One
+// function owns the spelling at each end, so no caller peels a component.
+pub function destr_marker(at: string, rest_written: boolean, tag: string): string {
+    var out: string = tag;
+    if (rest_written) { out = "@rest;" + out; }
+    if (at.len() > 0) { out = "@at:" + at + ";" + out; }
+    return out;
 }
 
-// is_struct_destr_marker reports whether a destructure StmtVar's marker channel
-// carries the struct form's `@sd:<Struct>:<fields>` tag, past any `@at:`
-// component. `is_destr_marker` is the same question for either form, asked
+pub function destr_marker_split(marker: string): DestrMarker {
+    var at: string = "";
+    var m: string = marker;
+    if (util.str_has_prefix(m, "@at:")) {
+        var i: i32 = 4;
+        while (i < m.len()) {
+            if (m[i] == b';') {
+                at = slice_unchecked(m, 4, i) + "";
+                m = slice_unchecked(m, i + 1, m.len()) + "";
+                break;
+            }
+            i = i + 1;
+        }
+    }
+    var rest_written: boolean = false;
+    if (util.str_has_prefix(m, "@rest;")) {
+        rest_written = true;
+        m = slice_unchecked(m, 6, m.len()) + "";
+    }
+    return DestrMarker { at: at, rest_written: rest_written, tag: m };
+}
+
+// is_struct_destr_marker reports whether the channel carries the struct form's
+// `@sd:` tag. `is_destr_marker` is the same question for either form, asked
 // where the channel would otherwise be read as a `: Type` annotation.
 pub function is_struct_destr_marker(type_name: string): boolean {
-    var (_, marker) = at_marker_split(type_name);
-    return util.str_has_prefix(marker, "@sd:");
+    return util.str_has_prefix(destr_marker_split(type_name).tag, "@sd:");
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-    return util.str_has_prefix(type_name, "@at:") || util.str_has_prefix(type_name, "@sd:");
-}
-
-// at_marker_split reads at_marker back, returning the `@` binding (empty when
-// the source wrote none) and the marker that followed it.
-pub function at_marker_split(marker: string): (string, string) {
-    if (!util.str_has_prefix(marker, "@at:")) { return ("", marker); }
-    var i: i32 = 4;
-    while (i < marker.len()) {
-        if (marker[i] == b';') { return (slice_unchecked(marker, 4, i) + "", slice_unchecked(marker, i + 1, marker.len()) + ""); }
-        i = i + 1;
-    }
-    return ("", marker);
+    return util.str_has_prefix(type_name, "@at:")
+        || util.str_has_prefix(type_name, "@rest;")
+        || util.str_has_prefix(type_name, "@sd:");
 }
 
 // parse_pattern_param consumes a destructuring parameter — `(a, b): (T, U)`
@@ -6830,7 +6876,7 @@ function parse_pattern_param(p: Par): (ParamDecl, ParamDestr, Par) {
             return (bad_param, bad, p);
         }
         p = p.advance();
-        var (binds, fields, fields_ok, fields_p) = parse_struct_pattern_fields(p);
+        var (binds, fields, fields_rest, fields_ok, fields_p) = parse_struct_pattern_fields(p);
         p = fields_p;
         // A struct pattern that binds nothing (`P { }`, `P { .. }`) leaves the
         // parameter unusable; native rejects it for the same reason.
@@ -6838,7 +6884,7 @@ function parse_pattern_param(p: Par): (ParamDecl, ParamDestr, Par) {
             return (bad_param, bad, p);
         }
         names = binds;
-        marker = "@sd:" + struct_name + ":" + fields;
+        marker = destr_marker("", fields_rest, "@sd:" + struct_name + ":" + fields);
     }
     // The annotation is required — the holder needs a type.
     if (p.peek_punct() != ":") {
