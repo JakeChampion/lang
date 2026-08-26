@@ -46,6 +46,18 @@ func calleeSavedMentioned(body string) []string {
 	return out
 }
 
+// savesTo and restoresFrom count the slot stores and loads of register x, in
+// both the single and the paired spelling.
+func savesTo(asm, x string) int { return slotOps(asm, "st", x) }
+
+func restoresFrom(asm, x string) int { return slotOps(asm, "ld", x) }
+
+func slotOps(asm, op, x string) int {
+	single := regexp.MustCompile(`\t` + op + `r ` + x + `, \[sp,`)
+	pair := regexp.MustCompile(`\t` + op + `p (` + x + `, x\d+|x\d+, ` + x + `), \[sp,`)
+	return len(single.FindAllString(asm, -1)) + len(pair.FindAllString(asm, -1))
+}
+
 // crossCallModule builds `main() = keep + ident(3)` where `keep` is defined
 // before the call and used after it, so it is live across the call. ident is a
 // separate function so the call is a real `bl`.
@@ -79,21 +91,22 @@ func TestCallCrossingValueUsesCalleeSavedRegister(t *testing.T) {
 		t.Fatalf("no callee-saved register used for the call-crossing value:\n%s", body)
 	}
 	for _, x := range used {
-		// Saved in the prologue: before the first block label.
+		// Saved in the prologue: before the first block label. The save is a
+		// `str` or, when it pairs with the next callee-saved register, an `stp`.
 		prologue := body
 		if i := strings.Index(body, "\n.L"); i >= 0 {
 			prologue = body[:i]
 		}
-		if !strings.Contains(prologue, "str "+x+", [sp,") {
+		if savesTo(prologue, x) == 0 {
 			t.Errorf("%s is used but not saved in the prologue:\n%s", x, prologue)
 		}
-		if !strings.Contains(body, "ldr "+x+", [sp,") {
+		if restoresFrom(body, x) == 0 {
 			t.Errorf("%s is used but never restored:\n%s", x, body)
 		}
 		// The register must not also be preserved at the call: the callee is
 		// what guarantees it, so a per-call save would be pure waste. The
-		// prologue save is the only `str` of it, so there is exactly one.
-		if n := strings.Count(body, "str "+x+", [sp,"); n != 1 {
+		// prologue save is the only one.
+		if n := savesTo(body, x); n != 1 {
 			t.Errorf("%s stored %d times, want exactly the one prologue save:\n%s", x, n, body)
 		}
 	}

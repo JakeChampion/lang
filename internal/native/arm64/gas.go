@@ -1563,6 +1563,11 @@ func asmPair(a *Assembler, mnem string, ops []string) error {
 	default:
 		return fmt.Errorf("%s: unsupported pair addressing", mnem)
 	}
+	// PairLoadStore scales the offset by 8 into a signed 7-bit field and masks,
+	// so an out-of-range offset would encode as a different, valid instruction.
+	if off%8 != 0 || off < -512 || off > 504 {
+		return fmt.Errorf("%s offset %d out of range: must be a multiple of 8 in [-512, 504]", mnem, off)
+	}
 	a.Emit(PairLoadStore(rt, rt2, m.base, int32(off), load, mode))
 	return nil
 }
