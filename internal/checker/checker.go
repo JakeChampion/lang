@@ -10770,7 +10770,6 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 	return bindings, outTypes
 }
 
-
 // errPayloadlessVariantBinder reports the bare-name-is-a-binder hazard: a
 // pattern position spelled with a payload-less variant's name binds every
 // value instead of testing the variant the spelling suggests. `where` names

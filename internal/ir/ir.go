@@ -6555,15 +6555,6 @@ func anyArmPayloads(arms []*ast.MatchArm) bool {
 	return false
 }
 
-func anyArmPayloadsExpr(arms []*ast.MatchExprArm) bool {
-	for _, arm := range arms {
-		if arm.Payloads != nil {
-			return true
-		}
-	}
-	return false
-}
-
 // armPayloadTest emits the tests for an arm's payload SUB-PATTERNS, leaving
 // one i32 boolean on the operand stack, and reports whether it emitted
 // anything (false = every slot is a plain binder, so the tag test alone
