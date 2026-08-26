@@ -75,3 +75,62 @@ func containsNode(root ast.Node, target ast.Node) bool {
 	})
 	return found
 }
+
+// typeReachesUserDrop reports whether dropping a value of type `t` can run a
+// user `core/mem.Drop` finalizer — on `t` itself or on anything it
+// transitively holds. `seen` breaks recursive types.
+//
+// Reuse is what needs the transitive answer (reuseClassOf): it takes over a
+// dying box, so the finalizers under it either do not run at all (the box's
+// own) or run at a different point than they otherwise would (its fields').
+func (b *builder) typeReachesUserDrop(t ast.Type, seen map[string]bool) bool {
+	if tn, isNominal := ast.ReceiverTypeName(t); isNominal {
+		if seen[tn] {
+			return false
+		}
+		seen[tn] = true
+		if _, hasDrop := userDropFnName(b.info, tn); hasDrop {
+			return true
+		}
+	}
+	switch tt := t.(type) {
+	case ast.StructType:
+		sd, ok := b.info.Structs[tt.Name]
+		if !ok {
+			return true // unknown shape — assume the worst
+		}
+		for _, f := range sd.Fields {
+			if b.typeReachesUserDrop(f.Type, seen) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		ed, ok := b.info.Enums[tt.Name]
+		if !ok {
+			return true
+		}
+		if len(tt.Args) > 0 {
+			ed = substituteEnumDecl(ed, tt.Args)
+		}
+		for _, v := range ed.Variants {
+			for _, pt := range v.Payloads {
+				if b.typeReachesUserDrop(pt, seen) {
+					return true
+				}
+			}
+		}
+	case ast.TupleType:
+		for _, et := range tt.Elems {
+			if b.typeReachesUserDrop(et, seen) {
+				return true
+			}
+		}
+	case ast.ArrayType:
+		return b.typeReachesUserDrop(tt.Elem, seen)
+	case ast.SliceType:
+		return b.typeReachesUserDrop(tt.Elem, seen)
+	case ast.StreamType:
+		return b.typeReachesUserDrop(tt.Elem, seen)
+	}
+	return false
+}
