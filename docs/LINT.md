@@ -133,7 +133,7 @@ cannot quietly go slack. Measured 2026-08-26:
 
 | Tree | Ceiling | Total excess |
 |---|---|---|
-| `examples/self_host` | 472 (`lower_call_method`, a 1752-line function) | 19847 across 1035 functions |
+| `examples/self_host` | 477 (`lower_call_named`) | 19869 across 1035 functions |
 | `internal/stdlib/std` | 68 (`_wb_break`) | 780 across 93 functions |
 
 ### Why summed distance, and not a count
