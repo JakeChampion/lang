@@ -25,6 +25,32 @@ var rcCorpus = []struct {
 	skipWasm string
 }{
 	{
+		// #7544: the last-use test in computeArraySetIncs is TEXTUAL, so
+		// inside a loop the textually-last `.with` occurrence re-executes and
+		// its in-place store is observed by the NEXT iteration's read of the
+		// same array. Distinct from the alias collision below: there is no
+		// alias here at all, just a read earlier in the same body.
+		// Before the loop gate: interpreter 2, x86-64 and arm64 10.
+		//
+		// The accumulator shape (`a = a.with(i, v)`) must stay in place or
+		// threading goes quadratic (#4838); it takes computeArraySetIncs'
+		// reassign-to-self early return and never reaches the gate. Measured:
+		// the append-cliff figures are identical across the fix.
+		name: "array_with_inplace_loop_read_before_with",
+		src: `
+function main(): i32 {
+    var xs: i32[] = [1, 2];
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 2) {
+        acc = acc + xs[0];
+        var ys: i32[] = xs.with(0, 9);
+        i = i + 1;
+    }
+    return (acc - 2) + __rc_underflow_count();
+}`,
+	},
+	{
 		// The per-ITERATION half of the same collision, which pins the
 		// arraySetConsumedReinit side of the guard: the declaration, the
 		// alias and the consuming `.with` all sit inside the loop body, so

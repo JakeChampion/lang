@@ -2383,6 +2383,42 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 			borrowedParam[p.Name] = true
 		}
 	}
+	// `.with` calls inside a loop body. The last-occurrence test below is
+	// TEXTUAL, and inside a loop the textually-last occurrence re-executes:
+	// an in-place store is then observed by the next iteration, where interp
+	// copies. callArgDeaths states the same invariant for its own last-use
+	// test (see its doc comment) and gets it structurally, by admitting only
+	// the self-reassign and `return` shapes.
+	//
+	// The accumulator is unaffected: `a = a.with(i, v)` takes the
+	// reassignSelf early return above and never reaches here, so the #4838
+	// in-place threading keeps its rc==1 branch. What this catches is the
+	// other receiver — one whose name is still read elsewhere in the body,
+	// which is the shape the copy exists for.
+	inLoop := map[*ast.Call]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		var body ast.Stmt
+		switch x := n.(type) {
+		case *ast.While:
+			body = x.Body
+		case *ast.Loop:
+			body = x.Body
+		case *ast.For:
+			body = x.Body
+		case *ast.ForEach:
+			body = x.Body
+		}
+		if body == nil {
+			return true
+		}
+		ast.Walk(body, func(m ast.Node) bool {
+			if c, ok := m.(*ast.Call); ok && isArraySetCall(c) {
+				inLoop[c] = true
+			}
+			return true
+		})
+		return true
+	})
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
 		if !ok || !isArraySetCall(c) {
@@ -2422,8 +2458,9 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 			return true
 		}
 		// Live after the call iff this occurrence is NOT the receiver
-		// name's last use.
-		incs[c] = !order.isLast(rid)
+		// name's last use — except inside a loop, where "last" re-executes
+		// (inLoop above).
+		incs[c] = !order.isLast(rid) || inLoop[c]
 		// No inc means cow_inplace consumes this receiver's reference (see
 		// arraySetConsumed) — record it so the exit sweep skips it. Both roles
 		// the sweep releases qualify: a declared owned local, and an OWNED param
