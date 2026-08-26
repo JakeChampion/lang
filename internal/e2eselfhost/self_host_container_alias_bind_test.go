@@ -473,18 +473,6 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 200, frees: 200,
 		},
 		{
-			// THE ROW THAT MUST NOT MOVE. A PARAMETER is borrowed, never owned, so
-			// aliasing one may not retain: the retain is gated on
-			// slot_is_reclaimable_str, whose first line refuses a parameter, and the
-			// credit is only ever copied from a source that already held one.
-			//
-			// This is not hypothetical. An unconditional `is_str` in the retain gave
-			// `var sp: string = sep;` inside std/array's join_with_last an inc nothing
-			// gives back, on every program that reaches it. An unbalanced retain
-			// allocates nothing and frees nothing, so it is invisible to this census
-			// on its own — it shows up HERE, as the CALLER's box never reaching 0.
-			// frees=0 is the status quo (t escapes into the call), and the failure
-			// this row guards against is the count staying 0 while live_bytes grows.
 			// The CANCELLED path (#4402 opt 1, string limb): the alias is read
 			// but never returned and the source is read after it, so the
 			// inc/dec pair is elided — the counts cannot move (a paired
@@ -503,12 +491,36 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 72, allocs: 200, frees: 200,
 		},
 		{
-			name: "string_alias_of_a_parameter_refused",
+			// A PARAMETER is borrowed, never owned, so aliasing one may not RETAIN:
+			// the retain is gated on slot_is_reclaimable_str, whose first line
+			// refuses a parameter, and the credit is only ever copied from a source
+			// that already held one. That is unchanged and is what this row still
+			// guards. An unconditional `is_str` in the retain once gave
+			// `var sp: string = sep;` inside std/array's join_with_last an inc
+			// nothing gives back; an unbalanced retain allocates nothing and frees
+			// nothing, so it is invisible on its own and shows up HERE, as the
+			// CALLER's box never reaching 0.
+			//
+			// wantFrees moved 0 -> 200 with the aliased-param borrow verdict, and
+			// the guard is sharper for it, not weaker: the caller's box now DOES
+			// reach 0, so an unbalanced retain shows as this count falling BELOW
+			// allocs rather than as a leak that was already there for another
+			// reason. `plen` aliases its param into `v`, reads `v.len()` and returns
+			// an i32 — `v` never escapes, so `p` is a borrow and `t` keeps its own
+			// credit rather than being treated as escaping into the call.
+			//
+			// Checked rather than assumed, because 0 -> 200 is also the direction an
+			// over-release moves in: the answer is unchanged at 21,
+			// __rc_underflow_count() is 0, -sanitize reports neither a
+			// use-after-free nor a double free, and the settling form has the CALLER
+			// read `t` back after the call with two fresh strings allocated in
+			// between — it returns native's answer with allocs == frees.
+			name: "string_alias_of_a_parameter_borrowed",
 			src: `function w(a: string): string { return a + "!"; }
 function plen(p: string): i32 { var v: string = p; return v.len(); }
 function round(i: i32): i32 { var t: string = w("ab"); return plen(t) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 0,
+			want: 21, allocs: 200, frees: 200,
 		},
 		{
 			// The conditional alias, first-class, and the reason the model is
@@ -710,16 +722,22 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 67, allocs: 500, frees: 100,
 		},
 		{
-			// REFUSED: a parameter source owns nothing to share — the collector
-			// never lists one, so neither forgiveness nor credit exists. The
-			// shallow decs return the buffer; the element leaks. The string[]
-			// sibling of string_alias_of_a_parameter_refused.
-			name: "strarr_alias_of_a_parameter_refused",
+			// The string[] sibling of the row above, and it moved with it: a
+			// parameter source still owns nothing to share and is still never
+			// listed by the collector, but `plen` only reads its alias, so the
+			// param is a BORROW and the CALLER's `src` keeps its credit — element
+			// included, which is the half that used to leak.
+			//
+			// wantFrees moved 100 -> 300. Same checks as the row above: answer
+			// unchanged at 70, underflow 0, sanitizer clean, and the churn form
+			// (caller reads src and both its elements back after two fresh arrays)
+			// returns native's answer with allocs == frees.
+			name: "strarr_alias_of_a_parameter_borrowed",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function plen(p: string[]): i32 { var v: string[] = p; return v.len(); }
 function round(i: i32): i32 { var src: string[] = [mkstr("x")]; return (plen(src) + i) % 101; }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 70, allocs: 300, frees: 100,
+			want: 70, allocs: 300, frees: 300,
 		}}
 }
 
