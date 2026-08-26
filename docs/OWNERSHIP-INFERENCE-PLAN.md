@@ -58,12 +58,28 @@ Ordered roughly by cost. All are *safe* leaks.
    `if/while/for/match` falls back to the function-exit sweep
    (`emitRcDecLocalsAtExit`). Peak memory is therefore higher than
    garbage-free Perceus; there is no per-arm drop placement.
-3. **Map keys and non-array map values** are never reclaimed ("a later
-   slice") — a permanent leak class for string-keyed maps.
+3. **Map keys and map values** — CLOSED for the canonical shapes (#2704).
+   The column walks reclaim string keys and string values on every
+   backend, the overwrite pre-drop releases a replaced value, and the
+   lookup temporaries (get_or's boxed fallback cell, its retained result,
+   a get / get_or key temp) are all reclaimed. What is left is one shape:
+   `m.insert(k, v)` OVERWRITING an existing entry when `k` is an
+   ALLOCATING expression (a concat, not an ident / field / index). The
+   runtime keeps the key it already has, so the caller's key reference is
+   orphaned, and the IR's overwrite pre-drop declines the re-evaluation
+   that would find the replaced value (`exprSafeToReevaluate`), so that
+   leaks too. Closing it wants either a runtime-side release of the
+   duplicate key (which needs an ABI discriminator the type-erased map
+   does not have — `__map_own_key`'s rebox trick allocates on the
+   two-word side) or a stash-and-substitute of the key at the set site.
 4. **Non-uniform / generic / boxed-generic enum** boxes + payloads
    flat-dec (the box is only freed when variant layouts are uniform).
+   Pinned as closed for the concrete and generic-instantiation shapes by
+   `internal/e2e/rc_map_string_column_reclaim_test.go`; a payload the
+   drop site still sees as `ParamType` is the residue.
 5. **One-level / non-uniform nested struct/enum/tuple fields** flat-dec
-   their inner heap.
+   their inner heap — the nested struct/array/string shape is closed and
+   pinned in the same file.
 6. **Closure capture envs** in fallback paths; **fresh temps** in
    unhandled shapes (method results that may alias the receiver,
    pair-form returns, retain-sink/indirect-call args); **chained
