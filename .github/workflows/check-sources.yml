@@ -1,7 +1,8 @@
 name: Check sources
 
 # `make check-sources` — native `fern -check` over the self-host sources and
-# every stdlib module as a standalone import — on every push to main.
+# every stdlib module as a standalone import, plus the feature census over the
+# same sources — on every push to main.
 #
 # The lint job runs the same gate on PRs, but no workflow ran anything on main,
 # so a merge race between two individually-green PRs landed an unbuildable main
@@ -12,6 +13,13 @@ name: Check sources
 # type) as the whole failure output — instead of leaving it to surface as a
 # driver-build failure at the top of ~20 self-host jobs on the next unrelated
 # PR.
+#
+# The census is here for the same reason and by the same route: it reads the
+# self-host sources as text, so it is 2 s and needs no toolchain, but it is
+# filed in internal/e2eselfhost — a package the unit lane excludes for costing
+# 90 minutes unsharded — and so ran only on pull requests, each against its own
+# base. Its wildcard-arm ratchet drifted 244 arms and stood red on main with
+# nothing to report it (#7570).
 #
 # No concurrency group, deliberately: back-to-back merges each keep their own
 # run, so a failure is attributed to one merge rather than to the newest of

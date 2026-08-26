@@ -26,10 +26,11 @@ name: Lint
 #                Fern sources only.
 #   check-sources — `make check-sources`: native `fern -check` over the
 #                self-host sources plus every stdlib module as a standalone
-#                import. Every self-host lane needs both to type-check but
-#                asks only implicitly, by building a driver, so a type error
-#                surfaced as a build-step failure at the top of a job named
-#                for something else (#7317). Also runs on every push to main
+#                import, and the feature census over those same sources.
+#                Every self-host lane needs both to type-check but asks only
+#                implicitly, by building a driver, so a type error surfaced as
+#                a build-step failure at the top of a job named for something
+#                else (#7317). Also runs on every push to main
 #                (check-sources.yml) to catch merge races.
 #   deadcode   — `make deadcode`: fails on any unreachable function not in
 #                tools/deadcode-allowlist.txt. A whole-program SSA reachability
