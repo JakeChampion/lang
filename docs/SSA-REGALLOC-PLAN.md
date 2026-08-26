@@ -602,9 +602,33 @@ where a hole-aware allocator would not".
 
 **Ordering implication.** The emit layer is not where the remaining size is.
 Interval refinement — hole-aware live ranges, so a value dead across a region
-stops holding a register there — is the next thing worth measuring, and it is
-an `internal/ssa` change rather than a per-backend one. The stack-arg ABI and
-imm19 veneers remain what the self-host needs to link, independent of size.
+stops holding a register there — is next, and it is an `internal/ssa` change
+rather than a per-backend one. The stack-arg ABI and imm19 veneers remain what
+the self-host needs to link, independent of size.
+
+### How much of the spilling the approximation causes
+
+Sized before building it, by comparing each function's true maximum of
+simultaneously live values against the demand its single hole-free intervals
+imply. Over `checker_modload_run`'s 1065 live functions, against the 22
+allocatable registers:
+
+| | functions | excess demand |
+|---|---|---|
+| spilling as intervals are built today | 158 | 3020 |
+| of those, would not spill at all under exact liveness | 36 | — |
+| still spilling under exact liveness | 122 | 1837 |
+
+So **39% of the excess register demand is an artifact of the approximation**,
+and 61% is real — those functions have more live values than the machine has
+registers and would spill under any allocator.
+
+Both halves of that are worth knowing. Counting only the functions the change
+would fix outright says 36 of 1065, which reads like a rounding error and is
+the wrong measure: most of the win is in functions that keep spilling but spill
+less. Excess demand is not proportional to memory ops either — a spilled
+value's cost is its use count — so this sizes the lever without predicting the
+byte count. Measure that against a base-matched build, not from this table.
 
 ### Two divergences the differential lane cannot see
 
