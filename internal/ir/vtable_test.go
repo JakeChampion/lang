@@ -242,7 +242,7 @@ function main(): i32 { return 0; }`
 // The over-approximation is deliberate for vtables — an unreferenced one is
 // dead static data no backend emits — but a wrapper is dead CODE whose body
 // calls `__method_<C>_<m>`. Tree-shake roots only the coerced concretes'
-// methods (treeshake.DynCoercionImplMethods), so a wrapper for an
+// methods (treeshake's dynVtableRoots), so a wrapper for an
 // implementor nothing coerces references a symbol that was dropped and the
 // native link fails on an undefined label. Only a coercion site can
 // materialise a primitive vtable (`as?` targets are struct/enum), so the

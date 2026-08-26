@@ -14,10 +14,9 @@ import (
 )
 
 // prepared mirrors cmd/fern's pre-enforcement pipeline: load (stdlib
-// imports resolved), check, monomorphise, then tree-shake with the
-// dyn roots — so Enforce sees exactly the call graph a backend would
-// compile. httpDropMain mirrors the wasi-http-only drop of the
-// synthesised tcp_serve main.
+// imports resolved), check, monomorphise, then tree-shake — so Enforce
+// sees exactly the call graph a backend would compile. httpDropMain
+// mirrors the wasi-http-only drop of the synthesised tcp_serve main.
 func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -41,7 +40,7 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 		}
 		prog.Funcs = kept
 	}
-	extras := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	var extras []string
 	if httpDropMain {
 		extras = append(extras, "handle", "__method_HeaderMap_append")
 	}
@@ -477,5 +476,46 @@ func TestGatedCapabilitiesResolvable(t *testing.T) {
 		if got := platforms.TargetsProviding(c); len(got) == 0 {
 			t.Errorf("gated capability %q is provided by no target — descriptor/gate-table drift", c)
 		}
+	}
+}
+
+// Enforce reports the capabilities of the ARTIFACT, so a call in code the
+// artifact does not contain is not a violation. That contract rests on
+// tree-shake handing over only reachable functions: rooting every `dyn`
+// coercion the checker recorded — sites in dead functions included — kept
+// the impl method behind an unreachable coercion alive, and a target
+// without its capability then rejected a program that can never make the
+// call (#4114).
+func TestEnforceIgnoresCallsBehindAnUnreachableCoercion(t *testing.T) {
+	src := `trait Greet { function hello(self: Self): i32; }
+struct Loud { n: i32 }
+impl Greet for Loud { function hello(self: Self): i32 { return logs_a_line(); } }
+
+function logs_a_line(): i32 {
+    print("nothing can reach this");
+    return 1;
+}
+
+function dead_coercion(): i32 {
+    var g: dyn Greet = Loud { n: 1 };
+    return g.hello();
+}
+
+function main(): i32 { return 7; }`
+	prog := prepared(t, src, false)
+	if vs := platforms.Enforce(prog, "arm64-freestanding"); len(vs) != 0 {
+		t.Errorf("want no violation for an unreachable coercion, got %d: %v", len(vs), vs)
+	}
+
+	// The same program with the coercion reached: `print` IS in the
+	// artifact now, and a target without `log` must still say so.
+	live := strings.Replace(src, "function main(): i32 { return 7; }",
+		"function main(): i32 { return dead_coercion(); }", 1)
+	vs := platforms.Enforce(prepared(t, live, false), "arm64-freestanding")
+	if len(vs) == 0 {
+		t.Fatal("a reachable coercion must still surface its callee's capability use")
+	}
+	if vs[0].Builtin != "print" {
+		t.Errorf("want the print violation, got %+v", vs[0])
 	}
 }

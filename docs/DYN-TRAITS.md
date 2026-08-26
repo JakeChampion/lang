@@ -425,9 +425,11 @@ x86-64 backend (`internal/codegen/x86_64/x86_64.go`):
   plain — no closure env), and `call r11`. Void iff `op.Sig.Result ==
   nil`.
 - The vtable's `__method_*` targets are reachable only through the
-  runtime vtable, so the build pins them as tree-shake roots via the
-  shared `treeshake.DynCoercionImplMethods(info)` helper (hoisted out of
-  the wasm build path so all backends share one rooting source).
+  runtime vtable, so tree-shake roots them from the coercion site it
+  reaches (`treeshake`'s `dynVtableRoots`, driven by the reachability
+  walk — one rooting source shared by all backends). Rooting them from
+  `Info.DynCoercions` whole-program instead kept the impl methods of a
+  coercion in a function nothing calls (#4114).
 
 arm64 backend (`internal/codegen/arm64/arm64.go`, slice 2d): the exact
 structural mirror of x86-64 — same boxed representation, same IR (zero IR
@@ -518,8 +520,8 @@ the stdlib rather than by the program under test:
   `collectVtables` deliberately over-approximates, emitting a vtable per
   implementor; an unreferenced vtable is dead static data no backend
   emits, but a wrapper is dead CODE calling `__method_<C>_<m>` — a symbol
-  tree-shake dropped, since `treeshake.DynCoercionImplMethods` roots only
-  the coerced concretes. `buildDynboxWrappers` therefore filters on
+  tree-shake dropped, since tree-shake roots only the concretes coerced
+  in code it reaches. `buildDynboxWrappers` therefore filters on
   `info.DynCoercions`. That is complete: a primitive vtable can only be
   materialised by a coercion, since an `as?` target is always a
   struct/enum.
@@ -1064,7 +1066,7 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    new IR op; the `data`/`vtable` extraction reuses the dispatch lowering's
    `b.dynBoxed()` branch and the `Some`/`None` construction reuses the
    ordinary heap-box `Option` representation. Downcast-only targets are
-   rooted via `treeshake.DowncastImplMethods`. Struct/enum targets;
+   rooted by the downcast site tree-shake reaches. Struct/enum targets;
    primitive targets remain a follow-up.
 7. **Multi-trait objects (`dyn A + B`) — slices 1 + 2 + downcast shipped.**
    Slice 1: surface + checker + interpreter. Slice 2: merged-vtable
@@ -1183,10 +1185,10 @@ trait name). A
 **downcast-only target** `T` (never coerced to `dyn Trait`, only downcast
 to) is absent from `Info.DynCoercions`, so its `__method_*` would be
 tree-shaken / IR-dead-function-eliminated and the vtable cell would
-reference a missing symbol; `treeshake.DowncastImplMethods(prog, info)`
-roots them on every backend (rooting **every** trait in the set, not just
-the primary, so a multi-trait downcast-only target's full merged vtable
-links — and the wasm path also feeds them to its IR-level `LiveFunctions`
+reference a missing symbol; tree-shake's `downcastRoots` roots them on
+every backend when it reaches the `as?` site (rooting **every** trait in
+the set, not just the primary, so a multi-trait downcast-only target's
+full merged vtable links — and the wasm path also feeds them to its IR-level `LiveFunctions`
 cull). RC of the produced `Option`/`data` is out of scope (leak-mode, like
 the rest of `dyn` — §4.4).
 
@@ -1276,7 +1278,7 @@ also lowers on all three native backends (and the self-host): `emitDowncast`
 keys the vtable-pointer compare by the whole set (`dynVtableSetKey(dc.Traits)`),
 so it references the same MERGED `__vtable_<A+B>_<T>` cell a multi-trait
 coercion of `T` stores — the compare matches exactly when the runtime
-concrete is `T` (§9). `treeshake.DowncastImplMethods` roots **every** trait
+concrete is `T` (§9). Tree-shake's `downcastRoots` roots **every** trait
 in the set's impl methods, so a multi-trait downcast-only target's full
 merged vtable links. Single-trait downcast is unchanged. The only
 multi-trait sub-case still missing is disambiguation syntax for a method
@@ -1306,5 +1308,5 @@ to a (trait-set,concrete) key:
   GAS label (`dynVtableLabel`), since `+` isn't a valid assembler-label
   char; wasm keys by data-segment offset and needs no sanitisation.
 - `DynCoercion.Traits` records the whole set so tree-shaking
-  (`treeshake.DynCoercionImplMethods`) already roots the impl methods of
+  (`treeshake`'s `dynVtableRoots`) already roots the impl methods of
   every trait, and `ir.dynTraitSetsUsed` collects each whole set used.
