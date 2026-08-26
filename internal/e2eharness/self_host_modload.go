@@ -5,8 +5,6 @@
 package e2eharness
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -16,22 +14,9 @@ import (
 func WriteSelfHostModloadProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{
-		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifyprovided.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern",
-		"flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern",
-		// treeshake backs the over-budget per-module rescue: the driver derives
-		// the reachable-name set from it before pruning each unit.
-		"treeshake.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	// treeshake backs the over-budget per-module rescue: the driver derives
+	// the reachable-name set from it before pruning each unit.
+	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifyprovided.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern", "treeshake.fern")
 	return dir
 }
 
