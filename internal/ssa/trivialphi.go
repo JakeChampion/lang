@@ -9,17 +9,34 @@ package ssa
 //
 //   - `phi v` (single-arg phi after FoldBranches dropped the
 //     other inbound edges) → `v`.
+//
 //   - `phi v, v, …, v` (all incoming values identical) → `v`.
+//
 //   - `phi v, phi-result, v, phi-result, v` (self-references
 //     allowed; the iterative phi-cycle in a loop header
 //     usually has the self-ref as one arg). Treated as
 //     trivial when, ignoring self-refs, only one distinct
 //     Value remains.
+//
 //   - `phi c1, c2` where c1 and c2 are distinct const Ops with
 //     identical immediate (e.g. two separate `const_int 7`
-//     defs on different incoming edges). Result aliases to the
-//     first const. Saves an iteration vs. waiting for CSE to
-//     dedup the constants first.
+//     defs on different incoming edges). The phi is REPLACED by
+//     a const Op of its own, in its own block, keeping the phi's
+//     Result — not aliased to c1.
+//
+//     Aliasing is what the other cases do, and here it is
+//     unsound: a phi block has two or more preds, so a const
+//     defined in ONE of them does not dominate the merge.
+//     `phi v4, v5` became `v5` and left `ret v5` in a block v5
+//     could not reach, which the arm64 SSA backend rejected on
+//     `X && (true && !(!false))` — "ret uses v5 before its def
+//     dominates the use" — rather than miscompiling it. Nothing
+//     downstream recovered it either: CSE will not dedup the two
+//     consts across a diamond for the same dominance reason, so
+//     a guard that merely declined would have dropped the
+//     optimisation outright. Materialising keeps it, and the
+//     new const lands after the block's remaining phis because
+//     Verify requires phis to lead a block.
 //
 // Phis whose surviving args span ≥2 distinct non-self Values
 // (and aren't all the same constant) are not trivial and stay.
@@ -43,6 +60,9 @@ func TrivialPhis(f *Func) {
 		}
 	}
 	sub := map[int32]Value{}
+	// Phis to rewrite in place into a const of their own, keyed by the
+	// block holding them.
+	materialise := map[*Block][]*Op{}
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Kind != OpPhi {
@@ -55,10 +75,18 @@ func TrivialPhis(f *Func) {
 				sub[op.Result.ID] = surviving
 				continue
 			}
-			if surviving, ok := constArgsTarget(op, defs); ok {
-				sub[op.Result.ID] = surviving
+			if model, ok := constArgsModel(op, defs); ok {
+				op.Kind = model.Kind
+				op.Args = nil
+				op.Imm = model.Imm
+				op.F64 = model.F64
+				op.Str = model.Str
+				materialise[b] = append(materialise[b], op)
 			}
 		}
+	}
+	for b, consts := range materialise {
+		reorderPhisFirst(b, consts)
 	}
 	if len(sub) == 0 {
 		return
@@ -66,31 +94,55 @@ func TrivialPhis(f *Func) {
 	applySubstitutions(f, sub)
 }
 
-// constArgsTarget reports whether every non-self-ref arg of
+// reorderPhisFirst moves `consts` — Ops in b that were phis a moment ago
+// and are now const Ops carrying the same Results — to sit directly after
+// b's remaining phis, which Verify requires to lead the block. Their args
+// are gone, so no use can precede them: every non-phi op in b already
+// followed the phis they replaced.
+func reorderPhisFirst(b *Block, consts []*Op) {
+	moved := map[*Op]bool{}
+	for _, op := range consts {
+		moved[op] = true
+	}
+	phis := make([]*Op, 0, len(b.Ops))
+	rest := make([]*Op, 0, len(b.Ops))
+	for _, op := range b.Ops {
+		if moved[op] {
+			continue
+		}
+		if op.Kind == OpPhi {
+			phis = append(phis, op)
+			continue
+		}
+		rest = append(rest, op)
+	}
+	b.Ops = append(append(phis, consts...), rest...)
+}
+
+// constArgsModel reports whether every non-self-ref arg of
 // `op` (assumed OpPhi) resolves to a const Op carrying the
-// same immediate value. Returns the first such arg if so —
-// aliasing the phi to either const works since they hold the
-// same value. Returns false if any arg isn't a const, or the
-// const kinds/values don't all match.
+// same immediate value, and returns one of those const Ops to
+// copy the constant from. The CALLER rewrites the phi into a
+// const of its own rather than aliasing it to that Op — see
+// the const-args case on TrivialPhis for why aliasing here is
+// unsound.
 //
 // Distinct from trivialPhiTarget: this handles the case where
 // the args are different SSA Values but represent the same
-// compile-time constant. CSE eventually dedups the constants
-// and lets trivialPhiTarget pick it up on the next iteration,
-// but doing it here saves a fixed-point round-trip.
-func constArgsTarget(op *Op, defs map[int32]*Op) (Value, bool) {
+// compile-time constant.
+func constArgsModel(op *Op, defs map[int32]*Op) (*Op, bool) {
 	var first Value
 	var firstDef *Op
 	for _, a := range op.Args {
 		if !a.IsValid() {
-			return Value{}, false
+			return nil, false
 		}
 		if a == op.Result {
 			continue
 		}
 		def, ok := defs[a.ID]
 		if !ok || !IsConst(def.Kind) {
-			return Value{}, false
+			return nil, false
 		}
 		if !first.IsValid() {
 			first = a
@@ -98,29 +150,29 @@ func constArgsTarget(op *Op, defs map[int32]*Op) (Value, bool) {
 			continue
 		}
 		if def.Kind != firstDef.Kind {
-			return Value{}, false
+			return nil, false
 		}
 		switch def.Kind {
 		case OpConstInt, OpConstBool:
 			if def.Imm != firstDef.Imm {
-				return Value{}, false
+				return nil, false
 			}
 		case OpConstFloat:
 			if def.F64 != firstDef.F64 {
-				return Value{}, false
+				return nil, false
 			}
 		case OpConstString:
 			if def.Str != firstDef.Str {
-				return Value{}, false
+				return nil, false
 			}
 		default:
-			return Value{}, false
+			return nil, false
 		}
 	}
 	if !first.IsValid() {
-		return Value{}, false
+		return nil, false
 	}
-	return first, true
+	return firstDef, true
 }
 
 // trivialPhiTarget reports whether `op` (assumed OpPhi) is

@@ -193,9 +193,12 @@ func TestTrivialPhiInOptimizePipeline(t *testing.T) {
 	}
 }
 
-// TestTrivialPhiConstIntArgsCollapse — two const_int 7 defs
-// on different incoming edges still let the phi collapse,
-// without waiting for CSE.
+// TestTrivialPhiConstIntArgsCollapse — two const_int 7 defs on different
+// incoming edges collapse the phi into a const_int of its own, keeping the
+// phi's Result. Aliasing the uses to v1 instead — which this pass used to
+// do — is unsound: v1 is defined in thenB, which does not dominate the
+// merge, so `use` would read a value that is not live on the elseB path.
+// Verify rejects that shape, so the whole function failed to compile.
 func TestTrivialPhiConstIntArgsCollapse(t *testing.T) {
 	f := NewFunc("f")
 	c := f.AddParam()
@@ -216,12 +219,19 @@ func TestTrivialPhiConstIntArgsCollapse(t *testing.T) {
 
 	TrivialPhis(f)
 
-	// Phi.Result must be aliased — `use` now reads v1 directly.
-	useOp := merge.Ops[1]
-	if useOp.Args[0] != v1 || useOp.Args[1] != v1 {
-		t.Errorf("use.Args = %v, want [%v, %v] (phi aliased to v1)",
-			useOp.Args, v1, v1)
+	// The phi became a const_int in its own block, under the same Result,
+	// so `use` needs no rewriting at all.
+	if got := merge.Ops[0]; got.Kind != OpConstInt || got.Imm != 7 || got.Result != phi {
+		t.Errorf("merge.Ops[0] = %v (kind %v, imm %d, result %v), want const_int 7 with result %v",
+			got, got.Kind, got.Imm, got.Result, phi)
 	}
+	if useOp := merge.Ops[1]; useOp.Args[0] != phi || useOp.Args[1] != phi {
+		t.Errorf("use.Args = %v, want both = %v (phi Result kept)", useOp.Args, phi)
+	}
+	if err := Verify(f); err != nil {
+		t.Errorf("Verify after TrivialPhis: %v", err)
+	}
+	_, _ = v1, v2
 }
 
 // TestTrivialPhiConstBoolArgs — same trick on OpConstBool.
@@ -244,10 +254,20 @@ func TestTrivialPhiConstBoolArgs(t *testing.T) {
 
 	TrivialPhis(f)
 
-	if merge.Term.Value != v1 {
-		t.Errorf("Term.Value = %v, want %v (const_bool phi collapsed)",
-			merge.Term.Value, v1)
+	// Collapsed in place: the ret keeps the phi's Result, which is now a
+	// const_bool defined in the merge block itself. Aliasing to v1 would name a
+	// value defined in only one predecessor.
+	if merge.Term.Value != phi {
+		t.Errorf("Term.Value = %v, want %v (phi Result kept)",
+			merge.Term.Value, phi)
 	}
+	if got := merge.Ops[0]; got.Kind != OpConstBool || got.Imm != 1 {
+		t.Errorf("merge.Ops[0] = kind %v imm %d, want const_bool 1", got.Kind, got.Imm)
+	}
+	if err := Verify(f); err != nil {
+		t.Errorf("Verify after TrivialPhis: %v", err)
+	}
+	_, _ = v1, v2
 }
 
 // TestTrivialPhiConstFloatArgs — and on OpConstFloat.
@@ -270,10 +290,20 @@ func TestTrivialPhiConstFloatArgs(t *testing.T) {
 
 	TrivialPhis(f)
 
-	if merge.Term.Value != v1 {
-		t.Errorf("Term.Value = %v, want %v (const_float phi collapsed)",
-			merge.Term.Value, v1)
+	// Collapsed in place: the ret keeps the phi's Result, which is now a
+	// const_float defined in the merge block itself. Aliasing to v1 would name a
+	// value defined in only one predecessor.
+	if merge.Term.Value != phi {
+		t.Errorf("Term.Value = %v, want %v (phi Result kept)",
+			merge.Term.Value, phi)
 	}
+	if got := merge.Ops[0]; got.Kind != OpConstFloat || got.F64 != 3.14 {
+		t.Errorf("merge.Ops[0] = kind %v f64 %v, want const_float 3.14", got.Kind, got.F64)
+	}
+	if err := Verify(f); err != nil {
+		t.Errorf("Verify after TrivialPhis: %v", err)
+	}
+	_, _ = v1, v2
 }
 
 // TestTrivialPhiConstStringArgs — and on OpConstString.
@@ -296,10 +326,20 @@ func TestTrivialPhiConstStringArgs(t *testing.T) {
 
 	TrivialPhis(f)
 
-	if merge.Term.Value != v1 {
-		t.Errorf("Term.Value = %v, want %v (const_string phi collapsed)",
-			merge.Term.Value, v1)
+	// Collapsed in place: the ret keeps the phi's Result, which is now a
+	// const_string defined in the merge block itself. Aliasing to v1 would name a
+	// value defined in only one predecessor.
+	if merge.Term.Value != phi {
+		t.Errorf("Term.Value = %v, want %v (phi Result kept)",
+			merge.Term.Value, phi)
 	}
+	if got := merge.Ops[0]; got.Kind != OpConstString || got.Str != "hi" {
+		t.Errorf("merge.Ops[0] = kind %v str %q, want const_string \"hi\"", got.Kind, got.Str)
+	}
+	if err := Verify(f); err != nil {
+		t.Errorf("Verify after TrivialPhis: %v", err)
+	}
+	_, _ = v1, v2
 }
 
 // TestTrivialPhiConstArgsDifferingValuesKept — phi of two
