@@ -604,8 +604,9 @@ around each call:
 
 6.4 stores and loads per call, over 175,765 calls. Spilling is **not** the
 story: across the same 1065 functions the allocator homes 394,251 values and
-spills only a few thousand of them, which cannot account for a million memory
-ops.
+spills **3,649 of them, 0.9%**, which cannot account for a million memory ops.
+The 104,409 non-call ops are the right order for that many spilled values plus
+the phi temps and prologues.
 
 An earlier revision of this section said the opposite — that 83% of stack
 traffic was spilled operands and the caller-save area only 16%. That came from
@@ -651,9 +652,19 @@ allocatable registers:
 
 So **39% of the excess register demand is an artifact of the approximation**,
 and 61% is real. That number is correct as measured and was still the wrong
-thing to measure: it sizes spilling, and spilling turned out to be 0.7% of
-values and 6% of the stack traffic. #7577 built the change it justified and the
-result was a 16% regression, for the reason above.
+thing to measure.
+
+#7577 built the change it justified, and the change **worked**: spilled values
+fell from 3,649 to 2,874, a 21% reduction, exactly what hole-aware interference
+is supposed to buy. The program still got **16% bigger**, because spilling was
+0.9% of values and 8% of the stack traffic while the caller-save area it
+inflated is 92%.
+
+That is the lesson worth keeping from this whole line of work. An optimisation
+delivering precisely what it promises can still lose, and the sizing that
+justified it can be arithmetically correct and still measure the wrong
+quantity. Before building, establish what share of the total the target
+actually is — not just how much of the target is addressable.
 
 Both halves of that are worth knowing. Counting only the functions the change
 would fix outright says 36 of 1065, which reads like a rounding error and is
