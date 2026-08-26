@@ -259,17 +259,30 @@ const selfHostSrcDir = "../../examples/self_host"
 // the staging step before BuildSelfHostBin for tests that hand-pick a driver's
 // import closure instead of copySelfHostTree'ing the whole directory.
 //
-// Prefer CopySelfHostDriver: it derives the list from the driver's imports, so
-// it cannot go stale when a module is added or removed.
+// Each name is expanded through its own import closure, so a hand-written list
+// names the modules a test CARES about and cannot go stale when one of them
+// gains an import. Ninety-odd call sites each restate a closure by hand; every
+// one of them broke at once when parser.fern gained `import "./ast"` (#6993),
+// which is the same staleness #7183 fixed for drivers by deriving the set.
+// Expanding is safe for a list that was already complete: the closure of a
+// complete set is itself, and HashSelfHostSources rejects a set that is not.
 func CopySelfHostFiles(t *testing.T, dir string, names ...string) {
 	t.Helper()
+	seen := map[string]bool{}
 	for _, name := range names {
-		src, err := os.ReadFile(filepath.Join(selfHostSrcDir, name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
+		for _, p := range SelfHostImportClosure(t, selfHostSrcDir, name) {
+			base := filepath.Base(p)
+			if seen[base] {
+				continue
+			}
+			seen[base] = true
+			src, err := os.ReadFile(filepath.Join(selfHostSrcDir, base))
+			if err != nil {
+				t.Fatalf("read %s: %v", base, err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, base), src, 0o644); err != nil {
+				t.Fatalf("write %s: %v", base, err)
+			}
 		}
 	}
 }
