@@ -328,6 +328,37 @@ function main(): i32 {
 return get(E.B(4));
 }
 `},
+	// A destructuring PARAMETER is lowered to a holder plus a prelude `let`,
+	// and the self-host printer reverses that. A body's OWN `let` destructure
+	// of a parameter has the same shape, so both directions are pinned here:
+	// the prelude must fold back into the signature, and the body statement
+	// must survive as one (#7523).
+	{"param-destructure-vs-body-let", `struct Point { x: i32, y: i32 }
+function folds_struct(Point { x: a, y }: Point): i32 {
+return a + y;
+}
+function folds_tuple((a, (b, c)): (i32, (i32, i32))): i32 {
+return a + b + c;
+}
+function folds_at(p @ Point { x, y }: Point): i32 {
+return x + y + p.x;
+}
+function body_let_struct(p: Point): i32 {
+let Point { x: a, y } = p;
+return a + y;
+}
+function body_let_tuple(t: (i32, (i32, i32))): i32 {
+let (a, (b, c)) = t;
+return a + b + c;
+}
+function body_let_discard(t: (i32, i32)): i32 {
+let (a, _) = t;
+return a;
+}
+function main(): i32 {
+return folds_struct(Point { x: 1, y: 2 }) + folds_tuple((1, (2, 3))) + folds_at(Point { x: 1, y: 2 }) + body_let_struct(Point { x: 1, y: 2 }) + body_let_tuple((1, (2, 3))) + body_let_discard((1, 2));
+}
+`},
 	{"precedence-bitwise-vs-compare", `function is_pow2(n: i32): boolean {
 return (n & (n - 1)) == 0;
 }

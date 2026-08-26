@@ -6796,9 +6796,36 @@ pub function destr_marker(at: string, rest_written: boolean, tag: string): strin
     return out;
 }
 
-pub function destr_marker_split(marker: string): DestrMarker {
+// pp_marker tags a destructure StmtVar as the PRELUDE a destructuring
+// PARAMETER was lowered to, rather than a destructure the programmer wrote —
+// the leading component of the marker channel, ahead of any `@at:` / `@rest;`
+// / `@sd:`.
+//
+// The printer reverses that lowering, spelling the parameter as its pattern
+// and dropping the prelude. Nothing else in the statement distinguishes the
+// two: a hand-written `let P { x, y } = p;` whose `p` is a parameter has the
+// same binding list, the same marker and the same holder initialiser, so
+// without this tag the body's own destructure was folded into the signature.
+pub function pp_marker(rest: string): string {
+    return "@pp;" + rest;
+}
+
+// is_param_prelude_marker reports whether the channel carries that tag.
+pub function is_param_prelude_marker(type_name: string): boolean {
+    return util.str_has_prefix(type_name, "@pp;");
+}
+
+// strip_pp_marker drops a leading `@pp;`, leaving the rest of the channel.
+pub function strip_pp_marker(marker: string): string {
+    if (!util.str_has_prefix(marker, "@pp;")) { return marker; }
+    return slice_unchecked(marker, 4, marker.len()) + "";
+}
+
+// A leading `@pp;` is transparent here, so every other reader of the channel
+// is unaffected by the tag.
+pub function destr_marker_split(marker0: string): DestrMarker {
     var at: string = "";
-    var m: string = marker;
+    var m: string = strip_pp_marker(marker0);
     if (util.str_has_prefix(m, "@at:")) {
         var i: i32 = 4;
         while (i < m.len()) {
@@ -6826,7 +6853,8 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-    return util.str_has_prefix(type_name, "@at:")
+    return util.str_has_prefix(type_name, "@pp;")
+        || util.str_has_prefix(type_name, "@at:")
         || util.str_has_prefix(type_name, "@rest;")
         || util.str_has_prefix(type_name, "@sd:");
 }
@@ -6913,7 +6941,7 @@ function prepend_param_destrs(body: Stmt[], destrs: ParamDestr[]): Stmt[] {
     var i: i32 = 0;
     while (i < destrs.len()) {
         var d: ParamDestr = destrs[i];
-        out = out.append(s_var_at(d.names, d.marker, e_ident_at(d.synth, d.line, d.col), d.line, d.col));
+        out = out.append(s_var_at(d.names, pp_marker(d.marker), e_ident_at(d.synth, d.line, d.col), d.line, d.col));
         i = i + 1;
     }
     var j: i32 = 0;
@@ -19469,8 +19497,15 @@ function main(): i32 {
 
     // Struct-pattern parameters, both spellings (#7306). The pattern head
     // desugars to a holder param of the annotated type plus a leading
-    // struct-destructure StmtVar carrying the `@sd:` marker — the same shape
-    // `let Point { x, y } = e;` produces, so it rides the existing lowering.
+    // struct-destructure StmtVar, so it rides the existing lowering.
+    //
+    // Its marker carries `@pp;` ahead of the `@sd:` tag. That is the ONE
+    // thing separating this prelude from the `let Point { x, y } = p;` a
+    // programmer writes over a parameter, which is otherwise identical —
+    // same binding list, same `@sd:` tag, same holder initialiser — and
+    // without it `-fmt` folded the body's own destructure into the
+    // signature (#7523). Pinning the full marker here is what keeps the two
+    // distinguishable.
     //
     // The NAMED-function assertion is the load-bearing one: before this
     // landed the parser took `{ x, y }` for the function BODY, so the failure
@@ -19490,7 +19525,7 @@ function main(): i32 {
     match (modSP.funcs[0].body[0]) {
         StmtVar(v) => {
             if (v.name != "x,y") { return 1157; }
-            if (v.type_name != "@sd:Point:x,y") { return 1158; }
+            if (v.type_name != "@pp;@sd:Point:x,y") { return 1158; }
             match (v.init) {
                 ExprIdent(id) => { if (id.name != spHolder) { return 1159; } },
                 _ => { return 1160; }
@@ -19507,7 +19542,7 @@ function main(): i32 {
     match (modSPR.funcs[0].body[0]) {
         StmtVar(v) => {
             if (v.name != "a,y") { return 1166; }
-            if (v.type_name != "@sd:Point:x,y") { return 1167; }
+            if (v.type_name != "@pp;@sd:Point:x,y") { return 1167; }
         },
         _ => { return 1168; }
     }
@@ -19521,7 +19556,7 @@ function main(): i32 {
     if (modSPA.funcs[0].params[0].name != "w") { return 1172; }
     match (modSPA.funcs[0].body[0]) {
         StmtVar(v) => {
-            if (v.type_name != "@sd:Point:x,y") { return 1173; }
+            if (v.type_name != "@pp;@sd:Point:x,y") { return 1173; }
             match (v.init) {
                 ExprIdent(id) => { if (id.name != "w") { return 1174; } },
                 _ => { return 1175; }
@@ -19547,7 +19582,7 @@ function main(): i32 {
                     match (lm.body[0]) {
                         StmtVar(dv) => {
                             if (dv.name != "x,y") { return 1185; }
-                            if (dv.type_name != "@sd:Point:x,y") { return 1186; }
+                            if (dv.type_name != "@pp;@sd:Point:x,y") { return 1186; }
                             match (dv.init) {
                                 ExprIdent(id) => { if (id.name != lm.params[0].name) { return 1187; } },
                                 _ => { return 1188; }
@@ -19569,7 +19604,7 @@ function main(): i32 {
                     if (lm.body.len() != 2) { return 1193; }
                     match (lm.body[0]) {
                         StmtVar(dv) => {
-                            if (dv.type_name != "@sd:Point:x,y") { return 1194; }
+                            if (dv.type_name != "@pp;@sd:Point:x,y") { return 1194; }
                         },
                         _ => { return 1195; }
                     }
