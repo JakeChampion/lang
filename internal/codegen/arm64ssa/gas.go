@@ -17,6 +17,7 @@ package arm64ssa
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,11 +30,63 @@ import (
 )
 
 // armX / armW map an abstract register index to its 64-bit / 32-bit AArch64
-// register name. The abstract file (allocatable + 4 scratch) is mapped onto
-// x0..x15 — all caller-saved / temporary registers under the AArch64 PCS, so the
-// leaf integer core needs no callee-saved save/restore bookkeeping.
-var armX = []string{"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15"}
-var armW = []string{"w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10", "w11", "w12", "w13", "w14", "w15"}
+// register name. Abstract indices [0, numAlloc) are the allocatable file and
+// [numAlloc, numAlloc+4) the scratch pool, so the ORDER of this table decides
+// which physical registers each role gets:
+//
+//	 0..11  x0..x11    caller-saved (temporaries under the AArch64 PCS)
+//	12..21  x19..x28   callee-saved (preserved by the callee, including every
+//	                   runtime helper in this file — pinned by
+//	                   TestRuntimeHelpersPreserveCalleeSaved)
+//	22..25  x12..x15   caller-saved, the scratch pool at the default numAlloc
+//
+// Two properties are load-bearing. Indices 0..7 must stay x0..x7 because
+// argMoveLines / paramMoveLines treat the incoming argument register for arg i
+// as abstract register i. And the callee-saved run must be contiguous and below
+// the scratch pool at the default numAlloc, so a call-crossing value the
+// allocator steered into x19..x28 costs one prologue save instead of a
+// store/reload at every call it spans.
+//
+// A numAlloc below maxAlloc simply shortens the allocatable file and slides the
+// scratch pool down into the callee-saved run; that stays correct (the prologue
+// saves whatever the body touches) and only costs the extra saves.
+var armX = []string{
+	"x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+	"x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28",
+	"x12", "x13", "x14", "x15",
+}
+var armW = []string{
+	"w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10", "w11",
+	"w19", "w20", "w21", "w22", "w23", "w24", "w25", "w26", "w27", "w28",
+	"w12", "w13", "w14", "w15",
+}
+
+// maxAlloc is the largest allocatable file the mapping supports: the 22 entries
+// before the scratch pool.
+const maxAlloc = 22
+
+// DefaultNumAlloc is the allocatable-file size the compiler driver uses. At this
+// size the scratch pool lands on x12..x15, the caller-saved temporaries — any
+// smaller and the pool slides into the callee-saved run and every function pays
+// to save its own scratch registers.
+const DefaultNumAlloc = maxAlloc
+
+// firstCalleeSaved is the abstract index where the callee-saved run begins.
+const firstCalleeSaved = 12
+
+// armCalleeSaved reports whether abstract register index r maps onto a
+// callee-saved AArch64 register (x19..x28).
+func armCalleeSaved(r int) bool { return r >= firstCalleeSaved && r < maxAlloc }
+
+// armCalleeSavedMask is the partition EmitWithCalleeSaved wants: one entry per
+// allocatable register, true where it survives a call.
+func armCalleeSavedMask(numAlloc int) []bool {
+	mask := make([]bool, numAlloc)
+	for r := range mask {
+		mask[r] = armCalleeSaved(r)
+	}
+	return mask
+}
 
 func xreg(i int) string { return armX[i] }
 func wreg(i int) string { return armW[i] }
@@ -52,13 +105,16 @@ func EmitAsm(f *ssa.Func, numAlloc int, entryArgs ...int64) (string, error) {
 // program: a `_start` that loads entryArgs into the argument registers, calls
 // the entry, and exits with its return value in the low byte, followed by each
 // function emitted under a unique label. Direct calls (`OpCall`) between the
-// functions are lowered to the AArch64 PCS — args in x0..x7, result in x0. The
-// whole allocatable file (x0..x15) is caller-saved under the PCS, so every
-// call-crossing value is preserved by the caller (the allocator marks them via
-// EmitWithCalleeSaved's all-caller-saved partition).
+// functions are lowered to the AArch64 PCS — args in x0..x7, result in x0.
+// Part of the allocatable file maps onto the PCS callee-saved registers
+// (armX), so a value live across a call can be kept in one over the call and
+// saved once in the prologue instead of at every call it spans.
 func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entryArgs []int64, vtables ...ir.VtableDecl) (string, error) {
 	if _, ok := funcs[entry]; !ok {
 		return "", fmt.Errorf("arm64ssa: unknown entry %q", entry)
+	}
+	if numAlloc > maxAlloc {
+		return "", fmt.Errorf("arm64ssa: numAlloc %d exceeds the %d mapped allocatable registers", numAlloc, maxAlloc)
 	}
 	// Resolve every op's result width across the module before instruction
 	// selection: which results are addresses (and so must never be narrowed to
@@ -73,9 +129,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 
 	progs := make(map[string]*x86.Program, len(funcs))
 	for _, name := range names {
-		// nil callee-saved partition: on arm64 the whole abstract file maps onto
-		// x0..x15, all caller-saved, so no register survives a call on its own.
-		p, err := x86.EmitWithCalleeSaved(funcs[name], numAlloc, nil)
+		p, err := x86.EmitWithCalleeSaved(funcs[name], numAlloc, armCalleeSavedMask(numAlloc))
 		if err != nil {
 			return "", fmt.Errorf("arm64ssa: emit %q: %w", name, err)
 		}
@@ -5324,22 +5378,70 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitFunc writes one function: its label, a stack frame (spill slots, plus a
-// call-save area and a saved-x30 slot when the function makes calls), each
-// block's straight-line body under a namespaced label, and the terminators.
-// The stack pointer stays fixed for the whole body — call-crossing registers are
-// preserved in the reserved call-save area rather than by moving sp — so every
-// slot access is a stable sp-relative offset.
+// emitFunc writes one function. It emits the body twice: the first pass finds
+// which callee-saved registers the body actually touches, the second emits the
+// prologue saves and epilogue restores for exactly those.
+//
+// Reading the set back off the emitted text is what makes it complete, the same
+// argument x86_64ssa's calleeSavedIn makes: the alternative is a list of every
+// Program field and line helper that can name a register, and the two failure
+// directions are not symmetric — an over-wide set costs a store and a load,
+// while a missed register is handed back to the caller clobbered with nothing
+// failing until unrelated code reads it. The second pass adds only saves and
+// restores of registers already in the set, so the set is stable.
 func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
+	var probe strings.Builder
+	pw := func(format string, args ...any) {
+		fmt.Fprintf(&probe, format, args...)
+		probe.WriteByte('\n')
+	}
+	if err := emitFuncBody(pw, name, p, numAlloc, nil, strLabels, sentLabels, fnIndex); err != nil {
+		return err
+	}
+	return emitFuncBody(w, name, p, numAlloc, calleeSavedIn(probe.String(), p.NumRegFile), strLabels, sentLabels, fnIndex)
+}
+
+// calleeSavedIn returns, in ascending abstract-index order, the callee-saved
+// registers the emitted text mentions. Tokens keep `_` and `.` so a label like
+// `.Lssa_x19_ok` stays one word rather than decomposing into a register name.
+func calleeSavedIn(asm string, numRegFile int) []int {
+	seen := map[string]bool{}
+	for _, tok := range armRegTokenRe.FindAllString(asm, -1) {
+		seen[tok] = true
+	}
+	var out []int
+	for r := 0; r < numRegFile && r < len(armX); r++ {
+		if armCalleeSaved(r) && (seen[armX[r]] || seen[armW[r]]) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// armRegTokenRe splits assembly into identifier-ish tokens, treating `_` and `.`
+// as word characters so a label name cannot decompose into a register name.
+var armRegTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
+
+// emitFuncBody writes one function: its label, a stack frame (spill slots, plus
+// a call-save area, one slot per callee-saved register in csSaved, and a
+// saved-x30 slot when the function makes calls), each block's straight-line body
+// under a namespaced label, and the terminators. The stack pointer stays fixed
+// for the whole body — call-crossing registers are preserved in the reserved
+// call-save area rather than by moving sp — so every slot access is a stable
+// sp-relative offset.
+func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc int, csSaved []int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
-	// Frame layout (8-byte slots): [0, NumSlots) spill slots; when the function
-	// calls, [NumSlots, NumSlots+numAlloc) is the call-save area and NumSlots+
-	// numAlloc holds the saved link register (x30, clobbered by `bl`).
+	// Frame layout (8-byte slots): [0, NumSlots) spill slots, then the call-save
+	// area — as wide as the largest single call's save set, not the whole
+	// allocatable file, since a call only ever writes save-set slot 0 upward.
+	// Above that sit one slot per callee-saved register the body uses, then
+	// (when the function calls) the saved link register (x30, clobbered by `bl`).
 	callSaveBase := p.NumSlots
-	lrSlot := p.NumSlots + numAlloc
-	nslots := p.NumSlots
+	csBase := p.NumSlots + maxCallSaveSlots(p, numAlloc)
+	lrSlot := csBase + len(csSaved)
+	nslots := lrSlot
 	if call {
 		nslots = lrSlot + 1
 	}
@@ -5353,22 +5455,36 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 	if call {
 		w("\tstr x30, [sp, #%d]", 8*lrSlot)
 	}
+	for k, r := range csSaved {
+		w("\tstr %s, [sp, #%d]", xreg(r), 8*(csBase+k))
+	}
 	// Parameter ABI: move each incoming argument register into its param's home.
-	// Must follow the frame setup (slot-homed params store to [sp]).
+	// Must follow the frame setup (slot-homed params store to [sp]) and the
+	// callee-saved saves (a param's home may be one of them).
 	for _, l := range paramMoveLines(p.ParamLocs) {
 		w("\t%s", l)
+	}
+
+	// teardown restores the link register and the callee-saved registers, then
+	// drops the frame. Emitted after the return value is in place, so restoring
+	// a callee-saved register that held it cannot clobber it.
+	teardown := func() {
+		if call {
+			w("\tldr x30, [sp, #%d]", 8*lrSlot)
+		}
+		for k, r := range csSaved {
+			w("\tldr %s, [sp, #%d]", xreg(r), 8*(csBase+k))
+		}
+		if frame > 0 {
+			w("\tadd sp, sp, #%d", frame)
+		}
 	}
 
 	ret := func(reg int) {
 		if reg != 0 {
 			w("\tmov x0, %s", xreg(reg))
 		}
-		if call {
-			w("\tldr x30, [sp, #%d]", 8*lrSlot)
-		}
-		if frame > 0 {
-			w("\tadd sp, sp, #%d", frame)
-		}
+		teardown()
 		w("\tret")
 	}
 
@@ -5468,12 +5584,7 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 			for _, l := range resolveRegMoves(pairRetMoves(blk.Term.RetReg, blk.Term.RetReg2)) {
 				w("\t%s", l)
 			}
-			if call {
-				w("\tldr x30, [sp, #%d]", 8*lrSlot)
-			}
-			if frame > 0 {
-				w("\tadd sp, sp, #%d", frame)
-			}
+			teardown()
 			w("\tret")
 		case x86.TJmp:
 			w("\tb .L%s_b%d", label, blk.Term.Target)
@@ -5485,6 +5596,23 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 		}
 	}
 	return nil
+}
+
+// maxCallSaveSlots is the width of the call-save area: the largest number of
+// caller-saved registers any one call in p has to preserve.
+func maxCallSaveSlots(p *x86.Program, numAlloc int) int {
+	most := 0
+	for _, blk := range p.Blocks {
+		for _, in := range blk.Insts {
+			switch in.Op {
+			case x86.Call, x86.CallPair, x86.CallIndirect, x86.CallDyn:
+				if n := len(callSavedSet(in, numAlloc)); n > most {
+					most = n
+				}
+			}
+		}
+	}
+	return most
 }
 
 // funcHasCall reports whether any block of p contains a direct call.
@@ -5514,14 +5642,16 @@ func usesCallIndirect(progs map[string]*x86.Program) bool {
 	return false
 }
 
-// callLines renders a direct call under the AArch64 PCS. The whole allocatable
-// file is caller-saved, so the registers holding values live across the call
-// (in.SaveRegs, computed by the allocator) are spilled to the reserved call-save
-// area — sp stays fixed, so those saves and the arg-move slot loads share the
-// same stable offsets. Arguments go into x0..x7 as a parallel register copy
-// (reg-homed) plus slot loads; the result (x0) is captured into the scratch
-// register — above the allocatable file, never in the save set — before the
-// saved registers are restored, then placed into the destination.
+// callLines renders a direct call under the AArch64 PCS. The CALLER-SAVED
+// registers holding values live across the call (in.SaveRegs, computed by the
+// allocator) are spilled to the reserved call-save area — sp stays fixed, so
+// those saves and the arg-move slot loads share the same stable offsets. A
+// value the allocator steered into the callee-saved half needs nothing here:
+// the callee restores it, and this function's prologue covers its own use of
+// the register. Arguments go into x0..x7 as a parallel register copy (reg-homed)
+// plus slot loads; the result (x0) is captured into the scratch register —
+// above the allocatable file, never in the save set — before the saved
+// registers are restored, then placed into the destination.
 func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, error) {
 	if len(in.ArgLocs) > argRegCount {
 		return nil, fmt.Errorf("arm64ssa: call supports up to %d args, got %d", argRegCount, len(in.ArgLocs))
@@ -5575,16 +5705,20 @@ func pairRetMoves(tagReg, payReg int) [][2]int {
 }
 
 // callSavedSet returns the caller-saved allocatable registers to preserve across
-// a call. The allocator computes the live-across set (SaveRegsSet) from liveness;
-// on arm64 every allocatable register is caller-saved, so absent that set the
-// fallback saves the whole allocatable file.
+// a call. The allocator computes the live-across set (SaveRegsSet) from liveness
+// and has already filtered it to the caller-saved partition; absent that set the
+// fallback saves every caller-saved allocatable register. Callee-saved registers
+// are never in either set — the callee restores them, and the prologue covers
+// this function's own use of them.
 func callSavedSet(in x86.Inst, numAlloc int) []int {
 	if in.SaveRegsSet {
 		return in.SaveRegs
 	}
 	saved := make([]int, 0, numAlloc)
 	for r := 0; r < numAlloc; r++ {
-		saved = append(saved, r)
+		if !armCalleeSaved(r) {
+			saved = append(saved, r)
+		}
 	}
 	return saved
 }
@@ -5828,9 +5962,9 @@ func boxDynLines(in x86.Inst, numAlloc int) []string {
 // `in.Imm`'s absolute function pointer (`vtable + slot*8`) into a scratch, then
 // call it with [data, method-args...] as the AArch64 PCS args (receiver-first,
 // plain — no closure env). Mirrors callIndirectLines' save/restore + argument
-// parallel-move; the scratch registers (s1..s3 = x13..x15) sit above the arg
-// registers (x0..x7) and allocatable homes (x0..x11), so the resolved target
-// (s1) survives the argument move.
+// parallel-move; the scratch registers sit above the allocatable file and so
+// are disjoint from both the arg registers (x0..x7) and every allocatable home,
+// so the resolved target (s1) survives the argument move.
 func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
 	n := len(in.ArgLocs)
 	if n < 1 {

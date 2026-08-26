@@ -97,15 +97,18 @@ func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string
 }
 
 // moduleMatchesEval asserts the arm64 binary's exit code equals EvalIn(funcs,
-// entry) mod 256 across several register-file sizes (small ones force spills and
-// larger caller-save sets).
+// entry) mod 256 across several register-file sizes. The small ones force spills
+// and larger caller-save sets; DefaultNumAlloc is what the compiler driver ships
+// and the only size at which the allocatable file reaches the callee-saved
+// registers, so a value live across a call is kept in one rather than spilled
+// around the call.
 func moduleMatchesEval(t *testing.T, funcs map[string]*ssa.Func, entry string, entryArgs ...int64) {
 	t.Helper()
 	want, err := ssa.EvalIn(funcs, funcs[entry], entryArgs...)
 	if err != nil {
 		t.Fatalf("EvalIn: %v", err)
 	}
-	for _, n := range []int{2, 4, 8} {
+	for _, n := range []int{2, 4, 8, arm64ssa.DefaultNumAlloc} {
 		got := assembleRunArmModule(t, funcs, entry, n, entryArgs...)
 		if got != int(uint8(want)) {
 			t.Errorf("nAlloc=%d arm64 run exit=%d, want EvalIn&0xFF=%d (EvalIn=%d)", n, got, int(uint8(want)), want)
@@ -1021,7 +1024,7 @@ func moduleMatchesEvalTable(t *testing.T, funcs map[string]*ssa.Func, table []st
 	if err != nil {
 		t.Fatalf("EvalInTable: %v", err)
 	}
-	for _, n := range []int{2, 4, 8} {
+	for _, n := range []int{2, 4, 8, arm64ssa.DefaultNumAlloc} {
 		got := assembleRunArmModule(t, funcs, entry, n, entryArgs...)
 		if got != int(uint8(want)) {
 			t.Errorf("nAlloc=%d arm64 run exit=%d, want EvalInTable&0xFF=%d (=%d)", n, got, int(uint8(want)), want)

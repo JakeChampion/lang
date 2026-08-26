@@ -501,10 +501,11 @@ machine** — a ~16% code-size reduction that holds as the program grows, so
 the binary-size premise of the epic is validated. Guarded by
 `TestCodeSizeSmallerThanStackMachine` (fails if the SSA path regresses to
 parity or worse). The residual call-heavy overhead (fib/calls) is the
-call sequence itself; shrinking it further needs call-clobber-aware
-*allocation* (prefer callee-saved registers for values live across calls),
-a deeper allocator change, before the Phase-3 flag-gate + end-to-end
-self-host binary measurement.
+call sequence itself. Call-clobber-aware *allocation* is in place —
+`ssa.Target.CalleeSaved` steers values live across a call into callee-saved
+registers, and both real-asm backends hand the allocator a partition
+(`x86_64ssa` System V, `arm64ssa` AArch64) — so what remains of that overhead
+is the copies and memory traffic measured in **Phase 3 measurement** below.
 
 ## Phase 3 measurement — the size win, and where it inverts
 
@@ -513,44 +514,50 @@ FileSiz (these are minimal static ELFs with no section headers, so that segment
 is the code; total file size is 64 KiB-page-padding-dominated below ~128 KB and
 is the wrong metric).
 
-### Over the examples corpus: 37% smaller
+### Over the examples corpus: 48% smaller
 
 All 281 corpus programs the flat backend can build, compiled both ways:
 
 | | bytes |
 |---|---|
 | flat `.text`, all 281 | 24,347,696 |
-| ssa `.text`, all 281 | 15,275,724 |
-| **ssa / flat** | **62.7%** |
+| ssa `.text`, all 281 | 12,734,576 |
+| **ssa / flat** | **52.3%** |
 
-269 of 281 are individually smaller, and the ratio improves with program size —
-the ten largest land at 15–44% of flat (`miniparse` 863,904 → 129,864, i.e.
-15.0%). So 62.7% understates what a large program gets.
+276 of 281 are individually smaller, and the ratio improves with program size —
+the ten largest land at 12–39% of flat (`miniparse` 863,904 → 103,080, i.e.
+11.9%). So 52.3% understates what a large program gets.
 
-12 programs regress. The small ones are fixed helper overhead over a tiny body.
-Three large ones are not explained: `peg_test` 133%, `json_roundtrip_test` 121%,
-`batch7_test` 120%. Two hypotheses were tested and **falsified** — Map-heavy
-code (only 4 of the 12 use Map; two of the three big regressors use none) and
-index-heavy code (the correlation runs the other way: regressors have 0.0–0.3
-index sites per KB, the big improvers 1.5–3.1). What *is* measured is that on
-the regressors the SSA path emits ~30% more `bl` than flat, and on the big
-improvers far fewer.
+Five programs regress, none by much:
 
-### On the self-host: 138%, and it does not build
+| program | flat | ssa | ssa % |
+|---|---|---|---|
+| `bench/map_int` | 13,648 | 15,744 | 115.4% |
+| `tests/peg_test` | 204,980 | 223,252 | 108.9% |
+| `tests/json_roundtrip_test` | 203,188 | 213,696 | 105.2% |
+| `bench/map_string` | 18,772 | 19,420 | 103.5% |
+| `tests/batch7_test` | 175,264 | 179,936 | 102.7% |
 
-The corpus does not extrapolate. `examples/self_host/fern.fern` is the number
-the epic is about, and it is on the wrong side of a crossover:
+The two worst-by-ratio are the small Map benches, where fixed helper overhead
+sits over a body of a few KB. The three large ones are the same three that used
+to regress by 120–133%; the callee-saved partition took most of it back but not
+all, and no cause has been isolated for what is left.
+
+### On the self-host: 133%, and it does not build
+
+The corpus does not extrapolate. Compiler-shaped input sits on the far side of
+a crossover:
 
 | program | flat `.text` | ssa | ssa % |
 |---|---|---|---|
-| `miniparse` (largest corpus program) | 863,904 | 129,864 | 15.0% |
-| `checker_modload_run.fern` | 8,018,492 | ~13,128,820 | 163.7% |
-| **`fern.fern` (self-host)** | **40,294,624** | **~55,816,236** | **138.5%** |
+| `miniparse` (largest corpus program) | 863,904 | 103,080 | 11.9% |
+| `checker_modload_run.fern` | 8,018,492 | ~10,690,520 | ~133% |
 
-The SSA figures for the last two are **inferred** (instruction count × 4 from an
-instrumented emitter), because neither links. The proxy is validated to 0.2% on
-programs that do link, and every known fix moves it upward, so treat 138.5% as
-a floor.
+The SSA figure there is **inferred** — instruction count × 4 off an
+instrumented emitter — because the program does not link; the proxy reads
+0.19% low on `miniparse`, which does. `examples/self_host/fern.fern` cannot be
+measured even that way: emit stops at the parameter-count check before any
+assembly exists.
 
 Two independent blockers, both pre-existing:
 
@@ -559,32 +566,45 @@ Two independent blockers, both pre-existing:
   sites exceed 8 args; the build stops at the first.
 - **No imm19 veneers.** `internal/native/arm64/veneer.go` plants veneers for
   `b`/`bl` (imm26, ±128 MB) but not for conditional branches (imm19, ±1 MiB).
-  SSA functions are big enough to overflow it, so fixing the ABI alone does not
-  get the self-host to link.
+  `checker_modload_run` clears emit and dies in the assembler — `branch to
+  ".Lfn_parser__parse_stmt_at_b48287" spans 840629 instructions — outside the
+  signed 19-bit range` — so fixing the ABI alone does not get the self-host to
+  link.
 
-Compile time moves the same way: SSA is faster on small programs (miniparse
-1.00 s → 0.35 s) and 33–45× slower on compiler-shaped input
-(`checker_modload_run` 8.0 s → 269.4 s).
+Compile time moves the other way from size, and this change did not shift it:
+SSA is faster on small programs (`miniparse` 1.21 s → 0.60 s) and ~28× slower
+on compiler-shaped input (`checker_modload_run` 11.7 s → 327.8 s, same box).
 
-### Why it inverts
+### Why it still inverts
 
-The opcode mix on one program says it. `checker_modload_run`, flat vs ssa:
-load/store 42.7% → **58.3%**, `mov` 17.7% → **25.0%**. `gas.go` wires a **nil
-callee-saved partition**, so the whole abstract file maps onto caller-saved
-registers and *no register survives a call* — every value live across one is
-spilled and reloaded. Compiler code is call-dense with large live sets, so that
-cost swamps the allocation win; it concentrates in the biggest functions
-(`parser__parse_stmt_at` 653,232 → 1,212,094 instructions, 1.86×).
+Both emitters' output for `checker_modload_run`, counted the same way:
 
-This is the same call-clobber-aware *allocation* the emit-quality section below
-already names as outstanding. Its ~84% figure was measured on 100–200-function
-x86-64 programs, which are on the winning side of the crossover — it does not
-generalise to the self-host, and this section is the correction.
+| | instructions | load/store | `mov` |
+|---|---|---|---|
+| flat | 2,010,751 | 859,653 (42.8%) | 357,069 (17.8%) |
+| ssa | 2,672,630 | 1,314,924 (49.2%) | 811,416 (30.4%) |
+
+SSA emits 661,879 more instructions. Load/store accounts for 455,271 of that
+and `mov` for 454,347 — each about 69% — with everything else running 247,739
+instructions *below* flat. So the excess is memory traffic and register copies
+in roughly equal measure, and the allocation win is real but buried under both.
+
+Spilling is no longer the whole story on the memory side.
+`internal/codegen/arm64ssa` maps x19..x28 into the allocatable file and hands
+`ssa.LinearScan` the matching partition, so a value live across a call stays in
+a register the callee restores and is saved once in the prologue rather than
+stored and reloaded at every call it spans. That moved the ratio 163.7% → 133%
+and the load/store share 58.3% → 49.2%.
+
+The copies are untouched: `mov` is now the single largest opcode, ahead of
+`ldr`. Argument placement, phi resolution, and the call result/scratch staging
+each emit their own, and none of them coalesce.
 
 **Ordering implication.** Phase 3/4's "measure the win and flip the default" is
-not one step. Call-clobber-aware allocation comes first (it is both the size
-regression and the compile-time regression), then the stack-arg ABI and imm19
-veneers, then the self-host builds, then a flip is measurable.
+not one step. Move coalescing comes first — the two remaining components are
+the same size, and it is the one with no pass addressing it — then the
+stack-arg ABI and imm19 veneers, then the self-host builds, then a flip is
+measurable.
 
 ### Two divergences the differential lane cannot see
 
