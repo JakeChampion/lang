@@ -87,9 +87,13 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   build under `-target arm64-linux -backend ssa` and behave identically —
   0 refused, 0 diverged, the other 5 rejected by the flat backend as well
   (`TestArm64SSABackendDifferential`, whose floor is the full 281 accordingly).
-  So there is no measured coverage gap left on arm64 against either the
-  generator or the corpus; what remains for Phase 4 is the default flip and
-  the binary-size number it exists to produce.
+
+  **That corpus is not the whole language, and it excludes the program this
+  epic is about.** `arm64SSADiffCorpus` skips `examples/self_host` outright
+  (`arm64_ssa_differential_test.go`), and the self-hosted compiler does NOT
+  compile under `-backend ssa`. Do not read "both corpora are clean" as
+  "coverage is done" — see **Phase 3 measurement** below for what is actually
+  blocking, which is a missing stack-argument ABI rather than any lowering gap.
 - **Perceus / RC ordering.** The IR carries reference-counting ops; the SSA path
   must preserve them and the allocator must not reorder across the points they
   assume. Confirm whether RC insertion happens before or after the SSA lift.
@@ -456,10 +460,10 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
 - [~] Phase 4 — arm64 SSA emit + default. The emit path ships as
   `-target arm64-linux -backend ssa` (`internal/codegen/arm64ssa`), not as a
   separate target, so the target descriptor and its E066 capability
-  enforcement still apply. Coverage is done: both fernsmith corpora and the
-  whole examples corpus sweep clean through it (see the coverage-parity
-  hazard above). Remaining: flipping the default, and the binary-size
-  measurement that flip is for.
+  enforcement still apply. Both fernsmith corpora and the whole examples
+  corpus sweep clean through it. The self-host does not build under it, and
+  the size win inverts at that scale — **Phase 3 measurement** below. The
+  default flip is NOT close.
 - [ ] Phase 5 — retire the stack-machine backends
 
 ## Emit-quality phase — results
@@ -501,3 +505,97 @@ call sequence itself; shrinking it further needs call-clobber-aware
 *allocation* (prefer callee-saved registers for values live across calls),
 a deeper allocator change, before the Phase-3 flag-gate + end-to-end
 self-host binary measurement.
+
+## Phase 3 measurement — the size win, and where it inverts
+
+Measured 2026-08-26 on `-target arm64-linux`, comparing the R+E LOAD segment's
+FileSiz (these are minimal static ELFs with no section headers, so that segment
+is the code; total file size is 64 KiB-page-padding-dominated below ~128 KB and
+is the wrong metric).
+
+### Over the examples corpus: 37% smaller
+
+All 281 corpus programs the flat backend can build, compiled both ways:
+
+| | bytes |
+|---|---|
+| flat `.text`, all 281 | 24,347,696 |
+| ssa `.text`, all 281 | 15,275,724 |
+| **ssa / flat** | **62.7%** |
+
+269 of 281 are individually smaller, and the ratio improves with program size —
+the ten largest land at 15–44% of flat (`miniparse` 863,904 → 129,864, i.e.
+15.0%). So 62.7% understates what a large program gets.
+
+12 programs regress. The small ones are fixed helper overhead over a tiny body.
+Three large ones are not explained: `peg_test` 133%, `json_roundtrip_test` 121%,
+`batch7_test` 120%. Two hypotheses were tested and **falsified** — Map-heavy
+code (only 4 of the 12 use Map; two of the three big regressors use none) and
+index-heavy code (the correlation runs the other way: regressors have 0.0–0.3
+index sites per KB, the big improvers 1.5–3.1). What *is* measured is that on
+the regressors the SSA path emits ~30% more `bl` than flat, and on the big
+improvers far fewer.
+
+### On the self-host: 138%, and it does not build
+
+The corpus does not extrapolate. `examples/self_host/fern.fern` is the number
+the epic is about, and it is on the wrong side of a crossover:
+
+| program | flat `.text` | ssa | ssa % |
+|---|---|---|---|
+| `miniparse` (largest corpus program) | 863,904 | 129,864 | 15.0% |
+| `checker_modload_run.fern` | 8,018,492 | ~13,128,820 | 163.7% |
+| **`fern.fern` (self-host)** | **40,294,624** | **~55,816,236** | **138.5%** |
+
+The SSA figures for the last two are **inferred** (instruction count × 4 from an
+instrumented emitter), because neither links. The proxy is validated to 0.2% on
+programs that do link, and every known fix moves it upward, so treat 138.5% as
+a floor.
+
+Two independent blockers, both pre-existing:
+
+- **No stack-argument ABI.** `argRegCount = 8` in `internal/codegen/arm64ssa/gas.go`
+  — register arguments only. 14 self-host functions exceed 8 params and 43 call
+  sites exceed 8 args; the build stops at the first.
+- **No imm19 veneers.** `internal/native/arm64/veneer.go` plants veneers for
+  `b`/`bl` (imm26, ±128 MB) but not for conditional branches (imm19, ±1 MiB).
+  SSA functions are big enough to overflow it, so fixing the ABI alone does not
+  get the self-host to link.
+
+Compile time moves the same way: SSA is faster on small programs (miniparse
+1.00 s → 0.35 s) and 33–45× slower on compiler-shaped input
+(`checker_modload_run` 8.0 s → 269.4 s).
+
+### Why it inverts
+
+The opcode mix on one program says it. `checker_modload_run`, flat vs ssa:
+load/store 42.7% → **58.3%**, `mov` 17.7% → **25.0%**. `gas.go` wires a **nil
+callee-saved partition**, so the whole abstract file maps onto caller-saved
+registers and *no register survives a call* — every value live across one is
+spilled and reloaded. Compiler code is call-dense with large live sets, so that
+cost swamps the allocation win; it concentrates in the biggest functions
+(`parser__parse_stmt_at` 653,232 → 1,212,094 instructions, 1.86×).
+
+This is the same call-clobber-aware *allocation* the emit-quality section below
+already names as outstanding. Its ~84% figure was measured on 100–200-function
+x86-64 programs, which are on the winning side of the crossover — it does not
+generalise to the self-host, and this section is the correction.
+
+**Ordering implication.** Phase 3/4's "measure the win and flip the default" is
+not one step. Call-clobber-aware allocation comes first (it is both the size
+regression and the compile-time regression), then the stack-arg ABI and imm19
+veneers, then the self-host builds, then a flip is measurable.
+
+### Two divergences the differential lane cannot see
+
+`arm64SSADiffCompare` compares exit status, signal and **stdout** — never
+stderr. Both of these are inside the covered subset that `docs/SSA-DECISION.md`
+holds to byte-identical behaviour:
+
+- **Aborts are silent.** An out-of-range index exits 134 under both, but flat
+  writes `fern: array index out of range` plus a backtrace and the SSA build
+  writes zero bytes. Not a missing backtrace — no cause line at all.
+- **`examples/proposals/trie.fern` allocates 6.7–32× more** under SSA on
+  struct-element arrays updated through `.append` / `.with`, where the
+  unique-reference in-place update appears to be lost. Same values; only the
+  bump high-water mark differs, and it prints to stderr.
