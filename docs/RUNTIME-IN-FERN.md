@@ -222,6 +222,25 @@ statically owns. The declarative table made that edge *declared* and
 *transitively closed*, but it is still a parallel artifact that can drift
 from the asm, and the wasm side still couples helpers with ad-hoc `if`s.
 
+**It had drifted, in three places, and the drift is structural rather than
+careless.** The graph is declared TWICE: `mark_<X>()` marks the root plus
+whatever its body links against, and `runtime_need_deps("<X>")` declares the
+same edges for `close_needs`. Both exist because a need arrives by either door
+— most emit sites call the wrapper, but an op site's own `.need(...)` and the
+driver's `-ir-extra-need` reach only the table — so an edge in one and not the
+other is a helper that links or not depending on which door was used.
+`str_trim`, `str_lines` and `str_split` each had a `str_concat` edge in the
+wrapper and not in the table, every one of them added after a real link
+failure. All three were latent only because those needs happen to arrive
+through the wrapper today.
+
+`internal/sourcelint` now fails when a wrapper knows an edge the table does
+not. Its own first version is worth recording: it matched 36 wrappers, passed,
+and had silently skipped `mark_str_trim` — the single wrapper it was written
+for — because that one opens with comment lines before its `return`. A count
+threshold looked like coverage and was not. It now asserts that every
+`mark_*` DEFINITION parsed, which is what turned up the other two.
+
 ### What the wasm half is actually blocked on
 
 Not the `module_uses_*` coupling — that reads worse than it is. Every helper

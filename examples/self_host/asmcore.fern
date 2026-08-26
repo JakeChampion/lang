@@ -3529,10 +3529,21 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
         || name == "arr_concat"
         || name == "str_case" || name == "str_repeat"
-        || name == "str_trim" || name == "str_reverse" || name == "str_replace"
+        || name == "str_reverse" || name == "str_replace"
         || name == "poll") {
         // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
         return heap;
+    }
+    if (name == "str_trim") {
+        // __fern_str_trim ends `slice_unchecked(s, start, end) + ""` (#7393), so
+        // its body calls __fern_str_concat — the dep a trim-without-concat link
+        // failure proved. mark_str_trim has declared it all along; this table did
+        // not, so the two declarations of one edge disagreed and only the wrapper
+        // carried it. Byte-neutral today, because every str_trim need is seeded
+        // through that wrapper; the point is that the closure no longer depends on
+        // which door the need came in by.
+        var dtrim: string[] = ["heap", "str_concat"];
+        return dtrim;
     }
     if (name == "maps") {
         // __fern_map_set calls __fern_str_eq (string-key path) and __fern_arr_push.
@@ -3562,8 +3573,12 @@ pub function runtime_need_deps(name: string): string[] {
     }
     if (name == "str_lines") {
         // __fern_str_lines scans for '\n' itself and appends each line —
-        // same arr_push / arr_push_owned pairing as __fern_str_split.
-        var d5: string[] = ["heap", "arr_push", "arr_push_owned"];
+        // same arr_push / arr_push_owned pairing as __fern_str_split, plus the
+        // str_concat each line's `slice + ""` needs (#7230). mark_str_lines has
+        // declared that last edge since the link failure proved it; this table
+        // did not, so the closure carried it only when the need came in through
+        // the wrapper.
+        var d5: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
         return d5;
     }
     if (name == "str_bytes") {
@@ -3574,8 +3589,9 @@ pub function runtime_need_deps(name: string): string[] {
     }
     if (name == "str_split") {
         // __fern_str_split builds the result string[] by appending each s[start:i]
-        // slice — same arr_push / arr_push_owned pairing as str_bytes.
-        var d8: string[] = ["heap", "arr_push", "arr_push_owned"];
+        // slice — same arr_push / arr_push_owned pairing as str_bytes, and the
+        // same #7230 str_concat edge as str_lines.
+        var d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
         return d8;
     }
     if (name == "read_dir") {
