@@ -616,7 +616,42 @@ remainder splits three ways:
   builtin's name rather than an IR op's. The refusal stays as the backstop for an
   op with no builtin name to report.
 
-- **Composites, not leaves**: `map_delete` and the strbuf family.
+- **Composites, not leaves**: `map_delete` and the strbuf family. Both are
+  blocked, and on different things — neither on length.
+
+  **`map_delete` is blocked on how a function pointer crosses into Fern.** Its
+  find loop has three arms keyed on `keykind`: string (`__fern_str_eq`), i32
+  (a register compare), and struct/enum, which calls the key type's derived
+  `__fn_<K>__eq` through a pointer the op site puts in `%r8`. The first two
+  arms are ordinary floor work. The third cannot be written in Fern today,
+  and the reason is an ABI mismatch rather than a missing primitive.
+
+  Fern has exactly one indirect-call lowering, and it is env-first. Every
+  `fn`-typed parameter is unconditionally marked a closure local
+  (`irlower.fern`, in the param loop of the function-entry lowering), and
+  `is_closure_local` is tested BEFORE the plain-indirect branch, so `eqfn(a, b)`
+  lowers to: push the param as an `i32[]` env box, read `box[0]` as the target
+  (bounds-checked against the box's length word), and `call_indirect` with
+  arity+1. Measured, not inferred — a two-arg `f(x, y)` through an `fn` param
+  emits exactly that, and it works only because the Fern CALL SITE lambda-lifts
+  the argument: the caller allocates `__fern_arr_box(1)`, stores a generated
+  `<fn>$wrap0` at `box[0]`, and that wrapper takes `(__env, a, b)` and discards
+  `__env`.
+
+  A bare code address in `%r8` is none of those things. Handing one to a Fern
+  helper reads the callee's own first instruction word as a target and its
+  second as an array length. To close the gap the EMITTER would have to
+  allocate a one-element box and emit a three-argument `$clo` wrapper per key
+  type — more hand-asm, plus an allocation on every delete, in order to delete
+  some hand-asm. That is a net loss, so `map_delete` waits on either a raw
+  indirect-call primitive (`__raw_call2`) or a decision to give derived `__eq`
+  the closure calling convention. Both are floor/ABI decisions, not migrations.
+
+  Splitting it the way `read_int` and `read_all_stdin` were split off the
+  Option-returning readers does NOT apply here: those were separate symbols,
+  whereas these are three arms of ONE symbol, so migrating two of them leaves
+  `__fern_map_delete` with a hand-asm dispatch into a Fern body — two
+  implementations where there is now one.
 
   **strbuf is deferred, and the reason is storage, not length.** Its three
   helpers are trivial — set a word, copy bytes and bump a word, drain into a
