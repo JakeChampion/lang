@@ -13,9 +13,18 @@ import (
 //   - helpers defines the real symbols (a struct, two functions),
 //   - facade re-exports them via `pub use "./helpers".{…}`,
 //   - main imports facade and uses the re-exported names through the
-//     facade: a re-exported TYPE in a `var` annotation (facade.Point)
-//     and re-exported VALUES in qualified calls (facade.make_point /
-//     facade.area / facade.add5).
+//     facade: a re-exported TYPE in a `var` annotation (facade.Point,
+//     facade.Shape) and re-exported VALUES in qualified calls
+//     (facade.make_point / facade.area / facade.add5).
+//
+// `Shape` also pins the half a re-exported ENUM needs and `pub use` does
+// NOT carry: variants are not re-exportable (`pub use ".{Sq}"` is refused
+// with `does not export "Sq"`), so `facade.Sq(p)` cannot resolve. The
+// variant namespace is flat, so the BARE form reaches the original decl
+// instead — construction `Sq(p)` and the match arm `Sq(q) =>` both bind
+// through the facade's type. That pairing is what lets an AST-types module
+// be split out from a module that consumers already name (#6993): the type
+// keeps its old qualifier via `pub use`, the variants go bare.
 //
 // area(6,7) = 42, add5(42) = 47, so a correct compile exits 47. The
 // decisive property: `facade.add5` etc. must resolve to the original
@@ -26,15 +35,20 @@ import (
 var pubUseSelfHostProgram = map[string]string{
 	"helpers.fern": "" +
 		"pub struct Point { x: i32, y: i32 }\n" +
+		"pub enum Shape { Sq(Point), Nothing }\n" +
 		"pub function add5(n: i32): i32 { return n + 5; }\n" +
 		"pub function make_point(x: i32, y: i32): Point { return Point { x: x, y: y }; }\n" +
 		"pub function area(p: Point): i32 { return p.x * p.y; }\n",
-	"facade.fern": "pub use \"./helpers\".{Point, add5, make_point, area};\n",
+	"facade.fern": "pub use \"./helpers\".{Point, Shape, add5, make_point, area};\n",
 	"main.fern": "" +
 		"import \"./facade\";\n" +
 		"function main(): i32 {\n" +
 		"    var p: facade.Point = facade.make_point(6, 7);\n" +
-		"    return facade.add5(facade.area(p));\n" +
+		"    var s: facade.Shape = Sq(p);\n" +
+		"    match (s) {\n" +
+		"        Sq(q) => { return facade.add5(facade.area(q)); },\n" +
+		"        _ => { return 0; }\n" +
+		"    }\n" +
 		"}\n",
 }
 
