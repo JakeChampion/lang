@@ -37,34 +37,44 @@ type tree struct {
 	name string
 	dir  string
 	// ceiling is the highest complexity any function in the tree reaches,
-	// counting suppressed functions too. The asymmetry with budget is
+	// counting suppressed functions too. The asymmetry with excess is
 	// deliberate: an `allow` says "this one may exceed the limit", never
 	// "this one may be worse than anything here has ever been", so a new
 	// function past the ceiling fails the gate however it is annotated.
 	ceiling int
-	// budget is how many UNSUPPRESSED functions exceed repoLimit.
-	budget int
+	// excess is the total distance over the limit: the sum of
+	// (score - repoLimit) across every UNSUPPRESSED function above it.
+	//
+	// Deliberately not a COUNT of functions over the limit, which is the
+	// obvious metric and the wrong one: splitting a 472-fork monster into
+	// ten readable 40-fork helpers takes that count from 1 to 10, so the
+	// gate would report the single most valuable refactor available as a
+	// regression and block it. Summed distance calls the same split what
+	// it is — 462 down to 300 — and keeps falling all the way to zero as
+	// the pieces get simpler. It is monotone in the direction the campaign
+	// actually moves.
+	excess int
 }
 
 var trees = []tree{
-	{name: "self-host compiler", dir: "../../examples/self_host", ceiling: 472, budget: 1035},
-	{name: "stdlib", dir: "../stdlib/std", ceiling: 68, budget: 93},
+	{name: "self-host compiler", dir: "../../examples/self_host", ceiling: 472, excess: 19847},
+	{name: "stdlib", dir: "../stdlib/std", ceiling: 68, excess: 780},
 }
 
 func TestRepoComplexityRatchet(t *testing.T) {
 	for _, tr := range trees {
 		t.Run(tr.name, func(t *testing.T) {
-			worst, worstName, over := measureTree(t, tr.dir)
+			worst, worstName, excess := measureTree(t, tr.dir)
 
-			if over > tr.budget {
-				t.Errorf("%d functions exceed the complexity limit of %d, up from the recorded %d.\n"+
+			if excess > tr.excess {
+				t.Errorf("total complexity over the limit of %d is %d, up from the recorded %d.\n"+
 					"A change added complexity above the limit. Split the new function up, or annotate it\n"+
 					"with `// fern-lint: allow cyclomatic-complexity` and a line saying why.\n"+
-					"Run: go run ./cmd/fern -lint %s", over, repoLimit, tr.budget, tr.dir)
-			} else if over < tr.budget {
-				t.Errorf("%d functions exceed the complexity limit of %d, down from the recorded %d.\n"+
-					"Bank the improvement: set this tree's budget to %d in %s.",
-					over, repoLimit, tr.budget, over, gateFile())
+					"Run: go run ./cmd/fern -lint %s", repoLimit, excess, tr.excess, tr.dir)
+			} else if excess < tr.excess {
+				t.Errorf("total complexity over the limit of %d is %d, down from the recorded %d.\n"+
+					"Bank the improvement: set this tree's excess to %d in %s.",
+					repoLimit, excess, tr.excess, excess, gateFile())
 			}
 
 			if worst > tr.ceiling {
@@ -83,17 +93,17 @@ func TestRepoComplexityRatchet(t *testing.T) {
 func gateFile() string { return "internal/lint/repo_gate_test.go" }
 
 // complexityRule names the one rule this gate counts, so adding a second
-// rule to the registry cannot silently inflate the budget.
+// rule to the registry cannot silently inflate the excess.
 var complexityRule = (&lint.Complexity{}).Name()
 
-// measureTree returns the tree's worst function, its name, and how many
-// functions exceed repoLimit.
+// measureTree returns the tree's worst function, its name, and the total
+// distance over repoLimit summed across the functions above it.
 //
-// The count comes from the linter proper rather than from Score directly,
+// The excess comes from the linter proper rather than from Score directly,
 // so a `// fern-lint: allow` comment in a Fern source exempts that function
 // here exactly as it does on the command line — one suppression mechanism,
 // not a second one that only the gate honours.
-func measureTree(t *testing.T, dir string) (worst int, worstName string, over int) {
+func measureTree(t *testing.T, dir string) (worst int, worstName string, excess int) {
 	t.Helper()
 	cfg := lint.NewConfig()
 	if err := cfg.SetOption("cyclomatic-complexity.max", fmt.Sprint(repoLimit)); err != nil {
@@ -125,7 +135,7 @@ func measureTree(t *testing.T, dir string) (worst int, worstName string, over in
 				// first-party source, not a finding to count.
 				t.Errorf("%s:%d: %s", fd.File, fd.Pos.Line, fd.Msg)
 			case complexityRule:
-				over++
+				excess += fd.Value - repoLimit
 			}
 		}
 		// The ceiling needs the score itself, which a finding reports as
@@ -140,7 +150,7 @@ func measureTree(t *testing.T, dir string) (worst int, worstName string, over in
 			}
 		}
 	}
-	return worst, worstName, over
+	return worst, worstName, excess
 }
 
 func fernFiles(t *testing.T, dir string) []string {

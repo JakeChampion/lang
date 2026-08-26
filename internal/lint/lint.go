@@ -82,6 +82,11 @@ type Finding struct {
 	// Help is an optional second line suggesting what to do. Empty when
 	// the message is its own advice.
 	Help string
+	// Value is the measurement behind the finding — a complexity score, a
+	// nesting depth — or zero for a rule that measures nothing. A finding's
+	// message is prose for a human; a gate comparing numbers should read
+	// them here rather than parsing the message back out.
+	Value int
 }
 
 // Pass is one rule's view of one file. A rule reads Prog and reports
@@ -100,7 +105,10 @@ type Pass struct {
 // Report records a finding at pos. Sites suppressed by a
 // `// fern-lint: allow <rule>` comment are dropped here, so no rule has
 // to know suppression exists.
-func (p *Pass) Report(pos ast.Position, msg, help string) {
+//
+// value is the measurement behind the finding (see Finding.Value); pass 0
+// from a rule that measures nothing.
+func (p *Pass) Report(pos ast.Position, msg, help string, value int) {
 	if p.sup.allows(p.rule.Name(), pos.Line) {
 		return
 	}
@@ -111,6 +119,7 @@ func (p *Pass) Report(pos ast.Position, msg, help string) {
 		File:     p.File,
 		Msg:      msg,
 		Help:     help,
+		Value:    value,
 	})
 }
 
