@@ -2383,19 +2383,25 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 			borrowedParam[p.Name] = true
 		}
 	}
-	// `.with` calls inside a loop body. The last-occurrence test below is
-	// TEXTUAL, and inside a loop the textually-last occurrence re-executes:
-	// an in-place store is then observed by the next iteration, where interp
-	// copies. callArgDeaths states the same invariant for its own last-use
-	// test (see its doc comment) and gets it structurally, by admitting only
-	// the self-reassign and `return` shapes.
+	// `.with` calls whose receiver outlives an enclosing loop's back edge.
+	// The last-occurrence test below is TEXTUAL, and a name declared OUTSIDE
+	// the loop is read again by the next iteration, so its textually-last
+	// occurrence is not its last dynamic use: an in-place store there is
+	// observed on the following pass, where interp copies. callArgDeaths
+	// states the same invariant for its own last-use test (see its doc
+	// comment) and gets it structurally, by admitting only the self-reassign
+	// and `return` shapes.
 	//
-	// The accumulator is unaffected: `a = a.with(i, v)` takes the
+	// A receiver DECLARED in the body ahead of the call is exempt: the next
+	// iteration re-declares it, so nothing on the back edge can observe the
+	// store, and forcing the inc there would cost the loop a copy per pass
+	// and re-break #6013 — the consuming receiver's slot is empty at the
+	// re-init drop precisely because cow_inplace took its reference.
+	//
+	// The accumulator is unaffected either way: `a = a.with(i, v)` takes the
 	// reassignSelf early return above and never reaches here, so the #4838
-	// in-place threading keeps its rc==1 branch. What this catches is the
-	// other receiver — one whose name is still read elsewhere in the body,
-	// which is the shape the copy exists for.
-	inLoop := map[*ast.Call]bool{}
+	// in-place threading keeps its rc==1 branch.
+	liveAcrossBackEdge := map[*ast.Call]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		var body ast.Stmt
 		switch x := n.(type) {
@@ -2411,12 +2417,24 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		if body == nil {
 			return true
 		}
-		ast.Walk(body, func(m ast.Node) bool {
-			if c, ok := m.(*ast.Call); ok && isArraySetCall(c) {
-				inLoop[c] = true
-			}
+		// Names declared as direct statements of the body, accumulated in
+		// statement order so a declaration that follows the call — where the
+		// receiver still names the OUTER binding — does not exempt it. A
+		// nested loop's own bodies are visited by this same walk, so a call
+		// is marked if ANY enclosing loop declares its receiver elsewhere,
+		// which is exactly "declared outside the innermost enclosing loop".
+		blk, _ := body.(*ast.Block)
+		if blk == nil {
+			markArraySetReceivers(body, nil, liveAcrossBackEdge)
 			return true
-		})
+		}
+		declared := map[string]bool{}
+		for _, st := range blk.Stmts {
+			markArraySetReceivers(st, declared, liveAcrossBackEdge)
+			if v, ok := st.(*ast.Var); ok {
+				declared[v.Name] = true
+			}
+		}
 		return true
 	})
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
@@ -2458,9 +2476,9 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 			return true
 		}
 		// Live after the call iff this occurrence is NOT the receiver
-		// name's last use — except inside a loop, where "last" re-executes
-		// (inLoop above).
-		incs[c] = !order.isLast(rid) || inLoop[c]
+		// name's last use — or the receiver survives a loop's back edge and
+		// "last" re-executes (liveAcrossBackEdge above).
+		incs[c] = !order.isLast(rid) || liveAcrossBackEdge[c]
 		// No inc means cow_inplace consumes this receiver's reference (see
 		// arraySetConsumed) — record it so the exit sweep skips it. Both roles
 		// the sweep releases qualify: a declared owned local, and an OWNED param
@@ -2474,6 +2492,22 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		return true
 	})
 	return incs
+}
+
+// markArraySetReceivers records every `.with` call under n whose ident
+// receiver is not in declared — the names a loop body re-declares each
+// iteration, which are the only receivers a back edge cannot observe.
+func markArraySetReceivers(n ast.Node, declared map[string]bool, out map[*ast.Call]bool) {
+	ast.Walk(n, func(m ast.Node) bool {
+		c, ok := m.(*ast.Call)
+		if !ok || !isArraySetCall(c) {
+			return true
+		}
+		if rid, rok := c.Args[0].(*ast.Ident); !rok || !declared[rid.Name] {
+			out[c] = true
+		}
+		return true
+	})
 }
 
 // computeArraySetConsumedReinit narrows arraySetConsumed to the receivers a
