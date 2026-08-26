@@ -397,7 +397,7 @@ function main(): i32 {
     // evaluating. Lowered the way the BACKENDS lower — lift_lambdas (which
     // fills defaults and hoists every capturing lambda to a `$clo` /
     // `__mkclo$` pair) over a builtin-enum-injected struct table, exactly as
-    // asm_ir.lift_lambdas does. Lowering the raw module instead would count
+    // ircore.lift_lambdas does. Lowering the raw module instead would count
     // closure sites that lambda lifting has not created yet.
     if (want_clocensus) {
         var cmod: parser.Module = irlower.lift_lambdas(mod);

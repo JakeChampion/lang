@@ -113,6 +113,7 @@ import "./treeshake";
 import "./arm64_native";
 import "./x86_native";
 import "./elf";
+import "./ircore";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
@@ -2221,8 +2222,8 @@ function run(): i32 {
     // an ill-typed assert raises — is on is_partial_checker_gap_code's measured
     // list, so its verdict does not reach the build here (#4346).
     if (optimize) {
-        if (constfold.has_asserts(merged) && !asm_ir.module_ir_eligible(parser.module_with_builtins(merged))) {
-            asm_ir.eprint_ir_ineligible();
+        if (constfold.has_asserts(merged) && !ircore.module_ir_eligible(parser.module_with_builtins(merged))) {
+            ircore.eprint_ir_ineligible();
             return 1;
         }
         merged = constfold.elide_asserts(merged);

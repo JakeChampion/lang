@@ -30,9 +30,9 @@ import "./ir";
 import "./irlower";
 import "./irverify";
 import "./irverifygate";
-import "./asm_ir";
 import "./asmcore";
 import "./astwalk";
+import "./ircore";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry freelist head array, then
@@ -96,7 +96,7 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     // emission never produced (#5508).
     var bp: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs), bp), mod.trait_reqs),
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(all_funcs, all_structs, ircore.array_ret_fns_of(all_funcs), bp), mod.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bp),
         // Array-param moves stay scoped to THIS module.
         move_arr_params: irlower.move_arr_params_of(mod.funcs),
@@ -215,7 +215,7 @@ pub function fn_table_base(): i32 { return 0; }
 // So a unit records its needs as METADATA at emit time, when its cache is
 // already in hand, and link merges the recorded sets instead. Cheap, and exact:
 // the asm side over-approximates with a fixed root set
-// (asm_ir.all_runtime_need_roots) precisely because it has no such per-unit
+// (ircore.all_runtime_need_roots) precisely because it has no such per-unit
 // record, and pays for it in dead runtime code.
 //
 // Op needs are stored under their op name; the boolean predicates are stored
@@ -880,8 +880,8 @@ pub function field_reclaim_types(cache: irlower.LowerResult[]): string[] {
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && asm_ir.is_field_reclaim_name(r.ops[i].str)) {  // call_direct
-                var t: string = asm_ir.field_reclaim_type(r.ops[i].str);
+            if (r.ops[i].kind_tag == 149 && ircore.is_field_reclaim_name(r.ops[i].str)) {  // call_direct
+                var t: string = ircore.field_reclaim_type(r.ops[i].str);
                 if (util.index_of_str(out, t) < 0) { out = out.append(t); }
             }
             i = i + 1;
@@ -905,8 +905,8 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && asm_ir.is_struct_drop_name(r.ops[i].str)) {  // call_direct
-                var t: string = asm_ir.struct_drop_type(r.ops[i].str);
+            if (r.ops[i].kind_tag == 149 && ircore.is_struct_drop_name(r.ops[i].str)) {  // call_direct
+                var t: string = ircore.struct_drop_type(r.ops[i].str);
                 if (util.index_of_str(out, t) < 0) { out = out.append(t); }
             }
             i = i + 1;
@@ -1398,7 +1398,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // pow_func / …) that wasm_ir_run pulls in when a module calls one — see the
     // fexp/flog/fsin/fcos/fpow arms below (kind_tag 62+), which emit
     // `call $__fern_<op>_f64`. They are NOT in the deferral list.
-    if (!asm_ir.eligible_core(mod)) { return false; }
+    if (!ircore.eligible_core(mod)) { return false; }
     return wasm_ir_deferrals_ok(lower_all_for(mod));
 }
 
@@ -1434,7 +1434,7 @@ function module_erased_wide(cache: irlower.LowerResult[]): boolean {
 // ITSELF: any bail (LowerResult.ok == false) routes the whole module to the AST
 // path cleanly, so the blocklist no longer has to be perfect (fragility #6 —
 // eligibility drift from what actually lowers). The register IR path already
-// gates on `r.ok` this way (asm_ir.func_eligible); this brings wasm to parity.
+// gates on `r.ok` this way (ircore.func_eligible); this brings wasm to parity.
 // Byte-identity-safe: an all-ok module (every current IR-eligible one, since it
 // emits valid wasm today) is unaffected; the gate only ever moves a
 // silently-bailing module off the IR path.
@@ -1514,7 +1514,7 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // and emitted a call to an undefined $__c_call<n>).
         var ci: i32 = 0;
         while (ci < ids.len()) {
-            if (asm_ir.is_c_call(ids[ci])) { return ids[ci]; }
+            if (ircore.is_c_call(ids[ci])) { return ids[ci]; }
             if (is_raw_floor_builtin(ids[ci])) { return ids[ci]; }
             ci = ci + 1;
         }
@@ -1530,7 +1530,7 @@ pub function wasm_unsupported_message(name: string): string {
     if (name == "timer_fd") {
         return "error: timer_fd is not supported on the wasm target (wasm has no pollable file descriptors); use wasm_timer_pollable, which returns a wasi:io/poll pollable\n";
     }
-    if (asm_ir.is_c_call(name)) {
+    if (ircore.is_c_call(name)) {
         return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)\n";
     }
     if (name == "proc_fork" || name == "proc_waitpid" || name == "proc_exec") {
@@ -2242,7 +2242,7 @@ pub function component_io_shims(needs: string[]): string {
 // keeps the ineligible-module bootstrap path from ever lowering (#4652). Uses
 // eligible_core (not all_eligible) so function-value modules lower on wasm.
 pub function should_use_ir_core(mod: parser.Module): boolean {
-    return asmcore.new_state().use_ir && asm_ir.eligible_core(mod);
+    return asmcore.new_state().use_ir && ircore.eligible_core(mod);
 }
 
 // emit_ir_module / emit_ir_module_mode MOVED HERE from wasm.fern (#3457, wasm
@@ -2340,7 +2340,7 @@ pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, i
             return emit_ir_module_mode(lm, ir_cache, mode);
         }
     }
-    asm_ir.eprint_ir_ineligible();
+    ircore.eprint_ir_ineligible();
     exit(1);
     return "";
 }
@@ -2894,7 +2894,7 @@ pub function wasm_poll_func(): string {
 // that is precisely the behaviour that made script support a reason wasm.fern
 // could not retire. asmcore.synth_script_main desugars it in the shared frontend
 // and the asm side has routed scripts through the IR path on that basis since
-// #3457 (asm_ir.script_normalized); the wasm route simply never called it.
+// #3457 (ircore.script_normalized); the wasm route simply never called it.
 //
 // Function-shaped modules pass through untouched, so this is inert for every
 // program that already has a `main`. Both the emitter (wasm.emit_module_mode) and
@@ -2902,7 +2902,7 @@ pub function wasm_poll_func(): string {
 // a verdict for a module the emitter does not judge — the same anti-drift rule
 // ir_route_precheck / ir_route_final rest on.
 pub function route_normalized(mod: parser.Module): parser.Module {
-    return lift_lambdas(asm_ir.script_normalized(mod));
+    return lift_lambdas(ircore.script_normalized(mod));
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
@@ -2912,7 +2912,7 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
     return irlower.lift_lambdas(mod);
 }
 
-// lift_lambdas_parts is asm_ir.lift_lambdas_parts for the wasm per-module route:
+// lift_lambdas_parts is ircore.lift_lambdas_parts for the wasm per-module route:
 // every part of a bundle lifted against the whole-program signature view the
 // others supply, so a capturing lambda handed to a SIBLING module's fn-param is
 // env-boxed instead of reaching lowering as a bare lambda that names a `<fd>$clo`
@@ -4366,7 +4366,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    call $__fern_rc_inc\n");
     } else if (o.kind_tag == 149 && o.str == "__fern_arr_share_dec") {  // call_direct
         parts = parts.append("    call $__fern_arr_dec\n");
-    } else if (o.kind_tag == 149 && asm_ir.is_fern_helper(o.str)) {  // call_direct
+    } else if (o.kind_tag == 149 && ircore.is_fern_helper(o.str)) {  // call_direct
         // Runtime RC helper: the arg is already on the wasm stack; the
         // helper takes it as a param and returns the ptr / count.
         parts = parts.append("    call " + wasm_helper_symbol(o.str) + "\n");
@@ -8525,7 +8525,7 @@ pub function heap_base_for_units(units: WasmUnit[]): i32 {
 // gating exact here preserves the byte-identity invariant for the single-unit
 // case. Deciding the helper set WITHOUT a combined cache is the out-of-process
 // driver's problem (step 4c), where the asm side's precedent is a sound
-// over-approximation (asm_ir.all_runtime_need_roots) rather than an exact union,
+// over-approximation (ircore.all_runtime_need_roots) rather than an exact union,
 // because the exact aggregation re-lowers every module and OOMs (#3425).
 //
 // It is also the SINGLE source of truth for wasm IR-path module emission. The

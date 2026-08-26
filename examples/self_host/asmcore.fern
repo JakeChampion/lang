@@ -2,15 +2,17 @@ import "./lexer";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./ir";
 
-// asmcore — the target-independent frontend shared by the x86-64
-// (asm.fern) and arm64 (asm_arm64.fern) text emitters: the Ty type
-// system, EmitState + its state methods, the free-variable walker,
-// type inference (infer_expr_type / match_payload_type / field +
-// struct tag resolution) and the pre-codegen checker. The backends
-// import this and add only their instruction-selection (emit_*).
-// Extracted to end the hand-maintained lockstep between the two
-// backends — this code now lives once.
+// asmcore — the emitter-side layer the three IR backends (asm_ir,
+// asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
+// state methods, the free-variable walker, type inference
+// (infer_expr_type / match_payload_type / field + struct tag
+// resolution) and the pre-codegen checker, plus the GAS text the two
+// native backends emit identically (see the section at the foot of
+// this file). The backends import this and add only their
+// instruction-selection (emit_*). What decides WHETHER a module
+// lowers, rather than what it emits, lives in ircore.fern.
 
 // base_type_name -> util.base_type_name (SH-020).
 
@@ -3497,6 +3499,24 @@ pub function add_const_agg(s: EmitState, packed: string): ConstAggOut {
     return ConstAggOut { state: EmitState { ...s, const_aggs: s.const_aggs.append(packed) }, idx: idx };
 }
 
+// str_lit_label builds the `.rodata` label for string-literal `idx`, honouring
+// the per-module namespace (`s.str_ns`): empty → `.S<idx>` (byte-identical to
+// the whole-program emitter), non-empty → `.S<ns>_<idx>` so separately-emitted
+// modules' string pools don't collide at link (#3451 step 3 / #3455). The SAME
+// label is used at the definition site (.rodata) and every `leaq` reference, so
+// the box's data pointer resolves within the module.
+pub function str_lit_label(s: EmitState, idx: i32): string {
+    if (s.str_ns.len() == 0) { return ".S" + util.i32_to_string(idx); }
+    return ".S" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
+// str_box_label is the STATIC BOX for literal `idx` — the value a const_str
+// pushes. Namespaced exactly as str_lit_label, whose bytes it points at.
+pub function str_box_label(s: EmitState, idx: i32): string {
+    if (s.str_ns.len() == 0) { return ".SB" + util.i32_to_string(idx); }
+    return ".SB" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
 // const_agg_label names constant `idx`'s data block, namespaced by str_ns on the
 // per-module path exactly as str_lit_label is, so two separately-emitted units'
 // constant pools cannot collide at link.
@@ -4475,7 +4495,6 @@ function callgate_name_in(names: string[], name: string): boolean {
     return false;
 }
 
-
 // emitter_call_names are the free-function spellings the self-host emitters
 // intercept in try_emit_builtin / lower_expr beyond the front-end builtin set:
 // the string helpers (`str_split(s, sep)` is the free form of `s.split(sep)`),
@@ -4818,3 +4837,297 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 }
 
 // contains -> util.contains (SH-020).
+
+// ---------------------------------------------------------------------------
+// Shared GAS text emission — what the x86-64 and arm64 IR backends emit
+// IDENTICALLY: the literal / constant / shape label names, the `.data` blocks
+// behind them, the runtime `.globl` export list, and the byte scanners both
+// peepholes run over their own output. None of it is instruction selection, and
+// keeping it in one backend is what let the pre-#3457 emitter twins drift.
+// wasm does not use any of it (its own linear-memory layout replaces the lot).
+// ---------------------------------------------------------------------------
+
+// emit_str_box_data_from flushes one static box per interned literal as a GAS
+// `.data` block — shared verbatim by the x86-64 and arm64 emitters, whose string
+// box layout is identical (data@box+0, len@box+8, rc at box-8).
+//
+// Each block is what `__fern_str_box` built at runtime, with one difference: the
+// rc word is -1, the immortal sentinel every rc entry point already skips, and
+// which #6149's const-aggregate blocks already rely on. A literal is immutable
+// and compile-time known, so nothing about it is per-evaluation; building a box
+// at rc=1 each time it was evaluated is what #7080 measured leaking, because the
+// positions that read one (a comparison operand, a method receiver, a map key)
+// never gave it a slot to be reclaimed from.
+//
+// `.data` rather than `.rodata`: the block holds a relocated pointer, the same
+// reason emit_const_agg_data_from uses `.data`.
+pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
+    if (s.string_lits.len() <= first) { return s; }
+    var st: EmitState = s.write("    .section .data\n    .align 8\n");
+    var i: i32 = first;
+    while (i < st.string_lits.len()) {
+        st = st.write("    .quad -1\n");                                            // rc @ box-8 (immortal)
+        st = st.write(str_box_label(st, i) + ":\n");
+        st = st.write("    .quad " + str_lit_label(st, i) + "\n");                  // data
+        st = st.write("    .quad " + util.i32_to_string(st.string_lits[i].len()) + "\n");  // len
+        i = i + 1;
+    }
+    return st;
+}
+
+// emit_const_agg_data flushes the unit's static aggregate constants (#6149) as
+// GAS `.data` blocks — shared verbatim by the x86-64 and arm64 emitters, which
+// have identical box layouts (`[shape_ptr@0, f0@8, …]`, cap at data-16, rc at
+// data-8) and identical directives here.
+//
+// Each block reproduces exactly what `__fern_arr_box(nf+1)` plus the field
+// stores would have produced, with ONE difference: the rc word is -1, the
+// immortal sentinel every rc entry point already skips. `__fern_rc_inc` and
+// `__fern_arr_dec` return early on a negative rc, `__fern_str_free` likewise,
+// and `__fern_rc_is_unique` answers 0 — so a shared constant is never freed,
+// never refcounted, and never reused in place. The cap word is still written so
+// nothing that reads a block's size off data-16 sees garbage, even though the
+// sentinel means no free path can reach it.
+pub function emit_const_agg_data(s: EmitState): EmitState {
+    return emit_const_agg_data_from(s, 0);
+}
+
+// emit_const_agg_data_from writes only the blocks from `first` on — the
+// incremental form the runtime-helper emit needs, whose constants are interned
+// after the main pool has already been written.
+pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
+    if (s.const_aggs.len() <= first) { return s; }
+    var st: EmitState = s.write("    .section .data\n    .align 8\n");
+    var i: i32 = first;
+    while (i < st.const_aggs.len()) {
+        var e: string = st.const_aggs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        var shp: string = slice_unchecked(e, 0, bar) + "";
+        var vals: string[] = ir.const_struct_values(e);
+        st = st.write("    .quad " + util.i32_to_string(vals.len() + 1) + "\n");   // cap @ data-16
+        st = st.write("    .quad -1\n");                                            // rc  @ data-8 (immortal)
+        st = st.write(const_agg_label(st, i) + ":\n");
+        st = st.write("    .quad " + shp + "\n");
+        var vi: i32 = 0;
+        while (vi < vals.len()) {
+            st = st.write("    .quad " + vals[vi] + "\n");
+            vi = vi + 1;
+        }
+        i = i + 1;
+    }
+    return st;
+}
+
+// ShapeRefOut carries the updated state + the label a shape pointer leaqs.
+pub struct ShapeRefOut { state: EmitState, label: string }
+
+// shape_ref resolves the label for an enum/struct SHAPE pointer (struct_make /
+// variant_is / struct_set_shape / dyn dispatch / downcast). On the whole-program
+// path (str_ns == "") a shape is interned as an ordinary string literal — the
+// pre-per-module behaviour, byte-identical. Per-module (str_ns != ""), a shape is
+// a `.weak` global symbol (shape_sym): the SAME shape referenced in two units
+// resolves to ONE linker-merged address, so the pointer-equality shape compare
+// (a token constructed in the lexer unit, matched in the parser unit) holds
+// across the module boundary. Without this every cross-module enum `match` (e.g.
+// the parser matching lexer's token variants) silently fails — the self-build
+// miscompile #3451's per-module bootstrap hit.
+pub function shape_ref(s: EmitState, name: string): ShapeRefOut {
+    if (s.str_ns.len() == 0) {
+        var lo: StringLitOut = add_string_lit(s, name);
+        return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };
+    }
+    return ShapeRefOut { state: add_shape_lit(s, name), label: shape_sym(name) };
+}
+
+// emit_runtime_globls exports the shared `__fern_*` / `__fn___fern_*` runtime
+// entry points `.globl` so a library module's `call __fern_alloc` (etc.) — an
+// unresolved extern in that module — links against the single copy the entry
+// module emits (#3451 step 3 / #3455). Only the entry calls this (it owns the
+// runtime). A `.globl` for a symbol the entry doesn't actually define (its need
+// wasn't present) is a harmless UND entry as long as nothing references it; a
+// symbol the entry DOES define is exported. This is emitted only in per-module
+// mode (globl_defs) — the whole-program emitter never calls it, so its output
+// is unchanged.
+pub function emit_runtime_globls(s: EmitState): EmitState {
+    var names: string[] = [
+        "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_str_box", "__fern_arr_push",
+        // array bounds trap (#5410): every unit's arr_get/arr_set emits a
+        // `jae __fern_oob_abort`; the entry owns the single definition
+        // (emit_ir_runtime's heap block), so export it like the other
+        // shared helpers or every library unit dangles at the per-module link.
+        "__fern_oob_abort",
+        "__fern_arr_push_owned",
+        // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
+        // call resolves against the entry module's single definition, exactly
+        // like the heap helpers above.
+        "__fn___fern_arr_reverse", "__fn___fern_arr_concat", "__fn___fern_arr_slice",
+        "__fn___fern_str_concat", "__fn___fern_str_eq",
+        "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
+        "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
+        "__fn___fern_str_replace", "__fn___fern_str_reverse", "__fn___fern_str_trim",
+        "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
+        "__fn___fern_str_ends_with", "__fn___fern_str_index_of",
+        // The stdout/stderr leaves are Fern on BOTH register backends now (#2649),
+        // so only the stack-ABI symbols exist; the register-ABI __fern_print_str /
+        // __fern_print_int / __fern_eprint_str / __fern_putchar are gone.
+        "__fn___fern_print_str", "__fn___fern_print_int",
+        "__fn___fern_eprint_str", "__fn___fern_putchar",
+        "__fn___fern_read_int", "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
+        "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
+        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
+        "__fn___fern_create_dir_all",
+        "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
+        "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
+        // #5623: the IR path's whole-stdin reader, emitted in the entry module's
+        // runtime — .globl so a per-module sibling's `call` resolves against it.
+        "__fn___fern_read_all_stdin",
+        "__fern_strbuf_reset", "__fern_strbuf_take",
+        // crash-only supervision (#5686): the entry owns fork / wait4.
+        "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
+        // random_bytes and random_i32 are Fern on BOTH register backends now
+        // (#2649), so only the stack-ABI symbols exist; the register-ABI
+        // __fern_random_bytes / __fern_random_i32 are gone.
+        "__fn___fern_random_bytes", "__fn___fern_random_i32",
+        // clocks (#2649): register-ABI symbols kept for arm64/AST (hand-asm); the
+        // x86-64 IR path defines the Fern-compiled __fn___fern_*_ns. Both listed
+        // during the transition (a .globl of an undefined symbol is a no-op).
+        // (__fern_now_unix_ms is already listed below.)
+        "__fern_monotonic_ns", "__fern_now_ns",
+        "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
+        "__fn___fern_poll",
+        "__fn___fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
+        "__fern_wasm_block", "__fern_wasm_poll",
+        "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
+        "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
+        "__fn___fern_open_fd",
+        "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
+        "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
+        // scalar / string keys()/values() snapshots (#4353): a library
+        // module's kind 131/132 flag-0/flag-2 read calls these; the entry
+        // owns the definitions.
+        "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
+        "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
+        "__fn___fern_alloc_reuse",
+        "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
+        "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",
+        "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
+        // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
+        // (`var b = a + a` → __fern_str_free) references this symbol; the entry
+        // owns the single definition (emit_ir_runtime), so export it for the
+        // per-module link like every other shared runtime helper.
+        "__fn___fern_str_free",
+        // string[] ELEMENT reclaim (#4355): a library module whose exit sweep
+        // frees a fresh-element string[] references this symbol; the entry owns
+        // the single definition (emit_ir_runtime).
+        "__fn___fern_str_arr_free",
+        // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
+        // fresh arr-of-arr local references these; the entry owns the bodies.
+        "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
+        // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
+        // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the
+        // entry owns the single definition (emit_ir_runtime's heap block). Every
+        // eligible spread used to sit in the entry, so this went unnoticed until
+        // synth_script_main spread a `parser.Module` — whose fields are
+        // ALL arrays, making it eligible where the string-carrying EmitState /
+        // FuncDecl spreads take the inline per-field path and never call out.
+        "__fn___fern_struct_copy",
+        // i32[] sum / product (#3457): a LIBRARY module calling xs.sum() emits
+        // `call __fn___fern_arr_i32_sum`; the entry owns the definition. A
+        // registered NEED root is not the same as an exported SYMBOL.
+        "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
+        "__fn___fern_i32_gcd", "__fn___fern_i32_lcm",
+        "__fn___fern_arr_i32_index_of", "__fn___fern_arr_str_index_of",
+        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt"
+    ];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        s = s.write(".globl " + names[i] + "\n");
+        i = i + 1;
+    }
+    return s;
+}
+
+// emit_module_ir_unit is emit_module_ir parameterised for per-module
+// translation units (the per-module-compilation epic, #3451 — step 1's emit
+// side / #3453, step 3 / #3455). Two knobs:
+//
+//   is_entry   — the entry module emits `_start` (→ call __fn_main + exit) AND
+//                the single shared `__fern_*` runtime. Non-entry (library)
+//                modules omit both: they expose only their `__fn_*` definitions
+//                and reference the runtime helpers / sibling `__fn_*` symbols as
+//                externs, resolved at link. (Aggregating runtime "needs" across
+//                ALL modules so the entry's single runtime covers every helper
+//                any module uses is the remaining step-3 piece; until then a
+//                non-entry module that itself allocates must be linked with an
+//                entry that pulls the heap runtime in.)
+//   globl_defs — mark each emitted `__fn_<label>` `.globl` so a sibling module
+//                can `call` into it across the translation-unit boundary.
+//
+// emit_module_ir delegates with is_entry=true, globl_defs=false, which
+// reproduces the whole-program merged output byte-for-byte (no per-function
+// `.globl`, the `_start` + runtime present, `str_ns` empty so string labels
+// stay `.S<idx>`), so the existing single-unit path is unchanged.
+//
+//   str_ns — per-module namespace for string-literal `.rodata` labels. Empty
+//            keeps `.S<idx>`; a non-empty ns makes each module's pool
+//            `.S<ns>_<idx>`, so two STRING-using modules co-link without
+//            label collision. A string-free module emits no `.rodata` either
+//            way, so a "" ns there is harmless.
+//   extra_needs — additional runtime needs to fold into the entry's single
+//            runtime (the whole-program union of every module's
+//            module_runtime_needs), so the entry emits the helpers a sibling
+//            library uses even when the entry itself doesn't. Empty for the
+//            whole-program path and for non-entry units.
+//   all_funcs / all_structs — the WHOLE-PROGRAM signature view (#3454): the
+//            union of every loaded module's functions / structs, over which the
+//            return-type side-tables + struct layouts are derived so a
+//            cross-module call is tagged by the callee's real signature. Only
+//            `mod.funcs` are emitted. For the single-unit path pass mod.funcs /
+//            mod.structs (byte-identical).
+//   lo / hi — the [lo, hi) function-index window this unit emits (function-
+//            sharding, #3425). A full window (lo=0, hi=mod.funcs.len(), or
+//            hi<0 as a "to the end" sentinel) is byte-identical to the
+//            unsharded emit; a partial window emits only that slice's `__fn_*`
+//            defs plus its own (str_ns-namespaced) string pool and its
+//            weak-deduped field-reclaims / struct-drops, so an oversized module
+//            can be emitted across separate processes without any single emit's
+//            leak-mode heap crossing the arena ceiling. Only non-entry library
+//            shards are windowed; the entry emits its full window.
+// emit_module_ir_unit computes the whole-program side-table bases and delegates
+// to emit_module_ir_unit_flat. Single-unit callers (the differential driver,
+// gated) use this form — the derivation costs the same as before. The
+// single-process `-per-module-emit-all` path instead computes the bases ONCE and
+// calls emit_module_ir_unit_flat directly for every unit, sharing them (#3457
+// slice 2 step 2). The bases cross as a `string[][]` bundle that flat extracts
+// straight into emit_module_funcs's INDIVIDUAL params (never re-extracted into
+// locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
+// SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
+// within `stur`'s ±256 offset range (23 params overflowed it).
+// pp_at reports whether the bytes at `lo` (bounded by `hi`) are `lit`.
+//
+// Byte-at-a-time rather than `asm[lo:lo+k] == lit`: a slice comparison
+// allocates, and this runs twice per emitted line. Going through slices here
+// cost a minute of system time on the compiler's own source, all of it arena
+// growth for temporaries the comparison drops immediately.
+pub function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
+    var m: i32 = lit.len();
+    if (lo + m > hi) { return false; }
+    var k: i32 = 0;
+    while (k < m) {
+        if (asm[lo + k] != lit[k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+// pp_eq_bytes reports whether asm[a:a_end] and asm[b:b_end] hold the same bytes.
+pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): boolean {
+    if (a_end - a != b_end - b) { return false; }
+    var k: i32 = 0;
+    while (a + k < a_end) {
+        if (asm[a + k] != asm[b + k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}

@@ -1,7 +1,7 @@
 // examples/self_host/asm_pathprobe_run.fern — observability driver for the
 // IR-eligibility decision. Reads Fern source from stdin, parses + lifts
 // lambdas, and prints "ir" if the module is fully IR-eligible
-// (asm_ir.all_eligible), or "ast" if any function bails it. "ast" is the
+// (ircore.all_eligible), or "ast" if any function bails it. "ast" is the
 // verdict's historical name from when a bail meant a route to the AST emitter;
 // the emitters are gone (#3457 / #5972), so it now means the drivers refuse the
 // module. Every caller pins one of the two strings, which is why the wording
@@ -11,7 +11,7 @@
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./asm_ir";
+import "./ircore";
 
 function main(): i32 {
     var src: string = io.read_all_stdin();
@@ -24,12 +24,12 @@ function main(): i32 {
     // builtin-enum injection), then checks all_eligible on lift_lambdas of
     // THAT. The probe must run the same pipeline or it sees un-monomorphised
     // generics and under-reports IR eligibility.
-    // asm_ir.script_normalized is part of that pipeline: a SCRIPT-shaped source
+    // ircore.script_normalized is part of that pipeline: a SCRIPT-shaped source
     // has its `main` synthesised inside emit_module_ir_gated, so judging the raw
     // module here reported "ast" for a program the emitter does route through IR.
     var bm: parser.Module = parser.module_with_builtins(mod);
-    var lm: parser.Module = asm_ir.script_normalized(asm_ir.lift_lambdas(bm));
-    if (asm_ir.all_eligible(lm)) {
+    var lm: parser.Module = ircore.script_normalized(ircore.lift_lambdas(bm));
+    if (ircore.all_eligible(lm)) {
         print("ir\n");
     } else {
         print("ast\n");

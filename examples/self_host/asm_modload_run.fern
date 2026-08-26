@@ -34,6 +34,7 @@ import "./irverify";
 import "./irverifyprovided";
 import "./modloader";
 import "./treeshake";
+import "./ircore";
 
 // ---- callee resolution (#6639 slice 4) ---------------------------------
 
@@ -46,7 +47,7 @@ import "./treeshake";
 // stdlib methods reached through an import. The declared set is only complete
 // once the bundle is.
 function verify_provided_module(merged: parser.Module): i32 {
-    var vmod: parser.Module = asm_ir.lift_lambdas(parser.module_with_builtins(merged));
+    var vmod: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(merged));
     // Every function the WHOLE program declares, keyed the way a call_direct
     // names it. `@import` externs are ordinary FuncDecls, so the host-supplied
     // half needs no separate arm.
@@ -80,7 +81,7 @@ function verify_provided_module(merged: parser.Module): i32 {
 // provided_audit checks the verifier's inventory against the EMITTER's own
 // predicate, and writes any name the two disagree about.
 //
-// Only this direction is checkable: `asm_ir.is_fern_helper` is a predicate, so
+// Only this direction is checkable: `ircore.is_fern_helper` is a predicate, so
 // a helper the emitter gained and the inventory did not cannot be enumerated
 // out of it. That direction surfaces instead as an unresolved callee in the
 // corpus sweep — which is the failure the pass exists to produce, so it is
@@ -92,7 +93,7 @@ function provided_audit(): i32 {
     var bad: string[] = [];
     var i: i32 = 0;
     while (i < names.len()) {
-        if (!asm_ir.is_fern_helper(names[i])) { bad = bad.append(names[i]); }
+        if (!ircore.is_fern_helper(names[i])) { bad = bad.append(names[i]); }
         i = i + 1;
     }
     if (bad.len() == 0) {
@@ -286,7 +287,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     var pruned: parser.Module[] = [];
     var si0: i32 = 0;
     while (si0 < parts.len()) { pruned = pruned.append(prune_to_reachable(parts[si0].mod, reach)); si0 = si0 + 1; }
-    var lifted: parser.Module[] = asm_ir.lift_lambdas_parts(pruned);
+    var lifted: parser.Module[] = ircore.lift_lambdas_parts(pruned);
     var pi: i32 = 0;
     while (pi < parts.len()) {
         var im: parser.Module = lifted[pi];
@@ -306,7 +307,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     }
     all_structs = builtin_view(dir, all_structs);
     // The entry unit emits the ONE shared runtime; seed it with every root so a
-    // library unit's `call __fern_*` resolves (asm_ir.all_runtime_need_roots —
+    // library unit's `call __fern_*` resolves (ircore.all_runtime_need_roots —
     // the same superset the batched per-module build feeds it).
     //
     // The exact union via module_runtime_needs is NOT usable here: it lowers
@@ -315,7 +316,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     // signature is built from the builtin HttpRequest / Platform layouts) is
     // silently skipped and the needs it would have marked — tcp_send,
     // tcp_close — go missing, dangling at link.
-    var needs: string[] = asm_ir.all_runtime_need_roots();
+    var needs: string[] = ircore.all_runtime_need_roots();
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
@@ -327,8 +328,8 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         // barely uses (every std/http + std/tcp program: ~40 modules loaded,
         // ~81 functions reachable) can never take the IR path.
         if (infmods[idx].funcs.len() == 0) { idx = idx + 1; continue; }
-        var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
-        if (parts[idx].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
+        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
+        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
         if (!elig) {
             // Name the module that took the whole program off the per-module
             // route. Without this the decline is silent and the failure
@@ -353,8 +354,8 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
 // under the whole-program view. The entry uses the stricter gate (it owns
 // `main` + the shared runtime).
 function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
-    if (parts[midx].is_entry) { return asm_ir.all_eligible_known_view(infmods[midx], known, all_funcs, all_structs); }
-    return asm_ir.all_eligible_lib_known_view(infmods[midx], known, all_funcs, all_structs);
+    if (parts[midx].is_entry) { return ircore.all_eligible_known_view(infmods[midx], known, all_funcs, all_structs); }
+    return ircore.all_eligible_lib_known_view(infmods[midx], known, all_funcs, all_structs);
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
@@ -519,7 +520,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     var pi: i32 = 0;
     while (pi < parts.len()) { rawmods = rawmods.append(parts[pi].mod); pi = pi + 1; }
     // The same lift the children run, so the unit list this sizes matches theirs.
-    var infmods: parser.Module[] = asm_ir.lift_lambdas_parts(rawmods);
+    var infmods: parser.Module[] = ircore.lift_lambdas_parts(rawmods);
     var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
     if (units.len() == 0) { return 1; }
     var tmp: string = "";
@@ -699,7 +700,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     var rawmods: parser.Module[] = [];
     var rpi: i32 = 0;
     while (rpi < parts.len()) { rawmods = rawmods.append(parts[rpi].mod); rpi = rpi + 1; }
-    var lifted: parser.Module[] = asm_ir.lift_lambdas_parts(rawmods);
+    var lifted: parser.Module[] = ircore.lift_lambdas_parts(rawmods);
     var pi: i32 = 0;
     while (pi < parts.len()) {
         var im: parser.Module = lifted[pi];
@@ -736,7 +737,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // the accumulation on exit while still sharing the base derivation across
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
         // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
-        var needs: string[] = asm_ir.all_runtime_need_roots();
+        var needs: string[] = ircore.all_runtime_need_roots();
         var wpb: irlower.FnSigs = asm_ir.wp_fn_sigs(all_funcs, all_structs);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
         // Incremental object cache (#3451 step 6 / #3458). This is the mode the
@@ -855,11 +856,11 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     }
     if (pm_mode == "needs") {
         // Seed the entry's shared runtime with the full root set instead of an
-        // exact per-module union (asm_ir.all_runtime_need_roots): a sound,
+        // exact per-module union (ircore.all_runtime_need_roots): a sound,
         // deterministic over-approximation that avoids re-emitting every module
         // here via module_runtime_needs — that aggregation OOMs a self-host-built
         // driver (#3425), the one thing blocking a self-host per-module self-compile.
-        var needs: string[] = asm_ir.all_runtime_need_roots();
+        var needs: string[] = ircore.all_runtime_need_roots();
         var no: i32 = 0;
         while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
         return 0;
@@ -899,8 +900,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     }
     var elig: boolean = true;
     if (!assume_eligible) {
-        elig = asm_ir.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
-        if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
+        elig = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
+        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
     }
     if (!elig) {
         eprint("per-module: module not IR-eligible: ");
@@ -947,7 +948,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
 function main(): i32 {
     var a: string[] = args();
     // `-ir-probe`: after real import resolution + bundling, report the IR-
-    // eligibility frontier (asm_ir.eligibility_report) instead of emitting asm.
+    // eligibility frontier (ircore.eligibility_report) instead of emitting asm.
     // Unlike asm_ir_run's stdin probe, this loads imports off disk, so a
     // function that calls an IMPORTED helper (`s.split_once()`,
     // `int.__int_to_string_u64()`) is measured with its callee actually
@@ -1084,7 +1085,7 @@ function main(): i32 {
                 // like core/cmp's min[T:Ord], whose type-param-receiver call
                 // otherwise bails and mis-reports `module: AST` for a program
                 // that in fact routes IR — #4374), not the raw merged module.
-                write(asm_ir.eligibility_report(asm_ir.lift_lambdas(parser.module_with_builtins(merged))));
+                write(ircore.eligibility_report(ircore.lift_lambdas(parser.module_with_builtins(merged))));
                 return 0;
             }
             // Hoisted above the arm64 leg so both targets share ONE
@@ -1105,7 +1106,7 @@ function main(): i32 {
                 // was reverted, which is why that test asserts through the LINK.
                 // The batched spawned path stays x86-only for now.
                 var amwb: parser.Module = parser.module_with_builtins(merged);
-                var anfuncs: i32 = asm_ir.lift_lambdas(amwb).funcs.len();
+                var anfuncs: i32 = ircore.lift_lambdas(amwb).funcs.len();
                 if (anfuncs > 512 || force_spawned) {
                     if (anfuncs < single_process_max && !force_spawned) {
                         var ashaken: parser.Module = treeshake.treeshake(merged);
@@ -1165,7 +1166,7 @@ function main(): i32 {
             // point only because it is the one cheap signal available before any
             // emit happens.
             var mwb: parser.Module = parser.module_with_builtins(merged);
-            var nfuncs: i32 = asm_ir.lift_lambdas(mwb).funcs.len();
+            var nfuncs: i32 = ircore.lift_lambdas(mwb).funcs.len();
             if (nfuncs > 512 || force_spawned) {
                 if (nfuncs < single_process_max && !force_spawned) {
                     var shaken: parser.Module = treeshake.treeshake(merged);
