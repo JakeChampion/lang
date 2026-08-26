@@ -652,10 +652,35 @@ remainder splits three ways:
   arguments reversed into stack-ABI order and `addq $16, %rsp` after, which is
   exactly the sequence the hand-asm writes by hand.
 
-  So `map_delete` needs no floor primitive and no ABI change — the helper takes
-  `eqfn: i32`. What it does need is the op site passing that address as an
-  ordinary stack argument rather than in `%r8`, which is the same conversion
-  every other migrated helper's op site already went through.
+  So the eq pointer needs no floor primitive and no ABI change — the helper
+  takes `eqfn: i32`, and the op site passes that address as an ordinary stack
+  argument rather than in `%r8`, the same conversion every other migrated
+  helper's op site already went through.
+
+  **The remaining obstacle is polymorphism, not the pointer.** One
+  `__fern_map_delete` serves all three key kinds, and a Fern body cannot
+  compare a string key without a `str_eq` it can NAME. Written on the raw floor
+  the keys are `i32` box pointers, and `a == b` on two `i32`s is an integer
+  compare, not a string compare; there is no surface spelling that reaches
+  `__fern_str_eq` from a raw pointer. Two ways out, neither yet taken:
+
+  - **Recognise the runtime symbol.** Teach irlower to lower
+    `__fern_str_eq(a, b)` to `op_str_eq`, exactly as it already recognises
+    `__fern_rc_dec` / `__fern_arr_dec` by their symbol names for the RC hooks.
+    Smallest change, keeps ONE body, and the op already exists.
+  - **Specialise per key kind.** Emit `rt_src_map_delete` three times with
+    correctly-typed parameters (`string[]`/`string`, `i32[]`/`i32`, raw+`eqfn`),
+    so each arm's comparison is ordinary typed Fern. Deletes the runtime
+    keykind dispatch too, at the cost of three bodies where a program uses
+    three kinds.
+
+  Note the result type while reading the hand-asm: `m.without(k)` is
+  `(Map[K, V], boolean)`, not a `Map`. The 16-byte two-slot box the helper
+  returns IS the tuple, so `op_map_delete`'s own comment — "pops [map, key]
+  → the map with that key removed" — is describing the surface intent, not the
+  value. Assigning it to a `Map`-typed variable is an E003 the front end
+  catches; `asm_ir_run.fern` does NOT type-check, so a probe driven through it
+  compiles the ill-typed program and segfaults.
 
   **strbuf is deferred, and the reason is storage, not length.** Its three
   helpers are trivial — set a word, copy bytes and bump a word, drain into a
