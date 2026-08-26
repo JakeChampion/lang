@@ -588,25 +588,55 @@ smaller than the shape suggested.
 **That correction matters more than the win.** This section previously called
 phi resolution "the whole remaining gap", generalising from the pattern in a
 ten-line loop without measuring how much of the total it was. It is about 3% of
-the stack traffic. Two further guesses died the same way when checked: the
-excess is not data access (**93% of load/store is sp-relative**) and it is not
-the caller-save area (198,627 ops, **16%** of the stack traffic, over 175,765
-calls).
+the stack traffic.
 
-What is left — **~1.03M ops, 83% of the stack traffic** — is operands of values
-the allocator homed in slots. That is spilling, and `internal/ssa/regalloc.go`
-already names the reason in its own header: intervals are single and hole-free,
-so a value live across a gap (around a loop, say) is treated as live throughout
-and takes a register it does not need, "at the cost of occasionally spilling
-where a hole-aware allocator would not".
+### The stack traffic is the caller-save area
 
-**Ordering implication.** The emit layer is not where the remaining size is.
-Interval refinement — hole-aware live ranges, so a value dead across a region
-stops holding a register there — is next, and it is an `internal/ssa` change
-rather than a per-backend one. The stack-arg ABI and imm19 veneers remain what
-the self-host needs to link, independent of size.
+Measured directly, and this replaces an attribution this section got wrong
+twice. **93% of load/store is sp-relative**, so it is stack traffic rather than
+data access. Of that stack traffic, counting the stores and loads in the window
+around each call:
 
-### How much of the spilling the approximation causes
+| | ops | share |
+|---|---|---|
+| caller-save around calls | 1,127,496 | **92%** |
+| everything else (spill slots, phi temps, prologue) | 104,409 | 8% |
+
+6.4 stores and loads per call, over 175,765 calls. Spilling is **not** the
+story: across the same 1065 functions the allocator homes 394,251 values and
+spills only a few thousand of them, which cannot account for a million memory
+ops.
+
+An earlier revision of this section said the opposite — that 83% of stack
+traffic was spilled operands and the caller-save area only 16%. That came from
+a text heuristic that only counted a `str` IMMEDIATELY before a `bl`; the
+argument moves sit in between, so it caught roughly one save per call instead
+of eight, and the remainder was assigned to spilling without being checked.
+Attributing by exclusion is how both wrong answers happened. Count the thing
+you are naming.
+
+**Why this reframes the ordering.** The lever is what crosses calls, not what
+spills. Two consequences, both measured:
+
+- It is why the callee-saved partition (#7550) was the largest single win in
+  the epic: it moves call-crossing values into registers the callee restores,
+  removing their per-call save entirely. There are only 10 such registers, so
+  everything beyond that pays at every call it spans.
+- It is why hole-aware live ranges made compiler-shaped input **worse**, not
+  better (#7577): keeping more values in registers puts more caller-saved
+  registers live across each call, so the save set grows — 6.41 ops per call on
+  main against 8.06 with the refinement, +289,166 ops, which is 79% of that
+  change's +366,057 instruction regression. Reducing spills and reducing
+  caller-save traffic pull against each other in call-dense code.
+
+So the next thing worth measuring is the allocation of the callee-saved
+registers themselves. `crosses` in `ssa.LinearScan` is a boolean — a value
+either crosses some call or does not — and the ten callee-saved registers go to
+whoever asks first. Ranking candidates by how many calls each one actually
+spans, and giving the scarce registers to the values that span the most, is a
+small change to an existing preference rather than a new allocator.
+
+### The interval approximation, and what sizing it missed
 
 Sized before building it, by comparing each function's true maximum of
 simultaneously live values against the demand its single hole-free intervals
@@ -620,8 +650,10 @@ allocatable registers:
 | still spilling under exact liveness | 122 | 1837 |
 
 So **39% of the excess register demand is an artifact of the approximation**,
-and 61% is real — those functions have more live values than the machine has
-registers and would spill under any allocator.
+and 61% is real. That number is correct as measured and was still the wrong
+thing to measure: it sizes spilling, and spilling turned out to be 0.7% of
+values and 6% of the stack traffic. #7577 built the change it justified and the
+result was a 16% regression, for the reason above.
 
 Both halves of that are worth knowing. Counting only the functions the change
 would fix outright says 36 of 1065, which reads like a rounding error and is
