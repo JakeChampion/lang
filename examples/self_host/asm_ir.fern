@@ -2769,10 +2769,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    decq %rcx\n");
         s = s.write("    jne .Lsbtake_loop\n");
         s = s.write(".Lsbtake_box:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r13, (%rax)\n");                // box.data
-        s = s.write("    movq %r12, 8(%rax)\n");               // box.len
+        // The result box comes from __fern_str_box, not a bare __fern_alloc(16):
+        // the drained string is an ordinary owned string (irlower's str-tracking
+        // treats `strbuf_take()` as fresh), so a dropped one reaches
+        // __fn___fern_str_free, which reads the refcount at box-8. A headerless
+        // box makes that read the last word of the PRECEDING allocation — here
+        // the tail of the text just copied. Native has built this one with an
+        // rc-headered allocation since docs/RC-STRINGS-PLAN.md; the self-host was
+        // the last producer left unconverted. data@box+0 / len@box+8 are where
+        // they always were, so no consumer moves.
+        s = s.write("    movq %r13, %rdi\n");                  // data
+        s = s.write("    movq %r12, %rsi\n");                  // len
+        s = s.write("    call __fern_str_box\n");
         s = s.write("    movq $0, __fern_strbuf_len(%rip)\n"); // reset
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
