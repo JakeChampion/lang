@@ -20,6 +20,7 @@
 // exact stdout and an exit code of 0 (zero round-trip failures), pinning the
 // contract end-to-end through the self-host -> native pipeline.
 
+import "./ast";
 import "./parser";
 import "./util";
 
@@ -49,7 +50,7 @@ function main(): i32 {
         "(i32, string)", "(string, (i32, bool))", "Option[(string, string)]",
         "(i32, string)[]", "dyn Shape", "dyn Shape[]",
         "() => P", "(i32) => i32", "(T, T) => i32", "(T) => U[]",
-        "(parser.Expr, T) => T", "(() => T) => U", "(i32) => (string, i32)",
+        "(ast.Expr, T) => T", "(() => T) => U", "(i32) => (string, i32)",
         "Vec[(T) => boolean]"
     ];
     var out: string = "";

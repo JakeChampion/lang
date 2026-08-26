@@ -160,8 +160,8 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // .ascii …`. The three drop/reclaim helpers are multi-line function BODIES, so
 // they collided anyway: that is one of the two things behind the per-module
 // rescue's `nfuncs < 1500` cap below — a program whose modules share struct
-// types (three `parser__` types across the stage-2 compiler's units) hit
-// `symbol __fn___struct_drop_parser__ParamDecl is already defined`, which reads
+// types (three `ast__` types across the stage-2 compiler's units) hit
+// `symbol __fn___struct_drop_ast__ParamDecl is already defined`, which reads
 // like a memory wall and is not one. (The cap's OTHER reason IS memory, but for
 // a different program: see the bound's own comment.)
 //

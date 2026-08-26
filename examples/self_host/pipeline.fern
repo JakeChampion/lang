@@ -31,6 +31,7 @@
 //       return fact(c);            // → 120
 //   }
 
+import "./ast";
 import "./lexer";
 import "./parser";
 import "./constfold";
@@ -78,9 +79,9 @@ function main(): i32 {
     // whose init should be a single ExprNumber after folding.
     if (folded2.funcs.len() != 2) { return 20; }
     match (folded2.funcs[1].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprNumber(n) => { if (n.text != "5") { return 21; } },
+                ast.ExprNumber(n) => { if (n.text != "5") { return 21; } },
                 _ => { return 22; }
             }
         },

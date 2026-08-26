@@ -1,0 +1,438 @@
+// ast — the syntax tree the whole compiler shares.
+//
+// These types used to live in parser.fern. They are here so that a pass
+// can name them WITHOUT importing the parser: astwalk needs the tree and
+// parser needs astwalk, and one module cannot be both. That cycle is why
+// parser.fern still hand-rolls the traversals every other module folds
+// onto the shared spine (#6993).
+//
+// The set is exactly the transitive closure of what a traversal reaches:
+// Expr / Stmt / Pattern and their cases, the arm and desugar records they
+// carry, and ParamDecl for a lambda's signature. Nothing here may name a
+// type that stayed in parser.fern, or the cycle comes straight back.
+
+
+// Expression nodes. Recursive via the union — `ExprBinary` holds
+// two Expr children, `ExprCall` holds a list of args, etc. The Go
+// parser produces a denser typed AST (NumberLit / FloatLit /
+// Ident / Binary / Call); this port collapses similar shapes into
+// fewer variants to keep the union member count tractable.
+
+// `raw` is the source spelling of a quoted literal — `'x'` (a `char`,
+// suffix "char") or `b'x'` (a `u8`, suffix "u8"). The lexer decodes the
+// scalar into `text` as a decimal numeral, so every consumer of a
+// suffixed integer literal reads them unchanged and only the printer
+// needs the spelling back. Empty for an ordinary number.
+pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
+
+// `ty` is the typed-IR carrier (#5986, the ExprIdent sibling of ExprCall.ty
+// from #5531): the checker's inferred type for the value this name reads,
+// spelled in irlower's canonical tag vocabulary and stamped by
+// checker.annotate_module. It is what lets lowering type a name whose type no
+// local SLOT carries — a module `const`, whose read is really a call to its
+// zero-argument accessor. Empty when unannotated (the asm_ir_run harness and
+// the native compiler never run annotate) or when the checker could not name
+// the type, in which case irlower's slot walk answers unchanged.
+pub struct ExprIdent { name: string, line: i32, col: i32, ty: string }
+
+pub struct ExprString { value: string, line: i32, col: i32 }
+
+pub struct ExprBool { value: boolean }
+
+// `ty` is the typed-IR carrier (#5986, the ExprBinary sibling of ExprCall.ty
+// from #5531). Ordinary arithmetic needs no carrier — irlower's predicates
+// compose a binary's type from its OPERANDS — but a composite operator
+// overload does: `a * b` on a struct evaluates to `a.mul(b)`'s declared
+// return, which no walk over the operands can reach. Stamped by
+// checker.annotate_module; "" when unannotated (the asm_ir_run harness and
+// the native compiler never run annotate), in which case irlower's operand
+// walk answers unchanged.
+pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string }
+
+// `ty` is the typed-IR carrier (#5986), the unary sibling of ExprBinary.ty
+// and for the same reason: `-a` on a struct is `a.neg()`, whose declared
+// return no walk over the operand can reach. "" when unannotated.
+pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string }
+
+// type_argc is the number of explicit call-site type arguments (`f[i32](x)`
+// has 1). The arguments themselves are erased — only the count is kept, so the
+// checker can flag a generic-call type-argument arity mismatch (E040). 0 means
+// no `[...]` was written.
+// `ty` is the resolved result-type tag (typed-IR migration, #5531): the annotate
+// pass (annotate.fern) stamps it post-constfold with the checker's inferred type
+// in irlower's tag vocabulary ("f64" for a float value, etc.), and lowering READS
+// it instead of re-deriving the call's type structurally. "" = unannotated (the
+// asm_ir_run harness and native cmd/fern don't run annotate), in which case
+// lowering falls back to its structural walk — so the field is byte-identity-safe.
+pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc: i32, ty: string }
+
+// Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
+// the checker rejects an empty literal in inference contexts
+// because it can't infer the element type.
+//
+// elem_ty is the ELEMENT type of the destination this literal was settled
+// against ("i64", "f64", "Foo[]", …), stamped by settle_to_type; "" when no
+// destination reached the literal. It is what decides the element slot width at
+// lowering — the first element's expression shape is only the fallback for an
+// unstamped literal. Native carries the same fact as ast.ArrayLit.ElemType and
+// sizes elements from it via ast.ElemSizeBytesFor.
+pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
+
+// ExprLambda is a function-valued expression: `function (a: T,
+// b: T): U { body }` — same shape as FuncDecl minus the name.
+// Capture semantics happen at the runtime layer; the parser
+// just builds the AST node.
+// origin records the source form a lambda the PARSER synthesised stands in for.
+// "" means the programmer wrote the lambda; the ORIGIN_* value-block constants
+// name which desugar produced it. Two readers: `-fmt` reprints ORIGIN_BLOCK as
+// `{ … }` rather than as a lambda, and is_value_block asks whether this lambda
+// is a desugar at all — a hand-written IIFE parses to the identical shape, and
+// only the marker separates them (#7192).
+// line / col locate a lambda the SOURCE wrote, for a diagnostic against one of
+// its annotations. Zero on a lambda the parser synthesised — the value-block
+// and match-/if-expression IIFEs — which is what keeps a reporter off their
+// guessed `ret_type`: those carry no annotation the programmer wrote.
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32 }
+
+// ExprTuple holds a parenthesised comma-separated list:
+// `(a, b, c)`. Distinct from arrays because tuple shape is
+// fixed-arity / heterogeneous; arrays are homogeneous and
+// dynamic. Field access in Fern uses `.0`, `.1`, etc. but
+// that's a later milestone — this slice only adds parsing.
+pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
+
+// Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
+// an array; `i` must type-check to i32. Out-of-range access at
+// runtime surfaces as VErr from the interp.
+// `unchecked` is #4380 lever 3: set by elide_len_bounded_body on a READ
+// `arr[i]` proven in-bounds by an enclosing `while (i < arr.len())` guard,
+// so irlower emits op_arr_get_nc (no per-iteration bounds check + len
+// reload). Defaults false; index WRITES are __set_index calls, never
+// ExprIndex, so only reads are ever marked.
+// `ty` is the typed-IR carrier (#5531's third): the checker's inferred type
+// for the ELEMENT this read yields, stamped by checker.annotate_module and
+// spelled in irlower's canonical tag vocabulary. Empty when unannotated (the
+// asm_ir_run harness and the native compiler never run annotate) or when the
+// checker could not resolve it, in which case irlower's structural walk
+// answers unchanged.
+pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string }
+
+// Postfix slicing `a[start:end]`. Returns a subview of the same
+// kind as `a` (subarray for TypeArray, substring for
+// TypeString). `start` is inclusive, `end` is exclusive — same
+// shape as Python / Go / Rust slicing.
+// `ty` is the typed-IR carrier naming the SOURCE array's type — "f64[]" /
+// "i64[]" / … — because the fact irlower's arr_slice needs is the source
+// element width, which is what its structural walk (expr_is_f64arr /
+// expr_is_i64arr on slc.array) also asks. Stamped by checker.annotate_module
+// via type_to_arrtag. Empty when unannotated (the
+// asm_ir_run harness and the native compiler never run annotate) or when the
+// checker could not name the element type, in which case irlower's structural
+// walk answers unchanged. NOTE it carries through the monomorphisation
+// rebuilds: dropping it there miscompiles clones (#6181).
+// `open_end` marks `a[lo:]` / `a[:]`, where no upper bound was written.
+// `end` then holds a placeholder that consumers MUST NOT evaluate: the
+// bound is the receiver's length, which every lowering already has to
+// hand. Encoding it this way rather than desugaring to `base.len()`
+// keeps the base expression in the tree exactly once — the desugar put
+// two independent copies there, so a side-effecting base ran twice.
+pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end: boolean }
+
+// Struct literal `Name { field: value, field: value }`. The
+// type_name is the struct's declared name; field_names and
+// field_values parallel-array the initializers in source
+// order. Empty struct lit `Name { }` is allowed (zero fields).
+//
+// Struct-update `Name { ...base, field: value }`: a leading
+// `...base` spread copies the un-overridden fields from `base`,
+// the listed fields override. `has_base` flags the presence of a
+// base; when false, `base` holds a placeholder ExprUnknown
+// sentinel (Expr is a no-null union, so we carry the flag rather
+// than sniff the sentinel). With a base, a subset of fields is
+// legal — the checker relaxes completeness. See
+// docs/IMMUTABILITY-MIGRATION-PLAN.md.
+pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32 }
+
+// Postfix field access `obj.field`. obj can be any Expr that
+// evaluates to a struct value. `ty` is the typed-IR carrier
+// (#5986, the ExprCall.ty sibling from #5531): checker's
+// annotate_module stamps the field read's inferred type tag so
+// irlower reads it instead of re-deriving the receiver's struct
+// type structurally. "" when unannotated.
+pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string }
+
+// ExprUnknown is the parser's rejection channel: there is no error list, so a
+// construct the parser refuses becomes this node, which every consumer reports
+// (interp: a VErr; asmcore: P001/P002; checker: an unknown type). `kind` names
+// the reason and `line`/`col` locate it (0 when the producer has no position).
+pub struct ExprUnknown { kind: string, line: i32, col: i32 }
+
+// ExprMapLit is a `Map { k0: v0, … }` literal as WRITTEN, and reaches only the
+// printer: parse_map_lit desugars every other parse to the
+// `map_new[_i32](8).insert(k0, v0)…` chain the compile path is written against,
+// and `-fmt` (Par.verbatim) takes this instead. Printing the chain back is not a
+// style choice — the chain states no K/V, so a `var m: Map[string, i32] = Map {}`
+// came back as `map_new(8)` and stopped compiling (E043).
+pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
+
+// ExprFString is an f-string `f"a {x} b"` as WRITTEN, and like ExprMapLit reaches
+// only the printer: every other parse desugars it into the `+`-chain of
+// `.to_string()` calls the compile path is written against, and printing that
+// chain back replaces the author's interpolation with its expansion. The three
+// arrays are parallel, one entry per part: `is_expr[i]` says whether the part is
+// an interpolant in `exprs[i]` or literal text in `lits[i]`. An interpolant is
+// held PARSED, not as source text, because the printer re-emits it through
+// print_expr — which is what native does, so the two agree on its spelling.
+pub struct ExprFString { lits: string[], exprs: Expr[], is_expr: boolean[], line: i32, col: i32 }
+
+pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
+              | ExprBinary | ExprUnary | ExprCall
+              | ExprArray | ExprTuple | ExprIndex | ExprSlice
+              | ExprStructLit | ExprFieldAccess | ExprLambda
+              | ExprMapLit | ExprFString | ExprUnknown;
+
+// Statement nodes.
+
+// StmtVar binds a name to an init value. `type_name` is the
+// optional `: Type` annotation (bare type name; empty string
+// means no annotation). The checker uses it to override the
+// inferred init type — so a `var sh: Shape = Circle { … }`
+// binds `sh` as TypeUnion("Shape") rather than the inferred
+// TypeStruct("Circle"). Interp / VM ignore it (annotations
+// are checker-only metadata).
+// fn_ret is the RETURN spelling of a fn-typed annotation (`var f: (i32) => i32`
+// -> "i32"). parse_type_name coarsens the annotation itself to the flat "fn"
+// tag, and StmtVar carries no signature sidecars, so without this the declared
+// return is simply lost — which is what leaves cap_param_for with nothing exact
+// to rebuild a fn-typed capture's signature from (#6256). "" on every other
+// binding.
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string }
+
+pub struct StmtReturn { value: Expr, line: i32, col: i32 }
+
+pub struct StmtExpr { value: Expr, line: i32 }
+
+// StmtIf models `if (cond) { then... } else { else... }`. else_body
+// is empty (`[]`) when the source omits the `else` branch; the
+// checker / interp branch on `len(else_body) == 0` rather than a
+// separate `has_else` flag.
+// `else_chained` records that the source wrote `else if`, not `else { if … }`.
+// Both parse to a one-element else_body holding a StmtIf, so only this bit
+// distinguishes them, and only the PRINTER reads it: reprinting one as the
+// other rewrites the user's source, and the block form additionally scopes
+// anything declared before the inner `if` (#6779).
+// MatchSugar is the written form of a match whose scrutinee is a TUPLE, a
+// STRUCT, or a non-enum value, carried on the `if` that build_tuple_match /
+// build_struct_match / build_literal_match desugar it to. All three replace
+// the match outright — the first two with a done-flag chain, the third with an
+// if/else-if chain — and leave no StmtMatch behind, so without this the printer
+// had only the chain to render: `-fmt -w` wrote `var __sm4_5_d = false; …`
+// (#7065) or the bare `if (n == 0) … else …` (#7072) over the user's match.
+// Read by the printer only; the walk and every lowering pass ignore it. Empty
+// (all three arm lists empty) on every other StmtIf, which is all of them.
+// Its `origin` names the source form the chain stands in for when that form is
+// not a `match` at all: "if_let" / "let_else" for an `if let` / `let … else`
+// whose head is a tuple, struct, literal or range pattern, which lower through
+// these same builders. "" is a `match`, which is every other carrier.
+// `arms` is the VARIANT-arm list, for the chain build_nested_arm_match emits:
+// its arms are ordinary MatchArms, not the tup/strct/lit records the other
+// three builders consume, and without it `-fmt` would print the chain rather
+// than the match that was written.
+pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: LitArm[], arms: MatchArm[], line: i32, col: i32, origin: string }
+
+// origin records the source form a synthesised `if (true) { … }` stands in for,
+// so `-fmt` reprints what was written rather than the lowering: "block" for a
+// bare `{ … }` statement (the Stmt union has no block node), "chain_assign" for
+// `a = b = c` (one assignment per target), "" for every `if` the programmer
+// actually spelled. Read by the printer only.
+pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean, sugar: MatchSugar, origin: string }
+
+// StmtWhile models `while (cond) { body... }`. The body executes
+// repeatedly as long as cond evaluates to a true VBool; an
+// in-body `return` short-circuits the loop the same way it
+// short-circuits an if-branch.
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32, is_loop: boolean }
+
+// StmtAssign models a re-assignment to an existing var: `x = expr;`.
+// The target is an ident name — full lvalue syntax (field /
+// index / tuple) is a later port milestone. The checker verifies
+// the target is already bound and that types match; the interp
+// updates the env's slot in place.
+pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target_line: i32, target_col: i32 }
+
+// StmtMatch models `match (scrutinee) { Pat => { ... }, ... }`.
+// Arms are walked top-to-bottom; the first pattern that matches
+// runs its body. The checker enforces that the pattern variant
+// (e.g. `Circle(c)`) refers to a known struct that's a variant
+// of the scrutinee's union type. Wildcards (`_`) act as the
+// default catch-all. The body is a stmt list, mirroring
+// StmtIf / StmtWhile; expression-position match lives in a
+// later slice (ExprMatch).
+// binding is the first payload binding (or "" / "_"); extra_bindings holds any
+// further bindings written in `Variant(a, b, …)`. The self-host's variants are
+// single-payload, so a multi-binding pattern is a payload-arity error (E015) —
+// extra_bindings lets the checker count them; codegen still uses `binding`.
+// `nested`, when non-empty (a single element), holds a sub-pattern for the
+// payload position — `Some(Ok(n))` parses `Some` with nested = [Ok(n)]. The
+// parser desugars a nested arm into a flat outer arm whose body re-matches the
+// payload on an inner `match` (desugar_nested_arms), so the checker / codegen
+// only ever see flat arms; empty (the common case) means a plain binder.
+// `field_names`, when non-empty, marks a RECORD-form pattern — `Rect { h, w }`
+// binds by field name in any order — and holds the FIELDS as written, with the
+// bindings holding the locals each was bound to (they differ only under the
+// `f: local` renaming form). It is a transient parse artefact:
+// resolve_variant_fields_module rewrites a settled pattern into the equivalent
+// positional one (bindings in declaration order) and clears it, so the checker
+// and codegen only ever see positional patterns. A pattern that still carries
+// names after that pass named a field the variant does not have, named one
+// twice, missed one, or renamed one — all E015 at the checker.
+// lit_cond is the condition a literal payload slot implies: `Sm(0)` binds the
+// slot to a synthetic name and tests it, so the pattern carries
+// `__pl<line>_<col> == 0` and has_lit_cond is set. The PARSER folds it into
+// the guard of whichever arm the pattern becomes — the outer arm for a direct
+// slot, the inner match's arm for a nested one — and clears it. Nothing
+// downstream should ever see it set; the checker refuses one that survives,
+// so a fold site nobody added cannot quietly go back to matching every value.
+// tup_kinds / tup_binds / tup_lits / tup_pats carry a TUPLE sub-pattern sitting
+// in payload slot 0 (`Pr((a, b))`), in parse_tuple_arm_pattern's encoding.
+// Pattern cannot express a tuple, so the data rides here and build_merged_arm
+// turns it into a build_tuple_match inner match rather than the variant one.
+// Empty tup_kinds means no tuple sub-pattern.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean, tup_kinds: i32[], tup_binds: string[], tup_lits: Expr[], tup_pats: Pattern[] }
+
+pub struct PatWildcard { tag: i32 }
+
+pub type Pattern = PatVariant | PatWildcard;
+
+// guard is an optional `if <expr>` between the pattern and `=>`; has_guard
+// distinguishes a real guard from the placeholder. When present the arm matches
+// only if the guard evaluates true (E027 checks it is boolean).
+// alt_cont marks an arm that continues the previous one's `|` alternative
+// list: `A | B => …` parses to one arm per alternative with the guard and body
+// shared, and only the reprint needs to know they were written as one arm. Set
+// on the WRITTEN arms (StmtMatch.sugar) only; the lowered arms are independent
+// by construction. Read by the printer.
+pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard: Expr, has_guard: boolean, alt_cont: boolean }
+
+// `origin` records whether this match was written directly (""), or
+// synthesised by the parser from an `if let` (`"if_let"`) / `let … else`
+// (`"let_else"`) desugar. Codegen ignores it (a desugared match compiles
+// exactly like a hand-written one — keeping the fixpoint byte-identical),
+// but the checker reads it to apply the dedicated `if-let`/`let-else`
+// diagnostics (E022/E023) the Go checker emits, instead of the generic
+// match-arm diagnostics (E035) the desugared shape would otherwise draw.
+// sugar is the arms as the PROGRAMMER wrote them, kept when a pattern carried
+// something the lowering consumes — a nested payload (`Some(Ok(n))`) or a
+// literal payload (`Sm(0)`, folded into the arm's guard). Read by the PRINTER
+// only, so `-fmt` reprints the pattern the source spelled instead of the merged
+// arm and its `__nest` temp, or the `V(__pl…) when __pl… == 0` the fold leaves.
+// Empty on every ordinary match, where the lowered arms ARE the written ones.
+pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[] }
+
+// StmtFor models `for VAR in EXPR { body }`. The iter expr
+// evaluates to an array (interp) / TypeArray (checker); the
+// loop binds `var_name` to each element in turn. break /
+// continue inside the body aren't modeled yet — a future
+// slice can add them as StmtBreak / StmtContinue.
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32 }
+
+// StmtBreak / StmtContinue model `break;` and `continue;`. The
+// tag fields are placeholder payload — variants need a shape
+// in the union and these stmts have no other state. The
+// surrounding while / for body handles the actual control
+// transfer.
+pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
+
+pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
+
+pub struct StmtUnknown { kind: string }
+
+// StmtDefer holds an action statement to run when the scope that executed it
+// finishes: the enclosing loop iteration for a defer in a loop body, else the
+// enclosing function (LIFO, every return path + falloff). It exists only
+// between the parser and the lower_defers pass (module_with_builtins) — that pass
+// eliminates every StmtDefer before any backend emits, so the emitters
+// never lower one at runtime (their arms are there for exhaustiveness).
+//
+// `on_error` is 1 for an `errdefer` — cleanup that runs only on an error
+// exit (a `return` of a None/Err value), not on success or falloff. 0 for
+// a plain `defer`. lower_defers schedules the two kinds at the right exits.
+pub struct StmtDefer { action: Stmt, on_error: i32, line: i32 }
+
+pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
+              | StmtAssign | StmtMatch | StmtFor
+              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer;
+
+// Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
+// type names are captured as bare strings — full type-syntax
+// parsing (arrays / generics / unions) is a later milestone.
+// fn_param_dyn: for a `fn`-typed param whose OWN parameter list contains
+// `dyn Trait` positions (`f: (dyn Speak) => i32`), a comma-separated list of the
+// dyn parameter indices ("0", "0,2"), else "". The flat "fn" type tag discards
+// the fn's per-parameter types, so this sidecar preserves which of a fn-value's
+// arguments must be dyn-boxed at an indirect call `f(7)` — without it a primitive
+// literal there is passed unboxed and op_dyn_dispatch reads it as a shape pointer
+// (SIGSEGV, #5276). Populated by peek_fn_param_dyn in parse_param.
+// fn_param_types: the same sidecar one level up — for a `fn`-typed param, the
+// comma-separated SPELLINGS of the fn's own parameter types ("i64", "i32,string").
+// `fn_ret` already preserves the return type for the same reason; together they
+// reconstruct the declared signature the flat "fn" tag threw away. wasm needs it
+// because a funcref type is structural: a `(i64) => boolean` value dispatched
+// through an all-i32 `(type $fn2)` is a module that will not load, and an
+// `(i32) => i64` one is a runtime `indirect call type mismatch` (#6282). The
+// spellings are kept RAW rather than mapped to widths here, because deciding
+// whether `T` is a type variable or a struct named T needs the enclosing
+// function's type_params, which parse_param does not have.
+pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+
+// LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
+// a literal to compare against (`lit`, dispatched via `==`) or the `_`
+// catch-all (`is_wild`), plus an optional guard and the arm body. The
+// match-arm parsers (parse_match_stmt / parse_match_expr) collect these
+// only when the first arm is a literal, then hand them to
+// build_literal_match instead of emitting a StmtMatch.
+// `has_range` marks a range pattern `lo..hi` / `lo..=hi`: `lit` is the low
+// bound, `range_hi` the high, and `range_inclusive` picks `..=` (inclusive)
+// over `..` (exclusive). build_literal_match lowers it to a bound test
+// `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
+// alt_cont — see MatchArm.alt_cont. `0 | 1 => …` parses to one LitArm per
+// alternative sharing a guard and body.
+pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean, alt_cont: boolean }
+
+// ---- Tuple-pattern match (`match (pair) { (0, y) => …, (x, y) => … }`) ----
+//
+// A `(` at the FIRST arm's pattern position marks a match on a
+// tuple-typed scrutinee. Arms are parsed into TupArm records and the
+// whole match desugars at parse time (build_tuple_match) into
+// constructs the rest of the pipeline already handles:
+//
+//   if (true) {                                  // scopes the temps
+//     var (__tmL_C_e0, __tmL_C_e1) = <scrutinee>; // the destructure StmtVar
+//     var __tmL_C_d = false;                      // "an arm ran" flag
+//     if (!__tmL_C_d && __tmL_C_e0 == LIT && …) { // literal elements
+//       var x = __tmL_C_e1;                       // binder elements
+//       if (<guard>) { __tmL_C_d = true; <body> } // guard sees the binds
+//     }
+//     …one if per arm; `_` and all-binder arms have no eq conditions…
+//   }
+//
+// The flag chain (instead of build_literal_match's backwards if/else
+// nesting) is what lets a guard run AFTER the arm's binders are
+// declared while a guard-false still falls through to the next arm.
+// The native checker validated arity / exhaustiveness / types before
+// any of this runs on the self-host path, so no diagnostics are
+// re-implemented here. Element kinds: 0 = binder, 1 = `_`, 2 = literal,
+// 3 = variant sub-pattern (`(A(x), y)`) — elem_pats[k] then holds the
+// PatVariant, and build_tuple_match nests the arm inside a match on the
+// element temp rather than adding a condition — 4 = nested tuple
+// (`(a, (b, c))`), where elem_pats[k] carries the nested element encoding in
+// its own tup_* fields and build_tuple_match destructures the element temp a
+// level deeper. elem_pats runs parallel to elem_kinds with a wildcard filler
+// at every other kind.
+// alt_cont — see MatchArm.alt_cont. `(1, 2) | (3, 4) => …` parses to one
+// TupArm per alternative sharing the guard and body.
+pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, alt_cont: boolean }
+
+// rest_written records the arm pattern's trailing `..` — see
+// PatVariant.rest_written; it binds nothing at either site.
+pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, rest_written: boolean, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }

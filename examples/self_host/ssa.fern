@@ -24,6 +24,7 @@
 // pipeline is optimise (copy-prop, const-fold, CSE, DCE, branch-simplify,
 // block-merge) → regalloc (linear scan) → emit (ssa_x86 / ssa_arm64).
 
+import "./ast";
 import "./parser";
 import "./astwalk";
 import "./util";
@@ -351,13 +352,13 @@ function (s: BState) kconst(v: i32): BState {
 // recorded type, a struct literal's own type, or the declared type of a
 // field reached through nested access. Anything else (calls, arrays, …) is
 // "" — field access on it bails.
-function type_of_expr(e: parser.Expr, s: BState): string {
+function type_of_expr(e: ast.Expr, s: BState): string {
     match (e) {
-        parser.ExprIdent(id) => { return s.get_var_type(id.name); },
-        parser.ExprStructLit(sl) => { return sl.type_name; },
-        parser.ExprString(_) => { return "string"; },
-        parser.ExprNumber(n) => { if (n.is_float) { return "f64"; } return ""; },
-        parser.ExprBinary(b) => {
+        ast.ExprIdent(id) => { return s.get_var_type(id.name); },
+        ast.ExprStructLit(sl) => { return sl.type_name; },
+        ast.ExprString(_) => { return "string"; },
+        ast.ExprNumber(n) => { if (n.is_float) { return "f64"; } return ""; },
+        ast.ExprBinary(b) => {
             // `string + string` (concatenation) yields a string.
             if (b.op == "+") {
                 if (type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string") { return "string"; }
@@ -369,7 +370,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             }
             return "";
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             // `as f64` casts (parser desugars to a unary "as_f64") yield f64;
             // `as i32` / `as i64` yield the target int; negation keeps its
             // operand's type (so `-1.5` is f64).
@@ -378,7 +379,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             if (u.op == "-") { return type_of_expr(u.operand, s); }
             return "";
         },
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             var st: string = type_of_expr(fa.obj, s);
             if (st.len() == 0) { return ""; }
             var si: i32 = find_struct_index(s.structs, st);
@@ -403,7 +404,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             }
             return "";
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             // A map-producing expression is typed "Map" (i32 keys) or "SMap"
             // (string keys) so `.len()` etc. dispatch to the map helpers and
             // method-key compares pick the right one: the constructors
@@ -411,7 +412,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             // map, threading the construction chain — so it inherits the
             // receiver's map type).
             match (c.callee) {
-                parser.ExprIdent(cid) => {
+                ast.ExprIdent(cid) => {
                     if (cid.name == "map_new_i32") { return "Map"; }
                     if (cid.name == "map_new") { return "SMap"; }
                     if (cid.name == "cell_new") { return "cell"; }
@@ -423,7 +424,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     var cgt: string = s.get_var_type(cid.name);
                     if (cgt.len() >= 4 && slice_unchecked(cgt, 0, 4) == "gfn:") { return slice_unchecked(cgt, 4, cgt.len()) + ""; }
                 },
-                parser.ExprFieldAccess(fa2) => {
+                ast.ExprFieldAccess(fa2) => {
                     if (fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
                     // A user method call → its declared return type (so a
                     // chained `a.m().n()` resolves n's receiver), read from the
@@ -442,7 +443,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             }
             return "";
         },
-        parser.ExprArray(arr) => {
+        ast.ExprArray(arr) => {
             // An array literal's type is "<elem>[]" when its elements carry a
             // known type (struct / string / nested array) — so indexing it
             // (below) recovers the element type for field-access / concat.
@@ -451,7 +452,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             if (et.len() == 0) { return ""; }
             return et + "[]";
         },
-        parser.ExprIndex(ix) => {
+        ast.ExprIndex(ix) => {
             // a[i] has the array's element type: strip one trailing "[]".
             var at: string = type_of_expr(ix.array, s);
             var n: i32 = at.len();
@@ -521,9 +522,9 @@ function count_fn_markers(types: string[]): i32 {
     return c;
 }
 
-function build_expr(e: parser.Expr, s: BState): BState {
+function build_expr(e: ast.Expr, s: BState): BState {
     match (e) {
-        parser.ExprNumber(n) => {
+        ast.ExprNumber(n) => {
             s = s.fresh();
             var args0: i32[] = [];
             if (n.is_float) {
@@ -536,14 +537,14 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // letter and zeroed them (#4341). Decimal is unchanged.
             return s.emit(SInst { kind_tag: 1, result: s.cur_id(), args: args0, imm: util.lit_to_i32(n.text), str: "" });
         },
-        parser.ExprBool(b) => {
+        ast.ExprBool(b) => {
             s = s.fresh();
             var iv: i32 = 0;
             if (b.value) { iv = 1; }
             var args0: i32[] = [];
             return s.emit(SInst { kind_tag: 2, result: s.cur_id(), args: args0, imm: iv, str: "" });
         },
-        parser.ExprIdent(id) => {
+        ast.ExprIdent(id) => {
             // A bound local / param (including a capturing-lambda box, which
             // is stored as the var's value) SHADOWS any same-named function:
             // read its value rather than taking a function address. Without
@@ -587,7 +588,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             }
             return s.fail();
         },
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             // String operands change `+` (concat) and `==`/`!=` (content
             // comparison, not pointer comparison).
             var str_operand: boolean = type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string";
@@ -616,7 +617,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             }
             return s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: a2, imm: 0, str: b.op });
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             s = build_expr(u.operand, s);
             if (!s.ok) { return s; }
             var xv: i32 = s.cur_id();
@@ -624,9 +625,9 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var a1: i32[] = [xv];
             return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: a1, imm: 0, str: u.op });
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(cid) => {
+                ast.ExprIdent(cid) => {
                     // slice_unchecked(s, a, b) is the byte slice `s[a:b]` used
                     // to be (#5634). The subset is untyped and a string is a
                     // byte array here, so it lowers to the same
@@ -993,7 +994,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     s = s.fresh();
                     return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     // User-defined receiver method `recv.m(args)` → a direct
                     // call to the method's symbol (seeded "<recv-type>#<m>" →
                     // "m:<sym>"), passing the receiver as the first argument.
@@ -1131,7 +1132,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 _ => { return s.fail(); }
             }
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             // Heap-allocate a tag word + one word per field: element 0 holds
             // the variant tag (the struct's type id, for `match`), fields
             // follow at offset f+1, each at its width. A `...base` spread
@@ -1191,7 +1192,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var sha: i32[] = [shandle];
             return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: sha, imm: 0, str: "" });
         },
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             // Tuple element access `t.0` / `t.1` / … — a numeric field name is
             // a positional index (struct fields are never all-digits). Tuple
             // elements live at offsets 0..n-1 (no tag / length prefix), so the
@@ -1221,7 +1222,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var ola: i32[] = [optr, oidx];
             return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: ola, imm: fw2, str: "" });
         },
-        parser.ExprString(strlit) => {
+        ast.ExprString(strlit) => {
             // A string literal is a static [len, b0, b1, …] constant: emit a
             // single const_str (the backend materialises it in a data section)
             // rather than alloc + a store_elem per byte, which exploded the IR
@@ -1233,7 +1234,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var sca: i32[] = [];
             return s.emit(SInst { kind_tag: 5, result: s.cur_id(), args: sca, imm: 0, str: strlit.value });
         },
-        parser.ExprArray(arr) => {
+        ast.ExprArray(arr) => {
             // Heap-allocate a length-prefixed i32 array: element 0 holds the
             // length, the n elements follow at 1..n. The expression's value
             // is the alloc handle (a pointer).
@@ -1266,7 +1267,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var ha: i32[] = [handle];
             return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ha, imm: 0, str: "" });
         },
-        parser.ExprTuple(tup) => {
+        ast.ExprTuple(tup) => {
             // A tuple `(a, b, c)` is a fixed-arity heap box: element i at
             // offset i (no length prefix — tuples are only ever indexed by the
             // constant `t.i`). The value is the alloc handle.
@@ -1291,7 +1292,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var tha: i32[] = [thandle];
             return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: tha, imm: 0, str: "" });
         },
-        parser.ExprIndex(ix) => {
+        ast.ExprIndex(ix) => {
             s = build_expr(ix.array, s);
             if (!s.ok) { return s; }
             var ptr: i32 = s.cur_id();
@@ -1309,7 +1310,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var la: i32[] = [ptr, idx1];
             return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh array (or
             // substring, since a string is a byte array) holding a[lo..hi-1].
             s = build_expr(sl.array, s);
@@ -1345,12 +1346,12 @@ function build_expr(e: parser.Expr, s: BState): BState {
 
 // ---- statement lowering ------------------------------------------------
 
-function build_stmt(st: parser.Stmt, s: BState): BState {
+function build_stmt(st: ast.Stmt, s: BState): BState {
     // Dead code after a terminator (e.g. statements following a return in
     // the same block) is dropped — the block is already closed.
     if (s.terminated()) { return s; }
     match (st) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             // Tuple destructuring `var (a, b, …) = t` — the parser joins the
             // names as "a,b,…". Build the tuple once, then bind each name to
             // its positional element (element i at offset i, no prefix).
@@ -1393,7 +1394,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // captures are stored by value (the same read-only contract as
             // before); the lifted body reads them back from the box (env).
             match (v.init) {
-                parser.ExprLambda(lam) => {
+                ast.ExprLambda(lam) => {
                     var lidx: i32 = count_fn_markers(s.vt_types);
                     var lname: string = s.name + "$lam$" + util.i32_to_string(lidx);
                     var lcaps: string[] = lambda_free_caps(lam, s.var_names);
@@ -1452,37 +1453,37 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             if (is_struct_type(v.type_name, s.structs) || v.type_name == "string") { return s.set_var_type(v.name, v.type_name); }
             return s;
         },
-        parser.StmtAssign(a) => {
+        ast.StmtAssign(a) => {
             s = build_expr(a.value, s);
             if (!s.ok) { return s; }
             return s.set_var(a.target, s.cur_id());
         },
-        parser.StmtExpr(x) => {
+        ast.StmtExpr(x) => {
             return build_expr(x.value, s);
         },
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             s = build_expr(r.value, s);
             if (!s.ok) { return s; }
             return s.set_term(t_ret(s.cur_id()));
         },
-        parser.StmtIf(f) => {
+        ast.StmtIf(f) => {
             return build_if(f, s);
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             return build_while(w, s);
         },
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             return build_match(m, s);
         },
-        parser.StmtFor(fr) => {
+        ast.StmtFor(fr) => {
             return build_for(fr, s);
         },
-        parser.StmtBreak(b) => {
+        ast.StmtBreak(b) => {
             if (!s.lc.active || b.tag != 0) { return s.fail(); }
             s = s.record_break();
             return s.set_term(t_br(s.lc.exit));
         },
-        parser.StmtContinue(c) => {
+        ast.StmtContinue(c) => {
             if (!s.lc.active || c.tag != 0) { return s.fail(); }
             s = s.record_continue();
             return s.set_term(t_br(s.lc.hdr));
@@ -1491,7 +1492,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
     }
 }
 
-function build_stmts(body: parser.Stmt[], s: BState): BState {
+function build_stmts(body: ast.Stmt[], s: BState): BState {
     var i: i32 = 0;
     while (i < body.len()) {
         s = build_stmt(body[i], s);
@@ -1520,28 +1521,28 @@ function opt_tag(name: string): i32 {
     return 0 - 1;
 }
 
-function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]): parser.Stmt[] {
-    var chain: parser.Stmt[] = [];
+function synth_match_chain(arms: ast.MatchArm[], structs: parser.StructDecl[]): ast.Stmt[] {
+    var chain: ast.Stmt[] = [];
     var i: i32 = arms.len() - 1;
     while (i >= 0) {
-        var arm: parser.MatchArm = arms[i];
+        var arm: ast.MatchArm = arms[i];
         match (arm.pattern) {
-            parser.PatWildcard(_) => { chain = arm.body; },
-            parser.PatVariant(pv) => {
+            ast.PatWildcard(_) => { chain = arm.body; },
+            ast.PatVariant(pv) => {
                 // Option/Result variants carry a fixed tag and bind the
                 // payload (box word 1) rather than the whole box.
                 var ot: i32 = opt_tag(pv.type_name);
                 var tag: i32 = ot;
                 if (ot < 0) { tag = find_struct_index(structs, pv.type_name); }
-                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, ty: "", op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0, ty: "" }, right: parser.ExprNumber { text: util.i32_to_string(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
-                var then_body: parser.Stmt[] = [];
+                var cond: ast.Expr = ast.ExprBinary { line: 0, col: 0, ty: "", op: "==", left: ast.ExprIdent { name: "$tag", line: 0, col: 0, ty: "" }, right: ast.ExprNumber { text: util.i32_to_string(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
+                var then_body: ast.Stmt[] = [];
                 if (pv.binding.len() > 0 && pv.binding != "_") {
-                    var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0, ty: "" };
+                    var binit: ast.Expr = ast.ExprIdent { name: "$scrut", line: 0, col: 0, ty: "" };
                     if (ot >= 0) {
-                        var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0, ty: "" }];
-                        binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0, ty: "" }, args: oargs, line: 0, col: 0, type_argc: 0, ty: "" };
+                        var oargs: ast.Expr[] = [ast.ExprIdent { name: "$scrut", line: 0, col: 0, ty: "" }];
+                        binit = ast.ExprCall { callee: ast.ExprIdent { name: "__opt_payload", line: 0, col: 0, ty: "" }, args: oargs, line: 0, col: 0, type_argc: 0, ty: "" };
                     }
-                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false, fn_ret: "" });
+                    then_body = then_body.append(ast.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false, fn_ret: "" });
                 }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
@@ -1555,7 +1556,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                     // => return …, Err(e) => return … }`) fail build_func.
                     chain = then_body;
                 } else {
-                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" };
+                    var theif: ast.Stmt = ast.StmtIf { cond: cond, then_body: then_body, else_body: chain, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" };
                     chain = [theif];
                 }
             }
@@ -1569,12 +1570,12 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
 // scrutinee's tag (struct word 0) and dispatching through a synthesized
 // if/else-if chain — so it reuses build_if's merge/phi machinery entirely.
 // A variant pattern naming an unknown struct bails out of the SSA subset.
-function build_match(m: parser.StmtMatch, s: BState): BState {
+function build_match(m: ast.StmtMatch, s: BState): BState {
     var ci: i32 = 0;
     while (ci < m.arms.len()) {
         match (m.arms[ci].pattern) {
-            parser.PatVariant(pv) => { if (opt_tag(pv.type_name) < 0 && find_struct_index(s.structs, pv.type_name) < 0) { return s.fail(); } },
-            parser.PatWildcard(_) => {}
+            ast.PatVariant(pv) => { if (opt_tag(pv.type_name) < 0 && find_struct_index(s.structs, pv.type_name) < 0) { return s.fail(); } },
+            ast.PatWildcard(_) => {}
         }
         ci = ci + 1;
     }
@@ -1588,7 +1589,7 @@ function build_match(m: parser.StmtMatch, s: BState): BState {
     var la: i32[] = [scrutv, z];
     s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 32, str: "" });
     s = s.set_var("$tag", s.cur_id());
-    var chain: parser.Stmt[] = synth_match_chain(m.arms, s.structs);
+    var chain: ast.Stmt[] = synth_match_chain(m.arms, s.structs);
     return build_stmts(chain, s);
 }
 
@@ -1613,36 +1614,36 @@ function build_match(m: parser.StmtMatch, s: BState): BState {
 // $arrN / $iN are synthetic temps made unique per loop (suffixed with the
 // builder's block-id allocator) so nested for-loops don't clash. Each
 // ExprIdent is inlined as a concrete literal directly into its parent field
-// (never pre-bound to a `parser.Expr` union local), matching
+// (never pre-bound to a `ast.Expr` union local), matching
 // synth_match_chain.
-function build_for(fr: parser.StmtFor, s: BState): BState {
+function build_for(fr: ast.StmtFor, s: BState): BState {
     var uid: string = util.i32_to_string(s.next_blk);
     var arr_name: string = "$arr" + uid;
     var i_name: string = "$i" + uid;
 
     // var $arrN = arr;
-    var decl_arr: parser.Stmt = parser.StmtVar { name: arr_name, type_name: "", init: fr.iter, line: 0, col: 0, is_str: false, fn_ret: "" };
+    var decl_arr: ast.Stmt = ast.StmtVar { name: arr_name, type_name: "", init: fr.iter, line: 0, col: 0, is_str: false, fn_ret: "" };
     // var $iN = 0 - 1;   (sentinel: the top-of-body increment yields 0 first)
-    var decl_i: parser.Stmt = parser.StmtVar { name: i_name, type_name: "",
-        init: parser.ExprBinary { line: 0, col: 0, ty: "", op: "-",
-            left: parser.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false, fn_ret: "" };
+    var decl_i: ast.Stmt = ast.StmtVar { name: i_name, type_name: "",
+        init: ast.ExprBinary { line: 0, col: 0, ty: "", op: "-",
+            left: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
+            right: ast.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false, fn_ret: "" };
 
     // guard: $iN + 1 < $arrN.len()
-    var guard: parser.Expr = parser.ExprBinary { line: 0, col: 0, ty: "", op: "<",
-        left: parser.ExprBinary { line: 0, col: 0, ty: "", op: "+",
-            left: parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" },
-            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } },
-        right: parser.ExprCall {
-            callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" }, field: "len", line: 0, col: 0, ty: "" },
+    var guard: ast.Expr = ast.ExprBinary { line: 0, col: 0, ty: "", op: "<",
+        left: ast.ExprBinary { line: 0, col: 0, ty: "", op: "+",
+            left: ast.ExprIdent { name: i_name, line: 0, col: 0, ty: "" },
+            right: ast.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } },
+        right: ast.ExprCall {
+            callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" }, field: "len", line: 0, col: 0, ty: "" },
             args: [], line: 0, col: 0, type_argc: 0, ty: "" } };
 
     // body: $iN = $iN + 1; <element binding>; <body>
-    var incr: parser.Stmt = parser.StmtAssign { target: i_name,
-        value: parser.ExprBinary { line: 0, col: 0, ty: "", op: "+",
-            left: parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" },
-            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, target_line: 0, target_col: 0 };
-    var wbody: parser.Stmt[] = [incr];
+    var incr: ast.Stmt = ast.StmtAssign { target: i_name,
+        value: ast.ExprBinary { line: 0, col: 0, ty: "", op: "+",
+            left: ast.ExprIdent { name: i_name, line: 0, col: 0, ty: "" },
+            right: ast.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var wbody: ast.Stmt[] = [incr];
     // `for (k, v) in m` — the parser joins the two names as "k,v". A comma in
     // the loop variable means map iteration: bind each via __ssa_map_key_at /
     // _val_at on $arrN ($arrN is a Map here, so the guard's `.len()` resolved
@@ -1655,35 +1656,35 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         // Expr union) rather than an array literal `[ExprIdent{…}, …]`: a
         // literal of concrete struct values assigned to a union-typed array
         // doesn't tag-wrap its elements, so a later match on them misfires.
-        var kargs: parser.Expr[] = [];
-        kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" });
-        kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" });
-        var bind_k: parser.Stmt = parser.StmtVar { name: kname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0, ty: "" }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
-        var vargs: parser.Expr[] = [];
-        vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" });
-        vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" });
-        var bind_v: parser.Stmt = parser.StmtVar { name: vname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0, ty: "" }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+        var kargs: ast.Expr[] = [];
+        kargs = kargs.append(ast.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" });
+        kargs = kargs.append(ast.ExprIdent { name: i_name, line: 0, col: 0, ty: "" });
+        var bind_k: ast.Stmt = ast.StmtVar { name: kname + "", type_name: "",
+            init: ast.ExprCall { callee: ast.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0, ty: "" }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+        var vargs: ast.Expr[] = [];
+        vargs = vargs.append(ast.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" });
+        vargs = vargs.append(ast.ExprIdent { name: i_name, line: 0, col: 0, ty: "" });
+        var bind_v: ast.Stmt = ast.StmtVar { name: vname + "", type_name: "",
+            init: ast.ExprCall { callee: ast.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0, ty: "" }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         wbody = wbody.append(bind_k);
         wbody = wbody.append(bind_v);
     } else {
-        var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
-            init: parser.ExprIndex {
-                array: parser.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" },
-                index: parser.ExprIdent { name: i_name, line: 0, col: 0, ty: "" }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
+        var bind_elem: ast.Stmt = ast.StmtVar { name: fr.var_name, type_name: "",
+            init: ast.ExprIndex {
+                array: ast.ExprIdent { name: arr_name, line: 0, col: 0, ty: "" },
+                index: ast.ExprIdent { name: i_name, line: 0, col: 0, ty: "" }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false, fn_ret: "" };
         wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;
     while (bi < fr.body.len()) { wbody = wbody.append(fr.body[bi]); bi = bi + 1; }
 
-    var lp: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody, label: "", line: 0, is_loop: false };
+    var lp: ast.Stmt = ast.StmtWhile { cond: guard, body: wbody, label: "", line: 0, is_loop: false };
 
-    var chain: parser.Stmt[] = [decl_arr, decl_i, lp];
+    var chain: ast.Stmt[] = [decl_arr, decl_i, lp];
     return build_stmts(chain, s);
 }
 
-function build_if(f: parser.StmtIf, s: BState): BState {
+function build_if(f: ast.StmtIf, s: BState): BState {
     s = build_expr(f.cond, s);
     if (!s.ok) { return s; }
     var cond_val: i32 = s.cur_id();
@@ -1830,32 +1831,32 @@ function index_of_i32(xs: i32[], n: i32): i32 {
 // collect_assigned returns the set of variable names targeted by an
 // assignment anywhere in `body` (recursing through nested if / while) —
 // these are the loop-carried variables that need a header phi.
-function collect_assigned(body: parser.Stmt[]): string[] {
+function collect_assigned(body: ast.Stmt[]): string[] {
     // Thread the accumulator as an `own` parameter (collect_assigned_loop) so
     // every grow + merge reclaims in place — the move-semantics threading shape
     // (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md). A fresh `[]` is the owned seed.
     return collect_assigned_loop(body, [], 0);
 }
-function collect_assigned_loop(body: parser.Stmt[], own out: string[], i: i32): string[] {
+function collect_assigned_loop(body: ast.Stmt[], own out: string[], i: i32): string[] {
     if (i >= body.len()) { return out; }
     out = collect_assigned_stmt(body[i], out);   // own-param move-and-rebind
     return collect_assigned_loop(body, out, i + 1); // self-tail-call: O(1) stack via TCO
 }
-function collect_assigned_stmt(st: parser.Stmt, own out: string[]): string[] {
+function collect_assigned_stmt(st: ast.Stmt, own out: string[]): string[] {
     match (st) {
-        parser.StmtAssign(a) => {
+        ast.StmtAssign(a) => {
             if (!contains_str(out, a.target)) { out = out.append(a.target); }
             return out;
         },
-        parser.StmtIf(f) => {
+        ast.StmtIf(f) => {
             out = merge_names(out, collect_assigned(f.then_body));
             out = merge_names(out, collect_assigned(f.else_body));
             return out;
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             return merge_names(out, collect_assigned(w.body));
         },
-        parser.StmtFor(fr) => {
+        ast.StmtFor(fr) => {
             // A nested for-loop desugars to a while AFTER this scan runs, so
             // its assignments (and the synthetic $iN it carries) are still
             // inside fr.body here — an enclosing loop must phi any variable
@@ -1863,7 +1864,7 @@ function collect_assigned_stmt(st: parser.Stmt, own out: string[]): string[] {
             // edge (observed: nested-for `total` reset to 0 each outer step).
             return merge_names(out, collect_assigned(fr.body));
         },
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 out = merge_names(out, collect_assigned(m.arms[ai].body));
@@ -1941,7 +1942,7 @@ function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_r
 // built, so the phis are emitted with just the pre operand and patched
 // afterward (patch_loop_header). On loop exit the live values are the
 // header phis (the merged values when the guard last evaluated false).
-function build_while(w: parser.StmtWhile, s: BState): BState {
+function build_while(w: ast.StmtWhile, s: BState): BState {
     var n0: i32 = s.var_names.len();
     var pre_names: string[] = s.var_names;
     var pre_vals: i32[] = s.var_vals;
@@ -2064,7 +2065,7 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
 // enclosing local (`locals`), minus its own params + body-bound names — its
 // captures, in first-read order (deterministic, so the lift site and the call
 // site agree).
-function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
+function lambda_free_caps(lm: ast.ExprLambda, locals: string[]): string[] {
     var refs: string[] = [];
     var bi: i32 = 0;
     while (bi < lm.body.len()) { refs = astwalk.collect_idents_stmt(lm.body[bi], refs); bi = bi + 1; }
@@ -2096,7 +2097,7 @@ function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
     var si: i32 = 0;
     while (si < upto) {
         match (fd.body[si]) {
-            parser.StmtVar(v) => {
+            ast.StmtVar(v) => {
                 var nm: string = "";
                 var ci: i32 = 0;
                 while (ci <= v.name.len()) {
@@ -2128,13 +2129,13 @@ function resolve_capture_type(name: string, fd: parser.FuncDecl): string {
     var si: i32 = 0;
     while (si < fd.body.len()) {
         match (fd.body[si]) {
-            parser.StmtVar(v) => {
+            ast.StmtVar(v) => {
                 if (v.name == name) {
                     if (v.type_name.len() > 0) { return v.type_name; }
                     match (v.init) {
-                        parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
-                        parser.ExprString(_) => { return "string"; },
-                        parser.ExprBool(_) => { return "boolean"; },
+                        ast.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
+                        ast.ExprString(_) => { return "string"; },
+                        ast.ExprBool(_) => { return "boolean"; },
                         _ => { return ""; }
                     }
                 }
@@ -2166,9 +2167,9 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
         var si: i32 = 0;
         while (si < fd.body.len()) {
             match (fd.body[si]) {
-                parser.StmtVar(v) => {
+                ast.StmtVar(v) => {
                     match (v.init) {
-                        parser.ExprLambda(lam) => {
+                        ast.ExprLambda(lam) => {
                             var nm: string = fn_sym(fd) + "$lam$" + util.i32_to_string(cnt);
                             cnt = cnt + 1;
                             var caps: string[] = lambda_free_caps(lam, parent_locals_upto(fd, si));
@@ -2205,15 +2206,15 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 // IR path lowers if the program falls back (else
                                 // it sees a duplicate __env param and emits a
                                 // broken function).
-                                var eparams: parser.ParamDecl[] = [];
+                                var eparams: ast.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
-                                var ebody: parser.Stmt[] = [];
+                                eparams = eparams.append(ast.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                                var ebody: ast.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
-                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, field: util.i32_to_string(cj + 1), line: 0, col: 0, ty: "" };
-                                    ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false, fn_ret: "" });
+                                    var acc: ast.Expr = ast.ExprFieldAccess { obj: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, field: util.i32_to_string(cj + 1), line: 0, col: 0, ty: "" };
+                                    ebody = ebody.append(ast.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false, fn_ret: "" });
                                     cj = cj + 1;
                                 }
                                 var bk: i32 = 0;
