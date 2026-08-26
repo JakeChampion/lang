@@ -35438,9 +35438,9 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // that used to be branched here answer identically, and branching them
         // only risked their exceptions drifting apart.
         var aeenum: string = arrenum_entry_enum(aens[aeni]);
-        var aeblocked: boolean = arrenum_append_escapes(body, aename, structs, aeenum, msites, false)
+        var aeblocked: boolean = arrenum_append_escapes(body, aename, structs, aeenum, msites, false, borrowable)
             || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum, msites)
-            || arrenum_share_holder_respread(body, aename, structs, msites);
+            || arrenum_share_holder_respread(body, aename, structs, msites, borrowable);
         if (!(aens[aeni].len() > 2 && aens[aeni][0] == b'A' && aens[aeni][1] == b'|')
             && aesite.len() > 0 && !aeblocked) {
             out = out.append("ARRENUM:" + aens[aeni]);
@@ -44479,7 +44479,7 @@ function arrenum_lit_enum(e: parser.Expr, structs: parser.StructDecl[]): string 
 // extraction — `xs[i]` bare, as a match subject, or a payload binding — therefore
 // falls back to the existing leak-safe shallow dec. Widening this to admit indexed
 // reads is the follow-up, and it needs the arm-binding escape analysis ARRTUP grew.
-function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
+function arrenum_esc_expr(e: parser.Expr, name: string, borrowable: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprNumber(_) => { return false; },
@@ -44489,7 +44489,7 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
         parser.ExprMapLit(ml) => {
             var mi: i32 = 0;
             while (mi < ml.keys.len()) {
-                if (arrenum_esc_expr(ml.keys[mi], name) || arrenum_esc_expr(ml.vals[mi], name)) { return true; }
+                if (arrenum_esc_expr(ml.keys[mi], name, borrowable) || arrenum_esc_expr(ml.vals[mi], name, borrowable)) { return true; }
                 mi = mi + 1;
             }
             return false;
@@ -44497,13 +44497,13 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
         parser.ExprFString(fs) => {
             var fi: i32 = 0;
             while (fi < fs.exprs.len()) {
-                if (fs.is_expr[fi] && arrenum_esc_expr(fs.exprs[fi], name)) { return true; }
+                if (fs.is_expr[fi] && arrenum_esc_expr(fs.exprs[fi], name, borrowable)) { return true; }
                 fi = fi + 1;
             }
             return false;
         },
-        parser.ExprBinary(b) => { return arrenum_esc_expr(b.left, name) || arrenum_esc_expr(b.right, name); },
-        parser.ExprUnary(u) => { return arrenum_esc_expr(u.operand, name); },
+        parser.ExprBinary(b) => { return arrenum_esc_expr(b.left, name, borrowable) || arrenum_esc_expr(b.right, name, borrowable); },
+        parser.ExprUnary(u) => { return arrenum_esc_expr(u.operand, name, borrowable); },
         parser.ExprCall(c) => {
             // `name.len()` — a header read that touches no element, so a borrow.
             match (c.callee) {
@@ -44512,7 +44512,7 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
                         match (cfa.obj) {
                             parser.ExprIdent(rid) => {
                                 if (rid.name == name) {
-                                    for arg in c.args { if (arrenum_esc_expr(arg, name)) { return true; } }
+                                    for arg in c.args { if (arrenum_esc_expr(arg, name, borrowable)) { return true; } }
                                     return false;
                                 }
                             },
@@ -44522,27 +44522,52 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
                 },
                 _ => {}
             }
-            if (arrenum_esc_expr(c.callee, name)) { return true; }
-            for arg in c.args { if (arrenum_esc_expr(arg, name)) { return true; } }
+            if (arrenum_esc_expr(c.callee, name, borrowable)) { return true; }
+            // A bare-ident ARGUMENT whose callee position is proven to touch no
+            // ELEMENT of it ("ELB:") is a borrow, not an escape. The plain box
+            // flag is NOT enough here and asking it would be a double free: it
+            // says the callee never keeps the BOX, while this class's release
+            // WALKS the element boxes and frees them, so a callee that merely
+            // hands one out would leave the caller's walk dangling it. Free
+            // functions only — a method's receiver is a second borrow question
+            // this tier does not answer.
+            var eb_callee: string = "";
+            match (c.callee) {
+                parser.ExprIdent(ecid) => { eb_callee = ecid.name; },
+                _ => {}
+            }
+            var eai: i32 = 0;
+            while (eai < c.args.len()) {
+                var eb_bare: boolean = false;
+                match (c.args[eai]) {
+                    parser.ExprIdent(eaid) => { if (eaid.name == name) { eb_bare = true; } },
+                    _ => {}
+                }
+                if (eb_bare) {
+                    if (eb_callee.len() == 0
+                        || !param_is_borrowable(borrowable, "ELB:" + eb_callee, eai)) { return true; }
+                } else if (arrenum_esc_expr(c.args[eai], name, borrowable)) { return true; }
+                eai = eai + 1;
+            }
             return false;
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (arrenum_esc_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (arrenum_esc_expr(a.elements[i], name, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
-            for el in t.elements { if (arrenum_esc_expr(el, name)) { return true; } }
+            for el in t.elements { if (arrenum_esc_expr(el, name, borrowable)) { return true; } }
             return false;
         },
-        parser.ExprIndex(x) => { return arrenum_esc_expr(x.array, name) || arrenum_esc_expr(x.index, name); },
-        parser.ExprSlice(sl) => { return arrenum_esc_expr(sl.array, name) || arrenum_esc_expr(sl.start, name) || arrenum_esc_expr(sl.end, name); },
+        parser.ExprIndex(x) => { return arrenum_esc_expr(x.array, name, borrowable) || arrenum_esc_expr(x.index, name, borrowable); },
+        parser.ExprSlice(sl) => { return arrenum_esc_expr(sl.array, name, borrowable) || arrenum_esc_expr(sl.start, name, borrowable) || arrenum_esc_expr(sl.end, name, borrowable); },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base) { if (arrenum_esc_expr(sl.base, name)) { return true; } }
-            for fv in sl.field_values { if (arrenum_esc_expr(fv, name)) { return true; } }
+            if (sl.has_base) { if (arrenum_esc_expr(sl.base, name, borrowable)) { return true; } }
+            for fv in sl.field_values { if (arrenum_esc_expr(fv, name, borrowable)) { return true; } }
             return false;
         },
-        parser.ExprFieldAccess(fa) => { return arrenum_esc_expr(fa.obj, name); },
+        parser.ExprFieldAccess(fa) => { return arrenum_esc_expr(fa.obj, name, borrowable); },
         // A lambda capturing the name carries it out of the frame entirely.
         parser.ExprLambda(lm) => {
             var used: string[] = astwalk.collect_idents_expr(e, []);
@@ -44552,47 +44577,47 @@ function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
     return true;
 }
 
-function arrenum_esc_stmt(st: parser.Stmt, name: string): boolean {
+function arrenum_esc_stmt(st: parser.Stmt, name: string, borrowable: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return arrenum_esc_expr(v.init, name); },
+        parser.StmtVar(v) => { return arrenum_esc_expr(v.init, name, borrowable); },
         parser.StmtAssign(a) => {
             // A reassignment of the name itself is not a read of it, but the value
             // is; the credit separately refuses reassigned names.
             if (a.target == name) { return true; }
-            return arrenum_esc_expr(a.value, name);
+            return arrenum_esc_expr(a.value, name, borrowable);
         },
-        parser.StmtReturn(r) => { return arrenum_esc_expr(r.value, name); },
-        parser.StmtExpr(e) => { return arrenum_esc_expr(e.value, name); },
+        parser.StmtReturn(r) => { return arrenum_esc_expr(r.value, name, borrowable); },
+        parser.StmtExpr(e) => { return arrenum_esc_expr(e.value, name, borrowable); },
         parser.StmtIf(f) => {
-            if (arrenum_esc_expr(f.cond, name)) { return true; }
-            return arrenum_escapes(f.then_body, name) || arrenum_escapes(f.else_body, name);
+            if (arrenum_esc_expr(f.cond, name, borrowable)) { return true; }
+            return arrenum_escapes(f.then_body, name, borrowable) || arrenum_escapes(f.else_body, name, borrowable);
         },
         parser.StmtWhile(w) => {
-            if (arrenum_esc_expr(w.cond, name)) { return true; }
-            return arrenum_escapes(w.body, name);
+            if (arrenum_esc_expr(w.cond, name, borrowable)) { return true; }
+            return arrenum_escapes(w.body, name, borrowable);
         },
         parser.StmtFor(fo) => {
-            if (arrenum_esc_expr(fo.iter, name)) { return true; }
-            return arrenum_escapes(fo.body, name);
+            if (arrenum_esc_expr(fo.iter, name, borrowable)) { return true; }
+            return arrenum_escapes(fo.body, name, borrowable);
         },
         parser.StmtMatch(m) => {
             // Any match over the name (or over anything mentioning it) extracts.
-            if (arrenum_esc_expr(m.scrutinee, name)) { return true; }
+            if (arrenum_esc_expr(m.scrutinee, name, borrowable)) { return true; }
             for arm in m.arms {
-                if (arm.has_guard) { if (arrenum_esc_expr(arm.guard, name)) { return true; } }
-                if (arrenum_escapes(arm.body, name)) { return true; }
+                if (arm.has_guard) { if (arrenum_esc_expr(arm.guard, name, borrowable)) { return true; } }
+                if (arrenum_escapes(arm.body, name, borrowable)) { return true; }
             }
             return false;
         },
-        parser.StmtDefer(d) => { return arrenum_esc_stmt(d.action, name); },
+        parser.StmtDefer(d) => { return arrenum_esc_stmt(d.action, name, borrowable); },
         _ => { return false; },
     }
     return false;
 }
 
-function arrenum_escapes(stmts: parser.Stmt[], name: string): boolean {
+function arrenum_escapes(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
     for stmt in stmts {
-        if (arrenum_esc_stmt(stmt, name)) { return true; }
+        if (arrenum_esc_stmt(stmt, name, borrowable)) { return true; }
     }
     return false;
 }
@@ -44628,7 +44653,7 @@ function arrenum_lit_is_empty(e: parser.Expr): boolean {
 // arrenum_self_append_elem: `e` is `name.append(<fresh ctor of ename>)`, and the
 // appended element mentions `name` nowhere (so `xs.append(E.A(xs[0]))` is refused
 // by the same walk the escape gate uses).
-function arrenum_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[], ename: string): boolean {
+function arrenum_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[], ename: string, borrowable: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             if (c.args.len() != 1) { return false; }
@@ -44638,7 +44663,7 @@ function arrenum_self_append_elem(e: parser.Expr, name: string, structs: parser.
                     match (fa.obj) {
                         parser.ExprIdent(rid) => {
                             if (rid.name != name) { return false; }
-                            if (arrenum_esc_expr(c.args[0], name)) { return false; }
+                            if (arrenum_esc_expr(c.args[0], name, borrowable)) { return false; }
                             return fresh_rcpayload_enum_init(c.args[0], structs, [], [], false) == ename;
                         },
                         _ => { return false; }
@@ -44653,17 +44678,17 @@ function arrenum_self_append_elem(e: parser.Expr, name: string, structs: parser.
 }
 
 // arrenum_name_is_appended: at least one sanctioned self-append of `name`.
-function arrenum_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string): boolean {
+function arrenum_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string, borrowable: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtAssign(a) => { if (a.target == name && arrenum_self_append_elem(a.value, name, structs, ename)) { return true; } },
+            parser.StmtAssign(a) => { if (a.target == name && arrenum_self_append_elem(a.value, name, structs, ename, borrowable)) { return true; } },
             parser.StmtIf(f) => {
-                if (arrenum_name_is_appended(f.then_body, name, structs, ename)) { return true; }
-                if (arrenum_name_is_appended(f.else_body, name, structs, ename)) { return true; }
+                if (arrenum_name_is_appended(f.then_body, name, structs, ename, borrowable)) { return true; }
+                if (arrenum_name_is_appended(f.else_body, name, structs, ename, borrowable)) { return true; }
             },
-            parser.StmtWhile(w) => { if (arrenum_name_is_appended(w.body, name, structs, ename)) { return true; } },
-            parser.StmtFor(fo) => { if (arrenum_name_is_appended(fo.body, name, structs, ename)) { return true; } },
-            parser.StmtMatch(m) => { for arm in m.arms { if (arrenum_name_is_appended(arm.body, name, structs, ename)) { return true; } } },
+            parser.StmtWhile(w) => { if (arrenum_name_is_appended(w.body, name, structs, ename, borrowable)) { return true; } },
+            parser.StmtFor(fo) => { if (arrenum_name_is_appended(fo.body, name, structs, ename, borrowable)) { return true; } },
+            parser.StmtMatch(m) => { for arm in m.arms { if (arrenum_name_is_appended(arm.body, name, structs, ename, borrowable)) { return true; } } },
             _ => {}
         }
     }
@@ -44690,7 +44715,7 @@ function arrenum_name_is_appended(stmts: parser.Stmt[], name: string, structs: p
 // credit routes emit_arrenum_deep_free rather than that plain dec, so granting it
 // there frees a buffer whose ownership left the frame. `return T { f: xs, … }` is
 // that shape, because the return is the source's last use.
-function arrenum_counted_field_share(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+function arrenum_counted_field_share(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
     match (e) {
         parser.ExprStructLit(sl) => {
             if (sl.has_base) { return false; }
@@ -44705,7 +44730,7 @@ function arrenum_counted_field_share(e: parser.Expr, name: string, structs: pars
                             seen = true;
                         }
                     },
-                    _ => { if (arrenum_esc_expr(sl.field_values[i], name)) { return false; } }
+                    _ => { if (arrenum_esc_expr(sl.field_values[i], name, borrowable)) { return false; } }
                 }
                 i = i + 1;
             }
@@ -44722,23 +44747,23 @@ function arrenum_counted_field_share(e: parser.Expr, name: string, structs: pars
 // with NO inc, so three owners sit at rc 2 and the first two sweeps free it between
 // them. The share count being complete is what the credit rests on, so this is a
 // gate on the credit rather than something the walk could guard against.
-function arrenum_counted_share_holders(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
+function arrenum_counted_share_holders(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
-            parser.StmtVar(v) => { if (arrenum_counted_field_share(v.init, name, structs, msites)) { a = push_str_unique(a, v.name); } },
-            parser.StmtAssign(asg) => { if (arrenum_counted_field_share(asg.value, name, structs, msites)) { a = push_str_unique(a, asg.target); } },
-            parser.StmtIf(f) => { a = arrenum_counted_share_holders(f.then_body, name, structs, msites, a); a = arrenum_counted_share_holders(f.else_body, name, structs, msites, a); },
-            parser.StmtWhile(w) => { a = arrenum_counted_share_holders(w.body, name, structs, msites, a); },
-            parser.StmtFor(fo) => { a = arrenum_counted_share_holders(fo.body, name, structs, msites, a); },
-            parser.StmtMatch(m) => { for arm in m.arms { a = arrenum_counted_share_holders(arm.body, name, structs, msites, a); } },
+            parser.StmtVar(v) => { if (arrenum_counted_field_share(v.init, name, structs, msites, borrowable)) { a = push_str_unique(a, v.name); } },
+            parser.StmtAssign(asg) => { if (arrenum_counted_field_share(asg.value, name, structs, msites, borrowable)) { a = push_str_unique(a, asg.target); } },
+            parser.StmtIf(f) => { a = arrenum_counted_share_holders(f.then_body, name, structs, msites, a, borrowable); a = arrenum_counted_share_holders(f.else_body, name, structs, msites, a, borrowable); },
+            parser.StmtWhile(w) => { a = arrenum_counted_share_holders(w.body, name, structs, msites, a, borrowable); },
+            parser.StmtFor(fo) => { a = arrenum_counted_share_holders(fo.body, name, structs, msites, a, borrowable); },
+            parser.StmtMatch(m) => { for arm in m.arms { a = arrenum_counted_share_holders(arm.body, name, structs, msites, a, borrowable); } },
             _ => {}
         }
     }
     return a;
 }
-function arrenum_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
-    var holders: string[] = arrenum_counted_share_holders(stmts, name, structs, msites, []);
+function arrenum_share_holder_respread(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
+    var holders: string[] = arrenum_counted_share_holders(stmts, name, structs, msites, [], borrowable);
     if (holders.len() == 0) { return false; }
     return body_spreads_any(stmts, structs, holders);
 }
@@ -44746,12 +44771,12 @@ function arrenum_share_holder_respread(stmts: parser.Stmt[], name: string, struc
 // arrenum_append_escapes: arrenum_escapes with exactly one sanctioned use — the
 // self-append rebind. Only the assign case differs; everything else delegates, so
 // the class keeps its deliberately tight "only xs.len()" rule everywhere else.
-function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string, msites: string[], allow_ret: boolean): boolean {
+function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string, msites: string[], allow_ret: boolean, borrowable: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                if (!arrenum_counted_field_share(v.init, name, structs, msites)) {
-                    if (arrenum_esc_expr(v.init, name)) { return true; }
+                if (!arrenum_counted_field_share(v.init, name, structs, msites, borrowable)) {
+                    if (arrenum_esc_expr(v.init, name, borrowable)) { return true; }
                 }
             },
             parser.StmtReturn(r) => {
@@ -44763,41 +44788,41 @@ function arrenum_append_escapes(stmts: parser.Stmt[], name: string, structs: par
                     parser.ExprIdent(rid) => { ret_ok = allow_ret && rid.name == name; },
                     _ => {}
                 }
-                if (!ret_ok && !arrenum_counted_field_share(r.value, name, structs, msites)
-                    && arrenum_esc_expr(r.value, name)) { return true; }
+                if (!ret_ok && !arrenum_counted_field_share(r.value, name, structs, msites, borrowable)
+                    && arrenum_esc_expr(r.value, name, borrowable)) { return true; }
             },
             parser.StmtExpr(e) => {
-                if (!arrenum_counted_field_share(e.value, name, structs, msites)
-                    && arrenum_esc_expr(e.value, name)) { return true; }
+                if (!arrenum_counted_field_share(e.value, name, structs, msites, borrowable)
+                    && arrenum_esc_expr(e.value, name, borrowable)) { return true; }
             },
             parser.StmtAssign(a) => {
                 if (a.target == name) {
-                    if (!arrenum_self_append_elem(a.value, name, structs, ename)) { return true; }
+                    if (!arrenum_self_append_elem(a.value, name, structs, ename, borrowable)) { return true; }
                 }
-                else if (!arrenum_counted_field_share(a.value, name, structs, msites)
-                    && arrenum_esc_expr(a.value, name)) { return true; }
+                else if (!arrenum_counted_field_share(a.value, name, structs, msites, borrowable)
+                    && arrenum_esc_expr(a.value, name, borrowable)) { return true; }
             },
             parser.StmtIf(f) => {
-                if (arrenum_esc_expr(f.cond, name)) { return true; }
-                if (arrenum_append_escapes(f.then_body, name, structs, ename, msites, allow_ret)) { return true; }
-                if (arrenum_append_escapes(f.else_body, name, structs, ename, msites, allow_ret)) { return true; }
+                if (arrenum_esc_expr(f.cond, name, borrowable)) { return true; }
+                if (arrenum_append_escapes(f.then_body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
+                if (arrenum_append_escapes(f.else_body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
             },
             parser.StmtWhile(w) => {
-                if (arrenum_esc_expr(w.cond, name)) { return true; }
-                if (arrenum_append_escapes(w.body, name, structs, ename, msites, allow_ret)) { return true; }
+                if (arrenum_esc_expr(w.cond, name, borrowable)) { return true; }
+                if (arrenum_append_escapes(w.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
             },
             parser.StmtFor(fo) => {
-                if (arrenum_esc_expr(fo.iter, name)) { return true; }
-                if (arrenum_append_escapes(fo.body, name, structs, ename, msites, allow_ret)) { return true; }
+                if (arrenum_esc_expr(fo.iter, name, borrowable)) { return true; }
+                if (arrenum_append_escapes(fo.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
             },
             parser.StmtMatch(m) => {
-                if (arrenum_esc_expr(m.scrutinee, name)) { return true; }
+                if (arrenum_esc_expr(m.scrutinee, name, borrowable)) { return true; }
                 for arm in m.arms {
-                    if (arm.has_guard && arrenum_esc_expr(arm.guard, name)) { return true; }
-                    if (arrenum_append_escapes(arm.body, name, structs, ename, msites, allow_ret)) { return true; }
+                    if (arm.has_guard && arrenum_esc_expr(arm.guard, name, borrowable)) { return true; }
+                    if (arrenum_append_escapes(arm.body, name, structs, ename, msites, allow_ret, borrowable)) { return true; }
                 }
             },
-            _ => { if (arrenum_esc_stmt(stmt, name)) { return true; } }
+            _ => { if (arrenum_esc_stmt(stmt, name, borrowable)) { return true; } }
         }
     }
     return false;
@@ -44810,22 +44835,22 @@ function arrenum_append_unsafe_for(stmts: parser.Stmt[], name: string, borrowabl
     for stmt in stmts {
         match (stmt) {
             parser.StmtVar(v) => {
-                if (!arrenum_counted_field_share(v.init, name, structs, msites)
+                if (!arrenum_counted_field_share(v.init, name, structs, msites, borrowable)
                     && expr_unsafe_for(v.init, name, borrowable, recv_borrow)) { return true; }
             },
             parser.StmtReturn(r) => {
-                if (!arrenum_counted_field_share(r.value, name, structs, msites)
+                if (!arrenum_counted_field_share(r.value, name, structs, msites, borrowable)
                     && expr_unsafe_for(r.value, name, borrowable, recv_borrow)) { return true; }
             },
             parser.StmtExpr(e) => {
-                if (!arrenum_counted_field_share(e.value, name, structs, msites)
+                if (!arrenum_counted_field_share(e.value, name, structs, msites, borrowable)
                     && expr_unsafe_for(e.value, name, borrowable, recv_borrow)) { return true; }
             },
             parser.StmtAssign(a) => {
                 if (a.target == name) {
-                    if (!arrenum_self_append_elem(a.value, name, structs, ename)) { return true; }
+                    if (!arrenum_self_append_elem(a.value, name, structs, ename, borrowable)) { return true; }
                 }
-                else if (!arrenum_counted_field_share(a.value, name, structs, msites)
+                else if (!arrenum_counted_field_share(a.value, name, structs, msites, borrowable)
                     && expr_unsafe_for(a.value, name, borrowable, recv_borrow)) { return true; }
             },
             parser.StmtIf(f) => {
@@ -44867,7 +44892,7 @@ function arrenum_append_built_enum(stmts: parser.Stmt[], name: string, tname: st
     if (slice_unchecked(tname, tname.len() - 2, tname.len()) != "[]") { return ""; }
     var ename: string = slice_unchecked(tname, 0, tname.len() - 2) + "";
     if (!enum_arr_elems_walk_ok(structs, ename)) { return ""; }
-    if (!arrenum_name_is_appended(stmts, name, structs, ename)) { return ""; }
+    if (!arrenum_name_is_appended(stmts, name, structs, ename, [])) { return ""; }
     return ename;
 }
 
@@ -51904,7 +51929,7 @@ function arrenum_producer_enum(fn: parser.FuncDecl, structs: parser.StructDecl[]
     var ename: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
     if (!enum_arr_elems_walk_ok(structs, ename)) { return ""; }
     if (!body_has_return(fn.body)) { return ""; }
-    if (body_has_nonfresh_arrenum_return(fn.body, fn.body, structs, ename)) { return ""; }
+    if (body_has_nonfresh_arrenum_return(fn.body, fn.body, structs, ename, [])) { return ""; }
     return ename;
 }
 
@@ -51915,8 +51940,8 @@ function arrenum_producer_enum(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // same predicate serves both questions.
 function arrenum_producer_ret_local(fnbody: parser.Stmt[], name: string, structs: parser.StructDecl[], ename: string): boolean {
     if (!arrenum_local_empty_init(fnbody, name)) { return false; }
-    if (!arrenum_name_is_appended(fnbody, name, structs, ename)) { return false; }
-    return !arrenum_append_escapes(fnbody, name, structs, ename, [], true);
+    if (!arrenum_name_is_appended(fnbody, name, structs, ename, [])) { return false; }
+    return !arrenum_append_escapes(fnbody, name, structs, ename, [], true, []);
 }
 
 // arrenum_local_empty_init: `name` is declared IN this body from `[]`. Requiring
@@ -51943,7 +51968,7 @@ function arrenum_local_empty_init(stmts: parser.Stmt[], name: string): boolean {
 // array-of-enums the callee owns outright — a fresh literal of `ename`, or a
 // local this body built by self-append. `fnbody` stays the whole function body so
 // a return nested in a block can still find that local's declaration.
-function body_has_nonfresh_arrenum_return(stmts: parser.Stmt[], fnbody: parser.Stmt[], structs: parser.StructDecl[], ename: string): boolean {
+function body_has_nonfresh_arrenum_return(stmts: parser.Stmt[], fnbody: parser.Stmt[], structs: parser.StructDecl[], ename: string, borrowable: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             parser.StmtReturn(r) => {
@@ -51954,10 +51979,10 @@ function body_has_nonfresh_arrenum_return(stmts: parser.Stmt[], fnbody: parser.S
                     }
                 }
             },
-            parser.StmtIf(f) => { if (body_has_nonfresh_arrenum_return(f.then_body, fnbody, structs, ename) || body_has_nonfresh_arrenum_return(f.else_body, fnbody, structs, ename)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfresh_arrenum_return(w.body, fnbody, structs, ename)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfresh_arrenum_return(fo.body, fnbody, structs, ename)) { return true; } },
-            parser.StmtMatch(m) => { for arm in m.arms { if (body_has_nonfresh_arrenum_return(arm.body, fnbody, structs, ename)) { return true; } } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrenum_return(f.then_body, fnbody, structs, ename, borrowable) || body_has_nonfresh_arrenum_return(f.else_body, fnbody, structs, ename, borrowable)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrenum_return(w.body, fnbody, structs, ename, borrowable)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrenum_return(fo.body, fnbody, structs, ename, borrowable)) { return true; } },
+            parser.StmtMatch(m) => { for arm in m.arms { if (body_has_nonfresh_arrenum_return(arm.body, fnbody, structs, ename, borrowable)) { return true; } } },
             _ => {}
         }
     }
@@ -56328,6 +56353,11 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             // reads it.
             var tupb: string = tuple_payload_borrow_flags(fn, flags);
             if (tupb.len() > 0) { out = borrow_reg_put(out, "TUPB:" + borrowable_key(fn), tupb); }
+            // The ELEMENT tier, the array-of-boxes analogue of "TUPB:" and for
+            // the same reason: an element WALK is a deep free, so the caller
+            // needs the stronger question the box flag does not answer.
+            var elb: string = arrenum_elem_borrow_flags(fn, flags);
+            if (elb.len() > 0) { out = borrow_reg_put(out, "ELB:" + borrowable_key(fn), elb); }
         }
     }
     return out;
@@ -56361,6 +56391,39 @@ function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): stri
     }
     if (!any1) { return ""; }
     return tupb;
+}
+
+// arrenum_elem_borrow_flags: the "ELB:" tier for one function — per-param flag
+// '1' iff the box flag is '1', the param is an ARRAY, and no ELEMENT of it
+// escapes the callee's body.
+//
+// The box flag licenses a box-only release: it proves the callee never keeps the
+// param. An array-of-boxes local's release is not box-only — it WALKS every
+// element box and frees it — so passing such a local to a call needs this
+// stronger proof before the caller may keep its walk. Exactly the distinction
+// "TUPB:" draws for rc-tuples, and for exactly the same reason.
+//
+// The element rule is the class's own: `arrenum_escapes` with an EMPTY registry,
+// so the only admitted use is `xs.len()` and an onward pass of the param counts
+// as an escape. Registry-independent by construction, like
+// tuple_payload_borrow_flags, so the interproc fixpoint cannot oscillate.
+function arrenum_elem_borrow_flags(fn: parser.FuncDecl, boxflags: string): string {
+    var none: string[] = [];
+    var elb: string = "";
+    var any1: boolean = false;
+    var pj: i32 = 0;
+    while (pj < fn.params.len()) {
+        var pty: string = fn.params[pj].type_name;
+        if (pj < boxflags.len() && boxflags[pj] == b'1'
+            && pty.len() >= 3 && slice_unchecked(pty, pty.len() - 2, pty.len()) == "[]"
+            && !arrenum_escapes(fn.body, fn.params[pj].name, none)) {
+            elb = elb + "1";
+            any1 = true;
+        } else { elb = elb + "0"; }
+        pj = pj + 1;
+    }
+    if (!any1) { return ""; }
+    return elb;
 }
 
 // borrowable_key is the registry key for a function's borrowability entry: the
@@ -56590,6 +56653,10 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     // monotone-decreasing convergence argument below.
                     var ip_tupb: string = tuple_payload_borrow_flags(fn, flags);
                     if (ip_tupb.len() > 0) { next = borrow_reg_put(next, "TUPB:" + borrowable_key(fn), ip_tupb); }
+                    // The "ELB:" element tier, registry-independent for the same
+                    // reason (arrenum_escapes walks with an empty registry).
+                    var ip_elb: string = arrenum_elem_borrow_flags(fn, flags);
+                    if (ip_elb.len() > 0) { next = borrow_reg_put(next, "ELB:" + borrowable_key(fn), ip_elb); }
                 }
             }
         }
