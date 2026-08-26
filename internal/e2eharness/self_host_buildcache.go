@@ -650,3 +650,35 @@ func (c *buildCache[T]) get(key string, build func() (T, error)) (T, error) {
 	e.once.Do(func() { e.val, e.err = build() })
 	return e.val, e.err
 }
+
+// SelfHostSourcesForEntry returns the self-host sources an in-memory entry
+// program needs, keyed by file name — the entry's own local imports plus their
+// transitive closure, read from examples/self_host.
+//
+// It is CopySelfHostFiles for tests that pass a map to compileFilesModload
+// instead of staging a project dir. Both stage2 tests used to restate this set
+// as a list of module names, which is the staleness CopySelfHostFiles's own
+// note describes: the list went wrong the moment parser.fern gained
+// `import "./ast"` (#6993). Deriving it from the entry text cannot.
+func SelfHostSourcesForEntry(t *testing.T, entrySrc string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	for _, m := range fernImportRe.FindAllStringSubmatch(entrySrc, -1) {
+		if isExternalFernImport(m[1]) {
+			continue
+		}
+		root := strings.TrimPrefix(m[1], "./") + ".fern"
+		for _, p := range SelfHostImportClosure(t, selfHostSrcDir, root) {
+			base := filepath.Base(p)
+			if _, ok := files[base]; ok {
+				continue
+			}
+			src, err := os.ReadFile(filepath.Join(selfHostSrcDir, base))
+			if err != nil {
+				t.Fatalf("read %s: %v", base, err)
+			}
+			files[base] = string(src)
+		}
+	}
+	return files
+}

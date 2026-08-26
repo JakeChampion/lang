@@ -66,7 +66,7 @@ func TestSelfHostTypeRef(t *testing.T) {
 		"ok   (i32) => i32\n" +
 		"ok   (T, T) => i32\n" +
 		"ok   (T) => U[]\n" +
-		"ok   (parser.Expr, T) => T\n" +
+		"ok   (ast.Expr, T) => T\n" +
 		"ok   (() => T) => U\n" +
 		"ok   (i32) => (string, i32)\n" +
 		"ok   Vec[(T) => boolean]\n" +
