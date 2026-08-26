@@ -185,6 +185,17 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if isCellStringGet(x) {
 			return ast.StringType{}, true
 		}
+		// `m.get_or(k, d)` on a Map[K, string]: every lowering of the call
+		// retains the returned buffer so the caller co-owns it alongside
+		// the map's value column (isMapStringGetOr). A BINDING balances
+		// that with its exit-sweep dec; a borrowing consumer dropped it on
+		// the floor, which leaked one buffer per `m.get_or(k, d).len()`
+		// once the column walk started actually releasing its own
+		// reference. Same known-because-we-emitted-it argument as the Cell
+		// case above.
+		if isMapStringGetOr(x) {
+			return ast.StringType{}, true
+		}
 	}
 	return nil, false
 }
@@ -2895,10 +2906,15 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 	//     __fern_cell_free the now-dead 16-byte cell.
 	//   native single-word (x86_64 ptrW=8, !TwoWordOverride): the
 	//     kv slot stores the string data pointer directly (no
-	//     boxing — the slot is already pointer-wide). One
-	//     __fern_rc_dec per entry is the whole reclamation; the L2
-	//     header at data-8 + rc-sentinel literals from prereqs 1+2
-	//     make this safe across heap + literal sources.
+	//     boxing — the slot is already pointer-wide), so one
+	//     __fern_str_dec per entry is the whole reclamation. It is
+	//     __fern_str_dec and not a bare __fern_rc_dec because only
+	//     the former RETURNS the rc1 block at the last reference; a
+	//     plain dec takes the count to zero and strands the buffer,
+	//     which leaked every heap key and value of every map on this
+	//     backend. Inline-SSO / literal / sentinel values are the
+	//     helper's own no-op path (the L2 header at data-8), so it is
+	//     safe across every source the column can hold.
 	var inner []Op
 	if ast.UseTwoWordStrings(ptrW) {
 		inner = []Op{
@@ -2918,7 +2934,7 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 			{Kind: OpLoadLocal, I32: 5},
 			{Kind: OpIf, I32: BlockTypeVoid},
 			{Kind: OpLoadLocal, I32: 5},
-			{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+			{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 			{Kind: OpDrop},
 			{Kind: OpEnd},
 		}

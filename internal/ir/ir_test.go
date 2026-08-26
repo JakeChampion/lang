@@ -2403,8 +2403,11 @@ func TestLowerMapStringValueGetRetain(t *testing.T) {
 // TestLowerMapStringValueReclaimOnNative verifies native single-word
 // strings (ptrW=8, !TwoWordOverride — the x86_64 path) generate
 // __drop_map_str_values for Map[K, string]. The body uses the
-// direct-pointer form (__fern_rc_dec on each stored data pointer; no
-// cell deref, no cell_free) since x86_64 stores strings unboxed.
+// direct-pointer form (no cell deref, no cell_free) since x86_64 stores
+// strings unboxed, and releases each stored data pointer through
+// __fern_str_dec — the helper that RETURNS the block at the last
+// reference. A bare __fern_rc_dec here only took the count to zero and
+// stranded every heap value the map held (#2704).
 func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
@@ -2417,8 +2420,8 @@ func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	if !callsDirect(p, "build", "__drop_map_str_values") {
 		t.Errorf("expected map local drop to route through __drop_map_str_values:\n%s", p)
 	}
-	if !callsDirect(p, "__drop_map_str_values", "__fern_rc_dec") {
-		t.Errorf("native __drop_map_str_values must reclaim each value via __fern_rc_dec:\n%s", p)
+	if !callsDirect(p, "__drop_map_str_values", "__fern_str_dec") {
+		t.Errorf("native __drop_map_str_values must reclaim each value via __fern_str_dec — a bare rc dec leaves the buffer stranded at rc 0:\n%s", p)
 	}
 	if callsDirect(p, "__drop_map_str_values", "__fern_cell_free") {
 		t.Errorf("native __drop_map_str_values must NOT call __fern_cell_free (no cell boxing):\n%s", p)
@@ -2475,8 +2478,9 @@ func TestLowerMapStringKeyReclaim(t *testing.T) {
 // TestLowerMapStringKeyReclaimOnNative is the native (ptrW=8 + single-
 // word) counterpart to TestLowerMapStringKeyReclaim: x86_64 also
 // generates __drop_map_str_keys, but the body uses the direct-pointer
-// form (__fern_rc_dec on each stored key data pointer; no cell deref,
-// no cell_free) since x86_64 stores keys unboxed.
+// form (no cell deref, no cell_free) since x86_64 stores keys unboxed,
+// releasing each stored key data pointer through __fern_str_dec (the
+// value side's note explains why a bare rc dec will not do).
 func TestLowerMapStringKeyReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -2489,8 +2493,8 @@ func TestLowerMapStringKeyReclaimOnNative(t *testing.T) {
 	if !callsDirect(p, "build", "__drop_map_str_keys") {
 		t.Errorf("expected map local drop to route through __drop_map_str_keys:\n%s", p)
 	}
-	if !callsDirect(p, "__drop_map_str_keys", "__fern_rc_dec") {
-		t.Errorf("native __drop_map_str_keys must reclaim each key via __fern_rc_dec:\n%s", p)
+	if !callsDirect(p, "__drop_map_str_keys", "__fern_str_dec") {
+		t.Errorf("native __drop_map_str_keys must reclaim each key via __fern_str_dec — a bare rc dec leaves the buffer stranded at rc 0:\n%s", p)
 	}
 	if callsDirect(p, "__drop_map_str_keys", "__fern_cell_free") {
 		t.Errorf("native __drop_map_str_keys must NOT call __fern_cell_free (no cell boxing):\n%s", p)

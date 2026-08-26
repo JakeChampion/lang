@@ -410,7 +410,7 @@ func TestMapStringKeyOverwriteAliasX86_64(t *testing.T) {
 // string map key does not fit the runtime's pointer-wide key slot, so the
 // lowering boxes it into a cell and passes the cell pointer through. `set`
 // keeps that cell; every read method (get / has / get_or / delete) does not,
-// and freeLookupKeyCell exists to reclaim it. It was gated on `ptrW != 4`,
+// and freeLookupBoxCell exists to reclaim it. It was gated on `ptrW != 4`,
 // on the belief that boxing was wasm-only — but boxing keys off the two-word
 // ABI, which arm64 also runs under. So on arm64 every string-keyed lookup
 // allocated a 16-byte cell and freed nothing, plus another 16 when the key was

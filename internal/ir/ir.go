@@ -13836,7 +13836,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && !needBoxK && !keyKind3 &&
 		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) == 4 &&
-		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
+		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
@@ -13868,7 +13868,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// as the kind-4 path).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
-		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
+		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
@@ -13894,14 +13894,16 @@ func (b *builder) callBody(n *ast.Call) error {
 	// counterpart of the wasm gate above. Natives store the string data
 	// pointer directly in the value slot (no boxing), so __map_lookup_val
 	// returns the data pointer instead of a cell pointer — no deref
-	// needed; just __fern_rc_dec on the loaded pointer. SSO inline-tag
-	// guard in __fern_rc_dec skips inline-packed shorts; literal sentinel
-	// short-circuits at data-8. arm64 (ptrW=8 + TwoWordOverride) stays
-	// excluded — same gating as the rest of the native string-reclaim
-	// path, awaiting boxed-string runtime helpers.
+	// needed; just __fern_str_dec on the loaded pointer, which RETURNS the
+	// block at the last reference where a bare rc dec would only zero the
+	// count and strand the replaced buffer. Its own guards cover every
+	// source the slot can hold: the SSO inline tag and the literal sentinel
+	// at data-8. arm64 (ptrW=8 + TwoWordOverride) stays excluded — same
+	// gating as the rest of the native string-reclaim path, awaiting
+	// boxed-string runtime helpers.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
-		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
+		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
@@ -13913,11 +13915,12 @@ func (b *builder) callBody(n *ast.Call) error {
 			oldSlot := b.allocSlot()
 			b.locals[fmt.Sprintf("__map_overwrite_oldstr_native_%d", oldSlot)] = oldSlot
 			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
-			// if oldPtr != 0: __fern_rc_dec it (low-bit guard handles inline).
+			// if oldPtr != 0: __fern_str_dec it (its low-bit guard handles
+			// inline strings, the data-8 sentinel handles literals).
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
-			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 		}
@@ -13942,13 +13945,36 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 &&
 		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !needBoxV {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
-			for _, a := range n.Args {
+			// The key and the fallback are stashed when they are FRESH owned
+			// temps, so the release below can end them once the helper has
+			// probed with them. Without it the temp of an
+			// `m.get_or(prefix + name, d)` was stranded on this ABI: the
+			// generic direct-call arg loop reclaims such an argument, but
+			// this lowering intercepts the call before reaching it, and
+			// there is no key cell here for freeLookupBoxCell to catch it
+			// through either. The fallback's dec is right on both outcomes
+			// for the reason freeLookupBoxCell records.
+			var tmpSlots []int32
+			var tmpTypes []ast.Type
+			for ai, a := range n.Args {
+				if ai > 0 {
+					slot, tt, ok, err := b.stashOwnedArgTemp(a)
+					if err != nil {
+						return err
+					}
+					if ok {
+						tmpSlots = append(tmpSlots, slot)
+						tmpTypes = append(tmpTypes, tt)
+						continue
+					}
+				}
 				if err := b.expr(a); err != nil {
 					return err
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
 			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			b.emitArgTempDrops(tmpSlots, tmpTypes)
 			return nil
 		}
 	}
@@ -17973,23 +17999,33 @@ func isParamName(name string, b *builder) bool {
 	return false
 }
 
-// exprContainsCall reports whether e contains a function/method Call
-// anywhere in its tree. Used to gate re-evaluation: an expression with no
-// Call is side-effect-free, so evaluating it twice (e.g. once for the
-// map-overwrite pre-drop lookup and again for the set itself) is safe.
-func exprContainsCall(e ast.Expr) bool {
-	found := false
-	ast.Walk(e, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		if _, ok := n.(*ast.Call); ok {
-			found = true
-			return false
-		}
+// exprSafeToReevaluate reports whether e can be evaluated a second time —
+// the map-overwrite pre-drop evaluates the map and the key for its lookup and
+// the set that follows evaluates both again — with the same value, no repeated
+// side effect, and NO SECOND ALLOCATION.
+//
+// It is an allow-list of loads, literals and scalar arithmetic. A call is
+// excluded for its side effects; a string concat, a slice and a container
+// literal are excluded because each re-evaluation allocates a fresh buffer
+// that nobody then owns — `m.insert(stem + "-key", v)` in a loop stranded one
+// key-sized block per iteration that way (#2704). An expression outside the
+// list simply loses the pre-drop, which is the pre-existing safe leak.
+func exprSafeToReevaluate(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.Ident, *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit:
 		return true
-	})
-	return found
+	case *ast.FieldAccess:
+		return exprSafeToReevaluate(x.Target)
+	case *ast.Index:
+		return exprSafeToReevaluate(x.Array) && exprSafeToReevaluate(x.Idx)
+	case *ast.CastExpr:
+		return exprSafeToReevaluate(x.Inner)
+	case *ast.Unary:
+		return x.NegCall == nil && exprSafeToReevaluate(x.Operand)
+	case *ast.Binary:
+		return !x.IsStringConcat && exprSafeToReevaluate(x.Left) && exprSafeToReevaluate(x.Right)
+	}
+	return false
 }
 
 func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
@@ -19175,6 +19211,24 @@ func (b *builder) emitCellNew(n *ast.Call) error {
 	return nil
 }
 
+// isMapStringGetOr reports whether `e` is `m.get_or(k, d)` on a
+// Map[K, string]. Every lowering of that call — the single-word inline,
+// its keyKind-3 twin, and the two-word emitWideMapGetOr — RETAINS the
+// returned buffer so the caller co-owns it alongside the map's column,
+// so the expression yields an owned +1 reference on every backend.
+func isMapStringGetOr(e ast.Expr) bool {
+	c, ok := e.(*ast.Call)
+	if !ok || len(c.TypeArgs) < 2 {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != "__method_Map_get_or" {
+		return false
+	}
+	_, isStr := c.TypeArgs[1].(ast.StringType)
+	return isStr
+}
+
 // isCellStringGet reports whether `e` is `c.get()` on a Cell[string].
 // emitCellGet RETAINS the slot's buffer, so the expression yields an owned
 // +1 reference that a binding balances with its exit-sweep dec and every
@@ -19578,7 +19632,7 @@ func (b *builder) boxIntoCell(arg ast.Expr, t ast.Type, slotLabel string) error 
 
 // boxIntoCellSlot is boxIntoCell that also returns the function-local
 // slot holding the cell pointer, so a caller can reclaim the cell after
-// the helper call that consumes it (see freeLookupKeyCell for the
+// the helper call that consumes it (see freeLookupBoxCell for the
 // transient read-method lookup-key path).
 func (b *builder) boxIntoCellSlot(arg ast.Expr, t ast.Type, slotLabel string) (int32, error) {
 	cellSlot := b.allocSlot()
@@ -19599,14 +19653,20 @@ func (b *builder) boxIntoCellSlot(arg ast.Expr, t ast.Type, slotLabel string) (i
 	return cellSlot, nil
 }
 
-// freeLookupKeyCell reclaims the transient boxed lookup-key cell after a
-// READ-ONLY Map method (get / has / delete / get_or) has consumed it —
-// the read helpers never retain the key cell (only set stores it). The
-// helper's result sits underneath on the operand stack and is left
-// untouched (the free ops are stack-balanced: load, call→returns cell,
-// drop). When the key was a FRESH owned temporary (a concat / literal /
-// call rather than an Ident / field / index alias the caller still
-// owns), its string buffer is also reclaimed via __fern_str_dec first.
+// freeLookupBoxCell reclaims a transient boxed cell after a READ-ONLY Map
+// method (get / has / delete / get_or) has consumed it — the lookup KEY of
+// any of them, and get_or's fallback VALUE. The read helpers never retain
+// either cell (only set stores one). The helper's result sits underneath on
+// the operand stack and is left untouched (the free ops are stack-balanced:
+// load, call→returns cell, drop). When the boxed argument was a FRESH owned
+// temporary (a concat / literal / call rather than an Ident / field / index
+// alias the caller still owns), its string buffer is also reclaimed via
+// __fern_str_dec first.
+//
+// For get_or's fallback that dec is right on BOTH lookup outcomes: on a miss
+// the helper returns the fallback and the caller's retain already took it to
+// two, so the dec leaves the caller's one; on a hit the fallback is an orphan
+// the retain never touched, and the dec frees it.
 // cellSlot < 0 means the key was NOT boxed, so there is nothing to reclaim:
 // every caller initialises it to -1 and only assigns when it boxes, which
 // makes it the complete guard. It used to be paired with `b.ptrW != 4`, on
@@ -19617,11 +19677,11 @@ func (b *builder) boxIntoCellSlot(arg ast.Expr, t ast.Type, slotLabel string) (i
 // another 16 when the key was a fresh temporary whose buffer also went
 // unreleased. Unbounded in a loop, and invisible on x86-64, which does not box
 // (#6243).
-func (b *builder) freeLookupKeyCell(cellSlot int32, keyArg ast.Expr, kType ast.Type) {
+func (b *builder) freeLookupBoxCell(cellSlot int32, boxedArg ast.Expr, t ast.Type) {
 	if cellSlot < 0 {
 		return
 	}
-	if _, isStr := kType.(ast.StringType); isStr && !needsRcIncOnAlias(keyArg, b) {
+	if _, isStr := t.(ast.StringType); isStr && !needsRcIncOnAlias(boxedArg, b) {
 		b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 		b.emit(Op{Kind: OpLoad, Width: WidthString})
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
@@ -19877,7 +19937,7 @@ func (b *builder) emitMapLenLoad(slot int32) {
 // set's result (a possibly COW-moved handle) is consumed off the operand
 // stack and pushed back, so this is stack-neutral.
 //
-// The string dec is unconditional here, unlike freeLookupKeyCell's: a key
+// The string dec is unconditional here, unlike freeLookupBoxCell's: a key
 // boxed for a SET always carries one owned reference — a fresh key moves its
 // rc in, an aliased one is retained by the set's key retain in callBody —
 // where a read method's aliased key is only borrowed.
@@ -19951,14 +20011,29 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	}
 	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	keyCell := int32(-1)
+	keyTmp, keyTmpType := int32(-1), ast.Type(nil)
 	if boxK {
 		var err error
 		keyCell, err = b.boxIntoCellSlot(n.Args[1], kType, "__map_get_kbox")
 		if err != nil {
 			return err
 		}
-	} else if err := b.expr(n.Args[1]); err != nil {
-		return err
+	} else {
+		// Unboxed key: stash a FRESH owned temp so the release below can end
+		// it once the helper has probed with it — the boxed branch gets that
+		// from freeLookupBoxCell, and the generic direct-call arg loop would
+		// have, but this lowering intercepts the call before reaching it. Left
+		// alone, `m.get(prefix + name)` stranded one key buffer per lookup on
+		// the single-word natives (#2704).
+		slot, tt, ok, err := b.stashOwnedArgTemp(n.Args[1])
+		if err != nil {
+			return err
+		}
+		if ok {
+			keyTmp, keyTmpType = slot, tt
+		} else if err := b.expr(n.Args[1]); err != nil {
+			return err
+		}
 	}
 	b.emitMapCall("__method_Map_get", 2, kType)
 	optOffset, optSize := usizeOptionBoxLayout(b.ptrW)
@@ -20052,9 +20127,12 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	// so the payload — the map's own value — is untouched; on a miss the slot
 	// holds the None sentinel, which the is_unique gate declines.
 	b.emitFreshBoxFreeSized(optPtrSlot, optSize)
-	// get doesn't retain the key cell — reclaim the transient (the
-	// operand stack is empty here, before the result is pushed).
-	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
+	// get doesn't retain the key — reclaim the transient (the operand stack
+	// is empty here, before the result is pushed), whichever form it took.
+	b.freeLookupBoxCell(keyCell, n.Args[1], kType)
+	if keyTmp >= 0 {
+		b.emitOwnedSlotDrop(keyTmp, keyTmpType)
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	return nil
 }
@@ -20096,7 +20174,7 @@ func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName str
 	// Read-only methods (has / get_or) don't retain the key cell — only
 	// set does, and set never routes here. Reclaim the transient cell.
 	if methodName != "__method_Map_set" {
-		b.freeLookupKeyCell(keyCell, n.Args[1], kType)
+		b.freeLookupBoxCell(keyCell, n.Args[1], kType)
 	}
 	return nil
 }
@@ -20170,7 +20248,7 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 	b.locals[fmt.Sprintf("__del_ok_%d", boolSlot)] = boolSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: boolSlot})
 	// delete doesn't retain the key cell — reclaim the transient.
-	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
+	b.freeLookupBoxCell(keyCell, n.Args[1], kType)
 
 	// Allocate (Map[K,V], bool) tuple: [mapPtr:ptrW | bool:4].
 	// Layout matches tupleElemLayout([(Map[K,V], bool)], ptrW):
@@ -20262,7 +20340,8 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	} else if err := b.expr(n.Args[1]); err != nil {
 		return err
 	}
-	if err := b.boxIntoCell(n.Args[2], vType, "__map_or_box"); err != nil {
+	valCell, err := b.boxIntoCellSlot(n.Args[2], vType, "__map_or_box")
+	if err != nil {
 		return err
 	}
 	b.emitMapCall("__method_Map_get_or", 3, kType)
@@ -20278,11 +20357,23 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	if _, isStr := vType.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 2})
 	}
-	// get_or doesn't retain the key cell — reclaim the transient (the
-	// loaded result value sits underneath; the free ops are balanced).
-	// NB the fallback value cell (__map_or_box) is a separate temporary
-	// that still leaks — same fresh-arg-temporary class as elsewhere.
-	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
+	// get_or retains neither cell it was handed — reclaim both transients
+	// (the loaded result value sits underneath; the free ops are balanced).
+	// The fallback cell is a per-lookup leak on every ABI that boxes: 16 B
+	// on arm64 / wasm for a string V, 8 B on x86-64 for a wide scalar.
+	b.freeLookupBoxCell(keyCell, n.Args[1], kType)
+	if _, isStr := vType.(ast.StringType); isStr {
+		b.freeLookupBoxCell(valCell, n.Args[2], vType)
+	} else {
+		// A wide-scalar fallback cell carries no string to release and is
+		// not the (data, len) shape __fern_cell_free knows — x86-64 has no
+		// such helper at all — so return it at the size it was allocated
+		// with. __free is (base, size) and returns nothing, so this stays
+		// stack-neutral over the loaded result underneath.
+		b.emit(Op{Kind: OpLoadLocal, I32: valCell})
+		b.emit(Op{Kind: OpConstI32, I32: payloadSlotSize(vType, b.ptrW)})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
+	}
 	return nil
 }
 
