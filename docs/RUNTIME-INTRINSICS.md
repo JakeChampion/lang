@@ -97,21 +97,22 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.)
 > `stat` is one body like the rest. arm64 also gained the `__raw_scratch` op and
 > its `__fern_scratch` .bss slot, which the helper hands the kernel to write into.
 >
-> **The array producers left the asm too.** `xs.reverse()` and `xs.concat(ys)`
-> (`asmcore.rt_src_arr_reverse` / `_arr_concat`) are Fern now, over the
-> `__raw_arr_box` + `__raw_array` pair added to the table below. These are the
-> first helpers to move that have nothing to do with syscalls, and they are
-> **arch-independent** — one source, no target parameter, replacing the two
-> hand-asm copies x86-64 and arm64 each carried. That is the shape the rest of
-> the array/map core should follow.
+> **The array producer left the asm too.** `a[start:end]`
+> (`asmcore.rt_src_arr_slice`) is Fern now, over the `__raw_arr_box` +
+> `__raw_array` pair added to the table below. It is the first helper to move
+> that has nothing to do with syscalls, and it is the shape the rest of the
+> array/map core should follow. (`xs.reverse()` and `xs.concat(ys)` moved with
+> it and were later deleted outright — #7451: their lowering intercepts fired
+> only for a program that imports nothing, which E043 rejects, so nothing the
+> compiler accepts could reach them.)
 >
 > Two properties make one `i32[]`-typed body serve every element type. The copy
 > is a raw 8-byte SLOT copy, so a `string[]`'s box pointers ride through
 > untouched; and it is deliberately SHALLOW — no element refcount traffic —
-> which is what the hand-asm did and what typing the parameters `i32[]` keeps
+> which is what the hand-asm did and what typing the parameter `i32[]` keeps
 > the RC insertion agreeing with.
 >
-> `a[start:end]` (`rt_src_arr_slice`) came last and is the one that takes a
+> `a[start:end]` is also the one that takes a
 > target. Its construction-time bounds check (#5419) traps, and "abort" is not
 > a Fern expression — which read as needing a new primitive and did not.
 > `__fern_oob_abort` is only `exit(134)`, so the helper spells the trap

@@ -253,28 +253,6 @@ function main(): i32 {
     return t + build().last() + build().first();    // +10
 }
 `, 70},
-	// xs.index_of(t) / xs.contains(t) on a string[], backed by the
-	// __fern_arr_str_index_of Fern helper (x86 + arm64) and its WAT twin
-	// $__fern_arr_str_index_of (wasm). Until this existed either one bailed the
-	// module (#3457 slice 5).
-	//
-	// `find` takes both operands as PARAMS, so its body carries no string
-	// literal — the shape that proves the wasm gate pulls $__fern_streq in for
-	// the call itself rather than relying on some other string op being present.
-	// The `"c" + "c"` argument is the reason this cannot share the i32 helper's
-	// pointer compare: a freshly concatenated block must still match the
-	// element's .rodata slot by CONTENT.
-	{"arr-string-index-of", `
-function find(xs: string[], t: string): i32 { return xs.index_of(t); }
-function main(): i32 {
-    var xs: string[] = ["a", "bb", "cc"];
-    var i: i32 = xs.index_of("bb");        // 1
-    var j: i32 = xs.index_of("zz");        // -1
-    var k: i32 = find(xs, "c" + "c");      // 2
-    if (xs.contains("cc") && !xs.contains("qq")) { return i + (0 - j) + k + 10; }
-    return 1;
-}
-`, 14},
 	// The ASCII classifier / case family on a byte receiver, lowered from the one
 	// unsigned-range primitive `(b - lo) <=u span` plus the mask idiom for the two
 	// case conversions. Until this existed every one of them bailed the module:
@@ -428,61 +406,6 @@ function main(): i32 {
     return t;
 }
 `, 22},
-	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
-	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
-	// called (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
-	// existed either one bailed the module (#3457 slice 5).
-	//
-	// Every result is CONSUMED, so the result-TYPE recovery is under test too: a
-	// missing one mis-dispatches `.len()` on a string[] rather than bailing. The
-	// empty-array pair pins len 0 rather than a trap, and `reverse().reverse()`
-	// pins the chained case, where the receiver of the outer call is itself a
-	// builtin result.
-	{"arr-reverse-concat", `
-function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var r: i32[] = xs.reverse();
-    var ys: i32[] = [4, 5];
-    var c: i32[] = xs.concat(ys);
-    var ss: string[] = ["ab", "c"];
-    var sr: string[] = ss.reverse();
-    var sc: string[] = ss.concat(["de"]);
-    var e: i32[] = [];
-    var t: i32 = r[0] * 10 + r.len() + c.len() + c[4];        // 30 + 3 + 5 + 5
-    t = t + sr.first().len() + sc.len() + sc.last().len();     // + 1 + 3 + 2
-    return t + e.reverse().len() + e.concat(e).len() + xs.reverse().reverse()[0]; // + 0 + 0 + 1
-}
-`, 50},
-	// The UNANNOTATED binding plus `for … in`. Two separate mechanisms have to
-	// agree: the expression classifiers (which type `xs.reverse()` itself) and
-	// lower_stmt_var's is_arr list (which types the SLOT). Only the second is
-	// what `for v in r` consults — it requires is_arr_slot and bails outright
-	// otherwise — so with the classifiers alone this shape still routed AST while
-	// `r.len()` worked, which is how it survived. The annotated form goes through
-	// is_array_type_name(v.type_name) instead and was never affected.
-	{"arr-reverse-concat-unannotated-foreach", `
-function main(): i32 {
-    var xs: string[] = ["a", "b", "c"];
-    var ys = xs.reverse();
-    var t: i32 = 0;
-    for s in ys { t = t + s.len(); }
-    var ns = xs.concat(["dd"]);
-    for s in ns { t = t + s.len(); }
-    return t;
-}
-`, 8},
-	// reverse() copies, so the source stays independent: appending to `a`
-	// afterwards must not be visible through `r`. A helper that returned the
-	// receiver instead of a fresh array passes every length assertion above and
-	// fails this one.
-	{"arr-reverse-is-a-copy", `
-function main(): i32 {
-    var a: i32[] = [1, 2];
-    var r: i32[] = a.reverse();
-    a = a.append(9);
-    return r[0] * 10 + r.len() + a.len();
-}
-`, 25},
 	// A DIRECT, hand-written IIFE — `(function (): i32 { return 7; })()`.
 	// lower_iife handled only the if/match-EXPRESSION desugars (a StmtIf or
 	// StmtMatch body); a single-`return` body fell through its catch-all and

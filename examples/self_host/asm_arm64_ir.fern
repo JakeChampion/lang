@@ -799,22 +799,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
             s = emit_str_op(o, s);
-        } else if (o.kind_tag == 214) {  // arr_reverse
-            // [arr] IS param[0]; call the Fern-compiled __fn___fern_arr_reverse
-            // (asmcore.rt_src_arr_reverse, #2649) via the stack ABI.
-            s = s.mark_heap();
-            s = s.mark_arr_reverse();
-            s = s.write("    bl __fn___fern_arr_reverse\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 215) {  // arr_concat
-            // operand stack [A, B] (B top); the stack ABI wants param[0]=A on
-            // top, so re-push the two popped operands in reverse.
-            s = s.mark_heap();
-            s = s.mark_arr_concat();
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_concat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 96) {  // arr_slice
             // operand stack [arr, start, end] (end top); the stack ABI wants
             // param[0]=arr on top, so re-push the three popped operands in
-            // reverse — the three-operand form of the arr_concat shuffle above.
+            // reverse.
             s = s.mark_heap();
             s = s.mark_arr_slice();
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_slice\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
@@ -5786,14 +5774,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    bl __fern_large_push\n");
         s = s.write("    b .Lapo_ret\n");
     }
-    // All three array helpers — __fern_arr_concat, __fern_arr_reverse and
-    // __fern_arr_slice — are Fern runtime functions now (#2649):
-    // asmcore.rt_src_arr_concat / rt_src_arr_reverse / rt_src_arr_slice, emitted
-    // need-gated in the migrated-helpers section over the __raw_arr_box +
-    // __raw_array pair. reverse / concat share their source with x86-64 verbatim
-    // — raw 8-byte slot copies with nothing target-specific in them, so there is
-    // no `tgt` to pass. arr_slice takes one, and only because its bounds trap
-    // (#5419) is exit(134) through __syscall3 and the exit number is per-target.
+    // __fern_arr_slice is a Fern runtime function now (#2649):
+    // asmcore.rt_src_arr_slice, emitted need-gated in the migrated-helpers
+    // section over the __raw_arr_box + __raw_array pair. It takes a `tgt`, and
+    // only because its bounds trap (#5419) is exit(134) through __syscall3 and
+    // the exit number is per-target.
     // __fern_arr_str_join is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_str_join. It calls str_concat (via `+`); the str_concat
     // + heap deps are declared by mark_arr_str_join so their bodies are present.
@@ -5876,17 +5861,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("random_bytes")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s.struct_decls, s);
     }
-    // xs.reverse() / xs.concat(ys) — the same source x86-64 emits, no `tgt`:
-    // allocate the fresh box with __raw_arr_box, copy the 8-byte slots, hand it
-    // back with __raw_array.
-    if (s.has_need("arr_reverse")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_reverse(), s.struct_decls, s);
-    }
-    if (s.has_need("arr_concat")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s.struct_decls, s);
-    }
-    // a[start:end] — takes `tgt`, unlike its two siblings: its bounds trap is
-    // exit(134) through __syscall3, and Darwin's exit is 1 where Linux's is 93.
+    // a[start:end] — takes `tgt`: its bounds trap is exit(134) through
+    // __syscall3, and Darwin's exit is 1 where Linux's is 93.
     if (s.has_need("arr_slice")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(tgt), s.struct_decls, s);
     }
