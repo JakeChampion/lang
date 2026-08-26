@@ -5,8 +5,6 @@
 package e2eharness
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -18,14 +16,6 @@ func WriteSelfHostAsmProject(t *testing.T) string {
 	// loader driver dispatches to either backend). Consumers that build
 	// asm_load_run through this helper need it in the temp dir for modload to
 	// resolve; consumers building asm.fern (x86) just ignore the extra source.
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern")
 	return dir
 }
