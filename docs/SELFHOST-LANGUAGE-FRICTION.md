@@ -493,16 +493,33 @@ exposed 22 inner loops the first pass could not see — 21 of them convertible, 
 16% bonus on that slice. Re-run the pass until the per-array counts stop moving
 rather than assuming one sweep is complete.
 
-**The binary cost is real, and the per-loop figure is not a unit to plan with.**
-Same tree, same `bin/fern`, `irlower.fern` the only variable: 35,437,500 →
-37,854,140 bytes, **+6.8%** — past `ci-check-driver-sizes`' 5% advisory
-tolerance, as the sixth slice warned the next conversion would be. But the cost
-is strongly sublinear, which the sixth slice's flat per-loop framing does not
-predict: converting only the 42 `t.elements` loops already costs +3.8%
-(31.6 KiB/loop), and the 89 loops after them add 11.6 KiB/loop. So most of a
-slice's growth is a fixed component that the first loops pay, and multiplying a
-per-loop figure by the ~2,400 loops left overestimates by a wide margin. Measure
-per slice; do not budget per loop, in either direction.
+**The binary cost is real, and nothing yet predicts it — loop count least of
+all.** This slice adds 2,416,640 bytes: **+6.8%** measured against `fern.fern`,
+**+9.2%** against `irlower_run.fern`, same commit, same absolute delta. Quote the
+second. `fern.fern` is the largest and least sensitive driver, so measuring a
+single module's change against it understates by whatever else is linked in; the
+driver dominated by the module you changed is the honest denominator.
+
+Measured across the whole migration by building `irlower_run.fern` at each slice
+boundary, the per-loop cost varies by **two orders of magnitude**:
+
+| slice | loops | delta | per loop |
+|---|---|---|---|
+| `stmts` (#7431) | 192 | +851,968 | 4.3 KiB |
+| `m.arms` + `c.args` (#7437, #7450) | ~261 | +4,882,432 | 18.3 KiB |
+| `funcs` (#7454) | 63 | +12,288 | **0.2 KiB** |
+| this slice (#7514) | 131 | +2,416,640 | 18.0 KiB |
+
+`funcs` converted 63 loops for twelve kilobytes; this slice converted 131 for two
+and a half megabytes. Same rewrite, same file, same transformer. So "the real
+per-loop price of the construct" (the sixth slice) and "sublinear, measure per
+slice" (this one, before the table above existed) are both averaging over a
+variable neither identified. **Do not budget the remaining ~2,300 loops from any
+of these numbers.** Finding what actually varies — cold versus hot code, iterand
+shape, an interaction with monomorphisation — is worth more than another
+per-slice measurement, because it would let the tail be ordered cheapest-first
+instead of merely costed. Tracked on #7519, together with the 10.89 MB of growth
+in the same window that this migration does *not* account for.
 
 **What the bucket-A share actually predicts.** Of the 118 `t.elements` /
 `structs` / `sl.field_values` loops, 110 converted and 8 held back, every one of
