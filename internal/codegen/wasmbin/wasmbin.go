@@ -1523,6 +1523,11 @@ func localValtypes(fn *ir.Func, funcByName map[string]*ir.Func) ([]byte, error) 
 			out = append(out, encode.ValtypeI32)
 		}
 	}
+	if fnInlinesRcOps(fn) {
+		for i := 0; i < rcOpScratchSlots; i++ {
+			out = append(out, encode.ValtypeI32)
+		}
+	}
 	return out, nil
 }
 
@@ -1546,6 +1551,33 @@ const callDynScratchSlots = 1
 func fnNeedsCallDynScratch(fn *ir.Func) bool {
 	for _, op := range fn.Ops {
 		if op.Kind == ir.OpCallDyn {
+			return true
+		}
+	}
+	return false
+}
+
+// rcOpScratchSlots is the count of extra wasm locals appended when a function
+// inlines the rc ops (#4402 opt 2b): +0 the pointer, +1 the rc-word address,
+// +2 the rc word itself.
+const rcOpScratchSlots = 3
+
+// rcInlineMaxOps is the per-function IR-op ceiling for the inline rc fast
+// path. Above it the ops fall back to the behaviour-identical runtime helper
+// call, so one enormous function cannot balloon the code section. Matches the
+// native backends' threshold; a var so the test can reassign it.
+var rcInlineMaxOps = 1_000_000
+
+// fnInlinesRcOps reports whether fn's rc ops lower inline rather than as calls
+// to __fern_rc_inc / _dec / _is_unique. localValtypes and emitBody must agree,
+// so both ask here.
+func fnInlinesRcOps(fn *ir.Func) bool {
+	if len(fn.Ops) > rcInlineMaxOps {
+		return false
+	}
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
 			return true
 		}
 	}
@@ -1646,6 +1678,16 @@ type emitCtx struct {
 	// used by OpCallDyn to stash the vtable address while it loads
 	// the function-table index of the dispatched method slot.
 	callDynScratchIdx uint32
+	// rcOpScratchBase is the wasm-slot index of the first of three
+	// scratch i32 locals the inline rc ops use (#4402 opt 2b): +0 ptr,
+	// +1 rc-word address, +2 rc word. Meaningful only when rcInline is
+	// set — slot 0 is a legitimate base for a function with no params
+	// or locals, so the flag carries the decision, not the index.
+	rcOpScratchBase uint32
+	// rcInline mirrors fnInlinesRcOps(fn) for the function being walked:
+	// true lowers OpRcInc / OpRcDec / OpRcIsUnique inline, false leaves
+	// them on the runtime-helper call.
+	rcInline bool
 	// internVtable returns the data-segment address of the (trait,
 	// concrete) vtable, interning per pair. Used by OpConstVtable.
 	internVtable func(trait, concrete string) (int, error)
@@ -1777,6 +1819,14 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		callDynBase += callIndirectScratchSlots
 	}
 	ctx.callDynScratchIdx = callDynBase
+	// rc-op scratch sits AFTER callDyn — last, so adding it shifts nothing.
+	ctx.rcInline = fnInlinesRcOps(fn)
+	if ctx.rcInline {
+		ctx.rcOpScratchBase = callDynBase
+		if fnNeedsCallDynScratch(fn) {
+			ctx.rcOpScratchBase += callDynScratchSlots
+		}
+	}
 	defer func() {
 		ctx.fn = nil
 		ctx.strPairScratchBase = 0
@@ -1785,6 +1835,8 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		ctx.closureSiteCursor = 0
 		ctx.callIndirectScratchIdx = 0
 		ctx.callDynScratchIdx = 0
+		ctx.rcOpScratchBase = 0
+		ctx.rcInline = false
 	}()
 
 	for opIdx, op := range fn.Ops {
@@ -2290,14 +2342,24 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return memory.InstI32Store8(body, 0, 0), nil
 
 	// ---- Calls (slice 5) ----
-	case ir.OpCallDirect, ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
+	case ir.OpRcInc, ir.OpRcDec, ir.OpRcIsUnique:
+		// #4402 opt 2b: the dedicated rc ops lower to an inline fast path
+		// — the null / low-address / static-sentinel guards and the rc
+		// RMW without a call. Semantics mirror buildRcIncBody /
+		// buildRcDecBody / buildRcIsUniqueBody exactly, including
+		// rc_dec's underflow-counter bump. Above rcInlineMaxOps the op
+		// stays on the behaviour-identical helper call below.
+		if ctx.rcInline {
+			return emitInlineRcOp(body, op.Kind, ctx.rcOpScratchBase), nil
+		}
+		fallthrough
+	case ir.OpCallDirect:
 		// Source-language built-ins (e.g. `print(s)`) get lowered
 		// to OpCallDirect with the source name. Map those names
 		// onto the synthetic runtime helpers that implement them.
 		// User functions and helpers without an alias map 1:1.
-		// The dedicated rc ops (#4402 opt 2) carry the helper name
-		// in Str and lower to the same plain call; opt 2b replaces
-		// this shared path with inline fast-path bodies.
+		// The rc ops carry the helper name in Str and reach here
+		// only when the inline path above declined.
 		name := callDirectAlias(op.Str)
 		idx, ok := ctx.funcIdx[name]
 		if !ok {
