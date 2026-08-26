@@ -1,6 +1,7 @@
 package lint_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -145,4 +146,86 @@ func lintWith(t *testing.T, cfg *lint.Config, src string) []lint.Finding {
 		t.Fatal(err)
 	}
 	return fs
+}
+
+// A finding carries its measurement, so a gate comparing numbers reads
+// Value instead of parsing the score back out of the message.
+func TestFindingCarriesItsScore(t *testing.T) {
+	cfg := lint.NewConfig()
+	if err := cfg.SetOption("cyclomatic-complexity.max", "2"); err != nil {
+		t.Fatal(err)
+	}
+	fs := lintWith(t, cfg, noisyFn)
+	if len(fs) != 1 {
+		t.Fatalf("got %d findings, want 1", len(fs))
+	}
+	if fs[0].Value != 3 {
+		t.Errorf("Value = %d, want the score 3", fs[0].Value)
+	}
+	if !strings.Contains(fs[0].Msg, "complexity of 3") {
+		t.Errorf("message %q disagrees with Value %d", fs[0].Msg, fs[0].Value)
+	}
+}
+
+// The repo gate ratchets on SUMMED DISTANCE over the limit, not on a count
+// of functions over it. This pins why: splitting one big function into
+// several smaller ones RAISES the count while LOWERING the distance, so a
+// count-based gate would report the most valuable refactor available as a
+// regression. If someone switches the gate back to counting, this fails.
+func TestSplittingImprovesExcessButNotCount(t *testing.T) {
+	const limit = 2
+
+	// One function with six forks.
+	whole := `function whole(n: i32): i32 {
+    if (n == 1) { return 1; }
+    if (n == 2) { return 2; }
+    if (n == 3) { return 3; }
+    if (n == 4) { return 4; }
+    if (n == 5) { return 5; }
+    if (n == 6) { return 6; }
+    return 0;
+}
+`
+	// The same work as three functions of two forks each.
+	split := `function part_a(n: i32): i32 {
+    if (n == 1) { return 1; }
+    if (n == 2) { return 2; }
+    return 0;
+}
+function part_b(n: i32): i32 {
+    if (n == 3) { return 3; }
+    if (n == 4) { return 4; }
+    return 0;
+}
+function part_c(n: i32): i32 {
+    if (n == 5) { return 5; }
+    if (n == 6) { return 6; }
+    return 0;
+}
+`
+	cfg := lint.NewConfig()
+	if err := cfg.SetOption("cyclomatic-complexity.max", strconv.Itoa(limit)); err != nil {
+		t.Fatal(err)
+	}
+
+	countWhole, excessWhole := countAndExcess(lintWith(t, cfg, whole), limit)
+	countSplit, excessSplit := countAndExcess(lintWith(t, cfg, split), limit)
+
+	if countSplit <= countWhole {
+		t.Fatalf("this test assumes splitting raises the count: whole=%d split=%d", countWhole, countSplit)
+	}
+	if excessSplit >= excessWhole {
+		t.Errorf("summed excess must FALL when a function is split: whole=%d split=%d", excessWhole, excessSplit)
+	}
+}
+
+func countAndExcess(fs []lint.Finding, limit int) (count, excess int) {
+	for _, f := range fs {
+		if f.Rule == lint.DirectiveRule {
+			continue
+		}
+		count++
+		excess += f.Value - limit
+	}
+	return count, excess
 }

@@ -69,7 +69,8 @@ func (c *Complexity) Check(p *Pass) {
 		}
 		p.Report(fn.Pos(),
 			fmt.Sprintf("function `%s` has a cyclomatic complexity of %d, over the limit of %d", DisplayName(fn), score, c.Max),
-			"split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`")
+			"split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`",
+			score)
 	}
 }
 

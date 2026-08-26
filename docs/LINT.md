@@ -120,8 +120,8 @@ switch off.
 The self-host compiler and the stdlib are held to `DefaultMaxComplexity`
 via a RATCHET rather than a hard limit, because 1128 of their 7724 functions
 are over it today and a limit nobody can meet is a limit nobody keeps. Two
-numbers per tree — the highest complexity any function reaches, and how many
-exceed the limit — and the test fails when either MOVES:
+numbers per tree — the highest complexity any function reaches, and the total
+distance over the limit — and the test fails when either MOVES:
 
 - **up**, because a change made the tree worse. Split the new function, or
   annotate it.
@@ -131,25 +131,42 @@ exceed the limit — and the test fails when either MOVES:
 So the gate is real from the day it lands — nothing may regress — and
 cannot quietly go slack. Measured 2026-08-26:
 
-| Tree | Ceiling | Over the limit |
+| Tree | Ceiling | Total excess |
 |---|---|---|
-| `examples/self_host` | 472 (`lower_call_method`, a 1752-line function) | 1035 of 5601 |
-| `internal/stdlib/std` | 68 (`_wb_break`) | 93 of 2123 |
+| `examples/self_host` | 472 (`lower_call_method`, a 1752-line function) | 19847 across 1035 functions |
+| `internal/stdlib/std` | 68 (`_wb_break`) | 780 across 93 functions |
+
+### Why summed distance, and not a count
+
+Counting the functions over the limit is the obvious metric and the wrong
+one. Splitting a 472-fork monster into ten readable 40-fork helpers takes
+that count from **1 to 10** — so a count-based gate reports the single most
+valuable refactor available as a regression, and blocks it.
+
+Summed distance calls the same split what it is: **462 down to 300**. It
+keeps falling as the pieces get simpler, all the way to zero, so it is
+monotone in the direction the campaign actually moves.
+`TestSplittingImprovesExcessButNotCount` pins that, and fails if anyone
+switches the gate back to counting.
+
+The ceiling covers what summed distance is weak at — it stops one new
+monster — so the pair between them resists both failure modes.
 
 Per-function exceptions go on the function, as an `allow` comment with a
 line saying why. They do not go in that table: an exception is reviewable
 where it applies and invisible in a list.
 
 The two numbers treat an `allow` differently, on purpose. It removes a
-function from the BUDGET — that is what the annotation asks for — but not
+function from the EXCESS — that is what the annotation asks for — but not
 from the CEILING, because "this one may exceed the limit" is not "this one
 may be worse than anything here has ever been". So a new 500-fork function
 fails the gate however it is annotated.
 
-The count comes from `lint.File` rather than from `lint.Score` directly, so
+The excess comes from `lint.File` rather than from `lint.Score` directly, so
 an `allow` comment in a Fern source exempts a function from the gate exactly
 as it does from the command line — one suppression mechanism, not a second
-one only the gate honours.
+one only the gate honours. Each finding carries its score in `Finding.Value`,
+so the gate compares numbers instead of parsing them back out of prose.
 
 ## Not here yet
 
