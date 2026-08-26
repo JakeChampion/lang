@@ -1695,8 +1695,11 @@ func (p *parser) looksLikeReceiverClause() bool {
 		return false
 	}
 	// Skip the type — accept any sequence of tokens until matching `)`.
+	// Bounded at the EOF sentinel, not at len: this scanner moves the
+	// cursor by hand, so without that bound an unterminated receiver
+	// clause (`function(A:`) walks off the end and the read below panics.
 	depth := 0
-	for p.i < len(p.tokens) {
+	for p.i < len(p.tokens)-1 {
 		t := p.tokens[p.i]
 		if t.Kind == lexer.Punct && t.Text == "(" {
 			depth++

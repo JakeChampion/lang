@@ -3889,3 +3889,23 @@ function f(w: Nest): i32 {
 		t.Errorf("inner arm = %q/%v, want the payload-less variant Err2", inner.Arms[0].VariantName, inner.Arms[0].Bindings)
 	}
 }
+
+// TestUnterminatedReceiverClauseDoesNotPanic covers the receiver-clause
+// lookahead running off the end of the token stream. `looksLikeReceiverClause`
+// walks the cursor by hand to skip the receiver's type, and its scan was
+// bounded by len(tokens) rather than by the EOF sentinel every other cursor
+// motion respects — so a clause with no closing `)` left the cursor one past
+// the end and the next read panicked. Found by FuzzParse / FuzzCheck, which
+// had never run in CI before the nightly lane.
+func TestUnterminatedReceiverClauseDoesNotPanic(t *testing.T) {
+	for _, src := range []string{
+		"function(A:",
+		"function (A:0",
+		"function(own a: T",
+		"function(a: Box[",
+	} {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("expected a parse error for %q", src)
+		}
+	}
+}
