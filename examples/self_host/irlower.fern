@@ -9202,6 +9202,23 @@ function lower_variant_ctor_args(args: parser.Expr[], decl_idx: i32, selfrebind:
                 _ => {}
             }
         }
+        // A STRUCT-BOX payload is a second owner of the box just as an array
+        // payload is of its buffer, and was excluded for no reason beyond the array
+        // predicate above naming only arrays — the same array-only gating
+        // lower_opt_make_payload had before #7528, one container over. SKIPPED at a
+        // move site: the construction takes over the local's reference there, so the
+        // inc would be paid against an elided sweep dec and the box would leak.
+        // That pairing is native's `needsRcIncOnAlias && !moveSites`.
+        if (variant_counted_struct_payload(args[i], fty, st.structs)) {
+            match (args[i]) {
+                parser.ExprIdent(psid) => {
+                    if (!st.moves_local_at(psid.name, psid.line, psid.col)) {
+                        st = st.retain_tos("variant-struct-payload");
+                    }
+                },
+                _ => {}
+            }
+        }
         // An ENUM payload (`Cons(n, xs)`) is a second owner of whatever box it
         // stores, so it takes the same dup — with the same exemption: a FRESH
         // variant ctor is sole-owned at rc 1 and needs none. Without it a bare
@@ -9229,6 +9246,26 @@ function lower_variant_ctor_args(args: parser.Expr[], decl_idx: i32, selfrebind:
         i = i + 1;
     }
     return st;
+}
+
+// variant_counted_struct_payload: `arg` is a bare ident stored into a variant
+// payload field of type `fty`, and that field is one emit_enum_variant_payload_drops
+// actually RELEASES (its deep-drop-ok and scalar-only arms). Both the construction
+// retain and the counted credit ask exactly this, in those words, because a credit
+// the retain does not honour is an over-release rather than a missed optimisation —
+// the same rule struct_routes_field_reclaim_at states for the string-field store.
+//
+// A bare ident of struct type always names a box (local or param). If the credit
+// then declines the name on one of its escape gates, the retain is unmatched and
+// the box LEAKS — the safe-leak side of the invariant, never a dangle.
+function variant_counted_struct_payload(arg: parser.Expr, fty: string, structs: parser.StructDecl[]): boolean {
+    if (!decl_is_struct(structs, fty)) { return false; }
+    if (!nested_field_deep_drop_ok(structs, fty) && !struct_lit_all_scalar(structs, fty)) { return false; }
+    match (arg) {
+        parser.ExprIdent(_) => { return true; },
+        _ => {}
+    }
+    return false;
 }
 
 // opt_payload_struct_slot: slot `i` holds a STRUCT box whose type routes a field
@@ -23180,7 +23217,7 @@ function struct_lit_all_enum_fields_fresh(structs: parser.StructDecl[], slit: pa
     while (i < slit.field_names.len()) {
         var ft: string = decl_field_type(structs, slit.type_name, slit.field_names[i]);
         if (decl_is_enum(structs, ft)) {
-            if (fresh_rcpayload_enum_init(slit.field_values[i], structs, [], []) != ft) { return false; }
+            if (fresh_rcpayload_enum_init(slit.field_values[i], structs, [], [], false) != ft) { return false; }
         }
         i = i + 1;
     }
@@ -25495,7 +25532,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // emit_enum_variant_drops can dispatch the right variant deep-drop.
                 var rcenum_owner: string = "";
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum) {
-                    var eo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites);
+                    var eo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites, false);
                     if (eo != "") {
                         if (!body_has_top_level_match(body, v.name) && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
                     }
@@ -28819,7 +28856,7 @@ function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string,
     match (st) {
         parser.StmtAssign(asn) => {
             if (asn.target != name) { return true; }
-            var o: string = fresh_rcpayload_enum_init(asn.value, structs, str_fresh, []);
+            var o: string = fresh_rcpayload_enum_init(asn.value, structs, str_fresh, [], false);
             if (o == "") { o = rcenum_call_init_owner(asn.value, opt_fresh_ret); }
             return o != "" && o == owner;
         },
@@ -28910,7 +28947,7 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 // a whole-program-proven fresh rc-enum ctor fn ("RCE:<name>|<Enum>"
                 // in opt_fresh_ret — every return a fresh direct construction, so
                 // the call result is a sole-owned chain exactly like an inline ctor).
-                var rceo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites);
+                var rceo: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites, true);
                 if (rceo == "") { rceo = rcenum_call_init_owner(v.init, opt_fresh_ret); }
                 // A REBOUND name is admitted when every assignment constructs a
                 // fresh chain of the SAME enum (#6127) — the rebind then routes
@@ -32861,10 +32898,13 @@ function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]
 // The field-move detectors (moves_fields_* / optstruct_body_moves_field) cannot
 // see this shape — a bare ident is a leaf there. A struct-lit BASE
 // (`T { ...name, … }`) is not a sink either — see the StructLit arm.
-function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[], apretain: string[]): boolean {
+function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: parser.StructDecl[], apretain: string[], msites: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var sink: boolean = false;
+            // The variant being constructed, "" if this is not a ctor call: its
+            // payload FIELD TYPES are what decide whether an argument was retained.
+            var vsink: string = "";
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     if ((fa.field == "append" && c.args.len() == 1) || (fa.field == "with" && c.args.len() == 2)) { sink = true; }
@@ -32878,15 +32918,17 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
                     // is also a latent OVER-release rather than a mere inconsistency —
                     // the moment the enum earns a payload drop, the credited `p` and
                     // the enum both release the same box.
-                    if (variant_enum_owner(structs, fa.field).len() > 0) { sink = true; }
-                    if (struct_box_sink_stored_expr(fa.obj, name, structs, apretain)) { return true; }
+                    if (variant_enum_owner(structs, fa.field).len() > 0) { sink = true; vsink = fa.field; }
+                    if (struct_box_sink_stored_expr(fa.obj, name, structs, apretain, msites)) { return true; }
                 },
                 parser.ExprIdent(cid) => {
-                    if (variant_enum_owner(structs, cid.name).len() > 0) { sink = true; }
+                    if (variant_enum_owner(structs, cid.name).len() > 0) { sink = true; vsink = cid.name; }
                 },
                 _ => {}
             }
-            for arg in c.args {
+            var ci: i32 = 0;
+            while (ci < c.args.len()) {
+                var arg: parser.Expr = c.args[ci];
                 if (sink) {
                     match (arg) {
                         parser.ExprIdent(aid) => {
@@ -32898,7 +32940,19 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
                             // the deep work once. Every unstamped sink — an append into
                             // an uncredited container, `with`, an array or tuple
                             // element, a variant payload — still refuses.
+                            // A variant-ctor payload the construction RETAINED is
+                            // the same counted share: lower_variant_ctor_args incs a
+                            // bare-ident struct payload of a releasable field type,
+                            // skipping only a MOVE site — and at a move site the enum
+                            // is sole owner, so the source must still be refused. Both
+                            // releases are rc-gated (emit_enum_variant_payload_drops
+                            // walks the payload under __fern_rc_is_unique), so the two
+                            // owners cannot both do the deep work.
+                            var vcounted: boolean = vsink.len() > 0
+                                && variant_counted_struct_payload(arg, decl_field_type_at(structs, vsink, ci), structs)
+                                && !moved_ident_at(arg, msites);
                             if (aid.name == name
+                                && !vcounted
                                 && !reclaim_has(apretain, "APOWNED:", util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col))) {
                                 return true;
                             }
@@ -32906,7 +32960,8 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
                         _ => {}
                     }
                 }
-                if (struct_box_sink_stored_expr(arg, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_expr(arg, name, structs, apretain, msites)) { return true; }
+                ci = ci + 1;
             }
             return false;
         },
@@ -32921,7 +32976,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
                         if (eid.name == name
                             && !reclaim_has(apretain, "APOWNED:", util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col))) { return true; }
                     },
-                    _ => { if (struct_box_sink_stored_expr(a.elements[i], name, structs, apretain)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(a.elements[i], name, structs, apretain, msites)) { return true; } }
                 }
                 i = i + 1;
             }
@@ -32931,7 +32986,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             for el in t.elements {
                 match (el) {
                     parser.ExprIdent(eid) => { if (eid.name == name) { return true; } },
-                    _ => { if (struct_box_sink_stored_expr(el, name, structs, apretain)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(el, name, structs, apretain, msites)) { return true; } }
                 }
             }
             return false;
@@ -32945,7 +33000,7 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             if (sl.has_base) {
                 match (sl.base) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (struct_box_sink_stored_expr(sl.base, name, structs, apretain)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(sl.base, name, structs, apretain, msites)) { return true; } }
                 }
             }
             // A bare-ident FIELD VALUE is a COUNTED share: the nested-struct and
@@ -32955,51 +33010,51 @@ function struct_box_sink_stored_expr(e: parser.Expr, name: string, structs: pars
             for fv in sl.field_values {
                 match (fv) {
                     parser.ExprIdent(_) => {},
-                    _ => { if (struct_box_sink_stored_expr(fv, name, structs, apretain)) { return true; } }
+                    _ => { if (struct_box_sink_stored_expr(fv, name, structs, apretain, msites)) { return true; } }
                 }
             }
             return false;
         },
-        parser.ExprBinary(b) => { return struct_box_sink_stored_expr(b.left, name, structs, apretain) || struct_box_sink_stored_expr(b.right, name, structs, apretain); },
-        parser.ExprUnary(u) => { return struct_box_sink_stored_expr(u.operand, name, structs, apretain); },
-        parser.ExprIndex(ix) => { return struct_box_sink_stored_expr(ix.array, name, structs, apretain) || struct_box_sink_stored_expr(ix.index, name, structs, apretain); },
-        parser.ExprFieldAccess(fa2) => { return struct_box_sink_stored_expr(fa2.obj, name, structs, apretain); },
-        parser.ExprLambda(lm) => { return struct_box_sink_stored_stmts(lm.body, name, structs, apretain); },
+        parser.ExprBinary(b) => { return struct_box_sink_stored_expr(b.left, name, structs, apretain, msites) || struct_box_sink_stored_expr(b.right, name, structs, apretain, msites); },
+        parser.ExprUnary(u) => { return struct_box_sink_stored_expr(u.operand, name, structs, apretain, msites); },
+        parser.ExprIndex(ix) => { return struct_box_sink_stored_expr(ix.array, name, structs, apretain, msites) || struct_box_sink_stored_expr(ix.index, name, structs, apretain, msites); },
+        parser.ExprFieldAccess(fa2) => { return struct_box_sink_stored_expr(fa2.obj, name, structs, apretain, msites); },
+        parser.ExprLambda(lm) => { return struct_box_sink_stored_stmts(lm.body, name, structs, apretain, msites); },
         _ => { return false; }
     }
     return false;
 }
 
-function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], apretain: string[]): boolean {
+function struct_box_sink_stored_stmts(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], apretain: string[], msites: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs, apretain)) { return true; } },
-            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs, apretain)) { return true; } },
-            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs, apretain)) { return true; } },
-            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs, apretain)) { return true; } },
+            parser.StmtVar(v) => { if (struct_box_sink_stored_expr(v.init, name, structs, apretain, msites)) { return true; } },
+            parser.StmtAssign(a) => { if (struct_box_sink_stored_expr(a.value, name, structs, apretain, msites)) { return true; } },
+            parser.StmtReturn(r) => { if (struct_box_sink_stored_expr(r.value, name, structs, apretain, msites)) { return true; } },
+            parser.StmtExpr(e) => { if (struct_box_sink_stored_expr(e.value, name, structs, apretain, msites)) { return true; } },
             parser.StmtIf(f) => {
-                if (struct_box_sink_stored_expr(f.cond, name, structs, apretain)) { return true; }
-                if (struct_box_sink_stored_stmts(f.then_body, name, structs, apretain)) { return true; }
-                if (struct_box_sink_stored_stmts(f.else_body, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_expr(f.cond, name, structs, apretain, msites)) { return true; }
+                if (struct_box_sink_stored_stmts(f.then_body, name, structs, apretain, msites)) { return true; }
+                if (struct_box_sink_stored_stmts(f.else_body, name, structs, apretain, msites)) { return true; }
             },
             parser.StmtWhile(w) => {
-                if (struct_box_sink_stored_expr(w.cond, name, structs, apretain)) { return true; }
-                if (struct_box_sink_stored_stmts(w.body, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_expr(w.cond, name, structs, apretain, msites)) { return true; }
+                if (struct_box_sink_stored_stmts(w.body, name, structs, apretain, msites)) { return true; }
             },
             parser.StmtFor(fo) => {
-                if (struct_box_sink_stored_expr(fo.iter, name, structs, apretain)) { return true; }
-                if (struct_box_sink_stored_stmts(fo.body, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_expr(fo.iter, name, structs, apretain, msites)) { return true; }
+                if (struct_box_sink_stored_stmts(fo.body, name, structs, apretain, msites)) { return true; }
             },
             parser.StmtMatch(m) => {
-                if (struct_box_sink_stored_expr(m.scrutinee, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_expr(m.scrutinee, name, structs, apretain, msites)) { return true; }
                 for arm in m.arms {
-                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs, apretain)) { return true; }
-                    if (struct_box_sink_stored_stmts(arm.body, name, structs, apretain)) { return true; }
+                    if (arm.has_guard && struct_box_sink_stored_expr(arm.guard, name, structs, apretain, msites)) { return true; }
+                    if (struct_box_sink_stored_stmts(arm.body, name, structs, apretain, msites)) { return true; }
                 }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                if (struct_box_sink_stored_stmts(one, name, structs, apretain)) { return true; }
+                if (struct_box_sink_stored_stmts(one, name, structs, apretain, msites)) { return true; }
             },
             _ => {}
         }
@@ -33050,6 +33105,33 @@ function struct_counted_share_expr(e: parser.Expr, name: string, structs: parser
                 match (c.args[0]) {
                     parser.ExprIdent(uid) => { if (uid.name == name) { return true; } },
                     _ => {}
+                }
+            }
+            // `A(name)` / `E.A(name)` — a variant payload lower_variant_ctor_args
+            // retained. Without this the source's sweep walks its fields STATICALLY
+            // while the enum's walk is rc-gated, so which of the two frees the
+            // buffers depends on which sweep runs first: measured as exit 99 on a
+            // live payload, with allocs == frees at live_bytes 0 and only
+            // __rc_underflow_count() dissenting. Gating both makes the order
+            // irrelevant. No move test: a MOVED payload never reaches here, because
+            // struct_box_sink_stored refuses that name its credit outright.
+            var csv: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cvid) => { if (variant_enum_owner(structs, cvid.name).len() > 0) { csv = cvid.name; } },
+                parser.ExprFieldAccess(cvfa) => { if (variant_enum_owner(structs, cvfa.field).len() > 0) { csv = cvfa.field; } },
+                _ => {}
+            }
+            if (csv.len() > 0) {
+                var cvi: i32 = 0;
+                while (cvi < c.args.len()) {
+                    match (c.args[cvi]) {
+                        parser.ExprIdent(cvaid) => {
+                            if (cvaid.name == name
+                                && variant_counted_struct_payload(c.args[cvi], decl_field_type_at(structs, csv, cvi), structs)) { return true; }
+                        },
+                        _ => {}
+                    }
+                    cvi = cvi + 1;
                 }
             }
             for arg in c.args { if (struct_counted_share_expr(arg, name, structs)) { return true; } }
@@ -33974,7 +34056,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // is an INC-ing sink there and does not taint its source.
         if (plan_on) {
             st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
-                && !struct_box_sink_stored_stmts(body, fnm, structs, asrows);
+                && !struct_box_sink_stored_stmts(body, fnm, structs, asrows, msites);
         }
         else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
         // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
@@ -37274,7 +37356,7 @@ function enum_all_variants_rc_droppable(structs: parser.StructDecl[], enum_name:
 // they stay admissible. A non-struct / non-deep-drop-ok field imposes no constraint.
 // `str_fresh` is str_fresh_ret_fns (whole-program fresh-string producers, #7364) —
 // pass [] where the registry is out of reach and only the syntactic set applies.
-function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string, structs: parser.StructDecl[], str_fresh: string[], msites: string[]): boolean {
+function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string, structs: parser.StructDecl[], str_fresh: string[], msites: string[], counted: boolean): boolean {
     var n: i32 = decl_field_count(structs, variant_name);
     var i: i32 = 0;
     while (i < n && i < args.len()) {
@@ -37297,6 +37379,17 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
             // the source's VALUE is dead after this store, which is what makes the
             // enum the only reader and its payload drop the one release.
             if (!fresh && moved_ident_at(args[i], msites)) { fresh = true; }
+            // A COUNTED payload: the construction retained this box
+            // (lower_variant_ctor_args, same predicate), so the enum holds a claim
+            // of its own and its release is balanced whether or not the source
+            // stays live. Admissible ONLY to callers whose release is rc-gated —
+            // emit_enum_variant_payload_drops walks the payload under
+            // __fern_rc_is_unique — which is what `counted` asserts. The
+            // sole-ownership consumers (struct_lit_all_enum_fields_fresh and the
+            // two registry scans) pass false: their premise is rc == 1 and no
+            // construction alias-inc, which a retained payload contradicts by
+            // definition.
+            if (!fresh && counted && variant_counted_struct_payload(args[i], ft, structs)) { fresh = true; }
             if (!fresh) { return false; }
         }
         // A STRING payload (#4355) must be FRESH too — a literal (const_str allocs
@@ -37336,14 +37429,14 @@ function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string
 // fresh literal/producer (variant_struct_payloads_fresh) so the match-site drop
 // can't double-free a local the payload aliases; array payloads ride the
 // construction alias-inc and need no such gate.
-function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[], str_fresh: string[], msites: string[]): string {
+function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[], str_fresh: string[], msites: string[], counted: boolean): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     var owner: string = variant_enum_owner(structs, id.name);
                     if (owner != "" && enum_all_variants_rc_droppable(structs, owner)
-                        && variant_struct_payloads_fresh(c.args, id.name, structs, str_fresh, msites)) { return owner; }
+                        && variant_struct_payloads_fresh(c.args, id.name, structs, str_fresh, msites, counted)) { return owner; }
                     return "";
                 },
                 // Qualified ctor `Enum.Variant(args...)` — the callee is a field
@@ -37354,7 +37447,7 @@ function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[],
                 parser.ExprFieldAccess(fa) => {
                     var ownerq: string = variant_enum_owner(structs, fa.field);
                     if (ownerq != "" && enum_all_variants_rc_droppable(structs, ownerq)
-                        && variant_struct_payloads_fresh(c.args, fa.field, structs, str_fresh, msites)) { return ownerq; }
+                        && variant_struct_payloads_fresh(c.args, fa.field, structs, str_fresh, msites, counted)) { return ownerq; }
                     return "";
                 },
                 _ => { return ""; }
@@ -37662,7 +37755,7 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
     while (vi < body.len()) {
         match (body[vi]) {
             parser.StmtVar(v) => {
-                var owner: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites);
+                var owner: string = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites, true);
                 if (owner == "") { owner = rcenum_call_init_owner(v.init, opt_fresh_ret); }
                 // A REBOUND name is admitted when every assignment builds a fresh
                 // chain of the same enum (#6127). The rebinds release the orphaned
@@ -37834,19 +37927,29 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     // deep-drop-ok nested-struct payload (Perceus enum-payload slice):
                     // __struct_drop_<T> releases the payload's rc-array fields (depth-1,
                     // leaf — nested_field_deep_drop_ok), then __fern_rc_dec frees the
-                    // payload box. NO is_unique guard: consumed_rcpayload_enum_frees only
-                    // admits an enum whose struct payload was a FRESH struct LITERAL
-                    // (variant_struct_payloads_fresh), so the payload box is the sole
-                    // owner (rc == 1) — a bare-ident/call payload aliasing a swept local
-                    // is rejected (its inner buffers would double-free). A call-BOUND
-                    // enum inherits the same invariant rather than escaping it: the
-                    // "RCE:" registry admits a producer only when every one of its
-                    // returns satisfies fresh_rcpayload_enum_init, which is that
-                    // literal test. The backend auto-emits __struct_drop_<T> on seeing
-                    // the call_direct (asm_ir op scan / wasm struct_drop_types).
+                    // payload box. The backend auto-emits __struct_drop_<T> on seeing the
+                    // call_direct (asm_ir op scan / wasm struct_drop_types).
+                    //
+                    // The WALK runs under __fern_rc_is_unique, the dec unconditionally.
+                    // At rc 1 — a fresh struct literal, or a payload the construction
+                    // MOVED — the guard passes and this is the release it always was.
+                    // It earns its keep on a COUNTED payload, where the source local
+                    // still holds a claim: two static walks free every field buffer
+                    // twice, and the census cannot see it (allocs == frees at
+                    // live_bytes 0, only __rc_underflow_count() dissenting). Gated, the
+                    // walk belongs to whichever owner finds rc 1 and the dec hands the
+                    // last one its turn, so sweep ORDER stops mattering.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                    st = st.emit(ir.op_if(0));
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__struct_drop_" + eft, 1));   // release payload's rc fields; returns box
+                    st = st.emit(ir.op_drop());
+                    st = st.emit(ir.op_end());
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));          // free the payload box
                     st = st.emit(ir.op_drop());
                 } else if (decl_is_struct(st.structs, eft) && struct_lit_all_scalar(st.structs, eft)) {
@@ -37898,6 +38001,34 @@ function enum_variant_array_payload_only(structs: parser.StructDecl[], vname: st
 
 // enum_all_variants_array_payload: every variant of `enum_name` is array-payload-only AND
 // at least one variant carries an array (so there is a payload to reclaim).
+// enum_payloads_counted_at_ctor: every rc payload of `enum_name` is one the
+// construction takes a counted reference to — an array payload
+// (enum_all_variants_array_payload, the original shape) or a struct payload
+// lower_variant_ctor_args now retains (variant_counted_struct_payload's field
+// test). The rc plan uses it to decide escape_owned (counted) against a full
+// escape: a payload the ctor counts does not take the source's whole box with
+// it, so the source stays free-eligible.
+function enum_payloads_counted_at_ctor(structs: parser.StructDecl[], enum_name: string): boolean {
+    if (enum_all_variants_array_payload(structs, enum_name)) { return true; }
+    var any: boolean = false;
+    var rc: boolean = false;
+    for sd in structs {
+        if (sd.enum_owner == enum_name) {
+            any = true;
+            var n: i32 = decl_field_count(structs, sd.name);
+            var fi: i32 = 0;
+            while (fi < n) {
+                var ft: string = decl_field_type_at(structs, sd.name, fi);
+                if (decl_is_struct(structs, ft)
+                    && (nested_field_deep_drop_ok(structs, ft) || struct_lit_all_scalar(structs, ft))) { rc = true; }
+                else if (!reuse_field_is_scalar(ft)) { return false; }
+                fi = fi + 1;
+            }
+        }
+    }
+    return any && rc;
+}
+
 function enum_all_variants_array_payload(structs: parser.StructDecl[], enum_name: string): boolean {
     var any: boolean = false;
     var arr: boolean = false;
@@ -43422,7 +43553,7 @@ function arrenum_lit_enum(e: parser.Expr, structs: parser.StructDecl[]): string 
             var owner: string = "";
             var i: i32 = 0;
             while (i < arr.elements.len()) {
-                var o: string = fresh_rcpayload_enum_init(arr.elements[i], structs, [], []);
+                var o: string = fresh_rcpayload_enum_init(arr.elements[i], structs, [], [], false);
                 if (o.len() == 0) { return ""; }
                 if (owner.len() == 0) { owner = o; }
                 if (o != owner) { return ""; }
@@ -50363,7 +50494,7 @@ function body_has_nonqualifying_rcenum_return(stmts: parser.Stmt[], structs: par
                 // Strict set only ([]): this proof registers "RCE:" rows while
                 // str_fresh_ret_fns is built independently; keeping it syntactic
                 // avoids ordering the two registries against each other.
-                if (fresh_rcpayload_enum_init(r.value, structs, [], []) != owner) { return true; }
+                if (fresh_rcpayload_enum_init(r.value, structs, [], [], false) != owner) { return true; }
                 if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
             },
             parser.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner)) { return true; } },
@@ -55824,6 +55955,19 @@ function rc_fe_split_csv(s: string): string[] {
 // if/match desugar). Method-call sinks (Map_set / push / with) are ported as
 // escape/escape_owned on their value arguments when they appear as
 // `.set(...)` / `.append(...)` / `.with(...)` method calls.
+// rc_fe_variant_ctor_args taints a variant construction's arguments, for both
+// ctor spellings: counted when the enum's payloads are ones the construction
+// takes a counted reference to, a full escape otherwise.
+function rc_fe_variant_ctor_args(args: parser.Expr[], en: string, s: FeState, structs: parser.StructDecl[], env_n: string[], env_s: string[]): FeState {
+    var st: FeState = s;
+    var counted: boolean = enum_payloads_counted_at_ctor(structs, en);
+    for arg in args {
+        if (counted) { st = FeState { ...st, tainted: rc_fe_escape_owned(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
+        else { st = FeState { ...st, tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
+    }
+    return st;
+}
+
 function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[], env_n: string[], env_s: string[]): FeState {
     var st: FeState = s;
     match (e) {
@@ -55845,16 +55989,14 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
+                    // Variant ctor: counted (escape_owned) when the construction
+                    // takes a counted reference to the payload; full escape
+                    // otherwise. The QUALIFIED spelling takes the same arm below —
+                    // it had none at all, so `E.A(p)` was not modelled here while
+                    // `A(p)` was, and the two spellings disagreed on whether the
+                    // source stayed free-eligible.
                     if (variant_enum_owner(structs, id.name).len() > 0) {
-                        // Variant ctor: counted (escape_owned) when the enum's
-                        // payloads are the leak-safe rc-counted shape the
-                        // EnumRcPayloads migration covers; full escape otherwise.
-                        var en: string = variant_enum_owner(structs, id.name);
-                        var rcp: boolean = enum_all_variants_array_payload(structs, en);
-                        for arg in c.args {
-                            if (rcp) { st = FeState { ...st, tainted: rc_fe_escape_owned(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
-                            else { st = FeState { ...st, tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
-                        }
+                        st = rc_fe_variant_ctor_args(c.args, variant_enum_owner(structs, id.name), st, structs, env_n, env_s);
                     }
                 },
                 parser.ExprLambda(lam) => {
@@ -55862,6 +56004,9 @@ function rc_fe_walk_expr(e: parser.Expr, s: FeState, structs: parser.StructDecl[
                     st = rc_fe_walk_stmts(lam.body, st, structs, env_n, env_s);
                 },
                 parser.ExprFieldAccess(fa) => {
+                    if (variant_enum_owner(structs, fa.field).len() > 0) {
+                        st = rc_fe_variant_ctor_args(c.args, variant_enum_owner(structs, fa.field), st, structs, env_n, env_s);
+                    }
                     // method-call sinks on the receiver object.
                     if (fa.field == "set" && c.args.len() == 2) {
                         st = FeState { ...st, tainted: rc_fe_escape(c.args[0], st.tainted, st.types_n, st.types_t, structs, env_n, env_s) };

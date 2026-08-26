@@ -27,9 +27,9 @@ with__moved           clean leak   refused: `with` is not a sanctioned arrstruct
 tuple__moved          clean clean  a MOVED struct element: the tuple is sole owner, so its walk is the one release
 tuple__live           clean leak   refused: tuple_make stores no counted reference, so a live source would dangle
 variant__moved        clean clean  a MOVED struct payload: the enum's rc-gated payload drop is the one release
-variant__live         clean leak   refused: the ctor stores no counted reference, so a live source would dangle
+variant__live         clean clean  the ctor retains a struct payload, so both owners release under the rc gate
 variant_unqual__moved clean clean  the bare spelling must measure identically — it used not to
-variant_unqual__live  clean leak   refused, same as the qualified spelling
+variant_unqual__live  clean clean  and the bare spelling measures identically — the rc plan modelled only one of them
 option__moved         clean leak   NOT the store: the credit needs a match STATEMENT, and this cell reads through a match EXPRESSION
 option__live          clean leak   same — see option_stmt for the store's own axis
 option_stmt__moved    clean clean  opt_make retains the struct box, so the option co-owns it and both releases are rc-gated
