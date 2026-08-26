@@ -6,6 +6,8 @@
 package e2eselfhost
 
 import (
+	"testing"
+
 	e2eharness "github.com/jakechampion/lang/internal/e2eharness"
 )
 
@@ -53,3 +55,10 @@ var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
 var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
 var x86_64Tooling = e2eharness.X86_64Tooling
+
+// selfHostImportClosureFiles is the self-host import closure of one driver,
+// as absolute-ish paths under examples/self_host.
+func selfHostImportClosureFiles(t *testing.T, fernName string) []string {
+	t.Helper()
+	return e2eharness.SelfHostImportClosure(t, "../../examples/self_host", fernName)
+}

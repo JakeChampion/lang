@@ -91,13 +91,19 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 	// Compile checker_run (importing std/io + ./lexer + ./parser +
 	// ./checker) with the arm64 file-based driver: the loader resolves
 	// std/io to the vendored flat io.fern, so the source is unmodified.
+	// Derived from the driver's own imports, not listed — see the note in
+	// buildCheckerDriverBin (#6993).
 	files := map[string]string{}
-	for _, m := range []string{"util", "lexer", "parser", "astwalk", "checker"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
-		if err != nil {
-			t.Fatalf("read %s.fern: %v", m, err)
+	for _, p := range selfHostImportClosureFiles(t, "checker_run.fern") {
+		base := filepath.Base(p)
+		if base == "checker_run.fern" {
+			continue // staged below as main.fern
 		}
-		files[m+".fern"] = string(src)
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", base))
+		if err != nil {
+			t.Fatalf("read %s: %v", base, err)
+		}
+		files[base] = string(src)
 	}
 	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
 	if err != nil {
