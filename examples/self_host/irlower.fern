@@ -43441,18 +43441,122 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 }
 
 // body_has_nonfresh_arrstruct_return: any return whose value is NOT a fresh
-// array-of-structs literal. The array-of-structs sibling of
-// body_has_nonfresh_arrtup_return.
-function body_has_nonfresh_arrstruct_return(stmts: parser.Stmt[], structs: parser.StructDecl[]): boolean {
+// array-of-structs the callee owns outright — a fresh literal, or a local this
+// body built by self-append (arrstruct_producer_ret_local). `fnbody` stays the
+// whole function body so a return nested in a block can still find that local's
+// declaration and its rebinds.
+function body_has_nonfresh_arrstruct_return(stmts: parser.Stmt[], fnbody: parser.Stmt[], structs: parser.StructDecl[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            parser.StmtReturn(r) => { if (!arrstruct_lit_is_fresh(r.value, structs, false)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, structs) || body_has_nonfresh_arrstruct_return(f.else_body, structs)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, structs)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, structs)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => {
+                if (!arrstruct_lit_is_fresh(r.value, structs, false)) {
+                    match (r.value) {
+                        parser.ExprIdent(rid) => { if (!arrstruct_producer_ret_local(fnbody, rid.name, structs)) { return true; } },
+                        _ => { return true; }
+                    }
+                }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, fnbody, structs) || body_has_nonfresh_arrstruct_return(f.else_body, fnbody, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, fnbody, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, fnbody, structs)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, fnbody, structs)) { return true; } a = a + 1; } },
             _ => {}
         }
+    }
+    return false;
+}
+
+// arrstruct_producer_ret_local: `name` is a local this body builds by self-append
+// and hands back — `var vals: Val[] = []; vals = vals.append(Val { .. }); return vals;`,
+// the shape the literal-only rule above refused even though the local-credit arm
+// (ARRSTRUCTA:) already trusts it inside a single frame. A producer written this
+// way registered nothing, so every consumer of it — `var g: Val[] = mk(..)` —
+// took the shallow buffer dec and stranded each element box and its array fields.
+//
+// Strictness matches the registry's question, not the local credit's: every
+// appended element must be a fresh struct LITERAL. A bare ident would leave the
+// container's counted co-owner in the frame being left, which is the same reason
+// arrstruct_lit_is_fresh takes bare_ok=false here.
+function arrstruct_producer_ret_local(fnbody: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    if (!arrstruct_local_fresh_init(fnbody, name, structs)) { return false; }
+    if (arrstruct_local_foreign_rebind(fnbody, name, structs)) { return false; }
+    return !body_unsafe_for_allow_ret(fnbody, name, [], []);
+}
+
+// arrstruct_local_fresh_init: `name` is declared IN this body with an array
+// literal every element of which is a fresh struct literal. `[]` qualifies
+// vacuously — that is what an append-built producer starts from. Requiring the
+// declaration to be here is what keeps the soleness proof local: a param, or a
+// name from an enclosing scope, is already owned by someone else.
+function arrstruct_local_fresh_init(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprArray(lit) => {
+                            var j: i32 = 0;
+                            while (j < lit.elements.len()) {
+                                if (!is_fresh_struct_init(lit.elements[j], structs)) { return false; }
+                                j = j + 1;
+                            }
+                            return true;
+                        },
+                        _ => { return false; }
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                if (arrstruct_local_fresh_init(f.then_body, name, structs)) { return true; }
+                if (arrstruct_local_fresh_init(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrstruct_local_fresh_init(w.body, name, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (arrstruct_local_fresh_init(fo.body, name, structs)) { return true; } },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { if (arrstruct_local_fresh_init(arm.body, name, structs)) { return true; } }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// arrstruct_local_foreign_rebind: any reassignment of `name` that is NOT
+// `name.append(<fresh struct literal>)` / `name.with(i, <fresh struct literal>)`.
+// The store INDEX comes from arrstruct_self_store_elem_index so the two spellings
+// stay one question; the element rule is the strict one above.
+function arrstruct_local_foreign_rebind(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            parser.StmtAssign(a) => {
+                if (a.target == name && !arrstruct_fresh_store_elem(a.value, name, structs)) { return true; }
+            },
+            parser.StmtIf(f) => {
+                if (arrstruct_local_foreign_rebind(f.then_body, name, structs)) { return true; }
+                if (arrstruct_local_foreign_rebind(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrstruct_local_foreign_rebind(w.body, name, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (arrstruct_local_foreign_rebind(fo.body, name, structs)) { return true; } },
+            parser.StmtMatch(m) => {
+                for arm in m.arms { if (arrstruct_local_foreign_rebind(arm.body, name, structs)) { return true; } }
+            },
+            parser.StmtDefer(d) => { return arrstruct_local_foreign_rebind([d.action], name, structs); },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// arrstruct_fresh_store_elem: the strict half of arrstruct_self_store_elem — the
+// self-store spellings it recognises, with a fresh struct LITERAL element only.
+function arrstruct_fresh_store_elem(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var eidx: i32 = arrstruct_self_store_elem_index(e, name);
+            if (eidx < 0) { return false; }
+            return is_fresh_struct_init(c.args[eidx], structs);
+        },
+        _ => { return false; }
     }
     return false;
 }
@@ -43481,7 +43585,7 @@ function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: parser.StructD
     if (fn.receiver_type.len() > 0) { return false; }
     if (arrstruct_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, structs);
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs);
 }
 
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
