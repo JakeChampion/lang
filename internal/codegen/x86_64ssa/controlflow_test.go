@@ -60,10 +60,11 @@ func TestEmitCountingLoop(t *testing.T) {
 
 // A header phi whose two incoming values must be SWAPPED across the back-edge:
 //
-//	a, b = b, a   each iteration. The read-all-then-write-all phi-move scheme
+//	a, b = b, a   each iteration. The phi-move sequentialisation must preserve
 //
-// must preserve both (a naive sequential copy would clobber one). After n
-// iterations return a. Validates parallel-copy correctness on a real cycle.
+// both, which means detecting that neither move can go first and parking one
+// value before the cycle unrolls (a naive sequential copy clobbers one). After
+// n iterations return a. Validates parallel-copy correctness on a real cycle.
 func TestEmitPhiSwapCycle(t *testing.T) {
 	build := func() *ssa.Func {
 		f := ssa.NewFunc("swap")
