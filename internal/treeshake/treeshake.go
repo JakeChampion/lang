@@ -13,6 +13,13 @@
 // for `*ast.Call` and `*ast.Ident` references whose name
 // resolves to a top-level FuncDecl. Drop Funcs not reached.
 //
+// A `dyn Trait` coercion and an `as? T` downcast reach their
+// vtable's impl methods through no call site at all, so the
+// walk roots them when it reaches the SITE that builds the
+// vtable (dynVtableRoots / downcastRoots). Rooting them from
+// the whole program instead kept the impl methods of a
+// coercion in a function nothing calls (#4114).
+//
 // Idempotent — running on an already-pruned program is a
 // no-op.
 package treeshake
@@ -25,12 +32,17 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
-// DynCoercionImplMethods returns the mangled impl-method names that a
-// `dyn Trait` vtable points at, for every (trait, concrete) pair the
-// checker recorded as a coercion site. These methods are reachable only
-// through the runtime vtable, never via a static call the tree-shake /
-// IR reachability walkers can follow, so each backend pins them as
-// extra roots (`treeshake.Run(prog, info, DynCoercionImplMethods(info)...)`).
+// dynVtableRoots enqueues the mangled impl-method names that the
+// `(traits, concrete)` vtable points at.
+//
+// These methods are reachable only through the runtime vtable
+// (`OpConstVtable` names them by string), never via a static call the
+// tree-shake / IR reachability walkers can follow, so the site that
+// builds the vtable — a `dyn Trait` coercion or an `e as? T` downcast —
+// has to root them itself.
+//
+// Every trait in the `dyn` set contributes: a multi-trait `dyn A + B`
+// needs A's and B's methods kept alive.
 //
 // For a struct/enum concrete the vtable slot points directly at the real
 // receiver method, so the mangled `__method_<C>_<m>` is rooted (mirrors
@@ -44,135 +56,86 @@ import (
 // (harmless) no-op for the AST-level tree-shaker; what tree-shake must keep
 // alive is the REAL `__method_<C>_<m>` the wrapper calls — that AST func
 // must survive into IR lowering where the wrapper's call edge picks it up.
-// So both the real method and the wrapper name are rooted: the former keeps
-// the AST func, the latter documents the vtable edge (and is robust to any
-// IR-level reachability consumer of these roots).
+// So both the real method and the wrapper name are rooted.
 //
-// Shared by the wasm and x86-64 build paths. See docs/DYN-TRAITS.md.
-func DynCoercionImplMethods(info *checker.Info) []string {
-	if info == nil || len(info.DynCoercions) == 0 {
-		return nil
+// See docs/DYN-TRAITS.md.
+func dynVtableRoots(info *checker.Info, traits []string, concrete string, enqueue func(string)) {
+	if info == nil || concrete == "" {
+		return
 	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
+	_, isStruct := info.Structs[concrete]
+	_, isEnum := info.Enums[concrete]
+	prim := !isStruct && !isEnum
+	for _, tr := range traits {
+		td, ok := info.Traits[tr]
+		if !ok {
+			continue
 		}
-	}
-	isPrimitive := func(concrete string) bool {
-		if _, isStruct := info.Structs[concrete]; isStruct {
-			return false
-		}
-		if _, isEnum := info.Enums[concrete]; isEnum {
-			return false
-		}
-		return true
-	}
-	for _, dc := range info.DynCoercions {
-		// Root the impl methods of EVERY trait in the `dyn` set (a
-		// multi-trait `dyn A + B` needs A's and B's methods kept alive).
-		// Fall back to the single Trait field if Traits is unset (older
-		// callers / single-trait sites).
-		traits := dc.Traits
-		if len(traits) == 0 {
-			traits = []string{dc.Trait}
-		}
-		prim := isPrimitive(dc.Concrete)
-		for _, tr := range traits {
-			td, ok := info.Traits[tr]
-			if !ok {
+		for _, m := range td.Methods {
+			if m.Assoc {
 				continue
 			}
-			for _, m := range td.Methods {
-				if m.Assoc {
-					continue
-				}
-				// Always root the real method: a struct/enum vtable slot
-				// points at it, and a primitive's wrapper calls it (so it
-				// must survive into IR lowering where the wrapper is
-				// generated).
-				add(implMethodName(info, dc.Concrete, m.Name, tr))
-				// For a primitive concrete also root the wrapper name (the
-				// actual vtable target). No-op in the AST tree-shaker today.
-				if prim {
-					add("__dynbox_" + dc.Concrete + "_" + m.Name)
-				}
+			// Always root the real method: a struct/enum vtable slot
+			// points at it, and a primitive's wrapper calls it (so it
+			// must survive into IR lowering where the wrapper is
+			// generated).
+			enqueue(implMethodName(info, concrete, m.Name, tr))
+			// For a primitive concrete also root the wrapper name (the
+			// actual vtable target). No-op in the AST tree-shaker today.
+			if prim {
+				enqueue("__dynbox_" + concrete + "_" + m.Name)
 			}
 		}
 	}
-	return out
 }
 
-// DowncastImplMethods returns the mangled impl-method names referenced by
-// the `(Trait, T)` vtable a `e as? T` downcast compares against. The
-// compiled downcast (docs/DYN-TRAITS.md §9) emits `OpConstVtable{Trait,
-// T}` and the backend materialises the `__vtable_<Trait>_<T>` cell, whose
-// slots are `.quad __method_<T>_<m>` (natives) / function-table indices
-// (wasm). Those methods are reachable ONLY through that static vtable, so
-// — exactly like DynCoercionImplMethods for coercion sites — they must be
-// pinned as tree-shake roots or the vtable would reference a dropped
-// symbol (link failure). This matters for a DOWNCAST-ONLY target: a `T`
-// that is never coerced to `dyn Trait`, only downcast to, is absent from
-// info.DynCoercions and so would be missed by DynCoercionImplMethods.
+// coercionTraits returns the trait set of a recorded coercion, falling
+// back to the single Trait field when Traits is unset.
+func coercionTraits(dc checker.DynCoercion) []string {
+	if len(dc.Traits) > 0 {
+		return dc.Traits
+	}
+	return []string{dc.Trait}
+}
+
+// downcastRoots enqueues the impl methods referenced by the `(Trait, T)`
+// vtable an `e as? T` downcast compares against. The compiled downcast
+// (docs/DYN-TRAITS.md §9) emits `OpConstVtable{Trait, T}` and the backend
+// materialises the `__vtable_<Trait>_<T>` cell, whose slots are `.quad
+// __method_<T>_<m>` (natives) / function-table indices (wasm).
+//
+// A DOWNCAST-ONLY target — a `T` never coerced to `dyn Trait`, only
+// downcast to — is absent from info.DynCoercions, so the coercion sites
+// alone would miss it.
+//
+// Every trait in the set is rooted, not just the primary `dc.Trait`: the
+// merged `(set, T)` vtable a multi-trait `dyn A + B` downcast compares
+// against holds the concatenation of all the set's traits' methods over T
+// (docs/DYN-TRAITS.md §10), so any one of them culled leaves a cell
+// pointing at a dropped symbol. For a single-trait `dyn A` downcast
+// dc.Traits is [A] and this is the same as rooting dc.Trait alone.
 //
 // Struct/enum targets only (the slice-1 downcast scope); collectVtables
 // routes struct/enum slots at the real `__method_<T>_<m>`, so that is the
 // name that must survive into codegen.
-func DowncastImplMethods(prog *ast.Program, info *checker.Info) []string {
-	if prog == nil || info == nil {
-		return nil
+func downcastRoots(dc *ast.DowncastExpr, info *checker.Info, enqueue func(string)) {
+	if dc == nil || dc.Trait == "" {
+		return
 	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
+	concrete := ""
+	switch t := dc.Target.(type) {
+	case ast.StructType:
+		concrete = t.Name
+	case ast.EnumType:
+		concrete = t.Name
+	default:
+		return
 	}
-	ast.WalkProgram(prog, func(n ast.Node) bool {
-		dc, ok := n.(*ast.DowncastExpr)
-		if !ok || dc.Trait == "" {
-			return true
-		}
-		concrete := ""
-		switch t := dc.Target.(type) {
-		case ast.StructType:
-			concrete = t.Name
-		case ast.EnumType:
-			concrete = t.Name
-		default:
-			return true
-		}
-		// Root the impl methods of EVERY trait in the set, not just the
-		// primary `dc.Trait`. The merged `(set, T)` vtable a multi-trait
-		// `dyn A + B` downcast compares against contains the concatenation
-		// of all the set's traits' methods over T (docs/DYN-TRAITS.md §10),
-		// so a downcast-only T (never coerced elsewhere) needs every one of
-		// them pinned or the merged vtable cell would reference a dropped
-		// symbol. For a single-trait `dyn A` downcast dc.Traits == [A], so
-		// this is byte-identical to rooting dc.Trait alone.
-		traits := dc.Traits
-		if len(traits) == 0 {
-			traits = []string{dc.Trait}
-		}
-		for _, tr := range traits {
-			td, ok := info.Traits[tr]
-			if !ok {
-				continue
-			}
-			for _, m := range td.Methods {
-				if m.Assoc {
-					continue
-				}
-				add(implMethodName(info, concrete, m.Name, tr))
-			}
-		}
-		return true
-	})
-	return out
+	traits := dc.Traits
+	if len(traits) == 0 {
+		traits = []string{dc.Trait}
+	}
+	dynVtableRoots(info, traits, concrete, enqueue)
 }
 
 // watHelperDeps lists the stdlib functions a still-in-wat
@@ -447,6 +410,17 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, info *checker.Info, e
 	if e == nil {
 		return
 	}
+	// A `dyn Trait` coercion builds a vtable whose slots name impl
+	// methods no call site mentions. Rooting them HERE — keyed on the
+	// coercion expression the checker recorded — is what keeps the root
+	// gated on the site being reachable: a coercion inside a function
+	// nothing calls roots nothing, so the impl method and everything it
+	// calls are pruned with it.
+	if info != nil {
+		if dc, ok := info.DynCoercions[e]; ok {
+			dynVtableRoots(info, coercionTraits(dc), dc.Concrete, enqueue)
+		}
+	}
 	switch x := e.(type) {
 	case *ast.Ident:
 		// Bare reference to a top-level function (function
@@ -544,6 +518,7 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, info *checker.Info, e
 	case *ast.CastExpr:
 		walkExpr(x.Inner, byName, info, enqueue)
 	case *ast.DowncastExpr:
+		downcastRoots(x, info, enqueue)
 		walkExpr(x.Inner, byName, info, enqueue)
 	case *ast.MakeClosure:
 		// Closure formation references the hoisted body.
@@ -592,8 +567,19 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, info *checker.Info, e
 // caller is the `__drop_struct_<C>` / `__drop_enum_<C>` glue, which IR
 // lowering synthesises long after tree-shake has run. Without this root the
 // method is pruned as unreachable and the natives fail to link on an
-// undefined `__method_<C>_drop`. Same shape as DynCoercionImplMethods: a
-// call edge no AST walk can see.
+// undefined `__method_<C>_drop`.
+//
+// This is the one root that stays WHOLE-PROGRAM. A `dyn` coercion or an
+// `as?` downcast is an expression the walk can reach, so those roots are
+// gated on their site being live (dynVtableRoots / downcastRoots); a Drop
+// impl has no site at all, and deciding whether the glue will exist means
+// asking whether a live function can hold a `C` — type reachability this
+// pass does not compute. So a `drop` body survives here even when nothing
+// constructs a `C`. It costs no bytes: the IR-level dead-function pass runs
+// after the glue is synthesised, sees a real call edge or none, and culls
+// it precisely. What it does cost is `platforms.Enforce`, which reads this
+// program as the artifact and so can still report an E066 for a capability
+// only an unconstructed type's finalizer uses (#4114).
 //
 // Trait names in info.Impls are module-mangled (`mem__Drop`), so the match
 // is on the simple name.

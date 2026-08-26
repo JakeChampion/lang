@@ -174,3 +174,83 @@ function main(): i32 { var s: S = S { ...mk(), b: 40 }; return s.a + s.b; }`
 		t.Errorf("mk is referenced by the struct-update base and must survive: %v", names)
 	}
 }
+
+// A `dyn Trait` coercion roots the impl methods its vtable points at, so
+// they survive even though no call site names them. The root has to be
+// gated on the COERCION SITE being reachable: rooting every coercion the
+// checker recorded — dead ones included — drags the impl method, and
+// everything it calls, into a program that can never run it (#4114).
+func TestShakeDropsImplMethodBehindDeadCoercion(t *testing.T) {
+	src := `trait Greet { function hello(self: Self): i32; }
+struct Loud { n: i32 }
+impl Greet for Loud { function hello(self: Self): i32 { return only_from_hello(); } }
+function only_from_hello(): i32 { return 42; }
+function dead_coercion(): i32 {
+    var g: dyn Greet = Loud { n: 1 };
+    return g.hello();
+}
+function main(): i32 { return 0; }`
+	names := runShake(t, src)
+	if hasName(names, "dead_coercion") {
+		t.Errorf("the coercing function itself survived: %v", names)
+	}
+	for _, gone := range []string{"__method_Loud_hello", "only_from_hello"} {
+		if hasName(names, gone) {
+			t.Errorf("%s survived behind an unreachable coercion: %v", gone, names)
+		}
+	}
+}
+
+// The gating must not cull a LIVE coercion's impl method: nothing in the
+// AST calls `__method_Loud_hello`, only the vtable cell names it, so
+// culling it leaves the cell pointing at a dropped symbol (link failure).
+func TestShakeKeepsImplMethodBehindLiveCoercion(t *testing.T) {
+	src := `trait Greet { function hello(self: Self): i32; }
+struct Loud { n: i32 }
+impl Greet for Loud { function hello(self: Self): i32 { return only_from_hello(); } }
+function only_from_hello(): i32 { return 42; }
+function main(): i32 {
+    var g: dyn Greet = Loud { n: 1 };
+    return g.hello();
+}`
+	names := runShake(t, src)
+	for _, want := range []string{"__method_Loud_hello", "only_from_hello"} {
+		if !hasName(names, want) {
+			t.Errorf("%s was culled from under a live vtable: %v", want, names)
+		}
+	}
+}
+
+// Same gating for the `e as? T` downcast vtable: a downcast-only target
+// (never coerced) is rooted by the downcast site, and only when that site
+// is reachable.
+func TestShakeDowncastRootsFollowReachability(t *testing.T) {
+	tail := `
+struct Quiet { n: i32 }
+impl Greet for Quiet { function hello(self: Self): i32 { return 1; } }
+function probe(g: dyn Greet): i32 {
+    var l: Option[Loud] = g as? Loud;
+    return 0;
+}
+`
+	head := `trait Greet { function hello(self: Self): i32; }
+struct Loud { n: i32 }
+impl Greet for Loud { function hello(self: Self): i32 { return only_from_hello(); } }
+function only_from_hello(): i32 { return 42; }
+`
+	dead := head + tail + `function main(): i32 { return 0; }`
+	if names := runShake(t, dead); hasName(names, "__method_Loud_hello") {
+		t.Errorf("downcast-only target survived behind an unreachable downcast: %v", names)
+	}
+
+	live := head + tail + `function main(): i32 {
+    var q: dyn Greet = Quiet { n: 2 };
+    return probe(q);
+}`
+	names := runShake(t, live)
+	for _, want := range []string{"probe", "__method_Loud_hello", "only_from_hello"} {
+		if !hasName(names, want) {
+			t.Errorf("%s was culled from under a live downcast vtable: %v", want, names)
+		}
+	}
+}

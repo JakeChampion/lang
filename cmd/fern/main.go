@@ -1136,8 +1136,10 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 		}
 		prog.Funcs = kept
 	}
-	extras := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
-	extras = append(extras, treeshake.DropImplMethods(info)...)
+	// treeshake roots the `dyn Trait` vtable impl methods itself, from the
+	// coercion / downcast sites it reaches. A Drop finalizer it cannot see:
+	// the only caller is drop glue IR lowering synthesises later.
+	extras := append([]string(nil), treeshake.DropImplMethods(info)...)
 	if shared && export != "" {
 		extras = append(extras, strings.Split(export, ",")...)
 	}

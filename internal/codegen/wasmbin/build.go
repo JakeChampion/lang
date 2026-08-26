@@ -143,26 +143,11 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 			treeshakeExtras = append(treeshakeExtras, fn.Name)
 		}
 	}
-	// `dyn Trait` impl methods are reached only through the runtime
-	// vtable (OpConstVtable names them by string), never via a static
-	// call the AST walker / IR reachability can see. Pin every impl
-	// method of a concrete type that coerces to a `dyn Trait` so it
-	// survives tree-shake and IR dead-function elimination. See
-	// docs/DYN-TRAITS.md §4.2.1.
-	dynImplMethods := treeshake.DynCoercionImplMethods(info)
-	dynImplMethods = append(dynImplMethods, treeshake.DropImplMethods(info)...)
-	treeshakeExtras = append(treeshakeExtras, dynImplMethods...)
-	// Same rooting for `e as? T` downcast targets: the (Trait,T) vtable
-	// the compare references holds those impl methods, and a downcast-only
-	// target (never coerced) is absent from DynCoercions
-	// (docs/DYN-TRAITS.md §9). Kept in its own slice so it can also be fed
-	// to the IR-level dead-function elimination below (LiveFunctions),
-	// which culls separately from the AST tree-shaker — without that, a
-	// downcast-only target's __method_* would survive tree-shake but be
-	// dropped at the IR layer and the vtable cell would reference a
-	// missing func (OpConstVtable: impl method not in prog.Funcs).
-	downcastImplMethods := treeshake.DowncastImplMethods(prog, info)
-	treeshakeExtras = append(treeshakeExtras, downcastImplMethods...)
+	// treeshake roots the `dyn Trait` vtable impl methods itself, from the
+	// coercion / downcast sites it reaches (docs/DYN-TRAITS.md §4.2.1, §9).
+	// The one root it cannot see from the AST is a Drop finalizer: its sole
+	// caller is drop glue IR lowering has not synthesised yet.
+	treeshakeExtras = append(treeshakeExtras, treeshake.DropImplMethods(info)...)
 	if opts.AsyncExportName != "" {
 		// The async export's source function is called only by the
 		// synthetic async wrapper (emit-time wasm bytes, invisible to the
@@ -257,8 +242,17 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		liveExtras = append(liveExtras, src)
 	}
 	liveExtras = append(liveExtras, exportRoots...)
-	liveExtras = append(liveExtras, dynImplMethods...)
-	liveExtras = append(liveExtras, downcastImplMethods...)
+	// Every vtable method is a root: OpConstVtable names it in a cell the
+	// reachability walk cannot follow, and a culled one leaves the cell
+	// referencing a missing func. Taking these from ip.Vtables — built by
+	// lowering, from the tree-shaken program — is what keeps the root set
+	// gated on reachability: a vtable no live code builds is not here to
+	// root anything (the x86-64 / arm64 backends root the same way).
+	for _, vt := range ip.Vtables {
+		for _, m := range vt.Methods {
+			liveExtras = append(liveExtras, m.Func)
+		}
+	}
 	// `dyn Trait` RC drop fns (docs/DYN-TRAITS.md §4.4) are reached only
 	// through the vtable's trailing drop slot (an indirect call_indirect
 	// the IR reachability walker can't follow), so root them explicitly so

@@ -277,15 +277,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prevOverride }()
 
-	// `dyn Trait` vtable impl methods are reachable only through the
-	// runtime vtable (OpConstVtable names them by string), never via a
-	// static call the AST walker / IR reachability can see — pin them as
-	// tree-shake roots so they survive (mirrors the x86-64 + wasm build
-	// paths). See docs/DYN-TRAITS.md §4.2.2.
-	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
-	dynRoots = append(dynRoots, treeshake.DropImplMethods(info)...)
-	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
-	treeshake.Run(prog, info, dynRoots...)
+	// treeshake roots the `dyn Trait` vtable impl methods itself, from the
+	// coercion / downcast sites it reaches (its dynVtableRoots). Only the
+	// roots it cannot see from the AST are passed in: a Drop finalizer,
+	// whose sole caller is drop glue IR lowering has not synthesised yet,
+	// and the -shared exports.
+	treeshake.Run(prog, info, append(treeshake.DropImplMethods(info), opts.Exports...)...)
 	// arm64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate
 	// (the same boxed representation x86-64 uses — both are ptrW==8 — so
@@ -342,7 +339,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// its comment for the root set and why ir.CodegenAliases has to be passed.
 	// MUST run before the use-flag pre-scan below, which walks ip.Funcs to
 	// decide which runtime helpers the prologue emits.
-	liveExtras := append([]string(nil), dynRoots...)
+	liveExtras := append([]string(nil), opts.Exports...)
 	for _, vt := range ip.Vtables {
 		for _, m := range vt.Methods {
 			liveExtras = append(liveExtras, m.Func)

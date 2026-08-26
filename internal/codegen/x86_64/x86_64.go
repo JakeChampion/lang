@@ -351,15 +351,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// into x86_64's lowering — producing mixed-ABI code.
 	ast.CodegenMu.Lock()
 	defer ast.CodegenMu.Unlock()
-	// `dyn Trait` vtable impl methods are reachable only through the
-	// runtime vtable (OpConstVtable names them by string), never via a
-	// static call the AST walker / IR reachability can see — pin them as
-	// tree-shake roots so they survive (mirrors the wasm build path).
-	// See docs/DYN-TRAITS.md §4.2.2.
-	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
-	dynRoots = append(dynRoots, treeshake.DropImplMethods(info)...)
-	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
-	treeshake.Run(prog, info, dynRoots...)
+	// treeshake roots the `dyn Trait` vtable impl methods itself, from the
+	// coercion / downcast sites it reaches (its dynVtableRoots). Only the
+	// roots it cannot see from the AST are passed in: a Drop finalizer,
+	// whose sole caller is drop glue IR lowering has not synthesised yet,
+	// and the -shared exports.
+	treeshake.Run(prog, info, append(treeshake.DropImplMethods(info), opts.Exports...)...)
 	// x86-64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate.
 	// It ALSO reclaims them (Perceus RC, slice 4b — docs/DYN-TRAITS.md
@@ -437,11 +434,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// afterwards would reserve for helpers no longer reachable.
 	//
 	// Roots beyond main/handle:
-	//   - `dynRoots` (the AST tree-shake roots): `dyn` coercion + downcast +
-	//     Drop impl methods, and any -shared exports.
+	//   - the -shared exports.
 	//   - every vtable method and the trailing drop slot: OpConstVtable names
 	//     them in a `.rodata` cell, an indirect reference the reachability walk
 	//     cannot follow, and a culled one is a dangling label at link time.
+	//     They come from ip.Vtables — built by lowering from the tree-shaken
+	//     program — so a vtable no live code builds roots nothing. The AST
+	//     tree-shake roots are deliberately NOT repeated here: they are
+	//     whole-program by construction (a Drop impl has no AST call site at
+	//     all), and seeding them would re-admit what this pass exists to cull.
 	//   - the per-set `__drop_dyn_<set>` helpers, called by name from the exit
 	//     sweep but only in programs that actually reclaim a `dyn`.
 	// ir.CodegenAliases closes the Map `_impl` gap: the IR emits `map_new` and
@@ -449,7 +450,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// impl is culled as unreachable and the link fails on a dangling label
 	// (#6609). The emit-time rewrite is still the `switch` in emitOp — the two
 	// have to agree, which is what ir.CodegenAliases's doc comment records.
-	liveExtras := append([]string(nil), dynRoots...)
+	liveExtras := append([]string(nil), opts.Exports...)
 	for _, vt := range ip.Vtables {
 		for _, m := range vt.Methods {
 			liveExtras = append(liveExtras, m.Func)

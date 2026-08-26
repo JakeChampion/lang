@@ -113,9 +113,7 @@ func corpusPrograms(t *testing.T, fn func(name string, cfg verifyConfig, ip *ir.
 				skippedLowering[name+"@"+cfg.name] = "monomorph: " + err.Error()
 				continue
 			}
-			roots := append(treeshake.DynCoercionImplMethods(info),
-				treeshake.DowncastImplMethods(p, info)...)
-			treeshake.Run(p, info, roots...)
+			treeshake.Run(p, info)
 			var opts []ir.LowerOption
 			if cfg.ptrW == 8 {
 				opts = append(opts, ir.DynSupported(), ir.DynRcSupported())

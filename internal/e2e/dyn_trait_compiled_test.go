@@ -632,7 +632,7 @@ function main(): i32 {
 // __vtable_Shape_Rect (which the compare references) must still emit and
 // its __method_Rect_* must survive tree-shake / IR dead-function
 // elimination, or the build fails to link / find the func. Guards the
-// DowncastImplMethods rooting (docs/DYN-TRAITS.md §9).
+// downcast-site rooting (docs/DYN-TRAITS.md §9).
 func TestDowncastOnlyTargetRooted(t *testing.T) {
 	src := `import "std/i32";
 trait Shape {
@@ -803,7 +803,7 @@ function main(): i32 {
 // target. The MERGED `__vtable_Show+Weigh_Brick` (which the compare
 // references) must still emit and ALL of Brick's __method_* (both traits)
 // must survive tree-shake, or the merged vtable cell references a dropped
-// symbol. Guards the multi-trait DowncastImplMethods rooting (rooting every
+// symbol. Guards the multi-trait downcast-site rooting (rooting every
 // trait in the set, not just the primary).
 func TestDowncastMultiTraitOnlyTargetRooted(t *testing.T) {
 	src := `import "std/i32";
