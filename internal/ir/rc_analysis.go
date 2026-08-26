@@ -2770,19 +2770,22 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		if !ok2 {
 			return "", "", 0, false
 		}
-		// A type with a `core/mem.Drop` impl never participates in reuse.
+		// A type that reaches a `core/mem.Drop` impl — its own, or one on
+		// anything it transitively holds — never participates in reuse.
 		// Reuse hands the dying value's box shell straight to the next
-		// constructor rather than freeing it, so the drop glue — and with it
-		// the user finalizer — never runs on the value being displaced: a
-		// destructor silently skipped on a value that really did die, which
-		// is worse than leaking it. Running the finalizer first and then
-		// recycling the shell would also be sound; declining is the
-		// conservative form, and it costs the optimisation only on the types
-		// that declare one.
-		if tn, isNominal := ast.ReceiverTypeName(t); isNominal {
-			if _, hasDrop := userDropFnName(b.info, tn); hasDrop {
-				return "", "", 0, false
-			}
+		// constructor rather than freeing it, so the drop glue for the box
+		// itself never runs: a destructor silently skipped on a value that
+		// really did die, which is worse than leaking it. A finalizer on a
+		// FIELD is not skipped but MOVED: the reuse branch releases the old
+		// fields where the box is taken over rather than where the donor
+		// would otherwise have died. That point is target-dependent — box
+		// classes are computed from ptrW, so two types pair on wasm and not
+		// on native — and a user-visible finalizer must not fire in a
+		// different order per backend. Declining is the conservative form
+		// either way, and it costs the optimisation only on the types that
+		// reach a `drop`.
+		if b.typeReachesUserDrop(t, map[string]bool{}) {
+			return "", "", 0, false
 		}
 		switch tt := t.(type) {
 		case ast.StructType:

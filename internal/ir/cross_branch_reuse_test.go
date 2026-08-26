@@ -1,6 +1,13 @@
 package ir_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/modload"
+)
 
 // Cross-branch reuse sharing (#4402 opt 3a): one dead donor D feeds a
 // construction in EVERY arm of a branch, not just the first the pairing
@@ -98,5 +105,46 @@ function main(): i32 {
 }`)
 	if got := allocReuseCount(funcByName(ip, "main")); got != 0 {
 		t.Errorf("a different-class donor must not pair, got %d __alloc_reuse", got)
+	}
+}
+
+// A donor whose FIELD reaches a user `core/mem.Drop` never pairs. Reuse
+// releases the donor's old fields where the recipient takes the box over,
+// which is a different point from where the donor would otherwise have died —
+// and box classes are computed from the target's pointer width, so the same
+// program pairs on one backend and not another. A user-visible finalizer must
+// not fire in a target-dependent order. (Loaded through modload: the impl
+// needs `core/mem` resolved, which the bare parse+check helper cannot do.)
+func TestReuseDeclinesDonorWithUserDropField(t *testing.T) {
+	src := `import "core/mem";
+struct W { n: i32 }
+impl mem.Drop for W {
+    function drop(self: Self): void { print("drop"); }
+}
+struct Holder { w: W }
+struct Other { w: W }
+function main(): i32 {
+    var h: Holder = Holder { w: W { n: 3 } };
+    var s: i32 = h.w.n;                          // h's last use
+    var o: Other = Other { w: W { n: 4 } };      // same class, must not pair
+    return s + o.w.n;
+}`
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	ip, err := ir.LowerWith(prog, info, 8)
+	ast.RcFreeEnabled = prev
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	if got := allocReuseCount(funcByName(ip, "main")); got != 0 {
+		t.Errorf("a donor holding a user-Drop value must not pair, got %d __alloc_reuse", got)
 	}
 }

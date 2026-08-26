@@ -149,6 +149,13 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 
 - **Borrows**: a donor whose box may be referenced by a borrowed
   binding fails `freeEligible` — no reuse (UAF guard).
+- **User finalizers**: a type that reaches a `core/mem.Drop` impl —
+  its own, or one on anything it transitively holds — never
+  participates in R3 (`typeReachesUserDrop`). Reuse would skip the
+  box's own finalizer and MOVE its fields' to the point the
+  recipient takes the box over; box classes come from the target's
+  pointer width, so that point is target-dependent, and a
+  user-visible `drop` must not reorder per backend.
 - **Literal/untracked sources**: `rhsTainted`'s conservative
   default (e.g. scalar enums from literal args in R2).
 - **Layout mismatch**: R2 needs `uniformEnumBoxSize`; R3 needs
