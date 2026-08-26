@@ -462,8 +462,8 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   separate target, so the target descriptor and its E066 capability
   enforcement still apply. Both fernsmith corpora and the whole examples
   corpus sweep clean through it. The self-host does not build under it, and
-  the size win inverts at that scale — **Phase 3 measurement** below. The
-  default flip is NOT close.
+  compiler-shaped input still costs ~113% of the flat backend where the corpus
+  gets 46% — **Phase 3 measurement** below. The default flip is NOT close.
 - [ ] Phase 5 — retire the stack-machine backends
 
 ## Emit-quality phase — results
@@ -500,62 +500,52 @@ At codebase scale the SSA backend is a **stable ~84% of the stack
 machine** — a ~16% code-size reduction that holds as the program grows, so
 the binary-size premise of the epic is validated. Guarded by
 `TestCodeSizeSmallerThanStackMachine` (fails if the SSA path regresses to
-parity or worse). The residual call-heavy overhead (fib/calls) is the
-call sequence itself. Call-clobber-aware *allocation* is in place —
-`ssa.Target.CalleeSaved` steers values live across a call into callee-saved
-registers, and both real-asm backends hand the allocator a partition
-(`x86_64ssa` System V, `arm64ssa` AArch64) — so what remains of that overhead
-is the copies and memory traffic measured in **Phase 3 measurement** below.
+parity or worse). The residual call-heavy overhead (fib/calls) was the
+call sequence itself, and both halves of it are now gone. Call-clobber-aware
+*allocation* steers values live across a call into callee-saved registers
+(`ssa.Target.CalleeSaved`, with both real-asm backends handing the allocator a
+partition — `x86_64ssa` System V, `arm64ssa` AArch64), and a call result is
+delivered straight into its home rather than through a capture scratch and a
+staging register. What remains is memory traffic, measured in
+**Phase 3 measurement** below.
 
-## Phase 3 measurement — the size win, and where it inverts
+## Phase 3 measurement — the size win, and what still costs
 
 Measured 2026-08-26 on `-target arm64-linux`, comparing the R+E LOAD segment's
 FileSiz (these are minimal static ELFs with no section headers, so that segment
 is the code; total file size is 64 KiB-page-padding-dominated below ~128 KB and
 is the wrong metric).
 
-### Over the examples corpus: 48% smaller
+### Over the examples corpus: 54% smaller
 
 All 281 corpus programs the flat backend can build, compiled both ways:
 
 | | bytes |
 |---|---|
 | flat `.text`, all 281 | 24,347,696 |
-| ssa `.text`, all 281 | 12,734,576 |
-| **ssa / flat** | **52.3%** |
+| ssa `.text`, all 281 | 11,222,272 |
+| **ssa / flat** | **46.1%** |
 
-276 of 281 are individually smaller, and the ratio improves with program size —
-the ten largest land at 12–39% of flat (`miniparse` 863,904 → 103,080, i.e.
-11.9%). So 52.3% understates what a large program gets.
+280 of 281 are individually smaller, and the ratio improves with program size —
+the ten largest land at 10–34% of flat (`miniparse` 863,904 → 88,092, i.e.
+10.2%). So 46.1% understates what a large program gets.
 
-Five programs regress, none by much:
+One program regresses: `bench/map_int`, 13,648 → 14,152 (103.7%), fixed helper
+overhead over a body of a few KB.
 
-| program | flat | ssa | ssa % |
-|---|---|---|---|
-| `bench/map_int` | 13,648 | 15,744 | 115.4% |
-| `tests/peg_test` | 204,980 | 223,252 | 108.9% |
-| `tests/json_roundtrip_test` | 203,188 | 213,696 | 105.2% |
-| `bench/map_string` | 18,772 | 19,420 | 103.5% |
-| `tests/batch7_test` | 175,264 | 179,936 | 102.7% |
+### On compiler-shaped input: ~113%, and it still does not build
 
-The two worst-by-ratio are the small Map benches, where fixed helper overhead
-sits over a body of a few KB. The three large ones are the same three that used
-to regress by 120–133%; the callee-saved partition took most of it back but not
-all, and no cause has been isolated for what is left.
-
-### On the self-host: 133%, and it does not build
-
-The corpus does not extrapolate. Compiler-shaped input sits on the far side of
-a crossover:
+The corpus does not extrapolate. Compiler-shaped input is still on the far side
+of a crossover, though a much nearer one than before:
 
 | program | flat `.text` | ssa | ssa % |
 |---|---|---|---|
-| `miniparse` (largest corpus program) | 863,904 | 103,080 | 11.9% |
-| `checker_modload_run.fern` | 8,018,492 | ~10,690,520 | ~133% |
+| `miniparse` (largest corpus program) | 863,904 | 88,092 | 10.2% |
+| `checker_modload_run.fern` | 8,018,492 | ~9,100,132 | ~113% |
 
 The SSA figure there is **inferred** — instruction count × 4 off an
 instrumented emitter — because the program does not link; the proxy reads
-0.19% low on `miniparse`, which does. `examples/self_host/fern.fern` cannot be
+0.23% low on `miniparse`, which does. `examples/self_host/fern.fern` cannot be
 measured even that way: emit stops at the parameter-count check before any
 assembly exists.
 
@@ -566,45 +556,55 @@ Two independent blockers, both pre-existing:
   sites exceed 8 args; the build stops at the first.
 - **No imm19 veneers.** `internal/native/arm64/veneer.go` plants veneers for
   `b`/`bl` (imm26, ±128 MB) but not for conditional branches (imm19, ±1 MiB).
-  `checker_modload_run` clears emit and dies in the assembler — `branch to
-  ".Lfn_parser__parse_stmt_at_b48287" spans 840629 instructions — outside the
-  signed 19-bit range` — so fixing the ABI alone does not get the self-host to
-  link.
+  `checker_modload_run` clears emit and dies in the assembler on a conditional
+  branch that spans more instructions than the signed 19-bit range holds. So
+  fixing the ABI alone does not get the self-host to link.
 
-Compile time moves the other way from size, and this change did not shift it:
-SSA is faster on small programs (`miniparse` 1.21 s → 0.60 s) and ~28× slower
-on compiler-shaped input (`checker_modload_run` 11.7 s → 327.8 s, same box).
+Compile time still moves the other way from size: SSA is faster on small
+programs (`miniparse` 1.21 s → 0.30 s) and ~20× slower on compiler-shaped input
+(`checker_modload_run` 11.7 s → 237.9 s, same box).
 
-### Why it still inverts
+### What the remaining gap is made of
 
 Both emitters' output for `checker_modload_run`, counted the same way:
 
 | | instructions | load/store | `mov` |
 |---|---|---|---|
 | flat | 2,010,751 | 859,653 (42.8%) | 357,069 (17.8%) |
-| ssa | 2,672,630 | 1,314,924 (49.2%) | 811,416 (30.4%) |
+| ssa | 2,275,033 | 1,314,959 (57.8%) | 413,744 (18.2%) |
 
-SSA emits 661,879 more instructions. Load/store accounts for 455,271 of that
-and `mov` for 454,347 — each about 69% — with everything else running 247,739
-instructions *below* flat. So the excess is memory traffic and register copies
-in roughly equal measure, and the allocation win is real but buried under both.
+**The copies are done.** Two rounds closed them. Call-clobber-aware allocation
+(x19..x28 in the allocatable file, with the matching partition handed to
+`ssa.LinearScan`) stopped spilling every value live across a call. Then
+call-result coalescing — delivering a result straight into its home instead of
+through a capture scratch and a staging register — cut `mov` from 811,416 to
+413,744, against flat's 357,069. That second round removed 397,597 instructions
+in total and 397,672 `mov`s: the whole reduction was copies, and load/store did
+not move by more than noise.
 
-Spilling is no longer the whole story on the memory side.
-`internal/codegen/arm64ssa` maps x19..x28 into the allocatable file and hands
-`ssa.LinearScan` the matching partition, so a value live across a call stays in
-a register the callee restores and is saved once in the prologue rather than
-stored and reloaded at every call it spans. That moved the ratio 163.7% → 133%
-and the load/store share 58.3% → 49.2%.
+What is left is memory traffic, and it is now the entire story. SSA emits
+264,282 more instructions than flat; load/store alone accounts for **455,306**
+of that, with everything else running 247,699 instructions *below* flat.
 
-The copies are untouched: `mov` is now the single largest opcode, ahead of
-`ldr`. Argument placement, phi resolution, and the call result/scratch staging
-each emit their own, and none of them coalesce.
+The shape is visible in any loop. Phi resolution goes through the temp slots
+unconditionally:
+
+```
+	str x0, [sp, #0]     // parallel copy on the back edge…
+	str x1, [sp, #8]
+	ldr x21, [sp, #0]    // …done entirely through memory
+	ldr x22, [sp, #8]
+```
+
+Four memory ops where two register moves would do. Read-all-then-write-all via
+slots is what makes a parallel copy correct when the moves form a cycle, but
+most do not — `resolveRegMoves` already orders an acyclic copy in registers for
+call arguments and pair returns, and only a genuine cycle needs a temp.
 
 **Ordering implication.** Phase 3/4's "measure the win and flip the default" is
-not one step. Move coalescing comes first — the two remaining components are
-the same size, and it is the one with no pass addressing it — then the
-stack-arg ABI and imm19 veneers, then the self-host builds, then a flip is
-measurable.
+not one step. Register-resident phi resolution comes next — it is the whole
+remaining gap on compiler-shaped input — then the stack-arg ABI and imm19
+veneers, then the self-host builds, then a flip is measurable.
 
 ### Two divergences the differential lane cannot see
 
