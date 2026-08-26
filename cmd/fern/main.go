@@ -1946,7 +1946,7 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	if _, ok := funcs["main"]; !ok {
 		return "", fmt.Errorf("no `main` function in program")
 	}
-	return arm64ssa.EmitAsmModule(funcs, "main", 12, nil, irProg.Vtables...)
+	return arm64ssa.EmitAsmModule(funcs, "main", arm64ssa.DefaultNumAlloc, nil, irProg.Vtables...)
 }
 
 // Linux dev hosts (cross-compiling) and Macs natively as long
