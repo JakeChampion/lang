@@ -89,6 +89,14 @@ type Manifest struct {
 	// Only the TOP-LEVEL manifest's excludes apply during `fern -resolve`
 	// (a dependency's [exclude] is ignored), preserving determinism.
 	Excludes map[string][]string
+	// Lint is the [lint] / [lint.options] tables as raw `key = value`
+	// pairs — a severity per rule name, and a `<rule>.<key>` entry per
+	// tuned option. The names are NOT validated here: which rules exist
+	// is internal/lint's to know, and a manifest parser that had to
+	// import the linter would drag it into every build that reads a
+	// dependency's fern.toml. `fern -lint` feeds these to
+	// lint.Config.SetPair, which rejects an unknown rule or option.
+	Lint map[string]string
 }
 
 // VersionDeps returns the names→min-version of this manifest's versioned
@@ -215,13 +223,13 @@ func Parse(src string) (*Manifest, error) {
 			}
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			switch section {
-			case "package", "dependencies", "exclude":
+			case "package", "dependencies", "exclude", "lint", "lint.options":
 			case "workspace":
 				if m.Members == nil {
 					m.Members = []string{}
 				}
 			default:
-				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude])", ln+1, section)
+				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])", ln+1, section)
 			}
 			continue
 		}
@@ -265,6 +273,23 @@ func Parse(src string) (*Manifest, error) {
 				return nil, fmt.Errorf("line %d: members: %w", ln+1, err)
 			}
 			m.Members = ms
+		case "lint", "lint.options":
+			// A severity is a quoted string; an option value may be a
+			// bare number, so accept either scalar spelling. Under
+			// [lint.options] the key is `<rule>.<key>`; under [lint] a
+			// dotted key is the same thing written inline, so both
+			// tables merge into one map and the dot decides.
+			v, err := parseScalar(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: [%s] %s: %w", ln+1, section, key, err)
+			}
+			if section == "lint.options" && !strings.Contains(key, ".") {
+				return nil, fmt.Errorf("line %d: [lint.options] key %q must be spelled <rule>.<option>", ln+1, key)
+			}
+			if m.Lint == nil {
+				m.Lint = map[string]string{}
+			}
+			m.Lint[key] = v
 		case "exclude":
 			if !validDepName(key) {
 				return nil, fmt.Errorf("line %d: invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
@@ -340,6 +365,27 @@ func parseString(val string) (string, error) {
 		return "", fmt.Errorf("escapes are not supported in %q (use forward slashes in paths)", val)
 	}
 	return s, nil
+}
+
+// parseScalar accepts either a quoted string or a bare integer, for the
+// tables whose values are not all one type. Anything else errors, so a
+// mistyped value is reported rather than passed on as a literal.
+func parseScalar(val string) (string, error) {
+	if strings.HasPrefix(val, "\"") {
+		return parseString(val)
+	}
+	if val == "" {
+		return "", fmt.Errorf("expected a quoted string or a number, got an empty value")
+	}
+	for i := 0; i < len(val); i++ {
+		if val[i] == '-' && i == 0 && len(val) > 1 {
+			continue
+		}
+		if val[i] < '0' || val[i] > '9' {
+			return "", fmt.Errorf("expected a quoted string or a number, got %q", val)
+		}
+	}
+	return val, nil
 }
 
 // parseDep accepts the declared-dependency forms this slice supports:

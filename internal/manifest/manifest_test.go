@@ -245,3 +245,49 @@ func TestParseWorkspaceErrors(t *testing.T) {
 		}
 	}
 }
+
+// The [lint] tables are collected verbatim: which rule names and options
+// exist is internal/lint's to know, so the manifest parser validates the
+// SPELLING of a value and nothing else.
+func TestParseLintTables(t *testing.T) {
+	m, err := Parse("[package]\nname = \"a\"\n[lint]\ncyclomatic-complexity = \"deny\"\n[lint.options]\ncyclomatic-complexity.max = 25\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"cyclomatic-complexity":     "deny",
+		"cyclomatic-complexity.max": "25",
+	}
+	if len(m.Lint) != len(want) {
+		t.Fatalf("lint = %v, want %v", m.Lint, want)
+	}
+	for k, v := range want {
+		if m.Lint[k] != v {
+			t.Errorf("lint[%q] = %q, want %q", k, m.Lint[k], v)
+		}
+	}
+
+	// A manifest with no [lint] table leaves the map nil, so a caller can
+	// tell "no lint config" from "lint config that happens to be empty".
+	none, err := Parse("[package]\nname = \"a\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if none.Lint != nil {
+		t.Errorf("lint = %v, want nil when no [lint] table is present", none.Lint)
+	}
+}
+
+func TestParseLintErrors(t *testing.T) {
+	cases := map[string]string{
+		"undotted option key": "[package]\nname = \"a\"\n[lint.options]\nmax = 25\n",
+		"unquoted severity":   "[package]\nname = \"a\"\n[lint]\ncyclomatic-complexity = deny\n",
+		"empty value":         "[package]\nname = \"a\"\n[lint]\ncyclomatic-complexity =\n",
+		"array value":         "[package]\nname = \"a\"\n[lint]\ncyclomatic-complexity = [\"deny\"]\n",
+	}
+	for label, src := range cases {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected parse error, got none", label)
+		}
+	}
+}

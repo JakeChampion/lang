@@ -630,6 +630,12 @@ func main() {
 	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern -fetch`) first; vendoring copies from the store.")
 	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
 	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. This is the ONLY command that touches the network — build/check/interp read the store and error when a url dependency hasn't been fetched.")
+	doLint := flag.Bool("lint", false, "lint FILE.fern or every .fern source under a directory, reporting code that compiles but reads badly (start with `fern -lint-rules`). Parse-only: no type-checking, no import resolution, so a file with a type error still lints and a whole tree costs one parse per file. Severities come from the governing fern.toml's [lint] table and then -lint-set; a `// fern-lint: allow RULE` comment silences one site. Exits 1 when a rule set to `deny` fires; a `warn` finding prints and exits 0.")
+	listLintRulesFlag := flag.Bool("lint-rules", false, "list the lint rules with their default severity, description, and tunable options, then exit.")
+	var lintSets repeatedString
+	flag.Var(&lintSets, "lint-set", "with -lint: set one rule's severity, `RULE=allow|warn|deny`. Repeatable; wins over the manifest's [lint] table.")
+	var lintOpts repeatedString
+	flag.Var(&lintOpts, "lint-opt", "with -lint: set one rule option, `RULE.OPTION=VALUE` (e.g. cyclomatic-complexity.max=20). Repeatable; wins over the manifest's [lint.options] table.")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
 	doAppendReport := flag.Bool("append-report", false, "print every `.append` site in FILE.fern and its transitive imports and whether the compiler grew the array in place or copied it, with the rule that decided. A copying append reallocates and copies the whole buffer, so one inside a loop is O(n\u00b2) bytes \u2014 the shape that OOM-killed CI in #4838, and which no other output distinguishes from the O(1) form. `.with` is absent because it has no compile-time decision to report: it lowers to a copy-on-write helper that reads the refcount at run time. Report mode; no codegen.")
 	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
@@ -651,6 +657,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
 		fmt.Fprintln(os.Stderr, "       fern -interp FILE.fern | fern -interp -    (read from stdin)")
+		fmt.Fprintln(os.Stderr, "       fern -lint PATH...                         (lint .fern sources; `fern -lint-rules` lists the rules)")
 		fmt.Fprintln(os.Stderr, "       fern -capabilities FILE.fern               (per-package capability usage report)")
 		fmt.Fprintln(os.Stderr, "       fern -tangle FILE.fern.md                  (literate: emit tangled Fern source)")
 		fmt.Fprintln(os.Stderr, "       fern -weave  FILE.fern.md                  (literate: emit woven Markdown)")
@@ -796,6 +803,22 @@ func main() {
 		if err := runAppendReport(flag.Arg(0), os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
+		}
+		return
+	}
+
+	if *listLintRulesFlag {
+		listLintRules(os.Stdout)
+		return
+	}
+
+	if *doLint {
+		if flag.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "usage: fern -lint PATH... (a .fern file or a directory of them)")
+			os.Exit(2)
+		}
+		if code := runLint(flag.Args(), lintSets, lintOpts, os.Stdout); code != 0 {
+			os.Exit(code)
 		}
 		return
 	}
