@@ -324,6 +324,13 @@ it.
   path** — the failure-reporting contract (predicate name in the message, actual
   + expected both quoted) is the runner's most regression-prone surface. Migration
   audit: `docs/TEST-RUNNER-MIGRATION.md`.
+- **Linter** (`fern -lint`, cyclomatic complexity, `[lint]` config, `// fern-lint:
+  allow` suppression) — `docs/LINT.md`. Engine: `internal/lint`. It runs on the
+  PARSE tree, so a rule needing types belongs in the checker instead. This
+  repository's own Fern sources are held to a complexity RATCHET
+  (`internal/lint/repo_gate_test.go`): its two numbers per tree may not move in
+  either direction, and a per-function exception is an `allow` comment on the
+  function, never a row in that table.
 - **Module loading** — there is no prelude injector; a program sees only what it
   `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.

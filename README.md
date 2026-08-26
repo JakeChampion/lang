@@ -91,6 +91,13 @@ wasmtime run factorial.wasm
 ./fern -fmt -d examples/factorial.fern     # print a unified diff against
                                            # the file; exits 1 when they differ
 
+# Linter (see docs/LINT.md). Parse-only, so a file with a type error still
+# lints. `fern -lint-rules` lists the rules with their options.
+./fern -lint examples/factorial.fern
+./fern -lint examples/                     # every .fern source under a directory
+./fern -lint -lint-set cyclomatic-complexity=deny \
+       -lint-opt cyclomatic-complexity.max=20 examples/
+
 # Per-package capability report (net / fs / env / subprocess / time / random;
 # see docs/PACKAGE-CAPABILITIES-BRIEF.md). Grants are also ENFORCED on every
 # compile / -check / -interp: a dependency whose fern.toml entry carries
