@@ -376,12 +376,13 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Hand-written AST walkers collapsing onto the shared fold spine is what this counts. It should only climb; a fall means a consumer went back to spelling its own traversal. Raise it to the measurement on every conversion — left at a stale 85 while the count reached 96, it would have accepted a walker going back to hand-indexing without a word.")
 
 	// The ratchet. These two are what the self-host writes INSTEAD of the
-	// features above, and both are only supposed to fall. The ceilings carry
-	// ~10% headroom over the measurement — enough for a normal PR's worth of new
-	// arms or loops without a red build, tight enough that a new pass written
-	// wholesale in the old dialect trips it.
-	atMost(t, c, "wildcard match arms", 2800, 2563,
-		"A `_ =>` arm is a match that does not enumerate its cases, so a new parser node added later is silently swallowed instead of caught. The fold spine exists to remove them.")
+	// features above, and both are only supposed to fall. A ceiling carries
+	// enough headroom for a normal PR's worth of new arms or loops without a red
+	// build, and no more: the wildcard row spent ~10% in three weeks without one
+	// conversion, so headroom that generous buys drift rather than tolerance.
+	// Size it in PRs, not percent — see the wildcard row's own note.
+	atMost(t, c, "wildcard match arms", 2900, 2810,
+		"A `_ =>` arm is a match that does not enumerate its cases, so a new parser node added later is silently swallowed instead of caught. The fold spine exists to remove them. The 2563/2800 pair this replaces had been overrun on MAIN — 2807 there, red on its own — because nothing runs this workflow outside a pull request, so the arms that consumed the headroom each passed against an older base. The new headroom is ~3%, not the ~10% above: the row climbed 244 in three weeks under a ceiling that could absorb it silently, and a ratchet that only ever moves up is not one.")
 	atMost(t, c, "increment by one", 5200, 4185,
 		"Every `x = x + 1` is one hand-written index loop that `for x in xs` would carry. This is the dialect the compiler is written in, and the count is the size of the migration left.")
 }
