@@ -367,6 +367,14 @@ type Generator struct {
 	// floatAggCounter names the aggregates the printable profile's
 	// mandatory float-aggregate observation declares (`__fag0`, ...).
 	floatAggCounter int
+	// cowCounter names the vars the array alias / copy-on-write
+	// cluster declares (`__cow_s0`, `__cow_a0`, `cw0_w`, `cw0_a`).
+	// Numbered across the whole program so the source and the alias
+	// are name-unique in every function they appear in — the rc
+	// analysis only elides an alias's refcount traffic when the name
+	// it aliases is declared exactly once (the slot-sharing hazard),
+	// so a reused name would silently stop producing the shape.
+	cowCounter int
 	// lambdaCounter names lambda parameters (`__lam_x0`, ...).
 	// Numbered across the whole program rather than per-lambda so a
 	// lambda emitted inside another lambda's body gets a distinct
@@ -838,6 +846,12 @@ func (g *Generator) MainProgram() string {
 		if g.maybeEmitLocalFn(&b, sc) {
 			continue
 		}
+		if g.maybeEmitArrayAliasCow(&b, sc) {
+			continue
+		}
+		if g.maybeEmitLoopReadBeforeWith(&b, sc) {
+			continue
+		}
 		// Main's vars are drawn from the deterministic-across-
 		// backends subset (no floats, no strings whose
 		// observation needs a print channel). Composite types
@@ -914,6 +928,12 @@ func (g *Generator) MainPrintableProgram() string {
 			continue
 		}
 		if g.maybeEmitForEach(&b, sc) {
+			continue
+		}
+		if g.maybeEmitArrayAliasCow(&b, sc) {
+			continue
+		}
+		if g.maybeEmitLoopReadBeforeWith(&b, sc) {
 			continue
 		}
 		vt := g.pickMainVarType()
@@ -1456,6 +1476,12 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 		if g.maybeEmitLocalFn(b, sc) {
 			continue
 		}
+		if g.maybeEmitArrayAliasCow(b, sc) {
+			continue
+		}
+		if g.maybeEmitLoopReadBeforeWith(b, sc) {
+			continue
+		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("v%d", i)
 		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
@@ -1670,6 +1696,136 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 		inner.declare(vt, vname)
 	}
 	b.WriteString("} ")
+	return true
+}
+
+// cowArrayTypes are the array gtypes maybeEmitArrayAliasCow builds in
+// every profile. Ordered smallest-element-first so an exhausted corpus
+// takes the i32 form.
+var cowArrayTypes = []gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32}
+
+// cowFloatArrayTypes are the extra ones the float-admitting profiles
+// add on top, the same split mainVarTypes / floatVarTypes make.
+var cowFloatArrayTypes = []gtype{tArrF32, tArrF64}
+
+// maybeEmitArrayAliasCow probabilistically emits the array
+// alias-then-copy-on-write cluster:
+//
+//	var __cow_s<N>: T[] = [ ... ];                    // source
+//	var __cow_a<N>: T[] = __cow_s<N>;                 // bare-ident ALIAS
+//	var cw<N>_w: T[]    = __cow_s<N>.with(<i>i32, v); // source's LAST use
+//	var cw<N>_a: E      = __cow_a<N>[<i>i32];         // read THROUGH the alias
+//
+// Returns true when it wrote one (caller should skip the var-decl it
+// would have emitted otherwise).
+//
+// The four statements are one production because the bug class they
+// reach is about their ORDER, not about any of them individually. A
+// `.with` whose receiver is at its last use lowers to an in-place
+// store guarded on the receiver holding the only reference; a
+// bare-ident alias is exactly what makes that guard's answer wrong if
+// the alias's refcount traffic was elided as a dead dup/drop pair. The
+// divergence is only observable by reading the alias AFTER the write,
+// so the read has to be its own later statement. Composed out of
+// independent productions the sequence needs four specific statements
+// to land in order, which no seed in a 2048-seed GenMain corpus
+// produced.
+//
+// The source and the alias are generator-private and are deliberately
+// NOT declared into the caller's scope, for the same reason the loop
+// counters are not: a later reference to the source would move its
+// last use past the `.with` and take the in-place path off the table,
+// and a later reference to the alias (a `return` mentioning it, say)
+// would pin it live and stop it being treated as a dead alias. Either
+// one silently turns the cluster back into an ordinary array copy. The
+// `.with` RESULT and the read-back element are declared, so an
+// enclosing return or print observation can pick them up — the
+// read-back is the value that carries the divergence.
+func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
+	// Exhaustion convention: `true` here = no cluster, which is the
+	// smaller output (the caller falls through to a single var-decl).
+	// Bias to ~15% emission per statement slot when bytes are flowing.
+	if g.flip(0.85) {
+		return false
+	}
+	pool := cowArrayTypes
+	if g.profile.floatsAllowed() {
+		pool = append(append([]gtype{}, pool...), cowFloatArrayTypes...)
+	}
+	arrT := pool[g.ch.intN(len(pool))]
+	elem, _ := arrayElemOf(arrT)
+	arrName := g.typeName(arrT)
+
+	idx := g.cowCounter
+	g.cowCounter++
+	src := fmt.Sprintf("__cow_s%d", idx)
+	alias := fmt.Sprintf("__cow_a%d", idx)
+	result := fmt.Sprintf("cw%d_w", idx)
+	readBack := fmt.Sprintf("cw%d_a", idx)
+
+	fmt.Fprintf(b, "var %s: %s = ", src, arrName)
+	n := g.arrayLiteral(b, sc, elem, 0)
+	b.WriteString("; ")
+	fmt.Fprintf(b, "var %s: %s = %s; ", alias, arrName, src)
+	// The literal's length is known here, so the write can land
+	// anywhere in it rather than always at 0.
+	at := g.ch.intN(n)
+	fmt.Fprintf(b, "var %s: %s = %s.with(%di32, ", result, arrName, src, at)
+	g.expr(b, sc, elem, 1)
+	b.WriteString("); ")
+	fmt.Fprintf(b, "var %s: %s = %s[%di32]; ", readBack, g.typeName(elem), alias, at)
+
+	sc.declare(arrT, result)
+	sc.declare(elem, readBack)
+	return true
+}
+
+// maybeEmitLoopReadBeforeWith emits the LOOP half of the copy-on-write shape:
+// a receiver declared outside the loop, read at the top of the body, and
+// consumed by a `.with` that is its textually-last occurrence. `identOrder`
+// is textual, so "last" re-executes and the next iteration reads the slot the
+// in-place store already overwrote — interp 2 against 10 on both natives when
+// #7544 was live. maybeEmitArrayAliasCow cannot reach this: its receiver dies
+// in the same straight-line block it was declared in.
+//
+// i32[] only. The read has to reach the return value to be observed at all,
+// and an i32 accumulator is the one element type that adds up without a cast.
+func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) bool {
+	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
+		return false
+	}
+	// Exhaustion convention: `true` = no loop, which is the smaller output.
+	if g.flip(0.85) {
+		return false
+	}
+	idx := g.cowCounter
+	g.cowCounter++
+	src := fmt.Sprintf("__cowl_s%d", idx)
+	counter := fmt.Sprintf("__cowl_i%d", idx)
+	acc := fmt.Sprintf("cwl%d_acc", idx)
+	result := fmt.Sprintf("cwl%d_w", idx)
+
+	// src stays out of sc, like maybeEmitArrayAliasCow's receiver: a later
+	// reference would move its last use past the `.with` and the shape would
+	// quietly become an ordinary copy.
+	fmt.Fprintf(b, "var %s: i32[] = ", src)
+	n := g.arrayLiteral(b, sc, tI32, 0)
+	b.WriteString("; ")
+	at := g.ch.intN(n)
+	// Two iterations minimum — one pass cannot observe its own store.
+	iters := 2 + g.ch.intN(2)
+	fmt.Fprintf(b, "var %s: i32 = 0i32; var %s: i32 = 0i32; ", acc, counter)
+	fmt.Fprintf(b, "while (%s < %di32) { ", counter, iters)
+	g.loopDepth++
+	fmt.Fprintf(b, "%s = %s + %s[%di32]; ", acc, acc, src, at)
+	fmt.Fprintf(b, "var %s: i32[] = %s.with(%di32, ", result, src, at)
+	g.expr(b, sc, tI32, 1)
+	b.WriteString("); ")
+	fmt.Fprintf(b, "%s = %s + 1i32; ", counter, counter)
+	g.loopDepth--
+	b.WriteString("} ")
+
+	sc.declare(tI32, acc)
 	return true
 }
 
@@ -1911,6 +2067,31 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			name := fns[g.ch.intN(len(fns))]
 			fmt.Fprintf(b, "%s(", name)
 			g.expr(b, sc, tI32, depth+1)
+			b.WriteByte(')')
+			return true
+		}
+	}
+	// `arr.with(i, v)`: T[] → T[]. The value-returning element
+	// write, and the only production that threads an array THROUGH
+	// a mutation rather than rebuilding it from a literal. It
+	// lowers to `__method_Array_set`, which the IR turns into a
+	// copy-on-write: a fresh buffer when anything else still holds
+	// a reference, an in-place store when this receiver holds the
+	// only one. Nothing else in the corpus reaches that decision.
+	//
+	// Index `0i32` for the same reason the array-index production
+	// at the top of this function uses it: every array literal the
+	// generator emits has at least one element, but no per-var
+	// length is tracked, so 0 is the only index statically known to
+	// be in bounds for an array reached through a var or a helper
+	// return. maybeEmitArrayAliasCow draws a wider index because it
+	// emits the receiver's literal itself and knows its length.
+	if elem, ok := arrayElemOf(t); ok {
+		arrs := sc.inScope(t)
+		if len(arrs) > 0 && !g.flip(0.7) {
+			name := arrs[g.ch.intN(len(arrs))]
+			fmt.Fprintf(b, "%s.with(0i32, ", name)
+			g.expr(b, sc, elem, depth+1)
 			b.WriteByte(')')
 			return true
 		}
@@ -2365,6 +2546,25 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if len(vars) > 0 && g.flip(0.6) {
 		b.WriteString(vars[g.ch.intN(len(vars))])
 		return
+	}
+	// With no in-scope var of type t the literal is the fall-through,
+	// and for a FUNCTION type that literal is a lambda — four AST
+	// nodes, where an element read out of an in-scope closure array is
+	// three. A spent corpus must not take the larger one: the
+	// production it would otherwise have reached (tryCompositeProduction's
+	// array index) is smaller, so truncating a byte here GREW the
+	// program and the shrinker could walk uphill. tFnI32I32 is the only
+	// type with a non-var production smaller than its own literal;
+	// every other literal is already the minimum available.
+	//
+	// Gated on exhausted() so a corpus with bytes left is untouched —
+	// the predicate consumes nothing, so random generation and every
+	// byte-driven decision are bit-identical to before.
+	if t == tFnI32I32 && g.ch.exhausted() {
+		if arrs := sc.inScope(tArrFnI32I32); len(arrs) > 0 {
+			fmt.Fprintf(b, "%s[0i32]", arrs[g.ch.intN(len(arrs))])
+			return
+		}
 	}
 	g.literal(b, sc, t, depth)
 }
@@ -2889,7 +3089,12 @@ func (g *Generator) mapLiteral(b *strings.Builder, sc *scope, depth int) {
 // always in-bounds. Sub-expressions recurse at depth+1 so the
 // outer MaxExprDepth budget keeps composite-of-composite
 // recursion finite.
-func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, depth int) {
+//
+// Returns the element count, which is the only place a caller can
+// learn an array's length: nothing tracks it per-var afterwards, so
+// a production wanting an in-bounds index other than 0 has to emit
+// the literal itself and index within what it drew.
+func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, depth int) int {
 	n := 1 + g.ch.intN(4) // 1..4 elements
 	b.WriteByte('[')
 	for i := 0; i < n; i++ {
@@ -2899,6 +3104,7 @@ func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, dept
 		g.expr(b, sc, elem, depth+1)
 	}
 	b.WriteByte(']')
+	return n
 }
 
 // lambdaLiteral emits `((<param>: i32) => <i32-expr>)`, the only

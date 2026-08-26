@@ -277,6 +277,50 @@ func wideOperandNear(src, op string) bool {
 // plain `(<i64 expr> >> 32i64) as i32` from emitI64HighHalf doesn't count.
 var u32AsI32RE = regexp.MustCompile(`u32[^()]*\) as i32\)`)
 
+// aliasCowClusterOrdered reports whether src contains a complete array
+// alias / copy-on-write cluster with its three parts IN ORDER: the
+// bare-ident alias of the source, the `.with` write whose receiver is
+// that same source, and the read back through the alias.
+//
+// The order is the whole point. `.with` lowers to an in-place store
+// only when its receiver is at its last use, and a read through the
+// alias is only a witness to that store if it happens afterwards —
+// checking for the three parts in any arrangement would credit a
+// corpus that never produces the shape. Spelled as a scan rather than
+// a regexp because tying the three parts to one cluster index needs a
+// backreference, which RE2 does not have.
+// loopReadBeforeWithOrdered reports whether src holds a complete
+// maybeEmitLoopReadBeforeWith shape: one receiver read into the
+// accumulator BEFORE a `.with` on that same receiver, both inside the
+// loop body. Order is the whole point — a `.with` ahead of the read is
+// an ordinary copy, and RE2 has no backreferences, so the parts are
+// tied to one cluster index by scanning rather than by one pattern.
+func loopReadBeforeWithOrdered(src string) bool {
+	for i := 0; i < 64; i++ {
+		recv := fmt.Sprintf("__cowl_s%d", i)
+		read := fmt.Sprintf("cwl%d_acc = cwl%d_acc + %s[", i, i, recv)
+		with := recv + ".with("
+		r := strings.Index(src, read)
+		w := strings.Index(src, with)
+		if r >= 0 && w > r {
+			return true
+		}
+	}
+	return false
+}
+
+func aliasCowClusterOrdered(src string) bool {
+	for n := 0; strings.Contains(src, fmt.Sprintf("var __cow_s%d:", n)); n++ {
+		alias := strings.Index(src, fmt.Sprintf("= __cow_s%d; ", n))
+		write := strings.Index(src, fmt.Sprintf("__cow_s%d.with(", n))
+		read := strings.Index(src, fmt.Sprintf("= __cow_a%d[", n))
+		if alias >= 0 && write > alias && read > write {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGenFeatureCoverage(t *testing.T) {
 	want := map[string]bool{
 		"function call":                false,
@@ -357,6 +401,10 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"closure escapes via return":   false,
 		"fn-typed parameter":           false,
 		"indirect call via fn value":   false,
+		"array .with() call":           false,
+		"array alias of a bare ident":  false,
+		"alias read after .with":       false,
+		"loop read before .with":       false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -720,6 +768,26 @@ func TestGenFeatureCoverage(t *testing.T) {
 			if unsignedOperandNear(src, "u8", op, u8LiteralRE) {
 				want["u8 saturating or checked"] = true
 			}
+		}
+		// Array copy-on-write. `.with` on its own is the broad
+		// production — tryCompositeProduction reaches for it in any
+		// array-valued expression position — and the two cluster
+		// landmarks are the narrow ordered shape: an alias whose
+		// source is later a `.with` receiver, then a read through the
+		// alias. Tracked apart because a corpus can have plenty of the
+		// first and none of the second, which is what it had before
+		// maybeEmitArrayAliasCow existed.
+		if strings.Contains(src, ".with(") {
+			want["array .with() call"] = true
+		}
+		if strings.Contains(src, "= __cow_s") {
+			want["array alias of a bare ident"] = true
+		}
+		if aliasCowClusterOrdered(src) {
+			want["alias read after .with"] = true
+		}
+		if loopReadBeforeWithOrdered(src) {
+			want["loop read before .with"] = true
 		}
 	}
 	for feature, ok := range want {
