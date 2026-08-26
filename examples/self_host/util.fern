@@ -900,3 +900,55 @@ pub function trim(s: string): string {
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) { b = b - 1; }
   return slice_unchecked(s, a, b) + "";
 }
+
+// levenshtein: the edit distance between `a` and `b`, in BYTES. The port of
+// internal/diag's, which is also byte-indexed, so the two agree on every
+// suggestion they make from the same candidate set.
+pub function levenshtein(a: string, b: string): i32 {
+    if (a == b) { return 0; }
+    if (a.len() == 0) { return b.len(); }
+    if (b.len() == 0) { return a.len(); }
+    var prev: i32[] = [];
+    var j: i32 = 0;
+    while (j <= b.len()) { prev = prev.append(j); j = j + 1; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        var cur: i32[] = [i + 1];
+        var k: i32 = 0;
+        while (k < b.len()) {
+            var cost: i32 = 1;
+            if (a[i] == b[k]) { cost = 0; }
+            var best: i32 = prev[k] + cost;
+            if (cur[k] + 1 < best) { best = cur[k] + 1; }
+            if (prev[k + 1] + 1 < best) { best = prev[k + 1] + 1; }
+            cur = cur.append(best);
+            k = k + 1;
+        }
+        prev = cur;
+        i = i + 1;
+    }
+    return prev[b.len()];
+}
+
+// suggest: the candidate closest to `name` within the same budget
+// internal/diag uses — two edits, or one for a name of three bytes or fewer —
+// or "" when nothing is close enough. Ties go to the FIRST candidate at the
+// best distance, which is what makes the answer depend on the caller's
+// candidate order rather than on a scan direction.
+pub function suggest(name: string, candidates: string[]): string {
+    if (name.len() == 0 || candidates.len() == 0) { return ""; }
+    var budget: i32 = 2;
+    if (name.len() <= 3) { budget = 1; }
+    var best: string = "";
+    var best_dist: i32 = budget + 1;
+    var i: i32 = 0;
+    while (i < candidates.len()) {
+        if (candidates[i] != name) {
+            var d: i32 = levenshtein(name, candidates[i]);
+            if (d < best_dist) { best = candidates[i]; best_dist = d; }
+        }
+        i = i + 1;
+    }
+    if (best_dist > budget) { return ""; }
+    return best;
+}
