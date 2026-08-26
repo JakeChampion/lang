@@ -24,6 +24,7 @@
 // driver (wasm_ir_run) — wasm.fern stays untouched until a later fold/flip.
 
 import "core/map";
+import "./ast";
 import "./parser";
 import "./util";
 import "./ir";
@@ -10488,8 +10489,8 @@ pub function export_func_ret(mod: parser.Module, name: string): string {
 }
 
 // export_func_params returns the parameter list of the free function `name`.
-pub function export_func_params(mod: parser.Module, name: string): parser.ParamDecl[] {
-    var none: parser.ParamDecl[] = [];
+pub function export_func_params(mod: parser.Module, name: string): ast.ParamDecl[] {
+    var none: ast.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && mod.funcs[i].name == name) {
@@ -10501,7 +10502,7 @@ pub function export_func_params(mod: parser.Module, name: string): parser.ParamD
 }
 
 // export_has_string_param reports whether any parameter is a string.
-pub function export_has_string_param(params: parser.ParamDecl[]): boolean {
+pub function export_has_string_param(params: ast.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < params.len()) {
         if (params[i].type_name == "string") { return true; }
@@ -10513,7 +10514,7 @@ pub function export_has_string_param(params: parser.ParamDecl[]): boolean {
 // export_has_numeric_array_param reports whether any parameter is a numeric
 // array (`list<T>`, slot == canonical element size) — the shape whose export
 // wrapper rebuilds a self-host array from the canonical (ptr,len).
-pub function export_has_numeric_array_param(params: parser.ParamDecl[]): boolean {
+pub function export_has_numeric_array_param(params: ast.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < params.len()) {
         if (extern_array_param_supported(params[i].type_name)) { return true; }
@@ -10541,7 +10542,7 @@ pub function module_has_array_param_export(mod: parser.Module): boolean {
 // the wrapper repacks into the canonical `[ptr,len]` return area. Scalars pass
 // through. Local indices: wrapper params 0..W-1, then one block local per
 // string param, then a loop counter, then (string result) $s + $ra.
-pub function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: string, slot: i32): string {
+pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: string, slot: i32): string {
     // Each string OR numeric-array param takes two canonical wrapper slots
     // (ptr,len) and gets one scratch "block" local (the [len][bytes] string block
     // / the rebuilt Fern array); scalars take one slot, no local.
@@ -10746,7 +10747,7 @@ pub function export_needs_heap(mod: parser.Module): boolean {
     var i: i32 = 0;
     while (i < mod.exports.len()) {
         var nm: string = mod.exports[i].func_name;
-        var params: parser.ParamDecl[] = export_func_params(mod, nm);
+        var params: ast.ParamDecl[] = export_func_params(mod, nm);
         if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_array_param_supported(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
             return true;
         }
@@ -10761,7 +10762,7 @@ pub function export_needs_heap(mod: parser.Module): boolean {
 pub function export_needs_realloc(mod: parser.Module): boolean {
     var i: i32 = 0;
     while (i < mod.exports.len()) {
-        var params: parser.ParamDecl[] = export_func_params(mod, mod.exports[i].func_name);
+        var params: ast.ParamDecl[] = export_func_params(mod, mod.exports[i].func_name);
         if (export_has_string_param(params) || export_has_numeric_array_param(params)) { return true; }
         i = i + 1;
     }
@@ -10774,7 +10775,7 @@ pub function extern_exports(mod: parser.Module, slot: i32): string {
     while (i < mod.exports.len()) {
         var x: parser.ExportBinding = mod.exports[i];
         var ret: string = export_func_ret(mod, x.func_name);
-        var params: parser.ParamDecl[] = export_func_params(mod, x.func_name);
+        var params: ast.ParamDecl[] = export_func_params(mod, x.func_name);
         // A VOID export needs a wrapper on the IR consumer for the mirror of the
         // reason a void EXTERN does (see extern_needs_wrapper): the IR path emits
         // every Fern function with `(result i32)`, so exporting one directly
@@ -11454,11 +11455,11 @@ pub function parse_option_payload(t: string): string {
 //
 // Only a direct `f(...)` callee counts, which is what the WASI categories are
 // spelled as; a method call reaches its receiver's type, not a name here.
-function call_name_of(e: parser.Expr, acc: Map[string, boolean]): Map[string, boolean] {
+function call_name_of(e: ast.Expr, acc: Map[string, boolean]): Map[string, boolean] {
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => { return acc.insert(id.name, true); },
+                ast.ExprIdent(id) => { return acc.insert(id.name, true); },
                 _ => {},
             }
         },

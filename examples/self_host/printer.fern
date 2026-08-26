@@ -4,7 +4,7 @@
 // through the lexer + parser.
 //
 // Same shape as the checker (#619) and interp (#623): a
-// recursive walk over parser.Expr / parser.Stmt with one match
+// recursive walk over ast.Expr / ast.Stmt with one match
 // arm per variant. Output isn't strictly pretty — no alignment,
 // no comment-preserving — but it produces re-parseable text for
 // every shape the parser handles today.
@@ -14,6 +14,7 @@
 // AST shape. Exit code 0 means every assertion passed; non-
 // zero codes identify which arm failed.
 
+import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -104,13 +105,13 @@ function binary_prec(op: string): i32 {
 
 // print_expr emits an expression at the outermost level, where nothing around
 // it can require parens.
-function print_expr(e: parser.Expr): string {
+function print_expr(e: ast.Expr): string {
     return print_expr_prec(e, prec_lowest());
 }
 
 // print_lambda_params renders a lambda's `(p: T, …)` list — shared by the
 // `function` and arrow spellings, which differ only in what follows it.
-function print_lambda_params(lm: parser.ExprLambda): string {
+function print_lambda_params(lm: ast.ExprLambda): string {
     var (pats, _) = param_patterns_for(lm.params, lm.body);
     return print_params_with(lm.params, pats);
 }
@@ -118,7 +119,7 @@ function print_lambda_params(lm: parser.ExprLambda): string {
 // print_params_with renders a parameter list, spelling a destructuring
 // parameter as the pattern it was written with rather than the holder the
 // desugar minted (#7338).
-function print_params_with(params: parser.ParamDecl[], pats: string[]): string {
+function print_params_with(params: ast.ParamDecl[], pats: string[]): string {
     var out: string = "(";
     var pi: i32 = 0;
     while (pi < params.len()) {
@@ -138,9 +139,9 @@ function print_params_with(params: parser.ParamDecl[], pats: string[]): string {
 
 // drop_prelude returns body with its first `n` statements removed — the `let`s
 // the parameter desugar minted, now spelled in the parameter list.
-function drop_prelude(body: parser.Stmt[], n: i32): parser.Stmt[] {
+function drop_prelude(body: ast.Stmt[], n: i32): ast.Stmt[] {
     if (n <= 0) { return body; }
-    var out: parser.Stmt[] = [];
+    var out: ast.Stmt[] = [];
     var i: i32 = n;
     while (i < body.len()) { out = out.append(body[i]); i = i + 1; }
     return out;
@@ -150,10 +151,10 @@ function drop_prelude(body: parser.Stmt[], n: i32): parser.Stmt[] {
 // `return <expr>;`, and "" for any other body — the shape a value-position
 // branch has once the if / match-expression desugar has rewritten it. A real
 // expression never prints empty, so "" is unambiguous.
-function print_return_only(body: parser.Stmt[]): string {
+function print_return_only(body: ast.Stmt[]): string {
     if (body.len() != 1) { return ""; }
     match (body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             if (expr_is_missing(r.value)) { return ""; }
             return print_expr(r.value);
         },
@@ -169,12 +170,12 @@ function print_return_only(body: parser.Stmt[]): string {
 // expression and the leading statements print inline. A block with no leading
 // statements is just its tail — braces there would be noise, and native drops
 // them too, so the tail carries the caller's precedence.
-function print_block_expr(c: parser.ExprCall, parent_prec: i32): string {
+function print_block_expr(c: ast.ExprCall, parent_prec: i32): string {
     if (c.args.len() != 0) { return ""; }
     match (c.callee) {
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             if (lm.origin != parser.ORIGIN_BLOCK || lm.body.len() == 0) { return ""; }
-            var last: parser.Stmt = lm.body[lm.body.len() - 1];
+            var last: ast.Stmt = lm.body[lm.body.len() - 1];
             var tail: string = print_return_only([last]);
             if (tail.len() == 0) { return ""; }
             if (lm.body.len() == 1) { return print_expr_prec(tail_expr(last), parent_prec); }
@@ -192,9 +193,9 @@ function print_block_expr(c: parser.ExprCall, parent_prec: i32): string {
 }
 
 // tail_expr is the expression of a `return <expr>;` statement.
-function tail_expr(st: parser.Stmt): parser.Expr {
+function tail_expr(st: ast.Stmt): ast.Expr {
     match (st) {
-        parser.StmtReturn(r) => { return r.value; },
+        ast.StmtReturn(r) => { return r.value; },
         _ => { return parser.e_unknown("block tail"); },
     }
 }
@@ -214,17 +215,17 @@ function tail_expr(st: parser.Stmt): parser.Expr {
 // iife_value_local names the local a value-producing chain assigns, when the
 // first and last statements of an IIFE body are its declaration and its
 // return. "" when the body is any other shape.
-function iife_value_local(first: parser.Stmt, last: parser.Stmt): string {
+function iife_value_local(first: ast.Stmt, last: ast.Stmt): string {
     var name: string = "";
     match (first) {
-        parser.StmtVar(v) => { name = v.name; },
+        ast.StmtVar(v) => { name = v.name; },
         _ => { return ""; }
     }
     if (name.len() == 0) { return ""; }
     match (last) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprIdent(id) => { if (id.name == name) { return name; } },
+                ast.ExprIdent(id) => { if (id.name == name) { return name; } },
                 _ => { return ""; }
             }
         },
@@ -233,10 +234,10 @@ function iife_value_local(first: parser.Stmt, last: parser.Stmt): string {
     return "";
 }
 
-function print_expr_iife(c: parser.ExprCall): string {
+function print_expr_iife(c: ast.ExprCall): string {
     if (c.args.len() != 0) { return ""; }
     match (c.callee) {
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             if (lm.params.len() != 0) { return ""; }
             // The VALUE-LOCAL shape: a chain cannot `return` an arm's value the
             // way a match arm does, so the desugar declares a local, lets the
@@ -249,7 +250,7 @@ function print_expr_iife(c: parser.ExprCall): string {
                         // "" not `vl`: the carrier holds the arms as WRITTEN,
                         // whose bodies still `return` their value — only the
                         // LOWERED arms were rewritten to assign the local.
-                        parser.StmtIf(vf) => { return print_sugared_match_expr(vf.sugar, ""); },
+                        ast.StmtIf(vf) => { return print_sugared_match_expr(vf.sugar, ""); },
                         _ => { return ""; }
                     }
                 }
@@ -257,12 +258,12 @@ function print_expr_iife(c: parser.ExprCall): string {
             }
             if (lm.body.len() != 1) { return ""; }
             match (lm.body[0]) {
-                parser.StmtMatch(m) => {
+                ast.StmtMatch(m) => {
                     // The WRITTEN arms when the parse consumed something into
                     // the lowering (a nested or literal payload) — otherwise a
                     // `match (o) { A(Ok2(n)) => n, … }` reprints as the merged
                     // arm and its inner match, wrapped back up in the IIFE.
-                    var marms: parser.MatchArm[] = m.arms;
+                    var marms: ast.MatchArm[] = m.arms;
                     if (m.sugar.len() > 0) { marms = m.sugar; }
                     if (marms.len() == 0) { return ""; }
                     var out: string = "match (" + print_expr(m.scrutinee) + ") { ";
@@ -272,7 +273,7 @@ function print_expr_iife(c: parser.ExprCall): string {
                         if (av.len() == 0) { return ""; }
                         if (i > 0) { out = out + ", "; }
                         var head: string = print_pattern(marms[i].pattern);
-                        var guarded: parser.MatchArm = marms[i];
+                        var guarded: ast.MatchArm = marms[i];
                         // See print_match: or-pattern alternatives rejoin here.
                         while (i + 1 < marms.len() && marms[i + 1].alt_cont) {
                             i = i + 1;
@@ -285,7 +286,7 @@ function print_expr_iife(c: parser.ExprCall): string {
                     }
                     return out + " }";
                 },
-                parser.StmtIf(f) => {
+                ast.StmtIf(f) => {
                     // A literal-scrutinee match in expression position is an
                     // if/else-if chain inside the IIFE; the carrier on its
                     // outermost `if` holds the arms as written.
@@ -315,16 +316,16 @@ function print_expr_iife(c: parser.ExprCall): string {
 // (IfChain.value_local), so the shape is the marker, and the match inside it
 // already reprints correctly — this only has to unwrap it and put the arm
 // values back where the `return`s were.
-function print_value_local_iife(c: parser.ExprCall): string {
+function print_value_local_iife(c: ast.ExprCall): string {
     if (c.args.len() != 0) { return ""; }
     match (c.callee) {
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             if (lm.params.len() != 0 || lm.body.len() != 3) { return ""; }
             var v: string = value_local_name(lm.body[0], lm.body[2]);
             if (v.len() == 0) { return ""; }
             match (lm.body[1]) {
-                parser.StmtIf(ifs) => { return print_sugared_match_expr(ifs.sugar, v); },
-                parser.StmtMatch(m) => { return print_match_expr_arms(m, v); },
+                ast.StmtIf(ifs) => { return print_sugared_match_expr(ifs.sugar, v); },
+                ast.StmtMatch(m) => { return print_match_expr_arms(m, v); },
                 _ => { return ""; }
             }
             return "";
@@ -336,17 +337,17 @@ function print_value_local_iife(c: parser.ExprCall): string {
 
 // value_local_name is the local an IIFE body declares first and returns last,
 // or "" when `first` / `last` are not that pair.
-function value_local_name(first: parser.Stmt, last: parser.Stmt): string {
+function value_local_name(first: ast.Stmt, last: ast.Stmt): string {
     var declared: string = "";
     match (first) {
-        parser.StmtVar(vd) => { declared = vd.name; },
+        ast.StmtVar(vd) => { declared = vd.name; },
         _ => { return ""; },
     }
     if (declared.len() == 0) { return ""; }
     match (last) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if (id.name == declared) { return declared; }
                     return "";
                 },
@@ -361,11 +362,11 @@ function value_local_name(first: parser.Stmt, last: parser.Stmt): string {
 // print_match_expr_arms is print_sugared_match_expr for a match the desugar
 // left as a StmtMatch — a variant match with a tuple sub-pattern, whose arms
 // are ordinary MatchArms rather than a carrier's.
-function print_match_expr_arms(m: parser.StmtMatch, v: string): string {
+function print_match_expr_arms(m: ast.StmtMatch, v: string): string {
     // The WRITTEN arms are snapshotted BEFORE value_arm_body rewrites the
     // terminal `return E` into `V = E`, so they still carry the return and the
     // value local does not apply to them.
-    var arms: parser.MatchArm[] = m.arms;
+    var arms: ast.MatchArm[] = m.arms;
     var val: string = v;
     if (m.sugar.len() > 0) { arms = m.sugar; val = ""; }
     if (arms.len() == 0) { return ""; }
@@ -376,7 +377,7 @@ function print_match_expr_arms(m: parser.StmtMatch, v: string): string {
         if (av.len() == 0) { return ""; }
         if (i > 0) { out = out + ", "; }
         var head: string = print_pattern(arms[i].pattern);
-        var guarded: parser.MatchArm = arms[i];
+        var guarded: ast.MatchArm = arms[i];
         while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
             i = i + 1;
             head = head + " | " + print_pattern(arms[i].pattern);
@@ -394,7 +395,7 @@ function print_match_expr_arms(m: parser.StmtMatch, v: string): string {
 //
 // `v` names the local the desugar stores arm values into (IfChain.value_local),
 // or is "" when the arms kept their `return`. See arm_expr_value.
-function print_sugared_match_expr(sg: parser.MatchSugar, v: string): string {
+function print_sugared_match_expr(sg: ast.MatchSugar, v: string): string {
     var arms: WrittenArm[] = sugar_written_arms(sg);
     if (arms.len() == 0) { return ""; }
     var out: string = "match (" + print_expr(sg.scrut) + ") { ";
@@ -419,9 +420,9 @@ function print_sugared_match_expr(sg: parser.MatchSugar, v: string): string {
 //
 // "" when the body has no terminal value at all — a divergent arm, which
 // value_arm_body deliberately leaves alone.
-function arm_expr_value(body: parser.Stmt[], v: string): string {
+function arm_expr_value(body: ast.Stmt[], v: string): string {
     if (body.len() == 0) { return ""; }
-    var last: parser.Stmt = body[body.len() - 1];
+    var last: ast.Stmt = body[body.len() - 1];
     var tail: string = "";
     if (v.len() == 0) {
         tail = print_return_only([last]);
@@ -442,28 +443,28 @@ function arm_expr_value(body: parser.Stmt[], v: string): string {
 // operator passes its own level to its LEFT operand and one above it to the
 // right, which is what keeps `a - (b - c)` parenthesised and `(a - b) - c`
 // bare.
-function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
+function print_expr_prec(e: ast.Expr, parent_prec: i32): string {
     match (e) {
-        parser.ExprNumber(n) => {
+        ast.ExprNumber(n) => {
             // A quoted literal prints its spelling, escapes and all — the
             // decoded value in `text` is not what the author wrote.
             if (n.raw.len() > 0) { return n.raw; }
             if (n.suffix.len() > 0) { return n.text + n.suffix; }
             return n.text;
         },
-        parser.ExprIdent(id) => { return id.name; },
-        parser.ExprString(s) => { return quote_string(s.value); },
-        parser.ExprBool(b) => {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprString(s) => { return quote_string(s.value); },
+        ast.ExprBool(b) => {
             if (b.value) { return "true"; }
             return "false";
         },
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             var p: i32 = binary_prec(b.op);
             var inner: string = print_expr_prec(b.left, p) + " " + b.op + " " + print_expr_prec(b.right, p + 1);
             if (p < parent_prec) { return "(" + inner + ")"; }
             return inner;
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             // A cast is a unary node whose op is `as_<type>` (parse_cast's
             // e_unary_at), not a prefix operator — printing it as one produced
             // `as_i32s[i + 1]` for `s[i + 1] as i32`, which re-parses as a call
@@ -484,7 +485,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             if (parent_prec >= prec_unary()) { return "(" + uinner + ")"; }
             return uinner;
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             // A match- or if-EXPRESSION reaches here as the 0-arg IIFE
             // parse_primary desugars it to. Printing that back is not a style
             // choice: the IIFE's return type is a TAG the desugar guessed from
@@ -515,7 +516,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             return out + ")";
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var out: string = "[";
             var i: i32 = 0;
             while (i < a.elements.len()) {
@@ -525,7 +526,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             return out + "]";
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var out: string = "(";
             var i: i32 = 0;
             while (i < t.elements.len()) {
@@ -535,13 +536,13 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             return out + ")";
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             return print_expr_prec(x.array, prec_primary()) + "[" + print_expr(x.index) + "]";
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             return print_expr_prec(sl.array, prec_primary()) + "[" + print_expr(sl.start) + ":" + print_expr(sl.end) + "]";
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             var out: string = sl.type_name + " { ";
             var first: boolean = true;
             if (sl.has_base) {
@@ -557,8 +558,8 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             return out + " }";
         },
-        parser.ExprFieldAccess(fa) => { return print_expr_prec(fa.obj, prec_primary()) + "." + fa.field; },
-        parser.ExprLambda(lm) => {
+        ast.ExprFieldAccess(fa) => { return print_expr_prec(fa.obj, prec_primary()) + "." + fa.field; },
+        ast.ExprLambda(lm) => {
             var params: string = print_lambda_params(lm);
             // An arrow lambda parses to this same node with its expression
             // wrapped in a one-statement `return` and NO return type, since the
@@ -583,7 +584,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             var out: string = "function" + params;
             if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
             var (_, vpre) = param_patterns_for(lm.params, lm.body);
-            var vbody: parser.Stmt[] = drop_prelude(lm.body, vpre);
+            var vbody: ast.Stmt[] = drop_prelude(lm.body, vpre);
             // A one-statement body renders inline, so a short predicate lambda
             // stays on the line that passes it. A lambda is an EXPRESSION, so
             // the multi-line form indents against a depth this walk does not
@@ -595,7 +596,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             var (lam_body, _) = print_block(vbody, 0, empty_fmt());
             return out + " " + lam_body;
         },
-        parser.ExprFString(fs) => {
+        ast.ExprFString(fs) => {
             var out: string = "f\"";
             var i: i32 = 0;
             while (i < fs.lits.len()) {
@@ -608,7 +609,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             return out + "\"";
         },
-        parser.ExprMapLit(ml) => {
+        ast.ExprMapLit(ml) => {
             var out: string = "Map {";
             var i: i32 = 0;
             while (i < ml.keys.len()) {
@@ -618,7 +619,7 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             return out + " }";
         },
-        parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
+        ast.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
     return "/*unhandled-expr*/";
 }
@@ -743,19 +744,19 @@ function drain_before(f: Fmt, limit: i32, depth: i32): (string, Fmt) {
 
 // stmt_line reports the source line a statement starts on, or 0 for one the
 // compiler synthesised (no source position, so nothing can attach to it).
-function stmt_line(st: parser.Stmt): i32 {
+function stmt_line(st: ast.Stmt): i32 {
     match (st) {
-        parser.StmtVar(v) => { return v.line; },
-        parser.StmtReturn(r) => { return r.line; },
-        parser.StmtAssign(a) => { return a.line; },
-        parser.StmtExpr(x) => { return x.line; },
-        parser.StmtIf(f) => { return f.line; },
-        parser.StmtWhile(w) => { return w.line; },
-        parser.StmtFor(fo) => { return fo.line; },
-        parser.StmtMatch(m) => { return m.line; },
-        parser.StmtDefer(d) => { return d.line; },
-        parser.StmtBreak(b) => { return b.line; },
-        parser.StmtContinue(c) => { return c.line; },
+        ast.StmtVar(v) => { return v.line; },
+        ast.StmtReturn(r) => { return r.line; },
+        ast.StmtAssign(a) => { return a.line; },
+        ast.StmtExpr(x) => { return x.line; },
+        ast.StmtIf(f) => { return f.line; },
+        ast.StmtWhile(w) => { return w.line; },
+        ast.StmtFor(fo) => { return fo.line; },
+        ast.StmtMatch(m) => { return m.line; },
+        ast.StmtDefer(d) => { return d.line; },
+        ast.StmtBreak(b) => { return b.line; },
+        ast.StmtContinue(c) => { return c.line; },
         _ => { return 0; }
     }
     return 0;
@@ -764,7 +765,7 @@ function stmt_line(st: parser.Stmt): i32 {
 // print_block renders `{ … }` and is the one place statements are drained
 // against: a comment above a statement, a blank line the author left before
 // it, and whatever is still queued when the block ends.
-function print_block(body: parser.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
+function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     // An empty block is a one-liner, as native prints it. Supporting a comment
     // inside one would force it multi-line for a comment with nothing to
     // attach to; the parent's drain picks those up instead.
@@ -792,7 +793,7 @@ function print_block(body: parser.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     return (out, g);
 }
 
-function print_pattern(pat: parser.Pattern): string {
+function print_pattern(pat: ast.Pattern): string {
     return print_pattern_ctx(pat, false);
 }
 
@@ -800,10 +801,10 @@ function print_pattern(pat: parser.Pattern): string {
 // grammar makes: a payload-less variant is `B` at an ARM position but must be
 // `B()` as a TUPLE ELEMENT, where a bare `B` binds a local named B instead —
 // a different program, not a different spelling.
-function print_pattern_ctx(pat: parser.Pattern, always_parens: boolean): string {
+function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
     match (pat) {
-        parser.PatWildcard(_) => { return "_"; },
-        parser.PatVariant(pv) => {
+        ast.PatWildcard(_) => { return "_"; },
+        ast.PatVariant(pv) => {
             var head: string = pv.type_name;
             if (pv.at_binding.len() > 0) { head = pv.at_binding + " @ " + pv.type_name; }
             // A NESTED payload (`Some(Ok(n))`) binds nothing itself, so the
@@ -862,16 +863,16 @@ function print_pattern_ctx(pat: parser.Pattern, always_parens: boolean): string 
 // __pl12_5 == 0` — a different program in the source the user gets back.
 // pv_pattern_name is the variant a pattern names, "" for a wildcard — which
 // is what `nested` holds at a slot that is a plain binder.
-function pv_pattern_name(pat: parser.Pattern): string {
+function pv_pattern_name(pat: ast.Pattern): string {
     match (pat) {
-        parser.PatVariant(v) => { return v.type_name; },
-        parser.PatWildcard(_) => { return ""; }
+        ast.PatVariant(v) => { return v.type_name; },
+        ast.PatWildcard(_) => { return ""; }
     }
     return "";
 }
 
 // nested_slot_binder is the name a variant pattern binds at payload slot i.
-function nested_slot_binder(pv: parser.PatVariant, i: i32): string {
+function nested_slot_binder(pv: ast.PatVariant, i: i32): string {
     if (i == 0) { return pv.binding; }
     if (i - 1 < pv.extra_bindings.len()) { return pv.extra_bindings[i - 1]; }
     return "";
@@ -879,19 +880,19 @@ function nested_slot_binder(pv: parser.PatVariant, i: i32): string {
 
 // range_pair renders `lo..hi` / `lo..=hi` when a `&&`'s two sides are the
 // bound PAIR a range payload builds for `binder`, and "" otherwise.
-function range_pair(lo: parser.Expr, hi: parser.Expr, binder: string): string {
+function range_pair(lo: ast.Expr, hi: ast.Expr, binder: string): string {
     match (lo) {
-        parser.ExprBinary(lb) => {
+        ast.ExprBinary(lb) => {
             if (lb.op != ">=") { return ""; }
             match (lb.left) {
-                parser.ExprIdent(li) => { if (li.name != binder) { return ""; } },
+                ast.ExprIdent(li) => { if (li.name != binder) { return ""; } },
                 _ => { return ""; }
             }
             match (hi) {
-                parser.ExprBinary(hb) => {
+                ast.ExprBinary(hb) => {
                     if (hb.op != "<" && hb.op != "<=") { return ""; }
                     match (hb.left) {
-                        parser.ExprIdent(hri) => { if (hri.name != binder) { return ""; } },
+                        ast.ExprIdent(hri) => { if (hri.name != binder) { return ""; } },
                         _ => { return ""; }
                     }
                     var sep: string = "..";
@@ -909,9 +910,9 @@ function range_pair(lo: parser.Expr, hi: parser.Expr, binder: string): string {
 // range_slot_for is lit_cond_for for a RANGE payload (`V(1..5)`). A range
 // folds to `binder >= lo && binder <op> hi`, which has no `==` conjunct, so
 // lit_cond_for cannot see it and the slot printed as its synthetic temp.
-function range_slot_for(cond: parser.Expr, binder: string): string {
+function range_slot_for(cond: ast.Expr, binder: string): string {
     match (cond) {
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             if (b.op != "&&") { return ""; }
             var here: string = range_pair(b.left, b.right, binder);
             if (here.len() > 0) { return here; }
@@ -924,11 +925,11 @@ function range_slot_for(cond: parser.Expr, binder: string): string {
     return "";
 }
 
-function payload_slot(pv: parser.PatVariant, binder: string): string {
+function payload_slot(pv: ast.PatVariant, binder: string): string {
     if (!pv.has_lit_cond) { return binder; }
     var rng: string = range_slot_for(pv.lit_cond, binder);
     if (rng.len() > 0) { return rng; }
-    var lit: parser.Expr = lit_cond_for(pv.lit_cond, binder);
+    var lit: ast.Expr = lit_cond_for(pv.lit_cond, binder);
     if (expr_is_missing(lit)) { return binder; }
     return print_expr(lit);
 }
@@ -936,17 +937,17 @@ function payload_slot(pv: parser.PatVariant, binder: string): string {
 // lit_cond_for finds the literal a slot was compared against inside the
 // `&&`-joined condition fold_lit_cond built — the right-hand side of the
 // `binder == <lit>` conjunct. Missing when the slot carries no literal.
-function lit_cond_for(cond: parser.Expr, binder: string): parser.Expr {
+function lit_cond_for(cond: ast.Expr, binder: string): ast.Expr {
     match (cond) {
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             if (b.op == "&&") {
-                var left: parser.Expr = lit_cond_for(b.left, binder);
+                var left: ast.Expr = lit_cond_for(b.left, binder);
                 if (!expr_is_missing(left)) { return left; }
                 return lit_cond_for(b.right, binder);
             }
             if (b.op == "==") {
                 match (b.left) {
-                    parser.ExprIdent(id) => { if (id.name == binder) { return b.right; } },
+                    ast.ExprIdent(id) => { if (id.name == binder) { return b.right; } },
                     _ => {}
                 }
             }
@@ -960,7 +961,7 @@ function lit_cond_for(cond: parser.Expr, binder: string): parser.Expr {
 // element kinds build_tuple_match encodes: 0 = binder, 1 = `_`, 2 = literal,
 // 3 = variant sub-pattern, 4 = nested tuple (whose own encoding rides on
 // elem_pats via p_tuple_carrier).
-function print_tuple_elem(kind: i32, bind: string, lit: parser.Expr, pat: parser.Pattern): string {
+function print_tuple_elem(kind: i32, bind: string, lit: ast.Expr, pat: ast.Pattern): string {
     if (kind == 1) { return "_"; }
     if (kind == 2) { return print_expr(lit); }
     if (kind == 3) { return print_pattern_ctx(pat, true); }
@@ -972,7 +973,7 @@ function print_tuple_elem(kind: i32, bind: string, lit: parser.Expr, pat: parser
 }
 
 // print_tuple_elems renders `(p0, p1, …)`.
-function print_tuple_elems(kinds: i32[], binds: string[], lits: parser.Expr[], pats: parser.Pattern[]): string {
+function print_tuple_elems(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): string {
     var out: string = "(";
     var i: i32 = 0;
     while (i < kinds.len()) {
@@ -984,7 +985,7 @@ function print_tuple_elems(kinds: i32[], binds: string[], lits: parser.Expr[], p
 }
 
 // print_tup_arm renders one tuple-match arm's pattern, `@` binding included.
-function print_tup_arm(a: parser.TupArm): string {
+function print_tup_arm(a: ast.TupArm): string {
     if (a.is_wild) {
         if (a.at_binding.len() > 0) { return a.at_binding + " @ _"; }
         return "_";
@@ -1008,7 +1009,7 @@ function rest_suffix(rest_written: boolean, n: i32): string {
 // print_struct_arm renders one struct-match arm's pattern `P { x, y: b }`,
 // using the same field kinds build_struct_match encodes (0 = bind, 2 =
 // literal, 3 = sub-pattern). A field bound to its own name prints shorthand.
-function print_struct_arm(a: parser.StructArm): string {
+function print_struct_arm(a: ast.StructArm): string {
     if (a.is_wild) {
         if (a.at_binding.len() > 0) { return a.at_binding + " @ _"; }
         return "_";
@@ -1032,14 +1033,14 @@ function print_struct_arm(a: parser.StructArm): string {
 // WrittenArm is one arm of a sugared match as the source spelled it: the
 // pattern text with any `|` alternatives already rejoined, and the guard and
 // body those alternatives shared.
-struct WrittenArm { head: string, body: parser.Stmt[], guard: parser.Expr, has_guard: boolean }
+struct WrittenArm { head: string, body: ast.Stmt[], guard: ast.Expr, has_guard: boolean }
 
 // sugar_written_arms regroups a carrier's per-alternative arms back into the
 // arms as written. A MatchSugar holds exactly one of the three arm lists — the
 // tuple, struct and literal desugars each populate their own — and every one of
 // them expands `P1 | P2 => …` to one entry per alternative sharing a body, so
 // the regroup is the same walk in all three cases (#7077).
-function sugar_written_arms(sg: parser.MatchSugar): WrittenArm[] {
+function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
     var out: WrittenArm[] = [];
     var i: i32 = 0;
     // The VARIANT-arm carrier: build_nested_arm_match's chain stands in for a
@@ -1047,7 +1048,7 @@ function sugar_written_arms(sg: parser.MatchSugar): WrittenArm[] {
     // print_pattern rather than through the tup/strct/lit spellings.
     if (sg.arms.len() > 0) {
         while (i < sg.arms.len()) {
-            var a: parser.MatchArm = sg.arms[i];
+            var a: ast.MatchArm = sg.arms[i];
             var ahead: string = print_pattern(a.pattern);
             // `A | B => …` parses to one arm per alternative with the body
             // cloned into each; alt_cont is what records that they were
@@ -1064,8 +1065,8 @@ function sugar_written_arms(sg: parser.MatchSugar): WrittenArm[] {
     var n: i32 = sg.tup.len() + sg.strct.len() + sg.lits.len();
     while (i < n) {
         var head: string = "";
-        var body: parser.Stmt[] = [];
-        var guard: parser.Expr = parser.e_bool(true);
+        var body: ast.Stmt[] = [];
+        var guard: ast.Expr = parser.e_bool(true);
         var has_guard: boolean = false;
         if (sg.tup.len() > 0) {
             head = print_tup_arm(sg.tup[i]);
@@ -1103,7 +1104,7 @@ function sugar_written_arms(sg: parser.MatchSugar): WrittenArm[] {
 // or struct scrutinee, whose done-flag chain the carrier hangs off (#7065), or
 // a non-enum scrutinee, whose if/else-if chain it hangs off (#7072). Without it
 // `-fmt` emitted the chain — `var __sm4_5_d = false; …` — over the user's match.
-function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
     var pad: string = indent_str(depth);
     var arms: WrittenArm[] = sugar_written_arms(sg);
     var out: string = "match (" + print_expr(sg.scrut) + ") {\n";
@@ -1128,7 +1129,7 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
 // written. Sibling of print_let_else, which recovers the variant-pattern form
 // from its StmtMatch, and it re-emits the statements that followed the same
 // way: the desugar moved them inside the success arm.
-function print_sugared_let_else(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
     var arms: WrittenArm[] = sugar_written_arms(sg);
     if (arms.len() < 2) { return print_sugared_match(sg, depth, f); }
     var g: Fmt = f;
@@ -1142,7 +1143,7 @@ function print_sugared_let_else(sg: parser.MatchSugar, depth: i32, f: Fmt): (str
         hi = hi + 1;
     }
     var out: string = "let " + head + " = " + print_expr(sg.scrut) + " else " + els + ";";
-    var rest: parser.Stmt[] = arms[0].body;
+    var rest: ast.Stmt[] = arms[0].body;
     var i: i32 = 0;
     while (i < rest.len()) {
         var ln: i32 = stmt_line(rest[i]);
@@ -1170,7 +1171,7 @@ function print_sugared_let_else(sg: parser.MatchSugar, depth: i32, f: Fmt): (str
 // The last written arm is the else block (empty when none was written); every
 // arm before it is the head, with any `|` alternatives already joined by
 // sugar_written_arms.
-function print_sugared_if_let(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
     var arms: WrittenArm[] = sugar_written_arms(sg);
     if (arms.len() < 2) { return print_sugared_match(sg, depth, f); }
     var g: Fmt = f;
@@ -1184,7 +1185,7 @@ function print_sugared_if_let(sg: parser.MatchSugar, depth: i32, f: Fmt): (strin
         i = i + 1;
     }
     out = out + " = " + print_expr(sg.scrut) + " " + then_block;
-    var els: parser.Stmt[] = arms[arms.len() - 1].body;
+    var els: ast.Stmt[] = arms[arms.len() - 1].body;
     if (els.len() > 0) {
         var (else_block, g2) = print_block(els, depth, g);
         g = g2;
@@ -1194,7 +1195,7 @@ function print_sugared_if_let(sg: parser.MatchSugar, depth: i32, f: Fmt): (strin
 }
 
 // print_lit_pat renders one literal arm pattern: `_`, a literal, or a range.
-function print_lit_pat(a: parser.LitArm): string {
+function print_lit_pat(a: ast.LitArm): string {
     if (a.is_wild) { return "_"; }
     if (a.has_range) {
         var dots: string = "..";
@@ -1204,21 +1205,21 @@ function print_lit_pat(a: parser.LitArm): string {
     return print_expr(a.lit);
 }
 
-function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
+function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     var pad: string = indent_str(depth);
     var out: string = "match (" + print_expr(m.scrutinee) + ") {\n";
     var g: Fmt = f;
     // The arms as WRITTEN when the parse consumed something into the lowering
     // — a nested payload merged into one arm plus an inner match, or a literal
     // payload folded onto the guard. Empty on an ordinary match.
-    var arms: parser.MatchArm[] = m.arms;
+    var arms: ast.MatchArm[] = m.arms;
     if (m.sugar.len() > 0) { arms = m.sugar; }
     var i: i32 = 0;
     while (i < arms.len()) {
         var (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
         g = g1;
         var head: string = print_pattern(arms[i].pattern);
-        var guarded: parser.MatchArm = arms[i];
+        var guarded: ast.MatchArm = arms[i];
         // `A | B => …` parsed to one arm per alternative sharing the body; the
         // continuations rejoin their head here.
         while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
@@ -1241,10 +1242,10 @@ function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
 // StmtMatch.origin already recorded which form was written — only let_else was
 // reading it, so an `if let` reprinted as the desugared match, `_ => {}` and
 // all.
-function print_if_let(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
+function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     // The written arms when a nested or literal payload was consumed into the
     // lowering; otherwise the lowered ones already are the written ones.
-    var arms: parser.MatchArm[] = m.arms;
+    var arms: ast.MatchArm[] = m.arms;
     if (m.sugar.len() > 0) { arms = m.sugar; }
     var g: Fmt = f;
     var (then_block, g1) = print_block(arms[0].body, depth, g);
@@ -1257,7 +1258,7 @@ function print_if_let(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
         i = i + 1;
     }
     out = out + " = " + print_expr(m.scrutinee) + " " + then_block;
-    var els: parser.Stmt[] = arms[arms.len() - 1].body;
+    var els: ast.Stmt[] = arms[arms.len() - 1].body;
     if (els.len() > 0) {
         var (else_block, g2) = print_block(els, depth, g);
         g = g2;
@@ -1269,11 +1270,11 @@ function print_if_let(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
 // print_let_else reconstructs `let PAT = EXPR else { … };` plus the statements
 // that followed it, which the desugar moved inside the success arm. They re-emit
 // as the siblings they were written as, at the same depth.
-function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
+function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     // The written arms when a nested payload or an or-pattern was consumed
     // into the lowering; otherwise the lowered ones already are the written
     // ones. Same carrier print_if_let reads, for the same reason.
-    var arms: parser.MatchArm[] = m.arms;
+    var arms: ast.MatchArm[] = m.arms;
     if (m.sugar.len() > 0) { arms = m.sugar; }
     var g: Fmt = f;
     var (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
@@ -1286,7 +1287,7 @@ function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) 
         hi = hi + 1;
     }
     var out: string = "let " + head + " = " + print_expr(m.scrutinee) + " else " + els + ";";
-    var rest: parser.Stmt[] = arms[0].body;
+    var rest: ast.Stmt[] = arms[0].body;
     var i: i32 = 0;
     while (i < rest.len()) {
         var ln: i32 = stmt_line(rest[i]);
@@ -1307,9 +1308,9 @@ function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) 
 
 // expr_is_missing reports an expression slot the parser never filled — a void
 // `return;`, whose value is the unknown-token placeholder for the `;`.
-function expr_is_missing(e: parser.Expr): boolean {
+function expr_is_missing(e: ast.Expr): boolean {
     match (e) {
-        parser.ExprUnknown(u) => { return u.kind.len() == 0 || util.str_has_prefix(u.kind, "punct:"); },
+        ast.ExprUnknown(u) => { return u.kind.len() == 0 || util.str_has_prefix(u.kind, "punct:"); },
         _ => { return false; }
     }
     return false;
@@ -1317,15 +1318,15 @@ function expr_is_missing(e: parser.Expr): boolean {
 
 // stmt_is_single_line: the statement kinds native renders on one line, and so
 // the ones a one-statement lambda body may keep inline.
-function stmt_is_single_line(st: parser.Stmt): boolean {
+function stmt_is_single_line(st: ast.Stmt): boolean {
     match (st) {
-        parser.StmtReturn(_) => { return true; },
-        parser.StmtVar(_) => { return true; },
-        parser.StmtExpr(_) => { return true; },
-        parser.StmtAssign(_) => { return true; },
-        parser.StmtBreak(_) => { return true; },
-        parser.StmtContinue(_) => { return true; },
-        parser.StmtDefer(_) => { return true; },
+        ast.StmtReturn(_) => { return true; },
+        ast.StmtVar(_) => { return true; },
+        ast.StmtExpr(_) => { return true; },
+        ast.StmtAssign(_) => { return true; },
+        ast.StmtBreak(_) => { return true; },
+        ast.StmtContinue(_) => { return true; },
+        ast.StmtDefer(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -1335,7 +1336,7 @@ function stmt_is_single_line(st: parser.Stmt): boolean {
 // assigns the innermost target first and copies leftwards — so the written
 // targets are the assignment targets read back to front, and the written value
 // is the first assignment's right-hand side.
-function print_chain_assign(stmts: parser.Stmt[]): string {
+function print_chain_assign(stmts: ast.Stmt[]): string {
     var out: string = "";
     var i: i32 = stmts.len() - 1;
     while (i >= 0) {
@@ -1345,35 +1346,35 @@ function print_chain_assign(stmts: parser.Stmt[]): string {
     return out + print_expr(assign_value(stmts[0])) + ";";
 }
 
-function assign_target(st: parser.Stmt): string {
+function assign_target(st: ast.Stmt): string {
     match (st) {
-        parser.StmtAssign(a) => { return a.target; },
+        ast.StmtAssign(a) => { return a.target; },
         _ => { return ""; },
     }
 }
 
-function assign_value(st: parser.Stmt): parser.Expr {
+function assign_value(st: ast.Stmt): ast.Expr {
     match (st) {
-        parser.StmtAssign(a) => { return a.value; },
+        ast.StmtAssign(a) => { return a.value; },
         _ => { return parser.e_bool(true); },
     }
 }
 
 // is_block_stmt reports whether `st` is a bare `{ … }` statement — the if-true
 // scope parse_stmt_at tags as such.
-function is_block_stmt(st: parser.Stmt): boolean {
+function is_block_stmt(st: ast.Stmt): boolean {
     match (st) {
-        parser.StmtIf(ifs) => { return ifs.origin == "block"; },
+        ast.StmtIf(ifs) => { return ifs.origin == "block"; },
         _ => { return false; },
     }
 }
 
 // block_stmts is the body of the if-true scope `st`; empty for anything that
 // is not an `if` at all.
-function block_stmts(st: parser.Stmt): parser.Stmt[] {
-    var none: parser.Stmt[] = [];
+function block_stmts(st: ast.Stmt): ast.Stmt[] {
+    var none: ast.Stmt[] = [];
     match (st) {
-        parser.StmtIf(ifs) => { return ifs.then_body; },
+        ast.StmtIf(ifs) => { return ifs.then_body; },
         _ => { return none; },
     }
 }
@@ -1381,7 +1382,7 @@ function block_stmts(st: parser.Stmt): parser.Stmt[] {
 // print_stmt_inline renders `st` for a position that CONTINUES the current
 // line — a one-statement lambda body. A lambda carries no comment cursor: it
 // is an expression, and native does not drain inside one either.
-function print_stmt_inline(st: parser.Stmt): string {
+function print_stmt_inline(st: ast.Stmt): string {
     var (text, _) = print_stmt_body(st, 0, empty_fmt());
     return text;
 }
@@ -1395,11 +1396,11 @@ function print_stmt_inline(st: parser.Stmt): string {
 // form keeps no record of which of the two was written.
 // `label` is the loop label the source wrote, which with_loop_label parks on
 // the desugar's inner while — there is no other loop in the shape to carry it.
-struct ForCSugar { init: parser.Stmt[], cond: parser.Expr, step: parser.Stmt[], body: parser.Stmt[], label: string, ok: boolean }
+struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string, ok: boolean }
 
 function no_c_for(): ForCSugar {
-    var none: parser.Stmt[] = [];
-    return ForCSugar { init: none, cond: parser.ExprBool { value: true }, step: none, body: none, label: "", ok: false };
+    var none: ast.Stmt[] = [];
+    return ForCSugar { init: none, cond: ast.ExprBool { value: true }, step: none, body: none, label: "", ok: false };
 }
 
 // as_c_for recognises the C-style-for desugar and takes the three header
@@ -1417,23 +1418,23 @@ function no_c_for(): ForCSugar {
 //         if (!(COND)) { break; }
 //         BODY…
 //     } }
-function as_c_for(ifs: parser.StmtIf): ForCSugar {
+function as_c_for(ifs: ast.StmtIf): ForCSugar {
     if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) { return no_c_for(); }
-    var outer: parser.Stmt[] = ifs.then_body;
+    var outer: ast.Stmt[] = ifs.then_body;
     if (outer.len() < 2) { return no_c_for(); }
     var flag: string = "";
     match (outer[outer.len() - 2]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (is_forc_name(v.name) && expr_is_true(v.init)) { flag = v.name; }
         },
         _ => {},
     }
     if (flag.len() == 0) { return no_c_for(); }
-    var wbody: parser.Stmt[] = [];
+    var wbody: ast.Stmt[] = [];
     var label: string = "";
     var have_while: boolean = false;
     match (outer[outer.len() - 1]) {
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             if (expr_is_true(w.cond)) { wbody = w.body; label = w.label; have_while = true; }
         },
         _ => {},
@@ -1441,10 +1442,10 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
     if (!have_while || wbody.len() < 3) { return no_c_for(); }
 
     // wbody[0]: `if (!flag) { STEP }` — STEP is its then-body, possibly empty.
-    var step: parser.Stmt[] = [];
+    var step: ast.Stmt[] = [];
     var step_ok: boolean = false;
     match (wbody[0]) {
-        parser.StmtIf(s) => {
+        ast.StmtIf(s) => {
             if (is_not_of_ident(s.cond, flag) && s.else_body.len() == 0) { step = s.then_body; step_ok = true; }
         },
         _ => {},
@@ -1454,7 +1455,7 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
     // wbody[1]: `flag = false`.
     var assign_ok: boolean = false;
     match (wbody[1]) {
-        parser.StmtAssign(a) => {
+        ast.StmtAssign(a) => {
             if (a.target == flag && expr_is_false(a.value)) { assign_ok = true; }
         },
         _ => {},
@@ -1462,16 +1463,16 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
     if (!assign_ok) { return no_c_for(); }
 
     // wbody[2]: `if (!(COND)) { break; }`.
-    var cond: parser.Expr = parser.ExprBool { value: true };
+    var cond: ast.Expr = ast.ExprBool { value: true };
     var cond_ok: boolean = false;
     match (wbody[2]) {
-        parser.StmtIf(c) => {
+        ast.StmtIf(c) => {
             if (c.else_body.len() == 0 && c.then_body.len() == 1) {
                 match (c.then_body[0]) {
-                    parser.StmtBreak(b) => {
+                    ast.StmtBreak(b) => {
                         if (b.label.len() == 0) {
                             match (c.cond) {
-                                parser.ExprUnary(u) => {
+                                ast.ExprUnary(u) => {
                                     if (u.op == "!") { cond = u.operand; cond_ok = true; }
                                 },
                                 _ => {},
@@ -1486,10 +1487,10 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
     }
     if (!cond_ok) { return no_c_for(); }
 
-    var init: parser.Stmt[] = [];
+    var init: ast.Stmt[] = [];
     var ii: i32 = 0;
     while (ii + 2 < outer.len()) { init = init.append(outer[ii]); ii = ii + 1; }
-    var body: parser.Stmt[] = [];
+    var body: ast.Stmt[] = [];
     var bi: i32 = 3;
     while (bi < wbody.len()) { body = body.append(wbody[bi]); bi = bi + 1; }
     return ForCSugar { init: init, cond: cond, step: step, body: body, label: label, ok: true };
@@ -1500,29 +1501,29 @@ function is_forc_name(name: string): boolean {
     return name.len() > 7 && util.str_has_prefix(name, "__forc_");
 }
 
-function expr_is_true(e: parser.Expr): boolean {
+function expr_is_true(e: ast.Expr): boolean {
     match (e) {
-        parser.ExprBool(b) => { return b.value; },
+        ast.ExprBool(b) => { return b.value; },
         _ => { return false; },
     }
     return false;
 }
 
-function expr_is_false(e: parser.Expr): boolean {
+function expr_is_false(e: ast.Expr): boolean {
     match (e) {
-        parser.ExprBool(b) => { return !b.value; },
+        ast.ExprBool(b) => { return !b.value; },
         _ => { return false; },
     }
     return false;
 }
 
 // is_not_of_ident reports `!<name>`.
-function is_not_of_ident(e: parser.Expr, name: string): boolean {
+function is_not_of_ident(e: ast.Expr, name: string): boolean {
     match (e) {
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             if (u.op != "!") { return false; }
             match (u.operand) {
-                parser.ExprIdent(id) => { return id.name == name; },
+                ast.ExprIdent(id) => { return id.name == name; },
                 _ => { return false; },
             }
         },
@@ -1554,13 +1555,13 @@ function strip_semi(s: string): string {
 // rendering every such body as a chain rewrote the second spelling into the
 // first (#6779). They are not interchangeable to a reader, to `make fmt-check`,
 // or to a block-scoped binding written before the inner `if`.
-function print_if_chain(ifs: parser.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
+function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
     var (then_text, g) = print_block(ifs.then_body, depth, f);
     var out: string = "if (" + print_expr(ifs.cond) + ") " + then_text;
     if (ifs.else_body.len() == 0) { return (out, g); }
     if (ifs.else_chained && ifs.else_body.len() == 1) {
         match (ifs.else_body[0]) {
-            parser.StmtIf(nested) => {
+            ast.StmtIf(nested) => {
                 var (nested_text, g2) = print_if_chain(nested, depth, g);
                 return (out + " else " + nested_text, g2);
             },
@@ -1589,8 +1590,8 @@ function for_binder(var_name: string): string {
 
 // drop_first_stmt is `stmts` without its head — the pattern header's
 // destructure, once it has been reprinted as the header itself.
-function drop_first_stmt(stmts: parser.Stmt[]): parser.Stmt[] {
-    var out: parser.Stmt[] = [];
+function drop_first_stmt(stmts: ast.Stmt[]): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
     var i: i32 = 1;
     while (i < stmts.len()) { out = out.append(stmts[i]); i = i + 1; }
     return out;
@@ -1599,12 +1600,12 @@ function drop_first_stmt(stmts: parser.Stmt[]): parser.Stmt[] {
 // print_for_iter renders a StmtFor's iterable. The range forms are carried as
 // a synthetic `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call
 // (parse_for_stmt), which is a parser-internal name no source may write.
-function print_for_iter(e: parser.Expr): string {
+function print_for_iter(e: ast.Expr): string {
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             if (c.args.len() == 2) {
                 match (c.callee) {
-                    parser.ExprIdent(id) => {
+                    ast.ExprIdent(id) => {
                         if (id.name == "__range") { return print_expr(c.args[0]) + ".." + print_expr(c.args[1]); }
                         if (id.name == "__range_incl") { return print_expr(c.args[0]) + "..=" + print_expr(c.args[1]); }
                     },
@@ -1620,14 +1621,14 @@ function print_for_iter(e: parser.Expr): string {
 // print_stmt renders ONE statement as a complete line — indent, text, any
 // inline trailing comment, and the newline. Comments ABOVE it were already
 // drained by the block loop; a nested block drains its own.
-function print_stmt(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
+function print_stmt(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     var (text, g) = print_stmt_line(st, depth, f);
     return (text + "\n", g);
 }
 
 // print_stmt_line is one statement indented at `depth` with NO trailing newline
 // — the form a caller that supplies its own separator needs.
-function print_stmt_line(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
+function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     var (text, g) = print_stmt_body(st, depth, f);
     var out: string = indent_str(depth) + text;
     // Only a single-line statement can carry a trailing comment: on a compound
@@ -1685,7 +1686,7 @@ function destr_at_prefix(type_name: string): string {
 // parse_struct_destructure encodes into type_name ("@sd:<Struct>:<fields>",
 // with the bound names comma-joined in `name`). A field renamed on binding
 // prints as `field: binding`, which is also how it was written.
-function print_struct_destructure(v: parser.StmtVar): string {
+function print_struct_destructure(v: ast.StmtVar): string {
     return "let " + destr_at_prefix(v.type_name) + struct_destr_pattern(v) + " = " + print_expr(v.init) + ";";
 }
 
@@ -1693,7 +1694,7 @@ function print_struct_destructure(v: parser.StmtVar): string {
 // — without the `let` and the initialiser. A destructuring PARAMETER prints the
 // same pattern in its parameter position, so the two share this rather than
 // each spelling the marker decode (#7338).
-function struct_destr_pattern(v: parser.StmtVar): string {
+function struct_destr_pattern(v: ast.StmtVar): string {
     var sd_marker: string = parser.destr_marker_split(v.type_name).tag;
     var rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
     var colon: i32 = 0 - 1;
@@ -1739,13 +1740,13 @@ function struct_destr_pattern(v: parser.StmtVar): string {
 // prelude is both smaller and idiomatic here. The two compilers have to agree
 // on OUTPUT, which the fmt parity gate checks; they need not agree on where the
 // pattern is kept.
-function param_pattern_from(st: parser.Stmt, holder: string): string {
+function param_pattern_from(st: ast.Stmt, holder: string): string {
     match (st) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (!parser.is_param_prelude_marker(v.type_name)) { return ""; }
             var from_holder: boolean = false;
             match (v.init) {
-                parser.ExprIdent(id) => { if (id.name == holder) { from_holder = true; } },
+                ast.ExprIdent(id) => { if (id.name == holder) { from_holder = true; } },
                 _ => { }
             }
             if (!from_holder) { return ""; }
@@ -1768,7 +1769,7 @@ function param_pattern_from(st: parser.Stmt, holder: string): string {
 // ordinary one) and how many leading body statements are the desugar's prelude.
 // The count is 0 unless EVERY pattern found is accounted for, so a caller either
 // skips the whole prelude or prints the desugared form — never drops a binding.
-function param_patterns_for(params: parser.ParamDecl[], body: parser.Stmt[]): (string[], i32) {
+function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[], i32) {
     var pats: string[] = [];
     var pi: i32 = 0;
     while (pi < params.len()) { pats = pats.append(""); pi = pi + 1; }
@@ -1803,9 +1804,9 @@ function param_patterns_for(params: parser.ParamDecl[], body: parser.Stmt[]): (s
 
 // print_nested_func_decl respells a nested `function name(…): T { … }` from the
 // lambda-valued local the parser desugars it to (marked "@fndecl" on type_name).
-function print_nested_func_decl(v: parser.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
+function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
     match (v.init) {
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             var out: string = "function " + v.name + print_lambda_params(lm);
             if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
             var (body, g) = print_block(lm.body, depth, f);
@@ -1817,15 +1818,15 @@ function print_nested_func_decl(v: parser.StmtVar, depth: i32, f: Fmt): (string,
 }
 
 // print_stmt_body is the statement text with no indent and no newline.
-function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
+function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     match (st) {
-        parser.StmtDefer(d) => {
+        ast.StmtDefer(d) => {
             // `defer { … }` parses its action with parse_stmt, so a block
             // action arrives as the tagged if-true scope. Native parses the
             // same action as a block EXPRESSION and prints it compactly, so
             // the braces go on one line here too.
             if (is_block_stmt(d.action)) {
-                var blk: parser.Stmt[] = block_stmts(d.action);
+                var blk: ast.Stmt[] = block_stmts(d.action);
                 var inl: string = "{ ";
                 var bi: i32 = 0;
                 while (bi < blk.len()) { inl = inl + print_stmt_inline(blk[bi]) + " "; bi = bi + 1; }
@@ -1836,7 +1837,7 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             if (d.on_error != 0) { return ("errdefer " + act, dg); }
             return ("defer " + act, dg);
         },
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             // Both destructuring forms parse to a StmtVar: the bindings are
             // comma-joined into `name`, and a STRUCT destructure additionally
             // tags `type_name` with the parser's `@sd:Type:field,field` marker.
@@ -1851,7 +1852,7 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }
             return ("var " + v.name + ann + " = " + print_expr(v.init) + ";", f);
         },
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             // A void `return;` parses with no value expression, which reaches
             // the printer as the unknown-token placeholder for the `;` that
             // followed. Printing that placeholder emits a comment INTO the
@@ -1859,8 +1860,8 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             if (expr_is_missing(r.value)) { return ("return;", f); }
             return ("return " + print_expr(r.value) + ";", f);
         },
-        parser.StmtExpr(x) => { return (print_expr(x.value) + ";", f); },
-        parser.StmtIf(ifs) => {
+        ast.StmtExpr(x) => { return (print_expr(x.value) + ";", f); },
+        ast.StmtIf(ifs) => {
             // A C-style `for` reaches the printer as its desugar — the parser
             // lowers it at parse time and the Stmt union has no node for it
             // (StmtFor models the range form only). Printing the desugar
@@ -1883,13 +1884,13 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             if (ifs.origin == "chain_assign") { return (print_chain_assign(ifs.then_body), f); }
             return print_if_chain(ifs, depth, f);
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             var (wb, wg) = print_block(w.body, depth, f);
             if (w.is_loop) { return (loop_label(w.label) + "loop " + wb, wg); }
             return (loop_label(w.label) + "while (" + print_expr(w.cond) + ") " + wb, wg);
         },
-        parser.StmtAssign(a) => { return (a.target + " = " + print_expr(a.value) + ";", f); },
-        parser.StmtMatch(m) => {
+        ast.StmtAssign(a) => { return (a.target + " = " + print_expr(a.value) + ";", f); },
+        ast.StmtMatch(m) => {
             // `let … else` is parsed as a two-arm match whose FIRST arm holds the
             // rest of the enclosing block (that is where the bindings are live),
             // so printing the match rewrites the whole tail of the function into
@@ -1899,16 +1900,16 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             if (m.origin == "if_let" && m.arms.len() >= 2) { return print_if_let(m, depth, f); }
             return print_match(m, depth, f);
         },
-        parser.StmtFor(fo) => {
+        ast.StmtFor(fo) => {
             // A pattern-shaped header desugars to a synthetic `$forpat_`
             // element plus a destructure of it (parse_for_stmt), so it reprints
             // from that destructure — writing the synthetic name into the
             // source instead would make `-fmt -w` permanent.
-            var fo_body: parser.Stmt[] = fo.body;
+            var fo_body: ast.Stmt[] = fo.body;
             var fo_binder: string = for_binder(fo.var_name);
             if (util.str_has_prefix(fo.var_name, "$forpat_") && fo.body.len() > 0) {
                 match (fo.body[0]) {
-                    parser.StmtVar(fpv) => {
+                    ast.StmtVar(fpv) => {
                         fo_binder = destr_at_prefix(fpv.type_name);
                         if (parser.is_struct_destr_marker(fpv.type_name)) { fo_binder = fo_binder + struct_destr_pattern(fpv); }
                         else { fo_binder = fo_binder + "(" + join_csv(fpv.name) + ")"; }
@@ -1920,15 +1921,15 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             var (fb, fg) = print_block(fo_body, depth, f);
             return (loop_label(fo.label) + "for " + fo_binder + " in " + print_for_iter(fo.iter) + " " + fb, fg);
         },
-        parser.StmtBreak(b) => {
+        ast.StmtBreak(b) => {
             if (b.label.len() > 0) { return ("break " + b.label + ";", f); }
             return ("break;", f);
         },
-        parser.StmtContinue(c) => {
+        ast.StmtContinue(c) => {
             if (c.label.len() > 0) { return ("continue " + c.label + ";", f); }
             return ("continue;", f);
         },
-        parser.StmtUnknown(u) => { return ("/*unknown-stmt:" + u.kind + "*/", f); }
+        ast.StmtUnknown(u) => { return ("/*unknown-stmt:" + u.kind + "*/", f); }
     }
     return ("/*unhandled-stmt*/", f);
 }
@@ -2119,7 +2120,7 @@ function print_const_decl(fd: parser.FuncDecl): string {
     var i: i32 = 0;
     while (i < fd.body.len()) {
         match (fd.body[i]) {
-            parser.StmtReturn(r) => { return out + " = " + print_expr(r.value) + ";\n"; },
+            ast.StmtReturn(r) => { return out + " = " + print_expr(r.value) + ";\n"; },
             _ => { }
         }
         i = i + 1;
@@ -2615,10 +2616,10 @@ function main(): i32 {
     var rt1: parser.Module = parser.parse_module(lexer.tokenize(s1));
     if (rt1.top_stmts.len() != 2) { return 10; }
     match (rt1.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.name != "a") { return 11; }
             match (v.init) {
-                parser.ExprBinary(b) => { if (b.op != "+") { return 12; } },
+                ast.ExprBinary(b) => { if (b.op != "+") { return 12; } },
                 _ => { return 13; }
             }
         },
@@ -2640,7 +2641,7 @@ function main(): i32 {
     var rt3: parser.Module = roundtrip_module(src3);
     if (rt3.top_stmts.len() != 3) { return 30; }
     match (rt3.top_stmts[1]) {
-        parser.StmtIf(ifs) => {
+        ast.StmtIf(ifs) => {
             if (ifs.then_body.len() != 1) { return 31; }
             if (ifs.else_body.len() != 1) { return 32; }
         },
@@ -2652,9 +2653,9 @@ function main(): i32 {
     var rt4: parser.Module = roundtrip_module(src4);
     if (rt4.top_stmts.len() != 5) { return 40; }
     match (rt4.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprArray(a) => { if (a.elements.len() != 3) { return 41; } },
+                ast.ExprArray(a) => { if (a.elements.len() != 3) { return 41; } },
                 _ => { return 42; }
             }
         },
@@ -2662,7 +2663,7 @@ function main(): i32 {
     }
     // While loop preserved with body of length 2.
     match (rt4.top_stmts[3]) {
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             if (w.body.len() != 2) { return 44; }
         },
         _ => { return 45; }
@@ -2672,9 +2673,9 @@ function main(): i32 {
     var src5: string = "var s = \"hello\\nworld\"; return 0;";
     var rt5: parser.Module = roundtrip_module(src5);
     match (rt5.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprString(_) => { },
+                ast.ExprString(_) => { },
                 _ => { return 50; }
             }
         },
@@ -2685,9 +2686,9 @@ function main(): i32 {
     var src6: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
     var rt6: parser.Module = roundtrip_module(src6);
     match (rt6.top_stmts[1]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprSlice(_) => { },
+                ast.ExprSlice(_) => { },
                 _ => { return 60; }
             }
         },
@@ -2714,10 +2715,10 @@ function main(): i32 {
     var rt9: parser.Module = roundtrip_module(src9);
     if (rt9.top_stmts.len() != 2) { return 90; }
     match (rt9.top_stmts[1]) {
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             if (m.arms.len() != 2) { return 91; }
             match (m.arms[0].pattern) {
-                parser.PatVariant(pv) => {
+                ast.PatVariant(pv) => {
                     if (pv.type_name != "Foo") { return 92; }
                     if (pv.binding != "f") { return 93; }
                 },
@@ -2731,13 +2732,13 @@ function main(): i32 {
     var srcA: string = "var n: i32 = 7; var sh: Shape = c; return n;";
     var rtA: parser.Module = roundtrip_module(srcA);
     match (rtA.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.type_name != "i32") { return 100; }
         },
         _ => { return 101; }
     }
     match (rtA.top_stmts[1]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.type_name != "Shape") { return 102; }
         },
         _ => { return 103; }
@@ -2766,22 +2767,22 @@ function main(): i32 {
     var rtD: parser.Module = roundtrip_module(srcD);
     if (rtD.top_stmts.len() != 1) { return 130; }
     match (rtD.top_stmts[0]) {
-        parser.StmtFor(f) => {
+        ast.StmtFor(f) => {
             if (f.var_name != "n") { return 131; }
             if (f.body.len() != 2) { return 132; }
             match (f.body[0]) {
-                parser.StmtIf(ifs) => {
+                ast.StmtIf(ifs) => {
                     match (ifs.then_body[0]) {
-                        parser.StmtBreak(_) => { },
+                        ast.StmtBreak(_) => { },
                         _ => { return 133; }
                     }
                 },
                 _ => { return 134; }
             }
             match (f.body[1]) {
-                parser.StmtIf(ifs) => {
+                ast.StmtIf(ifs) => {
                     match (ifs.then_body[0]) {
-                        parser.StmtContinue(_) => { },
+                        ast.StmtContinue(_) => { },
                         _ => { return 135; }
                     }
                 },
@@ -2800,9 +2801,9 @@ function main(): i32 {
     var rtE: parser.Module = roundtrip_module(srcE);
     if (rtE.top_stmts.len() != 3) { return 140; }
     match (rtE.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprTuple(t) => {
+                ast.ExprTuple(t) => {
                     if (t.elements.len() != 3) { return 141; }
                 },
                 _ => { return 142; }
@@ -2811,9 +2812,9 @@ function main(): i32 {
         _ => { return 143; }
     }
     match (rtE.top_stmts[1]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     if (fa.field != "0") { return 144; }
                 },
                 _ => { return 145; }
@@ -2830,10 +2831,10 @@ function main(): i32 {
     if (rtF.funcs.len() != 1) { return 150; }
     if (rtF.funcs[0].body.len() != 2) { return 151; }
     match (rtF.funcs[0].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.name != "f") { return 152; }
             match (v.init) {
-                parser.ExprLambda(lm) => {
+                ast.ExprLambda(lm) => {
                     if (lm.params.len() != 1) { return 153; }
                     if (lm.params[0].name != "x") { return 154; }
                     if (lm.params[0].type_name != "i32") { return 155; }
@@ -2852,11 +2853,11 @@ function main(): i32 {
     var srcG: string = "function main(): i32 { return function (): i32 { return 7; }(); }";
     var rtG: parser.Module = roundtrip_module(srcG);
     match (rtG.funcs[0].body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprCall(cc) => {
+                ast.ExprCall(cc) => {
                     match (cc.callee) {
-                        parser.ExprLambda(_) => { },
+                        ast.ExprLambda(_) => { },
                         _ => { return 161; }
                     }
                 },
@@ -2873,14 +2874,14 @@ function main(): i32 {
     var srcH: string = "function main(): i32 { return parser.parse_module(42); }";
     var rtH: parser.Module = roundtrip_module(srcH);
     match (rtH.funcs[0].body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprCall(cc) => {
+                ast.ExprCall(cc) => {
                     match (cc.callee) {
-                        parser.ExprFieldAccess(fa) => {
+                        ast.ExprFieldAccess(fa) => {
                             if (fa.field != "parse_module") { return 171; }
                             match (fa.obj) {
-                                parser.ExprIdent(id) => {
+                                ast.ExprIdent(id) => {
                                     if (id.name != "parser") { return 172; }
                                 },
                                 _ => { return 173; }
@@ -3068,9 +3069,9 @@ function main(): i32 {
     var rtPB: parser.Module = roundtrip_module(srcPB);
     if (rtPB.funcs.len() < 1) { return 244; }
     match (rtPB.funcs[0].body[0]) {
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             match (m.arms[0].pattern) {
-                parser.PatVariant(pv) => {
+                ast.PatVariant(pv) => {
                     if (pv.binding != "a") { return 245; }
                     if (pv.extra_bindings.len() != 1) { return 246; }
                     if (pv.extra_bindings[0] != "b") { return 247; }
@@ -3124,7 +3125,7 @@ function main(): i32 {
     var rtCFor: parser.Module = roundtrip_module(srcCFor);
     if (rtCFor.funcs.len() != 1) { return 262; }
     match (rtCFor.funcs[0].body[1]) {
-        parser.StmtIf(cf) => { if (!as_c_for(cf).ok) { return 263; } },
+        ast.StmtIf(cf) => { if (!as_c_for(cf).ok) { return 263; } },
         _ => { return 264; }
     }
 
@@ -3177,7 +3178,7 @@ function main(): i32 {
     if (mti < 0) { return 287; }
     if (rtTd.funcs[mti].body.len() != 2) { return 288; }
     match (rtTd.funcs[mti].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.name != "a,b") { return 289; }
             if (v.type_name.len() != 0) { return 290; }
         },
@@ -3190,7 +3191,7 @@ function main(): i32 {
     var msi: i32 = func_index(rtSd.funcs, "main");
     if (msi < 0) { return 292; }
     match (rtSd.funcs[msi].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.name != "x,bb") { return 293; }
             if (v.type_name != "@sd:P:x,y") { return 294; }
         },

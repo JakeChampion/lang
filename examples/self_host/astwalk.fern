@@ -1,4 +1,4 @@
-import "./parser";
+import "./ast";
 import "./util";
 
 // astwalk — shared AST traversals for the self-hosted compiler.
@@ -16,7 +16,7 @@ import "./util";
 // `visit` reaches it as a nested named function closing over whatever context
 // the consumer needs — see collect_qualrefs_expr. An arrow lambda works too
 // since #6996; the named form is kept because it reads better at the call site.
-pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T): T {
+pub function fold_expr[T](e: ast.Expr, acc: T, visit: (ast.Expr, T) => T): T {
     return fold_expr_pruned(e, acc, visit, descend_all);
 }
 
@@ -24,19 +24,19 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
 // reaches, in source order. The statement nodes themselves are visited only by
 // fold_stmt_nodes, which a consumer reaches for when what one contributes is
 // not an expression at all — a binder name, an assignment target.
-pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
+pub function fold_stmt[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): T {
     return fold_stmt_pruned(st, acc, visit, descend_all);
 }
 
 // descend_all is the unpruned walk's descent rule: every node's children are
 // reachable.
-pub function descend_all(e: parser.Expr): boolean { return true; }
+pub function descend_all(e: ast.Expr): boolean { return true; }
 
 // descend_none is the statement-shaped consumer's rule: no expression has
 // reachable children, so `visit_expr` sees the expression sitting in each
 // statement slot and nothing under it. collect_bound_stmt wants exactly that —
 // binders live on statements, never inside an initialiser.
-function descend_none(e: parser.Expr): boolean { return false; }
+function descend_none(e: ast.Expr): boolean { return false; }
 
 // fold_expr_pruned is fold_expr with descent control. `visit` still sees every
 // node the walk reaches; `descend` then decides whether that node's CHILDREN
@@ -59,14 +59,14 @@ function descend_none(e: parser.Expr): boolean { return false; }
 // monomorphised, and a top-level generic one cannot be named as a value at all
 // (#7040, #7042). It captures nothing, so it lifts to a plain function —
 // measured identical to passing a top-level named no-op.
-pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
-    return fold_expr_nodes(e, acc, (st: parser.Stmt, a: T) => a, visit, descend);
+pub function fold_expr_pruned[T](e: ast.Expr, acc: T, visit: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
+    return fold_expr_nodes(e, acc, (st: ast.Stmt, a: T) => a, visit, descend);
 }
 
 // fold_stmt_pruned is fold_expr_pruned's statement half. `descend` gates the
 // expressions it reaches exactly as it does inside an expression tree.
-pub function fold_stmt_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
-    return fold_stmt_nodes(st, acc, (s: parser.Stmt, a: T) => a, visit, descend);
+pub function fold_stmt_pruned[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
+    return fold_stmt_nodes(st, acc, (s: ast.Stmt, a: T) => a, visit, descend);
 }
 
 // fold_expr_nodes / fold_stmt_nodes are the walk itself, and the only copy of
@@ -79,33 +79,33 @@ pub function fold_stmt_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T
 // A consumer whose contribution is statement-shaped needs this pair: an
 // assignment TARGET and a `var` / `for` / match-arm BINDER are names carried on
 // the statement, not expressions the expression visitor can ever be handed.
-pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt, T) => T, visit_expr: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+pub function fold_expr_nodes[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => T, visit_expr: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
     acc = visit_expr(e, acc);
     if (!descend(e)) { return acc; }
     match (e) {
-        parser.ExprIdent(_) => { return acc; },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
+        ast.ExprIdent(_) => { return acc; },
+        ast.ExprNumber(_) => { return acc; },
+        ast.ExprString(_) => { return acc; },
+        ast.ExprBool(_) => { return acc; },
+        ast.ExprBinary(b) => {
             acc = fold_expr_nodes(b.left, acc, visit_stmt, visit_expr, descend);
             return fold_expr_nodes(b.right, acc, visit_stmt, visit_expr, descend);
         },
-        parser.ExprUnary(u) => { return fold_expr_nodes(u.operand, acc, visit_stmt, visit_expr, descend); },
-        parser.ExprCall(c) => {
+        ast.ExprUnary(u) => { return fold_expr_nodes(u.operand, acc, visit_stmt, visit_expr, descend); },
+        ast.ExprCall(c) => {
             acc = fold_expr_nodes(c.callee, acc, visit_stmt, visit_expr, descend);
             for arg in c.args {
                 acc = fold_expr_nodes(arg, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             for el in a.elements {
                 acc = fold_expr_nodes(el, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.ExprMapLit(ml) => {
+        ast.ExprMapLit(ml) => {
             var i: i32 = 0;
             while (i < ml.keys.len()) {
                 acc = fold_expr_nodes(ml.keys[i], acc, visit_stmt, visit_expr, descend);
@@ -114,7 +114,7 @@ pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt
             }
             return acc;
         },
-        parser.ExprFString(fs) => {
+        ast.ExprFString(fs) => {
             var i: i32 = 0;
             while (i < fs.exprs.len()) {
                 if (fs.is_expr[i]) { acc = fold_expr_nodes(fs.exprs[i], acc, visit_stmt, visit_expr, descend); }
@@ -122,48 +122,48 @@ pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt
             }
             return acc;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             for el in t.elements {
                 acc = fold_expr_nodes(el, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             acc = fold_expr_nodes(x.array, acc, visit_stmt, visit_expr, descend);
             return fold_expr_nodes(x.index, acc, visit_stmt, visit_expr, descend);
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             acc = fold_expr_nodes(sl.array, acc, visit_stmt, visit_expr, descend);
             acc = fold_expr_nodes(sl.start, acc, visit_stmt, visit_expr, descend);
             return fold_expr_nodes(sl.end, acc, visit_stmt, visit_expr, descend);
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             if (sl.has_base) { acc = fold_expr_nodes(sl.base, acc, visit_stmt, visit_expr, descend); }
             for field_value in sl.field_values {
                 acc = fold_expr_nodes(field_value, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.ExprFieldAccess(fa) => { return fold_expr_nodes(fa.obj, acc, visit_stmt, visit_expr, descend); },
-        parser.ExprLambda(lm) => {
+        ast.ExprFieldAccess(fa) => { return fold_expr_nodes(fa.obj, acc, visit_stmt, visit_expr, descend); },
+        ast.ExprLambda(lm) => {
             for body_st in lm.body {
                 acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.ExprUnknown(_) => { return acc; }
+        ast.ExprUnknown(_) => { return acc; }
     }
     return acc;
 }
 
-pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stmt, T) => T, visit_expr: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+pub function fold_stmt_nodes[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => T, visit_expr: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
     acc = visit_stmt(st, acc);
     match (st) {
-        parser.StmtDefer(d) => { return fold_stmt_nodes(d.action, acc, visit_stmt, visit_expr, descend); },
-        parser.StmtVar(v) => { return fold_expr_nodes(v.init, acc, visit_stmt, visit_expr, descend); },
-        parser.StmtReturn(r) => { return fold_expr_nodes(r.value, acc, visit_stmt, visit_expr, descend); },
-        parser.StmtExpr(e) => { return fold_expr_nodes(e.value, acc, visit_stmt, visit_expr, descend); },
-        parser.StmtIf(i) => {
+        ast.StmtDefer(d) => { return fold_stmt_nodes(d.action, acc, visit_stmt, visit_expr, descend); },
+        ast.StmtVar(v) => { return fold_expr_nodes(v.init, acc, visit_stmt, visit_expr, descend); },
+        ast.StmtReturn(r) => { return fold_expr_nodes(r.value, acc, visit_stmt, visit_expr, descend); },
+        ast.StmtExpr(e) => { return fold_expr_nodes(e.value, acc, visit_stmt, visit_expr, descend); },
+        ast.StmtIf(i) => {
             acc = fold_expr_nodes(i.cond, acc, visit_stmt, visit_expr, descend);
             for body_st in i.then_body {
                 acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
@@ -173,15 +173,15 @@ pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stm
             }
             return acc;
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             acc = fold_expr_nodes(w.cond, acc, visit_stmt, visit_expr, descend);
             for body_st in w.body {
                 acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.StmtAssign(a) => { return fold_expr_nodes(a.value, acc, visit_stmt, visit_expr, descend); },
-        parser.StmtMatch(m) => {
+        ast.StmtAssign(a) => { return fold_expr_nodes(a.value, acc, visit_stmt, visit_expr, descend); },
+        ast.StmtMatch(m) => {
             acc = fold_expr_nodes(m.scrutinee, acc, visit_stmt, visit_expr, descend);
             for arm in m.arms {
                 if (arm.has_guard) { acc = fold_expr_nodes(arm.guard, acc, visit_stmt, visit_expr, descend); }
@@ -191,16 +191,16 @@ pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stm
             }
             return acc;
         },
-        parser.StmtFor(f) => {
+        ast.StmtFor(f) => {
             acc = fold_expr_nodes(f.iter, acc, visit_stmt, visit_expr, descend);
             for body_st in f.body {
                 acc = fold_stmt_nodes(body_st, acc, visit_stmt, visit_expr, descend);
             }
             return acc;
         },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; }
     }
     return acc;
 }
@@ -221,7 +221,7 @@ pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stm
 // A `defer`'s action is a child statement, so it contributes nothing at this
 // level. Every variant is spelled out rather than wildcarded: a new statement
 // kind should fail to compile here, not silently own no expressions.
-pub function fold_stmt_own[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
+pub function fold_stmt_own[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): T {
     return fold_stmt_own_pruned(st, acc, visit, descend_all);
 }
 
@@ -229,26 +229,26 @@ pub function fold_stmt_own[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) =
 // as fold_expr_pruned: `descend` decides whether a visited node's CHILDREN are
 // walked, which a consumer needs when one node's contribution already accounts
 // for its whole subtree.
-pub function fold_stmt_own_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+pub function fold_stmt_own_pruned[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
     match (st) {
-        parser.StmtVar(v) => { return fold_expr_pruned(v.init, acc, visit, descend); },
-        parser.StmtAssign(a) => { return fold_expr_pruned(a.value, acc, visit, descend); },
-        parser.StmtReturn(r) => { return fold_expr_pruned(r.value, acc, visit, descend); },
-        parser.StmtExpr(e) => { return fold_expr_pruned(e.value, acc, visit, descend); },
-        parser.StmtIf(i) => { return fold_expr_pruned(i.cond, acc, visit, descend); },
-        parser.StmtWhile(w) => { return fold_expr_pruned(w.cond, acc, visit, descend); },
-        parser.StmtFor(f) => { return fold_expr_pruned(f.iter, acc, visit, descend); },
-        parser.StmtMatch(m) => {
+        ast.StmtVar(v) => { return fold_expr_pruned(v.init, acc, visit, descend); },
+        ast.StmtAssign(a) => { return fold_expr_pruned(a.value, acc, visit, descend); },
+        ast.StmtReturn(r) => { return fold_expr_pruned(r.value, acc, visit, descend); },
+        ast.StmtExpr(e) => { return fold_expr_pruned(e.value, acc, visit, descend); },
+        ast.StmtIf(i) => { return fold_expr_pruned(i.cond, acc, visit, descend); },
+        ast.StmtWhile(w) => { return fold_expr_pruned(w.cond, acc, visit, descend); },
+        ast.StmtFor(f) => { return fold_expr_pruned(f.iter, acc, visit, descend); },
+        ast.StmtMatch(m) => {
             acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
             for arm in m.arms {
                 if (arm.has_guard) { acc = fold_expr_pruned(arm.guard, acc, visit, descend); }
             }
             return acc;
         },
-        parser.StmtDefer(_) => { return acc; },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
+        ast.StmtDefer(_) => { return acc; },
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; }
     }
     return acc;
 }
@@ -277,68 +277,68 @@ pub function fold_stmt_own_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Exp
 // The `sugar` fields (StmtIf.sugar, StmtMatch.sugar) are the arms as WRITTEN,
 // which only the printer reads, and they are carried through unrewritten — a
 // rewrite of the compile path must not rewrite the author's source shape.
-pub function map_expr(e: parser.Expr, visit: (parser.Expr) => parser.Expr): parser.Expr {
+pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
     match (e) {
-        parser.ExprNumber(_) => { return visit(e); },
-        parser.ExprIdent(_) => { return visit(e); },
-        parser.ExprString(_) => { return visit(e); },
-        parser.ExprBool(_) => { return visit(e); },
-        parser.ExprUnknown(_) => { return visit(e); },
-        parser.ExprBinary(b) => {
-            return visit(parser.ExprBinary { ...b, left: map_expr(b.left, visit), right: map_expr(b.right, visit) });
+        ast.ExprNumber(_) => { return visit(e); },
+        ast.ExprIdent(_) => { return visit(e); },
+        ast.ExprString(_) => { return visit(e); },
+        ast.ExprBool(_) => { return visit(e); },
+        ast.ExprUnknown(_) => { return visit(e); },
+        ast.ExprBinary(b) => {
+            return visit(ast.ExprBinary { ...b, left: map_expr(b.left, visit), right: map_expr(b.right, visit) });
         },
-        parser.ExprUnary(u) => { return visit(parser.ExprUnary { ...u, operand: map_expr(u.operand, visit) }); },
-        parser.ExprCall(c) => {
-            var args: parser.Expr[] = [];
+        ast.ExprUnary(u) => { return visit(ast.ExprUnary { ...u, operand: map_expr(u.operand, visit) }); },
+        ast.ExprCall(c) => {
+            var args: ast.Expr[] = [];
             for arg in c.args { args = args.append(map_expr(arg, visit)); }
-            return visit(parser.ExprCall { ...c, callee: map_expr(c.callee, visit), args: args });
+            return visit(ast.ExprCall { ...c, callee: map_expr(c.callee, visit), args: args });
         },
-        parser.ExprArray(a) => {
-            var els: parser.Expr[] = [];
+        ast.ExprArray(a) => {
+            var els: ast.Expr[] = [];
             for el in a.elements { els = els.append(map_expr(el, visit)); }
-            return visit(parser.ExprArray { ...a, elements: els });
+            return visit(ast.ExprArray { ...a, elements: els });
         },
-        parser.ExprTuple(t) => {
-            var tel: parser.Expr[] = [];
+        ast.ExprTuple(t) => {
+            var tel: ast.Expr[] = [];
             for el in t.elements { tel = tel.append(map_expr(el, visit)); }
-            return visit(parser.ExprTuple { ...t, elements: tel });
+            return visit(ast.ExprTuple { ...t, elements: tel });
         },
-        parser.ExprIndex(ix) => {
-            return visit(parser.ExprIndex { ...ix, array: map_expr(ix.array, visit), index: map_expr(ix.index, visit) });
+        ast.ExprIndex(ix) => {
+            return visit(ast.ExprIndex { ...ix, array: map_expr(ix.array, visit), index: map_expr(ix.index, visit) });
         },
-        parser.ExprSlice(sl) => {
-            return visit(parser.ExprSlice { ...sl, array: map_expr(sl.array, visit), start: map_expr(sl.start, visit), end: map_expr(sl.end, visit) });
+        ast.ExprSlice(sl) => {
+            return visit(ast.ExprSlice { ...sl, array: map_expr(sl.array, visit), start: map_expr(sl.start, visit), end: map_expr(sl.end, visit) });
         },
-        parser.ExprStructLit(st) => {
-            var fv: parser.Expr[] = [];
+        ast.ExprStructLit(st) => {
+            var fv: ast.Expr[] = [];
             for field_value in st.field_values { fv = fv.append(map_expr(field_value, visit)); }
             // `base` is only a real expression when has_base; the slot is
             // otherwise whatever the parser left there.
-            var nb: parser.Expr = st.base;
+            var nb: ast.Expr = st.base;
             if (st.has_base) { nb = map_expr(st.base, visit); }
-            return visit(parser.ExprStructLit { ...st, field_values: fv, base: nb });
+            return visit(ast.ExprStructLit { ...st, field_values: fv, base: nb });
         },
-        parser.ExprFieldAccess(fa) => { return visit(parser.ExprFieldAccess { ...fa, obj: map_expr(fa.obj, visit) }); },
-        parser.ExprLambda(lm) => { return visit(parser.ExprLambda { ...lm, body: map_stmts(lm.body, visit) }); },
-        parser.ExprMapLit(ml) => {
-            var ks: parser.Expr[] = [];
-            var vs: parser.Expr[] = [];
+        ast.ExprFieldAccess(fa) => { return visit(ast.ExprFieldAccess { ...fa, obj: map_expr(fa.obj, visit) }); },
+        ast.ExprLambda(lm) => { return visit(ast.ExprLambda { ...lm, body: map_stmts(lm.body, visit) }); },
+        ast.ExprMapLit(ml) => {
+            var ks: ast.Expr[] = [];
+            var vs: ast.Expr[] = [];
             for key in ml.keys { ks = ks.append(map_expr(key, visit)); }
             for val in ml.vals { vs = vs.append(map_expr(val, visit)); }
-            return visit(parser.ExprMapLit { ...ml, keys: ks, vals: vs });
+            return visit(ast.ExprMapLit { ...ml, keys: ks, vals: vs });
         },
-        parser.ExprFString(fs) => {
+        ast.ExprFString(fs) => {
             // The three arrays are parallel, one entry per PART: a part with
             // is_expr false is literal text and its `exprs` slot is filler, not
             // an expression to rewrite.
-            var xs: parser.Expr[] = [];
+            var xs: ast.Expr[] = [];
             var q: i32 = 0;
             while (q < fs.exprs.len()) {
                 if (fs.is_expr[q]) { xs = xs.append(map_expr(fs.exprs[q], visit)); }
                 else { xs = xs.append(fs.exprs[q]); }
                 q = q + 1;
             }
-            return visit(parser.ExprFString { ...fs, exprs: xs });
+            return visit(ast.ExprFString { ...fs, exprs: xs });
         }
     }
     return visit(e);
@@ -346,36 +346,36 @@ pub function map_expr(e: parser.Expr, visit: (parser.Expr) => parser.Expr): pars
 
 // map_stmt rebuilds one statement with every expression it reaches rewritten,
 // including the ones inside the blocks it encloses.
-pub function map_stmt(st: parser.Stmt, visit: (parser.Expr) => parser.Expr): parser.Stmt {
+pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
     match (st) {
-        parser.StmtVar(v) => { return parser.StmtVar { ...v, init: map_expr(v.init, visit) }; },
-        parser.StmtReturn(r) => { return parser.StmtReturn { ...r, value: map_expr(r.value, visit) }; },
-        parser.StmtExpr(x) => { return parser.StmtExpr { ...x, value: map_expr(x.value, visit) }; },
-        parser.StmtAssign(a) => { return parser.StmtAssign { ...a, value: map_expr(a.value, visit) }; },
-        parser.StmtIf(f) => {
-            return parser.StmtIf { ...f, cond: map_expr(f.cond, visit), then_body: map_stmts(f.then_body, visit), else_body: map_stmts(f.else_body, visit) };
+        ast.StmtVar(v) => { return ast.StmtVar { ...v, init: map_expr(v.init, visit) }; },
+        ast.StmtReturn(r) => { return ast.StmtReturn { ...r, value: map_expr(r.value, visit) }; },
+        ast.StmtExpr(x) => { return ast.StmtExpr { ...x, value: map_expr(x.value, visit) }; },
+        ast.StmtAssign(a) => { return ast.StmtAssign { ...a, value: map_expr(a.value, visit) }; },
+        ast.StmtIf(f) => {
+            return ast.StmtIf { ...f, cond: map_expr(f.cond, visit), then_body: map_stmts(f.then_body, visit), else_body: map_stmts(f.else_body, visit) };
         },
-        parser.StmtWhile(w) => { return parser.StmtWhile { ...w, cond: map_expr(w.cond, visit), body: map_stmts(w.body, visit) }; },
-        parser.StmtFor(fo) => { return parser.StmtFor { ...fo, iter: map_expr(fo.iter, visit), body: map_stmts(fo.body, visit) }; },
-        parser.StmtMatch(mt) => {
-            var arms: parser.MatchArm[] = [];
+        ast.StmtWhile(w) => { return ast.StmtWhile { ...w, cond: map_expr(w.cond, visit), body: map_stmts(w.body, visit) }; },
+        ast.StmtFor(fo) => { return ast.StmtFor { ...fo, iter: map_expr(fo.iter, visit), body: map_stmts(fo.body, visit) }; },
+        ast.StmtMatch(mt) => {
+            var arms: ast.MatchArm[] = [];
             for arm in mt.arms {
-                var g: parser.Expr = arm.guard;
+                var g: ast.Expr = arm.guard;
                 if (arm.has_guard) { g = map_expr(arm.guard, visit); }
-                arms = arms.append(parser.MatchArm { ...arm, body: map_stmts(arm.body, visit), guard: g });
+                arms = arms.append(ast.MatchArm { ...arm, body: map_stmts(arm.body, visit), guard: g });
             }
-            return parser.StmtMatch { ...mt, scrutinee: map_expr(mt.scrutinee, visit), arms: arms };
+            return ast.StmtMatch { ...mt, scrutinee: map_expr(mt.scrutinee, visit), arms: arms };
         },
-        parser.StmtDefer(d) => { return parser.StmtDefer { ...d, action: map_stmt(d.action, visit) }; },
-        parser.StmtBreak(_) => { return st; },
-        parser.StmtContinue(_) => { return st; },
-        parser.StmtUnknown(_) => { return st; }
+        ast.StmtDefer(d) => { return ast.StmtDefer { ...d, action: map_stmt(d.action, visit) }; },
+        ast.StmtBreak(_) => { return st; },
+        ast.StmtContinue(_) => { return st; },
+        ast.StmtUnknown(_) => { return st; }
     }
     return st;
 }
 
-pub function map_stmts(stmts: parser.Stmt[], visit: (parser.Expr) => parser.Expr): parser.Stmt[] {
-    var out: parser.Stmt[] = [];
+pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
     for stmt in stmts { out = out.append(map_stmt(stmt, visit)); }
     return out;
 }
@@ -392,10 +392,10 @@ pub function map_stmts(stmts: parser.Stmt[], visit: (parser.Expr) => parser.Expr
 // goes; splice_own then walks the statement tree proper. Each statement is
 // visited exactly once: map_expr is bottom-up, so an inner lambda is spliced
 // before the outer one, and splice_own never re-enters an expression.
-pub function splice_stmts(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt[] {
-    var mapped: parser.Stmt[] = map_stmts(stmts, function(x: parser.Expr): parser.Expr {
+pub function splice_stmts(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
+    var mapped: ast.Stmt[] = map_stmts(stmts, function(x: ast.Expr): ast.Expr {
         match (x) {
-            parser.ExprLambda(lm) => { return parser.ExprLambda { ...lm, body: splice_own(lm.body, visit) }; },
+            ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: splice_own(lm.body, visit) }; },
             _ => { return x; }
         }
         return x;
@@ -406,10 +406,10 @@ pub function splice_stmts(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.S
 // splice_own applies `visit` down one statement tree, post-order. It does NOT
 // descend into expressions: splice_stmts' map pass has already spliced every
 // lambda body, and descending again would splice a nested one twice.
-function splice_own(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt[] {
-    var out: parser.Stmt[] = [];
+function splice_own(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
     for stmt in stmts {
-        var repl: parser.Stmt[] = visit(splice_own_children(stmt, visit));
+        var repl: ast.Stmt[] = visit(splice_own_children(stmt, visit));
         for r in repl { out = out.append(r); }
     }
     return out;
@@ -418,21 +418,21 @@ function splice_own(stmts: parser.Stmt[], visit: (parser.Stmt) => parser.Stmt[])
 // splice_own_children rebuilds one statement with each statement list it
 // encloses spliced. It does not visit `st` itself; that is splice_own's job,
 // so children are spliced before their parent is judged.
-function splice_own_children(st: parser.Stmt, visit: (parser.Stmt) => parser.Stmt[]): parser.Stmt {
+function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt {
     match (st) {
-        parser.StmtIf(f) => {
-            return parser.StmtIf { ...f, then_body: splice_own(f.then_body, visit), else_body: splice_own(f.else_body, visit) };
+        ast.StmtIf(f) => {
+            return ast.StmtIf { ...f, then_body: splice_own(f.then_body, visit), else_body: splice_own(f.else_body, visit) };
         },
-        parser.StmtWhile(w) => { return parser.StmtWhile { ...w, body: splice_own(w.body, visit) }; },
-        parser.StmtFor(fo) => { return parser.StmtFor { ...fo, body: splice_own(fo.body, visit) }; },
-        parser.StmtMatch(mt) => {
-            var arms: parser.MatchArm[] = [];
+        ast.StmtWhile(w) => { return ast.StmtWhile { ...w, body: splice_own(w.body, visit) }; },
+        ast.StmtFor(fo) => { return ast.StmtFor { ...fo, body: splice_own(fo.body, visit) }; },
+        ast.StmtMatch(mt) => {
+            var arms: ast.MatchArm[] = [];
             for arm in mt.arms {
-                arms = arms.append(parser.MatchArm { ...arm, body: splice_own(arm.body, visit) });
+                arms = arms.append(ast.MatchArm { ...arm, body: splice_own(arm.body, visit) });
             }
-            return parser.StmtMatch { ...mt, arms: arms };
+            return ast.StmtMatch { ...mt, arms: arms };
         },
-        parser.StmtDefer(d) => { return parser.StmtDefer { ...d, action: splice_own_children(d.action, visit) }; },
+        ast.StmtDefer(d) => { return ast.StmtDefer { ...d, action: splice_own_children(d.action, visit) }; },
         _ => { return st; }
     }
     return st;
@@ -440,10 +440,10 @@ function splice_own_children(st: parser.Stmt, visit: (parser.Stmt) => parser.Stm
 
 // ident_of contributes one node's identifier READS. It is the whole of
 // collect_idents_expr that is not the walk.
-function ident_of(e: parser.Expr, acc: string[]): string[] {
+function ident_of(e: ast.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprLambda(lm) => {
+        ast.ExprIdent(id) => { return acc.append(id.name); },
+        ast.ExprLambda(lm) => {
             // A nested lambda reads, from the ENCLOSING scope, only its FREE
             // variables — its own params and locally-bound names are bound WITHIN
             // it, not read from outside. Collect the inner body's idents, subtract
@@ -473,9 +473,9 @@ function ident_of(e: parser.Expr, acc: string[]): string[] {
 
 // not_lambda stops the walk at a lambda: ident_of has already accounted for its
 // whole body.
-function not_lambda(e: parser.Expr): boolean {
+function not_lambda(e: ast.Expr): boolean {
     match (e) {
-        parser.ExprLambda(_) => { return false; },
+        ast.ExprLambda(_) => { return false; },
         _ => { return true; }
     }
     return true;
@@ -483,7 +483,7 @@ function not_lambda(e: parser.Expr): boolean {
 
 // collect_idents_expr appends every identifier READ in `e` to `acc`
 // (with duplicates; consumers dedup when building capture lists).
-pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+pub function collect_idents_expr(e: ast.Expr, acc: string[]): string[] {
     return fold_expr_pruned(e, acc, ident_of, not_lambda);
 }
 
@@ -498,14 +498,14 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
 // or a lambda kept the original name, and lowering then failed to resolve it
 // (`FERN_STRICT_IR: function value n not defined`) on a program native
 // compiles and runs.
-pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.Expr {
+pub function subst_ident_expr(e: ast.Expr, from: string, to: string): ast.Expr {
     // Nested so the rename pair rides the closure rather than an extra
     // parameter on every recursive call — the same spelling the fold's
     // consumers use.
-    function subst_one(x: parser.Expr): parser.Expr {
+    function subst_one(x: ast.Expr): ast.Expr {
         match (x) {
-            parser.ExprIdent(id) => {
-                if (id.name == from) { return parser.ExprIdent { ...id, name: to }; }
+            ast.ExprIdent(id) => {
+                if (id.name == from) { return ast.ExprIdent { ...id, name: to }; }
                 return x;
             },
             _ => { return x; }
@@ -522,9 +522,9 @@ pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.
 // SH-057). The target is always a bare name — index and field assigns desugar
 // to __set_index / __set_field calls carried in `value`. Duplicates are fine;
 // capture lists dedup.
-function assign_target_of(st: parser.Stmt, acc: string[]): string[] {
+function assign_target_of(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
-        parser.StmtAssign(a) => { return acc.append(a.target); },
+        ast.StmtAssign(a) => { return acc.append(a.target); },
         _ => { return acc; }
     }
     return acc;
@@ -534,7 +534,7 @@ function assign_target_of(st: parser.Stmt, acc: string[]): string[] {
 // duplicates. `not_lambda` stops the walk at a lambda because ident_of has
 // already accounted for its whole body; a `when` guard is walked like an arm
 // body, since a name read only there is still a name the closure must capture.
-pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+pub function collect_idents_stmt(st: ast.Stmt, acc: string[]): string[] {
     return fold_stmt_nodes(st, acc, assign_target_of, ident_of, not_lambda);
 }
 
@@ -584,15 +584,15 @@ pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 // subtracting its bindings: a lambda's calls are part of what the artifact
 // executes, which is the question here, where free-variable analysis asks what
 // the enclosing scope must capture.
-function call_site_of(e: parser.Expr, want: string[], acc: CallSite[]): CallSite[] {
+function call_site_of(e: ast.Expr, want: string[], acc: CallSite[]): CallSite[] {
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if (util.has_str(want, id.name)) { return acc.append(CallSite { name: id.name, line: c.line, col: c.col, method: false }); }
                     return acc;
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     if (util.has_str(want, fa.field)) { return acc.append(CallSite { name: fa.field, line: c.line, col: c.col, method: true }); }
                     return acc;
                 },
@@ -605,8 +605,8 @@ function call_site_of(e: parser.Expr, want: string[], acc: CallSite[]): CallSite
 }
 
 // collect_calls_stmt appends every wanted call reachable from `st` to `acc`.
-pub function collect_calls_stmt(st: parser.Stmt, want: string[], acc: CallSite[]): CallSite[] {
-    function visit(e: parser.Expr, a: CallSite[]): CallSite[] { return call_site_of(e, want, a); }
+pub function collect_calls_stmt(st: ast.Stmt, want: string[], acc: CallSite[]): CallSite[] {
+    function visit(e: ast.Expr, a: CallSite[]): CallSite[] { return call_site_of(e, want, a); }
     return fold_stmt(st, acc, visit);
 }
 
@@ -619,9 +619,9 @@ pub function collect_calls_stmt(st: parser.Stmt, want: string[], acc: CallSite[]
 // This is the same set irlower's sa_pat_binds enumerates, which is the point:
 // two answers to "what does this pattern bind" is how at_binding came to be
 // missing from one of them (#6993).
-function pattern_binders(p: parser.Pattern, acc: string[]): string[] {
+function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
     match (p) {
-        parser.PatVariant(pv) => {
+        ast.PatVariant(pv) => {
             if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
             if (pv.at_binding.len() > 0) { acc = acc.append(pv.at_binding); }
             for eb in pv.extra_bindings {
@@ -632,7 +632,7 @@ function pattern_binders(p: parser.Pattern, acc: string[]): string[] {
             }
             return acc;
         },
-        parser.PatWildcard(_) => { return acc; }
+        ast.PatWildcard(_) => { return acc; }
     }
     return acc;
 }
@@ -641,11 +641,11 @@ function pattern_binders(p: parser.Pattern, acc: string[]): string[] {
 // loop variable, and the patterns of a `match`'s arms. Every one of them is
 // carried on the statement node, which is why this walk needs a statement
 // visitor and cannot be written over fold_stmt alone.
-function binders_of(st: parser.Stmt, acc: string[]): string[] {
+function binders_of(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
-        parser.StmtVar(v) => { return append_bound_name(acc, v.name); },
-        parser.StmtFor(f) => { return append_bound_name(acc, f.var_name); },
-        parser.StmtMatch(m) => {
+        ast.StmtVar(v) => { return append_bound_name(acc, v.name); },
+        ast.StmtFor(f) => { return append_bound_name(acc, f.var_name); },
+        ast.StmtMatch(m) => {
             for arm in m.arms {
                 acc = pattern_binders(arm.pattern, acc);
             }
@@ -660,13 +660,13 @@ function binders_of(st: parser.Stmt, acc: string[]): string[] {
 // name in the scope that encloses it. Paired with descend_none it makes the
 // walk statement-only, which is also what keeps a nested lambda's own locals
 // out of the enclosing scope's binder set.
-function binds_nothing(e: parser.Expr, acc: string[]): string[] { return acc; }
+function binds_nothing(e: ast.Expr, acc: string[]): string[] { return acc; }
 
 // collect_bound_stmt appends every name `st` binds in the scope it belongs to.
 // Consumers subtract it from collect_idents_stmt's reads to get free variables,
 // so a name missing here is read as a capture of an enclosing local that does
 // not exist.
-pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+pub function collect_bound_stmt(st: ast.Stmt, acc: string[]): string[] {
     return fold_stmt_nodes(st, acc, binders_of, binds_nothing, descend_none);
 }
 
@@ -674,7 +674,7 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 // whole function's binders — the over-approximating "bound anywhere in this
 // body, so a bare reference to it is local throughout" set that shadowing
 // means for bare names — want this one.
-pub function collect_bound_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+pub function collect_bound_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
     for stmt in stmts {
         acc = collect_bound_stmt(stmt, acc);
     }
@@ -698,11 +698,11 @@ pub struct QualRef { qual: string, name: string, line: i32, col: i32 }
 // The reference is located at the field access, which the parser positions at
 // the dot — matching native, whose rewriter reports this against `fa.P` and not
 // against the enclosing call.
-function qualref_of(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] {
+function qualref_of(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
     match (e) {
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             match (fa.obj) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if (util.has_str(quals, id.name)) {
                         return acc.append(QualRef { qual: id.name, name: fa.field, line: fa.line, col: fa.col });
                     }
@@ -718,13 +718,13 @@ function qualref_of(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] 
 
 // collect_qualrefs_expr appends every `<q>.<name>` in `e` whose qualifier `q`
 // is in `quals` (the module names in scope for the file being walked).
-pub function collect_qualrefs_expr(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] {
-    function visit(n: parser.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
+pub function collect_qualrefs_expr(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
+    function visit(n: ast.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
     return fold_expr(e, acc, visit);
 }
 
 // collect_qualrefs_stmt is collect_qualrefs_expr's statement half.
-pub function collect_qualrefs_stmt(st: parser.Stmt, quals: string[], acc: QualRef[]): QualRef[] {
-    function visit(n: parser.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
+pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], acc: QualRef[]): QualRef[] {
+    function visit(n: ast.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
     return fold_stmt(st, acc, visit);
 }

@@ -28,6 +28,7 @@
 // builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
 // self-host sources.
 
+import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
@@ -52,7 +53,7 @@ import "./astwalk";
 // could name it bare; a `match (test.assert_eq(...)) { Fail(m) => … }`
 // in a test file would silently fail to match (issue #2666's
 // TestOutcome). The self-host compiler's own modules sidestep this by
-// always qualifying (`parser.ExprIdent`), so this only widens what
+// always qualifying (`ast.ExprIdent`), so this only widens what
 // downstream code can spell, never changing existing resolution.
 // declnames_mangled is the precomputed `prefix + "__" + declnames[i]` parallel to
 // declnames, so a bare own-decl reference resolves to a SHARED string instance
@@ -308,10 +309,10 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     return tn;
 }
 
-function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
+function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
     match (p) {
-        parser.PatVariant(pv) => {
-            return parser.PatVariant { ...pv, type_name: rewrite_type_name(pv.type_name, ctx) };
+        ast.PatVariant(pv) => {
+            return ast.PatVariant { ...pv, type_name: rewrite_type_name(pv.type_name, ctx) };
         },
         _ => { return p; }
     }
@@ -323,30 +324,30 @@ function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
 // to a bare `mod__field` ident; a bare ident naming an own decl
 // becomes `prefix__name`; field access on a plain value is recursed
 // into untouched.
-pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
+pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
     match (e) {
-        parser.ExprIdent(id) => {
+        ast.ExprIdent(id) => {
             // A local variable shadowing a module-level decl keeps its bare
             // name (don't mangle it into the decl's reference).
             if (is_in(id.name, ctx.locals)) {
-                return parser.ExprIdent { name: id.name, line: id.line, col: id.col, ty: id.ty };
+                return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: id.ty };
             }
-            return parser.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty };
+            return ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty };
         },
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             match (fa.obj) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if (is_in(id.name, ctx.modnames)) {
                         // Alias-aware: `io.foo` -> `io_buffered__foo`.
                         var mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
                         // `ty: ""` and not `id.ty`: the result names a module-qualified
                         // FUNCTION, so the module ident's own tag says nothing about it.
-                        return parser.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
+                        return ast.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
                     }
                 },
                 _ => { }
             }
-            return parser.ExprFieldAccess {
+            return ast.ExprFieldAccess {
                 obj: rewrite_expr(fa.obj, ctx),
                 field: fa.field,
                 line: fa.line,
@@ -354,17 +355,17 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 ty: fa.ty
             };
         },
-        parser.ExprCall(c) => {
-            var args: parser.Expr[] = [];
+        ast.ExprCall(c) => {
+            var args: ast.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) {
                 args = args.append(rewrite_expr(c.args[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            return ast.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
-        parser.ExprBinary(b) => {
-            return parser.ExprBinary {
+        ast.ExprBinary(b) => {
+            return ast.ExprBinary {
                 op: b.op,
                 left: rewrite_expr(b.left, ctx),
                 right: rewrite_expr(b.right, ctx),
@@ -373,19 +374,19 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 ty: b.ty
             };
         },
-        parser.ExprUnary(u) => {
-            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col, ty: u.ty };
+        ast.ExprUnary(u) => {
+            return ast.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col, ty: u.ty };
         },
-        parser.ExprIndex(x) => {
-            return parser.ExprIndex {
+        ast.ExprIndex(x) => {
+            return ast.ExprIndex {
                 array: rewrite_expr(x.array, ctx),
                 index: rewrite_expr(x.index, ctx),
                 unchecked: x.unchecked,
                 ty: x.ty
             };
         },
-        parser.ExprSlice(sl) => {
-            return parser.ExprSlice {
+        ast.ExprSlice(sl) => {
+            return ast.ExprSlice {
                 array: rewrite_expr(sl.array, ctx),
                 start: rewrite_expr(sl.start, ctx),
                 end: rewrite_expr(sl.end, ctx),
@@ -393,34 +394,34 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 open_end: sl.open_end
             };
         },
-        parser.ExprTuple(t) => {
-            var elems: parser.Expr[] = [];
+        ast.ExprTuple(t) => {
+            var elems: ast.Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) {
                 elems = elems.append(rewrite_expr(t.elements[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprTuple { elements: elems, line: t.line, col: t.col };
+            return ast.ExprTuple { elements: elems, line: t.line, col: t.col };
         },
-        parser.ExprArray(a) => {
-            var elems: parser.Expr[] = [];
+        ast.ExprArray(a) => {
+            var elems: ast.Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) {
                 elems = elems.append(rewrite_expr(a.elements[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprArray { ...a, elements: elems };
+            return ast.ExprArray { ...a, elements: elems };
         },
-        parser.ExprStructLit(slit) => {
-            var fvs: parser.Expr[] = [];
+        ast.ExprStructLit(slit) => {
+            var fvs: ast.Expr[] = [];
             var i: i32 = 0;
             while (i < slit.field_values.len()) {
                 fvs = fvs.append(rewrite_expr(slit.field_values[i], ctx));
                 i = i + 1;
             }
-            var new_base: parser.Expr = slit.base;
+            var new_base: ast.Expr = slit.base;
             if (slit.has_base) { new_base = rewrite_expr(slit.base, ctx); }
-            return parser.ExprStructLit {
+            return ast.ExprStructLit {
                 type_name: rewrite_type_name(slit.type_name, ctx),
                 field_names: slit.field_names,
                 field_values: fvs,
@@ -429,7 +430,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 line: slit.line, col: slit.col
             };
         },
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             // The lambda's params and body locals shadow module-level
             // decls inside the body, while the ENCLOSING function's
             // locals stay visible to it (captures) — so the body
@@ -466,7 +467,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                     reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
                 };
             }
-            return parser.ExprLambda {
+            return ast.ExprLambda {
                 ...lm,
                 params: rewrite_params(lm.params, ctx),
                 ret_type: rewrite_type_name(lm.ret_type, ctx),
@@ -478,8 +479,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
     return e;
 }
 
-pub function rewrite_block(stmts: parser.Stmt[], ctx: RewriteCtx): parser.Stmt[] {
-    var out: parser.Stmt[] = [];
+pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         out = out.append(rewrite_stmt(stmts[i], ctx));
@@ -488,36 +489,36 @@ pub function rewrite_block(stmts: parser.Stmt[], ctx: RewriteCtx): parser.Stmt[]
     return out;
 }
 
-function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
+function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
     match (st) {
-        parser.StmtVar(v) => {
-            return parser.StmtVar {
+        ast.StmtVar(v) => {
+            return ast.StmtVar {
                 name: v.name,
                 type_name: rewrite_type_name(v.type_name, ctx),
                 init: rewrite_expr(v.init, ctx),
                 line: v.line, col: v.col, is_str: v.is_str
            , fn_ret: v.fn_ret };
         },
-        parser.StmtReturn(r) => {
-            return parser.StmtReturn { value: rewrite_expr(r.value, ctx), line: r.line, col: r.col };
+        ast.StmtReturn(r) => {
+            return ast.StmtReturn { value: rewrite_expr(r.value, ctx), line: r.line, col: r.col };
         },
-        parser.StmtExpr(x) => {
-            return parser.StmtExpr { value: rewrite_expr(x.value, ctx), line: x.line };
+        ast.StmtExpr(x) => {
+            return ast.StmtExpr { value: rewrite_expr(x.value, ctx), line: x.line };
         },
-        parser.StmtAssign(a) => {
-            return parser.StmtAssign { target: a.target, value: rewrite_expr(a.value, ctx), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+        ast.StmtAssign(a) => {
+            return ast.StmtAssign { target: a.target, value: rewrite_expr(a.value, ctx), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },
-        parser.StmtIf(f) => {
-            return parser.StmtIf { ...f,
+        ast.StmtIf(f) => {
+            return ast.StmtIf { ...f,
                 cond: rewrite_expr(f.cond, ctx),
                 then_body: rewrite_block(f.then_body, ctx),
                 else_body: rewrite_block(f.else_body, ctx) };
         },
-        parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop };
+        ast.StmtWhile(w) => {
+            return ast.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop };
         },
-        parser.StmtFor(f) => {
-            return parser.StmtFor {
+        ast.StmtFor(f) => {
+            return ast.StmtFor {
                 var_name: f.var_name,
                 iter: rewrite_expr(f.iter, ctx),
                 body: rewrite_block(f.body, ctx),
@@ -525,30 +526,30 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
                 line: f.line
             };
         },
-        parser.StmtMatch(m) => {
-            var arms: parser.MatchArm[] = [];
+        ast.StmtMatch(m) => {
+            var arms: ast.MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.append(parser.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
+                arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;
             }
-            return parser.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };
+            return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };
         },
         // Rewrite the deferred action's cross-module references before
         // lower_defers (module_with_builtins) schedules it at the exits.
-        parser.StmtDefer(d) => {
-            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error, line: d.line };
+        ast.StmtDefer(d) => {
+            return ast.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error, line: d.line };
         },
         _ => { return st; }
     }
     return st;
 }
 
-function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.ParamDecl[] {
-    var out: parser.ParamDecl[] = [];
+function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl[] {
+    var out: ast.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < params.len()) {
-        out = out.append(parser.ParamDecl {
+        out = out.append(ast.ParamDecl {
             name: params[i].name,
             type_name: rewrite_type_name(params[i].type_name, ctx),
             own: params[i].own,
@@ -1092,14 +1093,14 @@ function main(): i32 {
     if (mod.funcs.len() != 1) { return 1; }
     // Entry func name is NOT mangled.
     if (mod.funcs[0].name != "f") { return 2; }
-    var body: parser.Stmt[] = mod.funcs[0].body;
+    var body: ast.Stmt[] = mod.funcs[0].body;
     match (body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.type_name != "lexer__Token") { return 10; }
             match (v.init) {
-                parser.ExprCall(c) => {
+                ast.ExprCall(c) => {
                     match (c.callee) {
-                        parser.ExprIdent(id) => { if (id.name != "lexer__tokenize") { return 11; } },
+                        ast.ExprIdent(id) => { if (id.name != "lexer__tokenize") { return 11; } },
                         _ => { return 12; }
                     }
                 },
@@ -1109,9 +1110,9 @@ function main(): i32 {
         _ => { return 14; }
     }
     match (body[1]) {
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             match (m.arms[0].pattern) {
-                parser.PatVariant(pv) => { if (pv.type_name != "lexer__TokNumber") { return 21; } },
+                ast.PatVariant(pv) => { if (pv.type_name != "lexer__TokNumber") { return 21; } },
                 _ => { return 23; }
             }
         },
@@ -1121,12 +1122,12 @@ function main(): i32 {
     var mod2: parser.Module = flatten_source(
         "import \"./lexer\"; function g(): i32 { return p.x; }");
     match (mod2.funcs[0].body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     if (fa.field != "x") { return 30; }
                     match (fa.obj) {
-                        parser.ExprIdent(id) => { if (id.name != "p") { return 31; } },
+                        ast.ExprIdent(id) => { if (id.name != "p") { return 31; } },
                         _ => { return 32; }
                     }
                 },
@@ -1162,9 +1163,9 @@ function main(): i32 {
 
     // make's body: `return Box { v: n };` → struct-lit type mangled.
     match (mm.funcs[1].body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprStructLit(sl) => { if (sl.type_name != "m__Box") { return 60; } },
+                ast.ExprStructLit(sl) => { if (sl.type_name != "m__Box") { return 60; } },
                 _ => { return 61; }
             }
         },
@@ -1175,12 +1176,12 @@ function main(): i32 {
     // — local type mangled, internal call to `make` mangled, method
     // call `b.get()` LEFT as a field-access dispatch (not mangled).
     match (mm.funcs[2].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             if (v.type_name != "m__Box") { return 70; }
             match (v.init) {
-                parser.ExprCall(c) => {
+                ast.ExprCall(c) => {
                     match (c.callee) {
-                        parser.ExprIdent(id) => { if (id.name != "m__make") { return 71; } },
+                        ast.ExprIdent(id) => { if (id.name != "m__make") { return 71; } },
                         _ => { return 72; }
                     }
                 },
@@ -1190,15 +1191,15 @@ function main(): i32 {
         _ => { return 74; }
     }
     match (mm.funcs[2].body[1]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprCall(c) => {
+                ast.ExprCall(c) => {
                     match (c.callee) {
                         // b.get() — field access on local `b`, NOT mangled.
-                        parser.ExprFieldAccess(fa) => {
+                        ast.ExprFieldAccess(fa) => {
                             if (fa.field != "get") { return 80; }
                             match (fa.obj) {
-                                parser.ExprIdent(id) => { if (id.name != "b") { return 81; } },
+                                ast.ExprIdent(id) => { if (id.name != "b") { return 81; } },
                                 _ => { return 82; }
                             }
                         },
@@ -1275,11 +1276,11 @@ function main(): i32 {
     // Entry main's body: `return a__add(2, 3);` — qualified call
     // flattened to the bare mangled name that a__add now provides.
     match (merged.funcs[2].body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprCall(c) => {
+                ast.ExprCall(c) => {
                     match (c.callee) {
-                        parser.ExprIdent(id) => { if (id.name != "a__add") { return 105; } },
+                        ast.ExprIdent(id) => { if (id.name != "a__add") { return 105; } },
                         _ => { return 106; }
                     }
                 },
@@ -1310,11 +1311,11 @@ function main(): i32 {
         if (rxmerged.funcs[fi].name == "main") {
             found_main = true;
             match (rxmerged.funcs[fi].body[0]) {
-                parser.StmtReturn(r) => {
+                ast.StmtReturn(r) => {
                     match (r.value) {
-                        parser.ExprCall(c) => {
+                        ast.ExprCall(c) => {
                             match (c.callee) {
-                                parser.ExprIdent(id) => { if (id.name != "helpers__add5") { return 110; } },
+                                ast.ExprIdent(id) => { if (id.name != "helpers__add5") { return 110; } },
                                 _ => { return 111; }
                             }
                         },

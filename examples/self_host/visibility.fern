@@ -7,6 +7,7 @@
 // and broke those drivers; a separate module keeps the loader's dependencies
 // as narrow as they were and costs the full driver one import.
 
+import "./ast";
 import "./parser";
 import "./flatten";
 import "./util";
@@ -307,17 +308,17 @@ function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: st
 // type names. Deliberately shallow on expressions: a struct literal is the only
 // expression carrying a type NAME, and it is reached through the statement
 // positions that can hold one.
-function stmt_type_diags(st: parser.Stmt, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
+function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
     match (st) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             acc = check_type_name(v.type_name, quals, loaded, priv, v.line, v.col, acc);
             return expr_type_diags(v.init, quals, loaded, priv, acc);
         },
-        parser.StmtReturn(r) => { return expr_type_diags(r.value, quals, loaded, priv, acc); },
-        parser.StmtExpr(e) => { return expr_type_diags(e.value, quals, loaded, priv, acc); },
-        parser.StmtAssign(a) => { return expr_type_diags(a.value, quals, loaded, priv, acc); },
-        parser.StmtDefer(d) => { return stmt_type_diags(d.action, quals, loaded, priv, acc); },
-        parser.StmtIf(i) => {
+        ast.StmtReturn(r) => { return expr_type_diags(r.value, quals, loaded, priv, acc); },
+        ast.StmtExpr(e) => { return expr_type_diags(e.value, quals, loaded, priv, acc); },
+        ast.StmtAssign(a) => { return expr_type_diags(a.value, quals, loaded, priv, acc); },
+        ast.StmtDefer(d) => { return stmt_type_diags(d.action, quals, loaded, priv, acc); },
+        ast.StmtIf(i) => {
             acc = expr_type_diags(i.cond, quals, loaded, priv, acc);
             var ti: i32 = 0;
             while (ti < i.then_body.len()) { acc = stmt_type_diags(i.then_body[ti], quals, loaded, priv, acc); ti = ti + 1; }
@@ -325,19 +326,19 @@ function stmt_type_diags(st: parser.Stmt, quals: string[], loaded: flatten.Loade
             while (ei < i.else_body.len()) { acc = stmt_type_diags(i.else_body[ei], quals, loaded, priv, acc); ei = ei + 1; }
             return acc;
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             acc = expr_type_diags(w.cond, quals, loaded, priv, acc);
             var wi: i32 = 0;
             while (wi < w.body.len()) { acc = stmt_type_diags(w.body[wi], quals, loaded, priv, acc); wi = wi + 1; }
             return acc;
         },
-        parser.StmtFor(f) => {
+        ast.StmtFor(f) => {
             acc = expr_type_diags(f.iter, quals, loaded, priv, acc);
             var fi: i32 = 0;
             while (fi < f.body.len()) { acc = stmt_type_diags(f.body[fi], quals, loaded, priv, acc); fi = fi + 1; }
             return acc;
         },
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             acc = expr_type_diags(m.scrutinee, quals, loaded, priv, acc);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
@@ -347,48 +348,48 @@ function stmt_type_diags(st: parser.Stmt, quals: string[], loaded: flatten.Loade
             }
             return acc;
         },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; }
     }
     return acc;
 }
 
 // expr_type_diags finds struct-literal type names inside an expression.
-function expr_type_diags(e: parser.Expr, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
+function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
     match (e) {
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             acc = check_type_name(sl.type_name, quals, loaded, priv, sl.line, sl.col, acc);
             if (sl.has_base) { acc = expr_type_diags(sl.base, quals, loaded, priv, acc); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) { acc = expr_type_diags(sl.field_values[i], quals, loaded, priv, acc); i = i + 1; }
             return acc;
         },
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             acc = expr_type_diags(b.left, quals, loaded, priv, acc);
             return expr_type_diags(b.right, quals, loaded, priv, acc);
         },
-        parser.ExprUnary(u) => { return expr_type_diags(u.operand, quals, loaded, priv, acc); },
-        parser.ExprCall(c) => {
+        ast.ExprUnary(u) => { return expr_type_diags(u.operand, quals, loaded, priv, acc); },
+        ast.ExprCall(c) => {
             var i: i32 = 0;
             while (i < c.args.len()) { acc = expr_type_diags(c.args[i], quals, loaded, priv, acc); i = i + 1; }
             return acc;
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) { acc = expr_type_diags(a.elements[i], quals, loaded, priv, acc); i = i + 1; }
             return acc;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) { acc = expr_type_diags(t.elements[i], quals, loaded, priv, acc); i = i + 1; }
             return acc;
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             acc = expr_type_diags(x.array, quals, loaded, priv, acc);
             return expr_type_diags(x.index, quals, loaded, priv, acc);
         },
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             var i: i32 = 0;
             while (i < lm.body.len()) { acc = stmt_type_diags(lm.body[i], quals, loaded, priv, acc); i = i + 1; }
             return acc;

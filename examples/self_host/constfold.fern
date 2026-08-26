@@ -30,6 +30,7 @@
 // whether the answer may be emitted — see fits. This pass runs on EVERY
 // build, so a fold that changes the answer is a miscompile.
 
+import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -48,14 +49,14 @@ import "./astwalk";
 // The magnitude comes from i64_to_string with its sign stripped rather than
 // from negating the value, so INT64_MIN — which has no negation — needs no
 // case of its own.
-function lit_int(v: i64, suffix: string): parser.Expr {
+function lit_int(v: i64, suffix: string): ast.Expr {
     var s: string = util.i64_to_string(v);
     if (v >= 0) { return num_lit(s, suffix); }
-    return parser.ExprUnary { op: "-", operand: num_lit(slice_unchecked(s, 1, s.len()), suffix), line: 0, col: 0, ty: "" };
+    return ast.ExprUnary { op: "-", operand: num_lit(slice_unchecked(s, 1, s.len()), suffix), line: 0, col: 0, ty: "" };
 }
 
-function num_lit(text: string, suffix: string): parser.Expr {
-    return parser.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, line: 0, col: 0 };
+function num_lit(text: string, suffix: string): ast.Expr {
+    return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, line: 0, col: 0 };
 }
 
 // fits reports whether `v` is representable in the type a literal's SUFFIX
@@ -77,12 +78,12 @@ function fits(v: i64, suffix: string): boolean {
     return false;
 }
 
-function lit_bool(b: boolean): parser.Expr {
-    return parser.ExprBool { value: b };
+function lit_bool(b: boolean): ast.Expr {
+    return ast.ExprBool { value: b };
 }
 
-function lit_string(s: string): parser.Expr {
-    return parser.ExprString { value: s, line: 0, col: 0 };
+function lit_string(s: string): ast.Expr {
+    return ast.ExprString { value: s, line: 0, col: 0 };
 }
 
 // Optional-Int sentinel: Fern-port has no Option in the stdlib
@@ -92,9 +93,9 @@ function lit_string(s: string): parser.Expr {
 // width to decide whether its answer is representable — see fits.
 struct OptInt { ok: boolean, v: i64, suffix: string }
 
-function as_int_lit(e: parser.Expr): OptInt {
+function as_int_lit(e: ast.Expr): OptInt {
     match (e) {
-        parser.ExprNumber(n) => {
+        ast.ExprNumber(n) => {
             if (n.is_float) { return OptInt { ok: false, v: 0, suffix: "" }; }
             // lit_to_i64 (hex/binary-aware): digits_to_i32 stopped at the
             // `x`/`b` prefix and read every `0x`/`0b` operand as 0, so `-O`
@@ -103,7 +104,7 @@ function as_int_lit(e: parser.Expr): OptInt {
             // value instead of the wrapped one.
             return OptInt { ok: true, v: util.lit_to_i64(n.text), suffix: n.suffix };
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             // The negated form lit_int produces, so a chain still folds all the
             // way: `0 - 2147483647 - 1` needs the inner fold's result to be
             // readable by the outer one.
@@ -120,9 +121,9 @@ function as_int_lit(e: parser.Expr): OptInt {
 
 struct OptBool { ok: boolean, v: boolean }
 
-function as_bool_lit(e: parser.Expr): OptBool {
+function as_bool_lit(e: ast.Expr): OptBool {
     match (e) {
-        parser.ExprBool(b) => { return OptBool { ok: true, v: b.value }; },
+        ast.ExprBool(b) => { return OptBool { ok: true, v: b.value }; },
         _ => { return OptBool { ok: false, v: false }; }
     }
     return OptBool { ok: false, v: false };
@@ -130,9 +131,9 @@ function as_bool_lit(e: parser.Expr): OptBool {
 
 struct OptString { ok: boolean, v: string }
 
-function as_string_lit(e: parser.Expr): OptString {
+function as_string_lit(e: ast.Expr): OptString {
     match (e) {
-        parser.ExprString(s) => { return OptString { ok: true, v: s.value }; },
+        ast.ExprString(s) => { return OptString { ok: true, v: s.value }; },
         _ => { return OptString { ok: false, v: "" }; }
     }
     return OptString { ok: false, v: "" };
@@ -141,12 +142,12 @@ function as_string_lit(e: parser.Expr): OptString {
 // =================== EXPR FOLDING ====================
 
 // fold_expr returns a possibly-rewritten expression. The output
-// has the same parser.Expr shape; what may change is "constants
+// has the same ast.Expr shape; what may change is "constants
 // folded one level up." Multiple passes aren't needed — the
 // post-order walk means children fold first, so by the time we
 // look at a parent binary node both operands are already in
 // their folded form.
-pub function fold_expr(e: parser.Expr): parser.Expr {
+pub function fold_expr(e: ast.Expr): ast.Expr {
     return astwalk.map_expr(e, fold_node);
 }
 
@@ -154,17 +155,17 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
 // post-order map has already folded, collapsed to a literal when it can be.
 // Only the two arithmetic shapes contribute; every other node is its own
 // rebuilt form.
-function fold_node(e: parser.Expr): parser.Expr {
+function fold_node(e: ast.Expr): ast.Expr {
     match (e) {
-        parser.ExprBinary(b) => { return fold_binary(b.op, b.left, b.right); },
-        parser.ExprUnary(u) => { return fold_unary(u.op, u.operand); },
+        ast.ExprBinary(b) => { return fold_binary(b.op, b.left, b.right); },
+        ast.ExprUnary(u) => { return fold_unary(u.op, u.operand); },
         _ => { return e; }
     }
     return e;
 }
 
-function fold_binary(op: string, lhs: parser.Expr, rhs: parser.Expr): parser.Expr {
-    var unfolded: parser.Expr = parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0, ty: "" };
+function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr): ast.Expr {
+    var unfolded: ast.Expr = ast.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0, ty: "" };
     // Integer arithmetic + comparison + equality, evaluated in i64 so a u32
     // operand keeps its value. Both operands must name the SAME type: mixing
     // widths is the checker's business, and picking one of them here would
@@ -219,12 +220,12 @@ function fold_binary(op: string, lhs: parser.Expr, rhs: parser.Expr): parser.Exp
 
 // fold_arith emits the folded literal, or leaves the expression alone when the
 // value is not representable in the operands' type.
-function fold_arith(v: i64, suffix: string, unfolded: parser.Expr): parser.Expr {
+function fold_arith(v: i64, suffix: string, unfolded: ast.Expr): ast.Expr {
     if (!fits(v, suffix)) { return unfolded; }
     return lit_int(v, suffix);
 }
 
-function fold_unary(op: string, operand: parser.Expr): parser.Expr {
+function fold_unary(op: string, operand: ast.Expr): ast.Expr {
     if (op == "-") {
         var oi: OptInt = as_int_lit(operand);
         // The operand of a unary minus is a MAGNITUDE, so it is the negated
@@ -236,16 +237,16 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
         var ob: OptBool = as_bool_lit(operand);
         if (ob.ok) { return lit_bool(!ob.v); }
     }
-    return parser.ExprUnary { op: op, operand: operand, line: 0, col: 0, ty: "" };
+    return ast.ExprUnary { op: op, operand: operand, line: 0, col: 0, ty: "" };
 }
 
 // =================== STMT / MODULE FOLDING ====================
 
-function fold_stmt(st: parser.Stmt): parser.Stmt {
+function fold_stmt(st: ast.Stmt): ast.Stmt {
     return astwalk.map_stmt(st, fold_node);
 }
 
-function fold_block(body: parser.Stmt[]): parser.Stmt[] {
+function fold_block(body: ast.Stmt[]): ast.Stmt[] {
     return astwalk.map_stmts(body, fold_node);
 }
 
@@ -295,22 +296,22 @@ pub function has_asserts(mod: parser.Module): boolean {
     return found;
 }
 
-function stmts_have_assert(stmts: parser.Stmt[]): boolean {
+function stmts_have_assert(stmts: ast.Stmt[]): boolean {
     var found: boolean = false;
     var i: i32 = 0;
     while (i < stmts.len()) {
         found = astwalk.fold_stmt_nodes(stmts[i], found,
-            (st: parser.Stmt, acc: boolean) => acc || is_assert_stmt(st),
-            (e: parser.Expr, acc: boolean) => acc,
-            (e: parser.Expr) => true);
+            (st: ast.Stmt, acc: boolean) => acc || is_assert_stmt(st),
+            (e: ast.Expr, acc: boolean) => acc,
+            (e: ast.Expr) => true);
         i = i + 1;
     }
     return found;
 }
 
-function is_assert_stmt(st: parser.Stmt): boolean {
+function is_assert_stmt(st: ast.Stmt): boolean {
     match (st) {
-        parser.StmtIf(f) => { return f.origin == parser.ORIGIN_ASSERT; },
+        ast.StmtIf(f) => { return f.origin == parser.ORIGIN_ASSERT; },
         _ => { return false; }
     }
     return false;
@@ -319,12 +320,12 @@ function is_assert_stmt(st: parser.Stmt): boolean {
 // drop_assert keeps every statement but the assert desugar. The splicing fold
 // carries it into nested blocks, lambda bodies and match arms, so no shape
 // needs a case here.
-function drop_assert(st: parser.Stmt): parser.Stmt[] {
-    var keep: parser.Stmt[] = [st];
+function drop_assert(st: ast.Stmt): ast.Stmt[] {
+    var keep: ast.Stmt[] = [st];
     match (st) {
-        parser.StmtIf(f) => {
+        ast.StmtIf(f) => {
             if (f.origin == parser.ORIGIN_ASSERT) {
-                var gone: parser.Stmt[] = [];
+                var gone: ast.Stmt[] = [];
                 return gone;
             }
             return keep;
@@ -346,9 +347,9 @@ function main(): i32 {
     // init is a single ExprNumber whose text reads "7".
     var mod1: parser.Module = fold_source("var a = 1 + 2 * 3; return a;");
     match (mod1.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprNumber(n) => { if (n.text != "7") { return 10; } },
+                ast.ExprNumber(n) => { if (n.text != "7") { return 10; } },
                 _ => { return 11; }
             }
         },
@@ -358,9 +359,9 @@ function main(): i32 {
     // `(1 + 2) * 3` folds to 9.
     var mod2: parser.Module = fold_source("var a = (1 + 2) * 3; return a;");
     match (mod2.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprNumber(n) => { if (n.text != "9") { return 20; } },
+                ast.ExprNumber(n) => { if (n.text != "9") { return 20; } },
                 _ => { return 21; }
             }
         },
@@ -370,9 +371,9 @@ function main(): i32 {
     // Comparison folds to bool: `5 < 10` → true.
     var mod3: parser.Module = fold_source("var b = 5 < 10; return 0;");
     match (mod3.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBool(b) => { if (!b.value) { return 30; } },
+                ast.ExprBool(b) => { if (!b.value) { return 30; } },
                 _ => { return 31; }
             }
         },
@@ -382,18 +383,18 @@ function main(): i32 {
     // Boolean: `true && false` → false. `!true` → false.
     var mod4: parser.Module = fold_source("var a = true && false; var b = !true; return 0;");
     match (mod4.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBool(b) => { if (b.value) { return 40; } },
+                ast.ExprBool(b) => { if (b.value) { return 40; } },
                 _ => { return 41; }
             }
         },
         _ => { return 42; }
     }
     match (mod4.top_stmts[1]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBool(b) => { if (b.value) { return 43; } },
+                ast.ExprBool(b) => { if (b.value) { return 43; } },
                 _ => { return 44; }
             }
         },
@@ -403,9 +404,9 @@ function main(): i32 {
     // String concat folds: `"hi " + "there"` → single ExprString.
     var mod5: parser.Module = fold_source("var s = \"hi \" + \"there\"; return 0;");
     match (mod5.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprString(s) => { if (s.value != "hi there") { return 50; } },
+                ast.ExprString(s) => { if (s.value != "hi there") { return 50; } },
                 _ => { return 51; }
             }
         },
@@ -416,9 +417,9 @@ function main(): i32 {
     // an ExprBinary. Confirms the pass leaves unknowns alone.
     var mod6: parser.Module = fold_source("var a = 1 + x; return 0;");
     match (mod6.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBinary(b) => { if (b.op != "+") { return 60; } },
+                ast.ExprBinary(b) => { if (b.op != "+") { return 60; } },
                 _ => { return 61; }
             }
         },
@@ -429,9 +430,9 @@ function main(): i32 {
     // the error, not the folder).
     var mod7: parser.Module = fold_source("var a = 1 / 0; return 0;");
     match (mod7.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBinary(b) => { if (b.op != "/") { return 70; } },
+                ast.ExprBinary(b) => { if (b.op != "/") { return 70; } },
                 _ => { return 71; }
             }
         },
@@ -441,9 +442,9 @@ function main(): i32 {
     // Nested foldings cascade: `(2 + 3) * (4 + 5)` → 45 in one pass.
     var mod8: parser.Module = fold_source("var a = (2 + 3) * (4 + 5); return 0;");
     match (mod8.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprNumber(n) => { if (n.text != "45") { return 80; } },
+                ast.ExprNumber(n) => { if (n.text != "45") { return 80; } },
                 _ => { return 81; }
             }
         },
@@ -454,9 +455,9 @@ function main(): i32 {
     var mod9: parser.Module = fold_source("function add(): i32 { return 1 + 2; } function main(): i32 { return add(); }");
     if (mod9.funcs.len() != 2) { return 90; }
     match (mod9.funcs[0].body[0]) {
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             match (r.value) {
-                parser.ExprNumber(n) => { if (n.text != "3") { return 91; } },
+                ast.ExprNumber(n) => { if (n.text != "3") { return 91; } },
                 _ => { return 92; }
             }
         },
@@ -469,9 +470,9 @@ function main(): i32 {
     // folded literal, so the result is still a u32.
     var mod10: parser.Module = fold_source("var a = 2147484527u32 % 861u32; return 0;");
     match (mod10.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprNumber(n) => {
+                ast.ExprNumber(n) => {
                     if (n.text != "713") { return 100; }
                     if (n.suffix != "u32") { return 101; }
                 },
@@ -486,9 +487,9 @@ function main(): i32 {
     // -5 would change the answer.
     var mod11: parser.Module = fold_source("var a = 5u32 - 10u32; return 0;");
     match (mod11.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBinary(b) => { if (b.op != "-") { return 110; } },
+                ast.ExprBinary(b) => { if (b.op != "-") { return 110; } },
                 _ => { return 111; }
             }
         },
@@ -499,9 +500,9 @@ function main(): i32 {
     // overflows i32, so it stays a runtime add.
     var mod12: parser.Module = fold_source("var a = 2000000000 + 2000000000; return 0;");
     match (mod12.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBinary(b) => { if (b.op != "+") { return 120; } },
+                ast.ExprBinary(b) => { if (b.op != "+") { return 120; } },
                 _ => { return 121; }
             }
         },
@@ -512,9 +513,9 @@ function main(): i32 {
     // of the two types, so it picks neither.
     var mod13: parser.Module = fold_source("var a = 5u32 + 5; return 0;");
     match (mod13.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprBinary(b) => { if (b.op != "+") { return 130; } },
+                ast.ExprBinary(b) => { if (b.op != "+") { return 130; } },
                 _ => { return 131; }
             }
         },
@@ -527,12 +528,12 @@ function main(): i32 {
     // would read as an i64 (irlower.literal_is_i64 classifies by LENGTH).
     var mod14: parser.Module = fold_source("var a = 0 - 2147483647 - 1; return 0;");
     match (mod14.top_stmts[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprUnary(u) => {
+                ast.ExprUnary(u) => {
                     if (u.op != "-") { return 140; }
                     match (u.operand) {
-                        parser.ExprNumber(n) => { if (n.text != "2147483648") { return 141; } },
+                        ast.ExprNumber(n) => { if (n.text != "2147483648") { return 141; } },
                         _ => { return 142; }
                     }
                 },
@@ -548,7 +549,7 @@ function main(): i32 {
         "function main(): i32 { assert(1 > 2); return 0; }"));
     if (mod15.funcs[0].body.len() != 1) { return 150; }
     match (mod15.funcs[0].body[0]) {
-        parser.StmtReturn(_) => { },
+        ast.StmtReturn(_) => { },
         _ => { return 151; }
     }
 
@@ -561,16 +562,16 @@ function main(): i32 {
     var mod17: parser.Module = elide_asserts(fold_source(
         "function main(): i32 { while (false) { assert(1 > 2); } return 0; }"));
     match (mod17.funcs[0].body[0]) {
-        parser.StmtWhile(w) => { if (w.body.len() != 0) { return 160; } },
+        ast.StmtWhile(w) => { if (w.body.len() != 0) { return 160; } },
         _ => { return 161; }
     }
 
     var mod18: parser.Module = elide_asserts(fold_source(
         "function main(): i32 { var f = function(): i32 { assert(1 > 2); return 1; }; return 0; }"));
     match (mod18.funcs[0].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprLambda(lm) => { if (lm.body.len() != 1) { return 170; } },
+                ast.ExprLambda(lm) => { if (lm.body.len() != 1) { return 170; } },
                 _ => { return 171; }
             }
         },
@@ -580,7 +581,7 @@ function main(): i32 {
     var mod19: parser.Module = elide_asserts(fold_source(
         "enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"));
     match (mod19.funcs[0].body[1]) {
-        parser.StmtMatch(mt) => { if (mt.arms[0].body.len() != 0) { return 180; } },
+        ast.StmtMatch(mt) => { if (mt.arms[0].body.len() != 0) { return 180; } },
         _ => { return 181; }
     }
 
@@ -589,14 +590,14 @@ function main(): i32 {
     var mod20: parser.Module = elide_asserts(fold_source(
         "function main(): i32 { var f = function(): i32 { var g = function(): i32 { assert(1 > 2); return 1; }; return 2; }; return 0; }"));
     match (mod20.funcs[0].body[0]) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             match (v.init) {
-                parser.ExprLambda(outer) => {
+                ast.ExprLambda(outer) => {
                     if (outer.body.len() != 2) { return 190; }
                     match (outer.body[0]) {
-                        parser.StmtVar(iv) => {
+                        ast.StmtVar(iv) => {
                             match (iv.init) {
-                                parser.ExprLambda(inner) => { if (inner.body.len() != 1) { return 191; } },
+                                ast.ExprLambda(inner) => { if (inner.body.len() != 1) { return 191; } },
                                 _ => { return 192; }
                             }
                         },

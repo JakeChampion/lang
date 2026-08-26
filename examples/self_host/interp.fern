@@ -17,6 +17,7 @@
 // flow (`if` / `while` / `for`), structs / unions, generics. The
 // parser stub doesn't emit those yet either.
 
+import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -72,7 +73,7 @@ pub struct VTuple { elements: Value[] }
 // point of construction so free identifiers in the body resolve
 // against the enclosing function's bindings rather than the
 // caller's.
-pub struct VFunc { params: parser.ParamDecl[], ret_type: string, body: parser.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[] }
+pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[] }
 // VMap models the runtime hash-map. Parallel arrays for keys
 // and values keep the implementation trivial — lookup is a
 // linear scan via value_eq. Realistic-size programs would
@@ -549,22 +550,22 @@ function (e: Env) decl_type(name: string): string {
 // "" leaves dispatch on the runtime value alone, which picks the FIRST provider
 // when two traits claim one method name — a silent wrong answer, so the set of
 // shapes answered here is the set of shapes that dispatch correctly.
-function (e: Env) static_type_of(x: parser.Expr): string {
+function (e: Env) static_type_of(x: ast.Expr): string {
     match (x) {
-        parser.ExprIdent(id) => { return e.decl_type(id.name); },
-        parser.ExprIndex(ix) => {
+        ast.ExprIdent(id) => { return e.decl_type(id.name); },
+        ast.ExprIndex(ix) => {
             var at: string = e.static_type_of(ix.array);
             if (name_ends_with(at, "[]")) { return slice_unchecked(at, 0, at.len() - 2) + ""; }
             return "";
         },
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             var ot: string = e.static_type_of(fa.obj);
             if (ot.len() == 0) { return ""; }
             return struct_field_type(e.type_decls, ot, fa.field);
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     // A local binding of the same name shadows the function and
                     // holds a closure, whose return type is not declared here.
                     if (e.binds_name(id.name)) { return ""; }
@@ -573,7 +574,7 @@ function (e: Env) static_type_of(x: parser.Expr): string {
                 // A METHOD call: the receiver's own declared type names the
                 // definition, whose return type the declaration states. A
                 // closure held in a FIELD matches no declaration and answers "".
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     var rt: string = e.static_type_of(fa.obj);
                     if (rt.len() == 0) { return ""; }
                     return method_ret_type(e.funcs, rt, fa.field);
@@ -683,22 +684,22 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 
 // lam_assign_targets collects assignment targets anywhere in a lambda body,
 // including nested control flow and nested lambdas.
-function lam_assign_targets(stmts: parser.Stmt[], acc: string[]): string[] {
+function lam_assign_targets(stmts: ast.Stmt[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtAssign(a) => { acc = acc.append(a.target); acc = lam_targets_expr(a.value, acc); },
-            parser.StmtVar(v) => { acc = lam_targets_expr(v.init, acc); },
-            parser.StmtReturn(r) => { acc = lam_targets_expr(r.value, acc); },
-            parser.StmtExpr(x) => { acc = lam_targets_expr(x.value, acc); },
-            parser.StmtIf(f) => {
+            ast.StmtAssign(a) => { acc = acc.append(a.target); acc = lam_targets_expr(a.value, acc); },
+            ast.StmtVar(v) => { acc = lam_targets_expr(v.init, acc); },
+            ast.StmtReturn(r) => { acc = lam_targets_expr(r.value, acc); },
+            ast.StmtExpr(x) => { acc = lam_targets_expr(x.value, acc); },
+            ast.StmtIf(f) => {
                 acc = lam_targets_expr(f.cond, acc);
                 acc = lam_assign_targets(f.then_body, acc);
                 acc = lam_assign_targets(f.else_body, acc);
             },
-            parser.StmtWhile(w) => { acc = lam_targets_expr(w.cond, acc); acc = lam_assign_targets(w.body, acc); },
-            parser.StmtFor(fo) => { acc = lam_targets_expr(fo.iter, acc); acc = lam_assign_targets(fo.body, acc); },
-            parser.StmtMatch(m) => {
+            ast.StmtWhile(w) => { acc = lam_targets_expr(w.cond, acc); acc = lam_assign_targets(w.body, acc); },
+            ast.StmtFor(fo) => { acc = lam_targets_expr(fo.iter, acc); acc = lam_assign_targets(fo.body, acc); },
+            ast.StmtMatch(m) => {
                 acc = lam_targets_expr(m.scrutinee, acc);
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) { acc = lam_assign_targets(m.arms[ai].body, acc); ai = ai + 1; }
@@ -729,34 +730,34 @@ function lam_assign_targets(stmts: parser.Stmt[], acc: string[]): string[] {
 // approximate what a lambda READS: a superset is safe here because the result
 // is intersected with the names the enclosing body actually reassigns, and
 // cellify_env only touches names bound in this scope.
-function ib_idents_expr(e: parser.Expr, acc: string[]): string[] {
+function ib_idents_expr(e: ast.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
-        parser.ExprBinary(b) => { return ib_idents_expr(b.right, ib_idents_expr(b.left, acc)); },
-        parser.ExprUnary(u) => { return ib_idents_expr(u.operand, acc); },
-        parser.ExprIndex(ix) => { return ib_idents_expr(ix.index, ib_idents_expr(ix.array, acc)); },
-        parser.ExprSlice(sl) => { return ib_idents_expr(sl.end, ib_idents_expr(sl.start, ib_idents_expr(sl.array, acc))); },
-        parser.ExprFieldAccess(fa) => { return ib_idents_expr(fa.obj, acc); },
-        parser.ExprCall(c) => {
+        ast.ExprIdent(id) => { return acc.append(id.name); },
+        ast.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
+        ast.ExprBinary(b) => { return ib_idents_expr(b.right, ib_idents_expr(b.left, acc)); },
+        ast.ExprUnary(u) => { return ib_idents_expr(u.operand, acc); },
+        ast.ExprIndex(ix) => { return ib_idents_expr(ix.index, ib_idents_expr(ix.array, acc)); },
+        ast.ExprSlice(sl) => { return ib_idents_expr(sl.end, ib_idents_expr(sl.start, ib_idents_expr(sl.array, acc))); },
+        ast.ExprFieldAccess(fa) => { return ib_idents_expr(fa.obj, acc); },
+        ast.ExprCall(c) => {
             var a1: string[] = ib_idents_expr(c.callee, acc);
             var i: i32 = 0;
             while (i < c.args.len()) { a1 = ib_idents_expr(c.args[i], a1); i = i + 1; }
             return a1;
         },
-        parser.ExprArray(ar) => {
+        ast.ExprArray(ar) => {
             var a2: string[] = acc;
             var j: i32 = 0;
             while (j < ar.elements.len()) { a2 = ib_idents_expr(ar.elements[j], a2); j = j + 1; }
             return a2;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var a3: string[] = acc;
             var k: i32 = 0;
             while (k < t.elements.len()) { a3 = ib_idents_expr(t.elements[k], a3); k = k + 1; }
             return a3;
         },
-        parser.ExprStructLit(sl2) => {
+        ast.ExprStructLit(sl2) => {
             var a4: string[] = acc;
             if (sl2.has_base) { a4 = ib_idents_expr(sl2.base, a4); }
             var m: i32 = 0;
@@ -767,24 +768,24 @@ function ib_idents_expr(e: parser.Expr, acc: string[]): string[] {
     }
     return acc;
 }
-function ib_idents_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+function ib_idents_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { a = ib_idents_expr(v.init, a); },
-            parser.StmtAssign(asg) => { a = a.append(asg.target); a = ib_idents_expr(asg.value, a); },
-            parser.StmtReturn(r) => { a = ib_idents_expr(r.value, a); },
-            parser.StmtExpr(x) => { a = ib_idents_expr(x.value, a); },
-            parser.StmtIf(f) => { a = ib_idents_expr(f.cond, a); a = ib_idents_stmts(f.then_body, a); a = ib_idents_stmts(f.else_body, a); },
-            parser.StmtWhile(w) => { a = ib_idents_expr(w.cond, a); a = ib_idents_stmts(w.body, a); },
-            parser.StmtFor(fo) => { a = ib_idents_expr(fo.iter, a); a = ib_idents_stmts(fo.body, a); },
-            parser.StmtMatch(m) => {
+            ast.StmtVar(v) => { a = ib_idents_expr(v.init, a); },
+            ast.StmtAssign(asg) => { a = a.append(asg.target); a = ib_idents_expr(asg.value, a); },
+            ast.StmtReturn(r) => { a = ib_idents_expr(r.value, a); },
+            ast.StmtExpr(x) => { a = ib_idents_expr(x.value, a); },
+            ast.StmtIf(f) => { a = ib_idents_expr(f.cond, a); a = ib_idents_stmts(f.then_body, a); a = ib_idents_stmts(f.else_body, a); },
+            ast.StmtWhile(w) => { a = ib_idents_expr(w.cond, a); a = ib_idents_stmts(w.body, a); },
+            ast.StmtFor(fo) => { a = ib_idents_expr(fo.iter, a); a = ib_idents_stmts(fo.body, a); },
+            ast.StmtMatch(m) => {
                 a = ib_idents_expr(m.scrutinee, a);
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) { a = ib_idents_stmts(m.arms[ai].body, a); ai = ai + 1; }
             },
-            parser.StmtDefer(d) => { a = ib_idents_stmts([d.action], a); },
+            ast.StmtDefer(d) => { a = ib_idents_stmts([d.action], a); },
             _ => {}
         }
         i = i + 1;
@@ -798,7 +799,7 @@ function ib_idents_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
 //
 // Same walk as stmt_lambda_writes, and for the same reason: see its comment for
 // why it is the statement's OWN expressions and why it stops at a lambda.
-function lam_read_names(st: parser.Stmt): string[] {
+function lam_read_names(st: ast.Stmt): string[] {
     var acc: string[] = [];
     return astwalk.fold_stmt_own_pruned(st, acc, lam_read_of, not_lambda_expr);
 }
@@ -806,17 +807,17 @@ function lam_read_names(st: parser.Stmt): string[] {
 // body_assign_names: every name this body reassigns, at any depth. A name NOT
 // in here is captured by value, which is what keeps a loop-local `var` per
 // iteration.
-function body_assign_names(stmts: parser.Stmt[], acc: string[]): string[] {
+function body_assign_names(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtAssign(asg) => { a = a.append(asg.target); },
-            parser.StmtIf(f) => { a = body_assign_names(f.then_body, a); a = body_assign_names(f.else_body, a); },
-            parser.StmtWhile(w) => { a = body_assign_names(w.body, a); },
-            parser.StmtFor(fo) => { a = body_assign_names(fo.body, a); },
-            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = body_assign_names(m.arms[ai].body, a); ai = ai + 1; } },
-            parser.StmtDefer(d) => { a = body_assign_names([d.action], a); },
+            ast.StmtAssign(asg) => { a = a.append(asg.target); },
+            ast.StmtIf(f) => { a = body_assign_names(f.then_body, a); a = body_assign_names(f.else_body, a); },
+            ast.StmtWhile(w) => { a = body_assign_names(w.body, a); },
+            ast.StmtFor(fo) => { a = body_assign_names(fo.body, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = body_assign_names(m.arms[ai].body, a); ai = ai + 1; } },
+            ast.StmtDefer(d) => { a = body_assign_names([d.action], a); },
             _ => {}
         }
         i = i + 1;
@@ -834,7 +835,7 @@ function body_assign_names(stmts: parser.Stmt[], acc: string[]): string[] {
 //
 // Both must run BEFORE the statement evaluates, because that is when the
 // closure snapshots the env; celling afterwards hands it a slot nobody shares.
-function cellify_captures(env: Env, st: parser.Stmt, reassigned: string[]): Env {
+function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
     var out: Env = cellify_env(env, stmt_lambda_writes(st));
     if (reassigned.len() == 0) { return out; }
     var reads: string[] = lam_read_names(st);
@@ -861,7 +862,7 @@ function cellify_captures(env: Env, st: parser.Stmt, reassigned: string[]): Env 
 //
 // Only a lambda body contributes, so the walk stops at one: lam_assign_targets
 // already accounts for its whole body, and descending would re-scan it.
-function stmt_lambda_writes(st: parser.Stmt): string[] {
+function stmt_lambda_writes(st: ast.Stmt): string[] {
     var acc: string[] = [];
     return astwalk.fold_stmt_own_pruned(st, acc, lam_target_of, not_lambda_expr);
 }
@@ -869,29 +870,29 @@ function stmt_lambda_writes(st: parser.Stmt): string[] {
 // lam_targets_expr finds the nested lambdas in one expression and takes each
 // one's assignment targets. Stops AT a lambda: lam_target_of already accounts
 // for its whole body, so descending would re-scan it.
-function lam_targets_expr(e: parser.Expr, acc: string[]): string[] {
+function lam_targets_expr(e: ast.Expr, acc: string[]): string[] {
     return astwalk.fold_expr_pruned(e, acc, lam_target_of, not_lambda_expr);
 }
 
 // lam_target_of / lam_read_of are one node's contribution to the two scans —
 // the whole of each that is not the walk.
-function lam_target_of(e: parser.Expr, acc: string[]): string[] {
+function lam_target_of(e: ast.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprLambda(lm) => { return lam_assign_targets(lm.body, acc); },
+        ast.ExprLambda(lm) => { return lam_assign_targets(lm.body, acc); },
         _ => { return acc; }
     }
     return acc;
 }
-function lam_read_of(e: parser.Expr, acc: string[]): string[] {
+function lam_read_of(e: ast.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
+        ast.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
         _ => { return acc; }
     }
     return acc;
 }
-function not_lambda_expr(e: parser.Expr): boolean {
+function not_lambda_expr(e: ast.Expr): boolean {
     match (e) {
-        parser.ExprLambda(_) => { return false; },
+        ast.ExprLambda(_) => { return false; },
         _ => { return true; }
     }
     return true;
@@ -1578,14 +1579,14 @@ function resolve_ident_value(name: string, env: Env): Value {
     return idv;
 }
 
-function eval_expr(e: parser.Expr, env: Env): Value {
+function eval_expr(e: ast.Expr, env: Env): Value {
     match (e) {
-        parser.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text); },
-        parser.ExprBool(b) => { return v_bool(b.value); },
-        parser.ExprString(s) => { return v_string(s.value); },
-        parser.ExprIdent(id) => { return resolve_ident_value(id.name, env); },
+        ast.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text); },
+        ast.ExprBool(b) => { return v_bool(b.value); },
+        ast.ExprString(s) => { return v_string(s.value); },
+        ast.ExprIdent(id) => { return resolve_ident_value(id.name, env); },
 
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             var lv: Value = eval_expr(b.left, env);
             if (is_err(lv)) { return lv; }
             // Short-circuit `&&` / `||`: the RHS is NOT evaluated when the LHS
@@ -1606,12 +1607,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             if (is_err(rv)) { return rv; }
             return eval_binary(b.op, lv, rv);
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             var ov: Value = eval_expr(u.operand, env);
             if (is_err(ov)) { return ov; }
             return eval_unary(u.op, ov);
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             // Bare-ident callee → plain function call OR
             // closure call when the name is bound to a VFunc.
             // FieldAccess callee → method call.
@@ -1625,7 +1626,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             var recv: Value = v_err("__noreceiver__");
             var closure_val: Value = v_err("__noclosure__");
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     // If the name is bound in scope to a VFunc,
                     // it's a closure call. Plain function names
                     // shadow ident bindings via call_func's
@@ -1646,7 +1647,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         variant_name = name;
                     }
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     // Qualified-name call: `Ns.func(...)` where
                     // Ns is an imported namespace prefix. We
                     // recognise this when fa.obj is a bare
@@ -1656,7 +1657,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     // semantics otherwise.
                     var qualified_handled: boolean = false;
                     match (fa.obj) {
-                        parser.ExprIdent(ns_id) => {
+                        ast.ExprIdent(ns_id) => {
                             var qname: string = ns_id.name + "." + fa.field;
                             var qi: i32 = 0;
                             var qfound: boolean = false;
@@ -1683,7 +1684,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         var variant_call: boolean = false;
                         var static_type: string = "";
                         match (fa.obj) {
-                            parser.ExprIdent(oid) => {
+                            ast.ExprIdent(oid) => {
                                 // Ask the same question the ident evaluator
                                 // answers, not a narrower one (#6617). A raw
                                 // env lookup misses a CONST — which is a
@@ -1756,7 +1757,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls);
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var elems: Value[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) {
@@ -1767,7 +1768,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_tuple(elems);
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var elems: Value[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) {
@@ -1778,7 +1779,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_arr(elems);
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             var av: Value = eval_expr(x.array, env);
             if (is_err(av)) { return av; }
             var iv: Value = eval_expr(x.index, env);
@@ -1815,7 +1816,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable index arm");
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             var av: Value = eval_expr(sl.array, env);
             if (is_err(av)) { return av; }
             var sv: Value = eval_expr(sl.start, env);
@@ -1870,7 +1871,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable slice arm");
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             // Struct-update `Name { ...base, f: v }`: start from the
             // base struct's fields, then overwrite the named overrides
             // (or append any not already present). Field lookup is by
@@ -1921,7 +1922,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_struct(sl.type_name, sl.field_names, fvs);
         },
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             // Evaluate the object. Field can be:
             //   * struct field name (linear scan)
             //   * tuple index `0` / `1` / … (string-of-digits)
@@ -1942,7 +1943,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 // program a bare undefined-identifier object only
                 // arises for an enum type name.
                 match (fa.obj) {
-                    parser.ExprIdent(_) => {
+                    ast.ExprIdent(_) => {
                         var no_names: string[] = [];
                         var no_vals: Value[] = [];
                         return v_struct(fa.field, no_names, no_vals);
@@ -1972,7 +1973,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable field-access arm");
         },
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             // Capture the lexical environment by snapshotting
             // env.names / env.values. The body resolves free
             // idents against this snapshot first; the call
@@ -1986,9 +1987,9 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 captured_types: env.types
             };
         },
-        parser.ExprMapLit(_) => { return v_err("Map literal: formatter-only node"); },
-        parser.ExprFString(_) => { return v_err("f-string: formatter-only node"); },
-        parser.ExprUnknown(u) => {
+        ast.ExprMapLit(_) => { return v_err("Map literal: formatter-only node"); },
+        ast.ExprFString(_) => { return v_err("f-string: formatter-only node"); },
+        ast.ExprUnknown(u) => {
             // A float literal too large for f64 names its code, like the
             // checker and the asm front end report it (#6842).
             if (util.is_f64_range_kind(u.kind)) { return v_err("error[P002]: " + util.f64_range_message(u.kind)); }
@@ -2815,12 +2816,12 @@ pub struct StepResult { env: Env, ret: Value, sig: i32 }
 function step_none(env: Env): StepResult { return StepResult { env: env, ret: VErr { msg: "" }, sig: 0 }; }
 function step_stop(env: Env, v: Value): StepResult { return StepResult { env: env, ret: v, sig: 1 }; }
 
-function eval_stmt(st: parser.Stmt, env: Env): StepResult {
+function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     match (st) {
         // StmtDefer is lowered away by lower_defers_module before eval; this
         // arm recurses on the lowered form.
-        parser.StmtDefer(d) => { return eval_stmt(d.action, env); },
-        parser.StmtVar(v) => {
+        ast.StmtDefer(d) => { return eval_stmt(d.action, env); },
+        ast.StmtVar(v) => {
             var val: Value = eval_expr(v.init, env);
             // A runtime error in the initializer aborts the function rather
             // than being bound and silently swallowed (#4348 item 4). eval_expr
@@ -2856,11 +2857,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             var env2: Env = env.bind_decl(v.name, val, declared);
             return step_none(env2);
         },
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             var val: Value = eval_expr(r.value, env);
             return step_stop(env, val);
         },
-        parser.StmtExpr(x) => {
+        ast.StmtExpr(x) => {
             var val: Value = eval_expr(x.value, env);
             // A runtime error in an expression-statement aborts rather than
             // being dropped and swallowed (#4348 item 4). Otherwise the value
@@ -2868,7 +2869,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             if (is_err(val)) { return step_stop(env, val); }
             return step_none(env);
         },
-        parser.StmtIf(ifs) => {
+        ast.StmtIf(ifs) => {
             var cv: Value = eval_expr(ifs.cond, env);
             if (is_err(cv)) { return step_stop(env, cv); }
             // lower_defers_module's synthesized cleanup guards
@@ -2883,7 +2884,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             match (cv) {
                 VBool(b) => {
-                    var body: parser.Stmt[] = ifs.else_body;
+                    var body: ast.Stmt[] = ifs.else_body;
                     if (b.v) { body = ifs.then_body; }
                     // Branch-local `var`s don't escape: trim the
                     // env back to the entry length. Assignments
@@ -2898,7 +2899,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return step_stop(env, v_err("unreachable if-arm"));
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             // Loop until cond is false or the body returns.
             // Assignments inside the body need to outlive each
             // iteration — eval_block's "drop branch-local
@@ -2954,7 +2955,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return step_none(cur);
         },
-        parser.StmtAssign(a) => {
+        ast.StmtAssign(a) => {
             var av: Value = eval_expr(a.value, env);
             if (is_err(av)) { return step_stop(env, av); }
             // update silently no-ops on undefined names; surface
@@ -2977,7 +2978,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) { return step_none(env); }
             return step_none(env.update(a.target, av));
         },
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             // Evaluate the scrutinee. An error in the scrutinee
             // propagates without running any arm.
             var sv: Value = eval_expr(m.scrutinee, env);
@@ -2988,13 +2989,13 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // type_name; PatWildcard always matches.
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var arm: parser.MatchArm = m.arms[i];
+                var arm: ast.MatchArm = m.arms[i];
                 var matched: boolean = false;
                 var bind_names: string[] = [];
                 var bind_values: Value[] = [];
                 match (arm.pattern) {
-                    parser.PatWildcard(_) => { matched = true; },
-                    parser.PatVariant(pv) => {
+                    ast.PatWildcard(_) => { matched = true; },
+                    ast.PatVariant(pv) => {
                         // `match (b) { true => …, false => … }` over a bool.
                         if (pv.type_name == "true" || pv.type_name == "false") {
                             match (sv) {
@@ -3095,9 +3096,9 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
         // 2/3 and peels one level off anything deeper (sig - 2), so a
         // 2-level `break outer` unwinds both loops instead of silently
         // degrading to the innermost (which hung `outer: while(true)`).
-        parser.StmtBreak(b) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 + b.tag * 2 }; },
-        parser.StmtContinue(c) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 }; },
-        parser.StmtFor(f) => {
+        ast.StmtBreak(b) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 + b.tag * 2 }; },
+        ast.StmtContinue(c) => { return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 }; },
+        ast.StmtFor(f) => {
             // Evaluate the iter expression — must be a VArr.
             var iv: Value = eval_expr(f.iter, env);
             if (is_err(iv)) { return step_stop(env, iv); }
@@ -3140,7 +3141,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return step_none(cur);
         },
-        parser.StmtUnknown(u) => { return step_stop(env, v_err("parser-side unknown stmt: " + u.kind)); }
+        ast.StmtUnknown(u) => { return step_stop(env, v_err("parser-side unknown stmt: " + u.kind)); }
     }
     return step_stop(env, v_err("unhandled Stmt variant"));
 }
@@ -3172,7 +3173,7 @@ function trim_env(e: Env, base: i32): Env {
 // that update() rewrites slots in place, so reassignments to
 // outer-scoped names sit at index < base and survive the trim.
 // The first non-zero sig short-circuits the walk.
-function eval_block(body: parser.Stmt[], env: Env): StepResult {
+function eval_block(body: ast.Stmt[], env: Env): StepResult {
     var cur: Env = env;
     var reassigned: string[] = body_assign_names(body, []);
     var i: i32 = 0;
@@ -3191,7 +3192,7 @@ function eval_block(body: parser.Stmt[], env: Env): StepResult {
 // eval_program drives the stmt list. Stops at the first return
 // (or end of stmts). Returns the return-value or VErr if no
 // explicit return was seen.
-function eval_program(prog: parser.Stmt[]): Value {
+function eval_program(prog: ast.Stmt[]): Value {
     var env: Env = new_env();
     var preassigned: string[] = body_assign_names(prog, []);
     var i: i32 = 0;
@@ -3250,7 +3251,7 @@ pub function eval_module(raw_mod: parser.Module): Value {
 
 function run_source(src: string): Value {
     var toks: lexer.Token[] = lexer.tokenize(src);
-    var stmts: parser.Stmt[] = parser.parse_program(toks);
+    var stmts: ast.Stmt[] = parser.parse_program(toks);
     return eval_program(stmts);
 }
 

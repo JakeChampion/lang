@@ -83,7 +83,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	// far from the cause — so say it here, where the reason is written down.
 	sort.Strings(free)
 	wantFree := []string{
-		"arm64_native", "builtins", "elf", "lexer", "literate",
+		"arm64_native", "ast", "builtins", "elf", "lexer", "literate",
 		"util", "watbin", "wit_compose", "wit_decode", "x86_native",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {

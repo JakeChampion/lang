@@ -1,3 +1,4 @@
+import "./ast";
 import "./lexer";
 import "./parser";
 import "./astwalk";
@@ -42,7 +43,7 @@ pub function sanitize_label(name: string): string {
 
 // collect_bound_stmt -> astwalk.collect_bound_stmt (SH-022).
 
-pub function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
+pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
     var refs: string[] = [];
     var bi: i32 = 0;
     while (bi < lm.body.len()) {
@@ -1800,9 +1801,9 @@ pub function rt_src_str_trim(): string {
     return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32) { start = start + 1; } else { if (c == 9) { start = start + 1; } else { if (c == 10) { start = start + 1; } else { if (c == 13) { start = start + 1; } else { go = 0; } } } } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32) { end = end - 1; } else { if (c2 == 9) { end = end - 1; } else { if (c2 == 10) { end = end - 1; } else { if (c2 == 13) { end = end - 1; } else { go2 = 0; } } } } } } return slice_unchecked(s, start, end) + \"\"; }";
 }
 
-pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
+pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
     match (scrut) {
-        parser.ExprIdent(id) => {
+        ast.ExprIdent(id) => {
             // Scrutinee is a local — recover the wrapped payload tag
             // from its declared/inferred type.
             if (s.has_local(id.name)) {
@@ -1812,9 +1813,9 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
             }
             return ty_unknown();
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
                         return infer_expr_type(c.args[0], s);
                     }
@@ -1841,7 +1842,7 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
                     }
                     return ty_unknown();
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     if (fa.field == "read_chunk") { return ty_string(); }
                     if (fa.field == "read_line") { return ty_option(ty_string()); }
                     if (fa.field == "write") { return ty_i32(); }
@@ -2288,11 +2289,11 @@ pub function ty_is_array_like(t: Ty): boolean {
 // rc=1 and is NOT re-incremented. A spurious inc on a mis-inferred
 // non-array is harmless — the rc-inc helper's null / low-address /
 // sentinel guards short-circuit — so this is robust to inference gaps.
-pub function needs_rc_inc_on_alias(e: parser.Expr, s: EmitState): boolean {
+pub function needs_rc_inc_on_alias(e: ast.Expr, s: EmitState): boolean {
     match (e) {
-        parser.ExprIdent(id) => { return ty_is_array_like(s.local_type_of(id.name)); },
-        parser.ExprFieldAccess(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
-        parser.ExprIndex(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
+        ast.ExprIdent(id) => { return ty_is_array_like(s.local_type_of(id.name)); },
+        ast.ExprFieldAccess(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
+        ast.ExprIndex(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
         _ => { return false; }
     }
     return false;
@@ -2309,9 +2310,9 @@ pub function needs_rc_inc_on_alias(e: parser.Expr, s: EmitState): boolean {
 // returns -1 when no move applies (non-ident, non-array, or a borrowed
 // param). Eliding an inc/dec pair on one slot is net-zero regardless of
 // any aliasing of the same buffer through other slots, so this is safe.
-pub function (s: EmitState) move_on_return_idx(e: parser.Expr): i32 {
+pub function (s: EmitState) move_on_return_idx(e: ast.Expr): i32 {
     match (e) {
-        parser.ExprIdent(id) => {
+        ast.ExprIdent(id) => {
             if (!s.has_local(id.name)) { return 0 - 1; }
             if (!ty_is_array_like(s.local_type_of(id.name))) { return 0 - 1; }
             var idx: i32 = (0 - s.lookup_local(id.name)) / 8 - 1;
@@ -2751,16 +2752,16 @@ pub function tuple_ret_tag_at(tt: string, idx: i32): Ty {
 // destructure, for any arity. A tuple literal reads element idx
 // directly; a tuple-returning free function / method splits its
 // declared return type at idx.
-pub function tuple_destructure_tag_at(init: parser.Expr, idx: i32, s: EmitState): Ty {
+pub function tuple_destructure_tag_at(init: ast.Expr, idx: i32, s: EmitState): Ty {
     match (init) {
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             if (idx < t.elements.len()) {
                 return infer_expr_type(t.elements[idx], s);
             }
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     var fi: i32 = 0;
                     while (fi < s.funcs.len()) {
                         if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
@@ -2769,7 +2770,7 @@ pub function tuple_destructure_tag_at(init: parser.Expr, idx: i32, s: EmitState)
                         fi = fi + 1;
                     }
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     // The builtin map `without` returns `(Map, bool)`: bind
                     // element 0 to the receiver's own map tag so the resulting
                     // map dispatches its methods correctly (rather than
@@ -2814,23 +2815,23 @@ pub function ty_friendly(t: Ty): string {
     return ty_tag(t);
 }
 
-pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
+pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
     match (e) {
-        parser.ExprNumber(n) => { if (n.is_float) { return ty_f64(); } return ty_i32(); },
-        parser.ExprBool(_) => { return ty_bool(); },
-        parser.ExprString(_) => { return ty_string(); },
-        parser.ExprArray(a) => {
+        ast.ExprNumber(n) => { if (n.is_float) { return ty_f64(); } return ty_i32(); },
+        ast.ExprBool(_) => { return ty_bool(); },
+        ast.ExprString(_) => { return ty_string(); },
+        ast.ExprArray(a) => {
             if (a.elements.len() == 0) { return ty_array(); }
             var et: Ty = infer_expr_type(a.elements[0], s);
             if (ty_is_string(et)) { return ty_array_string(); }
             if (ty_is_i32(et) || ty_is_bool(et)) { return ty_array_i32(); }
             return ty_array();
         },
-        parser.ExprTuple(_) => { return ty_tuple(); },
-        parser.ExprMapLit(_) => { return ty_map_any(); },
-        parser.ExprFString(_) => { return ty_string(); },
-        parser.ExprStructLit(_) => { return ty_struct(); },
-        parser.ExprLambda(lm) => {
+        ast.ExprTuple(_) => { return ty_tuple(); },
+        ast.ExprMapLit(_) => { return ty_map_any(); },
+        ast.ExprFString(_) => { return ty_string(); },
+        ast.ExprStructLit(_) => { return ty_struct(); },
+        ast.ExprLambda(lm) => {
             // Encode the return type in the tag so a later
             // `f()` call site can recover it from the local's
             // recorded type. The closure-box itself is just an
@@ -2841,7 +2842,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             // string to route through `__fern_print_str`).
             return ty_fn(ty_from_name(lm.ret_type));
         },
-        parser.ExprIdent(id) => {
+        ast.ExprIdent(id) => {
             if (id.name == "None") { return ty_option(ty_unknown()); }
             if (s.has_local(id.name)) { return s.local_type_of(id.name); }
             // A bare ident may name a zero-arg function (a `const`).
@@ -2854,7 +2855,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             }
             return s.local_type_of(id.name);
         },
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
                     || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
                 return ty_bool();
@@ -2882,7 +2883,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             }
             return ty_i32();
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             if (u.op == "!") { return ty_bool(); }
             if (u.op == "-") { return infer_expr_type(u.operand, s); }
             if (u.op.len() >= 3 && slice_unchecked(u.op, 0, 3) == "as_") {
@@ -2924,9 +2925,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             }
             return ty_i32();
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if (id.name == "Some" && c.args.len() == 1) {
                         return ty_option(infer_expr_type(c.args[0], s));
                     }
@@ -3141,7 +3142,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     }
                     return ty_unknown();
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     var rt: Ty = infer_expr_type(fa.obj, s);
                     if (fa.field == "read_chunk") { return ty_option(ty_string()); }
                     if (fa.field == "read_line") { return ty_option(ty_string()); }
@@ -3284,7 +3285,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             }
             return ty_unknown();
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             // Container type drives element type:
             //   string → "u8"  (the byte type, #5629)
             //   array_string → "string"
@@ -3298,8 +3299,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             if (ty_is_array_i64(at)) { return ty_i64(); }
             return ty_i32();
         },
-        parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
+        ast.ExprFieldAccess(fa) => {
             // Resolve within the receiver's struct when its type is a
             // known struct name (match-bound variant payloads); else
             // fall back to the first-match field scan. See asm.fern.
@@ -3313,7 +3314,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             }
             return field_type_tag(fa.field, s);
         },
-        parser.ExprUnknown(_) => { return ty_unknown(); }
+        ast.ExprUnknown(_) => { return ty_unknown(); }
     }
     return ty_unknown();
 }
@@ -3406,7 +3407,7 @@ pub function fresh_label(s: EmitState): LabelOut {
     return LabelOut { state: ns, name: name };
 }
 
-pub function count_locals(body: parser.Stmt[]): i32 {
+pub function count_locals(body: ast.Stmt[]): i32 {
     var n: i32 = 0;
     var i: i32 = 0;
     while (i < body.len()) {
@@ -3425,9 +3426,9 @@ pub function name_has_comma(name: string): boolean {
     return false;
 }
 
-pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
+pub function count_locals_in_stmt(stmt: ast.Stmt): i32 {
     match (stmt) {
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             // `var (a, b, …) = E` destructure binds one frame slot per name;
             // count the comma-joined names (commas + 1) so the prologue
             // reserves enough — undercounting writes a binding below %rsp.
@@ -3442,9 +3443,9 @@ pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
             }
             return 1;
         },
-        parser.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
-        parser.StmtWhile(w) => { return count_locals(w.body); },
-        parser.StmtMatch(m) => {
+        ast.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
+        ast.StmtWhile(w) => { return count_locals(w.body); },
+        ast.StmtMatch(m) => {
             // +1 for the synthetic scrutinee local + one per
             // non-empty PatVariant binding + the recursive body
             // counts. Wildcard arms add no binding.
@@ -3452,17 +3453,17 @@ pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 match (m.arms[i].pattern) {
-                    parser.PatVariant(pv) => {
+                    ast.PatVariant(pv) => {
                         if (pv.binding.len() > 0 && pv.binding != "_") { n = n + 1; }
                     },
-                    parser.PatWildcard(_) => { }
+                    ast.PatWildcard(_) => { }
                 }
                 n = n + count_locals(m.arms[i].body);
                 i = i + 1;
             }
             return n;
         },
-        parser.StmtFor(f) => {
+        ast.StmtFor(f) => {
             // `for (k,v) in m` binds 4 locals (map ptr, index, k, v);
             // plain `for x in arr` binds 3.
             if (name_has_comma(f.var_name)) { return 4 + count_locals(f.body); }
@@ -3776,9 +3777,9 @@ pub function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
     return false;
 }
 
-pub function arg_fn_value_name(arg: parser.Expr, callee: string, idx: i32, s: EmitState): string {
+pub function arg_fn_value_name(arg: ast.Expr, callee: string, idx: i32, s: EmitState): string {
     match (arg) {
-        parser.ExprIdent(id) => {
+        ast.ExprIdent(id) => {
             if (callee_param_is_fn(s, callee, idx) && is_value_fn_name(s, id.name)) {
                 return id.name;
             }
@@ -3822,15 +3823,15 @@ pub function is_script_module(mod: parser.Module): boolean {
 // inert for every program that already has a `main`.
 pub function synth_script_main(mod: parser.Module): parser.Module {
     if (!is_script_module(mod)) { return mod; }
-    var body: parser.Stmt[] = mod.top_stmts;
+    var body: ast.Stmt[] = mod.top_stmts;
     var ends_in_return: boolean = false;
     match (body[body.len() - 1]) {
-        parser.StmtReturn(r) => { ends_in_return = true; },
+        ast.StmtReturn(r) => { ends_in_return = true; },
         _ => { },
     }
     if (!ends_in_return) {
-        body = body.append(parser.StmtReturn {
-            value: parser.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
+        body = body.append(ast.StmtReturn {
+            value: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
             line: 0,
             col: 0,
         });
@@ -3880,18 +3881,18 @@ function parse_unknown_error(where: string, kind: string): util.Diag {
     return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: 0, col: 0 };
 }
 
-function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.Diag[]): util.Diag[] {
+function collect_expr_unknown_errors(e: ast.Expr, where: string, errs: util.Diag[]): util.Diag[] {
     match (e) {
-        parser.ExprIdent(_) => { return errs; },
-        parser.ExprNumber(_) => { return errs; },
-        parser.ExprString(_) => { return errs; },
-        parser.ExprBool(_) => { return errs; },
-        parser.ExprBinary(b) => {
+        ast.ExprIdent(_) => { return errs; },
+        ast.ExprNumber(_) => { return errs; },
+        ast.ExprString(_) => { return errs; },
+        ast.ExprBool(_) => { return errs; },
+        ast.ExprBinary(b) => {
             errs = collect_expr_unknown_errors(b.left, where, errs);
             return collect_expr_unknown_errors(b.right, where, errs);
         },
-        parser.ExprUnary(u) => { return collect_expr_unknown_errors(u.operand, where, errs); },
-        parser.ExprCall(c) => {
+        ast.ExprUnary(u) => { return collect_expr_unknown_errors(u.operand, where, errs); },
+        ast.ExprCall(c) => {
             errs = collect_expr_unknown_errors(c.callee, where, errs);
             var i: i32 = 0;
             while (i < c.args.len()) {
@@ -3900,7 +3901,7 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
                 errs = collect_expr_unknown_errors(a.elements[i], where, errs);
@@ -3908,7 +3909,7 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
                 errs = collect_expr_unknown_errors(t.elements[i], where, errs);
@@ -3916,7 +3917,7 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprMapLit(ml) => {
+        ast.ExprMapLit(ml) => {
             var i: i32 = 0;
             while (i < ml.keys.len()) {
                 errs = collect_expr_unknown_errors(ml.keys[i], where, errs);
@@ -3925,7 +3926,7 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprFString(fs) => {
+        ast.ExprFString(fs) => {
             var i: i32 = 0;
             while (i < fs.exprs.len()) {
                 if (fs.is_expr[i]) { errs = collect_expr_unknown_errors(fs.exprs[i], where, errs); }
@@ -3933,16 +3934,16 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             errs = collect_expr_unknown_errors(x.array, where, errs);
             return collect_expr_unknown_errors(x.index, where, errs);
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             errs = collect_expr_unknown_errors(sl.array, where, errs);
             errs = collect_expr_unknown_errors(sl.start, where, errs);
             return collect_expr_unknown_errors(sl.end, where, errs);
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             if (sl.has_base) { errs = collect_expr_unknown_errors(sl.base, where, errs); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
@@ -3951,8 +3952,8 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprFieldAccess(fa) => { return collect_expr_unknown_errors(fa.obj, where, errs); },
-        parser.ExprLambda(lm) => {
+        ast.ExprFieldAccess(fa) => { return collect_expr_unknown_errors(fa.obj, where, errs); },
+        ast.ExprLambda(lm) => {
             var i: i32 = 0;
             while (i < lm.body.len()) {
                 errs = collect_stmt_unknown_errors(lm.body[i], where, errs);
@@ -3960,28 +3961,28 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: util.D
             }
             return errs;
         },
-        parser.ExprUnknown(u) => { return errs.append(parse_unknown_error(where, u.kind)); }
+        ast.ExprUnknown(u) => { return errs.append(parse_unknown_error(where, u.kind)); }
     }
     return errs;
 }
 
-function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: util.Diag[]): util.Diag[] {
+function collect_stmt_unknown_errors(st: ast.Stmt, where: string, errs: util.Diag[]): util.Diag[] {
     match (st) {
-        parser.StmtVar(v) => { return collect_expr_unknown_errors(v.init, where, errs); },
-        parser.StmtReturn(r) => {
+        ast.StmtVar(v) => { return collect_expr_unknown_errors(v.init, where, errs); },
+        ast.StmtReturn(r) => {
             // A bare `return;` is encoded as ExprUnknown("punct:;"). It's a
             // parser sentinel, not a real unknown expression — later checker
             // passes validate whether it is legal in context (void vs non-void).
             match (r.value) {
-                parser.ExprUnknown(u) => {
+                ast.ExprUnknown(u) => {
                     if (u.kind == "punct:;") { return errs; }
                 },
                 _ => {}
             }
             return collect_expr_unknown_errors(r.value, where, errs);
         },
-        parser.StmtExpr(e) => { return collect_expr_unknown_errors(e.value, where, errs); },
-        parser.StmtIf(i) => {
+        ast.StmtExpr(e) => { return collect_expr_unknown_errors(e.value, where, errs); },
+        ast.StmtIf(i) => {
             errs = collect_expr_unknown_errors(i.cond, where, errs);
             var ti: i32 = 0;
             while (ti < i.then_body.len()) {
@@ -3995,7 +3996,7 @@ function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: util.
             }
             return errs;
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             errs = collect_expr_unknown_errors(w.cond, where, errs);
             var i: i32 = 0;
             while (i < w.body.len()) {
@@ -4004,8 +4005,8 @@ function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: util.
             }
             return errs;
         },
-        parser.StmtAssign(a) => { return collect_expr_unknown_errors(a.value, where, errs); },
-        parser.StmtMatch(m) => {
+        ast.StmtAssign(a) => { return collect_expr_unknown_errors(a.value, where, errs); },
+        ast.StmtMatch(m) => {
             errs = collect_expr_unknown_errors(m.scrutinee, where, errs);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
@@ -4021,7 +4022,7 @@ function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: util.
             }
             return errs;
         },
-        parser.StmtFor(f) => {
+        ast.StmtFor(f) => {
             errs = collect_expr_unknown_errors(f.iter, where, errs);
             var i: i32 = 0;
             while (i < f.body.len()) {
@@ -4030,10 +4031,10 @@ function collect_stmt_unknown_errors(st: parser.Stmt, where: string, errs: util.
             }
             return errs;
         },
-        parser.StmtBreak(_) => { return errs; },
-        parser.StmtContinue(_) => { return errs; },
-        parser.StmtUnknown(u) => { return errs.append(parse_unknown_error(where, "stmt: " + u.kind)); },
-        parser.StmtDefer(d) => { return collect_stmt_unknown_errors(d.action, where, errs); }
+        ast.StmtBreak(_) => { return errs; },
+        ast.StmtContinue(_) => { return errs; },
+        ast.StmtUnknown(u) => { return errs.append(parse_unknown_error(where, "stmt: " + u.kind)); },
+        ast.StmtDefer(d) => { return collect_stmt_unknown_errors(d.action, where, errs); }
     }
     return errs;
 }
@@ -4094,11 +4095,11 @@ function has_to_string(rt: string, st: EmitState): boolean {
 // A type the partial `Ty` union cannot model comes back unknown; those
 // are skipped rather than mis-flagged, the same discipline the E038 /
 // E003 argument passes already use.
-function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): util.Diag[] {
+function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[] {
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if ((id.name == "print" || id.name == "write" || id.name == "eprint")
                             && c.args.len() == 1) {
                         var at: Ty = infer_expr_type(c.args[0], st);
@@ -4138,12 +4139,12 @@ function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): util.Di
     return [];
 }
 
-pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
+pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     match (st) {
-        parser.StmtExpr(ex) => {
+        ast.StmtExpr(ex) => {
             return CheckCtx { st: ctx.st, diags: util.append_diags(ctx.diags, display_arg_errs(ex.value, fname, ctx.st)) };
         },
-        parser.StmtReturn(r) => {
+        ast.StmtReturn(r) => {
             var got: Ty = infer_expr_type(r.value, ctx.st);
             if (!assignable(want, got)) {
                 return CheckCtx {
@@ -4155,7 +4156,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             }
             return ctx;
         },
-        parser.StmtVar(v) => {
+        ast.StmtVar(v) => {
             // Compiler-synthesized temps (`__defret`, `__dfa<N>`, `__env`, …)
             // are declared as i32-0 by the defer/errdefer/closure desugars and
             // then carry values of the enclosing function's own types (the
@@ -4189,7 +4190,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             }
             return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), diags: ctx.diags };
         },
-        parser.StmtAssign(a) => {
+        ast.StmtAssign(a) => {
             var got: Ty = infer_expr_type(a.value, ctx.st);
             var tt: Ty = ctx.st.local_type_of(a.target);
             if (!assignable(tt, got)) {
@@ -4206,14 +4207,14 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             }
             return ctx;
         },
-        parser.StmtIf(f) => {
+        ast.StmtIf(f) => {
             ctx = check_stmts(f.then_body, want, fname, ctx);
             return check_stmts(f.else_body, want, fname, ctx);
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             return check_stmts(w.body, want, fname, ctx);
         },
-        parser.StmtFor(fo) => {
+        ast.StmtFor(fo) => {
             var it: Ty = infer_expr_type(fo.iter, ctx.st);
             var elem: Ty = ty_unknown();
             if (ty_is_array_i32(it)) { elem = ty_i32(); }
@@ -4224,12 +4225,12 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), diags: ctx.diags };
             return check_stmts(fo.body, want, fname, ctx);
         },
-        parser.StmtMatch(m) => {
+        ast.StmtMatch(m) => {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var actx: CheckCtx = ctx;
                 match (m.arms[ai].pattern) {
-                    parser.PatVariant(pv) => {
+                    ast.PatVariant(pv) => {
                         if ((pv.type_name == "Some" || pv.type_name == "Ok")
                                 && pv.binding.len() > 0) {
                             actx = CheckCtx {
@@ -4239,7 +4240,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
                             };
                         }
                     },
-                    parser.PatWildcard(_) => { }
+                    ast.PatWildcard(_) => { }
                 }
                 actx = check_stmts(m.arms[ai].body, want, fname, actx);
                 // Keep accumulated errors; drop arm-local bindings.
@@ -4253,7 +4254,7 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
     return ctx;
 }
 
-pub function check_stmts(stmts: parser.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
+pub function check_stmts(stmts: ast.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     var i: i32 = 0;
     while (i < stmts.len()) {
         ctx = check_stmt(stmts[i], want, fname, ctx);
@@ -4320,15 +4321,15 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
 //
 // map_chain_root_ctor descends through chained arg-taking map-method calls
 // to the root callee; "" when the root is not a bare map ctor call.
-function map_chain_root_ctor(e: parser.Expr): string {
+function map_chain_root_ctor(e: ast.Expr): string {
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(cid) => {
+                ast.ExprIdent(cid) => {
                     if (cid.name == "map_new" || cid.name == "map_new_i32") { return cid.name; }
                     return "";
                 },
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
                             || fa.field == "has" || fa.field == "without") {
                         return map_chain_root_ctor(fa.obj);
@@ -4341,20 +4342,20 @@ function map_chain_root_ctor(e: parser.Expr): string {
         _ => { return ""; }
     }
 }
-function map_chain_check_expr(e: parser.Expr, fname: string, errs: util.Diag[]): util.Diag[] {
+function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): util.Diag[] {
     var out: util.Diag[] = errs;
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprFieldAccess(fa) => {
+                ast.ExprFieldAccess(fa) => {
                     if ((fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
                             || fa.field == "has" || fa.field == "without") && c.args.len() > 0) {
                         var mroot: string = map_chain_root_ctor(fa.obj);
                         if (mroot.len() > 0) {
                             var mism: boolean = false;
                             match (c.args[0]) {
-                                parser.ExprNumber(_) => { if (mroot == "map_new") { mism = true; } },
-                                parser.ExprString(_) => { if (mroot == "map_new_i32") { mism = true; } },
+                                ast.ExprNumber(_) => { if (mroot == "map_new") { mism = true; } },
+                                ast.ExprString(_) => { if (mroot == "map_new_i32") { mism = true; } },
                                 _ => {}
                             }
                             if (mism) {
@@ -4374,23 +4375,23 @@ function map_chain_check_expr(e: parser.Expr, fname: string, errs: util.Diag[]):
             while (i < c.args.len()) { out = map_chain_check_expr(c.args[i], fname, out); i = i + 1; }
             return out;
         },
-        parser.ExprBinary(b) => { return map_chain_check_expr(b.right, fname, map_chain_check_expr(b.left, fname, out)); },
-        parser.ExprUnary(u) => { return map_chain_check_expr(u.operand, fname, out); },
-        parser.ExprIndex(ix) => { return map_chain_check_expr(ix.index, fname, map_chain_check_expr(ix.array, fname, out)); },
-        parser.ExprSlice(sl) => { return map_chain_check_expr(sl.end, fname, map_chain_check_expr(sl.start, fname, map_chain_check_expr(sl.array, fname, out))); },
-        parser.ExprFieldAccess(fa2) => { return map_chain_check_expr(fa2.obj, fname, out); },
-        parser.ExprStructLit(sl2) => {
+        ast.ExprBinary(b) => { return map_chain_check_expr(b.right, fname, map_chain_check_expr(b.left, fname, out)); },
+        ast.ExprUnary(u) => { return map_chain_check_expr(u.operand, fname, out); },
+        ast.ExprIndex(ix) => { return map_chain_check_expr(ix.index, fname, map_chain_check_expr(ix.array, fname, out)); },
+        ast.ExprSlice(sl) => { return map_chain_check_expr(sl.end, fname, map_chain_check_expr(sl.start, fname, map_chain_check_expr(sl.array, fname, out))); },
+        ast.ExprFieldAccess(fa2) => { return map_chain_check_expr(fa2.obj, fname, out); },
+        ast.ExprStructLit(sl2) => {
             if (sl2.has_base) { out = map_chain_check_expr(sl2.base, fname, out); }
             var i: i32 = 0;
             while (i < sl2.field_values.len()) { out = map_chain_check_expr(sl2.field_values[i], fname, out); i = i + 1; }
             return out;
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) { out = map_chain_check_expr(a.elements[i], fname, out); i = i + 1; }
             return out;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) { out = map_chain_check_expr(t.elements[i], fname, out); i = i + 1; }
             return out;
@@ -4398,29 +4399,29 @@ function map_chain_check_expr(e: parser.Expr, fname: string, errs: util.Diag[]):
         _ => { return out; }
     }
 }
-function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: util.Diag[]): util.Diag[] {
+function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag[]): util.Diag[] {
     var out: util.Diag[] = errs;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { out = map_chain_check_expr(v.init, fname, out); },
-            parser.StmtAssign(a) => { out = map_chain_check_expr(a.value, fname, out); },
-            parser.StmtExpr(ex) => { out = map_chain_check_expr(ex.value, fname, out); },
-            parser.StmtReturn(r) => { out = map_chain_check_expr(r.value, fname, out); },
-            parser.StmtIf(iff) => {
+            ast.StmtVar(v) => { out = map_chain_check_expr(v.init, fname, out); },
+            ast.StmtAssign(a) => { out = map_chain_check_expr(a.value, fname, out); },
+            ast.StmtExpr(ex) => { out = map_chain_check_expr(ex.value, fname, out); },
+            ast.StmtReturn(r) => { out = map_chain_check_expr(r.value, fname, out); },
+            ast.StmtIf(iff) => {
                 out = map_chain_check_expr(iff.cond, fname, out);
                 out = map_chain_check_stmts(iff.then_body, fname, out);
                 out = map_chain_check_stmts(iff.else_body, fname, out);
             },
-            parser.StmtWhile(w) => {
+            ast.StmtWhile(w) => {
                 out = map_chain_check_expr(w.cond, fname, out);
                 out = map_chain_check_stmts(w.body, fname, out);
             },
-            parser.StmtFor(fo) => {
+            ast.StmtFor(fo) => {
                 out = map_chain_check_expr(fo.iter, fname, out);
                 out = map_chain_check_stmts(fo.body, fname, out);
             },
-            parser.StmtMatch(m) => {
+            ast.StmtMatch(m) => {
                 out = map_chain_check_expr(m.scrutinee, fname, out);
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
@@ -4429,7 +4430,7 @@ function map_chain_check_stmts(stmts: parser.Stmt[], fname: string, errs: util.D
                     ai = ai + 1;
                 }
             },
-            parser.StmtDefer(d) => { out = map_chain_check_stmts([d.action], fname, out); },
+            ast.StmtDefer(d) => { out = map_chain_check_stmts([d.action], fname, out); },
             _ => {}
         }
         i = i + 1;
@@ -4587,11 +4588,11 @@ function callgate_undefined_error(g: CallGate, where: string, name: string, line
 // callgate_expr walks one expression, appending a diagnostic line for each
 // direct call the live rules reject. `bound` is the enclosing function's
 // shadow set.
-function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
+function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
     match (e) {
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => {
+                ast.ExprIdent(id) => {
                     if (!callgate_name_in(bound, id.name)) {
                         var found: boolean = false;
                         var ti: i32 = 0;
@@ -4620,21 +4621,21 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
             }
             return errs;
         },
-        parser.ExprBinary(b) => {
+        ast.ExprBinary(b) => {
             errs = callgate_expr(b.left, g, where, bound, errs);
             return callgate_expr(b.right, g, where, bound, errs);
         },
-        parser.ExprUnary(u) => { return callgate_expr(u.operand, g, where, bound, errs); },
-        parser.ExprIndex(x) => {
+        ast.ExprUnary(u) => { return callgate_expr(u.operand, g, where, bound, errs); },
+        ast.ExprIndex(x) => {
             errs = callgate_expr(x.array, g, where, bound, errs);
             return callgate_expr(x.index, g, where, bound, errs);
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             errs = callgate_expr(sl.array, g, where, bound, errs);
             errs = callgate_expr(sl.start, g, where, bound, errs);
             return callgate_expr(sl.end, g, where, bound, errs);
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
                 errs = callgate_expr(a.elements[i], g, where, bound, errs);
@@ -4642,7 +4643,7 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
             }
             return errs;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
                 errs = callgate_expr(t.elements[i], g, where, bound, errs);
@@ -4650,7 +4651,7 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
             }
             return errs;
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
                 errs = callgate_expr(sl.field_values[i], g, where, bound, errs);
@@ -4659,8 +4660,8 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
             if (sl.has_base) { errs = callgate_expr(sl.base, g, where, bound, errs); }
             return errs;
         },
-        parser.ExprFieldAccess(fa) => { return callgate_expr(fa.obj, g, where, bound, errs); },
-        parser.ExprLambda(lm) => {
+        ast.ExprFieldAccess(fa) => { return callgate_expr(fa.obj, g, where, bound, errs); },
+        ast.ExprLambda(lm) => {
             // Lambda params shadow inside its body only; extend a body-local
             // copy of the shadow set.
             var lb: string[] = bound;
@@ -4688,28 +4689,28 @@ function callgate_known_callee(name: string, known: string[]): boolean {
     return callgate_name_in(known, name);
 }
 
-function callgate_stmts(stmts: parser.Stmt[], g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
+function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { errs = callgate_expr(v.init, g, where, bound, errs); },
-            parser.StmtReturn(r) => { errs = callgate_expr(r.value, g, where, bound, errs); },
-            parser.StmtExpr(x) => { errs = callgate_expr(x.value, g, where, bound, errs); },
-            parser.StmtAssign(a) => { errs = callgate_expr(a.value, g, where, bound, errs); },
-            parser.StmtIf(f) => {
+            ast.StmtVar(v) => { errs = callgate_expr(v.init, g, where, bound, errs); },
+            ast.StmtReturn(r) => { errs = callgate_expr(r.value, g, where, bound, errs); },
+            ast.StmtExpr(x) => { errs = callgate_expr(x.value, g, where, bound, errs); },
+            ast.StmtAssign(a) => { errs = callgate_expr(a.value, g, where, bound, errs); },
+            ast.StmtIf(f) => {
                 errs = callgate_expr(f.cond, g, where, bound, errs);
                 errs = callgate_stmts(f.then_body, g, where, bound, errs);
                 errs = callgate_stmts(f.else_body, g, where, bound, errs);
             },
-            parser.StmtWhile(w) => {
+            ast.StmtWhile(w) => {
                 errs = callgate_expr(w.cond, g, where, bound, errs);
                 errs = callgate_stmts(w.body, g, where, bound, errs);
             },
-            parser.StmtFor(fo) => {
+            ast.StmtFor(fo) => {
                 errs = callgate_expr(fo.iter, g, where, bound, errs);
                 errs = callgate_stmts(fo.body, g, where, bound, errs);
             },
-            parser.StmtMatch(m) => {
+            ast.StmtMatch(m) => {
                 errs = callgate_expr(m.scrutinee, g, where, bound, errs);
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
@@ -4718,7 +4719,7 @@ function callgate_stmts(stmts: parser.Stmt[], g: CallGate, where: string, bound:
                     ai = ai + 1;
                 }
             },
-            parser.StmtDefer(d) => { errs = callgate_stmts([d.action], g, where, bound, errs); },
+            ast.StmtDefer(d) => { errs = callgate_stmts([d.action], g, where, bound, errs); },
             _ => {}
         }
         i = i + 1;

@@ -59,6 +59,7 @@
 // `__` function and keeps a `__` const, because the filter is on the funcs
 // list it does not share.
 
+import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -352,7 +353,7 @@ function type_str(t: string): string {
 // "reconstruct the declared signature the flat `fn` tag threw away" — this is
 // the reconstruction, and without it every higher-order function in the stdlib
 // documents its callback as `fn`.
-function param_type_str(p: parser.ParamDecl): string {
+function param_type_str(p: ast.ParamDecl): string {
     if (p.type_name != "fn") { return type_str(p.type_name); }
     var out: string = "(";
     if (p.fn_param_types.len() > 0) {

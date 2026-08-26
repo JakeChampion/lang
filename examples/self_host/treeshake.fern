@@ -25,6 +25,7 @@
 // function is harmless; dropping a referenced one is not. Over-keeping only
 // costs IR budget; it never changes behaviour.
 
+import "./ast";
 import "./parser";
 import "./util";
 
@@ -44,39 +45,39 @@ function ts_op_method(op: string): string {
 
 // ts_names_expr appends every name `e` could REFERENCE (idents, field/method
 // names, operator-dispatch methods) to `acc`. Duplicates are fine.
-function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
+function ts_names_expr(e: ast.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
+        ast.ExprIdent(id) => { return acc.append(id.name); },
+        ast.ExprNumber(_) => { return acc; },
+        ast.ExprString(_) => { return acc; },
+        ast.ExprBool(_) => { return acc; },
+        ast.ExprBinary(b) => {
             var m: string = ts_op_method(b.op);
             if (m.len() > 0) { acc = acc.append(m); }
             acc = ts_names_expr(b.left, acc);
             return ts_names_expr(b.right, acc);
         },
-        parser.ExprUnary(u) => {
+        ast.ExprUnary(u) => {
             if (u.op == "-") { acc = acc.append("neg"); }
             return ts_names_expr(u.operand, acc);
         },
-        parser.ExprCall(c) => {
+        ast.ExprCall(c) => {
             acc = ts_names_expr(c.callee, acc);
             var i: i32 = 0;
             while (i < c.args.len()) { acc = ts_names_expr(c.args[i], acc); i = i + 1; }
             return acc;
         },
-        parser.ExprArray(a) => {
+        ast.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) { acc = ts_names_expr(a.elements[i], acc); i = i + 1; }
             return acc;
         },
-        parser.ExprTuple(t) => {
+        ast.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) { acc = ts_names_expr(t.elements[i], acc); i = i + 1; }
             return acc;
         },
-        parser.ExprMapLit(ml) => {
+        ast.ExprMapLit(ml) => {
             var i: i32 = 0;
             while (i < ml.keys.len()) {
                 acc = ts_names_expr(ml.keys[i], acc);
@@ -85,7 +86,7 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
             }
             return acc;
         },
-        parser.ExprFString(fs) => {
+        ast.ExprFString(fs) => {
             var i: i32 = 0;
             while (i < fs.exprs.len()) {
                 if (fs.is_expr[i]) { acc = ts_names_expr(fs.exprs[i], acc); }
@@ -93,16 +94,16 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
             }
             return acc;
         },
-        parser.ExprIndex(x) => {
+        ast.ExprIndex(x) => {
             acc = ts_names_expr(x.array, acc);
             return ts_names_expr(x.index, acc);
         },
-        parser.ExprSlice(sl) => {
+        ast.ExprSlice(sl) => {
             acc = ts_names_expr(sl.array, acc);
             acc = ts_names_expr(sl.start, acc);
             return ts_names_expr(sl.end, acc);
         },
-        parser.ExprStructLit(sl) => {
+        ast.ExprStructLit(sl) => {
             if (sl.has_base) { acc = ts_names_expr(sl.base, acc); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) { acc = ts_names_expr(sl.field_values[i], acc); i = i + 1; }
@@ -110,7 +111,7 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
         },
         // A method/field name (`x.eq`) is a reference: keep every function with
         // that simple name. Also recurse into the object.
-        parser.ExprFieldAccess(fa) => {
+        ast.ExprFieldAccess(fa) => {
             acc = acc.append(fa.field);
             // An array-method call `arr.<m>(...)` (`.join` / `.concat` /
             // `.reverse` / `.flat_map` / `.sort_by` / std/array's distinct,
@@ -126,24 +127,24 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
         // (Unlike astwalk's free-var collector we do not subtract lambda-local
         // bindings: over-keeping a same-named function is safe, dropping a
         // referenced one is not.)
-        parser.ExprLambda(lm) => {
+        ast.ExprLambda(lm) => {
             var i: i32 = 0;
             while (i < lm.body.len()) { acc = ts_names_stmt(lm.body[i], acc); i = i + 1; }
             return acc;
         },
-        parser.ExprUnknown(_) => { return acc; }
+        ast.ExprUnknown(_) => { return acc; }
     }
     return acc;
 }
 
 // ts_names_stmt appends every name `st` could reference to `acc`.
-function ts_names_stmt(st: parser.Stmt, acc: string[]): string[] {
+function ts_names_stmt(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
-        parser.StmtDefer(d) => { return ts_names_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return ts_names_expr(v.init, acc); },
-        parser.StmtReturn(r) => { return ts_names_expr(r.value, acc); },
-        parser.StmtExpr(e) => { return ts_names_expr(e.value, acc); },
-        parser.StmtIf(i) => {
+        ast.StmtDefer(d) => { return ts_names_stmt(d.action, acc); },
+        ast.StmtVar(v) => { return ts_names_expr(v.init, acc); },
+        ast.StmtReturn(r) => { return ts_names_expr(r.value, acc); },
+        ast.StmtExpr(e) => { return ts_names_expr(e.value, acc); },
+        ast.StmtIf(i) => {
             acc = ts_names_expr(i.cond, acc);
             var ti: i32 = 0;
             while (ti < i.then_body.len()) { acc = ts_names_stmt(i.then_body[ti], acc); ti = ti + 1; }
@@ -151,14 +152,14 @@ function ts_names_stmt(st: parser.Stmt, acc: string[]): string[] {
             while (ei < i.else_body.len()) { acc = ts_names_stmt(i.else_body[ei], acc); ei = ei + 1; }
             return acc;
         },
-        parser.StmtWhile(w) => {
+        ast.StmtWhile(w) => {
             acc = ts_names_expr(w.cond, acc);
             var i: i32 = 0;
             while (i < w.body.len()) { acc = ts_names_stmt(w.body[i], acc); i = i + 1; }
             return acc;
         },
-        parser.StmtAssign(a) => { return ts_names_expr(a.value, acc); },
-        parser.StmtMatch(m) => {
+        ast.StmtAssign(a) => { return ts_names_expr(a.value, acc); },
+        ast.StmtMatch(m) => {
             acc = ts_names_expr(m.scrutinee, acc);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
@@ -173,15 +174,15 @@ function ts_names_stmt(st: parser.Stmt, acc: string[]): string[] {
             }
             return acc;
         },
-        parser.StmtFor(f) => {
+        ast.StmtFor(f) => {
             acc = ts_names_expr(f.iter, acc);
             var i: i32 = 0;
             while (i < f.body.len()) { acc = ts_names_stmt(f.body[i], acc); i = i + 1; }
             return acc;
         },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; }
     }
     return acc;
 }
