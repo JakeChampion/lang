@@ -462,6 +462,42 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	}
 	out = append(out, argMoveLines(in.ArgLocs)...)
 	out = append(out, fmt.Sprintf("call %s", fnLabel(in.Callee)))
+	restore := func() {
+		for i := len(saved) - 1; i >= 0; i-- {
+			out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
+		}
+		if pad != 0 {
+			out = append(out, "add rsp, 8")
+		}
+	}
+	maskDst := func() {
+		if fix := maskFix(in.Dst, in.W); fix != "" {
+			out = append(out, strings.TrimPrefix(fix, "\n\t"))
+		}
+	}
+	// The result registers can be written before the restores — skipping the
+	// staging scratch entirely — exactly when the restores do not write them.
+	// The allocator cannot put a result and a value live ACROSS the same call in
+	// one register (their intervals overlap), so this holds for every call; the
+	// check is what keeps that an optimisation rather than a load-bearing
+	// assumption about a pass in another package.
+	if !inSaveSet(saved, in.Dst) && (in.Op != CallPair || !inSaveSet(saved, in.Dst2)) {
+		// System V returns in rax (tag) / rdx (payload) — gpRegs indices 0 and 3 —
+		// so delivering a pair into its destinations is a parallel copy over
+		// abstract indices. Self-moves are dropped rather than emitted as
+		// `mov rax, rax`, which is the whole point of coalescing here.
+		var moves [][2]int
+		if in.Dst != 0 {
+			moves = append(moves, [2]int{in.Dst, 0})
+		}
+		if in.Op == CallPair && in.Dst2 != 3 {
+			moves = append(moves, [2]int{in.Dst2, 3})
+		}
+		out = append(out, resolveRegMoves(moves)...)
+		restore()
+		maskDst()
+		return out, nil
+	}
 	out = append(out, fmt.Sprintf("mov %s, rax", reg(scratch))) // capture result (tag)
 	if in.Op == CallPair {
 		// The second return (payload) is in rdx. Capture it into s0 — free during
@@ -469,20 +505,24 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		// don't overwrite it.
 		out = append(out, fmt.Sprintf("mov %s, rdx", reg(s0)))
 	}
-	for i := len(saved) - 1; i >= 0; i-- {
-		out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
-	}
-	if pad != 0 {
-		out = append(out, "add rsp, 8")
-	}
+	restore()
 	out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch))) // place result
-	if fix := maskFix(in.Dst, in.W); fix != "" {
-		out = append(out, strings.TrimPrefix(fix, "\n\t"))
-	}
+	maskDst()
 	if in.Op == CallPair {
 		out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst2), reg(s0))) // place payload
 	}
 	return out, nil
+}
+
+// inSaveSet reports whether the call-save set contains register r — i.e. whether
+// a pop writes it after the call returns.
+func inSaveSet(saved []int, r int) bool {
+	for _, s := range saved {
+		if s == r {
+			return true
+		}
+	}
+	return false
 }
 
 // callIndirectLines renders a closure dispatch on the real-asm path. in.IdxLoc

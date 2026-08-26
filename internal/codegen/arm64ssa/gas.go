@@ -5662,6 +5662,13 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 	// result-capture scratch (s3), so neither the restores nor the tag placement
 	// clobber it. AArch64 returns a pair in x0 (tag) / x1 (payload).
 	s0 := numAlloc
+	// The result registers can be written before the restores — skipping the
+	// staging scratch entirely — exactly when the restores do not write them.
+	// The allocator cannot put a result and a value live ACROSS the same call in
+	// one register (their intervals overlap), so this holds for every call; the
+	// check is what keeps that an optimisation rather than a load-bearing
+	// assumption about a pass in another package.
+	direct := !inSaveSet(saved, in.Dst) && (in.Op != x86.CallPair || !inSaveSet(saved, in.Dst2))
 	var out []string
 	for k, r := range saved {
 		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
@@ -5673,13 +5680,30 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 	// alias map handed to LiveFunctionsWithAliases in buildArm64SSA — miss
 	// either and the assembler reports the same dangling label.
 	out = append(out, fmt.Sprintf("bl %s", fnLabel(ir.CodegenAlias(in.Callee))))
+	restore := func() {
+		for k := len(saved) - 1; k >= 0; k-- {
+			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
+		}
+	}
+	if direct {
+		// AArch64 returns in x0 (tag) / x1 (payload), which are abstract registers
+		// 0 and 1 — so delivering a pair into its destinations is a parallel copy
+		// over abstract indices, and resolveRegMoves drops the self-moves a
+		// destination that already IS x0/x1 produces.
+		moves := [][2]int{{in.Dst, 0}}
+		if in.Op == x86.CallPair {
+			moves = append(moves, [2]int{in.Dst2, 1})
+		}
+		out = append(out, resolveRegMoves(moves)...)
+		restore()
+		out = append(out, maskFix(in.Dst, in.W)...)
+		return out, nil
+	}
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(scratch))) // capture tag / result
 	if in.Op == x86.CallPair {
 		out = append(out, fmt.Sprintf("mov %s, x1", xreg(s0))) // capture payload
 	}
-	for k := len(saved) - 1; k >= 0; k-- {
-		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
-	}
+	restore()
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(scratch))) // place tag / result
 	out = append(out, maskFix(in.Dst, in.W)...)
 	if in.Op == x86.CallPair {
@@ -5688,6 +5712,17 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 		out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst2), xreg(s0))) // place payload
 	}
 	return out, nil
+}
+
+// inSaveSet reports whether the call-save set contains register r — i.e. whether
+// a restore writes it after the call returns.
+func inSaveSet(saved []int, r int) bool {
+	for _, s := range saved {
+		if s == r {
+			return true
+		}
+	}
+	return false
 }
 
 // pairRetMoves builds the parallel-copy move list that places the pair-return
@@ -5923,8 +5958,8 @@ func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error
 // the arm64 native `dyn` slice.
 func boxDynLines(in x86.Inst, numAlloc int) []string {
 	s0, s1, s2 := numAlloc, numAlloc+1, numAlloc+2
-	// Allocate the 16-byte payload cell into s2 (the Dst home), using s0 as the
-	// cursor-address temp and s1 as the rc/​bump temp.
+	// Allocate the 16-byte payload cell into s2, using s0 as the cursor-address
+	// temp and s1 as the rc/​bump temp, then place it into Dst at the end.
 	out := []string{
 		fmt.Sprintf("adrp %s, %s", xreg(s0), heapPtrSym),
 		fmt.Sprintf("add %s, %s, #:lo12:%s", xreg(s0), xreg(s0), heapPtrSym),
