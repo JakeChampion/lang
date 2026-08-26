@@ -10690,6 +10690,8 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     var ai: i32 = 0;
     var lat_slots: i32[] = [];
     var laa_slots: i32[] = [];
+    var lsl_slots: i32[] = [];
+    var lsl_types: string[] = [];
     while (ai < c.args.len()) {
         // A bare function-name argument at a "fn"-typed param
         // position is a function VALUE (a function pointer):
@@ -10862,6 +10864,35 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                 sc = sc.emit(ir.op_load_local(laas));
                 laa_slots = laa_slots.append(laas);
             }
+            // A fresh struct LITERAL argument (`take(P { … })`). The ladder that
+            // reclaims a DISCARDED struct literal lives in lower_stmt_inner's
+            // StmtExpr arm and has no counterpart in expression position, so an
+            // argument temp leaked its box and every rc field it owns — even a
+            // scalar-only struct, whose release there is a single dec. Stash and
+            // free it after the call, on the same terms as the array arm above
+            // and with that arm's two release shapes.
+            var slit_arg: string = "";
+            if (sc.ok && arg_releasable) {
+                match (c.args[ai]) {
+                    parser.ExprStructLit(lsl) => {
+                        if (!lsl.has_base
+                            && (struct_lit_all_scalar(sc.structs, lsl.type_name)
+                                || struct_fields_reusable(sc.structs, lsl.type_name))) {
+                            slit_arg = lsl.type_name;
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            if (slit_arg.len() > 0) {
+                var lsln: string = "$lsl" + util.i32_to_string(sc.locals.len());
+                sc = sc.add_local(lsln);
+                var lsls: i32 = sc.slot_of(lsln);
+                sc = sc.emit(ir.op_store_local(lsls));
+                sc = sc.emit(ir.op_load_local(lsls));
+                lsl_slots = lsl_slots.append(lsls);
+                lsl_types = lsl_types.append(slit_arg);
+            }
         }
         if (!sc.ok) { return sc; }
         ai = ai + 1;
@@ -10942,6 +10973,18 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     while (lfa < laa_slots.len()) {
         scr = scr.release(laa_slots[lfa], "__fern_rc_dec", "stashed-arr-arg");
         lfa = lfa + 1;
+    }
+    // The struct-literal arg temps, in the discarded-statement arm's order: the
+    // deep field drop first, while the box still OWNS its fields, then the box
+    // dec. A scalar-only struct has no reclaim array field and takes the dec
+    // alone, which is exactly what that arm emits for it.
+    var lfs: i32 = 0;
+    while (lfs < lsl_slots.len()) {
+        if (struct_has_reclaim_array_field(scr.structs, lsl_types[lfs])) {
+            scr = scr.release(lsl_slots[lfs], "__struct_drop_" + lsl_types[lfs], "stashed-struct-arg-deep");
+        }
+        scr = scr.release(lsl_slots[lfs], "__fern_rc_dec", "stashed-struct-arg");
+        lfs = lfs + 1;
     }
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
     // str_ret_argref >= 0) returns i64 on wasm — the uniform 8-byte
@@ -29662,11 +29705,12 @@ function discarded_tuple_ret_flags(s: LowerState, callee: string): string {
 }
 
 // lit_arg_callees_expr / _stmt collect the bare-ident CALLEE names of calls
-// carrying at least one direct string-LITERAL or fresh-anonymous-temp-shaped
-// argument (a concat / producer / copying method — the syntactic half of
-// is_fresh_str_temp; the type gate runs at the lowering) — the only callees
-// whose "BORROW:" entry lower_func needs to seed for the fresh-arg box
-// reclaim. Mirrors astwalk.collect_idents_expr's shape coverage; lambda
+// carrying at least one argument whose box the caller may have to free after
+// the call: a string LITERAL, an array or struct LITERAL, a producer CALL, or a
+// fresh-anonymous-temp-shaped argument (a concat / producer / copying method —
+// the syntactic half of is_fresh_str_temp; the type gate runs at the lowering).
+// These are the only callees whose "BORROW:" entry lower_func needs to seed for
+// the fresh-arg box reclaim. Mirrors astwalk.collect_idents_expr's shape coverage; lambda
 // bodies recurse directly (over-collection just seeds a harmless extra
 // entry).
 function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
@@ -29687,7 +29731,12 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                         // type info, so a non-producing call only seeds a
                         // spare entry — the same over-collection the method
                         // arm below already documents.
-                        match (arg) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, parser.ExprCall(_) => { has_lit = true; }, _ => {
+                        // ExprStructLit: the struct-literal arg temp, whose
+                        // reclaim has the same shape — the ladder that frees a
+                        // DISCARDED struct literal has no expression-position
+                        // counterpart, so without a "BORROW:" row here the
+                        // lowering's stash arm can never fire.
+                        match (arg) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, parser.ExprCall(_) => { has_lit = true; }, parser.ExprStructLit(_) => { has_lit = true; }, _ => {
                             if (str_local_binding_is_fresh(arg)) { has_lit = true; }
                         } }
                     }
