@@ -56,6 +56,20 @@ function main(): i32 { return add(40, 2); }`,
 			want: 42,
 		},
 		{
+			// A short-circuit `&&` whose two paths reach the merge with
+			// SEPARATE const defs of the same value. TrivialPhis used to
+			// alias the merge phi to one of them — a value defined in one
+			// predecessor, which does not dominate the merge — and Verify
+			// rejected the function outright: "ret uses v5 before its def
+			// dominates the use". The double negation is what drives both
+			// paths to a constant; `!false` or `!(!true)` fold to `true`
+			// and never build the shape.
+			name: "and_const_merge_phi",
+			src: `function g(): boolean { return ((1183.9f64 > 4.0f64) && (true && (!(!false)))); }
+function main(): i32 { if (g()) { return 1; } return 42; }`,
+			want: 42,
+		},
+		{
 			name: "loop_and_recursion",
 			src: `function fib(n: i32): i32 {
   if (n < 2) { return n; }
