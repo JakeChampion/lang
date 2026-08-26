@@ -38,7 +38,7 @@ import (
 //     (so the same-block pass misses it) yet still referenced inside the
 //     enclosing statement (so the cross-block deadFrom rejects it).
 type reusePairingHooks struct {
-	attemptPair    func(cName string, cNode ast.Expr, declIdx map[string]int, k int, deadFrom func(string, int) bool) bool
+	attemptPair    func(cName string, cNode ast.Expr, declIdx map[string]int, k int, deadFrom func(string, int) bool, share func(prev []ast.Expr) bool) bool
 	constructionAt func(st ast.Stmt) (string, ast.Expr)
 	declIndices    func(stmts []ast.Stmt) map[string]int
 	deadFromIn     func(stmts []ast.Stmt) func(string, int) bool
@@ -106,7 +106,7 @@ func (b *builder) dropGuidedSameList(h reusePairingHooks) {
 				if _, done := h.sources[cNode]; done {
 					continue
 				}
-				if h.attemptPair(cName, cNode, single, k, deadFrom) {
+				if h.attemptPair(cName, cNode, single, k, deadFrom, nil) {
 					break // token claimed by the first matching construction
 				}
 			}
@@ -169,7 +169,7 @@ func (b *builder) dropGuidedArmPass(h reusePairingHooks) {
 					armDead := func(name string, _ int) bool {
 						return deadAfter(name, j+1) && armConfinesRefs(st, preArm, arm, k, name)
 					}
-					h.attemptPair(cName, cNode, declIdx, j, armDead)
+					h.attemptPair(cName, cNode, declIdx, j, armDead, nil)
 				}
 			}
 		}
