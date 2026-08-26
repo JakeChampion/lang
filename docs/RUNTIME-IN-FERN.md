@@ -616,71 +616,46 @@ remainder splits three ways:
   builtin's name rather than an IR op's. The refusal stays as the backstop for an
   op with no builtin name to report.
 
-- **Composites, not leaves**: `map_delete` and the strbuf family. strbuf is
-  blocked; `map_delete` is not, though it looks it.
+- **Composites, not leaves**: `map_delete` and the strbuf family. `map_delete`
+  **has since moved**; strbuf is blocked, and on storage rather than length.
 
-  **`map_delete` turns on how a function pointer crosses into Fern.** Its
-  find loop has three arms keyed on `keykind`: string (`__fern_str_eq`), i32
-  (a register compare), and struct/enum, which calls the key type's derived
-  `__fn_<K>__eq` through a pointer the op site puts in `%r8`. The first two
-  arms are ordinary floor work. The third is the one that looks impossible and
-  is not — worth reading, because the obvious spelling of it silently
-  miscompiles.
+  **`map_delete` was the one that looked impossible and was not**, twice over,
+  so both traps are worth keeping.
 
-  Fern's indirect-call lowering has two branches, and the env-first one is
-  tested first. Every `fn`-typed parameter is unconditionally marked a closure
-  local (`irlower.fern`, in the param loop of the function-entry lowering), and
-  `is_closure_local` is tested BEFORE the plain-indirect branch, so `eqfn(a, b)`
-  lowers to: push the param as an `i32[]` env box, read `box[0]` as the target
-  (bounds-checked against the box's length word), and `call_indirect` with
-  arity+1. Measured, not inferred — a two-arg `f(x, y)` through an `fn` param
-  emits exactly that, and it works only because the Fern CALL SITE lambda-lifts
-  the argument: the caller allocates `__fern_arr_box(1)`, stores a generated
-  `<fn>$wrap0` at `box[0]`, and that wrapper takes `(__env, a, b)` and discards
-  `__env`.
+  Its find loop has three arms keyed on `keykind`: string, i32, and
+  struct/enum, which calls the key type's derived `__fn_<K>__eq` through a
+  pointer the op site used to put in `%r8`. The pointer was the first trap.
+  Fern's indirect-call lowering has two branches and the env-first one is
+  tested first: every `fn`-typed parameter is unconditionally marked a closure
+  local, so `eqfn(a, b)` pushes the param as an `i32[]` env box, reads `box[0]`
+  as the target — bounds-checked against the box's length word — and calls with
+  arity+1. That is right for a Fern closure and wrong for a bare code address,
+  which would be read as a target pointer and an array length. It works for
+  ordinary Fern code only because the CALL SITE lambda-lifts the argument,
+  allocating `__fern_arr_box(1)` and storing a generated `<fn>$wrap0` at
+  `box[0]`.
 
-  A bare code address in `%r8` is none of those things: handing one to an
-  `fn`-typed parameter reads the callee's own first instruction word as a
-  target and its second as an array length.
+  The fix is not a floor primitive: `is_closure_local` is keyed on the DECLARED
+  TYPE, so the parameter is `eqfn: i32` and misses the closure branch entirely,
+  taking the plain-indirect one below it. `load_local` + `call_indirect` is
+  instruction-for-instruction the stack-ABI call the hand-asm wrote by hand.
 
-  **The parameter simply must not be `fn`-typed.** `is_closure_local` is keyed
-  on the declared type, so a parameter declared `i32` misses the closure branch
-  and takes the plain-indirect one below it, which emits `load_local` +
-  `call_indirect` — the bare address straight from the parameter, no env box
-  and no arity+1. Measured: `function callraw(f: i32, x: i32, y: i32): boolean
-  { return f(x, y); }` emits `movq -8(%rbp), %r11` / `call *%r11` with the two
-  arguments reversed into stack-ABI order and `addq $16, %rsp` after, which is
-  exactly the sequence the hand-asm writes by hand.
+  The second trap was that the string arm could not be expressed at all: on the
+  raw floor the keys are i32 box pointers and `==` is an integer compare.
+  `__fern_str_eq` as a surface spelling — a runtime symbol accepted the way the
+  `__rc_dec` hooks are, lowering to the `op_str_eq` that `a == b` on two
+  strings already uses — is what closed it.
 
-  So the eq pointer needs no floor primitive and no ABI change — the helper
-  takes `eqfn: i32`, and the op site passes that address as an ordinary stack
-  argument rather than in `%r8`, the same conversion every other migrated
-  helper's op site already went through.
-
-  **The remaining obstacle is polymorphism, not the pointer.** One
-  `__fern_map_delete` serves all three key kinds, and a Fern body cannot
-  compare a string key without a `str_eq` it can NAME. Written on the raw floor
-  the keys are `i32` box pointers, and `a == b` on two `i32`s is an integer
-  compare, not a string compare; there is no surface spelling that reaches
-  `__fern_str_eq` from a raw pointer. Two ways out, neither yet taken:
-
-  - **Recognise the runtime symbol.** Teach irlower to lower
-    `__fern_str_eq(a, b)` to `op_str_eq`, exactly as it already recognises
-    `__fern_rc_dec` / `__fern_arr_dec` by their symbol names for the RC hooks.
-    Smallest change, keeps ONE body, and the op already exists.
-  - **Specialise per key kind.** Emit `rt_src_map_delete` three times with
-    correctly-typed parameters (`string[]`/`string`, `i32[]`/`i32`, raw+`eqfn`),
-    so each arm's comparison is ordinary typed Fern. Deletes the runtime
-    keykind dispatch too, at the cost of three bodies where a program uses
-    three kinds.
-
-  Note the result type while reading the hand-asm: `m.without(k)` is
-  `(Map[K, V], boolean)`, not a `Map`. The 16-byte two-slot box the helper
-  returns IS the tuple, so `op_map_delete`'s own comment — "pops [map, key]
-  → the map with that key removed" — is describing the surface intent, not the
-  value. Assigning it to a `Map`-typed variable is an E003 the front end
-  catches; `asm_ir_run.fern` does NOT type-check, so a probe driven through it
-  compiles the ill-typed program and segfaults.
+  Two more worth not rediscovering. The result is a two-element TUPLE, and a
+  tuple's layout is NOT an array's: element i sits at word i, element 0
+  deliberately overwriting the length word, where an array's element i sits at
+  word i+1. And the helper is gated on a `map_delete` need of its OWN, not on
+  `maps`: the Fern body is markedly larger than the hand-asm, so riding the
+  bundle cost a non-deleting map program +17.6% (26617 → 31308 bytes) and two
+  size-ceiling tests caught it. Splitting the need also stopped emitting a
+  delete body for programs that never call `.without`, which the hand-asm had
+  always done — the same program now emits 24315 bytes, smaller than before the
+  migration.
 
   **strbuf is deferred, and the reason is storage, not length.** Its three
   helpers are trivial — set a word, copy bytes and bump a word, drain into a

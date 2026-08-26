@@ -571,6 +571,24 @@ miscompiled at runtime (#5001 / #5007 / #5009 / #5026, plus the param / branch /
 transitive / direct-index fixes). Probe for the path, then probe differentially
 for the answer.
 
+### The emit drivers do not type-check, so a bad probe looks like a bad compiler
+
+`asm_ir_run.fern` is a raw emit harness: it compiles whatever it is handed. It
+accepts `var x: i32 = "hello";` and emits assembly for it. So an ill-typed probe
+driven through it produces a binary that segfaults, which is indistinguishable
+from a codegen bug until you check.
+
+Run a KNOWN-BAD program through the same path before believing any probe
+failure. If the control compiles too, the driver is not checking and the
+failure is your program. The front end (`fern.fern`) is what type-checks, and
+it rejects both with the same E003 native and the interpreter give.
+
+This cost two wrong diagnoses in one session — a reported SIGSEGV in
+`Map.without` that was an ill-typed test (`m.without(k)` is
+`(Map[K, V], boolean)`, not a `Map`), and a reported checker divergence that
+was the same thing one layer up. Both would have been caught by one control
+run.
+
 ## Diagnostic modes
 
 When a gate fails and the failure is a heap corruption rather than a wrong
