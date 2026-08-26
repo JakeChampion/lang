@@ -3031,6 +3031,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "__syscall4") { return ty_i32(); }
                     if (id.name == "__syscall5") { return ty_i32(); }
                     if (id.name == "__raw_environ") { return ty_i32(); }
+                    // Runtime-symbol spelling of the string comparison (#2649),
+                    // for helper sources whose strings are raw box pointers.
+                    if (id.name == "__fern_str_eq") { return ty_bool(); }
                     // Fixed static scratch buffer for syscall leaves (timespec /
                     // stat) — reused, never freed. Returns the buffer ptr as i32.
                     if (id.name == "__raw_scratch") { return ty_i32(); }
