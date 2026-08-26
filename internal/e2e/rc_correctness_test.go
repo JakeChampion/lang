@@ -25,6 +25,73 @@ var rcCorpus = []struct {
 	skipWasm string
 }{
 	{
+		// The per-ITERATION half of the same collision, which pins the
+		// arraySetConsumedReinit side of the guard: the declaration, the
+		// alias and the consuming `.with` all sit inside the loop body, so
+		// each iteration re-runs them. The straight-line cases below exercise
+		// arraySetConsumed only, and would pass with half the guard removed.
+		// Before the fix: interpreter 30, x86-64 54.
+		name: "array_with_inplace_receiver_alias_in_loop",
+		src: `
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var xs: i32[] = [1, 2, 3];
+        var y: i32[] = xs;
+        var zs: i32[] = xs.with(0, 9);
+        acc = acc + y[0] + zs[0];
+        i = i + 1;
+    }
+    return (acc - 30) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same collision on the simplest possible array: no rc-tracked
+		// element, so nothing is freed and nothing over-releases — the
+		// in-place `.with` is just VISIBLE through the alias. i32[] pins the
+		// value-semantics half on its own, since the string[] case below
+		// could otherwise pass for an rc-accounting bug.
+		// Before the fix: interpreter 19, x86-64 / arm64 / wasm 99.
+		name: "array_with_inplace_receiver_alias_scalar_elems",
+		src: `
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var y: i32[] = xs;
+    var zs: i32[] = xs.with(0, 9);
+    var c: i32 = y[0];
+    var d: i32 = zs[0];
+    return (c - 1) + (d - 9) + __rc_underflow_count();
+}`,
+	},
+	{
+		// `.with` on a bare-ident receiver at its LAST use takes
+		// __fern_arr_cow_inplace's rc == 1 branch and mutates the buffer in
+		// place. An alias of that receiver (`var y = xs`) is a borrow
+		// candidate for the #4402 dead-alias cancellation, and cancelling its
+		// transfer inc is what leaves the buffer at rc 1 — so the in-place
+		// mutation becomes visible through the alias and array value semantics
+		// break. Both reads are pinned: y[0] is still the 11-char original
+		// ("aaaaaaaaaa" + "!") and zs[0] is the 3-char replacement.
+		// Before the arraySetConsumed guard, x86-64 and arm64 both read 3 for
+		// y[0] while the interpreter read 11.
+		// The two reads must be BOUND, not folded into the return
+		// expression: inlining them changes the use order enough that the
+		// borrow is not taken and the case goes vacuous (measured — the
+		// inlined form returns 0 on a compiler without the guard).
+		name: "array_with_inplace_receiver_alias_keeps_inc",
+		src: `
+function mkstr(p: string): string { return p + "!"; }
+function main(): i32 {
+    var xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("b")];
+    var y: string[] = xs;
+    var zs: string[] = xs.with(0, mkstr("zz"));
+    var c: i32 = y[0].len();
+    var d: i32 = zs[0].len();
+    return (c - 11) + (d - 3) + __rc_underflow_count();
+}`,
+	},
+	{
 		// string[] whose elements alias a live local. Exercises the native
 		// single-word x86-64 string[] element reclaim (__fern_drop_arr_str:
 		// per-element __fern_str_dec then free the buffer); elements are

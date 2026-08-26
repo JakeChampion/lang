@@ -4644,6 +4644,28 @@ func (b *builder) computeBorrowedAliases() {
 		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
 			return true
 		}
+		// A `.with` receiver whose reference __fern_arr_cow_inplace CONSUMES
+		// is not borrowable, and neither is an alias of one. The helper takes
+		// the receiver's own reference over: at rc == 1 it mutates the buffer
+		// IN PLACE and the element it overwrites is deep-dropped. The alias
+		// inc is the only thing holding that buffer at rc 2, i.e. the only
+		// reason the helper copies instead — cancelling it makes the mutation
+		// visible through the alias, which is a use-after-free once the
+		// overwritten element is freed and a silent value-semantics break
+		// when it is not.
+		//
+		// arraySetConsumedReinit needs no test of its own: it is populated
+		// only from names already in arraySetConsumed, so the loop-body shape
+		// is covered by the line below rather than by a second clause.
+		//
+		// The self-host compiler does NOT have this bug today, because its rc
+		// port has not taken the dead-alias cancellation yet — measured: it
+		// answers 19 and 30 where both natives answered 99 and 54. Whoever
+		// ports #4402 across (roadmap goal 2) has to port this guard with it,
+		// or the collision arrives with it.
+		if b.rc.arraySetConsumed[x] || b.rc.arraySetConsumed[y] {
+			return true
+		}
 		if !b.rc.freeEligible[x] || !b.rc.freeEligible[y] {
 			return true
 		}
