@@ -312,20 +312,6 @@ func TestGeneralReuseFiresForTuplePointerElem(t *testing.T) {
 	}
 }
 
-func TestGeneralReuseSkipsTupleToStructKindMismatch(t *testing.T) {
-	ip := lowerForTest(t, `struct Pair { a: i32, b: i32 }
-function main(): i32 {
-    var a: (i32, i32) = (1, 2);
-    var s: i32 = a.0 + a.1;
-    var b: Pair = Pair { a: s, b: 9 };
-    return b.a + b.b;
-}`)
-	f := funcByName(ip, "main")
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("tuple D must not pair with struct C (kind mismatch), got %d", got)
-	}
-}
-
 // Fires for ENUM sources: a dead, owned enum local (uniform-droppable, here a
 // single-payload Wrap(i32[])) is reused for a later same-enum construction.
 func TestGeneralReuseFiresForEnum(t *testing.T) {
@@ -342,19 +328,22 @@ function main(): i32 {
 	}
 }
 
-// Skips: an enum D never pairs with a struct C, even at the same box class.
-func TestGeneralReuseSkipsEnumToStructKindMismatch(t *testing.T) {
+// Cross-KIND at the same box class (#4402 opt 3b): an enum D hands its box to
+// a struct C. The enum's box is tag + one pointer payload (class 32), which the
+// two-word struct matches exactly; D's old payload is released through D's own
+// uniform drop loads before C's fields are stored.
+func TestGeneralReuseFiresEnumDonorStructRecipient(t *testing.T) {
 	ip := lowerForTest(t, `enum Wrapper { Wrap(i32[]) }
-struct Holder { items: i32[] }
+struct Holder { n: i32, items: i32[] }
 function main(): i32 {
     var a: Wrapper = Wrap([1, 2]);
     var s: i32 = match (a) { Wrap(xs) => xs[0] };
-    var b: Holder = Holder { items: [s, 3] };
-    return b.items[0];
+    var b: Holder = Holder { n: s, items: [s, 3] };
+    return b.items[0] + b.n;
 }`)
 	f := funcByName(ip, "main")
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("enum D must not pair with struct C (kind mismatch), got %d", got)
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("enum D should donate its box to a same-class struct C, got %d", got)
 	}
 }
 

@@ -2870,6 +2870,11 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		return "", nil
 	}
 
+	// pairedTo lists, per donor, the constructions already paired with it —
+	// normally at most one (`consumed` is 1:1), more only when `share` admits
+	// a mutually-exclusive second claimant (cross-branch sharing, below).
+	pairedTo := map[string][]ast.Expr{}
+
 	// attemptPair tries to pair construction C (cName / cNode) with a dead,
 	// owned source D drawn from `declIdx` (name → declaration index in some
 	// statement list), where D must be declared before `k` and dead from `k`
@@ -2877,7 +2882,11 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 	// scoped to C's own block) and the cross-block pass (scoped to the function
 	// body, with k the top-level statement that ENCLOSES a nested C). Records the
 	// pairing in `sources`/`consumed` and returns true on success.
-	attemptPair := func(cName string, cNode ast.Expr, declIdx map[string]int, k int, deadFrom func(string, int) bool) bool {
+	//
+	// `share`, when non-nil, re-admits an ALREADY-consumed donor: it reports
+	// whether C can never run in the same pass as the constructions already
+	// holding D's token. Only the cross-branch pass passes it.
+	attemptPair := func(cName string, cNode ast.Expr, declIdx map[string]int, k int, deadFrom func(string, int) bool, share func(prev []ast.Expr) bool) bool {
 		cKind, cTypeName, cClass, ok := reuseClassOf(cName)
 		if !ok {
 			return false
@@ -2902,7 +2911,10 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		// byte-equal self-host gate when two D's qualify for one C.
 		bestD, bestDi := "", -1
 		for dName, di := range declIdx {
-			if di >= k || dName == cName || consumed[dName] || reassigned[dName] {
+			if di >= k || dName == cName || reassigned[dName] {
+				continue
+			}
+			if consumed[dName] && (share == nil || !share(pairedTo[dName])) {
 				continue
 			}
 			// A D whose box was MOVED into another live container (an array /
@@ -2925,23 +2937,16 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			if !b.rc.freeEligible[dName] || !b.localNameUnique(dName) {
 				continue
 			}
-			dKind, dTypeName, dClass, ok := reuseClassOf(dName)
-			if !ok || dKind != cKind {
-				continue
-			}
-			// Same NAMED struct/enum pairs at any size (D's box is reused as
-			// itself). Otherwise (a different struct type, or a tuple) pair
-			// only when D and C fall in the SAME freelist class — C's box
-			// fits D's reused block and __alloc_reuse's runtime class check
-			// matches. D's old fields are released and C's stored using each
-			// one's OWN layout (see the hooks). Enums require the same type
-			// (their old-payload free walks D's uniform drop loads; pairing a
-			// different enum of equal class is left to a later cut).
-			sameNamed := (cKind == "struct" || cKind == "enum") && dTypeName == cTypeName
-			if cKind == "enum" && !sameNamed {
-				continue
-			}
-			if !sameNamed && dClass != cClass {
+			// D and C pair whenever their boxes fall in the SAME freelist
+			// class, whatever KIND each is (struct / tuple / enum): C's box
+			// then fits D's block exactly and __alloc_reuse's runtime class
+			// check matches. Neither layout is imposed on the other — D's old
+			// pointer fields are released through D's own layout
+			// (reuseSourceLayout) before C stores its own — so a tuple can
+			// hand its box to a struct and an enum to either. Same-type pairs
+			// are the degenerate case: equal layouts, equal class.
+			_, _, dClass, ok := reuseClassOf(dName)
+			if !ok || dClass != cClass {
 				continue
 			}
 			if !deadFrom(dName, k) {
@@ -2954,6 +2959,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		if bestD != "" {
 			sources[cNode] = bestD
 			consumed[bestD] = true
+			pairedTo[bestD] = append(pairedTo[bestD], cNode)
 			return true
 		}
 		return false
@@ -3016,7 +3022,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				deadFrom := deadFromIn(blk.Stmts)
 				for k, st := range blk.Stmts {
 					if cName, cNode := constructionAt(st); cNode != nil {
-						attemptPair(cName, cNode, declIdx, k, deadFrom)
+						attemptPair(cName, cNode, declIdx, k, deadFrom, nil)
 					}
 				}
 			}
@@ -3067,7 +3073,25 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				if _, done := sources[cNode]; done {
 					return true // already paired (same-block, or a closer ancestor)
 				}
-				attemptPair(cName, cNode, declIdx, k, deadFrom)
+				// CROSS-BRANCH sharing: a donor already claimed by an earlier
+				// construction under this SAME enclosing statement may be
+				// claimed again when the two sit in different arms of an
+				// `if` / `match` nested in it — no single pass through st
+				// reaches both, so at most one of them consumes the token.
+				// (The claim is safe even if the exclusivity were wrong: the
+				// first consumer zeroes D's slot, so a second claim reads a
+				// null token and __alloc_reuse degrades to a fresh alloc.
+				// Exclusivity is what makes the second token sequence worth
+				// its code, not what makes it sound.)
+				share := func(prev []ast.Expr) bool {
+					for _, p := range prev {
+						if !mutuallyExclusive(st, p, cNode) {
+							return false
+						}
+					}
+					return true
+				}
+				attemptPair(cName, cNode, declIdx, k, deadFrom, share)
 				return true
 			})
 		}

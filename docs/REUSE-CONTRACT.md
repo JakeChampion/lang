@@ -79,12 +79,28 @@ Locked by: `internal/ir/enum_reuse_test.go`.
 
 ### R3 — general pairing reuse (cross-local FBIP)
 
-A construction C (`*ast.StructLit` / `*ast.TupleLit`) takes over
-the box of a *different* dead, owned local D of the same layout —
-the general Perceus reuse-token win beyond self-overwrite.
-Selection: `computeReuseSources`; D is marked `reuseConsumed` so
-the precise-drop pass doesn't double-free it.
-Locked by: `internal/ir/general_reuse_test.go`.
+A construction C (a struct / tuple literal or a payload-carrying
+enum variant) takes over the box of a *different* dead, owned
+local D — the general Perceus reuse-token win beyond
+self-overwrite. Selection: `computeReuseSources`; D is marked
+`reuseConsumed` so the precise-drop pass doesn't double-free it.
+
+D and C pair on **box class**, not on type or kind: any two
+reuse-eligible boxes that round to the same freelist class swap
+freely — struct↔tuple↔enum included. Neither layout is imposed on
+the other, because D's old pointer fields are released through
+D's OWN layout (`reuseSourceLayout`) before C stores its own.
+
+One dead D can feed a construction in **every arm** of an `if` /
+`match` nested in the statement it dies before: only one arm runs
+per pass, so the single token is claimed at most once
+(`mutuallyExclusive`, `internal/ir/rc_cross_branch.go`). Two
+constructions that can both run — straight-line siblings, or
+separate iterations of a loop — still share nothing: the first
+consumer zeroes D's slot.
+Locked by: `internal/ir/general_reuse_test.go`,
+`internal/ir/cross_branch_reuse_test.go`,
+`internal/e2e/rc_cross_branch_reuse_test.go`.
 
 ### R4 — consuming-match reuse (C2, zero-alloc FBIP)
 
@@ -136,7 +152,9 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 - **Literal/untracked sources**: `rhsTainted`'s conservative
   default (e.g. scalar enums from literal args in R2).
 - **Layout mismatch**: R2 needs `uniformEnumBoxSize`; R3 needs
-  same box layout.
+  the same box CLASS (a wider donor cannot fit a narrower
+  recipient's block, and `__alloc_reuse`'s runtime class check
+  would decline it anyway).
 - **Liveness**: any read of the donor after the construction
   site kills the pairing (and in R6, forces the copy path — that
   one is a *correctness* gate, not a missed optimisation).

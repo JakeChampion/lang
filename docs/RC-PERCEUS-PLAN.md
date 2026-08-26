@@ -3261,6 +3261,31 @@ it the better candidate to port ONCE, but that decision belongs to
 E4, not this evaluation. `docs/REUSE-CONTRACT.md`'s "Known gaps"
 entry points here.
 
+### Pairing widened: cross-branch + cross-class (2026-08-26)
+
+#4402 opt 3, in the PLDI pairing itself (both strategies inherit
+it — every gate lives in the shared `attemptPair`):
+
+- **Cross-branch sharing.** The cross-block pass no longer stops
+  at the first claimant: a donor already consumed is re-offered to
+  a construction that `mutuallyExclusive` proves cannot run in the
+  same pass (a different arm of an `if` / `match` under the same
+  enclosing statement). `if c { x = T{…} } else { y = T{…} }` with
+  one dead donor reused ONE arm's box before and both arms' now.
+  Soundness rests on the emit path, not the analysis: the first
+  consumer zeroes D's slot, so a second claim would read a null
+  token and `__alloc_reuse` would allocate fresh. Exclusivity is
+  what makes the second token sequence worth its code.
+- **Cross-class pairing.** The kind/type gates are gone; D and C
+  pair on equal freelist class alone, struct↔tuple↔enum included.
+  The emit path already released D's old fields through D's own
+  layout (`reuseSourceLayout`) and already passed D's size to
+  `__alloc_reuse`, so the static gate was strictly narrower than
+  the lowering. The class equality itself stays: statically
+  different classes can only ever take the runtime mismatch path
+  (free-then-alloc), which buys an early free and no reuse — that
+  is precise-drop's job, not the reuse token's.
+
 ## Testing strategy
 
 Three layers:
