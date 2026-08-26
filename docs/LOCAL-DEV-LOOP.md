@@ -216,6 +216,15 @@ pages, so bytes bumped land in `sys` and not in `user`, and a change that
 deletes allocation without deleting work can be invisible to a clock. Read RSS
 for the verdict and `__heap_bump_bytes()` for a gate that survives the host.
 
+**For the self-host compiler itself, `scripts/selfhost-alloc-bench` is the
+harness** — it builds a `FERN_LEAKCHECK`-instrumented compiler, compiles
+`checker.fern` with it for an exact allocation count, and reads peak RSS out of
+a scratch cgroup. Two details there are what separate a steady reading from a
+drifting one: a **fresh** cgroup per run (a v1 memory cgroup charges page cache
+to whoever faulted it in, so a reused one climbs) and emitting to `/dev/null`
+(8 MB of asm is otherwise charged as cache). With both it repeats to the
+megabyte. `docs/SELFHOST-SYMBOL-INTERNING.md` is the worked example.
+
 **It returns i64.** Bind it to an `i64` (`var b: i64 = __heap_bump_bytes();`);
 narrowing to an exit code needs an explicit `as i32`, which is what the existing
 corpus does. It used to be declared i32 while every runtime helper computed the
