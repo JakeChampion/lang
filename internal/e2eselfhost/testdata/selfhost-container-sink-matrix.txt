@@ -8,11 +8,26 @@
 # retain, an "APOWNED:" stamp from the pass that granted the container its
 # element walk, and an rc-gated release on both owners.
 #
-# Native is clean on every cell. A `leak` in the self-host column is a position
-# whose release protocol is unfinished, so struct_box_sink_stored refuses the
-# source's credit outright rather than dangle. Retiring one is a slice: stamp
-# the container's element sites, add the store's retain, admit the counted
-# element in that container's own credit, and flip its two cells here.
+# BOTH columns are clean on every cell, and that is the point of the file now:
+# it is a regression gate, not a to-do list. It was not always — it opened with
+# eight positions leaking, each retired by its own slice, and the shape those
+# slices converged on is what a new cell should be read against:
+#
+#   - the construction RETAINS a bare-ident element (skipped at a MOVE site,
+#     where the container takes over the source's reference instead);
+#   - an "APOWNED:" stamp from the pass that granted the container its element
+#     walk says which sites the container owns;
+#   - the container's credit admits the counted element;
+#   - BOTH releases are rc-gated, the source's via "SINKSHARE:". Half of that
+#     pairing is not half a fix: with one owner gated and the other walking
+#     statically, whichever sweep runs first frees the buffers and the other
+#     frees them again. It shows up as exit 99 and NOT in the census, which
+#     reads allocs == frees at live_bytes 0.
+#
+# A `leak` appearing here again means a position's release protocol regressed to
+# refusing the source's credit rather than dangling. Exit codes must match
+# between the compilers on every cell, and the underflow guard fails hard on
+# either side: an over-release is a bug in any cell, listed or not.
 
 arrlit__moved         clean clean  the literal admits a bare ident, stamped like a self-append
 arrlit__live          clean clean  counted element: [p] retains, both owners release rc-gated
@@ -30,8 +45,8 @@ variant__moved        clean clean  a MOVED struct payload: the enum's rc-gated p
 variant__live         clean clean  the ctor retains a struct payload, so both owners release under the rc gate
 variant_unqual__moved clean clean  the bare spelling must measure identically — it used not to
 variant_unqual__live  clean clean  and the bare spelling measures identically — the rc plan modelled only one of them
-option__moved         clean leak   NOT the store: the credit needs a match STATEMENT, and this cell reads through a match EXPRESSION
-option__live          clean leak   same — see option_stmt for the store's own axis
+option__moved         clean clean  the match EXPRESSION is an inlined IIFE, so consuming_match_of sees the match through it
+option__live          clean clean  and the store's own axis was already counted — see option_stmt
 option_stmt__moved    clean clean  opt_make retains the struct box, so the option co-owns it and both releases are rc-gated
 option_stmt__live     clean clean  a counted payload: the source stays live and each owner releases once
 result_stmt__moved    clean clean  `Ok(p)` is the same box through the same lowering — it must measure identically
