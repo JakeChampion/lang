@@ -10,8 +10,25 @@
 # 188 crossings / 812 bytes on 2026-08-04 and called it noise. By 2026-08-16 it
 # was 77,985 crossings and 21.4 GB — a seven-order-of-magnitude regression that
 # went twelve days unnoticed because nothing measured it outside a human typing
-# an env var (#6911). The numbers below are a CEILING to keep ratcheting down,
-# so a move upward here is a regression, not a ceiling being approached.
+# an env var (#6911).
+#
+# IT IS NOT A CEILING, AND A MOVE UPWARD IS NOT AUTOMATICALLY A REGRESSION.
+# The subject is the self-host compiler compiling checker.fern, so the number
+# scales with the compiler's OWN sources: every feature that adds `ir.Op`s
+# through irlower.LowerState.emit, or names through checker.Scope.bind, adds
+# appends and therefore bytes. Between f350a01 and ce72d61 it rose 12% with no
+# regression in it — 8d3fef0 (`if let` / `let … else` on the shared pattern
+# grammar, #2698) accounts for 5.8% of that on its own, and d61e5d3 (a
+# self-host rc fix that stopped a struct rebind freeing a shared box's field)
+# bought 18% more crossings as the price of being correct. Read a move here as
+# a QUESTION — which commit, and did it add compiler or add copying — and
+# update the number in the same PR when the answer is the former.
+#
+# THE FIRST BASELINE WAS NEVER MEASURED AT THE COMMIT THAT CARRIED IT. f350a01
+# checked in 268,028,888 / 282,154; re-measured, that commit reads 377,583,648
+# / 358,568 (#7545). The 268 M figure and the gdb census agreeing with it to 3%
+# both describe some earlier commit, so treat the paragraphs below as history
+# rather than as readings of anything still in the tree.
 #
 # THE NUMBERS JUMPED WHEN THE INSTRUMENT DID, once. Every reading before
 # #6888 §4d.6 counted SCALAR-element appends only: the tally lived inside
@@ -61,5 +78,5 @@
 # and the aarch64 lane does not yet build a self-host compiler for it. An
 # unbaselined arch reports UNBASELINED rather than failing.
 
-x86_64/checker.cliff_bytes	268028888
-x86_64/checker.cliff_count	282154
+x86_64/checker.cliff_bytes	430210116
+x86_64/checker.cliff_count	458270
