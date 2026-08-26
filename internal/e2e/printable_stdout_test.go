@@ -94,12 +94,7 @@ func TestDifferential_PrintableStdout(t *testing.T) {
 	tally := newLegTally(have, numMinRunRatio)
 	t.Cleanup(func() { tally.check(t) })
 
-	shardIdx, shardCount := diffOracleShard(t)
-	seedCount := printableSeeds(t)
-	for seed := uint64(0); seed < seedCount; seed++ {
-		if seed%shardCount != shardIdx {
-			continue
-		}
+	for _, seed := range diffOracleWindow(t, printableSeeds(t)) {
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()

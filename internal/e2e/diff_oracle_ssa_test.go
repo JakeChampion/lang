@@ -87,14 +87,8 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 
-	shardIdx, shardCount := diffOracleShard(t)
-	seedCount := printableSeeds(t)
-
 	var sampled, ran int64
-	for seed := uint64(0); seed < seedCount; seed++ {
-		if seed%shardCount != shardIdx {
-			continue
-		}
+	for _, seed := range diffOracleWindow(t, printableSeeds(t)) {
 		seed := seed
 		sampled++
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
@@ -140,14 +134,8 @@ func TestDifferential_Arm64SSAExitByte(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 
-	shardIdx, shardCount := diffOracleShard(t)
-	seedCount := diffOracleSeeds(t)
-
 	var sampled, ran int64
-	for seed := uint64(0); seed < seedCount; seed++ {
-		if seed%shardCount != shardIdx {
-			continue
-		}
+	for _, seed := range diffOracleWindow(t, diffOracleSeeds(t)) {
 		seed := seed
 		sampled++
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
