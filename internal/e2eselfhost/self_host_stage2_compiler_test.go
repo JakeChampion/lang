@@ -10,11 +10,11 @@ import (
 // TestSelfHostStage2Compiler builds a reusable, stdin-driven
 // self-hosted compiler and exercises it across real language features.
 //
-// Stage 1 bundles lexer.fern + parser.fern + asm.fern with an entry
+// Stage 1 bundles lexer.fern + parser.fern + asm_ir.fern with an entry
 // that reads a program from stdin (a read_line loop), lexes → parses →
 // emits, and prints the asm. flatten.bundle merges them and
-// asm.emit_module lowers the whole thing; gcc links it into ONE
-// self-hosted compiler binary — effectively a Fern-authored `fern`.
+// asm_ir.emit_module_or_error lowers the whole thing; gcc links it into
+// ONE self-hosted compiler binary — effectively a Fern-authored `fern`.
 //
 // Stage 2 then feeds that single compiler a table of programs over
 // stdin and assembles + runs each emitted result, asserting the exit
@@ -45,7 +45,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"    return 0;\n" +
 		"}\n"
 	files := map[string]string{"main.fern": entry}
-	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "irverify", "irverifystack", "irverifygate", "asm_ir"} {
+	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "irverify", "irverifystack", "irverifygate", "ircore", "asm_ir"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
 			t.Fatalf("read %s.fern: %v", m, err)
