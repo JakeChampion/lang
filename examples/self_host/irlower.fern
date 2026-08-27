@@ -10735,6 +10735,13 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // passes them on the operand stack), and the function-entry
     // param copy is a count-agnostic loop. So a call of any arity
     // lowers exactly as the retired AST path did.
+    return lower_call_named_generic(e, c, cid, s);
+}
+
+// The generic direct-call lowering: everything reached once the builtin-name
+// intercepts above have declined the callee. Lowers the arguments, brackets the
+// ones a callee may grow or free, emits the call, and releases what it retained.
+function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var sc: LowerState = s;
     var ai: i32 = 0;
     var lat_slots: i32[] = [];
@@ -19319,73 +19326,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         _ => { }
     }
     if (clo_init) {
-        // #4354 capture RC: classify BEFORE lowering — closure_captures
-        // resolves against the locals visible at the env-build site.
-        var clo_kinds: string = "";
-        if (s.clo_rc_approved(v.name)) {
-            match (v.init) {
-                ast.ExprLambda(clam) => {
-                    var ccaps: string[] = closure_captures(clam, s);
-                    var cki: i32 = 0;
-                    while (cki < ccaps.len()) {
-                        clo_kinds = clo_kinds + closure_capture_kind(s, ccaps[cki]);
-                        cki = cki + 1;
-                    }
-                },
-                _ => {}
-            }
-        }
-        var cv: LowerState = lower_expr(v.init, s);
-        if (!cv.ok) { return cv; }
-        var cvb: LowerState = cv.add_local(v.name);
-        cvb = cvb.mark_reclaim_site(cvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-        var cslot: i32 = cvb.slot_of(v.name);
-        cvb = cvb.mark_arr(cslot, true);
-        cvb = cvb.mark_closure_local(v.name);
-        // Record an Option/Result return so a later `match (f())` can name its
-        // scrutinee type — the closure-LOCAL sibling of the fn-param seeding.
-        // (The annotated named-fn-bound form is seeded at the top of
-        // lower_stmt_var; this covers unannotated lambda / closure inits.)
-        var cv_optret: string = closure_init_opt_ret(v.init, cvb);
-        if (cv_optret != "") { cvb = cvb.mark_closure_opt_ret(v.name, cv_optret); }
-        // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from
-        // a RETCLO2 factory call) recognises g()'s result as a closure.
-        if (init_retclo) { cvb = cvb.mark_closure_local("RETCLO$" + v.name); }
-        cvb = cvb.emit(ir.op_store_local(cslot));
-        // #4557 alias retain: a bare-ident closure alias shares the
-        // env box; inc it so this slot's exit-sweep dec is balanced
-        // (fresh lambda / __mkclo$ / element inits are already owned).
-        match (v.init) {
-            ast.ExprIdent(_) => {
-                cvb = cvb.retain(cslot, reclaim_site_key_of(v.name, v.line, v.col));
-            },
-            _ => {}
-        }
-        // #4354 build-site retain: for each classifiable capture, read it
-        // back from the stored env box (env[ci+1], the same arr_get the
-        // closure call path uses) and __fern_rc_inc it — the rc-aware inc
-        // (null / literal / immortal-view guarded). Balanced by the exit
-        // sweep's env release, driven by the SAME kinds string. Only
-        // emitted when at least one capture is classifiable, so a
-        // scalar-only closure stays byte-identical.
-        var has_rc_cap: boolean = false;
-        var ckj: i32 = 0;
-        while (ckj < clo_kinds.len()) { if (clo_kinds[ckj] != b'.') { has_rc_cap = true; } ckj = ckj + 1; }
-        if (has_rc_cap) {
-            var ckk: i32 = 0;
-            while (ckk < clo_kinds.len()) {
-                if (clo_kinds[ckk] != b'.') {
-                    cvb = cvb.emit(ir.op_load_local(cslot));
-                    cvb = cvb.emit(ir.op_const_i32(ckk + 1));
-                    cvb = cvb.emit(ir.op_arr_get(32));
-                    cvb = cvb.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                    cvb = cvb.emit(ir.op_drop());
-                }
-                ckk = ckk + 1;
-            }
-            cvb = cvb.add_clo_cap_kinds(v.name + "|" + clo_kinds);
-        }
-        return cvb;
+        return lower_stmt_var_closure(v, init_retclo, s);
     }
     // 2-element tuple destructure `var (a, b) = E` — the parser encodes
     // the name as "a,b". Eval the tuple box into a fresh temp, then bind
@@ -19505,184 +19446,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         }
     }
     if (comma >= 0) {
-        // N-element destructure `var (a, b, c, …) = E`: the parser encodes
-        // the name as "a,b,c,…". Eval the tuple box into a fresh temp, then
-        // bind name[i] = tuple_get(i). Scalar / string / struct elements
-        // (the same set the tuple LITERAL admits — a heap element bails the
-        // init lowering, so it never reaches here).
-        // Split on TOP-LEVEL commas: a NESTED position rides as its own
-        // parenthesised list (`"a,(b,c)"`), and its commas belong to that
-        // level, not this one.
-        var dnames: string[] = [];
-        var dstart: i32 = 0;
-        var dp: i32 = 0;
-        var ddepth: i32 = 0;
-        while (dp <= v.name.len()) {
-            if (dp == v.name.len() || (v.name[dp] == b',' && ddepth == 0)) {
-                dnames = dnames.append(slice_unchecked(v.name, dstart, dp));
-                dstart = dp + 1;
-            } else if (v.name[dp] == b'(') { ddepth = ddepth + 1; }
-            else if (v.name[dp] == b')') { ddepth = ddepth - 1; }
-            dp = dp + 1;
-        }
-        var dn: i32 = dnames.len();
-        var td_at: string = parser.destr_marker_split(v.type_name).at;
-        var dt: LowerState = lower_expr(v.init, s);
-        if (!dt.ok) { return dt; }
-        // An `@` binding names the temp holding the whole tuple, as it does
-        // for the struct form.
-        var tmp: string = td_at;
-        if (tmp.len() == 0) { tmp = "$tdst" + util.i32_to_string(dt.locals.len()); }
-        dt = dt.add_local(tmp);
-        var tmp_slot: i32 = dt.slot_of(tmp);
-        dt = dt.emit(ir.op_store_local(tmp_slot));
-        var dk: i32 = 0;
-        while (dk < dn) {
-            // A NESTED position `(b,c)` is not a name: bind the inner tuple to
-            // a temp here and destructure that temp again below, which is the
-            // shape the second level already had to work for (`var (s, b) = p`
-            // over a tuple-tagged local).
-            var dbind: string = dnames[dk];
-            var dnest: string = "";
-            if (dbind.len() >= 2 && slice_unchecked(dbind, 0, 1) == "(") {
-                dnest = slice_unchecked(dbind, 1, dbind.len() - 1) + "";
-                dbind = "$dnest" + util.i32_to_string(dt.locals.len());
-            }
-            dt = dt.add_local(dbind);
-            var dkslot: i32 = dt.slot_of(dbind);
-            // Type the binding from the source tuple's element tag: an
-            // inline `(e0, e1, …)` literal from the element exprs, a tuple
-            // local/param from its tracked tags. (Tags read from `s`, the
-            // pre-destructure scope, where the source elements live.)
-            var dtag: string = "";
-            match (v.init) {
-                ast.ExprTuple(dl) => {
-                    if (dl.elements.len() == dn) { dtag = elem_type_tag(dl.elements[dk], s); }
-                },
-                ast.ExprIdent(did) => { dtag = s.tuple_elem_tag(s.slot_of(did.name), dk); },
-                ast.ExprIndex(dix) => {
-                    // `var (a, b, …) = arr[i]` over a `(tuple)[]` array-of-tuples
-                    // local: the element TUPLE TYPE is recorded on the (is_arr)
-                    // slot's arrarr_elem (#4365). Read element dk's tag out of it —
-                    // the destructure sibling of expr_tuple_elem_tag's ExprIndex arm,
-                    // so a struct / nested-tuple element binds typed instead of
-                    // untyped (which read `p.x` off an unmarked slot and bailed).
-                    match (dix.array) {
-                        ast.ExprIdent(daid) => {
-                            var dasl: i32 = s.slot_of(daid.name);
-                            if (dasl >= 0 && s.is_arr_slot(dasl)) {
-                                var det: string = s.arrarr_elem_of_slot(dasl);
-                                if (det.len() >= 2 && slice_unchecked(det, 0, 1) == "(") { dtag = tuple_type_elem_tag(det, dk); }
-                            }
-                        },
-                        _ => {}
-                    }
-                    // arrarr_elem is only recorded for an ANNOTATED `(tuple)[]`
-                    // local, so `var ps = mk();` (or a bare `mk()[0]`) leaves the
-                    // walk empty and every element read as a 4-byte i32 — an f64
-                    // element then came back garbage with no diagnostic. ExprIndex.ty
-                    // (#6165) already carries the checker's type for this node; this
-                    // is the same walk-first/tag-fills-the-hole fallback
-                    // expr_tuple_elem_tag's ExprIndex arm has, which is why
-                    // `ps[0].1` was right while `var (i, v) = ps[0]` was not.
-                    if (dtag == "" && dix.ty.len() >= 2 && slice_unchecked(dix.ty, 0, 1) == "(") { dtag = tuple_type_elem_tag(dix.ty, dk); }
-                },
-                ast.ExprCall(dcl) => {
-                    // `var (a, b, …) = f()` / `= obj.f()` — recover element
-                    // dk's tag from the tuple-returning function's registry
-                    // entry (free fn by bare name, method by "Type.method").
-                    match (dcl.callee) {
-                        ast.ExprIdent(dcid) => { dtag = csv_nth(resolve_argref_tuple_tags(s.tuple_ret_type(dcid.name), dcl.args, s), dk); },
-                        ast.ExprFieldAccess(dfa) => {
-                            var drty: string = expr_struct_type(dfa.obj, s);
-                            if (drty != "") { dtag = csv_nth(resolve_argref_tuple_tags(s.tuple_ret_type(drty + "." + dfa.field), dcl.args, s), dk); }
-                            else if (dfa.field == "without") {
-                                // `m.without(k)` yields (Map[K,V], boolean):
-                                // element 0 is the receiver's map type, 1 is
-                                // the existed flag. Tag elem 0 with the map
-                                // type so the bound local re-marks as a map
-                                // (else `m2.len()` etc. miscompile) (#2926).
-                                var dwmt: string = "";
-                                match (dfa.obj) {
-                                    ast.ExprIdent(dwid) => { dwmt = s.map_type_of(s.slot_of(dwid.name)); },
-                                    _ => {}
-                                }
-                                if (dwmt != "") {
-                                    if (dk == 0) { dtag = dwmt; } else { dtag = "boolean"; }
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            // Emit the element read at its width (8-byte i64/f64 use the
-            // matching load), then store + type the binding. An i64
-            // element marks the slot i64 (so later uses route through
-            // lower_i64); an f64 element marks it f64.
-            dt = dt.emit(ir.op_load_local(tmp_slot));
-            if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
-            else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
-            else { dt = dt.emit(ir.op_tuple_get(dk)); }
-            dt = dt.emit(ir.op_store_local(dkslot));
-            if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
-            // A closure-BOX element ("clo") binds a closure local so
-            // `f(args)` on the binding dispatches env-first against the box.
-            else if (dtag == "clo") { dt = dt.mark_closure_local(dbind); }
-            else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
-            else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
-            else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
-            else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
-            else if (dtag.len() >= 8 && (slice_unchecked(dtag, 0, 7) == "Option[" || slice_unchecked(dtag, 0, 7) == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
-            // A TUPLE element (`var (p, c) = t` over ((string, i32), i32): p's
-            // tag is the nested tuple's spelling): record p's element tags so a
-            // SECOND-level destructure `var (s, b) = p` (and `p.N` reads)
-            // resolve their element types. Without this the nested tuple bound
-            // untyped and its STRING element read as an unmarked i32 — empty
-            // (#5306 gap 1; the all-i32 shape only worked because the untyped
-            // fallback happens to be i32).
-            else if (dtag.len() >= 2 && slice_unchecked(dtag, 0, 1) == "(") { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
-            // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
-            // slot as an array (the op_tuple_get above read its pointer) so
-            // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
-            // read element's arithmetic wraps.
-            else if (dtag == "i32[]" || dtag == "boolean[]" || dtag == "u32[]" || is_subword_array_type(dtag)) {
-                dt = dt.mark_arr(dkslot, true);
-                if (dtag == "u32[]") { dt = dt.mark_u32(dkslot, true); }
-            }
-            // An 8-byte-element (f64[]/i64[]) or string[] array element
-            // binds the slot as an array AND marks its element kind so a
-            // later `arr[i]` rides the width-marked arr_get(64) / arr_get_i64
-            // (f64/i64) or the string read (string[]) — the read-side twin
-            // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
-            else if (is_float_array_type_name(dtag)) { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
-            else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
-            else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
-            // A struct-array (X[]) or enum-array (E[]) element binds the slot
-            // as an array AND carries the element struct/enum name (strip the
-            // "[]") so `xs[i].field` / `match (xs[i])` resolve the element
-            // shape — the read-side twin of the struct/enum-array admission
-            // in tuple_elems_lowerable, mirroring the #3292 field-read bind.
-            else if (is_struct_array_field_type(dt.structs, dtag) || is_enum_array_field_type(dt.structs, dtag)) {
-                dt = dt.mark_arr(dkslot, true);
-                dt = dt.mark_struct_type(dkslot, slice_unchecked(dtag, 0, dtag.len() - 2));
-            }
-            else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
-            // A nominal-enum element carries its enum name in local_struct_
-            // type (like an enum local/param) so `match (c)` / `c.method()`
-            // on the bound slot dispatches to `<Enum>.<variant/method>`.
-            else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
-            // The temp is bound and its element tags are marked, so the inner
-            // level lowers as an ordinary destructure of that temp — the same
-            // recursion the source spelling describes.
-            if (dnest.len() > 0) {
-                dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_str: false, fn_ret: "" }, dt);
-                if (!dt.ok) { return dt; }
-            }
-            dk = dk + 1;
-        }
-        return dt;
+        return lower_stmt_var_destructure(v, s);
     }
     // Map construction `var m: Map[K, V] = map_new(n)`: the callee
     // `map_new` is generic, so the KEY KIND comes from the annotation, not
@@ -20818,6 +20582,262 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         opt_ty: opt_ty,
     };
     return bind_var_slot(v, s, se, vt);
+}
+
+// The tuple/struct destructuring bind: `var (a, b) = …`, reached when the
+// name carries a comma. Splits the pattern, lowers the initialiser once, and
+// binds each component to its own slot.
+function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
+    // N-element destructure `var (a, b, c, …) = E`: the parser encodes
+    // the name as "a,b,c,…". Eval the tuple box into a fresh temp, then
+    // bind name[i] = tuple_get(i). Scalar / string / struct elements
+    // (the same set the tuple LITERAL admits — a heap element bails the
+    // init lowering, so it never reaches here).
+    // Split on TOP-LEVEL commas: a NESTED position rides as its own
+    // parenthesised list (`"a,(b,c)"`), and its commas belong to that
+    // level, not this one.
+    var dnames: string[] = [];
+    var dstart: i32 = 0;
+    var dp: i32 = 0;
+    var ddepth: i32 = 0;
+    while (dp <= v.name.len()) {
+        if (dp == v.name.len() || (v.name[dp] == b',' && ddepth == 0)) {
+            dnames = dnames.append(slice_unchecked(v.name, dstart, dp));
+            dstart = dp + 1;
+        } else if (v.name[dp] == b'(') { ddepth = ddepth + 1; }
+        else if (v.name[dp] == b')') { ddepth = ddepth - 1; }
+        dp = dp + 1;
+    }
+    var dn: i32 = dnames.len();
+    var td_at: string = parser.destr_marker_split(v.type_name).at;
+    var dt: LowerState = lower_expr(v.init, s);
+    if (!dt.ok) { return dt; }
+    // An `@` binding names the temp holding the whole tuple, as it does
+    // for the struct form.
+    var tmp: string = td_at;
+    if (tmp.len() == 0) { tmp = "$tdst" + util.i32_to_string(dt.locals.len()); }
+    dt = dt.add_local(tmp);
+    var tmp_slot: i32 = dt.slot_of(tmp);
+    dt = dt.emit(ir.op_store_local(tmp_slot));
+    var dk: i32 = 0;
+    while (dk < dn) {
+        // A NESTED position `(b,c)` is not a name: bind the inner tuple to
+        // a temp here and destructure that temp again below, which is the
+        // shape the second level already had to work for (`var (s, b) = p`
+        // over a tuple-tagged local).
+        var dbind: string = dnames[dk];
+        var dnest: string = "";
+        if (dbind.len() >= 2 && slice_unchecked(dbind, 0, 1) == "(") {
+            dnest = slice_unchecked(dbind, 1, dbind.len() - 1) + "";
+            dbind = "$dnest" + util.i32_to_string(dt.locals.len());
+        }
+        dt = dt.add_local(dbind);
+        var dkslot: i32 = dt.slot_of(dbind);
+        // Type the binding from the source tuple's element tag: an
+        // inline `(e0, e1, …)` literal from the element exprs, a tuple
+        // local/param from its tracked tags. (Tags read from `s`, the
+        // pre-destructure scope, where the source elements live.)
+        var dtag: string = "";
+        match (v.init) {
+            ast.ExprTuple(dl) => {
+                if (dl.elements.len() == dn) { dtag = elem_type_tag(dl.elements[dk], s); }
+            },
+            ast.ExprIdent(did) => { dtag = s.tuple_elem_tag(s.slot_of(did.name), dk); },
+            ast.ExprIndex(dix) => {
+                // `var (a, b, …) = arr[i]` over a `(tuple)[]` array-of-tuples
+                // local: the element TUPLE TYPE is recorded on the (is_arr)
+                // slot's arrarr_elem (#4365). Read element dk's tag out of it —
+                // the destructure sibling of expr_tuple_elem_tag's ExprIndex arm,
+                // so a struct / nested-tuple element binds typed instead of
+                // untyped (which read `p.x` off an unmarked slot and bailed).
+                match (dix.array) {
+                    ast.ExprIdent(daid) => {
+                        var dasl: i32 = s.slot_of(daid.name);
+                        if (dasl >= 0 && s.is_arr_slot(dasl)) {
+                            var det: string = s.arrarr_elem_of_slot(dasl);
+                            if (det.len() >= 2 && slice_unchecked(det, 0, 1) == "(") { dtag = tuple_type_elem_tag(det, dk); }
+                        }
+                    },
+                    _ => {}
+                }
+                // arrarr_elem is only recorded for an ANNOTATED `(tuple)[]`
+                // local, so `var ps = mk();` (or a bare `mk()[0]`) leaves the
+                // walk empty and every element read as a 4-byte i32 — an f64
+                // element then came back garbage with no diagnostic. ExprIndex.ty
+                // (#6165) already carries the checker's type for this node; this
+                // is the same walk-first/tag-fills-the-hole fallback
+                // expr_tuple_elem_tag's ExprIndex arm has, which is why
+                // `ps[0].1` was right while `var (i, v) = ps[0]` was not.
+                if (dtag == "" && dix.ty.len() >= 2 && slice_unchecked(dix.ty, 0, 1) == "(") { dtag = tuple_type_elem_tag(dix.ty, dk); }
+            },
+            ast.ExprCall(dcl) => {
+                // `var (a, b, …) = f()` / `= obj.f()` — recover element
+                // dk's tag from the tuple-returning function's registry
+                // entry (free fn by bare name, method by "Type.method").
+                match (dcl.callee) {
+                    ast.ExprIdent(dcid) => { dtag = csv_nth(resolve_argref_tuple_tags(s.tuple_ret_type(dcid.name), dcl.args, s), dk); },
+                    ast.ExprFieldAccess(dfa) => {
+                        var drty: string = expr_struct_type(dfa.obj, s);
+                        if (drty != "") { dtag = csv_nth(resolve_argref_tuple_tags(s.tuple_ret_type(drty + "." + dfa.field), dcl.args, s), dk); }
+                        else if (dfa.field == "without") {
+                            // `m.without(k)` yields (Map[K,V], boolean):
+                            // element 0 is the receiver's map type, 1 is
+                            // the existed flag. Tag elem 0 with the map
+                            // type so the bound local re-marks as a map
+                            // (else `m2.len()` etc. miscompile) (#2926).
+                            var dwmt: string = "";
+                            match (dfa.obj) {
+                                ast.ExprIdent(dwid) => { dwmt = s.map_type_of(s.slot_of(dwid.name)); },
+                                _ => {}
+                            }
+                            if (dwmt != "") {
+                                if (dk == 0) { dtag = dwmt; } else { dtag = "boolean"; }
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        // Emit the element read at its width (8-byte i64/f64 use the
+        // matching load), then store + type the binding. An i64
+        // element marks the slot i64 (so later uses route through
+        // lower_i64); an f64 element marks it f64.
+        dt = dt.emit(ir.op_load_local(tmp_slot));
+        if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
+        else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
+        else { dt = dt.emit(ir.op_tuple_get(dk)); }
+        dt = dt.emit(ir.op_store_local(dkslot));
+        if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
+        // A closure-BOX element ("clo") binds a closure local so
+        // `f(args)` on the binding dispatches env-first against the box.
+        else if (dtag == "clo") { dt = dt.mark_closure_local(dbind); }
+        else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
+        else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
+        else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
+        else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
+        else if (dtag.len() >= 8 && (slice_unchecked(dtag, 0, 7) == "Option[" || slice_unchecked(dtag, 0, 7) == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
+        // A TUPLE element (`var (p, c) = t` over ((string, i32), i32): p's
+        // tag is the nested tuple's spelling): record p's element tags so a
+        // SECOND-level destructure `var (s, b) = p` (and `p.N` reads)
+        // resolve their element types. Without this the nested tuple bound
+        // untyped and its STRING element read as an unmarked i32 — empty
+        // (#5306 gap 1; the all-i32 shape only worked because the untyped
+        // fallback happens to be i32).
+        else if (dtag.len() >= 2 && slice_unchecked(dtag, 0, 1) == "(") { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
+        // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
+        // slot as an array (the op_tuple_get above read its pointer) so
+        // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
+        // read element's arithmetic wraps.
+        else if (dtag == "i32[]" || dtag == "boolean[]" || dtag == "u32[]" || is_subword_array_type(dtag)) {
+            dt = dt.mark_arr(dkslot, true);
+            if (dtag == "u32[]") { dt = dt.mark_u32(dkslot, true); }
+        }
+        // An 8-byte-element (f64[]/i64[]) or string[] array element
+        // binds the slot as an array AND marks its element kind so a
+        // later `arr[i]` rides the width-marked arr_get(64) / arr_get_i64
+        // (f64/i64) or the string read (string[]) — the read-side twin
+        // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
+        else if (is_float_array_type_name(dtag)) { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
+        else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
+        else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
+        // A struct-array (X[]) or enum-array (E[]) element binds the slot
+        // as an array AND carries the element struct/enum name (strip the
+        // "[]") so `xs[i].field` / `match (xs[i])` resolve the element
+        // shape — the read-side twin of the struct/enum-array admission
+        // in tuple_elems_lowerable, mirroring the #3292 field-read bind.
+        else if (is_struct_array_field_type(dt.structs, dtag) || is_enum_array_field_type(dt.structs, dtag)) {
+            dt = dt.mark_arr(dkslot, true);
+            dt = dt.mark_struct_type(dkslot, slice_unchecked(dtag, 0, dtag.len() - 2));
+        }
+        else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
+        // A nominal-enum element carries its enum name in local_struct_
+        // type (like an enum local/param) so `match (c)` / `c.method()`
+        // on the bound slot dispatches to `<Enum>.<variant/method>`.
+        else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
+        // The temp is bound and its element tags are marked, so the inner
+        // level lowers as an ordinary destructure of that temp — the same
+        // recursion the source spelling describes.
+        if (dnest.len() > 0) {
+            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_str: false, fn_ret: "" }, dt);
+            if (!dt.ok) { return dt; }
+        }
+        dk = dk + 1;
+    }
+    return dt;
+}
+
+// The closure-valued bind: `var f = |x| …` and the fn-typed initialisers that
+// produce a closure BOX rather than a bare function value.
+function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerState): LowerState {
+    // #4354 capture RC: classify BEFORE lowering — closure_captures
+    // resolves against the locals visible at the env-build site.
+    var clo_kinds: string = "";
+    if (s.clo_rc_approved(v.name)) {
+        match (v.init) {
+            ast.ExprLambda(clam) => {
+                var ccaps: string[] = closure_captures(clam, s);
+                var cki: i32 = 0;
+                while (cki < ccaps.len()) {
+                    clo_kinds = clo_kinds + closure_capture_kind(s, ccaps[cki]);
+                    cki = cki + 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    var cv: LowerState = lower_expr(v.init, s);
+    if (!cv.ok) { return cv; }
+    var cvb: LowerState = cv.add_local(v.name);
+    cvb = cvb.mark_reclaim_site(cvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var cslot: i32 = cvb.slot_of(v.name);
+    cvb = cvb.mark_arr(cslot, true);
+    cvb = cvb.mark_closure_local(v.name);
+    // Record an Option/Result return so a later `match (f())` can name its
+    // scrutinee type — the closure-LOCAL sibling of the fn-param seeding.
+    // (The annotated named-fn-bound form is seeded at the top of
+    // lower_stmt_var; this covers unannotated lambda / closure inits.)
+    var cv_optret: string = closure_init_opt_ret(v.init, cvb);
+    if (cv_optret != "") { cvb = cvb.mark_closure_opt_ret(v.name, cv_optret); }
+    // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from
+    // a RETCLO2 factory call) recognises g()'s result as a closure.
+    if (init_retclo) { cvb = cvb.mark_closure_local("RETCLO$" + v.name); }
+    cvb = cvb.emit(ir.op_store_local(cslot));
+    // #4557 alias retain: a bare-ident closure alias shares the
+    // env box; inc it so this slot's exit-sweep dec is balanced
+    // (fresh lambda / __mkclo$ / element inits are already owned).
+    match (v.init) {
+        ast.ExprIdent(_) => {
+            cvb = cvb.retain(cslot, reclaim_site_key_of(v.name, v.line, v.col));
+        },
+        _ => {}
+    }
+    // #4354 build-site retain: for each classifiable capture, read it
+    // back from the stored env box (env[ci+1], the same arr_get the
+    // closure call path uses) and __fern_rc_inc it — the rc-aware inc
+    // (null / literal / immortal-view guarded). Balanced by the exit
+    // sweep's env release, driven by the SAME kinds string. Only
+    // emitted when at least one capture is classifiable, so a
+    // scalar-only closure stays byte-identical.
+    var has_rc_cap: boolean = false;
+    var ckj: i32 = 0;
+    while (ckj < clo_kinds.len()) { if (clo_kinds[ckj] != b'.') { has_rc_cap = true; } ckj = ckj + 1; }
+    if (has_rc_cap) {
+        var ckk: i32 = 0;
+        while (ckk < clo_kinds.len()) {
+            if (clo_kinds[ckk] != b'.') {
+                cvb = cvb.emit(ir.op_load_local(cslot));
+                cvb = cvb.emit(ir.op_const_i32(ckk + 1));
+                cvb = cvb.emit(ir.op_arr_get(32));
+                cvb = cvb.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                cvb = cvb.emit(ir.op_drop());
+            }
+            ckk = ckk + 1;
+        }
+        cvb = cvb.add_clo_cap_kinds(v.name + "|" + clo_kinds);
+    }
+    return cvb;
 }
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
