@@ -34959,8 +34959,10 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // Credited "OPTARR:" so slot_is_reclaimable_optarr routes the loop-rebind +
     // exit sweep through emit_optarr_deep_free. collect_fresh_optarr_names
     // REQUIRES the name to be reassigned, the exact complement of those analyses'
-    // gate, so the two sets are disjoint and no box is freed twice.
-    var ofa: string[] = collect_fresh_optarr_names(body, []);
+    // gate, so the two sets are disjoint and no box is freed twice. It covers
+    // the rebound local whether or not a match consumes it — see
+    // optarr_rebound_credit_ok for the two proofs.
+    var ofa: string[] = collect_fresh_optarr_names(body, plan_on, plan_fe, []);
     out = reclaimable_optarr(ofa, out);
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
@@ -42099,9 +42101,7 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
                 // credit proof keeps call-provenance shapes the plan cannot
                 // yet type through returnsNoParamEscape; the plan adds the
                 // call-arg grants, still refusing any matched local.
-                var os_esc_ok: boolean = false;
-                if (!plan_on) { os_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
-                else { os_esc_ok = util.index_of_str(plan_fe, reclaim_site_key_of(v.name, v.line, v.col)) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
+                var os_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -42121,15 +42121,22 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
     return a;
 }
 
+// opt_unmatched_esc_ok: the escape gate the Option classes with no consuming
+// match share. Off-plan it is the ordinary non-escape proof; on-plan the
+// frame-escape analysis grants it and the two extra clauses re-impose what that
+// analysis does not model — a matched local and an alias bind.
+function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[]): boolean {
+    if (!plan_on) { return !body_unsafe_for(stmts, name, [], []); }
+    return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name) && !name_is_alias_bound(stmts, name);
+}
+
 function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                var oa_esc_ok: boolean = false;
-                if (!plan_on) { oa_esc_ok = !body_unsafe_for(stmts, v.name, [], []); }
-                else { oa_esc_ok = util.index_of_str(plan_fe, reclaim_site_key_of(v.name, v.line, v.col)) >= 0 && !name_is_match_scrutinee(stmts, v.name) && !name_is_alias_bound(stmts, v.name); }
+                var oa_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
                 if (unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -42149,7 +42156,46 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
     return a;
 }
 
-function collect_fresh_optarr_names(stmts: ast.Stmt[], acc: string[]): string[] {
+// optarr_rebound_credit_ok: a REASSIGNED Option[flat scalar array] local whose
+// every rebind rebuilds it fresh earns the exit sweep + loop-rebind release
+// under one of two proofs, by whether a consuming match ends its life.
+//
+//   - CONSUMED: a sole top-level `match (name)` after the declaration, whose
+//     arms neither bind the name nor let the payload out, and after which the
+//     name is dead.
+//   - NOT CONSUMED: no match on it at all, and the same escape gate the
+//     never-reassigned sibling class uses.
+//
+// The second is the quadrant that was empty. `collect_fresh_optarr_names`
+// covered reassigned-and-matched and `collect_unmatched_optarr_names` covers
+// neither-of-the-two, so a rebound local with nothing consuming it was credited
+// by no one and swept by no one — 400 allocs, 0 frees. The disjointness the two
+// classes rely on is unaffected: it rests on `reassigned`, which this does not
+// touch.
+function optarr_rebound_credit_ok(stmts: ast.Stmt[], v: ast.StmtVar, vi: i32, plan_on: boolean, plan_fe: string[]): boolean {
+    if (optarr_payload_escapes(stmts, v.name)) { return false; }
+    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+    if (match_idx > vi) {
+        return !match_arms_use_name(stmts[match_idx], v.name)
+            && !name_used_after(stmts, v.name, match_idx)
+            && !name_escapes_outside_stmt(stmts, v.name, match_idx);
+    }
+    // sole_top_level_match_idx answers -1 for NO match and for more than one
+    // alike, so the scrutinee test is what separates them; two matches stay
+    // refused.
+    //
+    // The non-escape proof is asked DIRECTLY rather than through
+    // opt_unmatched_esc_ok, which the never-reassigned sibling uses. That one
+    // may lean on the plan's frame-escape verdict because its locals are bound
+    // once; a REBOUND local is a different question and the plan grants it
+    // regardless of a `return name`, which measured as a WRONG ANSWER — 25
+    // against native's 42 — rather than a leak. The matched branch above has
+    // name_escapes_outside_stmt for the same reason.
+    return !name_is_match_scrutinee(stmts, v.name)
+        && !body_unsafe_for(stmts, v.name, [], []);
+}
+
+function collect_fresh_optarr_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -42159,22 +42205,16 @@ function collect_fresh_optarr_names(stmts: ast.Stmt[], acc: string[]): string[] 
                 if (optarr_ann_is(v.type_name)
                     && optarr_init_is_fresh(v.init)
                     && util.index_of_str(reassigned, v.name) >= 0
-                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", [])) {
-                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
-                    if (match_idx > vi
-                        && !match_arms_use_name(stmts[match_idx], v.name)
-                        && !optarr_payload_escapes(stmts, v.name)
-                        && !name_used_after(stmts, v.name, match_idx)
-                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
-                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                    }
+                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", [])
+                    && optarr_rebound_credit_ok(stmts, v, vi, plan_on, plan_fe)) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, a); a = collect_fresh_optarr_names(f.else_body, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, a); },
+            ast.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, plan_on, plan_fe, a); a = collect_fresh_optarr_names(f.else_body, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, a); }
+                for arm in m.arms { a = collect_fresh_optarr_names(arm.body, plan_on, plan_fe, a); }
             },
             _ => {}
         }
