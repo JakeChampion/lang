@@ -137,6 +137,26 @@ func (r *widthResolver) mark(f *Func, v Value) bool {
 	if d != nil && isIntConst(d.Kind) {
 		return false
 	}
+	// A value read from fewer than 8 bytes cannot be a machine address here:
+	// ResolveWidths runs only for the 64-bit arm64 backend, whose lift renders
+	// every pointer-width load as the 8-byte OpLoad. Marking one anyway stamps
+	// Width 64 on it, which is how the backend is told to skip the maskFix —
+	// so a negative i32 read through it stays zero-extended and every later
+	// signed compare, done at 64 bits, reads it as positive.
+	if d != nil && isNarrowLoad(d.Kind) {
+		return false
+	}
+	if i, ok := r.paramIdx[f][v.ID]; ok && d == nil {
+		// The lift records each parameter's address-ness from its DECLARED type,
+		// filling exactly one entry per parameter, so a full-length ParamAddrs
+		// is ground truth rather than an absent answer. Inference may not
+		// overturn it: promoting a parameter the front end typed as a scalar
+		// marks every OTHER caller's argument at that position as an address
+		// too, which strips the sign-extension those arguments need.
+		if len(f.ParamAddrs) == len(f.Params) && !f.ParamAddrs[i] {
+			return false
+		}
+	}
 	r.addr[f][v.ID] = true
 	if d != nil {
 		d.Addr = true
@@ -149,6 +169,15 @@ func (r *widthResolver) mark(f *Func, v Value) bool {
 		f.ParamAddrs[i] = true
 	}
 	return true
+}
+
+// isNarrowLoad reports whether k reads fewer than 8 bytes from memory.
+func isNarrowLoad(k OpKind) bool {
+	switch k {
+	case OpLoad8U, OpLoad8S, OpLoad16U, OpLoad16S, OpLoad32U:
+		return true
+	}
+	return false
 }
 
 // step advances the whole-module fixpoint by one round and reports whether it
