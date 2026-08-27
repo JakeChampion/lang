@@ -25,8 +25,8 @@ str__if_block__read                           clean  clean  clean on both sides
 str__if_block__unused                         clean  clean  clean on both sides
 str__loop_local__read                         clean  clean  clean on both sides
 str__loop_local__unused                       clean  clean  clean on both sides
-str__rebind__read                             leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
-str__rebind__unused                           leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str__rebind__read                             leak   clean  self-host ahead of native here: the registry widening credits the producer-call rebind, while #7446 still leaks native-arm64
+str__rebind__unused                           leak   clean  same as str__rebind__read: self-host clean, native-arm64 still #7446
 str__shadow_siblings__read                    clean  clean  clean on both sides
 str__shadow_siblings__unused                  clean  clean  clean on both sides
 str_arr__fnscope__read                        clean  clean  clean on both sides

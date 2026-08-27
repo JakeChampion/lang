@@ -24,8 +24,8 @@ str__if_block__read                           clean  clean  clean on both sides
 str__if_block__unused                         clean  clean  clean on both sides
 str__loop_local__read                         clean  clean  clean on both sides
 str__loop_local__unused                       clean  clean  clean on both sides
-str__rebind__read                             clean  leak   STR: credit is single-bind only; a rebound string local is refused and never swept
-str__rebind__unused                           clean  leak   same single-bind refusal as str__rebind__read
+str__rebind__read                             clean  clean  the accumulator class now reads the whole-program str-fresh-ret registry, so a producer-call rebind is credited
+str__rebind__unused                           clean  clean  same registry widening as str__rebind__read
 str__shadow_siblings__read                    clean  clean  clean on both sides
 str__shadow_siblings__unused                  clean  clean  clean on both sides
 str_arr__fnscope__read                        clean  clean  clean on both sides
