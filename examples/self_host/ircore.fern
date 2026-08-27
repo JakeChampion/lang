@@ -193,13 +193,6 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_i32_gcd"
         || name == "__fern_i32_lcm"
         || name == "__fern_arr_i32_index_of"
-        // The string[] index_of / contains scan (#3457) — content equality via
-        // str_eq, so it cannot share the i32 helper's pointer compare. Unlike
-        // i32_lcm → i32_gcd this needs no second entry: its `xs[i] == target`
-        // lowers to op_str_eq (kind 99, which emits the call itself), not to a
-        // call_direct calls_only_known would have to recognise. The str_eq
-        // runtime NEED is still required, and mark_arr_str_index_of declares it.
-        || name == "__fern_arr_str_index_of"
         // xs.min() / xs.max() (#3457): the Option-returning extremum helpers —
         // the guard and the box live in their Fern bodies, so the call site is
         // an ordinary call_direct like sum/product.
@@ -847,7 +840,7 @@ pub function all_runtime_need_roots(): string[] {
         // emits the helper for a sibling unit that calls it.
         "alloc_u8", "arg_at", "args", "arr_i32_index_of", "arr_i32_min_max", "arr_i32_min_max_opt",
         "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_slice",
-        "arr_str_index_of", "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
+        "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         "print_int", "proc_exec", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",

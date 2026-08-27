@@ -1421,10 +1421,6 @@ pub function rt_src_string_from_bytes(): string {
     return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
 }
 
-pub function (s: EmitState) mark_arr_str_index_of(): EmitState {
-    return s.need("str_eq").need("arr_str_index_of");
-}
-
 pub function (s: EmitState) mark_arr_str_join(): EmitState {
     return s.need("heap").need("str_concat").need("arr_str_join");
 }
@@ -1543,9 +1539,9 @@ pub function (s: EmitState) mark_i32_gcd(): EmitState {
 }
 
 // lcm's helper calls gcd's. The AST emit path has no close_needs, so the mark
-// helper must pull in the transitive dep (i32_gcd) directly — same shape as
-// mark_arr_str_index_of marking str_eq. (runtime_need_deps declares the edge too,
-// for the IR path's close_needs; both kept in sync.)
+// helper must pull in the transitive dep (i32_gcd) directly, and
+// runtime_need_deps declares the edge too, for the IR path's close_needs; both
+// kept in sync.
 pub function (s: EmitState) mark_i32_lcm(): EmitState {
     return s.need("i32_gcd").need("i32_lcm");
 }
@@ -1681,16 +1677,6 @@ pub function rt_src_str_cmp(): string {
 // the same a/b operands, so all route to the one Fern body.
 pub function rt_src_str_eq(): string {
     return "function __fern_str_eq(a: string, b: string): i32 { var la: i32 = a.len(); if (la != b.len()) { return 0; } var i: i32 = 0; while (i < la) { if (a[i] != b[i]) { return 0; } i = i + 1; } return 1; }";
-}
-
-// rt_src_arr_str_index_of backs `xs.index_of(t)` / `.contains(t)` on string
-// arrays (#2649). It is the first migrated helper that CALLS another runtime
-// helper: `xs[i] == t` lowers to a str_eq call (str_eq is itself a Fern runtime
-// function now). The str_eq dependency is declared by mark_arr_str_index_of, so
-// str_eq's body is emitted alongside. Returns the first index where an element
-// equals the target (content equality), or -1. Both params read-only (borrowed).
-pub function rt_src_arr_str_index_of(): string {
-    return "function __fern_arr_str_index_of(xs: string[], target: string): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
 }
 
 // rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). Builds the
@@ -3598,11 +3584,6 @@ pub function runtime_need_deps(name: string): string[] {
         var d2: string[] = ["arr_push"];
         return d2;
     }
-    if (name == "arr_str_index_of") {
-        // Linear scan comparing string elements with __fern_str_eq.
-        var d3: string[] = ["str_eq"];
-        return d3;
-    }
     if (name == "i32_lcm") {
         // __fern_i32_lcm's body calls `.gcd()` → __fn___fern_i32_gcd. Pure
         // scalar, so no heap. (gcd itself has no deps.)
@@ -5030,7 +5011,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // registered NEED root is not the same as an exported SYMBOL.
         "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
         "__fn___fern_i32_gcd", "__fn___fern_i32_lcm",
-        "__fn___fern_arr_i32_index_of", "__fn___fern_arr_str_index_of",
+        "__fn___fern_arr_i32_index_of",
         "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt"
     ];
     var i: i32 = 0;

@@ -4690,10 +4690,6 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
             if (o.str == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
             if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
-            // The string[] scan needs str_eq's body alongside its own;
-            // mark_arr_str_index_of sets both (runtime_need_deps carries the same
-            // edge for close_needs). No heap — it allocates nothing.
-            if (o.str == "__fern_arr_str_index_of") { s = s.mark_arr_str_index_of(); }
             // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
             // (the Option box they return), so they pull in the heap runtime too.
             if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
@@ -6636,16 +6632,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("arr_i32_index_of")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), all_structs, s);
-    }
-    // arr_str_index_of is the string[] sibling (#3457): the same linear scan but
-    // comparing with str_eq (whose body is pulled in by this need's dep), so
-    // content equality matches across distinct .rodata slots. Allocation-free.
-    // asm_arm64_ir.emit_ir_runtime already had this block; the x86 one did not,
-    // which is the same asymmetry that left the arm64 unit path with a dangling
-    // symbol in #5944 — here it is the x86 side that was missing.
-    if (s.has_need("arr_str_index_of")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_index_of(), all_structs, s);
     }
     // arr_i32_min_max_opt backs xs.min() / xs.max() (#3457). Emitted as ONE
     // module so both bodies share a lowering pass, and heap-dependent (present

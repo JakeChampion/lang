@@ -98,7 +98,6 @@ pub function provided_names(): string[] {
         "__fern_arr_i32_index_of",
         "__fern_arr_i32_min_opt",
         "__fern_arr_i32_max_opt",
-        "__fern_arr_str_index_of",
         "__fern_arr_str_join",
         "__fern_i32_pow",
         "__fern_i32_gcd",
