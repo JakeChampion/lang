@@ -53567,13 +53567,97 @@ function strarrfld_scan(e: ast.Expr, structs: parser.StructDecl[], binds: string
         _ => { return a; }
     }
 }
+// strarrfld_share_bind_stores: the site keys of every
+// `var p: T = T { …, <string[] field>: name, … }` bind directly in `stmts` —
+// the one position a share-bound local may legally reach. The store retains
+// the buffer, so the new holder co-owns a COUNTED reference exactly as the
+// inline share's does. Feeds strarr_unsafe_for_alias's `sfld_ok`, which is
+// already keyed this way for the local credit's own version of this question.
+//
+// A store nested inside an if / while / match body is not collected, so
+// strarr_unsafe_for_alias flags it and the bind is refused — the conservative
+// direction, and the reason this only needs the flat list.
+function strarrfld_share_bind_stores(stmts: ast.Stmt[], name: string, structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                match (v.init) {
+                    ast.ExprStructLit(sl) => {
+                        var i: i32 = 0;
+                        while (i < sl.field_names.len()) {
+                            match (sl.field_values[i]) {
+                                ast.ExprIdent(id) => {
+                                    if (id.name == name
+                                        && decl_field_type(structs, sl.type_name, sl.field_names[i]) == "string[]") {
+                                        out = push_str_unique(out, reclaim_site_key_of(v.name, v.line, v.col));
+                                    }
+                                },
+                                _ => {}
+                            }
+                            i = i + 1;
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+    }
+    return out;
+}
+
+// strarrfld_bind_read: the expression a `var` initialiser contributes to the
+// read walk. Normally the initialiser itself; for an admitted share BIND, only
+// its HOLDER.
+//
+// `var tt: string[] = q.f;` is the hoisted spelling of the inline share
+// strarrfld_scan admits at its struct-literal store — the same read, through a
+// local.
+// Marking it would refuse the SOURCE holder's reclaim, and a share needs both
+// ends alive to balance, so the read drops out and the holder is still walked.
+//
+// Admitting it needs one thing the inline position gets for free: proof that
+// the local reaches nothing but that store. `tt` is a plain local, so the field
+// scan sees none of its uses, and an unchecked bind would let `return tt[0]`
+// outlive the holder's deep free. strarr_unsafe_for_alias is that proof, and
+// it is the classifier the local "SARR:" credit already uses for the identical
+// question: its `sfld_ok` carve-out forgives the struct-literal store, while
+// every other use of `tt` — an element bind, a return, a call argument, an
+// append, a slice, an iteration — stays a hazard.
+//
+// `borrowable` is empty rather than the real registry, which is not built at
+// admission time: it can only refuse a call-argument borrow, never grant one.
+function strarrfld_bind_read(v: ast.StmtVar, stmts: ast.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[]): ast.Expr {
+    if (v.type_name != "string[]") { return v.init; }
+    match (v.init) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(_) => {
+                    var oty: string = fnfld_obj_type(fa.obj, structs, binds);
+                    if (oty.len() == 0 || decl_field_type(structs, oty, fa.field) != "string[]") { return v.init; }
+                    var sfld_ok: string[] = strarrfld_share_bind_stores(stmts, v.name, structs);
+                    if (sfld_ok.len() == 0) { return v.init; }
+                    var no_alias: string[] = [];
+                    var no_borrow: string[] = [];
+                    if (strarr_unsafe_for_alias(stmts, v.name, no_borrow, str_fresh, no_alias, sfld_ok)) { return v.init; }
+                    return fa.obj;
+                },
+                _ => { return v.init; }
+            }
+        },
+        _ => { return v.init; }
+    }
+    return v.init;
+}
+
 function strarrfld_scan_stmts(stmts: ast.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], fwd_exempt: string, acc: string[]): string[] {
     var a: string[] = acc;
     var b: string[] = binds;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                a = strarrfld_scan(v.init, structs, b, str_fresh, strarr_producers, forwarders, a);
+                a = strarrfld_scan(strarrfld_bind_read(v, stmts, structs, b, str_fresh), structs, b, str_fresh, strarr_producers, forwarders, a);
                 // `var r: R = …` binds by annotation, `var r = R { … }` by the
                 // literal; anything else drops the name, so a shadowing rebind
                 // never inherits the old type. Same rule as fnfld_read_stmts.
