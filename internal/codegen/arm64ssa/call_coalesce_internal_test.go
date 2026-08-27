@@ -25,7 +25,7 @@ func TestCallResultStagingDependsOnTheSaveSet(t *testing.T) {
 			Dst:         3, // x3
 			SaveRegs:    saveRegs,
 			SaveRegsSet: true,
-		}, numAlloc, scratch, 0)
+		}, numAlloc, scratch, frameLayout{})
 		if err != nil {
 			t.Fatalf("callLines: %v", err)
 		}
@@ -69,7 +69,7 @@ func TestCallPairDeliversBothResultsWithoutClobber(t *testing.T) {
 		Dst:         1, // x1 — the payload's own return register
 		Dst2:        0, // x0 — the tag's
 		SaveRegsSet: true,
-	}, numAlloc, numAlloc+3, 0)
+	}, numAlloc, numAlloc+3, frameLayout{})
 	if err != nil {
 		t.Fatalf("callLines: %v", err)
 	}
