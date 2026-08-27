@@ -14085,6 +14085,47 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
                 || decl_field_type(s.structs, sty, fa.field) == "string")) {
         fsrecv = freshself_call_recv_slot(fa.obj, s);
     }
+    // A SCALAR field read off an ELEMENT of a fresh struct-array producer —
+    // `mk()[i].k`, mk in the "STRUCTARRF:" / "ARRSTRUCTF:" registries
+    // (#7259). The index site's own reclaim cannot fire on these classes:
+    // releasing the container there frees the element box the field read is
+    // about to enter. So the release moves up to this node — park the
+    // container, index into it, read the field, THEN release with the exit
+    // sweep's class split. Scalar non-i64 reads only: an rc-field result
+    // would alias a box the release frees.
+    if (faown == "" && owned_scalar_field_type(decl_field_type(s.structs, sty, fa.field))
+            && !struct_field_is_i64(s.structs, sty, idx)) {
+        match (fa.obj) {
+            ast.ExprIndex(fia) => {
+                var fiac: string = owned_fresh_call_callee(fia.array, "STRUCTARRF:", s);
+                if (fiac == "") { fiac = owned_fresh_call_callee(fia.array, "ARRSTRUCTF:", s); }
+                if (fiac != "" && decl_is_struct(s.structs, s.struct_ret_type(fiac))) {
+                    var fxs: LowerState = lower_expr(fia.array, s);
+                    if (!fxs.ok) { return fxs; }
+                    var fxn: string = "$fxarr" + util.i32_to_string(fxs.locals.len());
+                    fxs = fxs.add_local(fxn);
+                    var fxslot: i32 = fxs.slot_of(fxn);
+                    fxs = fxs.emit(ir.op_store_local(fxslot));
+                    fxs = fxs.emit(ir.op_load_local(fxslot));
+                    fxs = lower_expr(fia.index, fxs);
+                    if (!fxs.ok) { return fxs; }
+                    fxs = fxs.emit(ir.op_arr_get(32));
+                    fxs = fxs.emit(ir.op_struct_get(idx, struct_field_width(s.structs, sty, idx)));
+                    var fxv: string = "$fxval" + util.i32_to_string(fxs.locals.len());
+                    fxs = fxs.add_local(fxv);
+                    var fxvslot: i32 = fxs.slot_of(fxv);
+                    fxs = fxs.emit(ir.op_store_local(fxvslot));
+                    if (struct_has_reclaim_array_field(fxs.structs, sty) || fxs.struct_routes_field_reclaim(sty)) {
+                        fxs = emit_arrstruct_deep_free(fxs, fxslot, sty);
+                    } else {
+                        fxs = fxs.release(fxslot, "__fern_arrarr_free", "fldread-fresh-structarr");
+                    }
+                    return fxs.emit(ir.op_load_local(fxvslot));
+                }
+            },
+            _ => {}
+        }
+    }
     // A fresh struct LITERAL receiver — `(P { … }).k`. The box is a
     // temporary nothing else can reach, exactly like the strict-fresh
     // producer call above, so the same release applies: read the field,

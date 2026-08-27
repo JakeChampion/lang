@@ -451,6 +451,69 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
+	// The index-read shape, whose release lives one node UP: the index site's
+	// own reclaim would free the element box before the field read enters it,
+	// so the field-access arm parks the container, indexes, reads the scalar,
+	// and releases the container afterwards with the same class split.
+	{"arrstruct-producer-index-field", `struct Inner { k: i32, ys: i32[] }
+function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mk()[0].k; i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	{"structarr-producer-index-field", `function w(a: string): string { return a + "!"; }
+struct P { s: string, n: i32 }
+function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mkp()[1].n; i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// An RC-field read off the element (`mkp()[0].s`) keeps the arm OFF —
+	// releasing the container would free the string box the read returns. The
+	// answer's stability is the assertion; the container's leak on this shape
+	// is the recorded safe floor, so no byte rate is pinned.
+	{"structarr-producer-index-strfield-not-freed", `function w(a: string): string { return a + "!"; }
+struct P { s: string, n: i32 }
+function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mkp()[0].s.len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var x: i32 = churn(200);
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    if (w1 != (200 * 2) % 251) { return 96; }
+    return 0;
+}`, 0},
+
 	// A producer whose result IS bound pays from the slot's exit sweep — it was
 	// already clean (#7445), and the new in-place release must not double it.
 	// An over-release here reads 99, not a byte count.
