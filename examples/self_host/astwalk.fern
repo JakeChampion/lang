@@ -35,8 +35,10 @@ pub function descend_all(e: ast.Expr): boolean { return true; }
 // descend_none is the statement-shaped consumer's rule: no expression has
 // reachable children, so `visit_expr` sees the expression sitting in each
 // statement slot and nothing under it. collect_bound_stmt wants exactly that —
-// binders live on statements, never inside an initialiser.
-function descend_none(e: ast.Expr): boolean { return false; }
+// binders live on statements, never inside an initialiser — and it is also
+// what keeps a statement-only walk out of lambda bodies, which are reachable
+// only through expression descent.
+pub function descend_none(e: ast.Expr): boolean { return false; }
 
 // fold_expr_pruned is fold_expr with descent control. `visit` still sees every
 // node the walk reaches; `descend` then decides whether that node's CHILDREN
