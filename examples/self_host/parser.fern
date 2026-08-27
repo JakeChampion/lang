@@ -12685,30 +12685,23 @@ function hl_append_str(a: string[], b: string[]): string[] {
     return out;
 }
 
+// hl_collect_var_names collects the `var` names a statement subtree declares —
+// deliberately ONLY var names, not for-binders or pattern binders, and
+// deliberately not into lambda bodies: it feeds hl_capture_list's shadow list,
+// where an inner lambda's locals would suppress a capture the lift needs.
+// descend_none is that stop spelled once — a lambda body is reachable only
+// through expression descent.
 function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => { out = out.append(v.name); },
-            ast.StmtIf(f) => {
-                out = hl_append_str(out, hl_collect_var_names(f.then_body));
-                out = hl_append_str(out, hl_collect_var_names(f.else_body));
-            },
-            ast.StmtWhile(w) => { out = hl_append_str(out, hl_collect_var_names(w.body)); },
-            ast.StmtFor(fr) => { out = hl_append_str(out, hl_collect_var_names(fr.body)); },
-            ast.StmtMatch(m) => {
-                var a: i32 = 0;
-                while (a < m.arms.len()) { out = hl_append_str(out, hl_collect_var_names(m.arms[a].body)); a = a + 1; }
-            },
-            ast.StmtDefer(d) => {
-                var one: ast.Stmt[] = [d.action];
-                out = hl_append_str(out, hl_collect_var_names(one));
-            },
-            _ => { }
+    function vs(st: ast.Stmt, acc: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => { return acc.append(v.name); },
+            _ => { return acc; }
         }
-        i = i + 1;
+        return acc;
     }
+    function ve(e: ast.Expr, acc: string[]): string[] { return acc; }
+    var out: string[] = [];
+    for st in stmts { out = astwalk.fold_stmt_nodes(st, out, vs, ve, astwalk.descend_none); }
     return out;
 }
 
@@ -12719,31 +12712,24 @@ function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
 // runs where it must — and the self-host's own sources (which use none)
 // pass through byte-for-byte, keeping the stage-2 fixpoint intact.
 function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
+    function vs(st: ast.Stmt, hit: boolean): boolean {
+        if (hit) { return true; }
+        match (st) {
             ast.StmtVar(v) => {
                 match (v.init) {
-                    ast.ExprLambda(lam) => { if (stmts_mention(lam.body, v.name)) { return true; } },
-                    _ => { }
+                    ast.ExprLambda(lam) => { return stmts_mention(lam.body, v.name); },
+                    _ => { return false; }
                 }
+                return false;
             },
-            ast.StmtIf(f) => { if (hl_has_rec_local(f.then_body) || hl_has_rec_local(f.else_body)) { return true; } },
-            ast.StmtWhile(w) => { if (hl_has_rec_local(w.body)) { return true; } },
-            ast.StmtFor(fr) => { if (hl_has_rec_local(fr.body)) { return true; } },
-            ast.StmtMatch(m) => {
-                var a: i32 = 0;
-                while (a < m.arms.len()) { if (hl_has_rec_local(m.arms[a].body)) { return true; } a = a + 1; }
-            },
-            ast.StmtDefer(d) => {
-                var one: ast.Stmt[] = [d.action];
-                if (hl_has_rec_local(one)) { return true; }
-            },
-            _ => { }
+            _ => { return false; }
         }
-        i = i + 1;
+        return false;
     }
-    return false;
+    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
+    var hit: boolean = false;
+    for st in stmts { hit = astwalk.fold_stmt_nodes(st, hit, vs, ve, astwalk.descend_none); }
+    return hit;
 }
 
 // hl_capture_list returns the ordered, de-duplicated list of enclosing
