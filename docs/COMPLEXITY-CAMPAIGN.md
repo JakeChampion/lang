@@ -122,6 +122,27 @@ nothing in the CLI calls `lift_from_ir`; its only importers are four
 one) is gated by compiling and running it: it exits 0, and each case returns
 its own error code on failure.
 
+**A slice that moves `own`-threaded state must also run `scripts/cliff-bench`.**
+The round-trip below proves the statements did not change; it proves nothing
+about OWNERSHIP, and moving code across a function boundary changes what the
+reuse analysis can prove. Slice 18 is the case: extracting twelve bodies out of
+`x86_gas_emit`, each of the shape
+
+    a = X86Asm { ...a, code: x86_alu_load_r64(a.code, 141, ...) };
+
+lost the compiler's proof that `a` is uniquely owned — even with `own a: X86Asm`
+on the helper — so every instruction copied the whole code array instead of
+appending in place, and the self-host compiler exhausted its arena compiling
+`checker.fern`. Byte-for-byte re-inlining could not have detected it; only
+`append-cliff` did.
+
+Slices 13-17 were checked afterwards and are exactly neutral (458360 crossings /
+258145264 bytes, identical across all six binaries), because each threaded
+ordinary borrowed state — a `LowerState`, a `BState`, a `string[]` accumulator —
+where no in-place reuse was at stake. So the check is not needed on every slice,
+only where an `own` parameter or a struct-update-plus-append is in the blast
+radius.
+
 Two rules that make the choice reliable:
 
 - **`cmp` the two compiler binaries before trusting an emit-hash run.** If they
@@ -321,6 +342,15 @@ moved out, `lower_call_method` sits at 295, and nearly all of that is the
 guards themselves — one per method the language dispatches. Splitting the
 table further would not make it more readable, it would just spread the same
 list over more functions.
+
+**A second reason to leave one alone: extraction would break reuse.**
+`x86_gas_emit` (177) is not a pure table — twelve of its arms were multi-line
+bodies, exactly the shape slice 1 moves. They still cannot move, because the
+function threads an `own X86Asm` through a struct-update-and-append and crossing
+a call boundary turns each update into a copy (above). Reshaping the helpers to
+return just the code array would preserve reuse, but that is a rewrite rather
+than a move, so the round-trip proof no longer applies and the safety argument
+goes with it. Left inline deliberately, for a different reason than the tables.
 
 When a function reaches that state, the honest end is an
 `// fern-lint: allow cyclomatic-complexity` on it with a line saying it is a
