@@ -115,6 +115,22 @@ var loopReuseIRCases = []struct {
 	{"cross-block-reuse",
 		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`,
 		31, 1},
+	// CROSS-BRANCH sharing (#4402 opt 3): one dead donor `a` feeds a construction
+	// in BOTH arms — only one arm runs per iteration, so the token is claimed at
+	// most once and ONE box covers the loop. Before the arms shared, the else arm
+	// found the donor already consumed by the then arm and bump-allocated, so this
+	// measured 2. i=0:{0,10}=10; i=1:{1,20}=21; i=2:{2,10}=12; i=3:{3,20}=23 = 66.
+	{"cross-block-both-arms",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: 1 }; if (i % 2 == 0) { var b: P = P { x: i, y: 10 }; sum = sum + b.x + b.y; } else { var c: P = P { x: i, y: 20 }; sum = sum + c.x + c.y; } i = i + 1; } return sum; }`,
+		66, 1},
+	// Cross-branch memory safety at scale: the same shape alternating over 5M
+	// iterations, so each arm takes the donor's box on half the passes and the
+	// other arm's zeroed slot is never re-read. A double free would crash; a
+	// leaked box would exhaust the heap. The modulus keeps the result inside the
+	// exit-code range — a wider one truncates (668 came back as 156).
+	{"cross-block-both-arms-churn-safe",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: P = P { x: i, y: 1 }; if (i % 2 == 0) { var b: P = P { x: i, y: 10 }; sum = (sum + b.x + b.y) % 113; } else { var c: P = P { x: i, y: 20 }; sum = (sum + c.x + c.y) % 113; } i = i + 1; } return sum; }`,
+		53, 1},
 	// Cross-block donor USED AFTER the if: `a` is read after the nested if, so it is
 	// NOT dead-from-k and reuse must be suppressed (both allocate — TWO boxes). A
 	// spurious reuse would strand the later a.x / a.y read. Value 25.
