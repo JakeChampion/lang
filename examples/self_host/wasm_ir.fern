@@ -8593,7 +8593,7 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // registered field is buffer-only-freed (its elements are raw code addresses).
     var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
     while (frti < frt.len()) {
-        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, fpk));
+        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0, fpk));
         frti = frti + 1;
     }
     var sdti: i32 = 0;
@@ -8846,7 +8846,7 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, fnptr_fields: string[]): string {
+pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean, fnptr_fields: string[]): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
     var si: i32 = 0;
@@ -8879,6 +8879,18 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
                     var newf: string = "(i32.load offset=" + off + " (local.get $new))";
                     var snapf: string = "(i32.load offset=" + off + " (local.get $snap))";
                     var dec: string = "(drop (call $__fern_arr_dec " + oldf + "))";
+                    // A replaced string[] field (#7648) releases DEEP via
+                    // $__fern_arr_dec_ptr: at rc==1 the per-element dec IS the
+                    // wasm string free (an inline rc-headered block), then the
+                    // buffer; a shared buffer just decs. The register backends
+                    // call __fern_str_arr_free here under the same "arr:<T>"
+                    // admission — without this arm the rebind freed the buffer
+                    // shallow and stranded every element box, 47 B/round on the
+                    // wasm leg only, while the exit path's $__struct_drop_<T>
+                    // already walked deep.
+                    if (strarr_ok && ft == "string[]") {
+                        dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
+                    }
                     // A replaced struct-ARRAY / enum-ARRAY field (#7067) is
                     // released DEEP via $__fern_arr_dec_ptr — which, exactly like
                     // $__struct_drop_<T>'s arm, releases each element box only
