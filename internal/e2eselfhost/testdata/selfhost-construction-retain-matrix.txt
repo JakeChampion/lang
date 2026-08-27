@@ -1,11 +1,14 @@
 # The construction-retain matrix: struct-literal FIELD KIND x VALUE SHAPE,
 # verdicts per compiler (native selfhost). Regenerate with
 # FERN_CONSTRUCTION_RETAIN_DUMP=1 (and -v). Exits match native on every cell
-# and the underflow guard is 0 everywhere: every divergence below is a
-# LEAK-direction floor — an uncounted share the release side then cannot
-# reclaim — which is the killer-drops wave's burn-down list. Native is clean
-# on all 35 cells: every share is counted there and fields drop at the box's
-# rc-death.
+# and the underflow guard is 0 everywhere. Native is clean on all 35 cells:
+# every share is counted there and fields drop at the box's rc-death.
+#
+# ALL 35 CELLS ARE NOW CLEAN ON BOTH COMPILERS. This grid was the killer-drops
+# wave's burn-down list and the list is empty; keep it as a REGRESSION gate. Any
+# divergence that appears here again is a leak-direction floor — an uncounted
+# share the release side then cannot reclaim — and belongs to whatever change
+# introduced it.
 #
 # The shape axis: fresh = inline literal/ctor (sole-owned, no-inc baseline);
 # local = bare ident of a fresh local, both claims live; param = bare ident
@@ -41,7 +44,11 @@ str__call           clean clean  producer result is Owned
 str_arr__fresh      clean clean  fresh string[] literal owned by the holder
 str_arr__local      clean clean  counted: the field store retains whenever it is not a MOVE, and the source keeps the DEEP "SARR:" credit so its element walk survives a path that never builds the holder
 str_arr__param      clean clean  same tier, DEEP class: the callee's store retains the buffer and __fern_str_arr_free's rc gate leaves the element walk to whichever owner reaches rc 1
-str_arr__fieldread  clean leak   the RewriteCtx shape, string[] flavor
+str_arr__fieldread  clean clean  counted share: a bare `q.f` string[] read handed into a string[] field is
+#                                admitted by strarrfld_scan's store rule, and NOT walked as a read, so the
+#                                SOURCE holder keeps its reclaim too. The construction retain was already
+#                                unconditional for an array field (str_arr__local proves it); only the
+#                                admission was missing (#5338)
 str_arr__call       clean clean  producer result owned
 arr_i32__fresh      clean clean  fresh scalar-array literal
 arr_i32__local      clean clean  the #3292 dup: bare scalar-array ident is retained and balanced
