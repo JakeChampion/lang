@@ -30437,6 +30437,18 @@ function collect_str_fresh_ret_call_names(stmts: ast.Stmt[], str_fresh_ret: stri
 // reassignment (emit_str_reclaim_store, heap-base-guarded so the initial "" literal
 // is a no-op on its .rodata data) and the final at scope exit is sound.
 
+// str_accum_value_is_fresh: the accumulator class's freshness test for a
+// binding or a rebind RHS. str_local_binding_is_fresh answers from the
+// expression alone — a concat, a string method, a known producer — and the
+// whole-program registry answers for a user function proven to return a fresh
+// box on every path (str_fresh_ret_fns_of). Without the registry half a
+// `var x = mk(..); x = mk(..)` fell between two collectors: this one could not
+// see mk was fresh, and collect_str_fresh_ret_call_names, which can, skips
+// every reassigned name.
+function str_accum_value_is_fresh(e: ast.Expr, str_fresh_ret: string[]): boolean {
+    return str_local_binding_is_fresh(e) || str_call_ret_is_fresh_reg(e, str_fresh_ret);
+}
+
 // str_accum_reassign_ok: `e` (a reassignment RHS already known to be a fresh
 // producer) references `name` ONLY in borrow-consume positions — a `+` concat
 // operand or (via expr_unsafe_for's receiver/borrow rules) a method receiver — and
@@ -30462,11 +30474,11 @@ function str_accum_reassign_ok(e: ast.Expr, name: string, borrowable: string[]):
 // `name` is unsafe (a non-fresh RHS would alias a live box; freeing name later
 // would then be a UAF). `return name` stays unsafe (non-escaping accumulators
 // only; the move-out builder is a follow-up).
-function str_accum_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
-    for stmt in stmts { if (stmt_accum_unsafe_for(stmt, name, borrowable)) { return true; } }
+function str_accum_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh_ret: string[]): boolean {
+    for stmt in stmts { if (stmt_accum_unsafe_for(stmt, name, borrowable, str_fresh_ret)) { return true; } }
     return false;
 }
-function stmt_accum_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_accum_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], str_fresh_ret: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, []); },
         ast.StmtReturn(r) => {
@@ -30486,18 +30498,18 @@ function stmt_accum_unsafe_for(st: ast.Stmt, name: string, borrowable: string[])
                 // FRESH producer (so `name` owns a fresh box afterwards, never an
                 // alias) that borrow-consumes `name`. Any other reassignment of
                 // `name` is unsafe (excludes the accumulator).
-                if (str_local_binding_is_fresh(a.value) && str_accum_reassign_ok(a.value, name, borrowable)) { return false; }
+                if (str_accum_value_is_fresh(a.value, str_fresh_ret) && str_accum_reassign_ok(a.value, name, borrowable)) { return false; }
                 return true;
             }
             return expr_unsafe_for(a.value, name, borrowable, []);
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return str_accum_unsafe_for(f.then_body, name, borrowable) || str_accum_unsafe_for(f.else_body, name, borrowable);
+            return str_accum_unsafe_for(f.then_body, name, borrowable, str_fresh_ret) || str_accum_unsafe_for(f.else_body, name, borrowable, str_fresh_ret);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return str_accum_unsafe_for(w.body, name, borrowable);
+            return str_accum_unsafe_for(w.body, name, borrowable, str_fresh_ret);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -30506,13 +30518,13 @@ function stmt_accum_unsafe_for(st: ast.Stmt, name: string, borrowable: string[])
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return str_accum_unsafe_for(fo.body, name, borrowable);
+            return str_accum_unsafe_for(fo.body, name, borrowable, str_fresh_ret);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
-                if (str_accum_unsafe_for(arm.body, name, borrowable)) { return true; }
+                if (str_accum_unsafe_for(arm.body, name, borrowable, str_fresh_ret)) { return true; }
             }
             return false;
         },
@@ -30529,21 +30541,21 @@ function stmt_accum_unsafe_for(st: ast.Stmt, name: string, borrowable: string[])
 // concat SHAPE but is not is_str) is credited yet never reclaimed. That the init is
 // a literal or fresh producer, and every reassignment is a valid consume-rebind of
 // s that never escapes, is proven by str_accum_unsafe_for at the crediting site.
-function collect_str_accumulator_names(stmts: ast.Stmt[], reassigned: string[], acc: string[]): string[] {
+function collect_str_accumulator_names(stmts: ast.Stmt[], reassigned: string[], str_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
                 if (util.index_of_str(reassigned, v.name) >= 0) {
-                    var init_ok: boolean = str_local_binding_is_fresh(v.init);
+                    var init_ok: boolean = str_accum_value_is_fresh(v.init, str_fresh_ret);
                     match (v.init) { ast.ExprString(_) => { init_ok = true; }, _ => {} }
                     if (init_ok) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 }
             },
-            ast.StmtIf(f) => { a = collect_str_accumulator_names(f.then_body, reassigned, a); a = collect_str_accumulator_names(f.else_body, reassigned, a); },
-            ast.StmtWhile(w) => { a = collect_str_accumulator_names(w.body, reassigned, a); },
-            ast.StmtFor(fo) => { a = collect_str_accumulator_names(fo.body, reassigned, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_accumulator_names(m.arms[ai].body, reassigned, a); ai = ai + 1; } },
+            ast.StmtIf(f) => { a = collect_str_accumulator_names(f.then_body, reassigned, str_fresh_ret, a); a = collect_str_accumulator_names(f.else_body, reassigned, str_fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_str_accumulator_names(w.body, reassigned, str_fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_str_accumulator_names(fo.body, reassigned, str_fresh_ret, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_accumulator_names(m.arms[ai].body, reassigned, str_fresh_ret, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -34725,8 +34737,8 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // that freed box, so crediting it would sweep memory already on the freelist.
     // The wired families all carry `index_of_str(reassigned, …) < 0`, so none of
     // them can hand an accumulator a credit by another route.
-    var accs: string[] = collect_str_accumulator_names(body, reassigned, []);
-    out = reclaimable_str_accumulator(accs, body, borrowable, out);
+    var accs: string[] = collect_str_accumulator_names(body, reassigned, str_fresh_ret, []);
+    out = reclaimable_str_accumulator(accs, body, borrowable, str_fresh_ret, out);
     // Fresh-string-return-call locals (`var r = f(..)`, f a str-fresh-ret free
     // function): r solely owns the fresh string the callee moved out, so — when r
     // is not reassigned and never escapes (body_unsafe_for) — it is freed at scope
@@ -67790,10 +67802,10 @@ while (sfi < sfrs.len()) {
     return out;
 }
 
-function reclaimable_str_accumulator(accs: string[], body: ast.Stmt[], borrowable: string[], out: string[]): string[] {
+function reclaimable_str_accumulator(accs: string[], body: ast.Stmt[], borrowable: string[], str_fresh_ret: string[], out: string[]): string[] {
 var ci: i32 = 0;
 while (ci < accs.len()) {
-    if (!str_accum_unsafe_for(body, reclaim_site_name(accs[ci]), borrowable)) { out = out.append("STR:" + accs[ci]); }
+    if (!str_accum_unsafe_for(body, reclaim_site_name(accs[ci]), borrowable, str_fresh_ret)) { out = out.append("STR:" + accs[ci]); }
     ci = ci + 1;
 }
 
