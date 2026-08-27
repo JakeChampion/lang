@@ -852,6 +852,33 @@ invisible until the one before it was lifted, none of them about register
 allocation. Sizing the work by what the compiler was *reporting* at any point
 would have missed all six.
 
+### Every self-host driver compiles
+
+**47 of 47 `examples/self_host/*_run.fern` build under `-backend ssa`.** That is
+the whole tree of self-host entry points: the asm and wasm emitters, the module
+loaders, the checker, the interpreter, the IR lowerer, `ferndoc`, the capability
+and platform probes.
+
+Compiling every driver is what found all six ceilings, and it is the only thing
+that could have. Each one sat behind the one before it, so no single failure
+ever named more than the next step — reading the compiler's current error and
+sizing the work from it would have stopped after the first.
+
+Two sizes, both against the flat backend and both byte-identical to it on real
+input:
+
+| `.text` | flat | SSA | |
+|---|---|---|---|
+| `checker_modload_run` | 8,255,292 | 8,278,404 | 100.3% |
+| `wasm_modload_run` | 31,711,628 | 27,735,580 | **87.5%** |
+
+What this does not claim: the sweep is a *compile* gate. It proves every driver
+emits, assembles and links, and two of them were run against the flat build over
+real modules — `checker_modload_run` byte-identical across all 94 self-host
+modules, `wasm_modload_run` on `-per-module-count` and `-per-module-manifest`.
+Running the other 45 end-to-end is the next increment, and it is where a
+miscompile that links cleanly would show up.
+
 ### The interval approximation, and what sizing it missed
 
 Sized before building it, by comparing each function's true maximum of
