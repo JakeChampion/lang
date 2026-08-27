@@ -44765,8 +44765,19 @@ function arrenum_esc_expr(e: ast.Expr, name: string, borrowable: string[]): bool
                     _ => {}
                 }
                 if (eb_bare) {
+                    // "CNT:" admits a SECOND position, where "ELB:" refuses: a
+                    // callee that STORES the array in a struct literal keeps a
+                    // reference, so the element flag says no, but that store is
+                    // a counted one — the construction incs the array and the
+                    // holder's field drop decs it — so the caller's own claim
+                    // is untouched and its walk is still owed. Withholding it
+                    // is the leak (`enum_arr__param`, a constant 2 objects),
+                    // not the safety. param_counted_of's "DCNT:" tier is what
+                    // proves the store counted, and it admits only where the
+                    // element walk exists and no `p[i]` hands one out.
                     if (eb_callee.len() == 0
-                        || !param_is_borrowable(borrowable, "ELB:" + eb_callee, eai)) { return true; }
+                        || !(param_is_borrowable(borrowable, "ELB:" + eb_callee, eai)
+                            || param_is_borrowable(borrowable, "CNT:" + eb_callee, eai))) { return true; }
                 } else if (arrenum_esc_expr(c.args[eai], name, borrowable)) { return true; }
                 eai = eai + 1;
             }
@@ -56704,12 +56715,15 @@ pub function str_param_counted_at(reg: string[], callee: string, ai: i32): boole
 // registry and nothing else, so a NAMED local passed at a counted position read as
 // an escape and lost its scope-exit release entirely — the callee's store retained
 // and its drop gave the retain back, and no one ever released the caller's own
-// claim, a constant 2-object leak. This closes the `string` and `string[]`
-// construction-retain `__param` cells; the enum and array-of-boxes ones are not
-// counted by either tier, which admits BY TYPE.
+// claim, a constant 2-object leak. This closes the `string`, `string[]`, `enum`
+// and enum-ARRAY construction-retain `__param` cells. The struct-array one is
+// still uncounted: admission is BY TYPE, and its tier is its own slice.
 //
-// Both tiers merge into one flag string: at a call argument the question is
-// whether THIS position is counted, not which type tier proved it. Keys are
+// All tiers merge into one flag string: at a call argument the question is
+// whether THIS position is counted, not which type tier proved it. What the
+// caller then RELEASES is decided by its own local's type — the deep tier needs
+// a distinct key only so param_counted_of's consumers can tell a plain-dec
+// credit from an element-walk one, not so this merge can. Keys are
 // distinct from the bare names by the prefix, so every existing lookup is inert.
 function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
     var keys: string[] = [];
@@ -56719,8 +56733,8 @@ function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
         var row: string = pcnt[i];
         var bar: i32 = 0;
         while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
-        // "ACNT:" and "SCNT:" are both five bytes; a row with no key or no '|'
-        // is not one param_counted_of wrote.
+        // Every tier key is five bytes ("ACNT:" / "SCNT:" / "ECNT:" / "DCNT:");
+        // a row with no key or no '|' is not one param_counted_of wrote.
         if (bar < row.len() && bar > 5) {
             var key: string = "CNT:" + slice_unchecked(row, 5, bar);
             var fl: string = slice_unchecked(row, bar + 1, row.len()) + "";
@@ -56816,6 +56830,8 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var enum_ok_result: boolean = enum_result_cannot_alias(fn.ret_type, structs);
             var eflags: string = "";
             var eany: boolean = false;
+            var eaflags: string = "";
+            var eaany: boolean = false;
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
@@ -56843,6 +56859,31 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ECNT:", structs, sfok)) { eok = true; }
                 if (eok) { eflags = eflags + "1"; eany = true; } else { eflags = eflags + "0"; }
+                // ENUM-ARRAY tier, the DEEP class. Its own key rather than a
+                // widening of "ACNT:": that tier's credit routes a plain
+                // arr_dec, and an array of BOXES owes an element walk, so its
+                // consumers must be able to tell the two apart.
+                //
+                // Admission needs the element walk to EXIST — enum_arr_elems_walk_ok
+                // is the same predicate the backends ask before emitting
+                // __enum_arr_elems_drop_<E> at the arr_dec site. Without it the
+                // credit would route a walk nothing emits, which is the leak it
+                // is trying to close rather than a fix.
+                //
+                // Both releases are rc-gated (the holder's walk and the source's
+                // emit_arrenum_deep_free each is_unique-gate the buffer), so the
+                // callee's counted store and the caller's own claim net to one
+                // owner: with rc 2 the first sweep decs and the second walks.
+                // The element handout the "ELB:" tier had to ask about is
+                // already refused here — arrparam_use_ok credits `p[i]` only for
+                // "SCNT:", so an element read disqualifies the param outright.
+                var eaok: boolean = false;
+                if (scalar_result
+                    && is_enum_array_field_type(structs, fn.params[pj].type_name)
+                    && enum_arr_elems_walk_ok(structs, slice_unchecked(fn.params[pj].type_name, 0, fn.params[pj].type_name.len() - 2))
+                    && !fn.params[pj].own
+                    && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "DCNT:", structs, sfok)) { eaok = true; }
+                if (eaok) { eaflags = eaflags + "1"; eaany = true; } else { eaflags = eaflags + "0"; }
                 pj = pj + 1;
             }
             if (aany) {
@@ -56854,6 +56895,11 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 var eent: string = "ECNT:" + borrowable_key(fn) + "|" + eflags;
                 next = next.append(eent);
                 if (util.index_of_str(reg, eent) < 0) { changed = true; }
+            }
+            if (eaany) {
+                var eaent: string = "DCNT:" + borrowable_key(fn) + "|" + eaflags;
+                next = next.append(eaent);
+                if (util.index_of_str(reg, eaent) < 0) { changed = true; }
             }
             if (sany) {
                 var sent: string = "SCNT:" + borrowable_key(fn) + "|" + sflags;
