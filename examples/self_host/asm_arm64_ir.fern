@@ -572,40 +572,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.mark_str_from_bytes();
             s = s.write("    bl __fn___fern_string_from_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 74) {  // memcpy
-            // [dst, src, n] -> copy n bytes src->dst, push dummy 0. n on top
-            // (x2), then src (x1), then dst (x0); labels are op-index-unique.
-            //
-            // Size-classed. At 8 bytes and up, an 8-byte loop runs until the
-            // rest fits in one more 8-byte access, which is then taken at the
-            // END of each operand — so the two accesses overlap and no length
-            // pays for a residue loop. Below 8, a bounded (<= 7 iteration)
-            // byte loop covers it. Regions must not overlap each other.
-            //
-            // x3/x4/x9/x10 are free: this emitter keeps operands on the
-            // machine stack, so nothing above x2 is live across an op.
-            //
-            // The x86-64 sibling deliberately keeps `rep movsb`. Measured over
-            // examples/bench, this shape is a 2.1x win here and a 10% LOSS
-            // there, where ERMSB covers the whole supported CPU baseline.
-            var mi: string = util.i32_to_string(i);
-            var mdone: string = lp + "mcd" + mi;
-            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = s.write("    cbz x2, " + mdone + "\n");
-            s = s.write("    cmp x2, #8\n    b.lo " + lp + "mcb" + mi + "\n");
-            s = s.write("    add x9, x1, x2\n    sub x9, x9, #8\n");
-            s = s.write("    add x10, x0, x2\n    sub x10, x10, #8\n");
-            s = s.write(lp + "mc" + mi + ":\n");
-            s = s.write("    cmp x0, x10\n    b.hs " + lp + "mct" + mi + "\n");
-            s = s.write("    ldr x4, [x1], #8\n    str x4, [x0], #8\n");
-            s = s.write("    b " + lp + "mc" + mi + "\n");
-            s = s.write(lp + "mct" + mi + ":\n");
-            s = s.write("    ldr x4, [x9]\n    str x4, [x10]\n");
-            s = s.write("    b " + mdone + "\n");
-            s = s.write(lp + "mcb" + mi + ":\n");
-            s = s.write("    ldrb w3, [x1], #1\n    strb w3, [x0], #1\n    sub x2, x2, #1\n");
-            s = s.write("    cbnz x2, " + lp + "mcb" + mi + "\n");
-            s = s.write(mdone + ":\n");
-            s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_memcpy(o, i, lp, s);
         } else if (o.kind_tag == 75) {  // memset
             // [dst, byte, n] -> fill n bytes at dst with byte's low byte (byte
             // loop), push dummy 0. n on top (x2), then byte (x1), then dst (x0).
@@ -775,25 +742,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // the whole point — a heap address survives it.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 5) {  // const_str
-            // String literal: intern the bytes in .rodata and push the address of
-            // its STATIC box (asmcore.emit_str_box_data_from). box = [rc=-1][data][len],
-            // so data@box+0 / len@box+8 are what __fern_str_concat / _eq already
-            // read, and the immortal rc makes every reclaim path a no-op (#7080).
-            //
-            // The block's own `.quad .S<i>` is a link-time absolute address, which
-            // is the runtime one only where the image loads where it was linked.
-            // On the static-PIE target it is not, and emit_ir_reloc fixes it once
-            // at _start rather than every evaluation paying to recompute it.
-            // Still mark_heap: the literal itself no longer allocates, but its
-            // value is a box pointer that flows into ops which do, and the
-            // runtime those need is emitted behind this flag.
-            s = s.mark_heap();
-            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
-            s = lo.state;
-            var boxlbl: string = asmcore.str_box_label(s, lo.idx);
-            s = s.write("    adrp x0, " + boxlbl + "\n");
-            s = s.write("    add x0, x0, :lo12:" + boxlbl + "\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_const_str(o, s);
         } else if (ir.is_str_op_kind(o.kind_tag)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
@@ -879,20 +828,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 s = s.write("    ldr x0, [sp], #16\n    fmov s0, w0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
-            // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
-            // The arena is mmap'd lazily; its base is recoverable from the
-            // recorded end (__fern_heap_end = base + heap_size), so base =
-            // end − heap_size and ptr − base = ptr − end + heap_size. The
-            // cursor is 0 until the first alloc, so guard that to report 0.
-            s = s.mark_heap();
-            s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");   // cursor (0 if uninit)
-            s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");   // arena end
-            s = s.write("    sub x2, x0, x1\n");                  // ptr − end
-            s = s.write("    mov x3, #1\n    lsl x3, x3, #34\n");// heap_size = 0x400000000 (16 GiB, lockstep with asm_arm64.fern), built via mov+lsl (32-bit literal parser)
-            s = s.write("    add x2, x2, x3\n");                  // ptr − base
-            s = s.write("    cmp x0, #0\n");
-            s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
-            s = s.write("    str x2, [sp, #-16]!\n");
+            s = emit_arm64_op_heap_bump_bytes(o, s);
         } else if (o.kind_tag == 229) {  // heap_mark
             // The arena checkpoint: the cursor, plus a snapshot of BOTH freelist
             // head tables into their .bss shadows. Snapshotted rather than
@@ -908,24 +844,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = arm64_copy_words(s, "__fern_large_freelist", "__fern_large_freelist_shadow", 2560);
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 230) {  // heap_release_to
-            // Rewind to the mark and restore both head tables. mark == 0 means
-            // the mark predates the first allocation, i.e. no checkpoint — leave
-            // the cursor alone rather than zero it and hand out the arena base.
-            // Sound only when nothing allocated after the mark is still
-            // reachable; the caller owns that, as it owns malloc/free pairing.
-            var hro: asmcore.LabelOut = asmcore.fresh_label(s);
-            var hr_done: string = hro.name;
-            s = hro.state;
-            s = s.mark_heap();
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    cbz x0, " + hr_done + "\n");
-            s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n    str x0, [x1]\n");
-            s = arm64_copy_words(s, "__fern_freelist_shadow", "__fern_freelist", 65536);
-            s = arm64_copy_words(s, "__fern_large_freelist_shadow", "__fern_large_freelist", 2560);
-            s = s.write(hr_done + ":\n");
-            // Push the mark back — the one-value-per-expression invariant, as on
-            // x86-64. x0 survives both paths (arm64_copy_words uses x9-x12).
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_heap_release_to(o, s);
         } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
             // The cliff WEIGHT: bytes copied at the crossings the counter
             // counts. Same inline .bss read + heap gate as its sibling.
@@ -1262,34 +1181,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("sleep_ms");
             s = s.write("    bl __fn___fern_sleep_ms\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 125) {  // map_set
-            // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=flags).
-            s = s.need("maps");
-            // vretain (o.width bit 3, #6880): the VALUE is an aliased array and
-            // this runtime stores the pointer with no rc-inc, so the store owes
-            // it a retain — the exit dec-sweep releases every array slot, and
-            // without this the map's column is left naming a freed block.
-            // Emitted before the pops, off the stack top, so the value's own
-            // slot is untouched.
-            if ((o.width / 8) % 2 == 1) {
-                s = s.write("    ldr x9, [sp]\n    str x9, [sp, #-16]!\n    bl __fn___fern_rc_inc\n    add sp, sp, #16\n");
-            }
-            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            // x4 = per-insert flag bits (mirrors the x86-IR %r9):
-            //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
-            //     (o.width bit 1, from irlower's is_fresh_str_temp) — map_set frees
-            //     the discarded key on an overwrite so a recurring computed key
-            //     doesn't leak (the arm64 twin of the x86-IR fix).
-            //   bit 1 = owncols (o.width bit 2, #4353): i32-key AND i32-value map
-            //     — its keys()/values() reads snapshot (kinds 131/132 flag 0), so
-            //     the grow path may free the superseded buffer (arr_push_owned).
-            // i32/interned keys are never fresh and string/pointer columns never
-            // set owncols → x4=0 → old behaviour for the compiler's own maps.
-            var x4bits: i32 = 0;
-            if ((o.width / 2) % 2 == 1) { x4bits = x4bits + 1; }
-            if ((o.width / 4) % 2 == 1) { x4bits = x4bits + 2; }
-            s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
-            s = map_eqfn_x5(s, o.str);   // x5 = derived K.eq for a struct/enum key, else 0
-            s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_map_set(o, s);
         } else if (o.kind_tag == 126) {  // map_len
             // pop map; len = keys-array length ([[map]]).
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
@@ -1318,65 +1210,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_map_delete\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 129) {  // map_get_or
-            s = s.need("maps");
-            var golbl: string = lp + "go" + util.i32_to_string(i);
-            // [map, k, default] (default top) -> __fern_map_get, payload or default.
-            s = s.write("    ldr x3, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");   // default(x3), k(x1), map(x0)
-            s = s.write("    str x3, [sp, #-16]!\n");   // save default across the call (x3 is caller-saved)
-            s = map_eqfn_x5(s, o.str);
-            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
-            s = s.write("    ldr x3, [sp], #16\n");      // restore default
-            // Release the Option box __fern_map_get allocated — it is consumed
-            // right here (#4357's ~16 B/call get_or leak). Extract tag +
-            // payload FIRST, then release through __fern_arr_dec: the box
-            // carries an rc header, and a headered block threaded straight onto
-            // the freelist corrupts it. x3/x4/x6 are caller-saved and live
-            // across the call; x6 is paired with itself to keep sp 16-byte
-            // aligned, so its partner pops into a scratch register.
-            s = s.write("    ldr x4, [x0]\n    ldr x6, [x0, #8]\n");   // tag, payload
-            s = s.write("    stp x3, x4, [sp, #-16]!\n    stp x6, x6, [sp, #-16]!\n");
-            s = s.write("    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n");
-            s = s.write("    ldp x6, x9, [sp], #16\n    ldp x3, x4, [sp], #16\n");
-            s = s.write("    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
-            s = s.write("    mov x0, x6\n    b " + golbl + "_e\n");
-            s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_map_get_or(o, i, lp, s);
         } else if (o.kind_tag == 131) {  // map_keys
-            // parallel-array map: keys[] pointer at box+0. Scalar column
-            // (i32_imm 0, #4353): SNAPSHOT into a fresh rc=1 copy via
-            // __fern_map_snapshot_col (asm_arm64.fern map runtime) so the read
-            // is an owned array — the exit sweep reclaims the copy, and
-            // map_set's owned grow can free the superseded live buffer without
-            // dangling it. Pointer/string column (i32_imm 1): the historical
-            // raw-buffer alias (slice 3). The helper allocates (__fern_arr_box),
-            // so mark the heap + maps needs like map_iter does.
-            if (o.i32_imm == 0) {
-                s = s.need("maps");
-                s = s.mark_heap();
-                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
-            } else if (o.i32_imm == 2) {
-                // String column (#4353 slice 3): snapshot + per-element
-                // rc-inc; the SARR post-loop release deep-frees the copy.
-                s = s.need("maps");
-                s = s.mark_heap();
-                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col_str\n    str x0, [sp, #-16]!\n");
-            } else {
-                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
-            }
+            s = emit_arm64_op_map_keys(o, s);
         } else if (o.kind_tag == 132) {  // map_values
-            // parallel-array map: values[] pointer at box+8. Same scalar-column
-            // snapshot / string-column retain-snapshot / pointer-column alias
-            // split as map_keys above.
-            if (o.i32_imm == 0) {
-                s = s.need("maps");
-                s = s.mark_heap();
-                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
-            } else if (o.i32_imm == 2) {
-                s = s.need("maps");
-                s = s.mark_heap();
-                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col_str\n    str x0, [sp, #-16]!\n");
-            } else {
-                s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
-            }
+            s = emit_arm64_op_map_values(o, s);
         } else if (o.kind_tag == 133) {  // map_iter
             // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm_arm64.fern:1243).
             // arm64 has no central op_allocates heap gate, so mark_heap explicitly.
@@ -1400,64 +1238,9 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // bump the stored cursor; push a dummy result for the statement drop.
             s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    add x1, x1, #1\n    str x1, [x0, #8]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 138) {  // struct_make
-            // nf field values on the operand stack (field nf-1 on top, decl
-            // order). Box = [shape_ptr@0, f0@8, …]; shape = the interned
-            // struct-name string (asm_arm64's layout). The box is rc-HEADERED so
-            // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
-            // refcount AND free it at the right size: allocate via __fern_arr_box
-            // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
-            // data-8 and the block size (cap+3 words) recoverable from cap at
-            // data-16 — exactly the array layout __fern_arr_dec frees. The slot
-            // offsets are unchanged (data+0=shape, data+(i+1)*8=field i), so every
-            // struct/enum reader (struct_get/_set, variant_is, dyn dispatch's
-            // shape@0) stays correct. __fern_arr_box writes len=cap at data+0; we
-            // overwrite it with the shape pointer, leaving cap@data-16 intact.
-            s = s.mark_heap();
-            var nf: i32 = o.i32_imm;
-            var smlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-            s = smlo.state;
-            s = s.write("    mov x0, #" + util.i32_to_string(nf + 1) + "\n    bl __fern_arr_box\n");
-            s = s.write("    adrp x1, " + smlo.label + "\n");
-            s = s.write("    add x1, x1, :lo12:" + smlo.label + "\n");
-            s = s.write("    str x1, [x0]\n");
-            var em: i32 = nf - 1;
-            while (em >= 0) {
-                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((em + 1) * 8) + "]\n");
-                em = em - 1;
-            }
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_struct_make(o, s);
         } else if (o.kind_tag == 218) {  // const_struct
-            // The whole box is a compile-time constant (#6149): intern its data
-            // block and push the block's address. No allocation, no field stores
-            // — where struct_make emits an __fern_arr_box call plus nf pops, this
-            // is one adrp/add pair. The block itself is written by the SHARED
-            // asmcore.emit_const_agg_data (identical layout and directives on both
-            // register backends).
-            //
-            // This needed a data relocation in the in-process arm64 assembler
-            // first: a block's first word is the shape POINTER, a
-            // `.quad <label>`, and arm64_gas_data_directive used to run every
-            // `.quad` operand through arm64_gas_atoi64 — so `.quad .S0`
-            // assembled to ZERO, nulling the shape word and making every `match`
-            // on the constant fall through (four union fixtures returned 0
-            // instead of their value). arm64_gas_numeric_tok now separates a
-            // number from a symbol, and arm64_gas_link resolves the queued slot.
-            var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(o.str));
-            s = kshp.state;
-            var kpack: string = kshp.label + "|";
-            var kvals: string[] = ir.const_struct_values(o.str);
-            var kv: i32 = 0;
-            while (kv < kvals.len()) {
-                if (kv > 0) { kpack = kpack + ","; }
-                kpack = kpack + kvals[kv];
-                kv = kv + 1;
-            }
-            var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
-            s = kout.state;
-            var klbl: string = asmcore.const_agg_label(s, kout.idx);
-            s = s.write("    adrp x0, " + klbl + "\n");
-            s = s.write("    add x0, x0, :lo12:" + klbl + "\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_const_struct(o, s);
         } else if (o.kind_tag == 139) {  // struct_get
             // pop struct box; field at (index+1)*8.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n    str x0, [sp, #-16]!\n");
@@ -1500,293 +1283,22 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    add x1, x1, :lo12:" + vlo.label + "\n");
             s = s.write("    cmp x0, x1\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 142) {  // tuple_make
-            // n elements on the operand stack (element n-1 on top). Box =
-            // [e0@0, e1@8, …], n*8 bytes, no shape slot. x0 (box) stays live.
-            // rc-HEADERED (via __fern_arr_box cap=n, exactly like struct_make) so a
-            // fresh, non-escaping SCALAR tuple local can be reclaimed by the exit
-            // dec-sweep at the right size — element offsets are unchanged (element i
-            // @ i*8; __fern_arr_box writes len=cap @ data+0, which element 0
-            // overwrites, leaving cap@data-16 for the free size). Non-reclaimed /
-            // escaping tuples carry the header and leak as before.
-            s = s.mark_heap();
-            var tn: i32 = o.i32_imm;
-            s = s.write("    mov x0, #" + util.i32_to_string(tn) + "\n    bl __fern_arr_box\n");
-            var tem: i32 = tn - 1;
-            while (tem >= 0) {
-                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(tem * 8) + "]\n");
-                tem = tem - 1;
-            }
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_tuple_make(o, s);
         } else if (o.kind_tag == 143) {  // tuple_get
             // pop tuple box; element at index*8.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string(o.i32_imm * 8) + "]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 159) {  // drop
             s = s.write("    add sp, sp, #16\n");
         } else if (o.kind_tag == 149 && ircore.is_fern_helper(o.str)) {  // call_direct
-            // Runtime RC helper — asm_arm64's stack-arg ABI + symbols (drop-in):
-            // the arg(s) are already on the rt-stack (the helper reads [sp]);
-            // call, caller-clean the args, push the result (helpers return the
-            // ptr / count in x0).
-            s = s.mark_heap();
-            // i32.to_string()'s decimal helper needs its body emitted (the
-            // stack-ABI __fn___fern_i32_to_string wrapper in asm_arm64.emit_runtime,
-            // gated on this need).
-            if (o.str == "__fern_i32_to_string") { s = s.mark_i32_to_string(); }
-            // u32.to_string()'s UNSIGNED decimal helper (#2649) — the x86 IR path
-            // marks this (asm_ir), but the arm64 IR path was missing it, so a
-            // module reaching u32_to_string on the arm64 IR path emitted the call
-            // without its body → "undefined reference to __fn___fern_u32_to_string"
-            // at link (e.g. u32_arith through the self-host arm64 stdtest gate).
-            if (o.str == "__fern_u32_to_string") { s = s.mark_u32_to_string(); }
-            // The WIDE siblings (#5826). asm_arm64.emit_runtime already emits
-            // both bodies gated on these needs; only the IR-path mark was
-            // missing, exactly as it was for u32 above.
-            if (o.str == "__fern_i64_to_string") { s = s.mark_i64_to_string(); }
-            if (o.str == "__fern_u64_to_string") { s = s.mark_u64_to_string(); }
-            // str_to_i32(s)'s decimal-parse helper — gated on this need (the
-            // stack-ABI __fn___fern_str_to_i32 wrapper in asm_arm64.emit_runtime).
-            if (o.str == "__fern_str_to_i32") { s = s.mark_str_to_i32(); }
-            // chr(n)'s 1-char-box helper — gated on this need (the self-contained
-            // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
-            if (o.str == "__fern_chr") { s = s.mark_chr(); }
-            // The i32 builtin helpers irlower lowers for EVERY backend (#3457):
-            // xs.sum() / .product() / .index_of() / .contains(), n.pow(k),
-            // n.gcd(m) / n.lcm(m), and
-            // xs.min() / .max(). Their bodies are need-gated in
-            // asm_arm64.emit_runtime, and the arm64 IR path marked none of them —
-            // so `bl __fn___fern_arr_i32_sum` was emitted against nothing and the
-            // link failed with an undefined reference (the same gap u32_to_string
-            // had above; the x86 IR path marks its equivalents in asm_ir).
-            if (o.str == "__fern_arr_i32_sum") { s = s.mark_arr_i32_sum(); }
-            if (o.str == "__fern_arr_i32_product") { s = s.mark_arr_i32_product(); }
-            if (o.str == "__fern_i32_pow") { s = s.mark_i32_pow(); }
-            // n.gcd(m) / n.lcm(m). The BODIES were already emitted below (gated
-            // on has_need), fed by all_runtime_need_roots in the per-module entry
-            // — but nothing marked the need from a call site, because irlower had
-            // no lowering for these two until now and so no call site existed.
-            // close_needs carries i32_lcm → i32_gcd, so marking lcm alone would
-            // still emit gcd's body; both are marked for symmetry with the x86
-            // pair in asm_ir.
-            if (o.str == "__fern_i32_gcd") { s = s.mark_i32_gcd(); }
-            if (o.str == "__fern_i32_lcm") { s = s.mark_i32_lcm(); }
-            if (o.str == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
-            // min/max return a freshly allocated Option box, so unlike the fold
-            // helpers they need the heap runtime as well as their own bodies.
-            if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
-                s = s.mark_heap();
-                s = s.need("arr_i32_min_max_opt");
-            }
-            // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join +
-            // str_concat + heap needs; the bodies come from asm_arm64.emit_runtime
-            // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
-            // exists there), so only the call site needs marking here.
-            if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
-            // arr-of-arr reclaim helpers (#4355 slice 9) — bodies gated on these
-            // needs in asm_arm64's runtime writer, mirroring the x86 asm_ir
-            // gating: an unrelated binary must not carry the strarrarr body's
-            // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
-            if (o.str == "__fern_arrarr_free") { s = s.need("arrarr_free"); }
-            // The VIEW-aware string[] element walk (#6544), gated the same way:
-            // a binary that never reclaims a builtin string[] must not carry a
-            // body whose inner `bl __fn___fern_str_view_free` the negative
-            // asm-grep contracts would see.
-            // The box-VALUE-column map frees (#4353 item 3) free that column
-            // through __fern_arrarr_free, so they pull in its body as well as
-            // their own.
-            if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
-                s = s.need("arrarr_free"); s = s.need("map_free_va");
-            }
-            if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
-            if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
-            // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
-            // emits a per-type pass-through body. arm64 does NOT deep-drop struct
-            // fields yet (leak-safe pass-through); still needs the heap runtime.
-            // (__fern_snapshot_dec — the shallow consume-rebind free — IS real on
-            // arm64 now; only the per-type deep-drop helpers remain pass-throughs.)
-            if (ircore.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
-            // __struct_drop_<T> (#3457): record the type so emit_module_ir_unit_arm64
-            // emits a per-type pass-through body (leak-safe; arm64 does NOT deep-drop
-            // yet, mirroring __field_reclaim). Still needs the heap runtime.
-            if (ircore.is_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
-            s = s.write("    bl " + ircore.ir_helper_symbol(o.str) + "\n");
-            if (o.i32_imm > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(o.i32_imm * 16) + "\n"); }
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_call_direct_helper(o, s);
         } else if (o.kind_tag == 149) {  // call_direct
-            // User call: the IR pushes args left-to-right (arg0 deepest);
-            // asm_arm64's ABI wants arg0 on TOP (param[i] at [x29,#16+i*16]).
-            // Reverse the argc 16-byte rt-stack slots, call, pop the args, push x0.
-            var argc: i32 = o.i32_imm;
-            // FFI __c_call<n> (#4375): a normal call to the shim __fn___c_call<n>
-            // (emitted by asm_arm64.emit_runtime). Register its need so the body
-            // is emitted; the shim reads its params off the arm64 stack ABI and
-            // marshals them into the AAPCS64 arg registers.
-            if (ircore.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
-            var h: i32 = 0;
-            while (h < argc / 2) {
-                var lo: i32 = h * 16;
-                var hi: i32 = (argc - 1 - h) * 16;
-                s = s.write("    ldr x0, [sp, #" + util.i32_to_string(lo) + "]\n");
-                s = s.write("    ldr x1, [sp, #" + util.i32_to_string(hi) + "]\n");
-                s = s.write("    str x0, [sp, #" + util.i32_to_string(hi) + "]\n");
-                s = s.write("    str x1, [sp, #" + util.i32_to_string(lo) + "]\n");
-                h = h + 1;
-            }
-            s = s.write("    bl __fn_" + asmcore.sanitize_label(o.str) + "\n");
-            if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_call_direct(o, s);
         } else if (o.kind_tag == 147) {  // dyn_dispatch
-            // `dyn Trait` method call. Receiver (arg0) + args are in argc
-            // consecutive locals from base_slot. Read the receiver's shape
-            // pointer (x1) and dispatch to the matching `<Type>.<method>` — a
-            // compare-branch chain over every module method named o.str with a
-            // struct receiver, mirroring asm_arm64.fern. Each matched arm pushes
-            // the argc locals (arg0/receiver on top, the arm64 ABI) and calls.
-            var dbase: i32 = o.i32_imm;
-            var dargc: i32 = o.width;
-            s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
-            s = s.write("    ldr x1, [x0]\n");
-            var dend: string = lp + "dynend" + util.i32_to_string(i);
-            var dfi: i32 = 0;
-            var darmn: i32 = 0;
-            while (dfi < s.funcs.len()) {
-                var dfd: parser.FuncDecl = s.funcs[dfi];
-                var ddbn: string = util.base_type_name(dfd.receiver_type);
-                // Dispatch arms: struct receivers (value carries its shape) AND
-                // primitive/string receivers (value heap-boxed at coercion —
-                // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
-                // local holds the box pointer, so arg0 is reloaded from box+8.
-                var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-                if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
-                        && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
-                    var dbn: string = ddbn;
-                    var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
-                    s = dlit.state;
-                    var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    s = s.write("    adrp x2, " + dlit.label + "\n");
-                    s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
-                    s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
-                    var dk: i32 = dargc - 1;
-                    while (dk >= 0) {
-                        if (dk == 0 && dprim) {
-                            // arg0 is the receiver: unbox the value from box+8.
-                            s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
-                            s = s.write("    ldr x0, [x0, #8]\n");
-                            s = s.write("    str x0, [sp, #-16]!\n");
-                        } else {
-                            s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
-                            s = s.write("    str x0, [sp, #-16]!\n");
-                        }
-                        dk = dk - 1;
-                    }
-                    s = s.write("    bl __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
-                    s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.write("    b " + dend + "\n");
-                    s = s.write(dnext + ":\n");
-                    darmn = darmn + 1;
-                }
-                // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
-                // value's offset-0 shape is its VARIANT's interned shape (the
-                // same identity op_variant_is reads), never the enum name
-                // itself, so the struct-arm compare above can never identify
-                // it. Match the receiver against EVERY variant of the enum;
-                // on any hit call `<Enum>.<method>` with the variant box as
-                // the receiver (its body's `match (self)` re-reads the
-                // variant). Keyed per-variant so two enums implementing the
-                // same trait dispatch to their own impls. recv_is_array
-                // excludes an array method's `T[]` receiver (base_type_name
-                // strips the `[]`, which would otherwise mis-read as an
-                // enum — #2766). Mirrors the x86 asm_ir arm.
-                if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
-                        && !asmcore.recv_is_array(dfd.receiver_type)
-                        && irlower.decl_is_enum(s.struct_decls, ddbn)) {
-                    var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    var dvi: i32 = 0;
-                    while (dvi < s.struct_decls.len()) {
-                        if (s.struct_decls[dvi].enum_owner == ddbn) {
-                            var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
-                            s = vlit.state;
-                            s = s.write("    adrp x2, " + vlit.label + "\n");
-                            s = s.write("    add x2, x2, :lo12:" + vlit.label + "\n");
-                            s = s.write("    cmp x1, x2\n    b.eq " + dehit + "\n");
-                        }
-                        dvi = dvi + 1;
-                    }
-                    s = s.write("    b " + denext + "\n");
-                    s = s.write(dehit + ":\n");
-                    var dek: i32 = dargc - 1;
-                    while (dek >= 0) {
-                        s = fr_ldr(s, "x0", 0 - 8 * (dbase + dek + 1));
-                        s = s.write("    str x0, [sp, #-16]!\n");
-                        dek = dek - 1;
-                    }
-                    s = s.write("    bl __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
-                    s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.write("    b " + dend + "\n");
-                    s = s.write(denext + ":\n");
-                    darmn = darmn + 1;
-                }
-                dfi = dfi + 1;
-            }
-            // No arm matched. Unreachable for a well-typed dyn value, so abort
-            // (exit 134, like __fern_oob_abort) rather than answer 0.
-            s = s.write("    mov x8, #93\n    mov x0, #134\n    svc #0\n");
-            s = s.write(dend + ":\n");
+            s = emit_arm64_op_dyn_dispatch(o, i, lp, s);
         } else if (o.kind_tag == 146) {  // dyn_box
-            // Heap-box a primitive/string value coerced into a `dyn Trait` slot
-            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
-            // shape = the interned primitive type name (the SAME .S label struct
-            // shapes use). The cell is rc-HEADERED via __fern_arr_box(cap=2) —
-            // exactly like opt_make — so a fresh, non-escaping prim/string dyn
-            // local can be freed by the exit sweep's __fern_rc_dec (#4351; the
-            // former raw __fern_alloc cell had no header, so it could never be
-            // reclaimed). Offsets unchanged (arr_box's len@0 is overwritten by
-            // the shape; cap@data-16 drives the free size). The value (one word)
-            // waits on the operand stack (memory, callee-preserved) across the
-            // alloc and is popped after — opt_make's alloc-then-store discipline.
-            var dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-            s = dbl.state;
-            s = s.mark_heap();
-            s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");  // x0 = cell ptr
-            s = s.write("    adrp x2, " + dbl.label + "\n");
-            s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
-            s = s.write("    str x2, [x0]\n");                       // shape @0
-            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");   // value @8
-            s = s.write("    str x0, [sp, #-16]!\n");                // push cell ptr
+            s = emit_arm64_op_dyn_box(o, s);
         } else if (o.kind_tag == 148) {  // dyn_downcast
-            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
-            // pointer carrying its concrete shape @0) is on top of the operand
-            // stack. Read its shape and compare to T's interned shape (the SAME
-            // .S label struct_make / dyn_dispatch use, so pointer identity
-            // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
-            // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
-            // value rides the operand stack (which __fern_alloc preserves)
-            // across the alloc, so the hit path reloads it as the Some payload.
-            s = s.mark_heap();
-            var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-            s = dcl.state;
-            var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
-            var dcend: string = lp + "dcend" + util.i32_to_string(i);
-            s = s.write("    ldr x0, [sp]\n");                       // peek dyn ptr (left on stack)
-            s = s.write("    ldr x1, [x0]\n");                       // shape @0
-            s = s.write("    adrp x2, " + dcl.label + "\n");
-            s = s.write("    add x2, x2, :lo12:" + dcl.label + "\n");
-            s = s.write("    cmp x1, x2\n    b.ne " + dcmiss + "\n");
-            // hit: Some(value) — alloc, tag 0, reload+store the dyn ptr payload.
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
-            s = s.write("    mov x1, #0\n    str x1, [x0]\n");
-            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write("    b " + dcend + "\n");
-            // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
-            s = s.write(dcmiss + ":\n");
-            s = s.write("    add sp, sp, #16\n");
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
-            s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write(dcend + ":\n");
+            s = emit_arm64_op_dyn_downcast(o, i, lp, s);
         } else if (o.kind_tag == 6) {  // const_func
             // A function VALUE is the function's code address (adrp/add of its
             // label) — push it. No funcref table (the address is the value);
@@ -1794,25 +1306,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             var cfl: string = "__fn_" + asmcore.sanitize_label(o.str);
             s = s.write("    adrp x0, " + cfl + "\n    add x0, x0, :lo12:" + cfl + "\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 150) {  // call_indirect
-            // Indirect call: the rt-stack holds [arg0(deepest) … argN-1,
-            // fn_addr(top)]. Pop the target into x9 (scratch), reverse the args so
-            // arg0 is on TOP (param[i] at [x29,#16+i*16]), blr through it, pop the
-            // args, push x0. Same arg discipline as call_direct.
-            var icargc: i32 = o.i32_imm;
-            s = s.write("    ldr x9, [sp], #16\n");
-            var ih: i32 = 0;
-            while (ih < icargc / 2) {
-                var ilo: i32 = ih * 16;
-                var ihi: i32 = (icargc - 1 - ih) * 16;
-                s = s.write("    ldr x0, [sp, #" + util.i32_to_string(ilo) + "]\n");
-                s = s.write("    ldr x1, [sp, #" + util.i32_to_string(ihi) + "]\n");
-                s = s.write("    str x0, [sp, #" + util.i32_to_string(ihi) + "]\n");
-                s = s.write("    str x1, [sp, #" + util.i32_to_string(ilo) + "]\n");
-                ih = ih + 1;
-            }
-            s = s.write("    blr x9\n");
-            if (icargc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(icargc * 16) + "\n"); }
-            s = s.write("    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_call_indirect(o, s);
         } else if (o.kind_tag == 4) {  // const_f64
             // Float literal: emit the EXACT IEEE-754 bits (round-to-nearest,
             // ties-to-even) as two little-endian 32-bit halves in .rodata, then
@@ -1828,21 +1322,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    .section .rodata\n" + flb.name + ": .long " + util.i32_to_string(flo) + ", " + util.i32_to_string(fhi) + "\n    .text\n");
             s = s.write("    adrp x0, " + flb.name + "\n    add x0, x0, :lo12:" + flb.name + "\n    ldr d0, [x0]\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 11) {  // i32_to_f64
-            // int -> f64, selected by the op's width + signedness. arm64 has both
-            // conversions, so each case is one instruction: scvtf for signed,
-            // ucvtf for unsigned, from a w-source at 32 bits and an x-source at
-            // 64. The old unconditional `scvtf d0, x0` was right for i32 / u32 /
-            // i64 (the 32-bit cases ride the slot correctly extended) but read a
-            // u64 >= 2^63 as negative — u64::MAX converted to -1.0 (#6051, the
-            // register sibling of the wasm fix in #5992).
-            if (o.width == 64) {
-                if (o.unsigned) { s = s.write("    ldr x0, [sp], #16\n    ucvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n"); }
-                else { s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n"); }
-            } else if (o.unsigned) {
-                s = s.write("    ldr x0, [sp], #16\n    ucvtf d0, w0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
-            } else {
-                s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
-            }
+            s = emit_arm64_op_i32_to_f64(o, s);
         } else if (o.kind_tag == 12) {  // f64_to_i32
             // f64 -> signed i32, saturating (fcvtzs to a 32-bit dest: NaN -> 0,
             // out-of-range clamps to INT32_MIN/MAX), then sign-extend into the
@@ -1885,20 +1365,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             else { s = s.write("    fdiv d0, d1, d0\n"); }
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 57 || o.kind_tag == 59 || o.kind_tag == 58 || o.kind_tag == 60 || o.kind_tag == 56 || o.kind_tag == 61 || o.kind_tag == 55) {  // fsqrt, ffloor, fceil, ftrunc, fabs, fround, fneg
-            // f64 unary math (op_funary): pop the operand into d0, apply the single
-            // FP instruction, push. frintm/frintp/frintz are round toward -inf /
-            // +inf / zero; frinta is round-to-nearest ties-AWAY (= Go's math.Round,
-            // so __round_f64 is one instruction here — no emulation needed, unlike
-            // x86/wasm).
-            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
-            if (o.kind_tag == 57) { s = s.write("    fsqrt d0, d0\n"); }  // fsqrt
-            else if (o.kind_tag == 59) { s = s.write("    frintm d0, d0\n"); }  // ffloor
-            else if (o.kind_tag == 58) { s = s.write("    frintp d0, d0\n"); }  // fceil
-            else if (o.kind_tag == 60) { s = s.write("    frintz d0, d0\n"); }  // ftrunc
-            else if (o.kind_tag == 61) { s = s.write("    frinta d0, d0\n"); }  // fround
-            else if (o.kind_tag == 55) { s = s.write("    fneg d0, d0\n"); }  // fneg
-            else { s = s.write("    fabs d0, d0\n"); }
-            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+            s = emit_arm64_op_fsqrt(o, s);
         } else if (o.kind_tag == 64 || o.kind_tag == 65 || o.kind_tag == 62 || o.kind_tag == 63) {  // fsin, fcos, fexp, flog
             // f64 transcendentals (op_funary): arm64 has no transcendental
             // instruction, so call the runtime helpers emit_runtime emits for the
@@ -1966,6 +1433,653 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
     // load offset out of range" errors. A pool here is off the execution path
     // (the `ret` above is unconditional), which is what makes it safe.
     s = s.write("    .ltorg\n");
+    return s;
+}
+
+function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // [dst, src, n] -> copy n bytes src->dst, push dummy 0. n on top
+    // (x2), then src (x1), then dst (x0); labels are op-index-unique.
+    //
+    // Size-classed. At 8 bytes and up, an 8-byte loop runs until the
+    // rest fits in one more 8-byte access, which is then taken at the
+    // END of each operand — so the two accesses overlap and no length
+    // pays for a residue loop. Below 8, a bounded (<= 7 iteration)
+    // byte loop covers it. Regions must not overlap each other.
+    //
+    // x3/x4/x9/x10 are free: this emitter keeps operands on the
+    // machine stack, so nothing above x2 is live across an op.
+    //
+    // The x86-64 sibling deliberately keeps `rep movsb`. Measured over
+    // examples/bench, this shape is a 2.1x win here and a 10% LOSS
+    // there, where ERMSB covers the whole supported CPU baseline.
+    var mi: string = util.i32_to_string(i);
+    var mdone: string = lp + "mcd" + mi;
+    s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    s = s.write("    cbz x2, " + mdone + "\n");
+    s = s.write("    cmp x2, #8\n    b.lo " + lp + "mcb" + mi + "\n");
+    s = s.write("    add x9, x1, x2\n    sub x9, x9, #8\n");
+    s = s.write("    add x10, x0, x2\n    sub x10, x10, #8\n");
+    s = s.write(lp + "mc" + mi + ":\n");
+    s = s.write("    cmp x0, x10\n    b.hs " + lp + "mct" + mi + "\n");
+    s = s.write("    ldr x4, [x1], #8\n    str x4, [x0], #8\n");
+    s = s.write("    b " + lp + "mc" + mi + "\n");
+    s = s.write(lp + "mct" + mi + ":\n");
+    s = s.write("    ldr x4, [x9]\n    str x4, [x10]\n");
+    s = s.write("    b " + mdone + "\n");
+    s = s.write(lp + "mcb" + mi + ":\n");
+    s = s.write("    ldrb w3, [x1], #1\n    strb w3, [x0], #1\n    sub x2, x2, #1\n");
+    s = s.write("    cbnz x2, " + lp + "mcb" + mi + "\n");
+    s = s.write(mdone + ":\n");
+    s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_const_str(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // String literal: intern the bytes in .rodata and push the address of
+    // its STATIC box (asmcore.emit_str_box_data_from). box = [rc=-1][data][len],
+    // so data@box+0 / len@box+8 are what __fern_str_concat / _eq already
+    // read, and the immortal rc makes every reclaim path a no-op (#7080).
+    //
+    // The block's own `.quad .S<i>` is a link-time absolute address, which
+    // is the runtime one only where the image loads where it was linked.
+    // On the static-PIE target it is not, and emit_ir_reloc fixes it once
+    // at _start rather than every evaluation paying to recompute it.
+    // Still mark_heap: the literal itself no longer allocates, but its
+    // value is a box pointer that flows into ops which do, and the
+    // runtime those need is emitted behind this flag.
+    s = s.mark_heap();
+    var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+    s = lo.state;
+    var boxlbl: string = asmcore.str_box_label(s, lo.idx);
+    s = s.write("    adrp x0, " + boxlbl + "\n");
+    s = s.write("    add x0, x0, :lo12:" + boxlbl + "\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
+    // The arena is mmap'd lazily; its base is recoverable from the
+    // recorded end (__fern_heap_end = base + heap_size), so base =
+    // end − heap_size and ptr − base = ptr − end + heap_size. The
+    // cursor is 0 until the first alloc, so guard that to report 0.
+    s = s.mark_heap();
+    s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");   // cursor (0 if uninit)
+    s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");   // arena end
+    s = s.write("    sub x2, x0, x1\n");                  // ptr − end
+    s = s.write("    mov x3, #1\n    lsl x3, x3, #34\n");// heap_size = 0x400000000 (16 GiB, lockstep with asm_arm64.fern), built via mov+lsl (32-bit literal parser)
+    s = s.write("    add x2, x2, x3\n");                  // ptr − base
+    s = s.write("    cmp x0, #0\n");
+    s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
+    s = s.write("    str x2, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Rewind to the mark and restore both head tables. mark == 0 means
+    // the mark predates the first allocation, i.e. no checkpoint — leave
+    // the cursor alone rather than zero it and hand out the arena base.
+    // Sound only when nothing allocated after the mark is still
+    // reachable; the caller owns that, as it owns malloc/free pairing.
+    var hro: asmcore.LabelOut = asmcore.fresh_label(s);
+    var hr_done: string = hro.name;
+    s = hro.state;
+    s = s.mark_heap();
+    s = s.write("    ldr x0, [sp], #16\n");
+    s = s.write("    cbz x0, " + hr_done + "\n");
+    s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n    str x0, [x1]\n");
+    s = arm64_copy_words(s, "__fern_freelist_shadow", "__fern_freelist", 65536);
+    s = arm64_copy_words(s, "__fern_large_freelist_shadow", "__fern_large_freelist", 2560);
+    s = s.write(hr_done + ":\n");
+    // Push the mark back — the one-value-per-expression invariant, as on
+    // x86-64. x0 survives both paths (arm64_copy_words uses x9-x12).
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=flags).
+    s = s.need("maps");
+    // vretain (o.width bit 3, #6880): the VALUE is an aliased array and
+    // this runtime stores the pointer with no rc-inc, so the store owes
+    // it a retain — the exit dec-sweep releases every array slot, and
+    // without this the map's column is left naming a freed block.
+    // Emitted before the pops, off the stack top, so the value's own
+    // slot is untouched.
+    if ((o.width / 8) % 2 == 1) {
+        s = s.write("    ldr x9, [sp]\n    str x9, [sp, #-16]!\n    bl __fn___fern_rc_inc\n    add sp, sp, #16\n");
+    }
+    s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    // x4 = per-insert flag bits (mirrors the x86-IR %r9):
+    //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
+    //     (o.width bit 1, from irlower's is_fresh_str_temp) — map_set frees
+    //     the discarded key on an overwrite so a recurring computed key
+    //     doesn't leak (the arm64 twin of the x86-IR fix).
+    //   bit 1 = owncols (o.width bit 2, #4353): i32-key AND i32-value map
+    //     — its keys()/values() reads snapshot (kinds 131/132 flag 0), so
+    //     the grow path may free the superseded buffer (arr_push_owned).
+    // i32/interned keys are never fresh and string/pointer columns never
+    // set owncols → x4=0 → old behaviour for the compiler's own maps.
+    var x4bits: i32 = 0;
+    if ((o.width / 2) % 2 == 1) { x4bits = x4bits + 1; }
+    if ((o.width / 4) % 2 == 1) { x4bits = x4bits + 2; }
+    s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
+    s = map_eqfn_x5(s, o.str);   // x5 = derived K.eq for a struct/enum key, else 0
+    s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_map_get_or(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = s.need("maps");
+    var golbl: string = lp + "go" + util.i32_to_string(i);
+    // [map, k, default] (default top) -> __fern_map_get, payload or default.
+    s = s.write("    ldr x3, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");   // default(x3), k(x1), map(x0)
+    s = s.write("    str x3, [sp, #-16]!\n");   // save default across the call (x3 is caller-saved)
+    s = map_eqfn_x5(s, o.str);
+    s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
+    s = s.write("    ldr x3, [sp], #16\n");      // restore default
+    // Release the Option box __fern_map_get allocated — it is consumed
+    // right here (#4357's ~16 B/call get_or leak). Extract tag +
+    // payload FIRST, then release through __fern_arr_dec: the box
+    // carries an rc header, and a headered block threaded straight onto
+    // the freelist corrupts it. x3/x4/x6 are caller-saved and live
+    // across the call; x6 is paired with itself to keep sp 16-byte
+    // aligned, so its partner pops into a scratch register.
+    s = s.write("    ldr x4, [x0]\n    ldr x6, [x0, #8]\n");   // tag, payload
+    s = s.write("    stp x3, x4, [sp, #-16]!\n    stp x6, x6, [sp, #-16]!\n");
+    s = s.write("    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n");
+    s = s.write("    ldp x6, x9, [sp], #16\n    ldp x3, x4, [sp], #16\n");
+    s = s.write("    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
+    s = s.write("    mov x0, x6\n    b " + golbl + "_e\n");
+    s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_map_keys(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // parallel-array map: keys[] pointer at box+0. Scalar column
+    // (i32_imm 0, #4353): SNAPSHOT into a fresh rc=1 copy via
+    // __fern_map_snapshot_col (asm_arm64.fern map runtime) so the read
+    // is an owned array — the exit sweep reclaims the copy, and
+    // map_set's owned grow can free the superseded live buffer without
+    // dangling it. Pointer/string column (i32_imm 1): the historical
+    // raw-buffer alias (slice 3). The helper allocates (__fern_arr_box),
+    // so mark the heap + maps needs like map_iter does.
+    if (o.i32_imm == 0) {
+        s = s.need("maps");
+        s = s.mark_heap();
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
+    } else if (o.i32_imm == 2) {
+        // String column (#4353 slice 3): snapshot + per-element
+        // rc-inc; the SARR post-loop release deep-frees the copy.
+        s = s.need("maps");
+        s = s.mark_heap();
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    bl __fern_map_snapshot_col_str\n    str x0, [sp, #-16]!\n");
+    } else {
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+    }
+
+    return s;
+}
+
+function emit_arm64_op_map_values(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // parallel-array map: values[] pointer at box+8. Same scalar-column
+    // snapshot / string-column retain-snapshot / pointer-column alias
+    // split as map_keys above.
+    if (o.i32_imm == 0) {
+        s = s.need("maps");
+        s = s.mark_heap();
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col\n    str x0, [sp, #-16]!\n");
+    } else if (o.i32_imm == 2) {
+        s = s.need("maps");
+        s = s.mark_heap();
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    bl __fern_map_snapshot_col_str\n    str x0, [sp, #-16]!\n");
+    } else {
+        s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+    }
+
+    return s;
+}
+
+function emit_arm64_op_struct_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // nf field values on the operand stack (field nf-1 on top, decl
+    // order). Box = [shape_ptr@0, f0@8, …]; shape = the interned
+    // struct-name string (asm_arm64's layout). The box is rc-HEADERED so
+    // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
+    // refcount AND free it at the right size: allocate via __fern_arr_box
+    // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
+    // data-8 and the block size (cap+3 words) recoverable from cap at
+    // data-16 — exactly the array layout __fern_arr_dec frees. The slot
+    // offsets are unchanged (data+0=shape, data+(i+1)*8=field i), so every
+    // struct/enum reader (struct_get/_set, variant_is, dyn dispatch's
+    // shape@0) stays correct. __fern_arr_box writes len=cap at data+0; we
+    // overwrite it with the shape pointer, leaving cap@data-16 intact.
+    s = s.mark_heap();
+    var nf: i32 = o.i32_imm;
+    var smlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+    s = smlo.state;
+    s = s.write("    mov x0, #" + util.i32_to_string(nf + 1) + "\n    bl __fern_arr_box\n");
+    s = s.write("    adrp x1, " + smlo.label + "\n");
+    s = s.write("    add x1, x1, :lo12:" + smlo.label + "\n");
+    s = s.write("    str x1, [x0]\n");
+    var em: i32 = nf - 1;
+    while (em >= 0) {
+        s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((em + 1) * 8) + "]\n");
+        em = em - 1;
+    }
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_const_struct(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // The whole box is a compile-time constant (#6149): intern its data
+    // block and push the block's address. No allocation, no field stores
+    // — where struct_make emits an __fern_arr_box call plus nf pops, this
+    // is one adrp/add pair. The block itself is written by the SHARED
+    // asmcore.emit_const_agg_data (identical layout and directives on both
+    // register backends).
+    //
+    // This needed a data relocation in the in-process arm64 assembler
+    // first: a block's first word is the shape POINTER, a
+    // `.quad <label>`, and arm64_gas_data_directive used to run every
+    // `.quad` operand through arm64_gas_atoi64 — so `.quad .S0`
+    // assembled to ZERO, nulling the shape word and making every `match`
+    // on the constant fall through (four union fixtures returned 0
+    // instead of their value). arm64_gas_numeric_tok now separates a
+    // number from a symbol, and arm64_gas_link resolves the queued slot.
+    var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(o.str));
+    s = kshp.state;
+    var kpack: string = kshp.label + "|";
+    var kvals: string[] = ir.const_struct_values(o.str);
+    var kv: i32 = 0;
+    while (kv < kvals.len()) {
+        if (kv > 0) { kpack = kpack + ","; }
+        kpack = kpack + kvals[kv];
+        kv = kv + 1;
+    }
+    var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
+    s = kout.state;
+    var klbl: string = asmcore.const_agg_label(s, kout.idx);
+    s = s.write("    adrp x0, " + klbl + "\n");
+    s = s.write("    add x0, x0, :lo12:" + klbl + "\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_tuple_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // n elements on the operand stack (element n-1 on top). Box =
+    // [e0@0, e1@8, …], n*8 bytes, no shape slot. x0 (box) stays live.
+    // rc-HEADERED (via __fern_arr_box cap=n, exactly like struct_make) so a
+    // fresh, non-escaping SCALAR tuple local can be reclaimed by the exit
+    // dec-sweep at the right size — element offsets are unchanged (element i
+    // @ i*8; __fern_arr_box writes len=cap @ data+0, which element 0
+    // overwrites, leaving cap@data-16 for the free size). Non-reclaimed /
+    // escaping tuples carry the header and leak as before.
+    s = s.mark_heap();
+    var tn: i32 = o.i32_imm;
+    s = s.write("    mov x0, #" + util.i32_to_string(tn) + "\n    bl __fern_arr_box\n");
+    var tem: i32 = tn - 1;
+    while (tem >= 0) {
+        s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(tem * 8) + "]\n");
+        tem = tem - 1;
+    }
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Runtime RC helper — asm_arm64's stack-arg ABI + symbols (drop-in):
+    // the arg(s) are already on the rt-stack (the helper reads [sp]);
+    // call, caller-clean the args, push the result (helpers return the
+    // ptr / count in x0).
+    s = s.mark_heap();
+    // i32.to_string()'s decimal helper needs its body emitted (the
+    // stack-ABI __fn___fern_i32_to_string wrapper in asm_arm64.emit_runtime,
+    // gated on this need).
+    if (o.str == "__fern_i32_to_string") { s = s.mark_i32_to_string(); }
+    // u32.to_string()'s UNSIGNED decimal helper (#2649) — the x86 IR path
+    // marks this (asm_ir), but the arm64 IR path was missing it, so a
+    // module reaching u32_to_string on the arm64 IR path emitted the call
+    // without its body → "undefined reference to __fn___fern_u32_to_string"
+    // at link (e.g. u32_arith through the self-host arm64 stdtest gate).
+    if (o.str == "__fern_u32_to_string") { s = s.mark_u32_to_string(); }
+    // The WIDE siblings (#5826). asm_arm64.emit_runtime already emits
+    // both bodies gated on these needs; only the IR-path mark was
+    // missing, exactly as it was for u32 above.
+    if (o.str == "__fern_i64_to_string") { s = s.mark_i64_to_string(); }
+    if (o.str == "__fern_u64_to_string") { s = s.mark_u64_to_string(); }
+    // str_to_i32(s)'s decimal-parse helper — gated on this need (the
+    // stack-ABI __fn___fern_str_to_i32 wrapper in asm_arm64.emit_runtime).
+    if (o.str == "__fern_str_to_i32") { s = s.mark_str_to_i32(); }
+    // chr(n)'s 1-char-box helper — gated on this need (the self-contained
+    // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
+    if (o.str == "__fern_chr") { s = s.mark_chr(); }
+    // The i32 builtin helpers irlower lowers for EVERY backend (#3457):
+    // xs.sum() / .product() / .index_of() / .contains(), n.pow(k),
+    // n.gcd(m) / n.lcm(m), and
+    // xs.min() / .max(). Their bodies are need-gated in
+    // asm_arm64.emit_runtime, and the arm64 IR path marked none of them —
+    // so `bl __fn___fern_arr_i32_sum` was emitted against nothing and the
+    // link failed with an undefined reference (the same gap u32_to_string
+    // had above; the x86 IR path marks its equivalents in asm_ir).
+    if (o.str == "__fern_arr_i32_sum") { s = s.mark_arr_i32_sum(); }
+    if (o.str == "__fern_arr_i32_product") { s = s.mark_arr_i32_product(); }
+    if (o.str == "__fern_i32_pow") { s = s.mark_i32_pow(); }
+    // n.gcd(m) / n.lcm(m). The BODIES were already emitted below (gated
+    // on has_need), fed by all_runtime_need_roots in the per-module entry
+    // — but nothing marked the need from a call site, because irlower had
+    // no lowering for these two until now and so no call site existed.
+    // close_needs carries i32_lcm → i32_gcd, so marking lcm alone would
+    // still emit gcd's body; both are marked for symmetry with the x86
+    // pair in asm_ir.
+    if (o.str == "__fern_i32_gcd") { s = s.mark_i32_gcd(); }
+    if (o.str == "__fern_i32_lcm") { s = s.mark_i32_lcm(); }
+    if (o.str == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
+    // min/max return a freshly allocated Option box, so unlike the fold
+    // helpers they need the heap runtime as well as their own bodies.
+    if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
+        s = s.mark_heap();
+        s = s.need("arr_i32_min_max_opt");
+    }
+    // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join +
+    // str_concat + heap needs; the bodies come from asm_arm64.emit_runtime
+    // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
+    // exists there), so only the call site needs marking here.
+    if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
+    // arr-of-arr reclaim helpers (#4355 slice 9) — bodies gated on these
+    // needs in asm_arm64's runtime writer, mirroring the x86 asm_ir
+    // gating: an unrelated binary must not carry the strarrarr body's
+    // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
+    if (o.str == "__fern_arrarr_free") { s = s.need("arrarr_free"); }
+    // The VIEW-aware string[] element walk (#6544), gated the same way:
+    // a binary that never reclaims a builtin string[] must not carry a
+    // body whose inner `bl __fn___fern_str_view_free` the negative
+    // asm-grep contracts would see.
+    // The box-VALUE-column map frees (#4353 item 3) free that column
+    // through __fern_arrarr_free, so they pull in its body as well as
+    // their own.
+    if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
+        s = s.need("arrarr_free"); s = s.need("map_free_va");
+    }
+    if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
+    if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
+    // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
+    // emits a per-type pass-through body. arm64 does NOT deep-drop struct
+    // fields yet (leak-safe pass-through); still needs the heap runtime.
+    // (__fern_snapshot_dec — the shallow consume-rebind free — IS real on
+    // arm64 now; only the per-type deep-drop helpers remain pass-throughs.)
+    if (ircore.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
+    // __struct_drop_<T> (#3457): record the type so emit_module_ir_unit_arm64
+    // emits a per-type pass-through body (leak-safe; arm64 does NOT deep-drop
+    // yet, mirroring __field_reclaim). Still needs the heap runtime.
+    if (ircore.is_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
+    s = s.write("    bl " + ircore.ir_helper_symbol(o.str) + "\n");
+    if (o.i32_imm > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(o.i32_imm * 16) + "\n"); }
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_call_direct(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // User call: the IR pushes args left-to-right (arg0 deepest);
+    // asm_arm64's ABI wants arg0 on TOP (param[i] at [x29,#16+i*16]).
+    // Reverse the argc 16-byte rt-stack slots, call, pop the args, push x0.
+    var argc: i32 = o.i32_imm;
+    // FFI __c_call<n> (#4375): a normal call to the shim __fn___c_call<n>
+    // (emitted by asm_arm64.emit_runtime). Register its need so the body
+    // is emitted; the shim reads its params off the arm64 stack ABI and
+    // marshals them into the AAPCS64 arg registers.
+    if (ircore.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
+    var h: i32 = 0;
+    while (h < argc / 2) {
+        var lo: i32 = h * 16;
+        var hi: i32 = (argc - 1 - h) * 16;
+        s = s.write("    ldr x0, [sp, #" + util.i32_to_string(lo) + "]\n");
+        s = s.write("    ldr x1, [sp, #" + util.i32_to_string(hi) + "]\n");
+        s = s.write("    str x0, [sp, #" + util.i32_to_string(hi) + "]\n");
+        s = s.write("    str x1, [sp, #" + util.i32_to_string(lo) + "]\n");
+        h = h + 1;
+    }
+    s = s.write("    bl __fn_" + asmcore.sanitize_label(o.str) + "\n");
+    if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // `dyn Trait` method call. Receiver (arg0) + args are in argc
+    // consecutive locals from base_slot. Read the receiver's shape
+    // pointer (x1) and dispatch to the matching `<Type>.<method>` — a
+    // compare-branch chain over every module method named o.str with a
+    // struct receiver, mirroring asm_arm64.fern. Each matched arm pushes
+    // the argc locals (arg0/receiver on top, the arm64 ABI) and calls.
+    var dbase: i32 = o.i32_imm;
+    var dargc: i32 = o.width;
+    s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+    s = s.write("    ldr x1, [x0]\n");
+    var dend: string = lp + "dynend" + util.i32_to_string(i);
+    var dfi: i32 = 0;
+    var darmn: i32 = 0;
+    while (dfi < s.funcs.len()) {
+        var dfd: parser.FuncDecl = s.funcs[dfi];
+        var ddbn: string = util.base_type_name(dfd.receiver_type);
+        // Dispatch arms: struct receivers (value carries its shape) AND
+        // primitive/string receivers (value heap-boxed at coercion —
+        // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
+        // local holds the box pointer, so arg0 is reloaded from box+8.
+        var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
+        if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
+                && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
+            var dbn: string = ddbn;
+            var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
+            s = dlit.state;
+            var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+            s = s.write("    adrp x2, " + dlit.label + "\n");
+            s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
+            s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
+            var dk: i32 = dargc - 1;
+            while (dk >= 0) {
+                if (dk == 0 && dprim) {
+                    // arg0 is the receiver: unbox the value from box+8.
+                    s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+                    s = s.write("    ldr x0, [x0, #8]\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                } else {
+                    s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                }
+                dk = dk - 1;
+            }
+            s = s.write("    bl __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
+            s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    b " + dend + "\n");
+            s = s.write(dnext + ":\n");
+            darmn = darmn + 1;
+        }
+        // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
+        // value's offset-0 shape is its VARIANT's interned shape (the
+        // same identity op_variant_is reads), never the enum name
+        // itself, so the struct-arm compare above can never identify
+        // it. Match the receiver against EVERY variant of the enum;
+        // on any hit call `<Enum>.<method>` with the variant box as
+        // the receiver (its body's `match (self)` re-reads the
+        // variant). Keyed per-variant so two enums implementing the
+        // same trait dispatch to their own impls. recv_is_array
+        // excludes an array method's `T[]` receiver (base_type_name
+        // strips the `[]`, which would otherwise mis-read as an
+        // enum — #2766). Mirrors the x86 asm_ir arm.
+        if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
+                && !asmcore.recv_is_array(dfd.receiver_type)
+                && irlower.decl_is_enum(s.struct_decls, ddbn)) {
+            var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+            var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+            var dvi: i32 = 0;
+            while (dvi < s.struct_decls.len()) {
+                if (s.struct_decls[dvi].enum_owner == ddbn) {
+                    var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
+                    s = vlit.state;
+                    s = s.write("    adrp x2, " + vlit.label + "\n");
+                    s = s.write("    add x2, x2, :lo12:" + vlit.label + "\n");
+                    s = s.write("    cmp x1, x2\n    b.eq " + dehit + "\n");
+                }
+                dvi = dvi + 1;
+            }
+            s = s.write("    b " + denext + "\n");
+            s = s.write(dehit + ":\n");
+            var dek: i32 = dargc - 1;
+            while (dek >= 0) {
+                s = fr_ldr(s, "x0", 0 - 8 * (dbase + dek + 1));
+                s = s.write("    str x0, [sp, #-16]!\n");
+                dek = dek - 1;
+            }
+            s = s.write("    bl __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
+            s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    b " + dend + "\n");
+            s = s.write(denext + ":\n");
+            darmn = darmn + 1;
+        }
+        dfi = dfi + 1;
+    }
+    // No arm matched. Unreachable for a well-typed dyn value, so abort
+    // (exit 134, like __fern_oob_abort) rather than answer 0.
+    s = s.write("    mov x8, #93\n    mov x0, #134\n    svc #0\n");
+    s = s.write(dend + ":\n");
+
+    return s;
+}
+
+function emit_arm64_op_dyn_box(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Heap-box a primitive/string value coerced into a `dyn Trait` slot
+    // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
+    // shape = the interned primitive type name (the SAME .S label struct
+    // shapes use). The cell is rc-HEADERED via __fern_arr_box(cap=2) —
+    // exactly like opt_make — so a fresh, non-escaping prim/string dyn
+    // local can be freed by the exit sweep's __fern_rc_dec (#4351; the
+    // former raw __fern_alloc cell had no header, so it could never be
+    // reclaimed). Offsets unchanged (arr_box's len@0 is overwritten by
+    // the shape; cap@data-16 drives the free size). The value (one word)
+    // waits on the operand stack (memory, callee-preserved) across the
+    // alloc and is popped after — opt_make's alloc-then-store discipline.
+    var dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+    s = dbl.state;
+    s = s.mark_heap();
+    s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");  // x0 = cell ptr
+    s = s.write("    adrp x2, " + dbl.label + "\n");
+    s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
+    s = s.write("    str x2, [x0]\n");                       // shape @0
+    s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");   // value @8
+    s = s.write("    str x0, [sp, #-16]!\n");                // push cell ptr
+
+    return s;
+}
+
+function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+    // pointer carrying its concrete shape @0) is on top of the operand
+    // stack. Read its shape and compare to T's interned shape (the SAME
+    // .S label struct_make / dyn_dispatch use, so pointer identity
+    // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
+    // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
+    // value rides the operand stack (which __fern_alloc preserves)
+    // across the alloc, so the hit path reloads it as the Some payload.
+    s = s.mark_heap();
+    var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+    s = dcl.state;
+    var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
+    var dcend: string = lp + "dcend" + util.i32_to_string(i);
+    s = s.write("    ldr x0, [sp]\n");                       // peek dyn ptr (left on stack)
+    s = s.write("    ldr x1, [x0]\n");                       // shape @0
+    s = s.write("    adrp x2, " + dcl.label + "\n");
+    s = s.write("    add x2, x2, :lo12:" + dcl.label + "\n");
+    s = s.write("    cmp x1, x2\n    b.ne " + dcmiss + "\n");
+    // hit: Some(value) — alloc, tag 0, reload+store the dyn ptr payload.
+    s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+    s = s.write("    mov x1, #0\n    str x1, [x0]\n");
+    s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    b " + dcend + "\n");
+    // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
+    s = s.write(dcmiss + ":\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+    s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write(dcend + ":\n");
+
+    return s;
+}
+
+function emit_arm64_op_call_indirect(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Indirect call: the rt-stack holds [arg0(deepest) … argN-1,
+    // fn_addr(top)]. Pop the target into x9 (scratch), reverse the args so
+    // arg0 is on TOP (param[i] at [x29,#16+i*16]), blr through it, pop the
+    // args, push x0. Same arg discipline as call_direct.
+    var icargc: i32 = o.i32_imm;
+    s = s.write("    ldr x9, [sp], #16\n");
+    var ih: i32 = 0;
+    while (ih < icargc / 2) {
+        var ilo: i32 = ih * 16;
+        var ihi: i32 = (icargc - 1 - ih) * 16;
+        s = s.write("    ldr x0, [sp, #" + util.i32_to_string(ilo) + "]\n");
+        s = s.write("    ldr x1, [sp, #" + util.i32_to_string(ihi) + "]\n");
+        s = s.write("    str x0, [sp, #" + util.i32_to_string(ihi) + "]\n");
+        s = s.write("    str x1, [sp, #" + util.i32_to_string(ilo) + "]\n");
+        ih = ih + 1;
+    }
+    s = s.write("    blr x9\n");
+    if (icargc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(icargc * 16) + "\n"); }
+    s = s.write("    str x0, [sp, #-16]!\n");
+
+    return s;
+}
+
+function emit_arm64_op_i32_to_f64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // int -> f64, selected by the op's width + signedness. arm64 has both
+    // conversions, so each case is one instruction: scvtf for signed,
+    // ucvtf for unsigned, from a w-source at 32 bits and an x-source at
+    // 64. The old unconditional `scvtf d0, x0` was right for i32 / u32 /
+    // i64 (the 32-bit cases ride the slot correctly extended) but read a
+    // u64 >= 2^63 as negative — u64::MAX converted to -1.0 (#6051, the
+    // register sibling of the wasm fix in #5992).
+    if (o.width == 64) {
+        if (o.unsigned) { s = s.write("    ldr x0, [sp], #16\n    ucvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n"); }
+        else { s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n"); }
+    } else if (o.unsigned) {
+        s = s.write("    ldr x0, [sp], #16\n    ucvtf d0, w0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+    } else {
+        s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+    }
+
+    return s;
+}
+
+function emit_arm64_op_fsqrt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // f64 unary math (op_funary): pop the operand into d0, apply the single
+    // FP instruction, push. frintm/frintp/frintz are round toward -inf /
+    // +inf / zero; frinta is round-to-nearest ties-AWAY (= Go's math.Round,
+    // so __round_f64 is one instruction here — no emulation needed, unlike
+    // x86/wasm).
+    s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
+    if (o.kind_tag == 57) { s = s.write("    fsqrt d0, d0\n"); }  // fsqrt
+    else if (o.kind_tag == 59) { s = s.write("    frintm d0, d0\n"); }  // ffloor
+    else if (o.kind_tag == 58) { s = s.write("    frintp d0, d0\n"); }  // fceil
+    else if (o.kind_tag == 60) { s = s.write("    frintz d0, d0\n"); }  // ftrunc
+    else if (o.kind_tag == 61) { s = s.write("    frinta d0, d0\n"); }  // fround
+    else if (o.kind_tag == 55) { s = s.write("    fneg d0, d0\n"); }  // fneg
+    else { s = s.write("    fabs d0, d0\n"); }
+    s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+
     return s;
 }
 
