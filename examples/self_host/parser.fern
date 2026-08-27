@@ -18394,6 +18394,51 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
 // =================== VALIDATION ====================
 
 function main(): i32 {
+    var rc: i32 = check_operator_precedence();
+    if (rc != 0) { return rc; }
+    rc = check_if_and_while();
+    if (rc != 0) { return rc; }
+    rc = check_compound_assignment();
+    if (rc != 0) { return rc; }
+    rc = check_slice_expressions();
+    if (rc != 0) { return rc; }
+    rc = check_module_functions();
+    if (rc != 0) { return rc; }
+    rc = check_struct_declarations();
+    if (rc != 0) { return rc; }
+    rc = check_struct_literals();
+    if (rc != 0) { return rc; }
+    rc = check_type_aliases();
+    if (rc != 0) { return rc; }
+    rc = check_match_statements();
+    if (rc != 0) { return rc; }
+    rc = check_var_annotations();
+    if (rc != 0) { return rc; }
+    rc = check_receiver_methods();
+    if (rc != 0) { return rc; }
+    rc = check_imports();
+    if (rc != 0) { return rc; }
+    rc = check_for_in_loops();
+    if (rc != 0) { return rc; }
+    rc = check_tuples();
+    if (rc != 0) { return rc; }
+    rc = check_break_and_continue();
+    if (rc != 0) { return rc; }
+    rc = check_generics();
+    if (rc != 0) { return rc; }
+    rc = check_lambdas();
+    if (rc != 0) { return rc; }
+    rc = check_fstrings();
+    if (rc != 0) { return rc; }
+    rc = check_qualified_names();
+    if (rc != 0) { return rc; }
+    rc = check_struct_patterns();
+    if (rc != 0) { return rc; }
+
+    return 0;
+}
+
+function check_operator_precedence(): i32 {
     // Source under test:
     //   var x = 1 + 2 * 3;        // x = 7
     //   var y = (1 + 2) * 3;      // y = 9
@@ -18472,6 +18517,10 @@ function main(): i32 {
         _ => { return 306; }
     }
 
+    return 0;
+}
+
+function check_if_and_while(): i32 {
     // If-statement parse: `if (x < 0) { var a = 1; } else { var b = 2; }`
     // should produce a single StmtIf with one stmt in each branch.
     var src2: string = "if (x < 0) { var a = 1; } else { var b = 2; }";
@@ -18526,6 +18575,10 @@ function main(): i32 {
         _ => { return 608; }
     }
 
+    return 0;
+}
+
+function check_compound_assignment(): i32 {
     // Compound assignment desugar: `x += 1;` should parse as a
     // StmtAssign whose RHS is an ExprBinary("+", ExprIdent("x"),
     // ExprNumber("1")). Confirms the desugar fires.
@@ -18588,6 +18641,10 @@ function main(): i32 {
         _ => { return 735; }
     }
 
+    return 0;
+}
+
+function check_slice_expressions(): i32 {
     // Slice parsing: `s[1:4]` → ExprSlice with three subtrees.
     var srcS: string = "var t = s[1:4]; return 0;";
     var progS: ast.Stmt[] = parse_program(lexer.tokenize(srcS));
@@ -18645,6 +18702,10 @@ function main(): i32 {
         _ => { return 665; }
     }
 
+    return 0;
+}
+
+function check_module_functions(): i32 {
     // parse_module: two function decls, no top-level stmts.
     var src5: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
     var mod: Module = parse_module(lexer.tokenize(src5));
@@ -18662,6 +18723,10 @@ function main(): i32 {
     if (mod.funcs[1].params.len() != 0) { return 709; }
     if (mod.funcs[1].ret_type != "i32") { return 710; }
 
+    return 0;
+}
+
+function check_struct_declarations(): i32 {
     // parse_module: struct decls.
     var srcSt: string = "struct Point { x: i32, y: i32 } struct Empty { } function main(): i32 { return 0; }";
     var modSt: Module = parse_module(lexer.tokenize(srcSt));
@@ -18685,6 +18750,10 @@ function main(): i32 {
     if (modTc.structs[0].fields.len() != 2) { return 731; }
     if (modTc.structs[0].fields[1].name != "b") { return 732; }
 
+    return 0;
+}
+
+function check_struct_literals(): i32 {
     // Struct literal: `var p = Point { x: 3, y: 4 };`
     var srcL: string = "var p = Point { x: 3, y: 4 }; return 0;";
     var progL: ast.Stmt[] = parse_program(lexer.tokenize(srcL));
@@ -18747,6 +18816,10 @@ function main(): i32 {
         _ => { return 824; }
     }
 
+    return 0;
+}
+
+function check_type_aliases(): i32 {
     // parse_module: union type aliases.
     //   pub type Shape = Circle | Square | Triangle;
     //   pub type Cell  = Empty | Wall;
@@ -18776,6 +18849,10 @@ function main(): i32 {
     if (modTy2.aliases[0].variants.len() != 1) { return 852; }
     if (modTy2.aliases[0].variants[0] != "Inner") { return 853; }
 
+    return 0;
+}
+
+function check_match_statements(): i32 {
     // Match statement: variant + wildcard arms with bindings.
     //   match (e) {
     //       Circle(c) => { return 1; },
@@ -18835,6 +18912,10 @@ function main(): i32 {
         _ => { return 924; }
     }
 
+    return 0;
+}
+
+function check_var_annotations(): i32 {
     // Var type annotation — user type (Shape).
     var srcTV: string = "var sh: Shape = c; return 0;";
     var progTV: ast.Stmt[] = parse_program(lexer.tokenize(srcTV));
@@ -18868,6 +18949,10 @@ function main(): i32 {
         _ => { return 952; }
     }
 
+    return 0;
+}
+
+function check_receiver_methods(): i32 {
     // Receiver method — `function (p: Par) advance(): Par { … }`.
     // Captures the receiver name + type alongside the method
     // name; the param list and return type behave normally.
@@ -18899,6 +18984,10 @@ function main(): i32 {
     if (modR0.funcs[0].receiver_type != "Scope") { return 983; }
     if (modR0.funcs[0].params.len() != 0) { return 984; }
 
+    return 0;
+}
+
+function check_imports(): i32 {
     // Top-level imports: `import "./lexer"; import "./parser";`.
     // Both get captured into mod.imports as Import entries.
     var srcIm: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
@@ -18914,6 +19003,10 @@ function main(): i32 {
     var modIp: Module = parse_module(lexer.tokenize(srcIp));
     if (modIp.imports.len() != 0) { return 1000; }
 
+    return 0;
+}
+
+function check_for_in_loops(): i32 {
     // For-in loop: `for x in arr { … }` parses as StmtFor with
     // var_name + iter + body.
     var srcFor: string = "for x in arr { var y = x + 1; }";
@@ -18945,6 +19038,10 @@ function main(): i32 {
         _ => { return 1023; }
     }
 
+    return 0;
+}
+
+function check_tuples(): i32 {
     // Tuple literal: `(1, 2, 3)` parses as ExprTuple with 3
     // elements. Single-arg paren stays grouping.
     var srcTu: string = "var t = (1, 2, 3); return 0;";
@@ -19018,6 +19115,10 @@ function main(): i32 {
         _ => { return 1059; }
     }
 
+    return 0;
+}
+
+function check_break_and_continue(): i32 {
     // break / continue stmts.
     var srcBC: string = "while (true) { if (x > 10) { break; } if (x < 0) { continue; } }";
     var progBC: ast.Stmt[] = parse_program(lexer.tokenize(srcBC));
@@ -19047,6 +19148,10 @@ function main(): i32 {
         _ => { return 1066; }
     }
 
+    return 0;
+}
+
+function check_generics(): i32 {
     // Generic type-name parsing — `Map[K, V]` in a param
     // captures the full spelling as a single string.
     var srcGT: string = "function lookup(m: Map[string, i32], k: string): i32 { return 0; }";
@@ -19114,6 +19219,10 @@ function main(): i32 {
         _ => { return 1087; }
     }
 
+    return 0;
+}
+
+function check_lambdas(): i32 {
     // Lambda expression: `function (x: i32): i32 { return x + 1; }`.
     var srcLm: string = "var f = function (x: i32): i32 { return x + 1; }; return 0;";
     var progLm: ast.Stmt[] = parse_program(lexer.tokenize(srcLm));
@@ -19133,6 +19242,10 @@ function main(): i32 {
         _ => { return 1076; }
     }
 
+    return 0;
+}
+
+function check_fstrings(): i32 {
     // f-string desugar: `return f"x={x}";` lowers to
     //   "x=" + (x).to_string()
     // i.e. ExprBinary("+", ExprString("x="),
@@ -19193,6 +19306,10 @@ function main(): i32 {
         _ => { return 1115; }
     }
 
+    return 0;
+}
+
+function check_qualified_names(): i32 {
     // Qualified type names in struct fields: `lexer.Token` (and the
     // array form `lexer.Token[]`). Before the parse_type_name fix
     // the stray `.` parked the field loop and the parser spun until
@@ -19242,6 +19359,10 @@ function main(): i32 {
         _ => { return 1146; }
     }
 
+    return 0;
+}
+
+function check_struct_patterns(): i32 {
     // Struct-pattern parameters, both spellings (#7306). The pattern head
     // desugars to a holder param of the annotated type plus a leading
     // struct-destructure StmtVar, so it rides the existing lowering.
