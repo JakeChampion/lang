@@ -983,3 +983,57 @@ were found by lifting the previous one, none of them the register allocator; the
 seventh was found by measuring a quantity nobody had measured. `.text` size was
 picked as the proxy at the start and never revisited, and a 2.4× slowdown sat
 inside a corpus that was passing every gate.
+
+### The run differential, and the miscompile the fixpoint could not see
+
+Every driver result above this line is a COMPILE result: 47/47 link, sizes match.
+That proves link-ability, not behaviour. The run differential feeds each of the
+286 corpus programs to the flat-built and SSA-built driver and compares stdout
+and exit status.
+
+`interp_run` came back clean — 285 match, 0 differ, 1 skip. `asm_run` did not:
+283 match, **3 differ**. On all three the SSA-built compiler emitted
+
+```
+movq $4294967295, %rax      # SSA build
+movq $-1, %rax              # flat build
+```
+
+which are different encodings holding different values — the first zero-extends
+to `0x00000000FFFFFFFF`, the second sign-extends to `0xFFFFFFFFFFFFFFFF`. Both
+driver binaries are individually deterministic across repeated runs, so this was
+a miscompile, not nondeterminism. A three-line program reproduces it.
+
+**Cause.** `ssa.ResolveWidths` marks values that hold a machine address, so the
+backend skips the `sxtw` that would corrupt a pointer above `0x7fffffff`. The
+marking is deliberately conservative. Two steps let that conservatism escape:
+
+- `ptrA - ptrB` is an integer — a length, an offset — and the `OpSub` case's own
+  comment says so, yet it marks the difference as an address.
+- Passing such a value to a function made `mark` overwrite the callee's
+  **declared** `ParamAddrs` entry, which then marked every OTHER caller's
+  argument at that position. `Addr` stamps `Width 64`, which is exactly how
+  `memLoadSeq` is told to skip its `maskFix`, so a negative i32 loaded through
+  one of those stayed zero-extended — and arm64ssa compares at 64 bits, so every
+  signed test on it read positive. `util.i32_to_string(-1)` rendered
+  `"4294967295"`.
+
+Instrumenting the pass counted **588 such loads across 201 functions** — 165 in
+`irlower`, 14 in `parser`, 10 in `asm_ir`, including `emit_ir_op_const_i32`
+itself. The same probe reports zero for `ir_strength_run`, which matches the
+flat build exactly.
+
+The fix refuses both impossible answers in `mark`: a value read from fewer than
+eight bytes cannot be a machine address here (`ResolveWidths` runs only for the
+64-bit arm64 backend, whose lift renders every pointer-width load as the 8-byte
+`OpLoad`), and inference may not overturn a parameter's declared classification.
+The first mirrors the guard `mark` already applied to integer constants.
+
+**What this says about the gates.** The bug predates the whole size campaign —
+the compiler built at the commit before #7643 reproduces it byte for byte. It
+survived the per-module fixpoint, all 335 fixtures, the 281-program corpus
+differential and the native suite, because none of them runs a self-host driver
+built by the SSA backend against its flat twin. `docs/TEST-GATES.md` already
+warns that the fixpoint is self-referential and blind to a stable miscompile;
+this is that blindness with a name. A compile sweep answers "does it link". Only
+a run differential answers "does it compute the same thing".
