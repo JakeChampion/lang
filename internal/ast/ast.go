@@ -3435,7 +3435,9 @@ type FuncDecl struct {
 	// actually emitted (E068, verifyFipAllocs) — see docs/REUSE-CONTRACT.md.
 	Fip bool
 	// Fbip marks a function the source annotated `fbip function …` — the
-	// Koka-style "fully in place with borrowing" sibling of Fip. The checker
+	// reuse-paired sibling of Fip, and the tier that corresponds to Koka's
+	// `fip` (Koka splits fip/fbip on borrowing, which Fern does by default;
+	// this pair splits on allocation). The checker
 	// runs the same E053 walk with a RELAXED allocation rule: constructor
 	// expressions (struct / tuple literals, payload-carrying enum variants)
 	// are allowed, because the IR layer verifies each such site is

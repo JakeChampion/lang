@@ -8133,7 +8133,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // concatenation / interpolation, writes to a non-`own` heap value (a copy), and
 // any call the checker can't prove allocation-free.
 //
-// `fbip function` (fully in place with borrowing, plan E2') runs the SAME walk
+// `fbip function` (the reuse-paired tier, plan E2') runs the SAME walk
 // with one relaxation: constructor expressions — struct / tuple literals and
 // payload-carrying enum variants — are allowed, because the IR layer verifies
 // each such site is reuse-PAIRED (or covered by the graded allowance) and
