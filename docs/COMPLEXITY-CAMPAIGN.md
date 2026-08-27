@@ -151,6 +151,13 @@ checks (guards identical and in order, bodies verbatim modulo indent) and it
 has caught every surgery slip so far — a multi-line `if` header cut after its
 first line, and a hardcoded block end that swallowed a closing brace.
 
+One trap in writing that reconstruction: **a helper-name pattern derived from
+the parent function's own name will match the parent.** Splitting
+`reclaimable_names_of` into `reclaimable_*` helpers gave a script that matched
+`^function (reclaimable_\w+)\(.*\): string\[\] \{$` — which ate the function
+being split. It failed loudly rather than subtly, but match the exact set of
+names you created rather than a pattern they happen to share.
+
 That plus `fern -check` costs seconds instead of an hour.
 
 ## Shapes and techniques
@@ -172,6 +179,33 @@ scan reports the block as side-effect-free — the one reading that most reliabl
 sends a mechanical extraction into a compile error or, worse, a silent behaviour
 change. Compute reads over the WHOLE construct including its header, too: a
 guard mentions locals the body never touches.
+
+### Extracting many pieces at once — only with derivable names
+
+`reclaimable_names_of` was one list built by ~37 category scans, each a loop
+appending to the same accumulator. Mechanically every one was extractable, and
+the first attempt did exactly that, producing `collect_reclaimable_1` through
+`_35`. **That version was thrown away.** Thirty-five numbered functions
+scattered through a 68k-line file is worse than the single function they came
+from: the ratchet number improves and every human outcome degrades. The number
+is what the gate measures, which is precisely why it cannot be the thing you
+optimise.
+
+What makes a large extraction defensible is that the names can be **derived
+from something already meaningful in the code**. Here each collection is built
+by a well-named producer, so the mapping writes itself and stays honest:
+
+    var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
+    out = reclaimable_rc_tuple(body, borrowable, ..., out);
+
+Thirty-two went that way. The counter-rule matters as much: **where a name
+cannot be derived, read the block and name it by hand, or leave it inline.**
+Five scans failed the derivation here, and one of them shows why the rule is
+not merely aesthetic — `clo_ok_from_tuple_credits` iterates `out`, so a
+name-from-the-collection scheme would have called it a reclaimable-something
+when it is the opposite: a CONSUMER of what the reclaim scans produced, writing
+`clo_ok`. A derived name there would not have been vague, it would have been
+false.
 
 ### A flat guard chain → move the body, keep the guard
 
@@ -299,7 +333,7 @@ a table.
 
 ## Order of work
 
-Sixteen slices in, the tree has gone from 19884 excess to 18763 and the
+Eighteen slices in, the tree has gone from 19884 excess to 18615 and the
 ceiling from 477 to 411. What is done, and what the remaining shapes are:
 
 | Function | File | Forks | Outcome |
@@ -320,6 +354,7 @@ ceiling from 477 to 411. What is done, and what the remaining shapes are:
 | `bind_var_slot` | `irlower.fern` | 213 → 114 | six reclaim-marking blocks out |
 | `lower_func` | `irlower.fern` | 262 → 221 | six accumulator passes out |
 | `build_expr` | `ssa.fern` | 184 → 143 | 12 of 14 match arms out |
+| `reclaimable_names_of` | `irlower.fern` | 167 → 13 | ~35 category scans out |
 
 **Fork count alone picks the wrong target.** The cheap, provable wins are
 functions whose parts are self-contained: a match whose arms each return, an op
