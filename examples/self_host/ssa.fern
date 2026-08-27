@@ -524,107 +524,11 @@ function count_fn_markers(types: string[]): i32 {
 
 function build_expr(e: ast.Expr, s: BState): BState {
     match (e) {
-        ast.ExprNumber(n) => {
-            s = s.fresh();
-            var args0: i32[] = [];
-            if (n.is_float) {
-                // f64 literal: the bits aren't representable in imm, so carry
-                // the source text; the backend emits it as a `.double` constant.
-                return s.emit(SInst { kind_tag: 4, result: s.cur_id(), args: args0, imm: 0, str: n.text });
-            }
-            // lit_to_i32 (hex/binary-aware) so `0x`/`0b` literals carry their
-            // value into the const_int imm; digits_to_i32 stopped at the prefix
-            // letter and zeroed them (#4341). Decimal is unchanged.
-            return s.emit(SInst { kind_tag: 1, result: s.cur_id(), args: args0, imm: util.lit_to_i32(n.text), str: "" });
-        },
-        ast.ExprBool(b) => {
-            s = s.fresh();
-            var iv: i32 = 0;
-            if (b.value) { iv = 1; }
-            var args0: i32[] = [];
-            return s.emit(SInst { kind_tag: 2, result: s.cur_id(), args: args0, imm: iv, str: "" });
-        },
-        ast.ExprIdent(id) => {
-            // A bound local / param (including a capturing-lambda box, which
-            // is stored as the var's value) SHADOWS any same-named function:
-            // read its value rather than taking a function address. Without
-            // this, a local named like a method/function — e.g. a loop var
-            // `w` (also the WState.w method) or `cur_id` (also BState.cur_id)
-            // — would resolve to a `funcaddr` to that function and bail SSA.
-            var v: i32 = s.get_var(id.name);
-            if (v >= 0) {
-                s = s.fresh();
-                var a1: i32[] = [v];
-                return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: a1, imm: 0, str: "" });
-            }
-            // None — the empty Option, a 2-word box { tag@0 = 1, payload@1 = 0 }
-            // (matches Some/Ok/Err construction above; tag 1 like None/Err).
-            if (id.name == "None") {
-                s = s.fresh();
-                var nbx: i32 = s.cur_id();
-                var nna2: i32[] = [];
-                s = s.emit(SInst { kind_tag: 14, result: nbx, args: nna2, imm: 2, str: "" });
-                s = s.kconst(0);
-                var nz: i32 = s.cur_id();
-                s = s.kconst(1);
-                var n1: i32 = s.cur_id();
-                s = s.fresh();
-                var nta: i32[] = [nbx, nz, n1];
-                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nta, imm: 32, str: "" });
-                s = s.fresh();
-                var ncp: i32[] = [nbx];
-                return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ncp, imm: 0, str: "" });
-            }
-            // Not a local: a no-capture lambda or a named top-level function
-            // used as a VALUE → a 1-slot closure box [funcaddr]. (A capturing
-            // lambda binding "fn:…|…" holds its box in the var, so it took the
-            // get_var path above.)
-            var idfn: string = s.get_var_type(id.name);
-            if (idfn.len() > 3 && slice_unchecked(idfn, 0, 3) == "fn:" && index_of_byte(idfn, b'|') < 0) {
-                return emit_fn_box(s, slice_unchecked(idfn, 3, idfn.len()));
-            }
-            if (idfn.len() >= 4 && slice_unchecked(idfn, 0, 4) == "gfn:") {
-                return emit_fn_box(s, id.name);
-            }
-            return s.fail();
-        },
-        ast.ExprBinary(b) => {
-            // String operands change `+` (concat) and `==`/`!=` (content
-            // comparison, not pointer comparison).
-            var str_operand: boolean = type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string";
-            var is_concat: boolean = b.op == "+" && str_operand;
-            var is_streq: boolean = (b.op == "==" || b.op == "!=") && str_operand;
-            s = build_expr(b.left, s);
-            if (!s.ok) { return s; }
-            var lv: i32 = s.cur_id();
-            s = build_expr(b.right, s);
-            if (!s.ok) { return s; }
-            var rv: i32 = s.cur_id();
-            s = s.fresh();
-            var a2: i32[] = [lv, rv];
-            if (is_concat) {
-                return s.emit(SInst { kind_tag: 17, result: s.cur_id(), args: a2, imm: 0, str: "" });
-            }
-            if (is_streq) {
-                s = s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: a2, imm: 0, str: "" });
-                if (b.op == "!=") {
-                    var eqv: i32 = s.cur_id();
-                    s = s.fresh();
-                    var na: i32[] = [eqv];
-                    s = s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: na, imm: 0, str: "!" });
-                }
-                return s;
-            }
-            return s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: a2, imm: 0, str: b.op });
-        },
-        ast.ExprUnary(u) => {
-            s = build_expr(u.operand, s);
-            if (!s.ok) { return s; }
-            var xv: i32 = s.cur_id();
-            s = s.fresh();
-            var a1: i32[] = [xv];
-            return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: a1, imm: 0, str: u.op });
-        },
+        ast.ExprNumber(n) => { return build_expr_number(n, s); },
+        ast.ExprBool(b) => { return build_expr_bool(b, s); },
+        ast.ExprIdent(id) => { return build_expr_ident(id, s); },
+        ast.ExprBinary(b) => { return build_expr_binary(b, s); },
+        ast.ExprUnary(u) => { return build_expr_unary(u, s); },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
@@ -1132,214 +1036,13 @@ function build_expr(e: ast.Expr, s: BState): BState {
                 _ => { return s.fail(); }
             }
         },
-        ast.ExprStructLit(sl) => {
-            // Heap-allocate a tag word + one word per field: element 0 holds
-            // the variant tag (the struct's type id, for `match`), fields
-            // follow at offset f+1, each at its width. A `...base` spread
-            // (functional update) builds the base first; fields the literal
-            // doesn't override are copied from it (load_elem at their offset).
-            var si: i32 = find_struct_index(s.structs, sl.type_name);
-            if (si < 0) { return s.fail(); }
-            var sd: parser.StructDecl = s.structs[si];
-            var nf: i32 = sd.fields.len();
-            var baseptr: i32 = 0 - 1;
-            if (sl.has_base) {
-                s = build_expr(sl.base, s);
-                if (!s.ok) { return s; }
-                baseptr = s.cur_id();
-            }
-            s = s.fresh();
-            var shandle: i32 = s.cur_id();
-            var sna: i32[] = [];
-            s = s.emit(SInst { kind_tag: 14, result: shandle, args: sna, imm: nf + 1, str: "" });
-            // tag at offset 0
-            s = s.kconst(0);
-            var tagidx: i32 = s.cur_id();
-            s = s.kconst(si);
-            var tagval: i32 = s.cur_id();
-            s = s.fresh();
-            var tsa: i32[] = [shandle, tagidx, tagval];
-            s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: tsa, imm: 32, str: "" });
-            var f: i32 = 0;
-            while (f < nf) {
-                var fname: string = sd.fields[f].name;
-                var lj: i32 = util.index_of_str(sl.field_names, fname);
-                var fw: i32 = struct_field_width(s.structs, sl.type_name, fname);
-                var fv: i32 = 0;
-                if (lj >= 0) {
-                    s = build_expr(sl.field_values[lj], s);
-                    if (!s.ok) { return s; }
-                    fv = s.cur_id();
-                } else if (sl.has_base) {
-                    // Copy the field from the base struct (same offset/width).
-                    s = s.kconst(f + 1);
-                    var bfidx: i32 = s.cur_id();
-                    s = s.fresh();
-                    var bla: i32[] = [baseptr, bfidx];
-                    s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: bla, imm: fw, str: "" });
-                    fv = s.cur_id();
-                } else {
-                    return s.fail();   // field missing from a non-spread literal
-                }
-                s = s.kconst(f + 1);
-                var fidx: i32 = s.cur_id();
-                s = s.fresh();
-                var fsa: i32[] = [shandle, fidx, fv];
-                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: fsa, imm: fw, str: "" });
-                f = f + 1;
-            }
-            s = s.fresh();
-            var sha: i32[] = [shandle];
-            return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: sha, imm: 0, str: "" });
-        },
-        ast.ExprFieldAccess(fa) => {
-            // Tuple element access `t.0` / `t.1` / … — a numeric field name is
-            // a positional index (struct fields are never all-digits). Tuple
-            // elements live at offsets 0..n-1 (no tag / length prefix), so the
-            // index is loaded directly. Width 0 (32-bit) matches the array /
-            // construct path; pointer elements fit the low-heap 32-bit slots.
-            if (util.is_all_digits(fa.field)) {
-                s = build_expr(fa.obj, s);
-                if (!s.ok) { return s; }
-                var tptr: i32 = s.cur_id();
-                s = s.kconst(util.digits_to_i32(fa.field));
-                var tidx: i32 = s.cur_id();
-                s = s.fresh();
-                var tla: i32[] = [tptr, tidx];
-                return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: tla, imm: 0, str: "" });
-            }
-            var sty: string = type_of_expr(fa.obj, s);
-            if (sty.len() == 0) { return s.fail(); }
-            var off: i32 = struct_field_index(s.structs, sty, fa.field);
-            if (off < 0) { return s.fail(); }
-            var fw2: i32 = struct_field_width(s.structs, sty, fa.field);
-            s = build_expr(fa.obj, s);
-            if (!s.ok) { return s; }
-            var optr: i32 = s.cur_id();
-            s = s.kconst(off + 1);   // field f is at offset f+1 (offset 0 is the tag)
-            var oidx: i32 = s.cur_id();
-            s = s.fresh();
-            var ola: i32[] = [optr, oidx];
-            return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: ola, imm: fw2, str: "" });
-        },
-        ast.ExprString(strlit) => {
-            // A string literal is a static [len, b0, b1, …] constant: emit a
-            // single const_str (the backend materialises it in a data section)
-            // rather than alloc + a store_elem per byte, which exploded the IR
-            // for string-heavy functions (asm.emit_runtime is ~4000 literals →
-            // hundreds of thousands of SInsts → OOM). The result is a string
-            // pointer like any other, so len / index / concat / streq reuse the
-            // existing paths.
-            s = s.fresh();
-            var sca: i32[] = [];
-            return s.emit(SInst { kind_tag: 5, result: s.cur_id(), args: sca, imm: 0, str: strlit.value });
-        },
-        ast.ExprArray(arr) => {
-            // Heap-allocate a length-prefixed i32 array: element 0 holds the
-            // length, the n elements follow at 1..n. The expression's value
-            // is the alloc handle (a pointer).
-            var n: i32 = arr.elements.len();
-            s = s.fresh();
-            var handle: i32 = s.cur_id();
-            var noargs: i32[] = [];
-            s = s.emit(SInst { kind_tag: 14, result: handle, args: noargs, imm: n + 1, str: "" });
-            // length at index 0
-            s = s.kconst(0);
-            var lenidx: i32 = s.cur_id();
-            s = s.kconst(n);
-            var lenval: i32 = s.cur_id();
-            s = s.fresh();
-            var la0: i32[] = [handle, lenidx, lenval];
-            s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: la0, imm: 0, str: "" });
-            var i: i32 = 0;
-            while (i < n) {
-                s = s.kconst(i + 1);
-                var idxv: i32 = s.cur_id();
-                s = build_expr(arr.elements[i], s);
-                if (!s.ok) { return s; }
-                var elv: i32 = s.cur_id();
-                s = s.fresh();
-                var sa: i32[] = [handle, idxv, elv];
-                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: sa, imm: 0, str: "" });
-                i = i + 1;
-            }
-            s = s.fresh();
-            var ha: i32[] = [handle];
-            return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ha, imm: 0, str: "" });
-        },
-        ast.ExprTuple(tup) => {
-            // A tuple `(a, b, c)` is a fixed-arity heap box: element i at
-            // offset i (no length prefix — tuples are only ever indexed by the
-            // constant `t.i`). The value is the alloc handle.
-            var tn: i32 = tup.elements.len();
-            s = s.fresh();
-            var thandle: i32 = s.cur_id();
-            var tnoargs: i32[] = [];
-            s = s.emit(SInst { kind_tag: 14, result: thandle, args: tnoargs, imm: tn, str: "" });
-            var ti: i32 = 0;
-            while (ti < tn) {
-                s = s.kconst(ti);
-                var tidxv: i32 = s.cur_id();
-                s = build_expr(tup.elements[ti], s);
-                if (!s.ok) { return s; }
-                var telev: i32 = s.cur_id();
-                s = s.fresh();
-                var tsa: i32[] = [thandle, tidxv, telev];
-                s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: tsa, imm: 0, str: "" });
-                ti = ti + 1;
-            }
-            s = s.fresh();
-            var tha: i32[] = [thandle];
-            return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: tha, imm: 0, str: "" });
-        },
-        ast.ExprIndex(ix) => {
-            s = build_expr(ix.array, s);
-            if (!s.ok) { return s; }
-            var ptr: i32 = s.cur_id();
-            s = build_expr(ix.index, s);
-            if (!s.ok) { return s; }
-            var idx: i32 = s.cur_id();
-            // Data lives at index+1 (element 0 is the length).
-            s = s.kconst(1);
-            var one: i32 = s.cur_id();
-            s = s.fresh();
-            var ba: i32[] = [idx, one];
-            s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: ba, imm: 0, str: "+" });
-            var idx1: i32 = s.cur_id();
-            s = s.fresh();
-            var la: i32[] = [ptr, idx1];
-            return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
-        },
-        ast.ExprSlice(sl) => {
-            // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh array (or
-            // substring, since a string is a byte array) holding a[lo..hi-1].
-            s = build_expr(sl.array, s);
-            if (!s.ok) { return s; }
-            var slarr: i32 = s.cur_id();
-            s = build_expr(sl.start, s);
-            if (!s.ok) { return s; }
-            var sllo: i32 = s.cur_id();
-            var slhi: i32 = 0;
-            if (sl.open_end) {
-                // `a[lo:]` — the bound is the receiver's length, which in this
-                // subset is element 0 of the array (see the ExprIndex arm's
-                // `index+1` load). sl.end is an unevaluated placeholder, and
-                // reading the length off `slarr` keeps the base evaluated once.
-                s = s.kconst(0);
-                var slz: i32 = s.cur_id();
-                s = s.fresh();
-                var sllargs: i32[] = [slarr, slz];
-                s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: sllargs, imm: 0, str: "" });
-                slhi = s.cur_id();
-            } else {
-                s = build_expr(sl.end, s);
-                if (!s.ok) { return s; }
-                slhi = s.cur_id();
-            }
-            s = s.fresh();
-            var slargs: i32[] = [slarr, sllo, slhi];
-            return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: slargs, imm: 0, str: "__ssa_arr_slice" });
-        },
+        ast.ExprStructLit(sl) => { return build_expr_struct_lit(sl, s); },
+        ast.ExprFieldAccess(fa) => { return build_expr_field_access(fa, s); },
+        ast.ExprString(strlit) => { return build_expr_string(strlit, s); },
+        ast.ExprArray(arr) => { return build_expr_array(arr, s); },
+        ast.ExprTuple(tup) => { return build_expr_tuple(tup, s); },
+        ast.ExprIndex(ix) => { return build_expr_index(ix, s); },
+        ast.ExprSlice(sl) => { return build_expr_slice(sl, s); },
         _ => { return s.fail(); }
     }
 }
@@ -3881,4 +3584,325 @@ pub function calls_func(funcs: SFunc[], name: string): boolean {
         fi = fi + 1;
     }
     return false;
+}
+
+function build_expr_number(n: ast.ExprNumber, s: BState): BState {
+    s = s.fresh();
+    var args0: i32[] = [];
+    if (n.is_float) {
+        // f64 literal: the bits aren't representable in imm, so carry
+        // the source text; the backend emits it as a `.double` constant.
+        return s.emit(SInst { kind_tag: 4, result: s.cur_id(), args: args0, imm: 0, str: n.text });
+    }
+    // lit_to_i32 (hex/binary-aware) so `0x`/`0b` literals carry their
+    // value into the const_int imm; digits_to_i32 stopped at the prefix
+    // letter and zeroed them (#4341). Decimal is unchanged.
+    return s.emit(SInst { kind_tag: 1, result: s.cur_id(), args: args0, imm: util.lit_to_i32(n.text), str: "" });
+}
+
+function build_expr_bool(b: ast.ExprBool, s: BState): BState {
+    s = s.fresh();
+    var iv: i32 = 0;
+    if (b.value) { iv = 1; }
+    var args0: i32[] = [];
+    return s.emit(SInst { kind_tag: 2, result: s.cur_id(), args: args0, imm: iv, str: "" });
+}
+
+function build_expr_ident(id: ast.ExprIdent, s: BState): BState {
+    // A bound local / param (including a capturing-lambda box, which
+    // is stored as the var's value) SHADOWS any same-named function:
+    // read its value rather than taking a function address. Without
+    // this, a local named like a method/function — e.g. a loop var
+    // `w` (also the WState.w method) or `cur_id` (also BState.cur_id)
+    // — would resolve to a `funcaddr` to that function and bail SSA.
+    var v: i32 = s.get_var(id.name);
+    if (v >= 0) {
+        s = s.fresh();
+        var a1: i32[] = [v];
+        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: a1, imm: 0, str: "" });
+    }
+    // None — the empty Option, a 2-word box { tag@0 = 1, payload@1 = 0 }
+    // (matches Some/Ok/Err construction above; tag 1 like None/Err).
+    if (id.name == "None") {
+        s = s.fresh();
+        var nbx: i32 = s.cur_id();
+        var nna2: i32[] = [];
+        s = s.emit(SInst { kind_tag: 14, result: nbx, args: nna2, imm: 2, str: "" });
+        s = s.kconst(0);
+        var nz: i32 = s.cur_id();
+        s = s.kconst(1);
+        var n1: i32 = s.cur_id();
+        s = s.fresh();
+        var nta: i32[] = [nbx, nz, n1];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nta, imm: 32, str: "" });
+        s = s.fresh();
+        var ncp: i32[] = [nbx];
+        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ncp, imm: 0, str: "" });
+    }
+    // Not a local: a no-capture lambda or a named top-level function
+    // used as a VALUE → a 1-slot closure box [funcaddr]. (A capturing
+    // lambda binding "fn:…|…" holds its box in the var, so it took the
+    // get_var path above.)
+    var idfn: string = s.get_var_type(id.name);
+    if (idfn.len() > 3 && slice_unchecked(idfn, 0, 3) == "fn:" && index_of_byte(idfn, b'|') < 0) {
+        return emit_fn_box(s, slice_unchecked(idfn, 3, idfn.len()));
+    }
+    if (idfn.len() >= 4 && slice_unchecked(idfn, 0, 4) == "gfn:") {
+        return emit_fn_box(s, id.name);
+    }
+    return s.fail();
+}
+
+function build_expr_binary(b: ast.ExprBinary, s: BState): BState {
+    // String operands change `+` (concat) and `==`/`!=` (content
+    // comparison, not pointer comparison).
+    var str_operand: boolean = type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string";
+    var is_concat: boolean = b.op == "+" && str_operand;
+    var is_streq: boolean = (b.op == "==" || b.op == "!=") && str_operand;
+    s = build_expr(b.left, s);
+    if (!s.ok) { return s; }
+    var lv: i32 = s.cur_id();
+    s = build_expr(b.right, s);
+    if (!s.ok) { return s; }
+    var rv: i32 = s.cur_id();
+    s = s.fresh();
+    var a2: i32[] = [lv, rv];
+    if (is_concat) {
+        return s.emit(SInst { kind_tag: 17, result: s.cur_id(), args: a2, imm: 0, str: "" });
+    }
+    if (is_streq) {
+        s = s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: a2, imm: 0, str: "" });
+        if (b.op == "!=") {
+            var eqv: i32 = s.cur_id();
+            s = s.fresh();
+            var na: i32[] = [eqv];
+            s = s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: na, imm: 0, str: "!" });
+        }
+        return s;
+    }
+    return s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: a2, imm: 0, str: b.op });
+}
+
+function build_expr_unary(u: ast.ExprUnary, s: BState): BState {
+    s = build_expr(u.operand, s);
+    if (!s.ok) { return s; }
+    var xv: i32 = s.cur_id();
+    s = s.fresh();
+    var a1: i32[] = [xv];
+    return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: a1, imm: 0, str: u.op });
+}
+
+function build_expr_struct_lit(sl: ast.ExprStructLit, s: BState): BState {
+    // Heap-allocate a tag word + one word per field: element 0 holds
+    // the variant tag (the struct's type id, for `match`), fields
+    // follow at offset f+1, each at its width. A `...base` spread
+    // (functional update) builds the base first; fields the literal
+    // doesn't override are copied from it (load_elem at their offset).
+    var si: i32 = find_struct_index(s.structs, sl.type_name);
+    if (si < 0) { return s.fail(); }
+    var sd: parser.StructDecl = s.structs[si];
+    var nf: i32 = sd.fields.len();
+    var baseptr: i32 = 0 - 1;
+    if (sl.has_base) {
+        s = build_expr(sl.base, s);
+        if (!s.ok) { return s; }
+        baseptr = s.cur_id();
+    }
+    s = s.fresh();
+    var shandle: i32 = s.cur_id();
+    var sna: i32[] = [];
+    s = s.emit(SInst { kind_tag: 14, result: shandle, args: sna, imm: nf + 1, str: "" });
+    // tag at offset 0
+    s = s.kconst(0);
+    var tagidx: i32 = s.cur_id();
+    s = s.kconst(si);
+    var tagval: i32 = s.cur_id();
+    s = s.fresh();
+    var tsa: i32[] = [shandle, tagidx, tagval];
+    s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: tsa, imm: 32, str: "" });
+    var f: i32 = 0;
+    while (f < nf) {
+        var fname: string = sd.fields[f].name;
+        var lj: i32 = util.index_of_str(sl.field_names, fname);
+        var fw: i32 = struct_field_width(s.structs, sl.type_name, fname);
+        var fv: i32 = 0;
+        if (lj >= 0) {
+            s = build_expr(sl.field_values[lj], s);
+            if (!s.ok) { return s; }
+            fv = s.cur_id();
+        } else if (sl.has_base) {
+            // Copy the field from the base struct (same offset/width).
+            s = s.kconst(f + 1);
+            var bfidx: i32 = s.cur_id();
+            s = s.fresh();
+            var bla: i32[] = [baseptr, bfidx];
+            s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: bla, imm: fw, str: "" });
+            fv = s.cur_id();
+        } else {
+            return s.fail();   // field missing from a non-spread literal
+        }
+        s = s.kconst(f + 1);
+        var fidx: i32 = s.cur_id();
+        s = s.fresh();
+        var fsa: i32[] = [shandle, fidx, fv];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: fsa, imm: fw, str: "" });
+        f = f + 1;
+    }
+    s = s.fresh();
+    var sha: i32[] = [shandle];
+    return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: sha, imm: 0, str: "" });
+}
+
+function build_expr_field_access(fa: ast.ExprFieldAccess, s: BState): BState {
+    // Tuple element access `t.0` / `t.1` / … — a numeric field name is
+    // a positional index (struct fields are never all-digits). Tuple
+    // elements live at offsets 0..n-1 (no tag / length prefix), so the
+    // index is loaded directly. Width 0 (32-bit) matches the array /
+    // construct path; pointer elements fit the low-heap 32-bit slots.
+    if (util.is_all_digits(fa.field)) {
+        s = build_expr(fa.obj, s);
+        if (!s.ok) { return s; }
+        var tptr: i32 = s.cur_id();
+        s = s.kconst(util.digits_to_i32(fa.field));
+        var tidx: i32 = s.cur_id();
+        s = s.fresh();
+        var tla: i32[] = [tptr, tidx];
+        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: tla, imm: 0, str: "" });
+    }
+    var sty: string = type_of_expr(fa.obj, s);
+    if (sty.len() == 0) { return s.fail(); }
+    var off: i32 = struct_field_index(s.structs, sty, fa.field);
+    if (off < 0) { return s.fail(); }
+    var fw2: i32 = struct_field_width(s.structs, sty, fa.field);
+    s = build_expr(fa.obj, s);
+    if (!s.ok) { return s; }
+    var optr: i32 = s.cur_id();
+    s = s.kconst(off + 1);   // field f is at offset f+1 (offset 0 is the tag)
+    var oidx: i32 = s.cur_id();
+    s = s.fresh();
+    var ola: i32[] = [optr, oidx];
+    return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: ola, imm: fw2, str: "" });
+}
+
+function build_expr_string(strlit: ast.ExprString, s: BState): BState {
+    // A string literal is a static [len, b0, b1, …] constant: emit a
+    // single const_str (the backend materialises it in a data section)
+    // rather than alloc + a store_elem per byte, which exploded the IR
+    // for string-heavy functions (asm.emit_runtime is ~4000 literals →
+    // hundreds of thousands of SInsts → OOM). The result is a string
+    // pointer like any other, so len / index / concat / streq reuse the
+    // existing paths.
+    s = s.fresh();
+    var sca: i32[] = [];
+    return s.emit(SInst { kind_tag: 5, result: s.cur_id(), args: sca, imm: 0, str: strlit.value });
+}
+
+function build_expr_array(arr: ast.ExprArray, s: BState): BState {
+    // Heap-allocate a length-prefixed i32 array: element 0 holds the
+    // length, the n elements follow at 1..n. The expression's value
+    // is the alloc handle (a pointer).
+    var n: i32 = arr.elements.len();
+    s = s.fresh();
+    var handle: i32 = s.cur_id();
+    var noargs: i32[] = [];
+    s = s.emit(SInst { kind_tag: 14, result: handle, args: noargs, imm: n + 1, str: "" });
+    // length at index 0
+    s = s.kconst(0);
+    var lenidx: i32 = s.cur_id();
+    s = s.kconst(n);
+    var lenval: i32 = s.cur_id();
+    s = s.fresh();
+    var la0: i32[] = [handle, lenidx, lenval];
+    s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: la0, imm: 0, str: "" });
+    var i: i32 = 0;
+    while (i < n) {
+        s = s.kconst(i + 1);
+        var idxv: i32 = s.cur_id();
+        s = build_expr(arr.elements[i], s);
+        if (!s.ok) { return s; }
+        var elv: i32 = s.cur_id();
+        s = s.fresh();
+        var sa: i32[] = [handle, idxv, elv];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: sa, imm: 0, str: "" });
+        i = i + 1;
+    }
+    s = s.fresh();
+    var ha: i32[] = [handle];
+    return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ha, imm: 0, str: "" });
+}
+
+function build_expr_tuple(tup: ast.ExprTuple, s: BState): BState {
+    // A tuple `(a, b, c)` is a fixed-arity heap box: element i at
+    // offset i (no length prefix — tuples are only ever indexed by the
+    // constant `t.i`). The value is the alloc handle.
+    var tn: i32 = tup.elements.len();
+    s = s.fresh();
+    var thandle: i32 = s.cur_id();
+    var tnoargs: i32[] = [];
+    s = s.emit(SInst { kind_tag: 14, result: thandle, args: tnoargs, imm: tn, str: "" });
+    var ti: i32 = 0;
+    while (ti < tn) {
+        s = s.kconst(ti);
+        var tidxv: i32 = s.cur_id();
+        s = build_expr(tup.elements[ti], s);
+        if (!s.ok) { return s; }
+        var telev: i32 = s.cur_id();
+        s = s.fresh();
+        var tsa: i32[] = [thandle, tidxv, telev];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: tsa, imm: 0, str: "" });
+        ti = ti + 1;
+    }
+    s = s.fresh();
+    var tha: i32[] = [thandle];
+    return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: tha, imm: 0, str: "" });
+}
+
+function build_expr_index(ix: ast.ExprIndex, s: BState): BState {
+    s = build_expr(ix.array, s);
+    if (!s.ok) { return s; }
+    var ptr: i32 = s.cur_id();
+    s = build_expr(ix.index, s);
+    if (!s.ok) { return s; }
+    var idx: i32 = s.cur_id();
+    // Data lives at index+1 (element 0 is the length).
+    s = s.kconst(1);
+    var one: i32 = s.cur_id();
+    s = s.fresh();
+    var ba: i32[] = [idx, one];
+    s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: ba, imm: 0, str: "+" });
+    var idx1: i32 = s.cur_id();
+    s = s.fresh();
+    var la: i32[] = [ptr, idx1];
+    return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
+}
+
+function build_expr_slice(sl: ast.ExprSlice, s: BState): BState {
+    // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh array (or
+    // substring, since a string is a byte array) holding a[lo..hi-1].
+    s = build_expr(sl.array, s);
+    if (!s.ok) { return s; }
+    var slarr: i32 = s.cur_id();
+    s = build_expr(sl.start, s);
+    if (!s.ok) { return s; }
+    var sllo: i32 = s.cur_id();
+    var slhi: i32 = 0;
+    if (sl.open_end) {
+        // `a[lo:]` — the bound is the receiver's length, which in this
+        // subset is element 0 of the array (see the ExprIndex arm's
+        // `index+1` load). sl.end is an unevaluated placeholder, and
+        // reading the length off `slarr` keeps the base evaluated once.
+        s = s.kconst(0);
+        var slz: i32 = s.cur_id();
+        s = s.fresh();
+        var sllargs: i32[] = [slarr, slz];
+        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: sllargs, imm: 0, str: "" });
+        slhi = s.cur_id();
+    } else {
+        s = build_expr(sl.end, s);
+        if (!s.ok) { return s; }
+        slhi = s.cur_id();
+    }
+    s = s.fresh();
+    var slargs: i32[] = [slarr, sllo, slhi];
+    return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: slargs, imm: 0, str: "__ssa_arr_slice" });
 }
