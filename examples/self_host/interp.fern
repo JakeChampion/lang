@@ -1612,151 +1612,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
             if (is_err(ov)) { return ov; }
             return eval_unary(u.op, ov);
         },
-        ast.ExprCall(c) => {
-            // Bare-ident callee → plain function call OR
-            // closure call when the name is bound to a VFunc.
-            // FieldAccess callee → method call.
-            // Any other expression evaluates to a callee value
-            // — VFunc → closure call, else error.
-            var name: string = "";
-            var is_method: boolean = false;
-            var is_closure: boolean = false;
-            var is_variant: boolean = false;
-            var variant_name: string = "";
-            var recv: Value = v_err("__noreceiver__");
-            var closure_val: Value = v_err("__noclosure__");
-            match (c.callee) {
-                ast.ExprIdent(id) => {
-                    // If the name is bound in scope to a VFunc,
-                    // it's a closure call. Plain function names
-                    // shadow ident bindings via call_func's
-                    // walk, but a `var f = function (...) {…}`
-                    // binding is observable here.
-                    var bound: Value = env.lookup(id.name);
-                    match (bound) {
-                        VFunc(_) => { is_closure = true; closure_val = bound; },
-                        _ => { name = id.name; }
-                    }
-                    // `Circle(7)` / `Some(x)` / `JNumber(s)` — an enum-variant
-                    // constructor, which no function table declares. Checked
-                    // after the VFunc probe and behind user_func_exists so a
-                    // local closure or a user-declared function of the same
-                    // name still wins (#5990).
-                    if (!is_closure && variant_arity(name, env.type_decls) >= 0 && !user_func_exists(name, env.funcs)) {
-                        is_variant = true;
-                        variant_name = name;
-                    }
-                },
-                ast.ExprFieldAccess(fa) => {
-                    // Qualified-name call: `Ns.func(...)` where
-                    // Ns is an imported namespace prefix. We
-                    // recognise this when fa.obj is a bare
-                    // ExprIdent (no chained method) AND there's
-                    // a function in env.funcs literally named
-                    // `Ns.func`. Falls back to method-call
-                    // semantics otherwise.
-                    var qualified_handled: boolean = false;
-                    match (fa.obj) {
-                        ast.ExprIdent(ns_id) => {
-                            var qname: string = ns_id.name + "." + fa.field;
-                            var qi: i32 = 0;
-                            var qfound: boolean = false;
-                            while (qi < env.funcs.len()) {
-                                if (env.funcs[qi].name == qname && env.funcs[qi].receiver_name.len() == 0) {
-                                    qfound = true;
-                                }
-                                qi = qi + 1;
-                            }
-                            if (qfound) {
-                                name = qname;
-                                qualified_handled = true;
-                            }
-                        },
-                        _ => { }
-                    }
-                    if (!qualified_handled) {
-                        // `E.Some(x)` — a call whose callee object is a
-                        // bare identifier with no runtime value is a
-                        // payload enum-variant construction (the nullary
-                        // sibling `E.Red` is handled on the ExprFieldAccess
-                        // eval path). Anything with a real object value is a
-                        // method call.
-                        var variant_call: boolean = false;
-                        var static_type: string = "";
-                        match (fa.obj) {
-                            ast.ExprIdent(oid) => {
-                                // Ask the same question the ident evaluator
-                                // answers, not a narrower one (#6617). A raw
-                                // env lookup misses a CONST — which is a
-                                // zero-arg function, not a binding — so
-                                // `S.len()` was classified as a variant
-                                // construction and built a variant named
-                                // `len` instead of dispatching a method.
-                                var probe: Value = resolve_ident_value(oid.name, env);
-                                if (is_err(probe)) {
-                                    variant_call = true;
-                                    // `i32.zero()` / `Point.default()` — the object
-                                    // names a TYPE carrying an associated function,
-                                    // which has no runtime value either. Without
-                                    // this the call built a variant named after the
-                                    // FUNCTION (`zero`), and the next method
-                                    // dispatched on that. A real variant still wins,
-                                    // and its arity probe is the cheap test, so the
-                                    // function-table scan only runs for a field no
-                                    // variant answers to.
-                                    if (variant_arity(fa.field, env.type_decls) < 0 && assoc_index(env.funcs, oid.name, fa.field) >= 0) {
-                                        variant_call = false;
-                                        static_type = oid.name;
-                                    }
-                                }
-                            },
-                            _ => { }
-                        }
-                        if (variant_call) {
-                            is_variant = true;
-                            variant_name = fa.field;
-                        } else {
-                            name = fa.field;
-                            is_method = true;
-                            if (static_type.len() > 0) {
-                                recv = v_type(static_type);
-                            } else {
-                                recv = eval_expr(fa.obj, env);
-                                if (is_err(recv)) { return recv; }
-                                name = dyn_method_name(name, env.static_type_of(fa.obj), recv, env.funcs);
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    // Treat as a value-producing expression
-                    // (e.g. immediate `function () { … }()`).
-                    var cv: Value = eval_expr(c.callee, env);
-                    if (is_err(cv)) { return cv; }
-                    match (cv) {
-                        VFunc(_) => { is_closure = true; closure_val = cv; },
-                        _ => { return v_err("call target is not callable"); }
-                    }
-                }
-            }
-            // Evaluate args in order, propagating the first VErr.
-            var arg_vals: Value[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                var av: Value = eval_expr(c.args[i], env);
-                if (is_err(av)) { return av; }
-                arg_vals = arg_vals.append(av);
-                i = i + 1;
-            }
-            if (is_variant) { return v_variant(variant_name, arg_vals); }
-            if (is_method) {
-                return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls);
-            }
-            if (is_closure) {
-                return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls);
-            }
-            return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls);
-        },
+        ast.ExprCall(c) => { return eval_expr_call(c, env); },
         ast.ExprTuple(t) => {
             var elems: Value[] = [];
             var i: i32 = 0;
@@ -1779,200 +1635,10 @@ function eval_expr(e: ast.Expr, env: Env): Value {
             }
             return v_arr(elems);
         },
-        ast.ExprIndex(x) => {
-            var av: Value = eval_expr(x.array, env);
-            if (is_err(av)) { return av; }
-            var iv: Value = eval_expr(x.index, env);
-            if (is_err(iv)) { return iv; }
-            match (av) {
-                VArr(arr) => {
-                    match (iv) {
-                        VInt(ii) => {
-                            if (ii.v < 0 || ii.v >= arr.elements.len()) {
-                                return v_err("array index out of range");
-                            }
-                            return arr.elements[ii.v];
-                        },
-                        _ => { return v_err("array index must be i32"); }
-                    }
-                },
-                VString(s) => {
-                    // String indexing returns the byte at the
-                    // given position as i32 — matches the Fern
-                    // semantics in the Go pipeline. Useful for
-                    // any text-processing code (the lexer's
-                    // own implementation reads bytes this way).
-                    match (iv) {
-                        VInt(ii) => {
-                            if (ii.v < 0 || ii.v >= s.v.len()) {
-                                return v_err("string index out of range");
-                            }
-                            return v_int((s.v[ii.v] as i32));
-                        },
-                        _ => { return v_err("string index must be i32"); }
-                    }
-                },
-                _ => { return v_err("can only index into an array or string"); }
-            }
-            return v_err("unreachable index arm");
-        },
-        ast.ExprSlice(sl) => {
-            var av: Value = eval_expr(sl.array, env);
-            if (is_err(av)) { return av; }
-            var sv: Value = eval_expr(sl.start, env);
-            if (is_err(sv)) { return sv; }
-            var sb: i32 = 0;
-            var eb: i32 = 0;
-            match (sv) {
-                VInt(i) => { sb = i.v; },
-                _ => { return v_err("slice start must be i32"); }
-            }
-            if (sl.open_end) {
-                // `x[lo:]` — the bound is the receiver's own length, read off
-                // the value already evaluated above. sl.end is a placeholder.
-                match (av) {
-                    VString(oes) => { eb = oes.v.len(); },
-                    VArr(oea) => { eb = oea.elements.len(); },
-                    _ => { return v_err("can only slice array or string"); }
-                }
-            } else {
-                var ev: Value = eval_expr(sl.end, env);
-                if (is_err(ev)) { return ev; }
-                match (ev) {
-                    VInt(i) => { eb = i.v; },
-                    _ => { return v_err("slice end must be i32"); }
-                }
-            }
-            match (av) {
-                VString(s) => {
-                    // `s[a:b]` on a string is checked (#5634): an out-of-range
-                    // bound or a bound that splits a code point yields `None`
-                    // rather than an error. `slice_unchecked` keeps the trap.
-                    if (sb < 0 || eb > s.v.len() || sb > eb) {
-                        var slcn1: Value[] = [];
-                        return v_variant("None", slcn1);
-                    }
-                    if (!interp_char_boundary(s.v, sb) || !interp_char_boundary(s.v, eb)) {
-                        var slcn2: Value[] = [];
-                        return v_variant("None", slcn2);
-                    }
-                    return v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]);
-                },
-                VArr(a) => {
-                    if (sb < 0 || eb > a.elements.len() || sb > eb) {
-                        return v_err("array slice out of range");
-                    }
-                    var out: Value[] = [];
-                    var i: i32 = sb;
-                    while (i < eb) { out = out.append(a.elements[i]); i = i + 1; }
-                    return v_arr(out);
-                },
-                _ => { return v_err("can only slice array or string"); }
-            }
-            return v_err("unreachable slice arm");
-        },
-        ast.ExprStructLit(sl) => {
-            // Struct-update `Name { ...base, f: v }`: start from the
-            // base struct's fields, then overwrite the named overrides
-            // (or append any not already present). Field lookup is by
-            // name, so order is irrelevant.
-            if (sl.has_base) {
-                var bv: Value = eval_expr(sl.base, env);
-                if (is_err(bv)) { return bv; }
-                match (bv) {
-                    VStruct(sv) => {
-                        var bnames: string[] = sv.field_names;
-                        var bvals: Value[] = sv.field_values;
-                        var oi: i32 = 0;
-                        while (oi < sl.field_values.len()) {
-                            var ov2: Value = eval_expr(sl.field_values[oi], env);
-                            if (is_err(ov2)) { return ov2; }
-                            var oname: string = sl.field_names[oi];
-                            var replaced: boolean = false;
-                            var bi: i32 = 0;
-                            while (bi < bnames.len()) {
-                                if (bnames[bi] == oname) {
-                                    bvals = bvals.with(bi, ov2);
-                                    replaced = true;
-                                }
-                                bi = bi + 1;
-                            }
-                            if (!replaced) {
-                                bnames = bnames.append(oname);
-                                bvals = bvals.append(ov2);
-                            }
-                            oi = oi + 1;
-                        }
-                        return v_struct(sl.type_name, bnames, bvals);
-                    },
-                    _ => { return v_err("struct update base is not a struct"); }
-                }
-            }
-            // Evaluate each field's value in declaration order,
-            // propagating the first VErr. Field names are
-            // copied as-is from the parser; the runtime treats
-            // them as opaque strings for lookup.
-            var fvs: Value[] = [];
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                var fv: Value = eval_expr(sl.field_values[i], env);
-                if (is_err(fv)) { return fv; }
-                fvs = fvs.append(fv);
-                i = i + 1;
-            }
-            return v_struct(sl.type_name, sl.field_names, fvs);
-        },
-        ast.ExprFieldAccess(fa) => {
-            // Evaluate the object. Field can be:
-            //   * struct field name (linear scan)
-            //   * tuple index `0` / `1` / … (string-of-digits)
-            // The parser stores both shapes as a bare string;
-            // we disambiguate on the receiver's runtime type.
-            var ov: Value = eval_expr(fa.obj, env);
-            if (is_err(ov)) {
-                // `E.Red` — a field access whose object is a bare
-                // identifier that resolves to no runtime value is a
-                // nullary enum-variant construction. The parser
-                // desugars enum variants into payload-less variant
-                // structs named for the variant, so the value is a
-                // zero-field VStruct tagged with the variant name; a
-                // qualified variant pattern `E.Red` matches it by its
-                // final path segment (see StmtMatch / variant_simple_
-                // name). Payload variants `E.Some(x)` are constructed
-                // on the ExprCall path. On a valid (checker-passed)
-                // program a bare undefined-identifier object only
-                // arises for an enum type name.
-                match (fa.obj) {
-                    ast.ExprIdent(_) => {
-                        var no_names: string[] = [];
-                        var no_vals: Value[] = [];
-                        return v_struct(fa.field, no_names, no_vals);
-                    },
-                    _ => { return ov; }
-                }
-            }
-            match (ov) {
-                VStruct(sv) => {
-                    var i: i32 = 0;
-                    while (i < sv.field_names.len()) {
-                        if (sv.field_names[i] == fa.field) {
-                            return sv.field_values[i];
-                        }
-                        i = i + 1;
-                    }
-                    return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
-                },
-                VTuple(tv) => {
-                    var idx: i32 = util.digits_to_i32(fa.field);
-                    if (idx < 0 || idx >= tv.elements.len()) {
-                        return v_err("tuple index `" + fa.field + "` out of range");
-                    }
-                    return tv.elements[idx];
-                },
-                _ => { return v_err("can only field-access a struct or tuple"); }
-            }
-            return v_err("unreachable field-access arm");
-        },
+        ast.ExprIndex(x) => { return eval_expr_index(x, env); },
+        ast.ExprSlice(sl) => { return eval_expr_slice(sl, env); },
+        ast.ExprStructLit(sl) => { return eval_expr_struct_lit(sl, env); },
+        ast.ExprFieldAccess(fa) => { return eval_expr_field_access(fa, env); },
         ast.ExprLambda(lm) => {
             // Capture the lexical environment by snapshotting
             // env.names / env.values. The body resolves free
@@ -1997,6 +1663,350 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         }
     }
     return v_err("unhandled Expr variant");
+}
+
+function eval_expr_call(c: ast.ExprCall, env: Env): Value {
+    // Bare-ident callee → plain function call OR
+    // closure call when the name is bound to a VFunc.
+    // FieldAccess callee → method call.
+    // Any other expression evaluates to a callee value
+    // — VFunc → closure call, else error.
+    var name: string = "";
+    var is_method: boolean = false;
+    var is_closure: boolean = false;
+    var is_variant: boolean = false;
+    var variant_name: string = "";
+    var recv: Value = v_err("__noreceiver__");
+    var closure_val: Value = v_err("__noclosure__");
+    match (c.callee) {
+        ast.ExprIdent(id) => {
+            // If the name is bound in scope to a VFunc,
+            // it's a closure call. Plain function names
+            // shadow ident bindings via call_func's
+            // walk, but a `var f = function (...) {…}`
+            // binding is observable here.
+            var bound: Value = env.lookup(id.name);
+            match (bound) {
+                VFunc(_) => { is_closure = true; closure_val = bound; },
+                _ => { name = id.name; }
+            }
+            // `Circle(7)` / `Some(x)` / `JNumber(s)` — an enum-variant
+            // constructor, which no function table declares. Checked
+            // after the VFunc probe and behind user_func_exists so a
+            // local closure or a user-declared function of the same
+            // name still wins (#5990).
+            if (!is_closure && variant_arity(name, env.type_decls) >= 0 && !user_func_exists(name, env.funcs)) {
+                is_variant = true;
+                variant_name = name;
+            }
+        },
+        ast.ExprFieldAccess(fa) => {
+            // Qualified-name call: `Ns.func(...)` where
+            // Ns is an imported namespace prefix. We
+            // recognise this when fa.obj is a bare
+            // ExprIdent (no chained method) AND there's
+            // a function in env.funcs literally named
+            // `Ns.func`. Falls back to method-call
+            // semantics otherwise.
+            var qualified_handled: boolean = false;
+            match (fa.obj) {
+                ast.ExprIdent(ns_id) => {
+                    var qname: string = ns_id.name + "." + fa.field;
+                    var qi: i32 = 0;
+                    var qfound: boolean = false;
+                    while (qi < env.funcs.len()) {
+                        if (env.funcs[qi].name == qname && env.funcs[qi].receiver_name.len() == 0) {
+                            qfound = true;
+                        }
+                        qi = qi + 1;
+                    }
+                    if (qfound) {
+                        name = qname;
+                        qualified_handled = true;
+                    }
+                },
+                _ => { }
+            }
+            if (!qualified_handled) {
+                // `E.Some(x)` — a call whose callee object is a
+                // bare identifier with no runtime value is a
+                // payload enum-variant construction (the nullary
+                // sibling `E.Red` is handled on the ExprFieldAccess
+                // eval path). Anything with a real object value is a
+                // method call.
+                var variant_call: boolean = false;
+                var static_type: string = "";
+                match (fa.obj) {
+                    ast.ExprIdent(oid) => {
+                        // Ask the same question the ident evaluator
+                        // answers, not a narrower one (#6617). A raw
+                        // env lookup misses a CONST — which is a
+                        // zero-arg function, not a binding — so
+                        // `S.len()` was classified as a variant
+                        // construction and built a variant named
+                        // `len` instead of dispatching a method.
+                        var probe: Value = resolve_ident_value(oid.name, env);
+                        if (is_err(probe)) {
+                            variant_call = true;
+                            // `i32.zero()` / `Point.default()` — the object
+                            // names a TYPE carrying an associated function,
+                            // which has no runtime value either. Without
+                            // this the call built a variant named after the
+                            // FUNCTION (`zero`), and the next method
+                            // dispatched on that. A real variant still wins,
+                            // and its arity probe is the cheap test, so the
+                            // function-table scan only runs for a field no
+                            // variant answers to.
+                            if (variant_arity(fa.field, env.type_decls) < 0 && assoc_index(env.funcs, oid.name, fa.field) >= 0) {
+                                variant_call = false;
+                                static_type = oid.name;
+                            }
+                        }
+                    },
+                    _ => { }
+                }
+                if (variant_call) {
+                    is_variant = true;
+                    variant_name = fa.field;
+                } else {
+                    name = fa.field;
+                    is_method = true;
+                    if (static_type.len() > 0) {
+                        recv = v_type(static_type);
+                    } else {
+                        recv = eval_expr(fa.obj, env);
+                        if (is_err(recv)) { return recv; }
+                        name = dyn_method_name(name, env.static_type_of(fa.obj), recv, env.funcs);
+                    }
+                }
+            }
+        },
+        _ => {
+            // Treat as a value-producing expression
+            // (e.g. immediate `function () { … }()`).
+            var cv: Value = eval_expr(c.callee, env);
+            if (is_err(cv)) { return cv; }
+            match (cv) {
+                VFunc(_) => { is_closure = true; closure_val = cv; },
+                _ => { return v_err("call target is not callable"); }
+            }
+        }
+    }
+    // Evaluate args in order, propagating the first VErr.
+    var arg_vals: Value[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var av: Value = eval_expr(c.args[i], env);
+        if (is_err(av)) { return av; }
+        arg_vals = arg_vals.append(av);
+        i = i + 1;
+    }
+    if (is_variant) { return v_variant(variant_name, arg_vals); }
+    if (is_method) {
+        return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls);
+    }
+    if (is_closure) {
+        return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls);
+    }
+    return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls);
+}
+
+function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
+    var av: Value = eval_expr(x.array, env);
+    if (is_err(av)) { return av; }
+    var iv: Value = eval_expr(x.index, env);
+    if (is_err(iv)) { return iv; }
+    match (av) {
+        VArr(arr) => {
+            match (iv) {
+                VInt(ii) => {
+                    if (ii.v < 0 || ii.v >= arr.elements.len()) {
+                        return v_err("array index out of range");
+                    }
+                    return arr.elements[ii.v];
+                },
+                _ => { return v_err("array index must be i32"); }
+            }
+        },
+        VString(s) => {
+            // String indexing returns the byte at the
+            // given position as i32 — matches the Fern
+            // semantics in the Go pipeline. Useful for
+            // any text-processing code (the lexer's
+            // own implementation reads bytes this way).
+            match (iv) {
+                VInt(ii) => {
+                    if (ii.v < 0 || ii.v >= s.v.len()) {
+                        return v_err("string index out of range");
+                    }
+                    return v_int((s.v[ii.v] as i32));
+                },
+                _ => { return v_err("string index must be i32"); }
+            }
+        },
+        _ => { return v_err("can only index into an array or string"); }
+    }
+    return v_err("unreachable index arm");
+}
+
+function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
+    var av: Value = eval_expr(sl.array, env);
+    if (is_err(av)) { return av; }
+    var sv: Value = eval_expr(sl.start, env);
+    if (is_err(sv)) { return sv; }
+    var sb: i32 = 0;
+    var eb: i32 = 0;
+    match (sv) {
+        VInt(i) => { sb = i.v; },
+        _ => { return v_err("slice start must be i32"); }
+    }
+    if (sl.open_end) {
+        // `x[lo:]` — the bound is the receiver's own length, read off
+        // the value already evaluated above. sl.end is a placeholder.
+        match (av) {
+            VString(oes) => { eb = oes.v.len(); },
+            VArr(oea) => { eb = oea.elements.len(); },
+            _ => { return v_err("can only slice array or string"); }
+        }
+    } else {
+        var ev: Value = eval_expr(sl.end, env);
+        if (is_err(ev)) { return ev; }
+        match (ev) {
+            VInt(i) => { eb = i.v; },
+            _ => { return v_err("slice end must be i32"); }
+        }
+    }
+    match (av) {
+        VString(s) => {
+            // `s[a:b]` on a string is checked (#5634): an out-of-range
+            // bound or a bound that splits a code point yields `None`
+            // rather than an error. `slice_unchecked` keeps the trap.
+            if (sb < 0 || eb > s.v.len() || sb > eb) {
+                var slcn1: Value[] = [];
+                return v_variant("None", slcn1);
+            }
+            if (!interp_char_boundary(s.v, sb) || !interp_char_boundary(s.v, eb)) {
+                var slcn2: Value[] = [];
+                return v_variant("None", slcn2);
+            }
+            return v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]);
+        },
+        VArr(a) => {
+            if (sb < 0 || eb > a.elements.len() || sb > eb) {
+                return v_err("array slice out of range");
+            }
+            var out: Value[] = [];
+            var i: i32 = sb;
+            while (i < eb) { out = out.append(a.elements[i]); i = i + 1; }
+            return v_arr(out);
+        },
+        _ => { return v_err("can only slice array or string"); }
+    }
+    return v_err("unreachable slice arm");
+}
+
+function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
+    // Struct-update `Name { ...base, f: v }`: start from the
+    // base struct's fields, then overwrite the named overrides
+    // (or append any not already present). Field lookup is by
+    // name, so order is irrelevant.
+    if (sl.has_base) {
+        var bv: Value = eval_expr(sl.base, env);
+        if (is_err(bv)) { return bv; }
+        match (bv) {
+            VStruct(sv) => {
+                var bnames: string[] = sv.field_names;
+                var bvals: Value[] = sv.field_values;
+                var oi: i32 = 0;
+                while (oi < sl.field_values.len()) {
+                    var ov2: Value = eval_expr(sl.field_values[oi], env);
+                    if (is_err(ov2)) { return ov2; }
+                    var oname: string = sl.field_names[oi];
+                    var replaced: boolean = false;
+                    var bi: i32 = 0;
+                    while (bi < bnames.len()) {
+                        if (bnames[bi] == oname) {
+                            bvals = bvals.with(bi, ov2);
+                            replaced = true;
+                        }
+                        bi = bi + 1;
+                    }
+                    if (!replaced) {
+                        bnames = bnames.append(oname);
+                        bvals = bvals.append(ov2);
+                    }
+                    oi = oi + 1;
+                }
+                return v_struct(sl.type_name, bnames, bvals);
+            },
+            _ => { return v_err("struct update base is not a struct"); }
+        }
+    }
+    // Evaluate each field's value in declaration order,
+    // propagating the first VErr. Field names are
+    // copied as-is from the parser; the runtime treats
+    // them as opaque strings for lookup.
+    var fvs: Value[] = [];
+    var i: i32 = 0;
+    while (i < sl.field_values.len()) {
+        var fv: Value = eval_expr(sl.field_values[i], env);
+        if (is_err(fv)) { return fv; }
+        fvs = fvs.append(fv);
+        i = i + 1;
+    }
+    return v_struct(sl.type_name, sl.field_names, fvs);
+}
+
+function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
+    // Evaluate the object. Field can be:
+    //   * struct field name (linear scan)
+    //   * tuple index `0` / `1` / … (string-of-digits)
+    // The parser stores both shapes as a bare string;
+    // we disambiguate on the receiver's runtime type.
+    var ov: Value = eval_expr(fa.obj, env);
+    if (is_err(ov)) {
+        // `E.Red` — a field access whose object is a bare
+        // identifier that resolves to no runtime value is a
+        // nullary enum-variant construction. The parser
+        // desugars enum variants into payload-less variant
+        // structs named for the variant, so the value is a
+        // zero-field VStruct tagged with the variant name; a
+        // qualified variant pattern `E.Red` matches it by its
+        // final path segment (see StmtMatch / variant_simple_
+        // name). Payload variants `E.Some(x)` are constructed
+        // on the ExprCall path. On a valid (checker-passed)
+        // program a bare undefined-identifier object only
+        // arises for an enum type name.
+        match (fa.obj) {
+            ast.ExprIdent(_) => {
+                var no_names: string[] = [];
+                var no_vals: Value[] = [];
+                return v_struct(fa.field, no_names, no_vals);
+            },
+            _ => { return ov; }
+        }
+    }
+    match (ov) {
+        VStruct(sv) => {
+            var i: i32 = 0;
+            while (i < sv.field_names.len()) {
+                if (sv.field_names[i] == fa.field) {
+                    return sv.field_values[i];
+                }
+                i = i + 1;
+            }
+            return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
+        },
+        VTuple(tv) => {
+            var idx: i32 = util.digits_to_i32(fa.field);
+            if (idx < 0 || idx >= tv.elements.len()) {
+                return v_err("tuple index `" + fa.field + "` out of range");
+            }
+            return tv.elements[idx];
+        },
+        _ => { return v_err("can only field-access a struct or tuple"); }
+    }
+    return v_err("unreachable field-access arm");
 }
 
 // call_func looks up `name` in the function table, binds args
