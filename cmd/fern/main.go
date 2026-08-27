@@ -1361,7 +1361,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		//     `wasmtime run prog.wasm` (no --invoke). main must
 		//     have signature () -> i32 for the canonical lift.
 		if outPath == "" {
-			return 1, fmt.Errorf("-backend ssa requires -o OUTPUT")
+			return 1, fmt.Errorf("-backend ssa for -target wasm32-wasi requires -o OUTPUT: it produces a wasm binary, not assembly text")
 		}
 		bin, err := buildWasmSSA(prog, info)
 		if err != nil {
@@ -1394,12 +1394,21 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		// an unsupported op surfaces as a clean error rather than a miscompile —
 		// this is the path the binary-size epic widens until the self-host
 		// compiler itself can be built through it.
-		if outPath == "" {
-			return 1, fmt.Errorf("-backend ssa requires -o OUTPUT")
-		}
 		asm, err := buildArm64SSA(prog, info)
 		if err != nil {
 			return 1, fmt.Errorf("arm64/ssa: %v", err)
+		}
+		// No -o writes the assembly to stdout, as the default emitter does:
+		// -o names the output BINARY, and the text is what this emitter has
+		// before it links. Without this the only way to read what the SSA
+		// backend generated was to disassemble the linked ELF — which carries
+		// neither sections nor symbols, so a reader could not even find a
+		// function in it.
+		if outPath == "" {
+			if _, werr := os.Stdout.WriteString(asm); werr != nil {
+				return 1, werr
+			}
+			return 0, nil
 		}
 		if err := linkNative(asm, outPath, "", "", nil); err != nil {
 			return 1, fmt.Errorf("arm64/ssa link: %v", err)
