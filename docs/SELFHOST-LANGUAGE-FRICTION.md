@@ -51,7 +51,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,054** in 4 modules — 703 in `irlower.fern`, 304 in `checker.fern`, 32 in `astwalk.fern`, 15 in `visibility.fern` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **121** across 12 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **126** across 12 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, and `interp.fern`'s cellify scans complete (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |

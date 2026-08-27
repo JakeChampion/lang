@@ -114,6 +114,13 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		{"lambda-write-if-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; if (id((function (): i32 { n = 9; return 1; })()) == 1) { return n; } return 0; }`},
 		{"lambda-write-while-cond", `function id(x: i32): i32 { return x; } function main(): i32 { var n: i32 = 1; var i: i32 = 0; while (i < 1 && id((function (): i32 { n = 9; return 1; })()) == 1) { i = i + 1; } return n; }`},
 		{"lambda-write-match-scrutinee", `enum W { One(i32) } function main(): i32 { var n: i32 = 1; match (W.One((function (): i32 { n = 9; return 1; })())) { W.One(_) => { return n; }, } return 0; }`},
+
+		// The two positions the whole-subtree fold reaches that the hand-written
+		// lambda-body walk's wildcard tail swallowed: a write through a `defer`
+		// action inside the lambda, and a write from a lambda nested in a
+		// match-arm GUARD inside the lambda.
+		{"lambda-write-via-defer", `function main(): i32 { var x: i32 = 0; var f = function (): i32 { defer x = 9; return 0; }; f(); return x; }`},
+		{"lambda-write-in-guard", `function main(): i32 { var x: i32 = 0; var f = function (): i32 { match (1) { 1 when (function (): boolean { x = 7; return true; })() => { return 1; }, _ => {}, } return 0; }; f(); return x; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
