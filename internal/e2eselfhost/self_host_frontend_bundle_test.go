@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
 	"testing"
 )
@@ -21,9 +20,6 @@ import (
 func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
-	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
-	utilSrc, _ := os.ReadFile("../../examples/self_host/util.fern")
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"function main(): i32 {\n" +
@@ -35,12 +31,7 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	// The loader follows main's ./lexer + ./parser imports (parser pulls
 	// in lexer + util) and merges them — the file-based equivalent of the
 	// hand-built ///MODULE util+lexer+parser bundle.
-	mergedAsm, progDir := compileFilesModload(t, runner, driverBin, map[string]string{
-		"util.fern":   string(utilSrc),
-		"lexer.fern":  string(lexerSrc),
-		"parser.fern": string(parserSrc),
-		"main.fern":   entry,
-	})
+	mergedAsm, progDir := compileFilesModload(t, runner, driverBin, map[string]string{"main.fern": entry})
 	if len(mergedAsm) == 0 {
 		t.Fatal("driver emitted 0 bytes for the frontend bundle")
 	}

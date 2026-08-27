@@ -44,8 +44,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"    print(asm_ir.emit_module_or_error(parser.parse_module(lexer.tokenize(src))));\n" +
 		"    return 0;\n" +
 		"}\n"
-	files := selfHostSourcesForEntry(t, entry)
-	files["main.fern"] = entry
+	files := map[string]string{"main.fern": entry}
 	compilerAsm, dir := compileFilesModload(t, runner, driverBin, files)
 	if len(compilerAsm) == 0 {
 		t.Fatal("stage 1: produced 0 bytes for the self-hosted compiler")

@@ -38,8 +38,7 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 		"    print(out);\n" +
 		"    return 0;\n" +
 		"}\n"
-	files := selfHostSourcesForEntry(t, entry)
-	files["main.fern"] = entry
+	files := map[string]string{"main.fern": entry}
 	compilerAsm, progDir := compileFilesModload(t, runner, driverBin, files)
 	if len(compilerAsm) == 0 {
 		t.Fatal("stage 1: produced 0 bytes for the self-hosted compiler")
