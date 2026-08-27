@@ -2605,6 +2605,39 @@ function roundtrip_module(src: string): parser.Module {
 }
 
 function main(): i32 {
+    var rc: i32 = check_expressions_and_control_flow();
+    if (rc != 0) { return rc; }
+    rc = check_string_and_slice_literals();
+    if (rc != 0) { return rc; }
+    rc = check_structs_and_aliases();
+    if (rc != 0) { return rc; }
+    rc = check_match_statements();
+    if (rc != 0) { return rc; }
+    rc = check_annotations_and_receivers();
+    if (rc != 0) { return rc; }
+    rc = check_imports();
+    if (rc != 0) { return rc; }
+    rc = check_loops_and_tuples();
+    if (rc != 0) { return rc; }
+    rc = check_lambdas();
+    if (rc != 0) { return rc; }
+    rc = check_qualified_names_and_externs();
+    if (rc != 0) { return rc; }
+    rc = check_declaration_modifiers();
+    if (rc != 0) { return rc; }
+    rc = check_enums();
+    if (rc != 0) { return rc; }
+    rc = check_const_and_for_sugar();
+    if (rc != 0) { return rc; }
+    rc = check_visibility_and_destructuring();
+    if (rc != 0) { return rc; }
+    rc = check_traits_and_impls();
+    if (rc != 0) { return rc; }
+
+    return 0;
+}
+
+function check_expressions_and_control_flow(): i32 {
     // Expression printing: ensure the binary-op rendering
     // parenthesises and round-trips. `1 + 2 * 3` parses as
     // `1 + (2*3)` (precedence) and prints as `(1 + (2 * 3))`.
@@ -2669,6 +2702,10 @@ function main(): i32 {
         _ => { return 45; }
     }
 
+    return 0;
+}
+
+function check_string_and_slice_literals(): i32 {
     // String literal escapes round-trip (`"a\"b\n"` → same).
     var src5: string = "var s = \"hello\\nworld\"; return 0;";
     var rt5: parser.Module = roundtrip_module(src5);
@@ -2695,6 +2732,10 @@ function main(): i32 {
         _ => { return 61; }
     }
 
+    return 0;
+}
+
+function check_structs_and_aliases(): i32 {
     // Struct decls + struct literals round-trip.
     var src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; return p.x; }";
     var rt7: parser.Module = roundtrip_module(src7);
@@ -2710,6 +2751,10 @@ function main(): i32 {
     if (rt8.aliases[0].name != "Shape") { return 81; }
     if (rt8.aliases[0].variants.len() != 2) { return 82; }
 
+    return 0;
+}
+
+function check_match_statements(): i32 {
     // Match statement round-trip.
     var src9: string = "var x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
     var rt9: parser.Module = roundtrip_module(src9);
@@ -2728,6 +2773,10 @@ function main(): i32 {
         _ => { return 95; }
     }
 
+    return 0;
+}
+
+function check_annotations_and_receivers(): i32 {
     // Var type annotation round-trip.
     var srcA: string = "var n: i32 = 7; var sh: Shape = c; return n;";
     var rtA: parser.Module = roundtrip_module(srcA);
@@ -2753,6 +2802,10 @@ function main(): i32 {
     if (rtB.funcs[0].receiver_type != "Par") { return 113; }
     if (rtB.funcs[1].receiver_name != "") { return 114; }
 
+    return 0;
+}
+
+function check_imports(): i32 {
     // Import round-trip — multiple imports survive emit + re-
     // parse with the same path list.
     var srcC: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
@@ -2762,6 +2815,10 @@ function main(): i32 {
     if (rtC.imports[1].path != "./parser") { return 122; }
     if (rtC.funcs.len() != 1) { return 123; }
 
+    return 0;
+}
+
+function check_loops_and_tuples(): i32 {
     // For-in + break / continue + tuple all round-trip.
     var srcD: string = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
     var rtD: parser.Module = roundtrip_module(srcD);
@@ -2823,6 +2880,10 @@ function main(): i32 {
         _ => { return 146; }
     }
 
+    return 0;
+}
+
+function check_lambdas(): i32 {
     // Lambda round-trip: `var f = function (x: i32): i32 { return
     // x + 1; }; return f(41);` — print should emit a re-parseable
     // `function (...)` literal.
@@ -2867,6 +2928,10 @@ function main(): i32 {
         _ => { return 163; }
     }
 
+    return 0;
+}
+
+function check_qualified_names_and_externs(): i32 {
     // Qualified-name call round-trip: `parser.parse_module(x)`.
     // The printer emits ExprFieldAccess as `obj.field` and ExprCall
     // wraps it the same way, so the re-parse should preserve the
@@ -2914,6 +2979,10 @@ function main(): i32 {
     if (rtI.funcs[0].import_wit != "get-random-u64") { return 188; }
     if (rtI.funcs[0].body.len() != 0) { return 189; }
 
+    return 0;
+}
+
+function check_declaration_modifiers(): i32 {
     // Declaration MODIFIERS survive the round trip (#6660). Each of these
     // changes what the program MEANS, so a printer that drops one makes
     // formatting a semantics change rather than a layout one: `fip` selects the
@@ -2990,6 +3059,10 @@ function main(): i32 {
     if (rtL.funcs.len() != 1) { return 208; }
     if (rtL.funcs[0].async) { return 209; }
 
+    return 0;
+}
+
+function check_enums(): i32 {
     // An enum must survive as an ENUM. The parser desugars it into one struct
     // per variant, so a printer with no enum arm renders those structs and the
     // type itself disappears — output that no longer compiles, because the
@@ -3081,6 +3154,11 @@ function main(): i32 {
         },
         _ => { return 249; }
     }
+
+    return 0;
+}
+
+function check_const_and_for_sugar(): i32 {
     // A `const` desugars to a zero-arg FuncDecl. It was dropped outright,
     // because the synthesised-decl filter keys on `line == 0` and the desugar
     // left the position there — so the declaration vanished while every
@@ -3156,6 +3234,10 @@ function main(): i32 {
     if (!util.contains(outLabels, "continue outer;")) { return 272; }
     if (!util.contains(outLabels, "break inner;")) { return 273; }
 
+    return 0;
+}
+
+function check_visibility_and_destructuring(): i32 {
     // #6773: `pub` on a struct / enum / alias. Printed from is_pub, which
     // already recorded the written keyword — nothing read it, so a formatted
     // library file kept its function exports and lost every type export.
@@ -3207,6 +3289,10 @@ function main(): i32 {
     if (rtMt.funcs[mmi].receiver_name != "o") { return 297; }
     if (rtMt.funcs[mmi].type_param_count != 1) { return 298; }
 
+    return 0;
+}
+
+function check_traits_and_impls(): i32 {
     // #6773 item 3: a `trait` block reaches the printer only through the two
     // DERIVED views the compile path keeps, so it has to be retained beside the
     // Module. The re-parse is the assertion: an emitted trait that does not
