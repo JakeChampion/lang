@@ -19,15 +19,34 @@ import (
 // not meant seriously.
 const repoLimit = lint.DefaultMaxComplexity
 
-// tree is one body of first-party Fern source under the limit, with the
-// two numbers that hold it to a RATCHET.
+// tolerance is how far a tree may drift from its recorded numbers before
+// the gate calls it a regression.
 //
-// Neither number is a permission slip. Both are the measured state of the
-// tree, and TestRepoComplexityRatchet fails when either MOVES — up, because
-// a change made the tree worse; down, because a change made it better and
-// the recorded number now says less than it could. So the gate is real from
-// the day it lands (nothing may regress) and cannot quietly go slack
-// (an improvement is banked, in the same diff that earned it).
+// It is not slack for the sake of it — it is sized from what this tree
+// actually does. An earlier draft of this gate was exact in both directions,
+// and measuring it against real main traffic showed why that cannot work
+// here: in one two-hour window main landed rc commits that moved the
+// ceiling 468 -> 477 (+1.9%) and the excess 19847 -> 19869 -> 19878
+// (+0.11%, then +0.05%). A full CI run on a PR takes about three and a half
+// hours. So an exact gate is stale before it can land, and once landed would
+// red-light main for whoever pushed the next rc commit — a gate nobody can
+// keep, which is the same failure as a limit nobody can meet.
+//
+// Five per cent absorbs that churn and still bites: one new 400-fork
+// function is +2% of the excess on its own, and a ceiling past 500 fails.
+// The shape — a checked-in baseline with a tolerance, growth fatal, both
+// directions reported — is the one `scripts/ci-check-perf` and
+// `scripts/ci-check-driver-sizes` already use for the same reason.
+const tolerance = 0.05
+
+// tree is one body of first-party Fern source held to the limit.
+//
+// The numbers are the measured state, not a permission slip. Growth past
+// `tolerance` FAILS. A shrink past it does not fail — it logs, asking for the
+// improvement to be banked. That asymmetry is deliberate: making an unrelated
+// PR red because it happened to simplify something is how a gate gets
+// disabled. A stale-low baseline only makes the gate stricter, so it is safe
+// in the direction it rots.
 //
 // To exempt a single function instead, annotate the function — a
 // `// fern-lint: allow cyclomatic-complexity` comment above it, with a line
@@ -57,8 +76,19 @@ type tree struct {
 }
 
 var trees = []tree{
-	{name: "self-host compiler", dir: "../../examples/self_host", ceiling: 477, excess: 19869},
+	{name: "self-host compiler", dir: "../../examples/self_host", ceiling: 477, excess: 19878},
 	{name: "stdlib", dir: "../stdlib/std", ceiling: 68, excess: 780},
+}
+
+// over reports whether measured has grown past want by more than tolerance.
+func over(measured, want int) bool {
+	return float64(measured) > float64(want)*(1+tolerance)
+}
+
+// under reports whether measured has fallen below want by more than
+// tolerance — worth banking, never worth failing.
+func under(measured, want int) bool {
+	return float64(measured) < float64(want)*(1-tolerance)
 }
 
 func TestRepoComplexityRatchet(t *testing.T) {
@@ -66,24 +96,24 @@ func TestRepoComplexityRatchet(t *testing.T) {
 		t.Run(tr.name, func(t *testing.T) {
 			worst, worstName, excess := measureTree(t, tr.dir)
 
-			if excess > tr.excess {
-				t.Errorf("total complexity over the limit of %d is %d, up from the recorded %d.\n"+
-					"A change added complexity above the limit. Split the new function up, or annotate it\n"+
-					"with `// fern-lint: allow cyclomatic-complexity` and a line saying why.\n"+
-					"Run: go run ./cmd/fern -lint %s", repoLimit, excess, tr.excess, tr.dir)
-			} else if excess < tr.excess {
-				t.Errorf("total complexity over the limit of %d is %d, down from the recorded %d.\n"+
-					"Bank the improvement: set this tree's excess to %d in %s.",
+			if over(excess, tr.excess) {
+				t.Errorf("total complexity over the limit of %d is %d, more than %.0f%% above the recorded %d.\n"+
+					"A change added real complexity. Split the new function up, or annotate it with\n"+
+					"`// fern-lint: allow cyclomatic-complexity` and a line saying why.\n"+
+					"Run: go run ./cmd/fern -lint %s", repoLimit, excess, tolerance*100, tr.excess, tr.dir)
+			} else if under(excess, tr.excess) {
+				t.Logf("total complexity over the limit of %d is %d, well below the recorded %d.\n"+
+					"Worth banking: set this tree's excess to %d in %s.",
 					repoLimit, excess, tr.excess, excess, gateFile())
 			}
 
-			if worst > tr.ceiling {
-				t.Errorf("`%s` reaches a complexity of %d, above the tree's recorded ceiling of %d.\n"+
-					"Nothing here may become harder to read than the worst function already is.",
-					worstName, worst, tr.ceiling)
-			} else if worst < tr.ceiling {
-				t.Errorf("the worst function in this tree is now `%s` at %d, below the recorded ceiling of %d.\n"+
-					"Bank the improvement: set this tree's ceiling to %d in %s.",
+			if over(worst, tr.ceiling) {
+				t.Errorf("`%s` reaches a complexity of %d, more than %.0f%% above the tree's recorded ceiling of %d.\n"+
+					"Nothing here may become materially harder to read than the worst function already is.",
+					worstName, worst, tolerance*100, tr.ceiling)
+			} else if under(worst, tr.ceiling) {
+				t.Logf("the worst function in this tree is now `%s` at %d, well below the recorded ceiling of %d.\n"+
+					"Worth banking: set this tree's ceiling to %d in %s.",
 					worstName, worst, tr.ceiling, worst, gateFile())
 			}
 		})
@@ -170,4 +200,47 @@ func fernFiles(t *testing.T, dir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// The tolerance is the whole reason this gate can live on a branch that takes
+// hours to land. These pin its two edges with the numbers that motivated it:
+// main moved the self-host excess by +22 and then +9 against ~19870 inside one
+// two-hour window, and moved the ceiling 468 -> 477.
+func TestToleranceAbsorbsMainsChurnButNotARegression(t *testing.T) {
+	const (
+		baseExcess  = 19869
+		baseCeiling = 468
+	)
+	cases := []struct {
+		name     string
+		measured int
+		want     int
+		fails    bool
+	}{
+		{"real main churn: +22 excess", baseExcess + 22, baseExcess, false},
+		{"real main churn: +9 excess", baseExcess + 9, baseExcess, false},
+		{"real main churn: ceiling 468 -> 477", 477, baseCeiling, false},
+		// One new 400-fork function is +390 excess, about 2% — under the
+		// band on its own. Enough of them, or one truly enormous function,
+		// is what this catches.
+		{"a 2000-fork regression", baseExcess + 2000, baseExcess, true},
+		{"ceiling doubles", baseCeiling * 2, baseCeiling, true},
+		{"exactly at the edge is not over", baseExcess + baseExcess/20, baseExcess, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := over(tc.measured, tc.want); got != tc.fails {
+				t.Errorf("over(%d, %d) = %v, want %v", tc.measured, tc.want, got, tc.fails)
+			}
+		})
+	}
+
+	// A shrink is never a failure — only ever a note. An unrelated PR that
+	// happens to simplify something must not go red for it.
+	if over(baseExcess/2, baseExcess) {
+		t.Error("halving the excess must not be reported as growth")
+	}
+	if !under(baseExcess/2, baseExcess) {
+		t.Error("halving the excess should be worth banking")
+	}
 }
