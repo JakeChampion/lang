@@ -47,11 +47,11 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **53** — 4 anonymous `function(…)` exprs and 49 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 6 in `parser` — the mentions, fn-value-call and moves-handle families); 29 of the 53 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **55** — 4 anonymous `function(…)` exprs and 51 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 8 in `parser` — the mentions, fn-value-call, moves-handle and deep-defer-scan families); 29 of the 55 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,054** in 4 modules — 703 in `irlower.fern`, 304 in `checker.fern`, 32 in `astwalk.fern`, 15 in `visibility.fern` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **110** across 12 modules — `parser.fern` joins with the mentions, fn-value-call and moves-handle families (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **112** across 12 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle and deep-defer-scan families (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
