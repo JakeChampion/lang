@@ -760,9 +760,9 @@ because the frame is 16-aligned. A latent bug, not a new one: the arm64
 assembler refused it correctly, and nothing had a frame that large until a
 module this size could reach emit.
 
-### The next one: literal pools, at 26 MB of .text
+### Literal pools, at 26 MB of .text
 
-Past the frame fix, `wasm_modload_run` reaches the assembler and stops there:
+Past the frame fix, `wasm_modload_run` reached the assembler and stopped there:
 
 ```
 arm64: ldr-literal at insn 264553 is 26676608 bytes from its pool
@@ -770,16 +770,33 @@ arm64: ldr-literal at insn 264553 is 26676608 bytes from its pool
 ```
 
 `ldr Xt, =constant` addresses its pool with the same signed 19-bit offset the
-conditional branches use, and the emitter flushes literals once. At 26 MB of
-`.text` that is nowhere near enough: pools have to be flushed periodically, each
-one hopped over, with every `ldr`-literal kept within reach of the nearest —
-which is the island placement `internal/native/arm64` already does for veneers,
-against a different limit. That machinery is now `splice`, so this is an
-addition to an existing pass rather than a new one.
+conditional branches use, and literals were flushed once, at the end. Flushing
+per function does not fix it either: `parser__parse_stmt_at` is **2.97 MB of
+code on its own**, three times the reach.
 
-Note what the sequence has been: three separate ceilings, each invisible until
-the one before it was lifted, none of them about register allocation. Sizing the
-work by what is currently *reported* would have missed all three.
+So the pool goes where the loads are. A far load's value is re-homed into an
+island spliced in within reach, headed by a `b` that hops over it — the same
+placement veneers use against a different limit, so it shares their machinery.
+The original entry stays put: a literal is 8 bytes, and duplicating one is
+cheaper than the bookkeeping to move it. Islands are anchored at even indices
+and sized even, which is what keeps a wide entry 8-byte aligned wherever it
+lands.
+
+**`wasm_modload_run` compiles, links and runs under `-backend ssa` with this** —
+and here the SSA backend is not at parity but *ahead*:
+
+| `wasm_modload_run` `.text` | bytes | of flat |
+|---|---|---|
+| flat backend | 31,711,628 | — |
+| SSA backend | 27,735,580 | **87.5%** |
+
+Its output matches the flat build's exactly, on `-per-module-count` and
+`-per-module-manifest` over real modules, not just on the usage line.
+
+Note what the sequence has been: four separate ceilings — arguments, frame size,
+branch reach, literal reach — each invisible until the one before it was lifted,
+none of them about register allocation. Sizing the work by what the compiler was
+*reporting* at any point would have missed all four.
 
 ### The interval approximation, and what sizing it missed
 

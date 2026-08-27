@@ -128,40 +128,47 @@ func (a *Assembler) margin() int {
 	return veneerMargin
 }
 
-// fitBranches rewrites the instruction stream so every branch reaches
-// its target: veneer islands for the b/bl that outrun imm26 (below),
-// and inversion-plus-hop for the conditional branches that outrun their
-// own much shorter span (relax.go). Both grow .text, which can in
-// principle push another branch out of range, so it iterates to a fixed
-// point. It is a no-op — not even a stream copy — when every branch
+// fitBranches rewrites the instruction stream so every PC-relative reference
+// reaches its target: veneer islands for the b/bl that outrun imm26 (below),
+// inversion-plus-hop for the conditional branches that outrun their own much
+// shorter span (relax.go), and pool islands for the ldr-literal loads that
+// outrun theirs (litpool.go). All three grow .text, which can in principle
+// push another reference out of range, so it iterates to a fixed point. It is a no-op — not even a stream copy — when every branch
 // already encodes, which is every program but the largest.
 //
-// Relaxation goes first each round because it creates b/bl the veneer
-// pass may then have to cover; a veneer never creates a conditional.
+// Order within a round runs shortest reach first: relaxation and pool
+// placement both add a `b` the veneer pass may then have to cover, and a
+// veneer creates neither a conditional nor a literal.
 //
 // Call it after FlushLiterals and before any layout that depends on
 // len(insns): it changes the size of .text.
 func (a *Assembler) fitBranches() error {
 	for pass := 0; ; pass++ {
 		short := a.shortBranches()
+		lits := a.farLiterals()
 		far := a.farBranches()
-		if len(short)+len(far) == 0 {
+		if len(short)+len(lits)+len(far) == 0 {
 			a.veneerPasses = pass
 			return nil
 		}
 		if pass >= maxVeneerPasses {
-			return fmt.Errorf("arm64: branch fitting did not converge after %d passes (%d branches still out of range)", maxVeneerPasses, len(short)+len(far))
+			return fmt.Errorf("arm64: branch fitting did not converge after %d passes (%d branches and %d literal loads still out of range)", maxVeneerPasses, len(short)+len(far), len(lits))
 		}
 		// One transform per pass: each splice invalidates the indices the
-		// other collected.
-		if len(short) > 0 {
+		// others collected.
+		switch {
+		case len(short) > 0:
 			if err := a.relaxShortBranches(short); err != nil {
 				return err
 			}
-			continue
-		}
-		if err := a.plantVeneers(far); err != nil {
-			return err
+		case len(lits) > 0:
+			if err := a.plantLitPools(lits); err != nil {
+				return err
+			}
+		default:
+			if err := a.plantVeneers(far); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -194,9 +201,15 @@ func (a *Assembler) farBranches() []int {
 // changes at all) and the end shifts nothing. Interior anchors are
 // added only when .text is longer than the two ends can cover between
 // them, and are nudged clear of any wide literal they would split.
-func (a *Assembler) veneerAnchors() []int {
+func (a *Assembler) veneerAnchors() []int { return a.anchorsWithin(a.reach() - a.margin()) }
+
+// anchorsWithin returns splice sites spaced no more than stride apart, so a
+// site is always within stride of any instruction. Both ends of .text are
+// always candidates and are the safest: index 0 shifts every instruction by
+// the same amount (so no branch, literal-pool, or adrp distance within the
+// program changes at all) and the end shifts nothing.
+func (a *Assembler) anchorsWithin(stride int) []int {
 	n := len(a.insns)
-	stride := a.reach() - a.margin()
 	anchors := []int{0}
 	if n > 2*stride {
 		for p := stride; p < n; p += stride {
@@ -228,7 +241,10 @@ func (a *Assembler) safeAnchor(p int) int {
 // exists; the error is an invariant check on veneerAnchors, not a case
 // a program can reach.
 func (a *Assembler) pickAnchor(anchors []int, at int, label string) (int, error) {
-	lim := a.reach() - a.margin()
+	return a.pickAnchorWithin(anchors, at, a.reach()-a.margin(), label)
+}
+
+func (a *Assembler) pickAnchorWithin(anchors []int, at, lim int, label string) (int, error) {
 	best, bestD := -1, 0
 	// Anchors are ascending, so only the two straddling `at` can be
 	// nearest. Scanning them all instead is quadratic in the branch
@@ -250,7 +266,7 @@ func (a *Assembler) pickAnchor(anchors []int, at int, label string) (int, error)
 		}
 	}
 	if best < 0 {
-		return 0, fmt.Errorf("arm64: no veneer site within branch range of the call to %q at instruction %d", label, at)
+		return 0, fmt.Errorf("arm64: no splice site within reach of %s at instruction %d", label, at)
 	}
 	return best, nil
 }
@@ -268,7 +284,7 @@ func (a *Assembler) plantVeneers(far []int) error {
 	retarget := make([]string, len(far))
 	for i, fi := range far {
 		f := a.fixups[fi]
-		at, err := a.pickAnchor(anchors, f.at, f.label)
+		at, err := a.pickAnchor(anchors, f.at, fmt.Sprintf("the call to %q", f.label))
 		if err != nil {
 			return err
 		}
