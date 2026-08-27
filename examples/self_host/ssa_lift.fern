@@ -181,6 +181,11 @@ function has_prefix(s: string, p: string): boolean {
 // needs a number, and util.digits_to_i32 handles plain DECIMAL only — so a
 // non-decimal literal reports ok=false and the caller bails rather than emitting
 // a wrong constant. Shared by const_i32_text and const_struct's field words.
+// The value-stack state a value-producing op reads and rewrites: the SSA
+// value counter, the operand stack, the instructions built so far, and the
+// ok flag a malformed op clears.
+struct LiftVals { nvals: i32, stack: i32[], insts: ssa.SInst[], ok: boolean }
+
 struct LitWord { ok: boolean, value: i32 }
 
 function decimal_word(t: string): LitWord {
@@ -359,34 +364,8 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: op.str });
             stack = stack.append(fcv);
         } else if (k == "const_i64") {
-            // A 64-bit integer literal, carried as source text (its value may not
-            // fit the i32 SInst.imm) → the SSA `const_i64` inst, which each
-            // backend splices straight into a full-width immediate (movabsq /
-            // ldr =). compute_widths marks the value 64-bit, so i64 arithmetic
-            // over it lowers to the q-suffixed / x-register ops. Accept a decimal
-            // (optionally signed) or 0x-hex literal — the two forms irlower emits
-            // — and bail on anything else so a caller falls back rather than
-            // splicing junk into the immediate.
-            var it: string = op.str;
-            var iok: boolean = it.len() > 0;
-            var istart: i32 = 0;
-            if (it.len() > 0 && it[0] == b'-') { istart = 1; if (it.len() == 1) { iok = false; } }
-            var ishex: boolean = it.len() > istart + 1 && it[istart] == b'0' && (it[istart + 1] == b'x' || it[istart + 1] == b'X');
-            var idi: i32 = istart;
-            if (ishex) { idi = istart + 2; if (it.len() <= idi) { iok = false; } }
-            while (idi < it.len()) {
-                var ic: i32 = it[idi] as i32;
-                var isdec: boolean = ic >= 48 && ic <= 57;
-                var ishexd: boolean = ishex && ((ic >= 97 && ic <= 102) || (ic >= 65 && ic <= 70));
-                if (!isdec && !ishexd) { iok = false; }
-                idi = idi + 1;
-            }
-            if (!iok) { ok = false; }
-            else {
-                var icv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: icv, args: [], imm: 0, str: it });
-                stack = stack.append(icv);
-            }
+            var lv: LiftVals = lift_const_i64(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "int_cast") {
             // `x as i32` lowers to a sign-extend of the low 32 bits (movslq) —
             // identity for an i32 value, so the SSA value flows through with no
@@ -394,20 +373,8 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             // actually mask or re-extend, are out of the integer subset.
             if (op.str != "i32") { ok = false; }
         } else if (k == "int_extend") {
-            // i32 -> i64 widen (`x as i64` / `as u64`): a unary that sign-extends
-            // (movslq / sxtw) a signed source or zero-extends (op.unsigned) an
-            // unsigned one. compute_widths marks sext_i64 / zext_i64 results
-            // 64-bit, so downstream i64 arithmetic uses the 64-bit ops.
-            if (stack.len() < 1) { ok = false; }
-            else {
-                var iea: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var iestr: string = "sext_i64";
-                if (op.unsigned) { iestr = "zext_i64"; }
-                var iev: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: iev, args: [iea], imm: 0, str: iestr });
-                stack = stack.append(iev);
-            }
+            var lv: LiftVals = lift_int_extend(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "int_wrap") {
             // i64 -> i32 truncate: keep the low 32 bits (the value's 32-bit home
             // already holds them). A unary "wrap_i32" whose result compute_widths
@@ -441,23 +408,8 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(slv);
             }
         } else if (k == "str_index") {
-            // `s[i]` → the byte at word i+1 (word 0 is the length). The SSA
-            // string is a [len, byte-per-word] block — the same shape as an i32
-            // array — so this is arr_get's lowering: load_elem at idx+1,
-            // mirroring build_func's ExprIndex on a string.
-            if (stack.len() < 2) { ok = false; }
-            else {
-                var sixi: i32 = stack[stack.len() - 1];
-                var sixb: i32 = stack[stack.len() - 2];
-                stack = drop_last2(stack);
-                var sione: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sione, args: [], imm: 1, str: "" });
-                var sioff: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: sioff, args: [sixi, sione], imm: 0, str: "+" });
-                var siv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: siv, args: [sixb, sioff], imm: 0, str: "" });
-                stack = stack.append(siv);
-            }
+            var lv: LiftVals = lift_str_index(nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "str_concat") {
             // `a + b` on strings → the SSA `concat` inst (a fresh heap string),
             // args [left, right], exactly as build_func lowers string `+`. The
@@ -579,20 +531,8 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(bv);
             }
         } else if (fbin_sym(k) != "") {
-            // f64 arithmetic / comparison — same shape as the integer binary,
-            // but the SSA symbol drives a float instruction downstream once
-            // compute_isfloat classifies the operands (which trace back to a
-            // const_float / f64 arg). Arithmetic pushes an f64; a compare pushes
-            // an i32 0/1 (compute_isfloat leaves it non-float, as intended).
-            if (stack.len() < 2) { ok = false; }
-            else {
-                var fr: i32 = stack[stack.len() - 1];
-                var flf: i32 = stack[stack.len() - 2];
-                stack = drop_last2(stack);
-                var fbv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: fbv, args: [flf, fr], imm: 0, str: fbin_sym(k) });
-                stack = stack.append(fbv);
-            }
+            var lv: LiftVals = lift_float_binop(k, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "not") {
             if (stack.len() < 1) { ok = false; }
             else {
@@ -638,53 +578,8 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(fiv);
             }
         } else if (k == "call_direct") {
-            var argc: i32 = op.i32_imm;
-            if (stack.len() < argc) { ok = false; }
-            else {
-                var cargs: i32[] = [];
-                var d: i32 = argc - 1;
-                while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
-                var e: i32 = 0;
-                while (e < argc) { stack = drop_last(stack); e = e + 1; }
-                if (op.str == "__fern_rc_is_unique" && argc == 1) {
-                    // The constructor-reuse guard (#6134 routes the record
-                    // update `p = T { ...p, … }` through it). There is no rc
-                    // header on the leak-only SSA heap, so nothing is ever
-                    // uniquely owned here: the guard is a const 0 and the
-                    // emitter's FRESH arm — allocate, copy the carried fields
-                    // across, drop the old box on the floor — is the arm that
-                    // runs. That arm IS the pre-reuse lowering, so the lifted
-                    // code matches what the lift consumed before the reuse
-                    // layer learned this shape.
-                    var uz: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: uz, args: [], imm: 0, str: "" });
-                    stack = stack.append(uz);
-                } else if (op.str == "__fern_alloc_reuse" && argc == 2) {
-                    // __fern_alloc_reuse(token, slots): hand back the token's
-                    // block when it fits, else a fresh one. The token is always
-                    // 0 above, so this is a plain allocation of `slots` words —
-                    // the RUNTIME-sized alloc form (size in args[0], imm 0),
-                    // the same one __new_array builds on.
-                    var arh: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: arh, args: [cargs[1]], imm: 0, str: "" });
-                    stack = stack.append(arh);
-                } else if (is_rc_noop(op.str) && argc >= 1) {
-                    // SSA lowers onto a leak-only bump heap (no free), so the RC
-                    // runtime helpers irlower threads through are inert here —
-                    // build_func emits no RC at all, and the lift strips the same
-                    // calls to keep one memory model. Every such helper takes the
-                    // subject box FIRST and returns it (or void with the result
-                    // drop'd), so the box argument stands in for the result: a
-                    // helper whose result FLOWS (e.g. the consume-rebind
-                    // `__field_reclaim_<T>(new, old, snap) -> new`, which irlower
-                    // store_local's) yields the live box, not a null const 0.
-                    stack = stack.append(cargs[0]);
-                } else {
-                    var cv: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: cv, args: cargs, imm: 0, str: op.str });
-                    stack = stack.append(cv);
-                }
-            }
+            var lv: LiftVals = lift_call_direct(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "const_func") {
             // A function VALUE — the address of a top-level function or a lifted
             // lambda `<fn>$cloN` — via the SSA `funcaddr` inst (a RIP-relative
@@ -694,94 +589,17 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 13, result: fav, args: [], imm: 0, str: op.str });
             stack = stack.append(fav);
         } else if (k == "call_indirect") {
-            // Indirect call through a function value. The operand stack is
-            // [arg0, …, arg_{argc-1}, target] with the code pointer on TOP; the
-            // SSA call_indirect takes args[0] = target then the args in order.
-            // For a closure the first arg is the env box and the target is
-            // box[0] — irlower's env-FIRST convention, which the register
-            // backends honour positionally (they ignore takes_env), so the
-            // lifted lambda reads its captures from param 0 and it all lines up.
-            var icargc: i32 = op.i32_imm;
-            if (stack.len() < icargc + 1) { ok = false; }
-            else {
-                var itgt: i32 = stack[stack.len() - 1];
-                var icargs: i32[] = [itgt];
-                var icd: i32 = icargc - 1;
-                while (icd >= 0) { icargs = icargs.append(stack[stack.len() - 2 - icd]); icd = icd - 1; }
-                var ice: i32 = 0;
-                while (ice < icargc + 1) { stack = drop_last(stack); ice = ice + 1; }
-                var icv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 12, result: icv, args: icargs, imm: 0, str: "" });
-                stack = stack.append(icv);
-            }
+            var lv: LiftVals = lift_call_indirect(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "arr_make") {
-            // An i32 array literal → a length-prefixed heap box (element 0 holds
-            // the length, the n elements at 1..n), matching build_func's
-            // ExprArray layout exactly so the lifted SSA runs on the same
-            // ssa_x86 / ssa_arm64 / eval_func memory model. The n element values
-            // are on the operand stack (element 0 deepest). Width-64 (i64 / f64)
-            // arrays carry 8-byte elements and are a later slice.
-            if (op.width != 32) { ok = false; }
-            else if (stack.len() < op.i32_imm) { ok = false; }
-            else {
-                var an: i32 = op.i32_imm;
-                var aelems: i32[] = [];
-                var ad: i32 = an - 1;
-                while (ad >= 0) { aelems = aelems.append(stack[stack.len() - 1 - ad]); ad = ad - 1; }
-                var ae: i32 = 0;
-                while (ae < an) { stack = drop_last(stack); ae = ae + 1; }
-                var handle: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: handle, args: [], imm: an + 1, str: "" });
-                var lidx: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: lidx, args: [], imm: 0, str: "" });
-                var lval: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: lval, args: [], imm: an, str: "" });
-                var lsv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: lsv, args: [handle, lidx, lval], imm: 0, str: "" });
-                var am: i32 = 0;
-                while (am < an) {
-                    var eidx: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: eidx, args: [], imm: am + 1, str: "" });
-                    var esv: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: esv, args: [handle, eidx, aelems[am]], imm: 0, str: "" });
-                    am = am + 1;
-                }
-                stack = stack.append(handle);
-            }
+            var lv: LiftVals = lift_arr_make(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "arr_get") {
-            // a[i] on an i32 array: element data lives at index+1 (index 0 is the
-            // length prefix), exactly as build_func's ExprIndex loads it.
-            if (op.width != 32) { ok = false; }
-            else if (stack.len() < 2) { ok = false; }
-            else {
-                var gidx: i32 = stack[stack.len() - 1];
-                var gbase: i32 = stack[stack.len() - 2];
-                stack = drop_last2(stack);
-                var gone: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: gone, args: [], imm: 1, str: "" });
-                var goff: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: goff, args: [gidx, gone], imm: 0, str: "+" });
-                var glv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: glv, args: [gbase, goff], imm: 0, str: "" });
-                stack = stack.append(glv);
-            }
+            var lv: LiftVals = lift_arr_get(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "arr_set") {
-            // a[i] = v on an i32 array: store at index+1, in place. Stack order
-            // is [base, idx, val] with val on top.
-            if (op.width != 32) { ok = false; }
-            else if (stack.len() < 3) { ok = false; }
-            else {
-                var sval: i32 = stack[stack.len() - 1];
-                var sidx: i32 = stack[stack.len() - 2];
-                var sbase: i32 = stack[stack.len() - 3];
-                stack = drop_last(stack); stack = drop_last(stack); stack = drop_last(stack);
-                var sone: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sone, args: [], imm: 1, str: "" });
-                var soff: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: soff, args: [sidx, sone], imm: 0, str: "+" });
-                var ssv2: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ssv2, args: [sbase, soff, sval], imm: 0, str: "" });
-            }
+            var lv: LiftVals = lift_arr_set(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "arr_len") {
             // a.len() → the length stored at index 0, mirroring str_len.
             if (stack.len() < 1) { ok = false; }
@@ -795,145 +613,23 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(llv);
             }
         } else if (k == "arr_push" || k == "arr_push_owned") {
-            // a.append(v) → __ssa_arr_push(a, v): a fresh length-(n+1) array with
-            // a's elements copied and v appended, exactly as build_func lowers the
-            // `.append` method call. Operand stack is [arr, val] (val on top),
-            // matching asm_ir's `popq %rsi; popq %rdi; call __fern_arr_push`.
-            // arr_push_owned (the sole-owner self-append) uses the same copying
-            // helper — the SSA bump heap never frees, so the owned in-place-realloc
-            // optimisation collapses to the plain copy (one leak-only memory model,
-            // as with the stripped RC calls). The helper body is injected by the
-            // emit driver when the program calls it (ssa.ssa_helpers_src).
-            if (stack.len() < 2) { ok = false; }
-            else {
-                var apv: i32 = stack[stack.len() - 1];
-                var apa: i32 = stack[stack.len() - 2];
-                stack = drop_last(stack); stack = drop_last(stack);
-                var apr: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: apr, args: [apa, apv], imm: 0, str: "__ssa_arr_push" });
-                stack = stack.append(apr);
-            }
+            var lv: LiftVals = lift_arr_push(nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "arr_slice" || k == "str_slice") {
-            // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh length-(hi-lo) array
-            // holding a[lo..hi-1], mirroring build_func's ExprSlice lowering. A
-            // string is a byte array in the same [len, byte-per-word] SSA layout,
-            // so str_slice shares the element-agnostic copy helper (a fresh
-            // substring, not the native zero-copy immortal-view box — the leak-only
-            // heap copies instead). Operand stack is [arr, lo, hi] (hi on top),
-            // matching asm_ir's `popq %rdx(hi); popq %rsi(lo); popq %rdi(arr)`.
-            if (stack.len() < 3) { ok = false; }
-            else {
-                var slhi: i32 = stack[stack.len() - 1];
-                var sllo: i32 = stack[stack.len() - 2];
-                var slar: i32 = stack[stack.len() - 3];
-                stack = drop_last(stack); stack = drop_last(stack); stack = drop_last(stack);
-                var slr: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: slr, args: [slar, sllo, slhi], imm: 0, str: "__ssa_arr_slice" });
-                stack = stack.append(slr);
-            }
+            var lv: LiftVals = lift_slice(nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "str_from_bytes") {
-            // string_from_bytes_unchecked(bs) → __ssa_arr_slice(bs, 0, bs.len()): a full-
-            // array copy into a fresh array, which IS the string (a byte array
-            // and a string share the [len, byte-per-word] SSA layout), exactly as
-            // build_func lowers the `string_from_bytes_unchecked` builtin. Operand stack is
-            // [arr] (the byte array on top). One shared const 0 serves as both the
-            // length-slot index and the slice's lo bound.
-            if (stack.len() < 1) { ok = false; }
-            else {
-                var sfb: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var sfz: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sfz, args: [], imm: 0, str: "" });
-                var sflen: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: sflen, args: [sfb, sfz], imm: 0, str: "" });
-                var sfr: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: sfr, args: [sfb, sfz, sflen], imm: 0, str: "__ssa_arr_slice" });
-                stack = stack.append(sfr);
-            }
+            var lv: LiftVals = lift_str_from_bytes(nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "struct_make") {
-            // A scalar-field struct literal (or enum-variant box) → a tag-
-            // prefixed heap box (slot 0 = type tag, field f at slot f+1),
-            // matching build_func's ExprStructLit layout. The nfields field
-            // values are on the operand stack (field 0 deepest). Slot 0 holds the
-            // struct/variant's id (struct_id_of over the module structs); for a
-            // plain struct the tag is inert (field access never reads it), for an
-            // enum variant it is exactly what variant_is compares against. A
-            // 64-bit field VALUE can't reach here (its producer, const_f64 /
-            // const_i64 / int_extend, bails), so every field stores i32-wide
-            // (imm 0), which the low-heap SSA also uses for pointer fields.
-            if (stack.len() < op.i32_imm) { ok = false; }
-            else {
-                var snf: i32 = op.i32_imm;
-                var sfields: i32[] = [];
-                var sfd: i32 = snf - 1;
-                while (sfd >= 0) { sfields = sfields.append(stack[stack.len() - 1 - sfd]); sfd = sfd - 1; }
-                var sfe: i32 = 0;
-                while (sfe < snf) { stack = drop_last(stack); sfe = sfe + 1; }
-                var sh: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: sh, args: [], imm: snf + 1, str: "" });
-                var stagi: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: stagi, args: [], imm: 0, str: "" });
-                var stagv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: stagv, args: [], imm: struct_id_of(structs, op.str), str: "" });
-                var stsv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: stsv, args: [sh, stagi, stagv], imm: 0, str: "" });
-                var sm2: i32 = 0;
-                while (sm2 < snf) {
-                    var sfi: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sfi, args: [], imm: sm2 + 1, str: "" });
-                    var sfsv: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: sfsv, args: [sh, sfi, sfields[sm2]], imm: 0, str: "" });
-                    sm2 = sm2 + 1;
-                }
-                stack = stack.append(sh);
-            }
+            var lv: LiftVals = lift_struct_make(op, structs, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "const_struct") {
-            // A struct literal every field of which is a compile-time scalar
-            // literal (#6149). The register backends place it in static data;
-            // the lift MATERIALISES it — same box, same layout as struct_make,
-            // just with constant field words instead of operand-stack values.
-            // That is what struct_make produced before the constant recognition
-            // existed, and on the leak-only SSA heap a per-evaluation box is
-            // exactly right: there is no rc word for a sentinel to live in.
-            var ksvals: string[] = ir.const_struct_values(op.str);
-            var ksh: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: ksh, args: [], imm: ksvals.len() + 1, str: "" });
-            var kstagi: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kstagi, args: [], imm: 0, str: "" });
-            var kstagv: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kstagv, args: [], imm: struct_id_of(structs, ir.const_struct_type(op.str)), str: "" });
-            var kstsv: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: kstsv, args: [ksh, kstagi, kstagv], imm: 0, str: "" });
-            var kfi: i32 = 0;
-            while (kfi < ksvals.len() && ok) {
-                var kw: LitWord = decimal_word(ksvals[kfi]);
-                if (!kw.ok) { ok = false; }
-                else {
-                    var kofi: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kofi, args: [], imm: kfi + 1, str: "" });
-                    var kvi: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kvi, args: [], imm: kw.value, str: "" });
-                    var ksti: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ksti, args: [ksh, kofi, kvi], imm: 0, str: "" });
-                }
-                kfi = kfi + 1;
-            }
-            if (ok) { stack = stack.append(ksh); }
+            var lv: LiftVals = lift_const_struct(op, structs, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "struct_get") {
-            // p.field on a scalar struct: field f is at slot f+1 (slot 0 is the
-            // tag), mirroring build_func's ExprFieldAccess. Width-64 (f64 / i64)
-            // fields are a later slice.
-            if (op.width == 64) { ok = false; }
-            else if (stack.len() < 1) { ok = false; }
-            else {
-                var gp: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var goff2: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: goff2, args: [], imm: op.i32_imm + 1, str: "" });
-                var glv2: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: glv2, args: [gp, goff2], imm: 0, str: "" });
-                stack = stack.append(glv2);
-            }
+            var lv: LiftVals = lift_struct_get(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "struct_set") {
             // p.field = v in place: store at slot field+1. Stack is
             // [struct, value] (value on top). Width-64 fields bail.
@@ -976,57 +672,11 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(rsv);
             }
         } else if (k == "struct_copy") {
-            // A functional update's compact base copy (#4650): pop the src box
-            // and push a FRESH box that is a shallow word-for-word copy of its
-            // ndecl+1 slots (slot 0 tag + the ndecl fields) — the lift-side
-            // mirror of the `__fern_struct_copy` helper call the asm backends
-            // emit for this op. Field pointers are shared, exactly like the
-            // inline base-copy path; on the leak-only SSA heap no rc is needed.
-            if (stack.len() < 1) { ok = false; }
-            else {
-                var scsrc: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var scn: i32 = op.i32_imm;
-                var sch2: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: sch2, args: [], imm: scn + 1, str: "" });
-                var scw: i32 = 0;
-                while (scw <= scn) {
-                    var scwi: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: scwi, args: [], imm: scw, str: "" });
-                    var scwv: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: scwv, args: [scsrc, scwi], imm: 0, str: "" });
-                    var scws: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: scws, args: [sch2, scwi, scwv], imm: 0, str: "" });
-                    scw = scw + 1;
-                }
-                stack = stack.append(sch2);
-            }
+            var lv: LiftVals = lift_struct_copy(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "tuple_make") {
-            // A tuple `(a, b, …)` → a heap box with element i at slot i (NO
-            // tag / length prefix — unlike arrays / structs), matching
-            // build_func's ExprTuple. The n element values are on the operand
-            // stack (element 0 deepest). 64-bit elements can't reach here (their
-            // producers bail), so every element stores i32-wide (imm 0).
-            if (stack.len() < op.i32_imm) { ok = false; }
-            else {
-                var tn2: i32 = op.i32_imm;
-                var telems: i32[] = [];
-                var ttd: i32 = tn2 - 1;
-                while (ttd >= 0) { telems = telems.append(stack[stack.len() - 1 - ttd]); ttd = ttd - 1; }
-                var tte: i32 = 0;
-                while (tte < tn2) { stack = drop_last(stack); tte = tte + 1; }
-                var th: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: th, args: [], imm: tn2, str: "" });
-                var tm2: i32 = 0;
-                while (tm2 < tn2) {
-                    var tei: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: tei, args: [], imm: tm2, str: "" });
-                    var tesv: i32 = nvals; nvals = nvals + 1;
-                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: tesv, args: [th, tei, telems[tm2]], imm: 0, str: "" });
-                    tm2 = tm2 + 1;
-                }
-                stack = stack.append(th);
-            }
+            var lv: LiftVals = lift_tuple_make(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "tuple_get") {
             // t.i → element at slot i (no prefix), mirroring build_func's numeric
             // ExprFieldAccess. Width-64 (i64 / f64) elements are a later slice.
@@ -1056,47 +706,11 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: tssv, args: [tsp, tsi, tsv], imm: 0, str: "" });
             }
         } else if (k == "opt_make") {
-            // Some(x) / Ok(x) / Err(x) → a 2-word box { tag@0, payload@1 },
-            // matching build_func's Option lowering. The payload (popped) is
-            // stored 8-byte (imm 64) so a pointer payload round-trips; the tag is
-            // op's i32_imm. Width-64 (i64 / f64) payloads (opt_make_w, same
-            // kind_tag) bail — their payload read needs float/i64 classification.
-            if (op.width == 64) { ok = false; }
-            else if (stack.len() < 1) { ok = false; }
-            else {
-                var omp: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var omb: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: omb, args: [], imm: 2, str: "" });
-                var omz: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: omz, args: [], imm: 0, str: "" });
-                var omt: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: omt, args: [], imm: op.i32_imm, str: "" });
-                var omts: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: omts, args: [omb, omz, omt], imm: 0, str: "" });
-                var omo: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: omo, args: [], imm: 1, str: "" });
-                var omps: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: omps, args: [omb, omo, omp], imm: 64, str: "" });
-                stack = stack.append(omb);
-            }
+            var lv: LiftVals = lift_opt_make(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "opt_none") {
-            // None → the empty Option box { tag@0 = 1, payload@1 = 0 }.
-            var onb: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: onb, args: [], imm: 2, str: "" });
-            var onz: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: onz, args: [], imm: 0, str: "" });
-            var ont: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: ont, args: [], imm: 1, str: "" });
-            var onts: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: onts, args: [onb, onz, ont], imm: 0, str: "" });
-            var ono: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: ono, args: [], imm: 1, str: "" });
-            var onp: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: onp, args: [], imm: 0, str: "" });
-            var onps: i32 = nvals; nvals = nvals + 1;
-            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: onps, args: [onb, ono, onp], imm: 64, str: "" });
-            stack = stack.append(onb);
+            var lv: LiftVals = lift_opt_none(nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "opt_tag") {
             // opt_tag(box) → the discriminant at word 0 (Some/Ok 0, None/Err 1).
             if (stack.len() < 1) { ok = false; }
@@ -1110,39 +724,11 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(otv);
             }
         } else if (k == "opt_payload") {
-            // opt_payload(box) → the payload at word 1, read 8-byte (imm 64) to
-            // match the store. The i64 / f64 payload variant (opt_payload_w, same
-            // kind_tag, width 64) bails.
-            if (op.width == 64) { ok = false; }
-            else if (stack.len() < 1) { ok = false; }
-            else {
-                var opb: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var opo: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: opo, args: [], imm: 1, str: "" });
-                var opv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: opv, args: [opb, opo], imm: 64, str: "" });
-                stack = stack.append(opv);
-            }
+            var lv: LiftVals = lift_opt_payload(op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "variant_is") {
-            // variant_is(box) → 1 if the box's tag (slot 0) is the variant
-            // `op.str`, else 0. load_elem(box, 0) == struct_id_of(op.str) — the
-            // very id struct_make wrote into slot 0, so an enum match is exact.
-            // The payload is bound separately via struct_get once matched.
-            if (stack.len() < 1) { ok = false; }
-            else {
-                var vib: i32 = stack[stack.len() - 1];
-                stack = drop_last(stack);
-                var viz: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: viz, args: [], imm: 0, str: "" });
-                var vit: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: vit, args: [vib, viz], imm: 0, str: "" });
-                var viid: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: viid, args: [], imm: struct_id_of(structs, op.str), str: "" });
-                var viv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: viv, args: [vit, viid], imm: 0, str: "==" });
-                stack = stack.append(viv);
-            }
+            var lv: LiftVals = lift_variant_is(op, structs, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }
         } else if (k == "return") {
@@ -1474,6 +1060,572 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
 
     var f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
     return LResult { func: f, ok: ok, bail: bail };
+}
+
+function lift_const_i64(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // A 64-bit integer literal, carried as source text (its value may not
+    // fit the i32 SInst.imm) → the SSA `const_i64` inst, which each
+    // backend splices straight into a full-width immediate (movabsq /
+    // ldr =). compute_widths marks the value 64-bit, so i64 arithmetic
+    // over it lowers to the q-suffixed / x-register ops. Accept a decimal
+    // (optionally signed) or 0x-hex literal — the two forms irlower emits
+    // — and bail on anything else so a caller falls back rather than
+    // splicing junk into the immediate.
+    var it: string = op.str;
+    var iok: boolean = it.len() > 0;
+    var istart: i32 = 0;
+    if (it.len() > 0 && it[0] == b'-') { istart = 1; if (it.len() == 1) { iok = false; } }
+    var ishex: boolean = it.len() > istart + 1 && it[istart] == b'0' && (it[istart + 1] == b'x' || it[istart + 1] == b'X');
+    var idi: i32 = istart;
+    if (ishex) { idi = istart + 2; if (it.len() <= idi) { iok = false; } }
+    while (idi < it.len()) {
+        var ic: i32 = it[idi] as i32;
+        var isdec: boolean = ic >= 48 && ic <= 57;
+        var ishexd: boolean = ishex && ((ic >= 97 && ic <= 102) || (ic >= 65 && ic <= 70));
+        if (!isdec && !ishexd) { iok = false; }
+        idi = idi + 1;
+    }
+    if (!iok) { ok = false; }
+    else {
+        var icv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: icv, args: [], imm: 0, str: it });
+        stack = stack.append(icv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_int_extend(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // i32 -> i64 widen (`x as i64` / `as u64`): a unary that sign-extends
+    // (movslq / sxtw) a signed source or zero-extends (op.unsigned) an
+    // unsigned one. compute_widths marks sext_i64 / zext_i64 results
+    // 64-bit, so downstream i64 arithmetic uses the 64-bit ops.
+    if (stack.len() < 1) { ok = false; }
+    else {
+        var iea: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var iestr: string = "sext_i64";
+        if (op.unsigned) { iestr = "zext_i64"; }
+        var iev: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: iev, args: [iea], imm: 0, str: iestr });
+        stack = stack.append(iev);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_str_index(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // `s[i]` → the byte at word i+1 (word 0 is the length). The SSA
+    // string is a [len, byte-per-word] block — the same shape as an i32
+    // array — so this is arr_get's lowering: load_elem at idx+1,
+    // mirroring build_func's ExprIndex on a string.
+    if (stack.len() < 2) { ok = false; }
+    else {
+        var sixi: i32 = stack[stack.len() - 1];
+        var sixb: i32 = stack[stack.len() - 2];
+        stack = drop_last2(stack);
+        var sione: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sione, args: [], imm: 1, str: "" });
+        var sioff: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: sioff, args: [sixi, sione], imm: 0, str: "+" });
+        var siv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: siv, args: [sixb, sioff], imm: 0, str: "" });
+        stack = stack.append(siv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_float_binop(k: string, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // f64 arithmetic / comparison — same shape as the integer binary,
+    // but the SSA symbol drives a float instruction downstream once
+    // compute_isfloat classifies the operands (which trace back to a
+    // const_float / f64 arg). Arithmetic pushes an f64; a compare pushes
+    // an i32 0/1 (compute_isfloat leaves it non-float, as intended).
+    if (stack.len() < 2) { ok = false; }
+    else {
+        var fr: i32 = stack[stack.len() - 1];
+        var flf: i32 = stack[stack.len() - 2];
+        stack = drop_last2(stack);
+        var fbv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: fbv, args: [flf, fr], imm: 0, str: fbin_sym(k) });
+        stack = stack.append(fbv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    var argc: i32 = op.i32_imm;
+    if (stack.len() < argc) { ok = false; }
+    else {
+        var cargs: i32[] = [];
+        var d: i32 = argc - 1;
+        while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
+        var e: i32 = 0;
+        while (e < argc) { stack = drop_last(stack); e = e + 1; }
+        if (op.str == "__fern_rc_is_unique" && argc == 1) {
+            // The constructor-reuse guard (#6134 routes the record
+            // update `p = T { ...p, … }` through it). There is no rc
+            // header on the leak-only SSA heap, so nothing is ever
+            // uniquely owned here: the guard is a const 0 and the
+            // emitter's FRESH arm — allocate, copy the carried fields
+            // across, drop the old box on the floor — is the arm that
+            // runs. That arm IS the pre-reuse lowering, so the lifted
+            // code matches what the lift consumed before the reuse
+            // layer learned this shape.
+            var uz: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: uz, args: [], imm: 0, str: "" });
+            stack = stack.append(uz);
+        } else if (op.str == "__fern_alloc_reuse" && argc == 2) {
+            // __fern_alloc_reuse(token, slots): hand back the token's
+            // block when it fits, else a fresh one. The token is always
+            // 0 above, so this is a plain allocation of `slots` words —
+            // the RUNTIME-sized alloc form (size in args[0], imm 0),
+            // the same one __new_array builds on.
+            var arh: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: arh, args: [cargs[1]], imm: 0, str: "" });
+            stack = stack.append(arh);
+        } else if (is_rc_noop(op.str) && argc >= 1) {
+            // SSA lowers onto a leak-only bump heap (no free), so the RC
+            // runtime helpers irlower threads through are inert here —
+            // build_func emits no RC at all, and the lift strips the same
+            // calls to keep one memory model. Every such helper takes the
+            // subject box FIRST and returns it (or void with the result
+            // drop'd), so the box argument stands in for the result: a
+            // helper whose result FLOWS (e.g. the consume-rebind
+            // `__field_reclaim_<T>(new, old, snap) -> new`, which irlower
+            // store_local's) yields the live box, not a null const 0.
+            stack = stack.append(cargs[0]);
+        } else {
+            var cv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: cv, args: cargs, imm: 0, str: op.str });
+            stack = stack.append(cv);
+        }
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_call_indirect(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // Indirect call through a function value. The operand stack is
+    // [arg0, …, arg_{argc-1}, target] with the code pointer on TOP; the
+    // SSA call_indirect takes args[0] = target then the args in order.
+    // For a closure the first arg is the env box and the target is
+    // box[0] — irlower's env-FIRST convention, which the register
+    // backends honour positionally (they ignore takes_env), so the
+    // lifted lambda reads its captures from param 0 and it all lines up.
+    var icargc: i32 = op.i32_imm;
+    if (stack.len() < icargc + 1) { ok = false; }
+    else {
+        var itgt: i32 = stack[stack.len() - 1];
+        var icargs: i32[] = [itgt];
+        var icd: i32 = icargc - 1;
+        while (icd >= 0) { icargs = icargs.append(stack[stack.len() - 2 - icd]); icd = icd - 1; }
+        var ice: i32 = 0;
+        while (ice < icargc + 1) { stack = drop_last(stack); ice = ice + 1; }
+        var icv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 12, result: icv, args: icargs, imm: 0, str: "" });
+        stack = stack.append(icv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_arr_make(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // An i32 array literal → a length-prefixed heap box (element 0 holds
+    // the length, the n elements at 1..n), matching build_func's
+    // ExprArray layout exactly so the lifted SSA runs on the same
+    // ssa_x86 / ssa_arm64 / eval_func memory model. The n element values
+    // are on the operand stack (element 0 deepest). Width-64 (i64 / f64)
+    // arrays carry 8-byte elements and are a later slice.
+    if (op.width != 32) { ok = false; }
+    else if (stack.len() < op.i32_imm) { ok = false; }
+    else {
+        var an: i32 = op.i32_imm;
+        var aelems: i32[] = [];
+        var ad: i32 = an - 1;
+        while (ad >= 0) { aelems = aelems.append(stack[stack.len() - 1 - ad]); ad = ad - 1; }
+        var ae: i32 = 0;
+        while (ae < an) { stack = drop_last(stack); ae = ae + 1; }
+        var handle: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: handle, args: [], imm: an + 1, str: "" });
+        var lidx: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: lidx, args: [], imm: 0, str: "" });
+        var lval: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: lval, args: [], imm: an, str: "" });
+        var lsv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: lsv, args: [handle, lidx, lval], imm: 0, str: "" });
+        var am: i32 = 0;
+        while (am < an) {
+            var eidx: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: eidx, args: [], imm: am + 1, str: "" });
+            var esv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: esv, args: [handle, eidx, aelems[am]], imm: 0, str: "" });
+            am = am + 1;
+        }
+        stack = stack.append(handle);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_arr_get(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // a[i] on an i32 array: element data lives at index+1 (index 0 is the
+    // length prefix), exactly as build_func's ExprIndex loads it.
+    if (op.width != 32) { ok = false; }
+    else if (stack.len() < 2) { ok = false; }
+    else {
+        var gidx: i32 = stack[stack.len() - 1];
+        var gbase: i32 = stack[stack.len() - 2];
+        stack = drop_last2(stack);
+        var gone: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: gone, args: [], imm: 1, str: "" });
+        var goff: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: goff, args: [gidx, gone], imm: 0, str: "+" });
+        var glv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: glv, args: [gbase, goff], imm: 0, str: "" });
+        stack = stack.append(glv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_arr_set(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // a[i] = v on an i32 array: store at index+1, in place. Stack order
+    // is [base, idx, val] with val on top.
+    if (op.width != 32) { ok = false; }
+    else if (stack.len() < 3) { ok = false; }
+    else {
+        var sval: i32 = stack[stack.len() - 1];
+        var sidx: i32 = stack[stack.len() - 2];
+        var sbase: i32 = stack[stack.len() - 3];
+        stack = drop_last(stack); stack = drop_last(stack); stack = drop_last(stack);
+        var sone: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sone, args: [], imm: 1, str: "" });
+        var soff: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: soff, args: [sidx, sone], imm: 0, str: "+" });
+        var ssv2: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ssv2, args: [sbase, soff, sval], imm: 0, str: "" });
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_arr_push(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // a.append(v) → __ssa_arr_push(a, v): a fresh length-(n+1) array with
+    // a's elements copied and v appended, exactly as build_func lowers the
+    // `.append` method call. Operand stack is [arr, val] (val on top),
+    // matching asm_ir's `popq %rsi; popq %rdi; call __fern_arr_push`.
+    // arr_push_owned (the sole-owner self-append) uses the same copying
+    // helper — the SSA bump heap never frees, so the owned in-place-realloc
+    // optimisation collapses to the plain copy (one leak-only memory model,
+    // as with the stripped RC calls). The helper body is injected by the
+    // emit driver when the program calls it (ssa.ssa_helpers_src).
+    if (stack.len() < 2) { ok = false; }
+    else {
+        var apv: i32 = stack[stack.len() - 1];
+        var apa: i32 = stack[stack.len() - 2];
+        stack = drop_last(stack); stack = drop_last(stack);
+        var apr: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: apr, args: [apa, apv], imm: 0, str: "__ssa_arr_push" });
+        stack = stack.append(apr);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_slice(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh length-(hi-lo) array
+    // holding a[lo..hi-1], mirroring build_func's ExprSlice lowering. A
+    // string is a byte array in the same [len, byte-per-word] SSA layout,
+    // so str_slice shares the element-agnostic copy helper (a fresh
+    // substring, not the native zero-copy immortal-view box — the leak-only
+    // heap copies instead). Operand stack is [arr, lo, hi] (hi on top),
+    // matching asm_ir's `popq %rdx(hi); popq %rsi(lo); popq %rdi(arr)`.
+    if (stack.len() < 3) { ok = false; }
+    else {
+        var slhi: i32 = stack[stack.len() - 1];
+        var sllo: i32 = stack[stack.len() - 2];
+        var slar: i32 = stack[stack.len() - 3];
+        stack = drop_last(stack); stack = drop_last(stack); stack = drop_last(stack);
+        var slr: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: slr, args: [slar, sllo, slhi], imm: 0, str: "__ssa_arr_slice" });
+        stack = stack.append(slr);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_str_from_bytes(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // string_from_bytes_unchecked(bs) → __ssa_arr_slice(bs, 0, bs.len()): a full-
+    // array copy into a fresh array, which IS the string (a byte array
+    // and a string share the [len, byte-per-word] SSA layout), exactly as
+    // build_func lowers the `string_from_bytes_unchecked` builtin. Operand stack is
+    // [arr] (the byte array on top). One shared const 0 serves as both the
+    // length-slot index and the slice's lo bound.
+    if (stack.len() < 1) { ok = false; }
+    else {
+        var sfb: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var sfz: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sfz, args: [], imm: 0, str: "" });
+        var sflen: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: sflen, args: [sfb, sfz], imm: 0, str: "" });
+        var sfr: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: sfr, args: [sfb, sfz, sflen], imm: 0, str: "__ssa_arr_slice" });
+        stack = stack.append(sfr);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_struct_make(op: ir.Op, structs: parser.StructDecl[], nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // A scalar-field struct literal (or enum-variant box) → a tag-
+    // prefixed heap box (slot 0 = type tag, field f at slot f+1),
+    // matching build_func's ExprStructLit layout. The nfields field
+    // values are on the operand stack (field 0 deepest). Slot 0 holds the
+    // struct/variant's id (struct_id_of over the module structs); for a
+    // plain struct the tag is inert (field access never reads it), for an
+    // enum variant it is exactly what variant_is compares against. A
+    // 64-bit field VALUE can't reach here (its producer, const_f64 /
+    // const_i64 / int_extend, bails), so every field stores i32-wide
+    // (imm 0), which the low-heap SSA also uses for pointer fields.
+    if (stack.len() < op.i32_imm) { ok = false; }
+    else {
+        var snf: i32 = op.i32_imm;
+        var sfields: i32[] = [];
+        var sfd: i32 = snf - 1;
+        while (sfd >= 0) { sfields = sfields.append(stack[stack.len() - 1 - sfd]); sfd = sfd - 1; }
+        var sfe: i32 = 0;
+        while (sfe < snf) { stack = drop_last(stack); sfe = sfe + 1; }
+        var sh: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: sh, args: [], imm: snf + 1, str: "" });
+        var stagi: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: stagi, args: [], imm: 0, str: "" });
+        var stagv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: stagv, args: [], imm: struct_id_of(structs, op.str), str: "" });
+        var stsv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: stsv, args: [sh, stagi, stagv], imm: 0, str: "" });
+        var sm2: i32 = 0;
+        while (sm2 < snf) {
+            var sfi: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: sfi, args: [], imm: sm2 + 1, str: "" });
+            var sfsv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: sfsv, args: [sh, sfi, sfields[sm2]], imm: 0, str: "" });
+            sm2 = sm2 + 1;
+        }
+        stack = stack.append(sh);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_const_struct(op: ir.Op, structs: parser.StructDecl[], nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // A struct literal every field of which is a compile-time scalar
+    // literal (#6149). The register backends place it in static data;
+    // the lift MATERIALISES it — same box, same layout as struct_make,
+    // just with constant field words instead of operand-stack values.
+    // That is what struct_make produced before the constant recognition
+    // existed, and on the leak-only SSA heap a per-evaluation box is
+    // exactly right: there is no rc word for a sentinel to live in.
+    var ksvals: string[] = ir.const_struct_values(op.str);
+    var ksh: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: ksh, args: [], imm: ksvals.len() + 1, str: "" });
+    var kstagi: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kstagi, args: [], imm: 0, str: "" });
+    var kstagv: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kstagv, args: [], imm: struct_id_of(structs, ir.const_struct_type(op.str)), str: "" });
+    var kstsv: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: kstsv, args: [ksh, kstagi, kstagv], imm: 0, str: "" });
+    var kfi: i32 = 0;
+    while (kfi < ksvals.len() && ok) {
+        var kw: LitWord = decimal_word(ksvals[kfi]);
+        if (!kw.ok) { ok = false; }
+        else {
+            var kofi: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kofi, args: [], imm: kfi + 1, str: "" });
+            var kvi: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kvi, args: [], imm: kw.value, str: "" });
+            var ksti: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ksti, args: [ksh, kofi, kvi], imm: 0, str: "" });
+        }
+        kfi = kfi + 1;
+    }
+    if (ok) { stack = stack.append(ksh); }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_struct_get(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // p.field on a scalar struct: field f is at slot f+1 (slot 0 is the
+    // tag), mirroring build_func's ExprFieldAccess. Width-64 (f64 / i64)
+    // fields are a later slice.
+    if (op.width == 64) { ok = false; }
+    else if (stack.len() < 1) { ok = false; }
+    else {
+        var gp: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var goff2: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: goff2, args: [], imm: op.i32_imm + 1, str: "" });
+        var glv2: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: glv2, args: [gp, goff2], imm: 0, str: "" });
+        stack = stack.append(glv2);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_struct_copy(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // A functional update's compact base copy (#4650): pop the src box
+    // and push a FRESH box that is a shallow word-for-word copy of its
+    // ndecl+1 slots (slot 0 tag + the ndecl fields) — the lift-side
+    // mirror of the `__fern_struct_copy` helper call the asm backends
+    // emit for this op. Field pointers are shared, exactly like the
+    // inline base-copy path; on the leak-only SSA heap no rc is needed.
+    if (stack.len() < 1) { ok = false; }
+    else {
+        var scsrc: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var scn: i32 = op.i32_imm;
+        var sch2: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: sch2, args: [], imm: scn + 1, str: "" });
+        var scw: i32 = 0;
+        while (scw <= scn) {
+            var scwi: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: scwi, args: [], imm: scw, str: "" });
+            var scwv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: scwv, args: [scsrc, scwi], imm: 0, str: "" });
+            var scws: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: scws, args: [sch2, scwi, scwv], imm: 0, str: "" });
+            scw = scw + 1;
+        }
+        stack = stack.append(sch2);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_tuple_make(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // A tuple `(a, b, …)` → a heap box with element i at slot i (NO
+    // tag / length prefix — unlike arrays / structs), matching
+    // build_func's ExprTuple. The n element values are on the operand
+    // stack (element 0 deepest). 64-bit elements can't reach here (their
+    // producers bail), so every element stores i32-wide (imm 0).
+    if (stack.len() < op.i32_imm) { ok = false; }
+    else {
+        var tn2: i32 = op.i32_imm;
+        var telems: i32[] = [];
+        var ttd: i32 = tn2 - 1;
+        while (ttd >= 0) { telems = telems.append(stack[stack.len() - 1 - ttd]); ttd = ttd - 1; }
+        var tte: i32 = 0;
+        while (tte < tn2) { stack = drop_last(stack); tte = tte + 1; }
+        var th: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: th, args: [], imm: tn2, str: "" });
+        var tm2: i32 = 0;
+        while (tm2 < tn2) {
+            var tei: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: tei, args: [], imm: tm2, str: "" });
+            var tesv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: tesv, args: [th, tei, telems[tm2]], imm: 0, str: "" });
+            tm2 = tm2 + 1;
+        }
+        stack = stack.append(th);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_opt_make(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // Some(x) / Ok(x) / Err(x) → a 2-word box { tag@0, payload@1 },
+    // matching build_func's Option lowering. The payload (popped) is
+    // stored 8-byte (imm 64) so a pointer payload round-trips; the tag is
+    // op's i32_imm. Width-64 (i64 / f64) payloads (opt_make_w, same
+    // kind_tag) bail — their payload read needs float/i64 classification.
+    if (op.width == 64) { ok = false; }
+    else if (stack.len() < 1) { ok = false; }
+    else {
+        var omp: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var omb: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: omb, args: [], imm: 2, str: "" });
+        var omz: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: omz, args: [], imm: 0, str: "" });
+        var omt: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: omt, args: [], imm: op.i32_imm, str: "" });
+        var omts: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: omts, args: [omb, omz, omt], imm: 0, str: "" });
+        var omo: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: omo, args: [], imm: 1, str: "" });
+        var omps: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: omps, args: [omb, omo, omp], imm: 64, str: "" });
+        stack = stack.append(omb);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_opt_none(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // None → the empty Option box { tag@0 = 1, payload@1 = 0 }.
+    var onb: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: onb, args: [], imm: 2, str: "" });
+    var onz: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: onz, args: [], imm: 0, str: "" });
+    var ont: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: ont, args: [], imm: 1, str: "" });
+    var onts: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: onts, args: [onb, onz, ont], imm: 0, str: "" });
+    var ono: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: ono, args: [], imm: 1, str: "" });
+    var onp: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: onp, args: [], imm: 0, str: "" });
+    var onps: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: onps, args: [onb, ono, onp], imm: 64, str: "" });
+    stack = stack.append(onb);
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_opt_payload(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // opt_payload(box) → the payload at word 1, read 8-byte (imm 64) to
+    // match the store. The i64 / f64 payload variant (opt_payload_w, same
+    // kind_tag, width 64) bails.
+    if (op.width == 64) { ok = false; }
+    else if (stack.len() < 1) { ok = false; }
+    else {
+        var opb: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var opo: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: opo, args: [], imm: 1, str: "" });
+        var opv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: opv, args: [opb, opo], imm: 64, str: "" });
+        stack = stack.append(opv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+function lift_variant_is(op: ir.Op, structs: parser.StructDecl[], nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    // variant_is(box) → 1 if the box's tag (slot 0) is the variant
+    // `op.str`, else 0. load_elem(box, 0) == struct_id_of(op.str) — the
+    // very id struct_make wrote into slot 0, so an enum match is exact.
+    // The payload is bound separately via struct_get once matched.
+    if (stack.len() < 1) { ok = false; }
+    else {
+        var vib: i32 = stack[stack.len() - 1];
+        stack = drop_last(stack);
+        var viz: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: viz, args: [], imm: 0, str: "" });
+        var vit: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: vit, args: [vib, viz], imm: 0, str: "" });
+        var viid: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: viid, args: [], imm: struct_id_of(structs, op.str), str: "" });
+        var viv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: viv, args: [vit, viid], imm: 0, str: "==" });
+        stack = stack.append(viv);
+    }
+
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
 // ---- STerm constructors (ssa.fern's t_* helpers are module-private) ------
