@@ -68,6 +68,9 @@ enum_arr__fieldread clean clean  counted: the field read is retained and both NO
 enum_arr__call      clean clean  producer result owned, payload walk releases it
 struct_arr__fresh   clean clean  fresh [Inner{..}] literal owned, deep-dropped
 struct_arr__local   clean clean  counted: the field share keeps the source its rc-gated walk
-struct_arr__param   clean leak   param Inner[]
+struct_arr__param   clean clean  counted: the "DCNT:" tier admits the STRUCT-array arm on the same key as
+#                                the enum one — what the caller releases is decided by its own local's
+#                                type, not by which type proved the store — and arrstruct_elem_esc_expr
+#                                gained the "CNT:" exemption its arrenum twin already had
 struct_arr__fieldread clean clean counted: array-of-struct retain + kept source drop
 struct_arr__call    clean clean  producer result owned

@@ -37,10 +37,11 @@ import (
 // closed, unrelated defect — so it had no issue of its own until #7610.
 //
 // Every want was confirmed against the native x86-64 backend, which is clean on
-// all six. The struct-array twin is deliberately pinned at its LEAKING value:
-// its first cause is still open (no counted-param tier — the "DCNT:" sibling is
-// enum-only), so the precise-drop fix alone cannot close it, and a row that
-// moves when `struct_arr__param` lands is the signal that wants to be visible.
+// all six. The struct-array twin was pinned at its LEAKING value when this suite
+// was written — its first cause was still open, the "DCNT:" tier being enum-only
+// — with a guard that fails if the row starts balancing. That guard fired one
+// slice later, when the tier grew its struct arm; the row balances now, and the
+// guard stays because the same reasoning applies to whatever is pinned next.
 
 const preciseDropArrBoxDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
@@ -102,16 +103,18 @@ func preciseDropArrBoxCases() []arrenumShareCase {
 			want: 7, balance: true,
 		},
 		{
-			// The struct-array twin, pinned at its LEAKING value on purpose:
-			// `struct_arr__param` has no counted-param tier yet, so this cannot
-			// balance until that slice lands — and then this row moves with it.
-			name: "struct_array_twin_still_leaks",
+			// The struct-array twin. Pinned LEAKING when this suite was written,
+			// because `struct_arr__param` had no counted-param tier and the
+			// precise-drop fix alone could not close it; the stale-pin guard
+			// below then caught it the moment the "DCNT:" tier grew its struct
+			// arm, which is what that guard exists for. Balances now.
+			name: "struct_array_twin",
 			src: `struct Inner { xs: i32[], k: i32 }
 struct P { f: Inner[], n: i32 }
 function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
 function rd(src: Inner[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }
 ` + preciseDropArrBoxMain("var keep: Inner[] = mkv(7);", ret),
-			want: 6,
+			want: 6, balance: true,
 		},
 	}
 }

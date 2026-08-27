@@ -41,9 +41,9 @@ import (
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
 //
-// The struct-array twin (`Inner[]`, same shape, same cause) is not fixed here:
-// it has its own escape walker and follows as its own slice, the way the
-// arrstruct and arrenum halves of every earlier slice did.
+// The struct-array twin (`Inner[]`, same shape, same cause) followed as its own
+// slice, the way the arrstruct and arrenum halves of every earlier slice did;
+// both walkers now carry this tier and the "CNT:" one beside it.
 
 const arrenumBorrowDecl = `enum E { A(i32[]), B }
 function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
@@ -94,16 +94,19 @@ func arrenumBorrowCases() []arrenumShareCase {
 			want: 6, balance: true,
 		},
 		{
-			// REFUSED: the callee STORES the param in a struct field, so the
-			// caller's walk would free a buffer the holder still owns. This is
-			// the construction matrix's own `enum_arr__param` shape, and it
-			// stays the leak it was — that cell needs the store to retain,
-			// which is a different slice.
+			// ADMITTED, by a different tier than this suite's. "ELB:" refuses it
+			// — the callee keeps a reference, so it is not element-safe — but
+			// the reference is a COUNTED store, which param_counted_of's
+			// "DCNT:" tier proves and borrow_reg_with_counted publishes to this
+			// walker under "CNT:". Was the `enum_arr__param` leak when this
+			// suite was written; balances since that tier landed, and pinned
+			// here at the balance rather than only at the exit code so the row
+			// cannot go stale silently a second time.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: E[], n: i32 }
 function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				producer, "rd(keep, r)"),
-			want: 6,
+			want: 6, balance: true,
 		},
 		{
 			// REFUSED by the BOX flag, before this tier is consulted at all.

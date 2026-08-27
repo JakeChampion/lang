@@ -155,16 +155,23 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			want: 3, leaks: true,
 		},
 		{
-			// REFUSED: the callee STORES the param in a struct field, so the
-			// caller's walk would strand a buffer the holder still owns. This is
-			// the construction matrix's own `struct_arr__param` cell and stays
-			// the leak it was — that cell needs the STORE to retain, a different
-			// slice from this one.
+			// ADMITTED, by a different tier than this suite's — and the row this
+			// suite's guard was watching for. "ELB:" refuses it (the callee
+			// keeps a reference, so it is not element-safe), but the reference
+			// is a COUNTED store, which param_counted_of's "DCNT:" tier proves
+			// and borrow_reg_with_counted publishes here under "CNT:".
+			//
+			// The guard warned that a balance here could instead mean the BOX
+			// FLAG had been weakened, and named the check. It was not: every
+			// handout shape below still refuses (element_handed_out_in_struct,
+			// _bare, element_field_handed_out, element_appended_elsewhere), so
+			// does callee_extracts_element, and TestSelfHostStage2FixpointArm64
+			// is green with no gen2 segfault. Only the counted-STORE shape moved.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: Inner[], n: i32 }
 function rd(src: Inner[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				producer, "rd(keep, r)"),
-			want: 6, leaks: true,
+			want: 6, balance: true,
 		},
 		// The four handout shapes: something from the array outlives the call
 		// while the callee stays box-borrowable. Each is where the weaker
