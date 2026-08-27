@@ -172,8 +172,18 @@ checks (guards identical and in order, bodies verbatim modulo indent) and it
 has caught every surgery slip so far — a multi-line `if` header cut after its
 first line, and a hardcoded block end that swallowed a closing brace.
 
-One trap in writing that reconstruction: **a helper-name pattern derived from
-the parent function's own name will match the parent.** Splitting
+Two traps in writing that reconstruction. **An arm-boundary matcher for an
+else-if CHAIN must match any `} else if (` at the chain's indent, not a
+predicate on the value being switched on.** `emit_ir_op` dispatches on
+`o.kind_tag`, but some of its guards read `} else if (ir.is_str_op_kind(o.kind_tag))`
+— matching `if (o.kind_tag` missed those, so one body swallowed the guard after
+it. That surfaced as a parse error, but only by luck: between two arms of the
+same shape it would have compiled and silently merged two cases, and only the
+round-trip would have caught it. Which is the argument for running the
+round-trip BEFORE `fern -check`, not after.
+
+And **a helper-name pattern derived from the parent function's own name will
+match the parent.** Splitting
 `reclaimable_names_of` into `reclaimable_*` helpers gave a script that matched
 `^function (reclaimable_\w+)\(.*\): string\[\] \{$` — which ate the function
 being split. It failed loudly rather than subtly, but match the exact set of
@@ -363,8 +373,9 @@ a table.
 
 ## Order of work
 
-Eighteen slices in, the tree has gone from 19884 excess to 18615 and the
-ceiling from 477 to 411. What is done, and what the remaining shapes are:
+Twenty slices in, the tree has gone from 19884 excess to 18576 and the
+ceiling from 477 to 411. One more was written and thrown away — slice 18, see
+"not worth removing". What is done, and what the remaining shapes are:
 
 | Function | File | Forks | Outcome |
 |---|---|---|---|
@@ -385,6 +396,7 @@ ceiling from 477 to 411. What is done, and what the remaining shapes are:
 | `lower_func` | `irlower.fern` | 262 → 221 | six accumulator passes out |
 | `build_expr` | `ssa.fern` | 184 → 143 | 12 of 14 match arms out |
 | `reclaimable_names_of` | `irlower.fern` | 167 → 13 | ~35 category scans out |
+| `emit_ir_op` | `wasm_ir.fern` | 183 → 144 | 27 multi-line op cases out |
 
 **Fork count alone picks the wrong target.** The cheap, provable wins are
 functions whose parts are self-contained: a match whose arms each return, an op
