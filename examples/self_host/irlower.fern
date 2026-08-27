@@ -51114,10 +51114,23 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 // Reclaim any scalar-element array slot (i32[] / i64[] / f64[] are
                 // all is_arr and freed by the exit dec-sweep with the same
                 // __fern_rc_dec); the precise drop just moves that dec earlier and
-                // zeroes the slot. string[] (strarr) and nested arrays (arrarr) stay
-                // excluded — their buffers hold pointers needing an element walk.
+                // zeroes the slot.
+                //
+                // Every slot whose buffer holds POINTERS is excluded, because this
+                // dec is box-only and the zeroed slot then hides the element walk
+                // from the exit sweep — the elements are stranded with no second
+                // owner to reach them. The exclusion set is exactly what that sweep
+                // deep-frees in its own dedicated loops: string[] and nested arrays,
+                // and the three array-of-boxes classes it documents as "excluded
+                // from the plain is_arr sweep above". Naming only the first two left
+                // an `E[]` / `Inner[]` / `(T, U)[]` local taking the SCALAR path
+                // (#7610): the same program with the same local leaked its element
+                // boxes when the precise drop fired and was clean when it did not.
                 if (dslot >= s.n_params && s.is_arr_slot(dslot)
-                        && !s.is_strarr_slot(dslot) && !s.is_arrarr_slot(dslot)) {
+                        && !s.is_strarr_slot(dslot) && !s.is_arrarr_slot(dslot)
+                        && !slot_is_reclaimable_arrenum(s, dslot)
+                        && !slot_is_reclaimable_arrstruct(s, dslot)
+                        && !slot_is_reclaimable_arrtup(s, dslot)) {
                     s = s.release_zero(dslot, "__fern_rc_dec", "precise-drop-scalar-arr");
                 } else if (dslot >= s.n_params && slot_is_reclaimable_struct(s, dslot)
                         && util.index_of_str(xreuse.donors, pdrops.names[pi]) < 0

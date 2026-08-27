@@ -60,12 +60,10 @@ enum__fieldread     clean clean  q.f read retained; the holder's own ctor-call i
 enum__call          clean clean  strict-fresh enum call result ("ENUM:" registry) owned outright
 enum_arr__fresh     clean clean  fresh [E.A(..)] literal: __enum_arr_elems_drop walks the payloads
 enum_arr__local     clean clean  counted: the field share keeps the source its rc-gated walk
-enum_arr__param     clean leak   TWO causes stacked. The handover is now counted (the "DCNT:" tier;
-#                                self_host_arrenum_counted_param_test.go measures the same program over
-#                                mkv(seed()) at 104/104, was 104/102). What is left is this cell's CONSTANT
-#                                producer argument: mkv(7) const-folds the local dead and moves its release
-#                                to a box-only site. That is #7610 (the borrowed-arg suite warns about it
-#                                but cites #7364, which is closed and unrelated); the cell flips when it lands.
+enum_arr__param     clean clean  needed BOTH of its two stacked causes closed: the counted handover (the
+#                                "DCNT:" tier, self_host_arrenum_counted_param_test.go) and the precise
+#                                drop, which took this cell's mkv(7) local down the SCALAR-array path and
+#                                box-only-dec'd a buffer of pointers (#7610)
 enum_arr__fieldread clean clean  counted: the field read is retained and both NODEEP markers drop with it
 enum_arr__call      clean clean  producer result owned, payload walk releases it
 struct_arr__fresh   clean clean  fresh [Inner{..}] literal owned, deep-dropped
