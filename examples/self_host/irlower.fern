@@ -11573,31 +11573,6 @@ function lower_call_arr_firstlast(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: L
     return pal.emit(ir.op_arr_get(32));
 }
 
-// lower_call_index_of lowers the array `.index_of(x)` / `.contains(x)` pair,
-// which share a scan and differ only in what they leave on the stack.
-function lower_call_index_of(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState): LowerState {
-    var sxn: string = "$sioxs" + util.i32_to_string(s.locals.len());
-    var psi: LowerState = s.add_local(sxn);
-    var sxslot: i32 = psi.slot_of(sxn);
-    psi = lower_expr(fa.obj, psi);
-    if (!psi.ok) { return psi; }
-    psi = psi.emit(ir.op_store_local(sxslot));
-    var stn: string = "$siot" + util.i32_to_string(psi.locals.len());
-    psi = psi.add_local(stn);
-    var stslot: i32 = psi.slot_of(stn);
-    psi = lower_expr(c.args[0], psi);
-    if (!psi.ok) { return psi; }
-    psi = psi.emit(ir.op_store_local(stslot));
-    psi = psi.emit(ir.op_load_local(stslot));  // param1 = target
-    psi = psi.emit(ir.op_load_local(sxslot));  // param0 = xs
-    psi = psi.emit(ir.op_call_direct("__fern_arr_str_index_of", 2));
-    if (fa.field == "contains") {
-        psi = psi.emit(ir.op_const_i32(0));
-        return psi.emit(ir.op_bin("ge_s", 0, false));
-    }
-    return psi;
-}
-
 // lower_call_map_method lowers the Map method desugars — insert/set, get, has,
 // delete, clear, keys, values and iteration — for a receiver whose tracked type
 // is the map type mtype. Split out of lower_call_method; the guard selecting it
