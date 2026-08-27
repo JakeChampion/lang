@@ -35,12 +35,12 @@
 # never inc'd. TestSelfHostContainerSinkMatrixX86_64 is the grid for that axis.
 str__fresh          clean clean  fresh concat is Owned, handed over uncounted and dropped
 str__local          clean clean  counted: the struct-lit field retain fires whenever the store is not a MOVE, and the source now keeps the "STR:" credit that balances it
-str__param          clean leak   same gate, param origin
+str__param          clean clean  counted: param_counted_of proves the callee's every use is a counted store, so the caller keeps the release its own creation owes
 str__fieldread      clean clean  counted share: str_field_share_read retains the read and flips both holders to FLDCHECKED
 str__call           clean clean  producer result is Owned
 str_arr__fresh      clean clean  fresh string[] literal owned by the holder
 str_arr__local      clean clean  counted: the field store retains whenever it is not a MOVE, and the source keeps the DEEP "SARR:" credit so its element walk survives a path that never builds the holder
-str_arr__param      clean leak   same, param origin
+str_arr__param      clean clean  same tier, DEEP class: the callee's store retains the buffer and __fern_str_arr_free's rc gate leaves the element walk to whichever owner reaches rc 1
 str_arr__fieldread  clean leak   the RewriteCtx shape, string[] flavor
 str_arr__call       clean clean  producer result owned
 arr_i32__fresh      clean clean  fresh scalar-array literal
