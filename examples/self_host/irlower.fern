@@ -34728,49 +34728,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // #4357 tuple-returning dead intermediate. Same "TUP:" class → the same
     // shallow box free (elements untouched), same escape gate below.
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
-    var ti: i32 = 0;
-    while (ti < tups.len()) {
-        // tups holds BINDING-SITE keys (#7272); every gate below asks about the
-        // variable, so each takes the bare name back out of the key.
-        var tnm: string = reclaim_site_name(tups[ti]);
-        // #7282: a plain `var v = t` alias shares the box, so it shares the
-        // credit. The bind retained it (lower_stmt_var's ExprIdent arm), both
-        // slots sweep, and the refcount arbitrates.
-        var tal: string[] = [];
-        tal = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
-        if (!body_unsafe_for_alias_ret_ok(body, tnm, borrowable, recv_borrow, tal, util.index_of_str(tretn, tnm) >= 0)) {
-            out = out.append("TUP:" + tups[ti]);
-            out = credit_alias_sites(out, "TUP:", tal);
-            // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
-            // assignment builds a fresh tuple (#6127), which lets lower_stmt_assign
-            // release the box the rebind orphans. "TUP:" alone only frees the FINAL
-            // value at scope exit, so a loop rebind leaked one box per iteration.
-            // A separate credit rather than a widened "TUP:" because the two answer
-            // different questions — "TUP:" that the box is non-escaping and freeable
-            // at exit, this that the SUPERSEDED box is freeable at the assignment.
-            if (util.index_of_str(reassigned, tnm) >= 0
-                && all_assigns_fresh_scalar_tuple(body, tnm,
-                        scalar_tuple_decl_ann_all_scalar(body, tnm))) {
-                out = out.append("TUPREBIND:" + tups[ti]);
-            }
-            // The bare-ident element release (#7226) needs the owned-pointer-element
-            // extraction gate the "TUPRC:" class below applies, for exactly the reason
-            // its comment gives: `return t.1` / `var u = t.1` hands the element's
-            // reference to a NEW owner, so releasing it here over-releases it (witnessed
-            // as exit 99 on the escaping form). A scalar read `t.0`, an indexed read
-            // `t.1[j]` and their `.len()` stay borrows and keep the credit.
-            //
-            // The annotation is REQUIRED rather than skipped-when-absent: without a
-            // tuple type there is no way to tell a scalar element copy from a pointer
-            // extraction, and the wrong guess here is an over-release. An un-annotated
-            // tuple keeps "TUP:" and simply does not earn the element release.
-            var tupelemty: string = rctuple_type_of_decl(body, tnm);
-            if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal)) {
-                out = out.append("TUPELEMOK:" + tups[ti]);
-            }
-        }
-        ti = ti + 1;
-    }
+    out = reclaimable_scalar_tuple(body, borrowable, reassigned, recv_borrow, structs, tretn, tups, out);
     // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
     // fresh ARRAY-literal element — credited "TUPRC:" so slot_is_reclaimable_rctuple
     // drives the DEEP loop-rebind reclaim (emit_tuple_deep_reinit_store: arr_dec each
@@ -34784,65 +34742,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // (no type) skip the second gate, preserving prior behaviour. #4365.
     var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
     var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, []);
-    var rti: i32 = 0;
-    while (rti < rctups.len()) {
-        // Binding-SITE keys here too (#7272); the gates take the bare name.
-        var rnm: string = reclaim_site_name(rctups[rti]);
-        var ral: string[] = [];
-        ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
-        if (!body_unsafe_for_alias_ret_ok(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0)) {
-            var rctty: string = rctuple_type_of_decl(body, rnm);
-            if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0)) {
-                out = out.append("TUPRC:" + rctups[rti]);
-                // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
-                // this is the general rule the struct case taught: only the BOX
-                // was retained at the bind, so only the box may be released
-                // twice. "TUPRC:" / "TUPRCS:" drive a type-driven DEEP free
-                // (emit_rctuple_deep_free — every rc position, then the box), so
-                // duplicating them frees each element twice: measured as exit 99
-                // on `var t: (i32, i32[]) = (i, [i, i+1]); var v = t;` with
-                // allocs == frees at live_bytes 0, the census silent as always.
-                //
-                // "TUP:" is the shallow box dec, and the alias has no recorded
-                // element kinds (its init is an ident, not a literal), so
-                // emit_tup_elem_releases emits nothing for it. The source keeps
-                // the one deep free; the alias spends the one extra box
-                // reference. The two classes are documented as disjoint per SLOT,
-                // and these are different slots.
-                out = credit_alias_sites(out, "TUP:", ral);
-                // "TUPRCS:" additionally lets the scope-exit sweep deep-free the FINAL
-                // value (#6127). "TUPRC:" alone is consumed only by the StmtVar rebind
-                // path, so a SINGLE-BIND rc-tuple was credited, entry-zeroed, and then
-                // never released — allocs=200 frees=0 live_bytes=8000 per 100 rounds
-                // with no reassignment anywhere. Three extra conditions on top of
-                // "TUPRC:", each load-bearing:
-                //   - a tuple ANNOTATION, since the sweep frees by TYPE (it has no
-                //     init literal at exit);
-                //   - tuple_arg_payload_retained, so the tuple holds a counted
-                //     reference to every rc-typed position the blind type-driven drop
-                //     dec's: a fresh literal it sole-owns, or a bare ident the
-                //     construction retained (#7281);
-                //   - not reassigned, because the assign path emits no release for
-                //     this class, so the final value's shape cannot be judged from
-                //     the declaration alone.
-                //   - not reassigned, OR every assignment rebuilds a fresh rc-tuple
-                //     of the SAME type (all_assigns_fresh_rc_tuple, #6127). #6251
-                //     excluded reassigned names outright because the assign path
-                //     emitted no release, which left a REBOUND rc-tuple freeing
-                //     nothing at all; lower_stmt_assign now deep-drops the superseded
-                //     chain, and proving every assignment rebuilds the same shape is
-                //     what makes the declaration's type a sound description of the
-                //     final value the sweep frees by.
-                var rc_rebind_ok: boolean = util.index_of_str(reassigned, rnm) < 0
-                    || all_assigns_fresh_rc_tuple(body, rnm, rctty, structs);
-                if (rctty != "" && rc_rebind_ok
-                        && util.index_of_str(sweeprc, rctups[rti]) >= 0) {
-                    out = out.append("TUPRCS:" + rctups[rti]);
-                }
-            }
-        }
-        rti = rti + 1;
-    }
+    out = reclaimable_rc_tuple(body, borrowable, rctups, reassigned, recv_borrow, structs, sweeprc, tretn, out);
     // Fresh rc-payload ENUM locals (`var b = Full([i, i+1])` consumed by a match in
     // the same block): credited "RCENUM:" so slot_is_reclaimable_rcenum drives the
     // DEEP loop-rebind reclaim (emit_enum_deep_reinit_store → emit_enum_variant_drops
@@ -34852,35 +34752,12 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
     // loop-local; this closes that gap (#4357) with no overlap.
     var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, borrowable, str_fresh_ret, msites, []);
-    var rei: i32 = 0;
-    while (rei < rcenums.len()) {
-        // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
-        // match + dead-after + non-escaping (name_escapes_outside_stmt skipping the
-        // match) + no moved arm payload, per block — so credit directly.
-        //
-        // An "S:" marker means the name has NO consuming match, so its final value
-        // reaches function exit unreleased and earns the extra "RCENUMS:" sweep
-        // credit beside the rebind one. Both are emitted for that half; the
-        // match-consumed half gets "RCENUM:" alone.
-        var rname: string = rcenums[rei];
-        if (rname.len() > 2 && rname[0] == b'S' && rname[1] == b':') {
-            var bare: string = slice_unchecked(rname, 2, rname.len()) + "";
-            out = out.append("RCENUM:" + bare);
-            out = out.append("RCENUMS:" + bare);
-        } else {
-            out = out.append("RCENUM:" + rname);
-        }
-        rei = rei + 1;
-    }
+    out = reclaimable_rcenum(rcenums, out);
     // All-scalar ENUM locals with no consuming match ("SCENUMS:"): the shallow
     // sibling of the "RCENUMS:" credit above. Both the loop rebind and the
     // scope-exit sweep release the box with a plain rc-dec.
     var scenums: string[] = collect_fresh_scenum_names(body, structs, borrowable, plan_on, plan_fe, []);
-    var sei: i32 = 0;
-    while (sei < scenums.len()) {
-        out = out.append("SCENUMS:" + scenums[sei]);
-        sei = sei + 1;
-    }
+    out = reclaimable_scenum(scenums, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
     // (the struct / tuple / snapshot consumers never do). Two gates before a name
@@ -34930,84 +34807,13 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     var lits_pre: string[] = collect_litstr_local_names(body, []);
     var sc1: i32 = 0;
     while (sc1 < lits_pre.len()) { str_cands = push_str_unique(str_cands, lits_pre[sc1]); sc1 = sc1 + 1; }
-    var si: i32 = 0;
-    while (si < strs.len()) {
-        // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
-        // all ask about the variable, so each takes the bare name back out. The
-        // cross-list `strs` dedupes below compare key-to-key and get sharper for
-        // it: two same-named bindings no longer collapse into one another.
-        var snm: string = reclaim_site_name(strs[si]);
-        // #7282 string limb: a plain `var v = s` alias shares the box, so it
-        // shares the credit. The bind retained it (lower_stmt_var's ExprIdent
-        // arm), both slots sweep, and the refcount arbitrates.
-        //
-        // The two halves are one decision, not two that happen to agree. Without
-        // the forgiveness the alias is a bare-ident escape and `s` earns nothing,
-        // which is the leak this closes (200 allocs / 0 frees per 100 rounds).
-        // With the forgiveness but no alias credit, `s` is swept once while two
-        // slots hold the box — a leak of the alias' retain. Granting both is what
-        // makes inc and dec co-extensive.
-        //
-        // A string is a single box with no field or element walk, so the alias
-        // takes the SAME "STR:" class rather than a shallow variant: there is no
-        // deep release here to withhold from it, which is what makes this simpler
-        // than the struct and rc-tuple cases rather than merely different.
-        var sal: string[] = [];
-        sal = alias_bind_sites_of(body, snm, borrowable, recv_borrow, body, sal);
-        // The alias REASSIGN (`t = s`) joins the alias BIND, on the same terms: the
-        // assignment now RETAINS (keyed on the "STRALIASSRC:" row below), so `t`
-        // holds a counted share rather than a borrow. Its site goes into `sal` so
-        // the escape walker reads the source's use there as the share it is, and
-        // takes the "STR:" credit alongside — the same "granting both is what makes
-        // inc and dec co-extensive" this block already states for the bind.
-        var sra: string[] = str_alias_reassign_target_sites(body, snm, str_cands, body, []);
-        var sal_all: string[] = sal;
-        var sri: i32 = 0;
-        while (sri < sra.len()) { sal_all = push_str_unique(sal_all, sra[sri]); sri = sri + 1; }
-        // A struct-literal string FIELD is the third counted share this credit
-        // survives, alongside the alias bind and the alias reassign: the
-        // construction retains the box and the holder's field drop decs it, so
-        // the source keeps the claim its own release balances. Tagged per
-        // candidate rather than seeded into clo_ok once, because the move gate
-        // inside is a question about THIS name's use at THIS literal.
-        var sfsites: string[] = rc_counted_field_sites(body, snm, structs, sfok, msites, out, "string", []);
-        var str_clo_ok: string[] = clo_ok;
-        var sfi: i32 = 0;
-        while (sfi < sfsites.len()) { str_clo_ok = str_clo_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
-        if (util.index_of_str(reassigned, snm) < 0
-            && !body_unsafe_for_clo_alias(body, snm, borrowable, str_clo_ok, recv_borrow, sal_all)) {
-            out = out.append("STR:" + strs[si]);
-            out = credit_alias_sites(out, "STR:", sal_all);
-            if (sra.len() > 0) {
-                // The source is handing its box on at an assignment, so the retain
-                // has to fire there. lower_stmt_assign keys on this row.
-                out = out.append("STRALIASSRC:" + strs[si]);
-            }
-        }
-        si = si + 1;
-    }
+    out = reclaimable_string(body, borrowable, clo_ok, msites, reassigned, recv_borrow, sfok, str_cands, strs, structs, out);
     // Literal-init string locals (#6582) — same two gates as the fresh producers
     // above, plus the `.to_string()` identity-alias exclusion. See the
     // collect_litstr_local_names block for why this is not folded into
     // str_local_binding_is_fresh.
     var lits: string[] = collect_litstr_local_names(body, []);
-    var li2: i32 = 0;
-    while (li2 < lits.len()) {
-        var lnm: string = reclaim_site_name(lits[li2]);
-        var lal: string[] = alias_bind_sites_of(body, lnm, borrowable, recv_borrow, body, []);
-        var lra: string[] = str_alias_reassign_target_sites(body, lnm, str_cands, body, []);
-        var lri: i32 = 0;
-        while (lri < lra.len()) { lal = push_str_unique(lal, lra[lri]); lri = lri + 1; }
-        if (util.index_of_str(strs, lits[li2]) < 0
-            && util.index_of_str(reassigned, lnm) < 0
-            && !litstr_tostring_recv_body(body, lnm)
-            && !body_unsafe_for_clo_alias(body, lnm, borrowable, clo_ok, recv_borrow, lal)) {
-            out = out.append("STR:" + lits[li2]);
-            out = credit_alias_sites(out, "STR:", lal);
-            if (lra.len() > 0) { out = out.append("STRALIASSRC:" + lits[li2]); }
-        }
-        li2 = li2 + 1;
-    }
+    out = reclaimable_litstr_local(body, borrowable, clo_ok, lits, reassigned, recv_borrow, str_cands, strs, out);
     // `<scalar>.to_string()` string locals (#6599) — same gates as the producers
     // above. See the collect_tostr_scalar_names block for why the receiver-type test
     // cannot live in str_local_binding_is_fresh.
@@ -35016,66 +34822,22 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     var tsn: string[] = param_decl_names(params, tostr_decl_names(body, []));
     var tst: string[] = param_decl_types(params, tostr_decl_vals(body, []));
     var tss: string[] = collect_tostr_scalar_names(body, tsn, tst, []);
-    var ti2: i32 = 0;
-    while (ti2 < tss.len()) {
-        var tnm: string = reclaim_site_name(tss[ti2]);
-        var tsal: string[] = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, []);
-        if (util.index_of_str(strs, tss[ti2]) < 0
-            && util.index_of_str(reassigned, tnm) < 0
-            && !body_unsafe_for_clo_alias(body, tnm, borrowable, clo_ok, recv_borrow, tsal)) {
-            out = out.append("STR:" + tss[ti2]);
-            out = credit_alias_sites(out, "STR:", tsal);
-        }
-        ti2 = ti2 + 1;
-    }
+    out = reclaimable_tostr_scalar(body, borrowable, clo_ok, reassigned, recv_borrow, strs, tss, out);
     // `xs.join(sep)` string locals — same gates again, and the receiver-type test
     // lives here for the same reason the `.to_string()` one does (join_strarr_init).
     var jss: string[] = collect_join_strarr_names(body, tsn, tst, []);
-    var ji: i32 = 0;
-    while (ji < jss.len()) {
-        var jnm: string = reclaim_site_name(jss[ji]);
-        var jal: string[] = alias_bind_sites_of(body, jnm, borrowable, recv_borrow, body, []);
-        if (util.index_of_str(strs, jss[ji]) < 0
-            && util.index_of_str(reassigned, jnm) < 0
-            && !body_unsafe_for_clo_alias(body, jnm, borrowable, clo_ok, recv_borrow, jal)) {
-            out = out.append("STR:" + jss[ji]);
-            out = credit_alias_sites(out, "STR:", jal);
-        }
-        ji = ji + 1;
-    }
+    out = reclaimable_join_strarr(body, borrowable, clo_ok, jss, reassigned, recv_borrow, strs, out);
     // `<string>.trim()` locals — same gates again. Since #7393 the builtin trim
     // returns an owned copy, so the credit is an ordinary "STR:" name with the
     // ordinary full release; the collector's receiver-TYPE test is what keeps a
     // user method named `trim` (which may return a field alias) uncredited.
     var tms: string[] = collect_trim_local_names(body, tsn, tst, []);
-    var tmi: i32 = 0;
-    while (tmi < tms.len()) {
-        var mnm: string = reclaim_site_name(tms[tmi]);
-        var mal: string[] = alias_bind_sites_of(body, mnm, borrowable, recv_borrow, body, []);
-        if (util.index_of_str(strs, tms[tmi]) < 0
-            && util.index_of_str(reassigned, mnm) < 0
-            && !body_unsafe_for_clo_alias(body, mnm, borrowable, clo_ok, recv_borrow, mal)) {
-            out = out.append("STR:" + tms[tmi]);
-            out = credit_alias_sites(out, "STR:", mal);
-        }
-        tmi = tmi + 1;
-    }
+    out = reclaimable_trim_local(body, borrowable, clo_ok, reassigned, recv_borrow, strs, tms, out);
     // `<string>.replace(old, new)` locals — same gates, released behind the
     // identity guard (the slot's str_identity_src is what carries the receiver to
     // compare against).
     var rps: string[] = collect_replace_local_names(body, tsn, tst, []);
-    var rpi: i32 = 0;
-    while (rpi < rps.len()) {
-        var rnm: string = reclaim_site_name(rps[rpi]);
-        var rpal: string[] = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, []);
-        if (util.index_of_str(strs, rps[rpi]) < 0
-            && util.index_of_str(reassigned, rnm) < 0
-            && !body_unsafe_for_clo_alias(body, rnm, borrowable, clo_ok, recv_borrow, rpal)) {
-            out = out.append("STR:" + rps[rpi]);
-            out = credit_alias_sites(out, "STR:", rpal);
-        }
-        rpi = rpi + 1;
-    }
+    out = reclaimable_replace_local(body, borrowable, clo_ok, reassigned, recv_borrow, rps, strs, out);
     // `var v: str = base.drop(2)` — an SFRRECV method chain in BINDING position
     // (#6544), released behind the same identity guard, pointed at the chain root.
     // Same two gates as its siblings, but credited "SFRCAND:" rather than "STR:":
@@ -35089,16 +34851,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // chain root's slot, and only the binding site can resolve one. An alias has
     // no root walk of its own, so it could not carry the guard the credit assumes.
     var sfrs: string[] = collect_sfrrecv_local_names(body, tsn, tst, str_fresh_ret, []);
-    var sfi: i32 = 0;
-    while (sfi < sfrs.len()) {
-        var fnm: string = reclaim_site_name(sfrs[sfi]);
-        if (util.index_of_str(strs, sfrs[sfi]) < 0
-            && util.index_of_str(reassigned, fnm) < 0
-            && !body_unsafe_for_clo(body, fnm, borrowable, clo_ok, recv_borrow)) {
-            out = out.append("SFRCAND:" + sfrs[sfi]);
-        }
-        sfi = sfi + 1;
-    }
+    out = reclaimable_sfrrecv_local(body, borrowable, clo_ok, reassigned, recv_borrow, sfrs, strs, out);
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
     // a fresh consume-rebind of s and that never escapes (str_accum_unsafe_for —
@@ -35116,41 +34869,19 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // The wired families all carry `index_of_str(reassigned, …) < 0`, so none of
     // them can hand an accumulator a credit by another route.
     var accs: string[] = collect_str_accumulator_names(body, reassigned, []);
-    var ci: i32 = 0;
-    while (ci < accs.len()) {
-        if (!str_accum_unsafe_for(body, reclaim_site_name(accs[ci]), borrowable)) { out = out.append("STR:" + accs[ci]); }
-        ci = ci + 1;
-    }
+    out = reclaimable_str_accumulator(accs, body, borrowable, out);
     // Fresh-string-return-call locals (`var r = f(..)`, f a str-fresh-ret free
     // function): r solely owns the fresh string the callee moved out, so — when r
     // is not reassigned and never escapes (body_unsafe_for) — it is freed at scope
     // exit / per loop-rebind, closing the caller-side leak the returned builder left.
     var frets: string[] = collect_fresh_str_ret_call_names(body, str_fresh_ret, reassigned, []);
-    var fri: i32 = 0;
-    while (fri < frets.len()) {
-        var frnm: string = reclaim_site_name(frets[fri]);
-        var fral: string[] = alias_bind_sites_of(body, frnm, borrowable, recv_borrow, body, []);
-        if (!body_unsafe_for_alias(body, frnm, borrowable, recv_borrow, fral)) {
-            out = out.append("STR:" + frets[fri]);
-            out = credit_alias_sites(out, "STR:", fral);
-        }
-        fri = fri + 1;
-    }
+    out = reclaimable_str_ret_call(body, borrowable, frets, recv_borrow, out);
     // Owned-container READ destinations (#6491 pointer half): `var s: string =
     // mk()[i]` / `= mk().f`. The read releases the container and hands over its
     // single reference to the extracted box, so s owns it exactly as a
     // fresh-producer binding does — same two gates, same "STR:" class.
     var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, structs, []);
-    var oci: i32 = 0;
-    while (oci < ocrs.len()) {
-        var ocnm: string = reclaim_site_name(ocrs[oci]);
-        var ocal: string[] = alias_bind_sites_of(body, ocnm, borrowable, recv_borrow, body, []);
-        if (!body_unsafe_for_alias(body, ocnm, borrowable, recv_borrow, ocal)) {
-            out = out.append("STR:" + ocrs[oci]);
-            out = credit_alias_sites(out, "STR:", ocal);
-        }
-        oci = oci + 1;
-    }
+    out = reclaimable_owned_container_read_str(body, borrowable, ocrs, recv_borrow, out);
     // `?`-bound string payloads (#4355): `var s: string = mk(pre)?` where mk is
     // an opt-fresh producer whose success payloads are all fresh (flag "f") —
     // the `?` edge frees the source box (lower_try) and MOVES the payload's
@@ -35158,16 +34889,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // producer-call binding. Same two gates as frets: non-escape
     // (body_unsafe_for) and not reassigned (enforced by the collector).
     var tstrs: string[] = collect_try_str_binding_names(body, opt_fresh_ret, reassigned, []);
-    var tsi: i32 = 0;
-    while (tsi < tstrs.len()) {
-        var tsnm: string = reclaim_site_name(tstrs[tsi]);
-        var tsal: string[] = alias_bind_sites_of(body, tsnm, borrowable, recv_borrow, body, []);
-        if (!body_unsafe_for_alias(body, tsnm, borrowable, recv_borrow, tsal)) {
-            out = out.append("STR:" + tstrs[tsi]);
-            out = credit_alias_sites(out, "STR:", tsal);
-        }
-        tsi = tsi + 1;
-    }
+    out = reclaimable_try_str_binding(body, borrowable, recv_borrow, tstrs, out);
     // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
     // prefix so only slot_is_reclaimable_map matches. __fern_map_free frees the keys
     // + values buffers AND returns the 16-byte RAW mapbox to the freelist (x86/arm64
@@ -35189,57 +34911,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // reclaim; #4357.
     maps = collect_mapf_call_names(body, tup_fresh_ret, maps);
     var aliased_m: string[] = aliased_array_names_of(body);
-    var mi: i32 = 0;
-    while (mi < maps.len()) {
-        // `maps` holds BINDING-SITE keys (#7253); every gate below asks about the
-        // NAME, and a same-named sibling binding refuses the credit for both — the
-        // gate stays coarser than the key, which is the safe direction.
-        var mapnm: string = reclaim_site_name(maps[mi]);
-        // The two POSITIONAL gates, and their one override: a map whose only
-        // alias and only escape is a bare-ident element of a local, non-escaping
-        // tuple keeps the credit (#7212). The tuple holds an uncounted pointer
-        // nothing on that side ever releases, so the local still owes the one
-        // release, and scope exit is past every read of a local tuple. Asked
-        // only when the plain reading has already refused — it walks the body
-        // again, and the maps it can rescue are the minority that reach it.
-        var pos_ok: boolean = util.index_of_str(aliased_m, mapnm) < 0
-            && !body_unsafe_for(body, mapnm, borrowable, recv_borrow);
-        if (!pos_ok) { pos_ok = map_tuple_elem_borrow_only(body, mapnm, borrowable, recv_borrow, reassigned); }
-        // The reassigned gate admits the sanctioned COW self-reassign
-        // (`m = m.insert(k, v)` — map_nonself_reassigned / #4357): insert at
-        // rc==1 mutates in place and returns the SAME box, so the slot's
-        // value is unchanged and the exit / precise reclaim still frees
-        // exactly one live box. Any other rebind disqualifies as before.
-        // The iteration and identity holes below are NOT overridden.
-        if (!map_nonself_reassigned(body, mapnm)
-            && pos_ok
-            && !map_has_explicit_iter(body, mapnm)
-            // Identity-carrying method hole (insert/without return the
-            // receiver's own box — see expr_map_identity_use): any such use
-            // can smuggle the mapbox past the borrow-only escape walk, so it
-            // excludes the map from reclaim.
-            && !map_identity_escape(body, mapnm)) {
-            out = out.append("MAP:" + maps[mi]);
-            // #4353: a reclaimable map whose every VALUE (resp. KEY) is a fresh
-            // string additionally deep-releases that column — via
-            // __fern_map_free_vs / _ks / _kvs on the register backends (wasm
-            // already deep-releases). Sound because the map is the sole rc=1 owner
-            // of each fresh value / key box.
-            if (map_str_value_reclaimable(body, mapnm)) {
-                out = out.append("MAPVS:" + maps[mi]);
-            }
-            if (map_str_key_reclaimable(body, mapnm)) {
-                out = out.append("MAPKS:" + maps[mi]);
-            }
-            // #4353 item 3: an ARRAY- or STRUCT-valued column whose every value is
-            // a fresh literal — released per element via __fern_map_free_va / _ksva.
-            // Mutually exclusive with MAPVS: by the declared value type.
-            if (map_box_value_reclaimable(body, mapnm, structs)) {
-                out = out.append("MAPVA:" + maps[mi]);
-            }
-        }
-        mi = mi + 1;
-    }
+    out = reclaimable_map(aliased_m, body, borrowable, maps, reassigned, recv_borrow, structs, out);
     // Fresh string[] locals with provably-fresh/static ELEMENTS (#4355): credited
     // under an "SARR:" prefix so only slot_is_reclaimable_strarr matches. The
     // strarr_unsafe_for gate proves non-escape of the array AND of every element
@@ -35249,40 +34921,13 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // on `reassigned` — the self-append rebind IS a reassignment; the gate
     // validates each one individually.
     var sarrs: string[] = collect_fresh_strarr_names(body, body, fresh_ret, str_fresh_ret, []);
-    var sri: i32 = 0;
-    while (sri < sarrs.len()) {
-        // #7282 string[] limb (#7391): a plain `var x: string[] = xs` alias
-        // shares buffer AND elements, so it shares the credit — the bind
-        // retains the buffer, both slots sweep through __fern_str_arr_free,
-        // and its rc gate arbitrates: rc>1 decs and leaves the elements to the
-        // other owner; only the LAST owner's rc==1 walks them. That gate is
-        // what lets the alias take the SAME deep "SARR:" class where a struct
-        // alias must take box-only "NODEEP:" — the walk cannot run twice.
-        var sanm: string = reclaim_site_name(sarrs[sri]);
-        var sasal: string[] = strarr_alias_bind_sites_of(body, sanm, borrowable, str_fresh_ret, body, []);
-        // A struct-literal `string[]` field is a counted share on the same terms
-        // the string family took in #7557, and it needs the DEEP class rather
-        // than a box-only one: the element walk must survive a path where the
-        // holder is never constructed. __fern_str_arr_free's rc gate is what
-        // makes granting both owners the walk safe — only the last one at rc 1
-        // performs it.
-        var sasfld: string[] = rc_counted_field_sites(body, sanm, structs, sfok, msites, out, "string[]", []);
-        if (!strarr_unsafe_for_alias(body, sanm, borrowable, str_fresh_ret, sasal, sasfld)) {
-            out = out.append("SARR:" + sarrs[sri]);
-            out = credit_alias_sites(out, "SARR:", sasal);
-        }
-        sri = sri + 1;
-    }
+    out = reclaimable_strarr(body, borrowable, msites, sarrs, sfok, str_fresh_ret, structs, out);
     // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
     // own prefix so the binding-site type confirmation is required alongside.
     // Same strarr_unsafe_for gate: it is the non-escape half of the proof, and
     // it is name-level, so it applies here unchanged.
     var bsarrs: string[] = collect_builtin_strarr_names(body, []);
-    var bri: i32 = 0;
-    while (bri < bsarrs.len()) {
-        if (!strarr_unsafe_for(body, reclaim_site_name(bsarrs[bri]), borrowable, str_fresh_ret)) { out = out.append("SARRB:" + bsarrs[bri]); }
-        bri = bri + 1;
-    }
+    out = reclaimable_builtin_strarr(body, borrowable, bsarrs, str_fresh_ret, out);
     // Fresh arr-of-arr locals (#4355 slice 9): `var g = [[..], [..]]` where
     // every element is an ARRAY LITERAL of scalar literals / fresh strings —
     // credited "ARRARR:<name>" so only slot_is_reclaimable_arrarr matches.
@@ -35296,27 +34941,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // `for row in g` iteration binds an inner buffer the free would dangle —
     // a transient `g[i][j]` / `g[i].len()` borrow is fine).
     var aarrs: string[] = collect_fresh_arrarr_names(body, opt_fresh_ret, []);
-    var aai: i32 = 0;
-    while (aai < aarrs.len()) {
-        var aan: string = aarrs[aai];
-        // "S|<name>" entries are strings-fresh MARKERS, not candidates.
-        // NOT excluded on `reassigned` any more (#6092) — the self-append rebind
-        // IS a reassignment, and refusing the credit for it left every
-        // append-BUILT arr-of-arr leaking its rows. arrarr_unsafe_for validates
-        // each rebind individually (only `g = g.append(<row literal>)` passes)
-        // and is otherwise body_unsafe_for, so it subsumes both former checks.
-        // The string[] class has worked this way since #4355.
-        if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
-            && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
-            && !arrarr_row_escapes(body, reclaim_site_name(aan))) {
-            out = out.append("ARRARR:" + aan);
-            // STRICT string-kind credit only when every inner element proved
-            // fresh (slot_is_reclaimable_arrarr consults this one when the
-            // slot's type-aware arrarr_elem says the inners hold strings).
-            if (util.index_of_str(aarrs, "S|" + aan) >= 0) { out = out.append("ARRARRS:" + aan); }
-        }
-        aai = aai + 1;
-    }
+    out = reclaimable_arrarr(aarrs, body, borrowable, opt_fresh_ret, out);
     // Fresh Option[<scalar-arr>][] locals (#4365): `var xs: Option[i32[]][] =
     // [Some([..]), None]` — credited "OPTAARR:" so slot_is_reclaimable_optaarr
     // routes the exit sweep / loop-rebind through __fern_optarrarr_free
@@ -35327,34 +34952,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // option box whose payload the free would dangle; a transient
     // `match (xs[i])` payload borrow is fine).
     var oaas: string[] = collect_fresh_optaarr_names(body, []);
-    var oai: i32 = 0;
-    while (oai < oaas.len()) {
-        // `oaas` holds BINDING-SITE keys (#7253); all four gates ask about the
-        // VARIABLE, so each takes the bare name back out of the key.
-        var oanm: string = reclaim_site_name(oaas[oai]);
-        // The whole-name escape gate is plan-routed (step 2, the SCENUMS
-        // pattern); the element-alias and payload gates stay — a bound
-        // `var o = xs[i]` takes no counted retain here (native's Index-shape
-        // dup is not ported), so the name-level plan cannot license them.
-        // The two grants are individually sound, so their UNION is the staged
-        // gate: the credit-side escape proof keeps every pre-routing grant
-        // (the plan still lacks native's returnsNoParamEscape oracle, so a
-        // call-provenance local is plan-tainted through its own init args),
-        // and the plan adds the call-arg/counted-sink grants the credit gate
-        // cannot see. The credit half retires with that oracle's port.
-        var oa_esc_ok: boolean = false;
-        if (!plan_on) { oa_esc_ok = !body_unsafe_for(body, oanm, borrowable, recv_borrow); }
-        else if (!name_is_alias_bound(body, oanm)) {
-            oa_esc_ok = util.index_of_str(plan_fe, oaas[oai]) >= 0;
-        }
-        if (oa_esc_ok
-            && util.index_of_str(reassigned, oanm) < 0
-            && !arrarr_row_escapes(body, oanm)
-            && !optaarr_elem_payload_escapes(body, oanm)) {
-            out = out.append("OPTAARR:" + oaas[oai]);
-        }
-        oai = oai + 1;
-    }
+    out = reclaimable_optaarr(body, borrowable, oaas, plan_fe, plan_on, reassigned, recv_borrow, out);
     // Fresh Option[<tuple-with-array>] locals (#4365): `var o: Option[(i32, i32[])]
     // = Some((i, [i, i+1]))` consumed by a borrow-only match — credited "OPTTUP:"
     // so slot_is_reclaimable_opttup routes the loop-rebind + exit sweep through the
@@ -35368,11 +34966,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // them directly (a body_unsafe_for gate here would reject the consuming
     // match scrutinee, exactly what the block-level analysis handles instead).
     var ots: string[] = collect_fresh_opttup_names(body, structs, []);
-    var oti: i32 = 0;
-    while (oti < ots.len()) {
-        out = out.append("OPTTUP:" + ots[oti]);
-        oti = oti + 1;
-    }
+    out = reclaimable_opttup(ots, out);
     // Fresh Option[<struct-with-array-field>] locals (#4365): `var o: Option[P] =
     // Some(P { xs: [..] })` (P routes field-reclaim) consumed by a borrow-only match —
     // the struct sibling of OPTTUP. Credited "OPTSTRUCT:" so slot_is_reclaimable_optstruct
@@ -35381,11 +34975,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // collect_fresh_optstruct_names is self-gating (block-level consuming-match analysis),
     // so credit the names it returns directly.
     var oss: string[] = collect_fresh_optstruct_names(body, structs, []);
-    var osi: i32 = 0;
-    while (osi < oss.len()) {
-        out = out.append("OPTSTRUCT:" + oss[osi]);
-        osi = osi + 1;
-    }
+    out = reclaimable_optstruct(oss, out);
     // Fresh Option[<scalar-arr-of-arr>] locals (#4365): `var o: Option[i32[][]] =
     // Some([[i, i+1], ...])` consumed by a borrow-only match — the arr-of-arr sibling of
     // OPTSTRUCT. Credited "OPTARRARR:" so slot_is_reclaimable_optarrarr routes the loop-rebind
@@ -35393,11 +34983,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // option box dec). collect_fresh_optarrarr_names is self-gating (block-level consuming-match
     // analysis), so credit its names directly.
     var oas: string[] = collect_fresh_optarrarr_names(body, []);
-    var oasi: i32 = 0;
-    while (oasi < oas.len()) {
-        out = out.append("OPTARRARR:" + oas[oasi]);
-        oasi = oasi + 1;
-    }
+    out = reclaimable_optarrarr(oas, out);
     // REBOUND Option[<flat scalar array>] locals (#6127): `var o: Option[i32[]] =
     // Some([..]); while { o = Some([..]) }`. The simplest payload kind in this
     // family and the only one with no rebind class — every consuming-match
@@ -35407,40 +34993,17 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // REQUIRES the name to be reassigned, the exact complement of those analyses'
     // gate, so the two sets are disjoint and no box is freed twice.
     var ofa: string[] = collect_fresh_optarr_names(body, []);
-    var ofai: i32 = 0;
-    while (ofai < ofa.len()) {
-        out = out.append("OPTARR:" + ofa[ofai]);
-        ofai = ofai + 1;
-    }
+    out = reclaimable_optarr(ofa, out);
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
     var ufa: string[] = collect_unmatched_optarr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
-    var ufai: i32 = 0;
-    while (ufai < ufa.len()) {
-        out = out.append("OPTARR:" + ufa[ufai]);
-        // #6360: a SECOND tag when this local's Err payload is a proven-fresh
-        // string, so the sweep can fill the tag guard's else-branch for it alone.
-        // OPTARR: is shared with the reassigned+match class, whose slots earned no
-        // such proof — an unconditional Err release there would dangle.
-        // Same key, one gate: the Err-payload proof asks about the variable.
-        // "OPTARRERR:" is a SUB-TAG of the "OPTARR:" entry appended just above —
-        // same slot, same key — so the two are granted and resolved together and
-        // cannot end up keyed differently.
-        if (unmatched_optarr_err_str_fresh(body, reclaim_site_name(ufa[ufai]), opt_fresh_ret)) {
-            out = out.append("OPTARRERR:" + ufa[ufai]);
-        }
-        ufai = ufai + 1;
-    }
+    out = reclaimable_unmatched_optarr(body, opt_fresh_ret, ufa, out);
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
     var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
-    var ufsi: i32 = 0;
-    while (ufsi < ufs.len()) {
-        out = out.append("OPTSTR:" + ufs[ufsi]);
-        ufsi = ufsi + 1;
-    }
+    out = reclaimable_unmatched_optstr(ufs, out);
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
     // arrays. Credited "ARRTUP:" so slot_is_reclaimable_arrtup routes the loop-rebind
@@ -35452,21 +35015,8 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // escapes — a bare `keep = xs[i].1` array-field extraction; a scalar read
     // `xs[i].0`, indexed read `xs[i].1[j]` and `xs[i].1.len()` are borrows).
     var ats: string[] = collect_fresh_arrtup_names(body, body, structs, fresh_ret, []);
-    var ati: i32 = 0;
-    while (ati < ats.len()) {
-        // `ats` holds BINDING-SITE keys (#7253); every gate asks about the
-        // VARIABLE, so each takes the bare name back out of the key.
-        var atnm: string = reclaim_site_name(ats[ati]);
-        if (!body_unsafe_for(body, atnm, borrowable, recv_borrow)
-            && util.index_of_str(reassigned, atnm) < 0
-            && !arrarr_row_escapes(body, atnm)
-            && !arrtup_elem_payload_escapes(body, atnm, arrtup_elem_type_of_decl(body, structs, atnm), structs)) {
-            out = out.append("ARRTUP:" + ats[ati]);
-        }
-        ati = ati + 1;
-    }
-    var asrowi: i32 = 0;
-    while (asrowi < asrows.len()) { out = out.append(asrows[asrowi]); asrowi = asrowi + 1; }
+    out = reclaimable_arrtup(ats, body, borrowable, reassigned, recv_borrow, structs, out);
+    out = reclaimable_credit(asrows, out);
     // Fresh `MyEnum[]` locals (#5474): `var xs: E[] = [E.A(..), E.B, ..]` — the enum
     // sibling of ARRTUP/ARRSTRUCT, and the last array-of-X element kind that had no
     // element walk at all. Credited "ARRENUM:<local>#<Enum>", the enum riding the
@@ -35475,34 +35025,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // `xs.len()` — because an element extraction here risks a double-free rather than
     // a leak; arrenum_esc_expr says why.
     var aens: string[] = collect_fresh_arrenum_names(body, body, structs, fresh_ret, []);
-    var aeni: i32 = 0;
-    while (aeni < aens.len()) {
-        // The entry is "<site key>#<Enum>"; the site key half is what the credit is
-        // keyed on and the bare name is what the gates ask about. A site key cannot
-        // contain '#', so the split is unambiguous either way.
-        var aesite: string = arrenum_entry_name(aens[aeni]);
-        var aename: string = reclaim_site_name(aesite);
-        // "A|" rows are append-BUILT markers, not candidates. The marked entry
-        // takes the same "ARRENUM:" credit — the release path is identical and
-        // emit_arrenum_reclaim_store is already cow-guarded — but the two blunt
-        // gates have to sanction the self-append rebind, which is the one
-        // reassignment and the one non-`len()` use the class permits.
-        // ONE pair of gates for both the literal/producer and the append-built
-        // candidate. The append exception costs the former nothing — a candidate
-        // that is not append-built has no reassignment at all, because the
-        // collector's `reassigned` check already refused it — so the two paths
-        // that used to be branched here answer identically, and branching them
-        // only risked their exceptions drifting apart.
-        var aeenum: string = arrenum_entry_enum(aens[aeni]);
-        var aeblocked: boolean = arrenum_append_escapes(body, aename, structs, aeenum, msites, false, borrowable)
-            || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum, msites)
-            || arrenum_share_holder_respread(body, aename, structs, msites, borrowable);
-        if (!(aens[aeni].len() > 2 && aens[aeni][0] == b'A' && aens[aeni][1] == b'|')
-            && aesite.len() > 0 && !aeblocked) {
-            out = out.append("ARRENUM:" + aens[aeni]);
-        }
-        aeni = aeni + 1;
-    }
+    out = reclaimable_arrenum(aens, body, borrowable, msites, recv_borrow, structs, out);
     // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
     // — every element fresh (a no-base struct literal, or a call to a strict-fresh
     // struct-returning function — structarr_elem_store_ok), and P has no rc-array field
@@ -35519,32 +35042,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // detector's struct_has_reclaim_array_field guard keeps this DISJOINT from
     // ARRSTRUCT — field structs deep-drop there, scalar structs shallow-free here.
     var sarrs2: string[] = collect_fresh_structarr_names(body, fresh_ret, []);
-    var sa2i: i32 = 0;
-    while (sa2i < sarrs2.len()) {
-        // NOT excluded on `reassigned` any more (#6127) — the self-append rebind
-        // IS a reassignment, and the blunt exclusion left every append-built
-        // struct array leaking one element box per append.
-        // structarr_unsafe_for validates each rebind individually and is
-        // otherwise body_unsafe_for, so it subsumes both former checks.
-        // "A|" rows are append-BUILT markers, not candidates.
-        // As above: site keys, with the "A|" marker riding the same key.
-        var sanm: string = reclaim_site_name(sarrs2[sa2i]);
-        if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
-            && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
-            && !structarr_elem_escapes(body, sanm, borrowable)) {
-            // Append-built candidates take the SEPARATE STRUCTARRA: credit,
-            // which slot_is_reclaimable_structarr additionally gates on the
-            // element struct being all-scalar (#6127 / #6129). Literal-built
-            // ones keep the original credit and the original, looser rule, so
-            // their emitted code is unchanged.
-            if (util.index_of_str(sarrs2, "A|" + sarrs2[sa2i]) >= 0) {
-                out = out.append("STRUCTARRA:" + sarrs2[sa2i]);
-            } else {
-                out = out.append("STRUCTARR:" + sarrs2[sa2i]);
-            }
-        }
-        sa2i = sa2i + 1;
-    }
+    out = reclaimable_structarr(body, borrowable, fresh_ret, sarrs2, out);
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
     // concrete's rc-headered box) — credited "DYN:<name>|<Concrete>" so the
@@ -35567,24 +35065,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // there is the op_dyn_box primitive known, and a non-string primitive cell
     // is fresh by construction, so the escape gates are the whole admission.
     var dyns: string[] = collect_dyn_struct_names(body, body, structs, fresh_ret, struct_ret_fns, []);
-    var dyi: i32 = 0;
-    while (dyi < dyns.len()) {
-        var dentry: string = dyns[dyi];
-        var dbar: i32 = 0;
-        while (dbar < dentry.len() && dentry[dbar] != b'|') { dbar = dbar + 1; }
-        // The entry is "<site key>|<Concrete>"; the key half is what the credit is
-        // keyed on and the bare name is what the gates ask about. A site key
-        // contains no '|', so the split is unambiguous either way.
-        var dsite: str = slice_unchecked(dentry, 0, dbar);
-        var dname: string = reclaim_site_name(dsite + "");
-        if (dsite.len() > 0
-            && util.index_of_str(reassigned, dname) < 0
-            && !body_unsafe_for(body, dname, borrowable, recv_borrow)) {
-            if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dsite); }
-            else { out = out.append("DYN:" + dentry); }
-        }
-        dyi = dyi + 1;
-    }
+    out = reclaimable_dyn_struct(body, borrowable, dyns, reassigned, recv_borrow, out);
     // dyn-Trait ARRAY locals (#4351 slice 3): `var xs: dyn T[] = [<literals>]`
     // — every element is an rc-headered box (prim/string op_dyn_box cell or
     // scalar-only struct box), sole-owned by the buffer when no element
@@ -35593,17 +35074,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // Credited "DARR:<name>|<kinds>" so the exit sweep releases each element
     // by kind ('s' frees the inner string box first) before the buffer dec.
     var darrs: string[] = collect_dyn_arr_names(body, structs, []);
-    var dai: i32 = 0;
-    while (dai < darrs.len()) {
-        var daentry: string = darrs[dai];
-        var dabar: i32 = 0;
-        while (dabar < daentry.len() && daentry[dabar] != b'|') { dabar = dabar + 1; }
-        var daname: str = slice_unchecked(daentry, 0, dabar);
-        if (daname.len() > 0
-            && util.index_of_str(reassigned, daname) < 0
-            && !darr_unsafe_for(body, daname, borrowable)) { out = out.append("DARR:" + daentry); }
-        dai = dai + 1;
-    }
+    out = reclaimable_dyn_arr(body, borrowable, darrs, reassigned, out);
     // Reassigned array-payload ENUM locals: credited "ENUMRE:<E>:<name>" so the StmtAssign
     // deep-drops each superseded box's payload (emit_enum_reclaim_store) instead of the
     // box-only shallow free that leaked it on the register backends. Gated
@@ -68063,4 +67534,725 @@ while (sni < snaps.len()) {
 }
 
     return s;
+}
+
+function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], tretn: string[], tups: string[], out: string[]): string[] {
+var ti: i32 = 0;
+while (ti < tups.len()) {
+    // tups holds BINDING-SITE keys (#7272); every gate below asks about the
+    // variable, so each takes the bare name back out of the key.
+    var tnm: string = reclaim_site_name(tups[ti]);
+    // #7282: a plain `var v = t` alias shares the box, so it shares the
+    // credit. The bind retained it (lower_stmt_var's ExprIdent arm), both
+    // slots sweep, and the refcount arbitrates.
+    var tal: string[] = [];
+    tal = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
+    if (!body_unsafe_for_alias_ret_ok(body, tnm, borrowable, recv_borrow, tal, util.index_of_str(tretn, tnm) >= 0)) {
+        out = out.append("TUP:" + tups[ti]);
+        out = credit_alias_sites(out, "TUP:", tal);
+        // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
+        // assignment builds a fresh tuple (#6127), which lets lower_stmt_assign
+        // release the box the rebind orphans. "TUP:" alone only frees the FINAL
+        // value at scope exit, so a loop rebind leaked one box per iteration.
+        // A separate credit rather than a widened "TUP:" because the two answer
+        // different questions — "TUP:" that the box is non-escaping and freeable
+        // at exit, this that the SUPERSEDED box is freeable at the assignment.
+        if (util.index_of_str(reassigned, tnm) >= 0
+            && all_assigns_fresh_scalar_tuple(body, tnm,
+                    scalar_tuple_decl_ann_all_scalar(body, tnm))) {
+            out = out.append("TUPREBIND:" + tups[ti]);
+        }
+        // The bare-ident element release (#7226) needs the owned-pointer-element
+        // extraction gate the "TUPRC:" class below applies, for exactly the reason
+        // its comment gives: `return t.1` / `var u = t.1` hands the element's
+        // reference to a NEW owner, so releasing it here over-releases it (witnessed
+        // as exit 99 on the escaping form). A scalar read `t.0`, an indexed read
+        // `t.1[j]` and their `.len()` stay borrows and keep the credit.
+        //
+        // The annotation is REQUIRED rather than skipped-when-absent: without a
+        // tuple type there is no way to tell a scalar element copy from a pointer
+        // extraction, and the wrong guess here is an over-release. An un-annotated
+        // tuple keeps "TUP:" and simply does not earn the element release.
+        var tupelemty: string = rctuple_type_of_decl(body, tnm);
+        if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal)) {
+            out = out.append("TUPELEMOK:" + tups[ti]);
+        }
+    }
+    ti = ti + 1;
+}
+
+    return out;
+}
+
+function reclaimable_rc_tuple(body: ast.Stmt[], borrowable: string[], rctups: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], sweeprc: string[], tretn: string[], out: string[]): string[] {
+var rti: i32 = 0;
+while (rti < rctups.len()) {
+    // Binding-SITE keys here too (#7272); the gates take the bare name.
+    var rnm: string = reclaim_site_name(rctups[rti]);
+    var ral: string[] = [];
+    ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
+    if (!body_unsafe_for_alias_ret_ok(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0)) {
+        var rctty: string = rctuple_type_of_decl(body, rnm);
+        if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0)) {
+            out = out.append("TUPRC:" + rctups[rti]);
+            // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
+            // this is the general rule the struct case taught: only the BOX
+            // was retained at the bind, so only the box may be released
+            // twice. "TUPRC:" / "TUPRCS:" drive a type-driven DEEP free
+            // (emit_rctuple_deep_free — every rc position, then the box), so
+            // duplicating them frees each element twice: measured as exit 99
+            // on `var t: (i32, i32[]) = (i, [i, i+1]); var v = t;` with
+            // allocs == frees at live_bytes 0, the census silent as always.
+            //
+            // "TUP:" is the shallow box dec, and the alias has no recorded
+            // element kinds (its init is an ident, not a literal), so
+            // emit_tup_elem_releases emits nothing for it. The source keeps
+            // the one deep free; the alias spends the one extra box
+            // reference. The two classes are documented as disjoint per SLOT,
+            // and these are different slots.
+            out = credit_alias_sites(out, "TUP:", ral);
+            // "TUPRCS:" additionally lets the scope-exit sweep deep-free the FINAL
+            // value (#6127). "TUPRC:" alone is consumed only by the StmtVar rebind
+            // path, so a SINGLE-BIND rc-tuple was credited, entry-zeroed, and then
+            // never released — allocs=200 frees=0 live_bytes=8000 per 100 rounds
+            // with no reassignment anywhere. Three extra conditions on top of
+            // "TUPRC:", each load-bearing:
+            //   - a tuple ANNOTATION, since the sweep frees by TYPE (it has no
+            //     init literal at exit);
+            //   - tuple_arg_payload_retained, so the tuple holds a counted
+            //     reference to every rc-typed position the blind type-driven drop
+            //     dec's: a fresh literal it sole-owns, or a bare ident the
+            //     construction retained (#7281);
+            //   - not reassigned, because the assign path emits no release for
+            //     this class, so the final value's shape cannot be judged from
+            //     the declaration alone.
+            //   - not reassigned, OR every assignment rebuilds a fresh rc-tuple
+            //     of the SAME type (all_assigns_fresh_rc_tuple, #6127). #6251
+            //     excluded reassigned names outright because the assign path
+            //     emitted no release, which left a REBOUND rc-tuple freeing
+            //     nothing at all; lower_stmt_assign now deep-drops the superseded
+            //     chain, and proving every assignment rebuilds the same shape is
+            //     what makes the declaration's type a sound description of the
+            //     final value the sweep frees by.
+            var rc_rebind_ok: boolean = util.index_of_str(reassigned, rnm) < 0
+                || all_assigns_fresh_rc_tuple(body, rnm, rctty, structs);
+            if (rctty != "" && rc_rebind_ok
+                    && util.index_of_str(sweeprc, rctups[rti]) >= 0) {
+                out = out.append("TUPRCS:" + rctups[rti]);
+            }
+        }
+    }
+    rti = rti + 1;
+}
+
+    return out;
+}
+
+function reclaimable_rcenum(rcenums: string[], out: string[]): string[] {
+var rei: i32 = 0;
+while (rei < rcenums.len()) {
+    // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
+    // match + dead-after + non-escaping (name_escapes_outside_stmt skipping the
+    // match) + no moved arm payload, per block — so credit directly.
+    //
+    // An "S:" marker means the name has NO consuming match, so its final value
+    // reaches function exit unreleased and earns the extra "RCENUMS:" sweep
+    // credit beside the rebind one. Both are emitted for that half; the
+    // match-consumed half gets "RCENUM:" alone.
+    var rname: string = rcenums[rei];
+    if (rname.len() > 2 && rname[0] == b'S' && rname[1] == b':') {
+        var bare: string = slice_unchecked(rname, 2, rname.len()) + "";
+        out = out.append("RCENUM:" + bare);
+        out = out.append("RCENUMS:" + bare);
+    } else {
+        out = out.append("RCENUM:" + rname);
+    }
+    rei = rei + 1;
+}
+
+    return out;
+}
+
+function reclaimable_scenum(scenums: string[], out: string[]): string[] {
+var sei: i32 = 0;
+while (sei < scenums.len()) {
+    out = out.append("SCENUMS:" + scenums[sei]);
+    sei = sei + 1;
+}
+
+    return out;
+}
+
+function reclaimable_string(body: ast.Stmt[], borrowable: string[], clo_ok: string[], msites: string[], reassigned: string[], recv_borrow: string[], sfok: string[], str_cands: string[], strs: string[], structs: parser.StructDecl[], out: string[]): string[] {
+var si: i32 = 0;
+while (si < strs.len()) {
+    // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
+    // all ask about the variable, so each takes the bare name back out. The
+    // cross-list `strs` dedupes below compare key-to-key and get sharper for
+    // it: two same-named bindings no longer collapse into one another.
+    var snm: string = reclaim_site_name(strs[si]);
+    // #7282 string limb: a plain `var v = s` alias shares the box, so it
+    // shares the credit. The bind retained it (lower_stmt_var's ExprIdent
+    // arm), both slots sweep, and the refcount arbitrates.
+    //
+    // The two halves are one decision, not two that happen to agree. Without
+    // the forgiveness the alias is a bare-ident escape and `s` earns nothing,
+    // which is the leak this closes (200 allocs / 0 frees per 100 rounds).
+    // With the forgiveness but no alias credit, `s` is swept once while two
+    // slots hold the box — a leak of the alias' retain. Granting both is what
+    // makes inc and dec co-extensive.
+    //
+    // A string is a single box with no field or element walk, so the alias
+    // takes the SAME "STR:" class rather than a shallow variant: there is no
+    // deep release here to withhold from it, which is what makes this simpler
+    // than the struct and rc-tuple cases rather than merely different.
+    var sal: string[] = [];
+    sal = alias_bind_sites_of(body, snm, borrowable, recv_borrow, body, sal);
+    // The alias REASSIGN (`t = s`) joins the alias BIND, on the same terms: the
+    // assignment now RETAINS (keyed on the "STRALIASSRC:" row below), so `t`
+    // holds a counted share rather than a borrow. Its site goes into `sal` so
+    // the escape walker reads the source's use there as the share it is, and
+    // takes the "STR:" credit alongside — the same "granting both is what makes
+    // inc and dec co-extensive" this block already states for the bind.
+    var sra: string[] = str_alias_reassign_target_sites(body, snm, str_cands, body, []);
+    var sal_all: string[] = sal;
+    var sri: i32 = 0;
+    while (sri < sra.len()) { sal_all = push_str_unique(sal_all, sra[sri]); sri = sri + 1; }
+    // A struct-literal string FIELD is the third counted share this credit
+    // survives, alongside the alias bind and the alias reassign: the
+    // construction retains the box and the holder's field drop decs it, so
+    // the source keeps the claim its own release balances. Tagged per
+    // candidate rather than seeded into clo_ok once, because the move gate
+    // inside is a question about THIS name's use at THIS literal.
+    var sfsites: string[] = rc_counted_field_sites(body, snm, structs, sfok, msites, out, "string", []);
+    var str_clo_ok: string[] = clo_ok;
+    var sfi: i32 = 0;
+    while (sfi < sfsites.len()) { str_clo_ok = str_clo_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
+    if (util.index_of_str(reassigned, snm) < 0
+        && !body_unsafe_for_clo_alias(body, snm, borrowable, str_clo_ok, recv_borrow, sal_all)) {
+        out = out.append("STR:" + strs[si]);
+        out = credit_alias_sites(out, "STR:", sal_all);
+        if (sra.len() > 0) {
+            // The source is handing its box on at an assignment, so the retain
+            // has to fire there. lower_stmt_assign keys on this row.
+            out = out.append("STRALIASSRC:" + strs[si]);
+        }
+    }
+    si = si + 1;
+}
+
+    return out;
+}
+
+function reclaimable_litstr_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], lits: string[], reassigned: string[], recv_borrow: string[], str_cands: string[], strs: string[], out: string[]): string[] {
+var li2: i32 = 0;
+while (li2 < lits.len()) {
+    var lnm: string = reclaim_site_name(lits[li2]);
+    var lal: string[] = alias_bind_sites_of(body, lnm, borrowable, recv_borrow, body, []);
+    var lra: string[] = str_alias_reassign_target_sites(body, lnm, str_cands, body, []);
+    var lri: i32 = 0;
+    while (lri < lra.len()) { lal = push_str_unique(lal, lra[lri]); lri = lri + 1; }
+    if (util.index_of_str(strs, lits[li2]) < 0
+        && util.index_of_str(reassigned, lnm) < 0
+        && !litstr_tostring_recv_body(body, lnm)
+        && !body_unsafe_for_clo_alias(body, lnm, borrowable, clo_ok, recv_borrow, lal)) {
+        out = out.append("STR:" + lits[li2]);
+        out = credit_alias_sites(out, "STR:", lal);
+        if (lra.len() > 0) { out = out.append("STRALIASSRC:" + lits[li2]); }
+    }
+    li2 = li2 + 1;
+}
+
+    return out;
+}
+
+function reclaimable_tostr_scalar(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tss: string[], out: string[]): string[] {
+var ti2: i32 = 0;
+while (ti2 < tss.len()) {
+    var tnm: string = reclaim_site_name(tss[ti2]);
+    var tsal: string[] = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, []);
+    if (util.index_of_str(strs, tss[ti2]) < 0
+        && util.index_of_str(reassigned, tnm) < 0
+        && !body_unsafe_for_clo_alias(body, tnm, borrowable, clo_ok, recv_borrow, tsal)) {
+        out = out.append("STR:" + tss[ti2]);
+        out = credit_alias_sites(out, "STR:", tsal);
+    }
+    ti2 = ti2 + 1;
+}
+
+    return out;
+}
+
+function reclaimable_join_strarr(body: ast.Stmt[], borrowable: string[], clo_ok: string[], jss: string[], reassigned: string[], recv_borrow: string[], strs: string[], out: string[]): string[] {
+var ji: i32 = 0;
+while (ji < jss.len()) {
+    var jnm: string = reclaim_site_name(jss[ji]);
+    var jal: string[] = alias_bind_sites_of(body, jnm, borrowable, recv_borrow, body, []);
+    if (util.index_of_str(strs, jss[ji]) < 0
+        && util.index_of_str(reassigned, jnm) < 0
+        && !body_unsafe_for_clo_alias(body, jnm, borrowable, clo_ok, recv_borrow, jal)) {
+        out = out.append("STR:" + jss[ji]);
+        out = credit_alias_sites(out, "STR:", jal);
+    }
+    ji = ji + 1;
+}
+
+    return out;
+}
+
+function reclaimable_trim_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tms: string[], out: string[]): string[] {
+var tmi: i32 = 0;
+while (tmi < tms.len()) {
+    var mnm: string = reclaim_site_name(tms[tmi]);
+    var mal: string[] = alias_bind_sites_of(body, mnm, borrowable, recv_borrow, body, []);
+    if (util.index_of_str(strs, tms[tmi]) < 0
+        && util.index_of_str(reassigned, mnm) < 0
+        && !body_unsafe_for_clo_alias(body, mnm, borrowable, clo_ok, recv_borrow, mal)) {
+        out = out.append("STR:" + tms[tmi]);
+        out = credit_alias_sites(out, "STR:", mal);
+    }
+    tmi = tmi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_replace_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], rps: string[], strs: string[], out: string[]): string[] {
+var rpi: i32 = 0;
+while (rpi < rps.len()) {
+    var rnm: string = reclaim_site_name(rps[rpi]);
+    var rpal: string[] = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, []);
+    if (util.index_of_str(strs, rps[rpi]) < 0
+        && util.index_of_str(reassigned, rnm) < 0
+        && !body_unsafe_for_clo_alias(body, rnm, borrowable, clo_ok, recv_borrow, rpal)) {
+        out = out.append("STR:" + rps[rpi]);
+        out = credit_alias_sites(out, "STR:", rpal);
+    }
+    rpi = rpi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_sfrrecv_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], sfrs: string[], strs: string[], out: string[]): string[] {
+var sfi: i32 = 0;
+while (sfi < sfrs.len()) {
+    var fnm: string = reclaim_site_name(sfrs[sfi]);
+    if (util.index_of_str(strs, sfrs[sfi]) < 0
+        && util.index_of_str(reassigned, fnm) < 0
+        && !body_unsafe_for_clo(body, fnm, borrowable, clo_ok, recv_borrow)) {
+        out = out.append("SFRCAND:" + sfrs[sfi]);
+    }
+    sfi = sfi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_str_accumulator(accs: string[], body: ast.Stmt[], borrowable: string[], out: string[]): string[] {
+var ci: i32 = 0;
+while (ci < accs.len()) {
+    if (!str_accum_unsafe_for(body, reclaim_site_name(accs[ci]), borrowable)) { out = out.append("STR:" + accs[ci]); }
+    ci = ci + 1;
+}
+
+    return out;
+}
+
+function reclaimable_str_ret_call(body: ast.Stmt[], borrowable: string[], frets: string[], recv_borrow: string[], out: string[]): string[] {
+var fri: i32 = 0;
+while (fri < frets.len()) {
+    var frnm: string = reclaim_site_name(frets[fri]);
+    var fral: string[] = alias_bind_sites_of(body, frnm, borrowable, recv_borrow, body, []);
+    if (!body_unsafe_for_alias(body, frnm, borrowable, recv_borrow, fral)) {
+        out = out.append("STR:" + frets[fri]);
+        out = credit_alias_sites(out, "STR:", fral);
+    }
+    fri = fri + 1;
+}
+
+    return out;
+}
+
+function reclaimable_owned_container_read_str(body: ast.Stmt[], borrowable: string[], ocrs: string[], recv_borrow: string[], out: string[]): string[] {
+var oci: i32 = 0;
+while (oci < ocrs.len()) {
+    var ocnm: string = reclaim_site_name(ocrs[oci]);
+    var ocal: string[] = alias_bind_sites_of(body, ocnm, borrowable, recv_borrow, body, []);
+    if (!body_unsafe_for_alias(body, ocnm, borrowable, recv_borrow, ocal)) {
+        out = out.append("STR:" + ocrs[oci]);
+        out = credit_alias_sites(out, "STR:", ocal);
+    }
+    oci = oci + 1;
+}
+
+    return out;
+}
+
+function reclaimable_try_str_binding(body: ast.Stmt[], borrowable: string[], recv_borrow: string[], tstrs: string[], out: string[]): string[] {
+var tsi: i32 = 0;
+while (tsi < tstrs.len()) {
+    var tsnm: string = reclaim_site_name(tstrs[tsi]);
+    var tsal: string[] = alias_bind_sites_of(body, tsnm, borrowable, recv_borrow, body, []);
+    if (!body_unsafe_for_alias(body, tsnm, borrowable, recv_borrow, tsal)) {
+        out = out.append("STR:" + tstrs[tsi]);
+        out = credit_alias_sites(out, "STR:", tsal);
+    }
+    tsi = tsi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_map(aliased_m: string[], body: ast.Stmt[], borrowable: string[], maps: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], out: string[]): string[] {
+var mi: i32 = 0;
+while (mi < maps.len()) {
+    // `maps` holds BINDING-SITE keys (#7253); every gate below asks about the
+    // NAME, and a same-named sibling binding refuses the credit for both — the
+    // gate stays coarser than the key, which is the safe direction.
+    var mapnm: string = reclaim_site_name(maps[mi]);
+    // The two POSITIONAL gates, and their one override: a map whose only
+    // alias and only escape is a bare-ident element of a local, non-escaping
+    // tuple keeps the credit (#7212). The tuple holds an uncounted pointer
+    // nothing on that side ever releases, so the local still owes the one
+    // release, and scope exit is past every read of a local tuple. Asked
+    // only when the plain reading has already refused — it walks the body
+    // again, and the maps it can rescue are the minority that reach it.
+    var pos_ok: boolean = util.index_of_str(aliased_m, mapnm) < 0
+        && !body_unsafe_for(body, mapnm, borrowable, recv_borrow);
+    if (!pos_ok) { pos_ok = map_tuple_elem_borrow_only(body, mapnm, borrowable, recv_borrow, reassigned); }
+    // The reassigned gate admits the sanctioned COW self-reassign
+    // (`m = m.insert(k, v)` — map_nonself_reassigned / #4357): insert at
+    // rc==1 mutates in place and returns the SAME box, so the slot's
+    // value is unchanged and the exit / precise reclaim still frees
+    // exactly one live box. Any other rebind disqualifies as before.
+    // The iteration and identity holes below are NOT overridden.
+    if (!map_nonself_reassigned(body, mapnm)
+        && pos_ok
+        && !map_has_explicit_iter(body, mapnm)
+        // Identity-carrying method hole (insert/without return the
+        // receiver's own box — see expr_map_identity_use): any such use
+        // can smuggle the mapbox past the borrow-only escape walk, so it
+        // excludes the map from reclaim.
+        && !map_identity_escape(body, mapnm)) {
+        out = out.append("MAP:" + maps[mi]);
+        // #4353: a reclaimable map whose every VALUE (resp. KEY) is a fresh
+        // string additionally deep-releases that column — via
+        // __fern_map_free_vs / _ks / _kvs on the register backends (wasm
+        // already deep-releases). Sound because the map is the sole rc=1 owner
+        // of each fresh value / key box.
+        if (map_str_value_reclaimable(body, mapnm)) {
+            out = out.append("MAPVS:" + maps[mi]);
+        }
+        if (map_str_key_reclaimable(body, mapnm)) {
+            out = out.append("MAPKS:" + maps[mi]);
+        }
+        // #4353 item 3: an ARRAY- or STRUCT-valued column whose every value is
+        // a fresh literal — released per element via __fern_map_free_va / _ksva.
+        // Mutually exclusive with MAPVS: by the declared value type.
+        if (map_box_value_reclaimable(body, mapnm, structs)) {
+            out = out.append("MAPVA:" + maps[mi]);
+        }
+    }
+    mi = mi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_strarr(body: ast.Stmt[], borrowable: string[], msites: string[], sarrs: string[], sfok: string[], str_fresh_ret: string[], structs: parser.StructDecl[], out: string[]): string[] {
+var sri: i32 = 0;
+while (sri < sarrs.len()) {
+    // #7282 string[] limb (#7391): a plain `var x: string[] = xs` alias
+    // shares buffer AND elements, so it shares the credit — the bind
+    // retains the buffer, both slots sweep through __fern_str_arr_free,
+    // and its rc gate arbitrates: rc>1 decs and leaves the elements to the
+    // other owner; only the LAST owner's rc==1 walks them. That gate is
+    // what lets the alias take the SAME deep "SARR:" class where a struct
+    // alias must take box-only "NODEEP:" — the walk cannot run twice.
+    var sanm: string = reclaim_site_name(sarrs[sri]);
+    var sasal: string[] = strarr_alias_bind_sites_of(body, sanm, borrowable, str_fresh_ret, body, []);
+    // A struct-literal `string[]` field is a counted share on the same terms
+    // the string family took in #7557, and it needs the DEEP class rather
+    // than a box-only one: the element walk must survive a path where the
+    // holder is never constructed. __fern_str_arr_free's rc gate is what
+    // makes granting both owners the walk safe — only the last one at rc 1
+    // performs it.
+    var sasfld: string[] = rc_counted_field_sites(body, sanm, structs, sfok, msites, out, "string[]", []);
+    if (!strarr_unsafe_for_alias(body, sanm, borrowable, str_fresh_ret, sasal, sasfld)) {
+        out = out.append("SARR:" + sarrs[sri]);
+        out = credit_alias_sites(out, "SARR:", sasal);
+    }
+    sri = sri + 1;
+}
+
+    return out;
+}
+
+function reclaimable_builtin_strarr(body: ast.Stmt[], borrowable: string[], bsarrs: string[], str_fresh_ret: string[], out: string[]): string[] {
+var bri: i32 = 0;
+while (bri < bsarrs.len()) {
+    if (!strarr_unsafe_for(body, reclaim_site_name(bsarrs[bri]), borrowable, str_fresh_ret)) { out = out.append("SARRB:" + bsarrs[bri]); }
+    bri = bri + 1;
+}
+
+    return out;
+}
+
+function reclaimable_arrarr(aarrs: string[], body: ast.Stmt[], borrowable: string[], opt_fresh_ret: SigReg, out: string[]): string[] {
+var aai: i32 = 0;
+while (aai < aarrs.len()) {
+    var aan: string = aarrs[aai];
+    // "S|<name>" entries are strings-fresh MARKERS, not candidates.
+    // NOT excluded on `reassigned` any more (#6092) — the self-append rebind
+    // IS a reassignment, and refusing the credit for it left every
+    // append-BUILT arr-of-arr leaking its rows. arrarr_unsafe_for validates
+    // each rebind individually (only `g = g.append(<row literal>)` passes)
+    // and is otherwise body_unsafe_for, so it subsumes both former checks.
+    // The string[] class has worked this way since #4355.
+    if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
+        && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
+        && !arrarr_row_escapes(body, reclaim_site_name(aan))) {
+        out = out.append("ARRARR:" + aan);
+        // STRICT string-kind credit only when every inner element proved
+        // fresh (slot_is_reclaimable_arrarr consults this one when the
+        // slot's type-aware arrarr_elem says the inners hold strings).
+        if (util.index_of_str(aarrs, "S|" + aan) >= 0) { out = out.append("ARRARRS:" + aan); }
+    }
+    aai = aai + 1;
+}
+
+    return out;
+}
+
+function reclaimable_optaarr(body: ast.Stmt[], borrowable: string[], oaas: string[], plan_fe: string[], plan_on: boolean, reassigned: string[], recv_borrow: string[], out: string[]): string[] {
+var oai: i32 = 0;
+while (oai < oaas.len()) {
+    // `oaas` holds BINDING-SITE keys (#7253); all four gates ask about the
+    // VARIABLE, so each takes the bare name back out of the key.
+    var oanm: string = reclaim_site_name(oaas[oai]);
+    // The whole-name escape gate is plan-routed (step 2, the SCENUMS
+    // pattern); the element-alias and payload gates stay — a bound
+    // `var o = xs[i]` takes no counted retain here (native's Index-shape
+    // dup is not ported), so the name-level plan cannot license them.
+    // The two grants are individually sound, so their UNION is the staged
+    // gate: the credit-side escape proof keeps every pre-routing grant
+    // (the plan still lacks native's returnsNoParamEscape oracle, so a
+    // call-provenance local is plan-tainted through its own init args),
+    // and the plan adds the call-arg/counted-sink grants the credit gate
+    // cannot see. The credit half retires with that oracle's port.
+    var oa_esc_ok: boolean = false;
+    if (!plan_on) { oa_esc_ok = !body_unsafe_for(body, oanm, borrowable, recv_borrow); }
+    else if (!name_is_alias_bound(body, oanm)) {
+        oa_esc_ok = util.index_of_str(plan_fe, oaas[oai]) >= 0;
+    }
+    if (oa_esc_ok
+        && util.index_of_str(reassigned, oanm) < 0
+        && !arrarr_row_escapes(body, oanm)
+        && !optaarr_elem_payload_escapes(body, oanm)) {
+        out = out.append("OPTAARR:" + oaas[oai]);
+    }
+    oai = oai + 1;
+}
+
+    return out;
+}
+
+function reclaimable_opttup(ots: string[], out: string[]): string[] {
+var oti: i32 = 0;
+while (oti < ots.len()) {
+    out = out.append("OPTTUP:" + ots[oti]);
+    oti = oti + 1;
+}
+
+    return out;
+}
+
+function reclaimable_optstruct(oss: string[], out: string[]): string[] {
+var osi: i32 = 0;
+while (osi < oss.len()) {
+    out = out.append("OPTSTRUCT:" + oss[osi]);
+    osi = osi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_optarrarr(oas: string[], out: string[]): string[] {
+var oasi: i32 = 0;
+while (oasi < oas.len()) {
+    out = out.append("OPTARRARR:" + oas[oasi]);
+    oasi = oasi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_optarr(ofa: string[], out: string[]): string[] {
+var ofai: i32 = 0;
+while (ofai < ofa.len()) {
+    out = out.append("OPTARR:" + ofa[ofai]);
+    ofai = ofai + 1;
+}
+
+    return out;
+}
+
+function reclaimable_unmatched_optarr(body: ast.Stmt[], opt_fresh_ret: SigReg, ufa: string[], out: string[]): string[] {
+var ufai: i32 = 0;
+while (ufai < ufa.len()) {
+    out = out.append("OPTARR:" + ufa[ufai]);
+    // #6360: a SECOND tag when this local's Err payload is a proven-fresh
+    // string, so the sweep can fill the tag guard's else-branch for it alone.
+    // OPTARR: is shared with the reassigned+match class, whose slots earned no
+    // such proof — an unconditional Err release there would dangle.
+    // Same key, one gate: the Err-payload proof asks about the variable.
+    // "OPTARRERR:" is a SUB-TAG of the "OPTARR:" entry appended just above —
+    // same slot, same key — so the two are granted and resolved together and
+    // cannot end up keyed differently.
+    if (unmatched_optarr_err_str_fresh(body, reclaim_site_name(ufa[ufai]), opt_fresh_ret)) {
+        out = out.append("OPTARRERR:" + ufa[ufai]);
+    }
+    ufai = ufai + 1;
+}
+
+    return out;
+}
+
+function reclaimable_unmatched_optstr(ufs: string[], out: string[]): string[] {
+var ufsi: i32 = 0;
+while (ufsi < ufs.len()) {
+    out = out.append("OPTSTR:" + ufs[ufsi]);
+    ufsi = ufsi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_arrtup(ats: string[], body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], out: string[]): string[] {
+var ati: i32 = 0;
+while (ati < ats.len()) {
+    // `ats` holds BINDING-SITE keys (#7253); every gate asks about the
+    // VARIABLE, so each takes the bare name back out of the key.
+    var atnm: string = reclaim_site_name(ats[ati]);
+    if (!body_unsafe_for(body, atnm, borrowable, recv_borrow)
+        && util.index_of_str(reassigned, atnm) < 0
+        && !arrarr_row_escapes(body, atnm)
+        && !arrtup_elem_payload_escapes(body, atnm, arrtup_elem_type_of_decl(body, structs, atnm), structs)) {
+        out = out.append("ARRTUP:" + ats[ati]);
+    }
+    ati = ati + 1;
+}
+
+    return out;
+}
+
+function reclaimable_credit(asrows: string[], out: string[]): string[] {
+var asrowi: i32 = 0;
+while (asrowi < asrows.len()) { out = out.append(asrows[asrowi]); asrowi = asrowi + 1; }
+
+    return out;
+}
+
+function reclaimable_arrenum(aens: string[], body: ast.Stmt[], borrowable: string[], msites: string[], recv_borrow: string[], structs: parser.StructDecl[], out: string[]): string[] {
+var aeni: i32 = 0;
+while (aeni < aens.len()) {
+    // The entry is "<site key>#<Enum>"; the site key half is what the credit is
+    // keyed on and the bare name is what the gates ask about. A site key cannot
+    // contain '#', so the split is unambiguous either way.
+    var aesite: string = arrenum_entry_name(aens[aeni]);
+    var aename: string = reclaim_site_name(aesite);
+    // "A|" rows are append-BUILT markers, not candidates. The marked entry
+    // takes the same "ARRENUM:" credit — the release path is identical and
+    // emit_arrenum_reclaim_store is already cow-guarded — but the two blunt
+    // gates have to sanction the self-append rebind, which is the one
+    // reassignment and the one non-`len()` use the class permits.
+    // ONE pair of gates for both the literal/producer and the append-built
+    // candidate. The append exception costs the former nothing — a candidate
+    // that is not append-built has no reassignment at all, because the
+    // collector's `reassigned` check already refused it — so the two paths
+    // that used to be branched here answer identically, and branching them
+    // only risked their exceptions drifting apart.
+    var aeenum: string = arrenum_entry_enum(aens[aeni]);
+    var aeblocked: boolean = arrenum_append_escapes(body, aename, structs, aeenum, msites, false, borrowable)
+        || arrenum_append_unsafe_for(body, aename, borrowable, recv_borrow, structs, aeenum, msites)
+        || arrenum_share_holder_respread(body, aename, structs, msites, borrowable);
+    if (!(aens[aeni].len() > 2 && aens[aeni][0] == b'A' && aens[aeni][1] == b'|')
+        && aesite.len() > 0 && !aeblocked) {
+        out = out.append("ARRENUM:" + aens[aeni]);
+    }
+    aeni = aeni + 1;
+}
+
+    return out;
+}
+
+function reclaimable_structarr(body: ast.Stmt[], borrowable: string[], fresh_ret: string[], sarrs2: string[], out: string[]): string[] {
+var sa2i: i32 = 0;
+while (sa2i < sarrs2.len()) {
+    // NOT excluded on `reassigned` any more (#6127) — the self-append rebind
+    // IS a reassignment, and the blunt exclusion left every append-built
+    // struct array leaking one element box per append.
+    // structarr_unsafe_for validates each rebind individually and is
+    // otherwise body_unsafe_for, so it subsumes both former checks.
+    // "A|" rows are append-BUILT markers, not candidates.
+    // As above: site keys, with the "A|" marker riding the same key.
+    var sanm: string = reclaim_site_name(sarrs2[sa2i]);
+    if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
+        && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
+        && !structarr_elem_escapes(body, sanm, borrowable)) {
+        // Append-built candidates take the SEPARATE STRUCTARRA: credit,
+        // which slot_is_reclaimable_structarr additionally gates on the
+        // element struct being all-scalar (#6127 / #6129). Literal-built
+        // ones keep the original credit and the original, looser rule, so
+        // their emitted code is unchanged.
+        if (util.index_of_str(sarrs2, "A|" + sarrs2[sa2i]) >= 0) {
+            out = out.append("STRUCTARRA:" + sarrs2[sa2i]);
+        } else {
+            out = out.append("STRUCTARR:" + sarrs2[sa2i]);
+        }
+    }
+    sa2i = sa2i + 1;
+}
+
+    return out;
+}
+
+function reclaimable_dyn_struct(body: ast.Stmt[], borrowable: string[], dyns: string[], reassigned: string[], recv_borrow: string[], out: string[]): string[] {
+var dyi: i32 = 0;
+while (dyi < dyns.len()) {
+    var dentry: string = dyns[dyi];
+    var dbar: i32 = 0;
+    while (dbar < dentry.len() && dentry[dbar] != b'|') { dbar = dbar + 1; }
+    // The entry is "<site key>|<Concrete>"; the key half is what the credit is
+    // keyed on and the bare name is what the gates ask about. A site key
+    // contains no '|', so the split is unambiguous either way.
+    var dsite: str = slice_unchecked(dentry, 0, dbar);
+    var dname: string = reclaim_site_name(dsite + "");
+    if (dsite.len() > 0
+        && util.index_of_str(reassigned, dname) < 0
+        && !body_unsafe_for(body, dname, borrowable, recv_borrow)) {
+        if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dsite); }
+        else { out = out.append("DYN:" + dentry); }
+    }
+    dyi = dyi + 1;
+}
+
+    return out;
+}
+
+function reclaimable_dyn_arr(body: ast.Stmt[], borrowable: string[], darrs: string[], reassigned: string[], out: string[]): string[] {
+var dai: i32 = 0;
+while (dai < darrs.len()) {
+    var daentry: string = darrs[dai];
+    var dabar: i32 = 0;
+    while (dabar < daentry.len() && daentry[dabar] != b'|') { dabar = dabar + 1; }
+    var daname: str = slice_unchecked(daentry, 0, dabar);
+    if (daname.len() > 0
+        && util.index_of_str(reassigned, daname) < 0
+        && !darr_unsafe_for(body, daname, borrowable)) { out = out.append("DARR:" + daentry); }
+    dai = dai + 1;
+}
+
+    return out;
 }
