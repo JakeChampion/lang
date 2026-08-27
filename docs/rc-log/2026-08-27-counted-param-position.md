@@ -150,8 +150,18 @@ the walk bails immediately after), the shape-selected 135 (237 s), the widened
 targeted rc set (168 s), every `TestSelfHostStrArr` across all three backends
 (76 s), and the full wasm sweep — 521 tests, zero failures, zero skips (622 s).
 
+## Follow-up correction
+
+The "scope: two cells" section above says the enum, enum-array and struct-array
+`__param` cells are one remaining family. They are TWO, and this record's own
+framing was wrong about it. `enum__param` withholds the caller's release
+entirely, exactly as these cells did, and closed the same way in
+`2026-08-27-enum-counted-param.md`. The two array-of-boxes cells do NOT
+withhold — they release SHALLOW where they need the element walk. Different
+question, own slice.
+
 ## Matrix
 
-`str__param` and `str_arr__param` re-pinned `clean clean`. The construction-retain
-matrix now stands at **4 leaking cells of 35** — `str_arr__fieldread`,
-`enum__param`, `enum_arr__param`, `struct_arr__param`.
+`str__param` and `str_arr__param` re-pinned `clean clean`, taking the
+construction-retain matrix to 4 leaking cells of 35 at the time of writing.
+`enum__param` closed shortly after; it now stands at 3.

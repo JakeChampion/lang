@@ -25,12 +25,19 @@ import (
 // whether the callee keeps a reference, but whether a reference it does keep was
 // RETAINED. A retained one leaves the caller's claim intact.
 //
-// SCOPE, stated rather than implied: this closes str__param and str_arr__param.
-// The enum, enum-array and struct-array `__param` cells are not counted by any
-// tier — param_counted_of admits `string` and scalar-element arrays plus
-// `string[]`, by type — and widening it to a class whose release WALKS element
-// boxes is the deep-release question "ELB:" exists for, with its own proof to
-// write. Those three stay pinned as leaks.
+// SCOPE: this closes str__param, str_arr__param and enum__param. The enum tier
+// ("ECNT:") is the third on this registry and needs one guard the string tier
+// does not: a callee that DESTRUCTURES the enum could hand its payload out
+// uncounted. arrparam_use_ok_stmt already walks a match scrutinee at
+// counted=false, so a bare `match (p)` on the param disqualifies it outright —
+// the callee cannot destructure it at all. `callee_hands_out_payload` pins that.
+//
+// The enum-ARRAY and struct-ARRAY `__param` cells are a DIFFERENT cause and stay
+// pinned as leaks. They do not withhold the caller's release at all: `main`
+// emits __fern_arr_dec in all three positions where the fixed string[] case
+// emits __fern_str_arr_free. The release is SHALLOW where it needs the element
+// walk, so the question there is why the deep credit is refused, not why the
+// argument reads as an escape.
 //
 // ON THE LOAD-BEARING CHECK, measured rather than asserted: replacing the "CNT:"
 // lookup with a blanket admission of every bare-ident call argument does NOT
@@ -241,6 +248,104 @@ function main(): i32 {
     return t % 97;
 }`,
 			want: 94, balance: false,
+		},
+		{
+			// The enum flavour of the repro, and the third tier on this registry.
+			// 102 allocs / 100 frees before, native 102/102.
+			name: "counted_arg_enum",
+			src: `struct P { f: E, n: i32 }
+enum E { A(i32[]), B }
+function mkv(i: i32): E { return E.A([i, i + 1]); }
+
+function round(src: E, i: i32): i32 {
+    var p: P = P { f: src, n: i };
+    return ((match (p.f) { E.A(xs) => xs.len(), E.B => 0 }) + p.n) % 101;
+}
+function main(): i32 {
+    var keep: E = mkv(7);
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(keep, r); t = t + 0; r = r + 1; }
+    t = (t + 0) % 97;
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 5, balance: true,
+		},
+		{
+			// REFUSED by enum_result_cannot_alias: the tier is name-keyed and
+			// type-blind, so ANY enum result could be the argument. Both
+			// compilers leak here; the floor is a leak either way.
+			name: "callee_returns_enum",
+			src: `enum E { A(i32[]), B }
+function mkv(i: i32): E { return E.A([i, i + 1]); }
+function seed(): i32 { return 7; }
+struct P { f: E, n: i32 }
+function esc(src: E, i: i32): E { return src; }
+function main(): i32 {
+    var keep: E = mkv(seed());
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { var o: E = esc(keep, r); t = t + (match (o) { E.A(xs) => xs.len(), E.B => 0 }); r = r + 1; }
+    t = t + (match (keep) { E.A(xs) => xs[0], E.B => 0 });
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 13, balance: false,
+		},
+		{
+			// REFUSED, and this is the hole with no analogue in the string tier: a
+			// callee that destructures the enum could hand the PAYLOAD out
+			// uncounted. arrparam_use_ok_stmt walks a match scrutinee at
+			// counted=false, so a bare `match (p)` on the param disqualifies it
+			// outright — the callee cannot destructure it at all. Matches
+			// native's leak exactly (202/201).
+			name: "callee_hands_out_payload",
+			src: `enum E { A(i32[]), B }
+function mkv(i: i32): E { return E.A([i, i + 1]); }
+function seed(): i32 { return 7; }
+function grab(src: E, i: i32): i32[] { match (src) { E.A(xs) => { return xs; }, E.B => { return []; } } return []; }
+function main(): i32 {
+    var keep: E = mkv(seed());
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { var p: i32[] = grab(keep, r); t = t + p.len() + p[0]; r = r + 1; }
+    var c: i32 = 0;
+    while (c < 200) { var junk: i32[] = [c, c + 1, c + 2]; t = t + junk[2]; c = c + 1; }
+    t = t + (match (keep) { E.A(xs) => xs[0] * 1000, E.B => 0 });
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 70, balance: false,
+		},
+		{
+			// The DESIGNED case, and the one that can fail on behaviour: the holder
+			// is RETURNED, so the retain is live past the frame that built the
+			// enum, and the payload is read back after 20 churn frames have
+			// recycled the freelist. Self-host is clean at 6900/6900 where
+			// NATIVE leaks 900 objects. A wrong walk returns 100, a double free 99.
+			name: "enum_holder_escapes_readback",
+			src: `enum E { A(i32[]), B }
+function mkv(i: i32): E { return E.A([i, i + 1]); }
+function seed(): i32 { return 7; }
+struct P { f: E, n: i32 }
+function keepit(src: E, i: i32): P { return P { f: src, n: i }; }
+function churnjunk(i: i32): i32 { var a: i32[] = [i, i + 1, i + 2]; return a[2]; }
+function round(i: i32): i32 {
+    var k: E = mkv(seed() + i);
+    var h: P = keepit(k, i);
+    var j: i32 = 0; var t: i32 = 0;
+    while (j < 20) { t = t + churnjunk(j); j = j + 1; }
+    var v: i32 = (match (h.f) { E.A(xs) => xs[0] + xs[1], E.B => 0 });
+    if (v != (seed() + i) + (seed() + i + 1)) { return 0 - 1; }
+    return (t + v) % 101;
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
+    while (i < 300) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    if (bad > 0) { return 100; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 83;
+}`,
+			want: 10, balance: true,
 		},
 	}
 }
