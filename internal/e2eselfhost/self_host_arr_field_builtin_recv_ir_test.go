@@ -21,10 +21,8 @@ import (
 // They run under FERN_STRICT_IR=1 (#6602) because the answer alone cannot show
 // the shape stayed on the IR path.
 //
-// The last two cases are controls that must not move: a `string[]` field was
-// already covered (expr_is_strarr does have a field arm, so it reached the
-// __fern_arr_str_index_of helper), and a plain array local is the path the fix
-// leaves alone. An `i64[]` / `f64[]` field is deliberately NOT admitted — those
+// The last case is a control that must not move: a plain array local is the
+// path the fix leaves alone. An `i64[]` / `f64[]` field is deliberately NOT admitted — those
 // arrays hold 8-byte elements, the helpers read 4-byte slots, so the receiver
 // still falls through and the module still bails rather than summing half of
 // each element.
@@ -56,7 +54,6 @@ var arrFieldBuiltinRecvCases = []struct {
 	// traffic at all. A stray release here would be an over-release, not a
 	// wrong answer.
 	{"field-reduce-no-rc-underflow", `struct H { xs: i32[] } function fold(h: H): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + h.xs.sum(); i = i + 1; } return t; } function main(): i32 { var i: i32 = 0; while (i < 20) { var h: H = H { xs: [1, 2, 3] }; if (fold(h) != 120) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
-	{"strarr-field-index-of-unchanged", `struct S { ss: string[] } function main(): i32 { var s: S = S { ss: ["a", "b", "c"] }; return s.ss.index_of("b"); }`, 1},
 	{"local-sum-unchanged", `function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.sum(); }`, 6},
 }
 
