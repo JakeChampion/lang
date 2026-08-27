@@ -34500,145 +34500,14 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // gate below reads an append as a sink.
     var asrows: string[] = arrstruct_credit_rows(body, structs, borrowable, fresh_ret, msites);
     var out: string[] = [];
-    var i: i32 = 0;
-    while (i < fresh.len()) {
-        // Borrow-AWARE escape gate (the same predicate the array reclaim uses in
-        // precise_drop_names): a fresh struct local is reclaim-safe unless it is
-        // used UNSAFELY — returned, stored into a container, passed to a
-        // non-borrowable param, sliced, etc. Unlike the older crude
-        // walk_stmts_escapes, a method RECEIVER (`s = s.emit(op)`) and a
-        // borrowable free-call arg (`s = f(s)`) count as BORROWS, not escapes —
-        // so the builder-threaded EmitState/LowerState (`s = s.method(...)`, the
-        // dominant per-module pattern) becomes reclaimable. The reassign frees the
-        // old box with a cow-guarded, rc-guarded SHALLOW arr_dec (emit_arr_store)
-        // and the final value with the end-of-scope sweep — both box-only, so the
-        // builder's shared field pointers (carried into the new box without an
-        // inc) keep rc==1 across the chain and are freed exactly once at the last
-        // box's death. A `return s` still flags `s` unsafe (escapes), so a
-        // returned builder is never reclaimed. (#3456 — escaping-struct reclaim.)
-        // Also exclude locals reassigned from an ALIAS (`lam = l` / `= x.f` /
-        // `= xs[i]`): after the rebind they hold a BORROW, so reclaiming them
-        // would free memory the aliased container still owns (#3425 stage-2).
-        // The borrow reading of a method RECEIVER above is only good while no
-        // method HANDS THE RECEIVER BACK into something longer-lived — see
-        // recv_borrow_escapes_via_result. Without that gate `keep = b.me()`
-        // left `keep` on b's own box and b's per-rebind reclaim freed it
-        // underneath, which is an over-release rather than a leak.
-        // `fresh` holds BINDING-SITE keys; every gate below asks about the
-        // VARIABLE, so each takes the bare name back out of the key.
-        var fnm: string = reclaim_site_name(fresh[i]);
-        // #7282: a plain `var v: T = t` alias shares the box, so it shares the
-        // credit — and the bind retained it, gated on slot_is_reclaimable_struct
-        // so the retain and the credit are the same set.
-        //
-        // That gate is the CREDIT predicate rather than a type test, which is the
-        // whole of #7368. The reverted clause asked `struct_type_of_slot`, a
-        // type-NAME carrier that is also set for enum names, dyn tags, "clo", the
-        // ELEMENT type of a struct/enum array — and, as the crash showed, for
-        // slots holding plain SCALARS. `__fern_i32_to_string` binds the negated
-        // input, so on INT_MIN the slot held 0x80000000: non-zero, even, above
-        // 0x10000, past every __fern_rc_inc guard, dereferencing 0x7FFFFFF8.
-        var sal: string[] = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, []);
-        // Step-2 routing, struct family: the ESCAPE conjunct is the plan's
-        // per-site verdict (free_eligible_sites_of; the alias forgiveness is
-        // the plan's own #7282 arithmetic, sound because the struct alias
-        // bind retains — credit-keyed at lower_stmt_var's ExprIdent arm, so
-        // the pair stays co-extensive by construction). The other conjuncts
-        // are family knowledge the plan does not carry: the alias-rebind
-        // borrow flag and the receiver-handed-back gates.
-        var st_esc_ok: boolean = false;
-        // The plan's counted-sink forgiveness (#7345) is TAKEN for the struct
-        // family, which is what retires the sink refusal this gate used to
-        // carry. The refusal's stated condition was the release protocol, not
-        // the analysis: a counted sink retains, so the source keeps a claim
-        // nothing released, but two owners each running the struct release
-        // meant two deep field walks — measured as exit 99 on append-rebind.
-        // The exit sweep now releases through emit_struct_field_drops_gated,
-        // so the field walk runs only for the owner that finds rc 1 and the
-        // box dec is what hands the last one its turn. With that in place the
-        // struct row of the construction-retain matrix is clean end to end.
-        // Native agrees on the analysis half too: a StructLit / TupleLit slot
-        // is an INC-ing sink there and does not taint its source.
-        if (plan_on) {
-            st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
-                && !struct_box_sink_stored_stmts(body, fnm, structs, asrows, msites);
-        }
-        else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
-        // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
-        // Its header named the precondition itself — "family knowledge until
-        // assignments carry the co-extensive retain" — and lower_stmt_assign now
-        // carries it, keyed on the "ALIASSRC:" row this branch emits.
-        var bas_ok: boolean = !struct_bare_assigned_src(body, fnm)
-            || bare_assign_targets_all_fresh(body, fnm, fresh);
-        if (st_esc_ok && !reassigned_from_alias(body, fnm)
-            && bas_ok
-            && !struct_returned_bare(body, fnm)
-            && !struct_arg_to_handback(body, fnm, handback)
-            && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
-            && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
-            out = out.append(fresh[i]);
-            // THE ALIAS TAKES A BOX-ONLY RELEASE, NEVER THE DEEP ONE. A struct's
-            // release is a DEEP FIELD DROP plus a box dec, and only the box was
-            // retained at the bind. Two deep drops free every field buffer twice:
-            // measured as exit 99 on `var t: P = P { xs: [..] }; var v: P = t;`,
-            // with allocs == frees at live_bytes 0, so only the underflow counter
-            // dissented.
-            //
-            // "NODEEP:" is exactly the marker for "keep this slot's free BOX-ONLY"
-            // (#3425), so the alias takes the box dec and the source keeps the one
-            // field walk. The box is freed once at rc 0 whichever sweep runs last,
-            // and the fields are dropped exactly once.
-            //
-            // This is the per-type difference the array, tuple and string classes
-            // do not have: their release IS the box dec, so sharing the credit
-            // shares the whole release.
-            out = credit_alias_sites(out, "", sal);
-            out = credit_alias_sites(out, "NODEEP:", sal);
-            // "SINKSHARE:" marks the names this gate admits BECAUSE their box is
-            // a counted share at a struct-literal field — the class the sink
-            // refusal used to reject wholesale. Only they take the rc-gated field
-            // walk at the sweep; every other struct slot keeps the STATIC role
-            // pairing above (source deep, alias box-only), which is measured and
-            // must not move. Gating those too breaks them in both directions: with
-            // the NODEEP alias in place nothing walks the fields (a leak on
-            // struct_alias_in_a_conditional), and without it two owners walk them
-            // (exit 99 on the same shape).
-            if (struct_counted_share_stmts(body, fnm, structs)) {
-                out = out.append("SINKSHARE:" + fresh[i]);
-            }
-            // A forgiven bare-assign SOURCE hands its box on as a COUNTED share, so
-            // both owners reach the release and the field walk must be rc-gated for
-            // the same reason the struct-literal sink is: two static deep walks free
-            // every buffer twice (exit 99).
-            if (struct_bare_assigned_src(body, fnm)) {
-                out = out.append("ALIASSRC:" + fresh[i]);
-                if (util.index_of_str(out, "SINKSHARE:" + fresh[i]) < 0) {
-                    out = out.append("SINKSHARE:" + fresh[i]);
-                }
-            }
-        }
-        i = i + 1;
-    }
+    out = reclaimable_fresh_struct(asrows, body, borrowable, fresh, handback, msites, plan_fe, plan_on, recv_borrow, structs, out);
     // SECOND PASS — the counted alias reassign TARGET. reassigned_from_alias refuses
     // every such name because the slot would hold a BORROW; the retain above makes it
     // a counted share instead, so the premise no longer holds. It runs second because
     // the forgiveness asks whether the SOURCE ended up credited, which is only known
     // once the first pass finishes — and that ordering is the co-extensivity
     // guarantee.
-    var ai2: i32 = 0;
-    while (ai2 < fresh.len()) {
-        var anm: string = reclaim_site_name(fresh[ai2]);
-        if (util.index_of_str(out, fresh[ai2]) < 0
-                && reassigned_from_alias(body, anm)
-                && alias_reassign_sources_counted(body, anm, out)
-                && !struct_returned_bare(body, anm)
-                && !body_unsafe_for_alias(body, anm, borrowable, recv_borrow,
-                       alias_bind_sites_of(body, anm, borrowable, recv_borrow, body, []))) {
-            out = out.append(fresh[ai2]);
-            out = out.append("SINKSHARE:" + fresh[ai2]);
-        }
-        ai2 = ai2 + 1;
-    }
+    out = reclaimable_alias_sink_share(body, borrowable, fresh, recv_borrow, out);
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
     // sweeps' DEEP field drop (emit_struct_field_drops → __struct_drop_<T>) is
     // sound only while the dead box still OWNS its rc fields. A method-RECEIVER
@@ -34782,22 +34651,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // already credited "TUPRC:" is no longer an escape — see the ExprTuple arm of
     // body_unsafe_for_clo. Tagged into the same list rather than threaded as a
     // seventh parameter, the way every other credit in this function is carried.
-    var tprc: i32 = 0;
-    while (tprc < out.len()) {
-        if (out[tprc].len() > 6 && slice_unchecked(out[tprc], 0, 6) == "TUPRC:") {
-            clo_ok = clo_ok.append("TUP:" + slice_unchecked(out[tprc], 6, out[tprc].len()));
-        }
-        // #7226 string limb: a string local at a BARE-IDENT element of a tuple
-        // this pass credited "TUPELEMOK:" is likewise no longer an escape — the
-        // element release gives the construction retain back, so the local's own
-        // box reaches 0. Without this the string never earned "STR:" and its box
-        // was never swept: inc 1, dec 0, 32 B/round unbounded. See the ExprTuple
-        // arm of body_unsafe_for_clo.
-        if (out[tprc].len() > 10 && slice_unchecked(out[tprc], 0, 10) == "TUPELEMOK:") {
-            clo_ok = clo_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
-        }
-        tprc = tprc + 1;
-    }
+    clo_ok = clo_ok_from_tuple_credits(out, clo_ok);
     // The candidate pool an alias-reassign TARGET must come from: a string local
     // bound by a fresh producer or a literal. A target outside it is some other
     // class and earns nothing here.
@@ -68255,4 +68109,168 @@ while (dai < darrs.len()) {
 }
 
     return out;
+}
+
+function reclaimable_fresh_struct(asrows: string[], body: ast.Stmt[], borrowable: string[], fresh: string[], handback: string[], msites: string[], plan_fe: string[], plan_on: boolean, recv_borrow: string[], structs: parser.StructDecl[], out: string[]): string[] {
+var i: i32 = 0;
+while (i < fresh.len()) {
+    // Borrow-AWARE escape gate (the same predicate the array reclaim uses in
+    // precise_drop_names): a fresh struct local is reclaim-safe unless it is
+    // used UNSAFELY — returned, stored into a container, passed to a
+    // non-borrowable param, sliced, etc. Unlike the older crude
+    // walk_stmts_escapes, a method RECEIVER (`s = s.emit(op)`) and a
+    // borrowable free-call arg (`s = f(s)`) count as BORROWS, not escapes —
+    // so the builder-threaded EmitState/LowerState (`s = s.method(...)`, the
+    // dominant per-module pattern) becomes reclaimable. The reassign frees the
+    // old box with a cow-guarded, rc-guarded SHALLOW arr_dec (emit_arr_store)
+    // and the final value with the end-of-scope sweep — both box-only, so the
+    // builder's shared field pointers (carried into the new box without an
+    // inc) keep rc==1 across the chain and are freed exactly once at the last
+    // box's death. A `return s` still flags `s` unsafe (escapes), so a
+    // returned builder is never reclaimed. (#3456 — escaping-struct reclaim.)
+    // Also exclude locals reassigned from an ALIAS (`lam = l` / `= x.f` /
+    // `= xs[i]`): after the rebind they hold a BORROW, so reclaiming them
+    // would free memory the aliased container still owns (#3425 stage-2).
+    // The borrow reading of a method RECEIVER above is only good while no
+    // method HANDS THE RECEIVER BACK into something longer-lived — see
+    // recv_borrow_escapes_via_result. Without that gate `keep = b.me()`
+    // left `keep` on b's own box and b's per-rebind reclaim freed it
+    // underneath, which is an over-release rather than a leak.
+    // `fresh` holds BINDING-SITE keys; every gate below asks about the
+    // VARIABLE, so each takes the bare name back out of the key.
+    var fnm: string = reclaim_site_name(fresh[i]);
+    // #7282: a plain `var v: T = t` alias shares the box, so it shares the
+    // credit — and the bind retained it, gated on slot_is_reclaimable_struct
+    // so the retain and the credit are the same set.
+    //
+    // That gate is the CREDIT predicate rather than a type test, which is the
+    // whole of #7368. The reverted clause asked `struct_type_of_slot`, a
+    // type-NAME carrier that is also set for enum names, dyn tags, "clo", the
+    // ELEMENT type of a struct/enum array — and, as the crash showed, for
+    // slots holding plain SCALARS. `__fern_i32_to_string` binds the negated
+    // input, so on INT_MIN the slot held 0x80000000: non-zero, even, above
+    // 0x10000, past every __fern_rc_inc guard, dereferencing 0x7FFFFFF8.
+    var sal: string[] = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, []);
+    // Step-2 routing, struct family: the ESCAPE conjunct is the plan's
+    // per-site verdict (free_eligible_sites_of; the alias forgiveness is
+    // the plan's own #7282 arithmetic, sound because the struct alias
+    // bind retains — credit-keyed at lower_stmt_var's ExprIdent arm, so
+    // the pair stays co-extensive by construction). The other conjuncts
+    // are family knowledge the plan does not carry: the alias-rebind
+    // borrow flag and the receiver-handed-back gates.
+    var st_esc_ok: boolean = false;
+    // The plan's counted-sink forgiveness (#7345) is TAKEN for the struct
+    // family, which is what retires the sink refusal this gate used to
+    // carry. The refusal's stated condition was the release protocol, not
+    // the analysis: a counted sink retains, so the source keeps a claim
+    // nothing released, but two owners each running the struct release
+    // meant two deep field walks — measured as exit 99 on append-rebind.
+    // The exit sweep now releases through emit_struct_field_drops_gated,
+    // so the field walk runs only for the owner that finds rc 1 and the
+    // box dec is what hands the last one its turn. With that in place the
+    // struct row of the construction-retain matrix is clean end to end.
+    // Native agrees on the analysis half too: a StructLit / TupleLit slot
+    // is an INC-ing sink there and does not taint its source.
+    if (plan_on) {
+        st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
+            && !struct_box_sink_stored_stmts(body, fnm, structs, asrows, msites);
+    }
+    else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
+    // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
+    // Its header named the precondition itself — "family knowledge until
+    // assignments carry the co-extensive retain" — and lower_stmt_assign now
+    // carries it, keyed on the "ALIASSRC:" row this branch emits.
+    var bas_ok: boolean = !struct_bare_assigned_src(body, fnm)
+        || bare_assign_targets_all_fresh(body, fnm, fresh);
+    if (st_esc_ok && !reassigned_from_alias(body, fnm)
+        && bas_ok
+        && !struct_returned_bare(body, fnm)
+        && !struct_arg_to_handback(body, fnm, handback)
+        && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
+        && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
+        out = out.append(fresh[i]);
+        // THE ALIAS TAKES A BOX-ONLY RELEASE, NEVER THE DEEP ONE. A struct's
+        // release is a DEEP FIELD DROP plus a box dec, and only the box was
+        // retained at the bind. Two deep drops free every field buffer twice:
+        // measured as exit 99 on `var t: P = P { xs: [..] }; var v: P = t;`,
+        // with allocs == frees at live_bytes 0, so only the underflow counter
+        // dissented.
+        //
+        // "NODEEP:" is exactly the marker for "keep this slot's free BOX-ONLY"
+        // (#3425), so the alias takes the box dec and the source keeps the one
+        // field walk. The box is freed once at rc 0 whichever sweep runs last,
+        // and the fields are dropped exactly once.
+        //
+        // This is the per-type difference the array, tuple and string classes
+        // do not have: their release IS the box dec, so sharing the credit
+        // shares the whole release.
+        out = credit_alias_sites(out, "", sal);
+        out = credit_alias_sites(out, "NODEEP:", sal);
+        // "SINKSHARE:" marks the names this gate admits BECAUSE their box is
+        // a counted share at a struct-literal field — the class the sink
+        // refusal used to reject wholesale. Only they take the rc-gated field
+        // walk at the sweep; every other struct slot keeps the STATIC role
+        // pairing above (source deep, alias box-only), which is measured and
+        // must not move. Gating those too breaks them in both directions: with
+        // the NODEEP alias in place nothing walks the fields (a leak on
+        // struct_alias_in_a_conditional), and without it two owners walk them
+        // (exit 99 on the same shape).
+        if (struct_counted_share_stmts(body, fnm, structs)) {
+            out = out.append("SINKSHARE:" + fresh[i]);
+        }
+        // A forgiven bare-assign SOURCE hands its box on as a COUNTED share, so
+        // both owners reach the release and the field walk must be rc-gated for
+        // the same reason the struct-literal sink is: two static deep walks free
+        // every buffer twice (exit 99).
+        if (struct_bare_assigned_src(body, fnm)) {
+            out = out.append("ALIASSRC:" + fresh[i]);
+            if (util.index_of_str(out, "SINKSHARE:" + fresh[i]) < 0) {
+                out = out.append("SINKSHARE:" + fresh[i]);
+            }
+        }
+    }
+    i = i + 1;
+}
+
+    return out;
+}
+
+function reclaimable_alias_sink_share(body: ast.Stmt[], borrowable: string[], fresh: string[], recv_borrow: string[], out: string[]): string[] {
+var ai2: i32 = 0;
+while (ai2 < fresh.len()) {
+    var anm: string = reclaim_site_name(fresh[ai2]);
+    if (util.index_of_str(out, fresh[ai2]) < 0
+            && reassigned_from_alias(body, anm)
+            && alias_reassign_sources_counted(body, anm, out)
+            && !struct_returned_bare(body, anm)
+            && !body_unsafe_for_alias(body, anm, borrowable, recv_borrow,
+                   alias_bind_sites_of(body, anm, borrowable, recv_borrow, body, []))) {
+        out = out.append(fresh[ai2]);
+        out = out.append("SINKSHARE:" + fresh[ai2]);
+    }
+    ai2 = ai2 + 1;
+}
+
+    return out;
+}
+
+function clo_ok_from_tuple_credits(out: string[], clo_ok: string[]): string[] {
+var tprc: i32 = 0;
+while (tprc < out.len()) {
+    if (out[tprc].len() > 6 && slice_unchecked(out[tprc], 0, 6) == "TUPRC:") {
+        clo_ok = clo_ok.append("TUP:" + slice_unchecked(out[tprc], 6, out[tprc].len()));
+    }
+    // #7226 string limb: a string local at a BARE-IDENT element of a tuple
+    // this pass credited "TUPELEMOK:" is likewise no longer an escape — the
+    // element release gives the construction retain back, so the local's own
+    // box reaches 0. Without this the string never earned "STR:" and its box
+    // was never swept: inc 1, dec 0, 32 B/round unbounded. See the ExprTuple
+    // arm of body_unsafe_for_clo.
+    if (out[tprc].len() > 10 && slice_unchecked(out[tprc], 0, 10) == "TUPELEMOK:") {
+        clo_ok = clo_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
+    }
+    tprc = tprc + 1;
+}
+
+    return clo_ok;
 }
