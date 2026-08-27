@@ -605,9 +605,12 @@ func usesStrbuf(helpers []string) bool {
 
 // usesEnv reports whether the module references the env() builtin, so _start
 // captures envp and the .bss slot is emitted.
+// usesEnv reports whether the envp snapshot _start takes is needed: env() walks
+// it, and __fern_proc_exec hands it to execve so the child inherits the
+// environment.
 func usesEnv(helpers []string) bool {
 	for _, h := range helpers {
-		if h == "env" {
+		if h == "env" || h == "proc_exec" {
 			return true
 		}
 	}
@@ -704,6 +707,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_inc":             emitRcIncHelper,
 	"__fern_rc_dec":             emitRcDecHelper,
 	"__fern_rc_underflow_count": emitRcUnderflowCountHelper,
+	"proc_fork":                 emitProcForkHelper,
+	"proc_waitpid":              emitProcWaitpidHelper,
+	"proc_exec":                 emitProcExecHelper,
 	"__fern_box_free":           emitBoxFreeHelper,
 	"__fern_closure_drop":       emitClosureDropHelper,
 	"__str_len":                 emitStrLenHelper,
@@ -2074,6 +2080,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_drop_arr_ptr":           {"__fern_rc_dec", "__fern_arr_dec"},
 	"__fern_map_drop":               {"__free"},
 	"__fern_map_hash_seed":          {"random_i32"},
+	"proc_exec":                     {"__alloc"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
 	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
@@ -2437,6 +2444,152 @@ func emitAllocHelper(w func(string, ...any)) {
 	w("\tstr x10, [x8]")
 	emitHeapGuardCall(w)
 	w("\tmov x0, x9")
+	w("\tret")
+}
+
+// The subprocess trio, the arm64 Linux syscalls behind Fern's `proc_*`
+// builtins. Ported from the flat backend, which had them and this one did not
+// — asm_modload_run spawns per-module workers, so it could not be compiled here
+// at all.
+//
+// Strings and arrays are the same shape as everywhere else in this backend: a
+// data pointer with the byte/element count at [p, #-4] and the refcount at
+// [p, #-8]. execve wants NUL-terminated C strings and a NULL-terminated argv,
+// so proc_exec builds both.
+
+// emitProcForkHelper writes `proc_fork() -> i32`: 0 in the child, the
+// child's pid in the parent, -errno on failure.
+//
+// arm64 Linux has no bare fork(2). fork is clone(SIGCHLD, 0, 0, 0, 0) — the
+// kernel's return shape is already the contract, so nothing to normalise.
+func emitProcForkHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("proc_fork"))
+	w("\tmov x0, #17") // flags = SIGCHLD
+	w("\tmov x1, #0")  // newsp = 0: share the parent's, copy-on-write
+	w("\tmov x2, #0")  // parent_tid
+	w("\tmov x3, #0")  // tls
+	w("\tmov x4, #0")  // child_tid
+	w("\tmov x8, #220")
+	w("\tsvc #0")
+	w("\tret")
+}
+
+// emitProcWaitpidHelper writes `proc_waitpid(pid) -> i32`: a blocking
+// wait4, then the status-word decode the shell uses —
+//
+//	WIFEXITED  ((status & 0x7f) == 0) -> (status >> 8) & 0xff
+//	else (signal death)               -> 128 + (status & 0x7f)
+//
+// so a bounds-trapped worker surfaces as its raw exit code, e.g. 134. A failing
+// syscall returns -errno as-is.
+func emitProcWaitpidHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("proc_waitpid"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tsxtw x0, w0")      // pid
+	w("\tadd x1, x29, #16") // &status
+	w("\tmov x2, #0")       // options
+	w("\tmov x3, #0")       // rusage = NULL
+	w("\tmov x8, #260")
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.lt .Lssa_wait_done") // -errno: return as-is
+	w("\tldr w9, [x29, #16]")
+	w("\tand w10, w9, #0x7f") // termination signal (0 = exited)
+	w("\tcbnz w10, .Lssa_wait_sig")
+	w("\tlsr w0, w9, #8")
+	w("\tand w0, w0, #0xff")
+	w("\tb .Lssa_wait_done")
+	w(".Lssa_wait_sig:")
+	w("\tadd w0, w10, #128")
+	w(".Lssa_wait_done:")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitProcExecHelper writes `proc_exec(path, args) -> i32`.
+//
+// It only ever returns on failure (-errno): a successful execve replaces the
+// image. argv is [path, args...] because execve does not prepend argv[0], and
+// the NUL-terminated copies are deliberately never freed — nothing outlives the
+// call to free them for, and on the failure path the process is about to die.
+func emitProcExecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("proc_exec"))
+	w("\tstp x29, x30, [sp, #-80]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tstp x25, x26, [sp, #64]")
+	w("\tmov x19, x1") // args array
+	w("\tmov x25, x0") // path bytes
+
+	// argv[0]: a NUL-terminated copy of path.
+	w("\tldur w20, [x25, #-4]") // path length
+	w("\tadd w0, w20, #1")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x26, x0")
+	w("\tmov x24, #0")
+	w(".Lssa_pexec_pcopy:")
+	w("\tcmp x24, x20")
+	w("\tb.ge .Lssa_pexec_pcopy_done")
+	w("\tldrb w1, [x25, x24]")
+	w("\tstrb w1, [x26, x24]")
+	w("\tadd x24, x24, #1")
+	w("\tb .Lssa_pexec_pcopy")
+	w(".Lssa_pexec_pcopy_done:")
+	w("\tstrb wzr, [x26, x20]")
+
+	// argv itself: argc + 2 slots — argv[0] plus the NULL terminator.
+	w("\tldur w20, [x19, #-4]") // argc
+	w("\tadd w0, w20, #2")
+	w("\tlsl w0, w0, #3")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x21, x0")
+	w("\tstr x26, [x21]")
+	w("\tmov x22, #0")
+
+	w(".Lssa_pexec_arg:")
+	w("\tcmp x22, x20")
+	w("\tb.ge .Lssa_pexec_arg_done")
+	w("\tldr x25, [x19, x22, lsl #3]") // args[i]
+	w("\tldur w24, [x25, #-4]")
+	w("\tadd w0, w24, #1")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x23, x0")
+	w("\tmov x1, #0")
+	w(".Lssa_pexec_acopy:")
+	w("\tcmp x1, x24")
+	w("\tb.ge .Lssa_pexec_acopy_done")
+	w("\tldrb w2, [x25, x1]")
+	w("\tstrb w2, [x23, x1]")
+	w("\tadd x1, x1, #1")
+	w("\tb .Lssa_pexec_acopy")
+	w(".Lssa_pexec_acopy_done:")
+	w("\tstrb wzr, [x23, x24]")
+	w("\tadd x1, x22, #1")
+	w("\tstr x23, [x21, x1, lsl #3]")
+	w("\tadd x22, x22, #1")
+	w("\tb .Lssa_pexec_arg")
+	w(".Lssa_pexec_arg_done:")
+	w("\tadd x1, x20, #1")
+	w("\tstr xzr, [x21, x1, lsl #3]")
+
+	w("\tldr x0, [x21]") // path
+	w("\tmov x1, x21")   // argv
+	w("\tadrp x2, %s", envpSym)
+	w("\tadd x2, x2, #:lo12:%s", envpSym)
+	w("\tldr x2, [x2]")
+	w("\tmov x8, #221")
+	w("\tsvc #0")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x25, x26, [sp, #64]")
+	w("\tldp x29, x30, [sp], #80")
 	w("\tret")
 }
 

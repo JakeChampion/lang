@@ -819,10 +819,38 @@ And the silent skip is now an emit-time error naming the helper. It is the same
 condition the assembler already checks; the point is to fail where a coverage
 gap reads as one.
 
-Note what the sequence has been: five ceilings — arguments, frame size, branch
-reach, literal reach, and a missing helper — each invisible until the one before
-it was lifted, none of them about register allocation. Sizing the work by what
-the compiler was *reporting* at any point would have missed all five.
+### The sixth, named by the fifth's diagnostic
+
+The new emit-time check earned itself back on the very next driver.
+`asm_modload_run` stops with:
+
+```
+arm64ssa: 3 call target(s) the module never defines — a runtime helper this
+backend does not emit: fn_proc_exec, fn_proc_fork, fn_proc_waitpid
+```
+
+Three lines instead of a mangled label out of the assembler forty minutes
+later, and the fix reads straight off it: `asm_modload_run` spawns per-module
+workers, and the flat backend had the subprocess trio while this one did not.
+
+Ported: `proc_fork` (arm64 Linux has no bare `fork(2)` — it is
+`clone(SIGCHLD, 0, 0, 0, 0)`), `proc_waitpid` (a blocking `wait4` plus the
+shell's status decode, so a bounds-trapped worker surfaces as 134 rather than
+as a raw status word), and `proc_exec` (`execve`, building the NUL-terminated
+`argv` the kernel wants from this backend's length-prefixed strings). They also
+pull in the `envp` snapshot `_start` takes, so a program that only ever spawns
+still hands its child an environment.
+
+One trap worth recording: these arrive at codegen under their **bare** builtin
+names — `proc_fork`, not `__fern_proc_fork`, which is the flat backend's
+spelling. Keying the table the other way emits three helpers nobody calls and
+leaves the three calls dangling, which is what the first attempt did.
+
+Note what the sequence has been: six ceilings — arguments, frame size, branch
+reach, literal reach, a missing detector, a missing syscall trio — each
+invisible until the one before it was lifted, none of them about register
+allocation. Sizing the work by what the compiler was *reporting* at any point
+would have missed all six.
 
 ### The interval approximation, and what sizing it missed
 
