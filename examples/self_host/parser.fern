@@ -24,6 +24,7 @@
 //   - Receivers, type-params, `pub`, `import`
 
 import "./ast";
+import "./astwalk";
 import "./util";
 import "./lexer";
 
@@ -4852,86 +4853,50 @@ function arms_have_written_form(written: ast.MatchArm[]): boolean {
     return false;
 }
 
-// expr_mentions / stmts_mention report whether `name` appears as an
-// identifier anywhere in an expression / statement list. Used to detect a
-// self-recursive local function (whose body references its own name) —
-// the closure-valued-local desugar below can't bind the name before the
-// lambda captures it, so recursion needs top-level hoisting (closureconv),
-// which isn't ported yet. Conservative: any mention counts.
-pub function expr_mentions(e: ast.Expr, name: string): boolean {
+// mentions_name is the mentions family's per-node contribution: one node is a
+// mention when it reads `name` as an identifier.
+function mentions_name(e: ast.Expr, name: string, hit: boolean): boolean {
+    if (hit) { return true; }
     match (e) {
         ast.ExprIdent(id) => { return id.name == name; },
-        ast.ExprBinary(b) => { return expr_mentions(b.left, name) || expr_mentions(b.right, name); },
-        ast.ExprUnary(u) => { return expr_mentions(u.operand, name); },
-        ast.ExprCall(c) => {
-            if (expr_mentions(c.callee, name)) { return true; }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (expr_mentions(c.args[i], name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                if (expr_mentions(a.elements[i], name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                if (expr_mentions(t.elements[i], name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprIndex(ix) => { return expr_mentions(ix.array, name) || expr_mentions(ix.index, name); },
-        ast.ExprSlice(sl) => { return expr_mentions(sl.array, name) || expr_mentions(sl.start, name) || expr_mentions(sl.end, name); },
-        ast.ExprFieldAccess(fa) => { return expr_mentions(fa.obj, name); },
-        ast.ExprStructLit(s) => {
-            if (s.has_base && expr_mentions(s.base, name)) { return true; }
-            var i: i32 = 0;
-            while (i < s.field_values.len()) {
-                if (expr_mentions(s.field_values[i], name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprLambda(lm) => { return stmts_mention(lm.body, name); },
         _ => { return false; }
     }
+    return false;
+}
+
+// expr_mentions / stmt_mentions / stmts_mention report whether `name` appears
+// as an identifier anywhere in an expression / statement / statement list. Used
+// to detect a self-recursive local function (whose body references its own
+// name) — the closure-valued-local desugar below can't bind the name before the
+// lambda captures it, so recursion needs top-level hoisting (closureconv),
+// which isn't ported yet. Conservative: any mention counts.
+//
+// Folding these onto astwalk WIDENS them by one node: the hand-written walk's
+// `_ =>` tail had no StmtDefer arm, so a name mentioned only inside a defer
+// action read as absent. astwalk enumerates all twelve Stmt cases, so it is
+// seen. Measured on a parsed `defer cleanup(zz)`: before, no mention; after,
+// one. Widening is the safe direction — every caller treats absence as a
+// licence (irlower's `return false` guards, the self-recursion check here) —
+// but no end-to-end consequence has been demonstrated, so this is recorded as
+// coverage gained, not as a fixed miscompile.
+//
+// The other two nodes the `_ =>` swallowed, ExprFString and ExprMapLit, change
+// nothing: parse_module desugars both to calls before any consumer runs.
+// Checked rather than assumed, because a consumer walking a tree BEFORE that
+// desugar would see a difference.
+pub function expr_mentions(e: ast.Expr, name: string): boolean {
+    function visit(n: ast.Expr, a: boolean): boolean { return mentions_name(n, name, a); }
+    return astwalk.fold_expr(e, false, visit);
 }
 
 pub function stmt_mentions(st: ast.Stmt, name: string): boolean {
-    match (st) {
-        ast.StmtVar(v) => { return expr_mentions(v.init, name); },
-        ast.StmtReturn(r) => { return expr_mentions(r.value, name); },
-        ast.StmtExpr(e) => { return expr_mentions(e.value, name); },
-        ast.StmtAssign(a) => { return expr_mentions(a.value, name); },
-        ast.StmtIf(f) => { return expr_mentions(f.cond, name) || stmts_mention(f.then_body, name) || stmts_mention(f.else_body, name); },
-        ast.StmtWhile(w) => { return expr_mentions(w.cond, name) || stmts_mention(w.body, name); },
-        ast.StmtFor(fr) => { return expr_mentions(fr.iter, name) || stmts_mention(fr.body, name); },
-        ast.StmtMatch(m) => {
-            if (expr_mentions(m.scrutinee, name)) { return true; }
-            var i: i32 = 0;
-            while (i < m.arms.len()) {
-                if (stmts_mention(m.arms[i].body, name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        _ => { return false; }
-    }
+    function visit(n: ast.Expr, a: boolean): boolean { return mentions_name(n, name, a); }
+    return astwalk.fold_stmt(st, false, visit);
 }
 
 pub function stmts_mention(stmts: ast.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (stmt_mentions(stmts[i], name)) { return true; }
-        i = i + 1;
+    for st in stmts {
+        if (stmt_mentions(st, name)) { return true; }
     }
     return false;
 }
