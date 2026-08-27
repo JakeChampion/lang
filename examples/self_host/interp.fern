@@ -683,32 +683,14 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 // same code path without threading a set through Env.
 
 // lam_assign_targets collects assignment targets anywhere in a lambda body,
-// including nested control flow and nested lambdas.
+// including nested control flow and nested lambdas. The whole-subtree fold
+// WIDENS the old hand-written walk onto a `defer` action's assignment and a
+// match-arm guard's nested lambda — shapes where the write previously landed
+// in a private copy — in the direction every other engine already answers.
 function lam_assign_targets(stmts: ast.Stmt[], acc: string[]): string[] {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtAssign(a) => { acc = acc.append(a.target); acc = lam_targets_expr(a.value, acc); },
-            ast.StmtVar(v) => { acc = lam_targets_expr(v.init, acc); },
-            ast.StmtReturn(r) => { acc = lam_targets_expr(r.value, acc); },
-            ast.StmtExpr(x) => { acc = lam_targets_expr(x.value, acc); },
-            ast.StmtIf(f) => {
-                acc = lam_targets_expr(f.cond, acc);
-                acc = lam_assign_targets(f.then_body, acc);
-                acc = lam_assign_targets(f.else_body, acc);
-            },
-            ast.StmtWhile(w) => { acc = lam_targets_expr(w.cond, acc); acc = lam_assign_targets(w.body, acc); },
-            ast.StmtFor(fo) => { acc = lam_targets_expr(fo.iter, acc); acc = lam_assign_targets(fo.body, acc); },
-            ast.StmtMatch(m) => {
-                acc = lam_targets_expr(m.scrutinee, acc);
-                var ai: i32 = 0;
-                while (ai < m.arms.len()) { acc = lam_assign_targets(m.arms[ai].body, acc); ai = ai + 1; }
-            },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return acc;
+    var a: string[] = acc;
+    for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all); }
+    return a;
 }
 
 
@@ -726,70 +708,20 @@ function lam_assign_targets(stmts: ast.Stmt[], acc: string[]): string[] {
 // MUST stay by value, and celling that would hand every closure the last
 // iteration's n. Native answers 3 for that shape, not 6.
 
-// ib_idents_expr / ib_idents_stmts collect every ident mentioned. Used only to
+// ib_ident_of / ib_idents_stmts collect every ident mentioned. Used only to
 // approximate what a lambda READS: a superset is safe here because the result
 // is intersected with the names the enclosing body actually reassigns, and
 // cellify_env only touches names bound in this scope.
-function ib_idents_expr(e: ast.Expr, acc: string[]): string[] {
+function ib_ident_of(e: ast.Expr, acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
-        ast.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
-        ast.ExprBinary(b) => { return ib_idents_expr(b.right, ib_idents_expr(b.left, acc)); },
-        ast.ExprUnary(u) => { return ib_idents_expr(u.operand, acc); },
-        ast.ExprIndex(ix) => { return ib_idents_expr(ix.index, ib_idents_expr(ix.array, acc)); },
-        ast.ExprSlice(sl) => { return ib_idents_expr(sl.end, ib_idents_expr(sl.start, ib_idents_expr(sl.array, acc))); },
-        ast.ExprFieldAccess(fa) => { return ib_idents_expr(fa.obj, acc); },
-        ast.ExprCall(c) => {
-            var a1: string[] = ib_idents_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) { a1 = ib_idents_expr(c.args[i], a1); i = i + 1; }
-            return a1;
-        },
-        ast.ExprArray(ar) => {
-            var a2: string[] = acc;
-            var j: i32 = 0;
-            while (j < ar.elements.len()) { a2 = ib_idents_expr(ar.elements[j], a2); j = j + 1; }
-            return a2;
-        },
-        ast.ExprTuple(t) => {
-            var a3: string[] = acc;
-            var k: i32 = 0;
-            while (k < t.elements.len()) { a3 = ib_idents_expr(t.elements[k], a3); k = k + 1; }
-            return a3;
-        },
-        ast.ExprStructLit(sl2) => {
-            var a4: string[] = acc;
-            if (sl2.has_base) { a4 = ib_idents_expr(sl2.base, a4); }
-            var m: i32 = 0;
-            while (m < sl2.field_values.len()) { a4 = ib_idents_expr(sl2.field_values[m], a4); m = m + 1; }
-            return a4;
-        },
         _ => { return acc; }
     }
     return acc;
 }
 function ib_idents_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => { a = ib_idents_expr(v.init, a); },
-            ast.StmtAssign(asg) => { a = a.append(asg.target); a = ib_idents_expr(asg.value, a); },
-            ast.StmtReturn(r) => { a = ib_idents_expr(r.value, a); },
-            ast.StmtExpr(x) => { a = ib_idents_expr(x.value, a); },
-            ast.StmtIf(f) => { a = ib_idents_expr(f.cond, a); a = ib_idents_stmts(f.then_body, a); a = ib_idents_stmts(f.else_body, a); },
-            ast.StmtWhile(w) => { a = ib_idents_expr(w.cond, a); a = ib_idents_stmts(w.body, a); },
-            ast.StmtFor(fo) => { a = ib_idents_expr(fo.iter, a); a = ib_idents_stmts(fo.body, a); },
-            ast.StmtMatch(m) => {
-                a = ib_idents_expr(m.scrutinee, a);
-                var ai: i32 = 0;
-                while (ai < m.arms.len()) { a = ib_idents_stmts(m.arms[ai].body, a); ai = ai + 1; }
-            },
-            ast.StmtDefer(d) => { a = ib_idents_stmts([d.action], a); },
-            _ => {}
-        }
-        i = i + 1;
-    }
+    for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, ib_ident_of, astwalk.descend_all); }
     return a;
 }
 
@@ -866,13 +798,6 @@ function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
 function stmt_lambda_writes(st: ast.Stmt): string[] {
     var acc: string[] = [];
     return astwalk.fold_stmt_own_pruned(st, acc, lam_target_of, not_lambda_expr);
-}
-
-// lam_targets_expr finds the nested lambdas in one expression and takes each
-// one's assignment targets. Stops AT a lambda: lam_target_of already accounts
-// for its whole body, so descending would re-scan it.
-function lam_targets_expr(e: ast.Expr, acc: string[]): string[] {
-    return astwalk.fold_expr_pruned(e, acc, lam_target_of, not_lambda_expr);
 }
 
 // lam_target_of / lam_read_of are one node's contribution to the two scans —
