@@ -3713,22 +3713,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 1) {  // const_i32
-            // Zero materialises as `xorl %eax, %eax` (2 bytes) rather than
-            // `movq $0, %rax` (7: REX.W + C7 /0 + imm32). Literal zero is
-            // everywhere — every source `0`, zero-init and implicit `return 0`
-            // — so the 5 bytes compound. Mirrors the native x86-64 backend's
-            // OpConstI32 zero case (#4380 lever 2).
-            //
-            // `xor` clobbers FLAGS where `mov` does not, which is only safe
-            // because FLAGS are never live across an IR-op boundary here: each
-            // comparison op emits its own cmp + setcc together, so a const
-            // materialisation can never sit between a flag-setter and its
-            // reader. Do not weaken that invariant without revisiting this.
-            if (o.i32_imm == 0) {
-                s = s.write("    xorl %eax, %eax\n    pushq %rax\n");
-            } else {
-                s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
-            }
+            s = emit_ir_op_const_i32(o, s);
         } else if (o.kind_tag == 2) {  // const_i32_text
             // Integer literal source text spliced into a 32-bit immediate (hex /
             // full u32 range) — byte-identical to asm.fern's ExprNumber.
@@ -3846,39 +3831,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 158) {  // brif
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + ircore.br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind_tag == 87) {  // arr_make
-            // n element values on the operand stack (element n-1 on top).
-            // asm.fern 8-byte layout via __fern_arr_box: data = base+16, rc=1,
-            // len=n, element i at data+(i+1)*8. Pop top-down (element n-1 →
-            // slot n .. element 0 → slot 1); base stays live in %rax across the
-            // pops (they only touch the operand stack), then push it.
-            var n: i32 = o.i32_imm;
-            s = s.write("    movq $" + util.i32_to_string(n) + ", %rdi\n");
-            s = s.write("    call __fern_arr_box\n");
-            var em: i32 = n - 1;
-            while (em >= 0) {
-                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
-                em = em - 1;
-            }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_arr_make(o, s);
         } else if (o.kind_tag == 88) {  // arr_get
-            // pop idx (top), base; element at data+(idx+1)*8. Bounds check first
-            // (docs/ARRAY-BOUNDS.md): idx vs the length prefix at data[0]. The
-            // UNSIGNED compare catches both idx >= len and a negative idx (which
-            // reads as a huge unsigned) with one branch to the shared abort —
-            // which lives in the heap runtime block, so mark the need (a module
-            // whose only array touch is a read must still pull the block in).
-            // Bounds-check elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc,
-            // the foreach counted reads) drops the cmp + jae — the `idx < arr_len`
-            // guard ran immediately before, so the read is provably in bounds. The
-            // existing checked path already relies on i32 indices being upper-bits
-            // clean (its cmpq compares the full %rcx), so the elided form is
-            // equally safe without a separate zero-extend.
-            s = s.need("heap");
-            if (o.i32_imm == 1) {
-                s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
-            } else {
-                s = s.write("    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
-            }
+            s = emit_ir_op_arr_get(o, s);
         } else if (o.kind_tag == 89) {  // arr_set
             // pop val (top), idx, base; store at data+(idx+1)*8. Same bounds
             // check as arr_get: an out-of-range write aborts, never corrupts.
@@ -4129,75 +4084,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
                 s = s.write("    popq %rax\n    popcntl %eax, %eax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
-            // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
-            // The arena is mmap'd lazily; its base is recoverable from the
-            // recorded end (__fern_heap_end = base + heap_size), so base =
-            // end − heap_size. The cursor is 0 until the first alloc, so guard
-            // that case to report 0 (matching native's __fern_heap_bump_bytes).
-            s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");   // cursor (0 if uninit)
-            s = s.write("    movq __fern_heap_end(%rip), %rcx\n");   // arena end = base + heap_size (0 if uninit)
-            s = s.write("    movabs $17179869184, %rdx\n");           // heap_size (0x400000000, 16 GiB)
-            s = s.write("    subq %rdx, %rcx\n");                    // %rcx = base = end − heap_size
-            s = s.write("    movq %rax, %rdx\n");
-            s = s.write("    subq %rcx, %rdx\n");                    // ptr − base
-            s = s.write("    xorq %rcx, %rcx\n");
-            s = s.write("    testq %rax, %rax\n");                   // ptr == 0 ?
-            s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
-            s = s.write("    pushq %rcx\n");
-            s = s.need("heap");
+            s = emit_ir_op_heap_bump_bytes(o, s);
         } else if (o.kind_tag == 229) {  // heap_mark
-            // The arena checkpoint: the cursor, plus a snapshot of BOTH freelist
-            // head tables into their .bss shadows. The heads are snapshotted
-            // rather than cleared because a block allocated AND freed inside the
-            // window leaves a head pointing above the mark — after the rewind, a
-            // pop and a bump would both hand out that address. Restoring the
-            // pre-mark heads drops exactly those entries and keeps the older ones
-            // reusable. One live mark at a time: the shadow is a single buffer,
-            // so marks do not nest. rep movsq clobbers rcx/rsi/rdi, and the
-            // operand stack around an inline op may hold live values in them, so
-            // save and restore rather than lean on a caller-saved rule this
-            // backend does not otherwise rely on.
-            s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
-            s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
-            s = s.write("    leaq __fern_freelist(%rip), %rsi\n");
-            s = s.write("    leaq __fern_freelist_shadow(%rip), %rdi\n");
-            s = s.write("    movl $65536, %ecx\n    rep movsq\n");
-            s = s.write("    leaq __fern_large_freelist(%rip), %rsi\n");
-            s = s.write("    leaq __fern_large_freelist_shadow(%rip), %rdi\n");
-            s = s.write("    movl $2560, %ecx\n    rep movsq\n");
-            s = s.write("    popq %rdi\n    popq %rsi\n    popq %rcx\n");
-            s = s.write("    pushq %rax\n");
-            s = s.need("heap");
+            s = emit_ir_op_heap_mark(o, s);
         } else if (o.kind_tag == 230) {  // heap_release_to
-            // Rewind to the mark and restore both head tables. mark == 0 means
-            // "taken before the first allocation seeded the cursor", i.e. no
-            // checkpoint — leave the cursor alone rather than zero it and hand
-            // out the arena base. Releasing is sound only when nothing allocated
-            // after the mark is still reachable; the caller owns that invariant,
-            // exactly as it owns malloc/free pairing.
-            var hrlo: asmcore.LabelOut = asmcore.fresh_label(s);
-            var hrl_done: string = hrlo.name;
-            s = hrlo.state;
-            s = s.write("    popq %rax\n");
-            s = s.write("    testq %rax, %rax\n");
-            s = s.write("    jz " + hrl_done + "\n");
-            s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
-            s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
-            s = s.write("    leaq __fern_freelist_shadow(%rip), %rsi\n");
-            s = s.write("    leaq __fern_freelist(%rip), %rdi\n");
-            s = s.write("    movl $65536, %ecx\n    rep movsq\n");
-            s = s.write("    leaq __fern_large_freelist_shadow(%rip), %rsi\n");
-            s = s.write("    leaq __fern_large_freelist(%rip), %rdi\n");
-            s = s.write("    movl $2560, %ecx\n    rep movsq\n");
-            s = s.write("    popq %rdi\n    popq %rsi\n    popq %rcx\n");
-            s = s.write(hrl_done + ":\n");
-            // Push the mark back — the one-value-per-expression invariant the
-            // whole op stream keeps (raw_store8 does the same); statement
-            // position drops it. Without this the statement's drop pops a value
-            // nothing pushed, and the next allocation runs on a corrupt frame.
-            // %rax survives both paths: rep movsq clobbers only rcx/rsi/rdi.
-            s = s.write("    pushq %rax\n");
-            s = s.need("heap");
+            s = emit_ir_op_heap_release_to(o, s);
         } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
             // The cliff WEIGHT: bytes copied at the crossings the counter
             // counts, a plain .bss word accumulated by __fern_arr_push's
@@ -4223,52 +4114,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    pushq %rax\n");
             s = s.need("heap");
         } else if (o.kind_tag == 138) {  // struct_make
-            // nf field values on the operand stack (field nf-1 on top, decl
-            // order). Box = [shape_ptr@0, f0@8, f1@16, …]; shape = the interned
-            // struct-name string (asm.fern's layout). The box is rc-HEADERED so
-            // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
-            // refcount AND free it at the right size: allocate via __fern_arr_box
-            // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
-            // data-8 and the block size (cap+3 words) recoverable from cap at
-            // data-16 — exactly the array layout __fern_arr_dec frees. The
-            // returned pointer's slot offsets are unchanged (data+0=shape,
-            // data+(i+1)*8=field i), so every struct/enum reader (struct_get/_set,
-            // variant_is, dyn dispatch's shape@0) stays byte-for-byte correct.
-            // __fern_arr_box writes len=cap at data+0; we overwrite it with the
-            // shape pointer, leaving cap@data-16 (the free-size word) intact.
-            var nf: i32 = o.i32_imm;
-            var smshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-            s = smshp.state;
-            s = s.write("    movq $" + util.i32_to_string(nf + 1) + ", %rdi\n");
-            s = s.write("    call __fern_arr_box\n");
-            s = s.write("    leaq " + smshp.label + "(%rip), %rcx\n");
-            s = s.write("    movq %rcx, (%rax)\n");
-            var em: i32 = nf - 1;
-            while (em >= 0) {
-                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
-                em = em - 1;
-            }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_struct_make(o, s);
         } else if (o.kind_tag == 218) {  // const_struct
-            // The whole box is a compile-time constant (#6149): intern its data
-            // block and push the block's address. No allocation, no field stores
-            // — where struct_make emits an __fern_arr_box call plus nf pops, this
-            // is one leaq. The block is laid out by emit_const_agg_data below to
-            // be byte-identical to what __fern_arr_box + the stores would have
-            // produced, except for the rc word, which is the immortal sentinel.
-            var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(o.str));
-            s = kshp.state;
-            var kpack: string = kshp.label + "|";
-            var kvals: string[] = ir.const_struct_values(o.str);
-            var kv: i32 = 0;
-            while (kv < kvals.len()) {
-                if (kv > 0) { kpack = kpack + ","; }
-                kpack = kpack + kvals[kv];
-                kv = kv + 1;
-            }
-            var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
-            s = kout.state;
-            s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), %rax\n    pushq %rax\n");
+            s = emit_ir_op_const_struct(o, s);
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — exactly like struct_make/tuple_make — so a
@@ -4470,39 +4318,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("sleep_ms");
         } else if (o.kind_tag == 125) {  // map_set
-            // vretain (o.width bit 3, #6880): the VALUE is an aliased array and
-            // this runtime stores the pointer with no rc-inc, so the store owes
-            // it a retain — the exit dec-sweep releases every array slot, and
-            // without this the map's column is left naming a freed block.
-            // Emitted before the pops, off the stack top, so the value's own
-            // slot is untouched; __fn___fern_rc_inc is a leaf clobbering only
-            // %rax/%rcx (dead here — this backend keeps values on the stack).
-            if ((o.width / 8) % 2 == 1) {
-                s = s.write("    movq (%rsp), %rax\n    pushq %rax\n    call __fn___fern_rc_inc\n    addq $8, %rsp\n");
-            }
-            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
-            // %r8 = derived eq fn for a struct/enum key (o.str = "K.eq"), or
-            // 0 for a scalar/string key. __fern_map_set dispatches struct
-            // keys through it (call *) instead of i32/string compare. #2671.
-            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-            // %r9 = per-insert flag bits:
-            //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
-            //     (o.width bit 1, set by irlower's is_fresh_str_temp). map_set
-            //     frees the discarded key on an overwrite so a recurring computed
-            //     key doesn't leak (the register twin of wasm #4876).
-            //   bit 1 = owncols (o.width bit 2, #4353/#5335): every column of the
-            //     map snapshots on read (i32 → kinds 131/132 flag 0, string →
-            //     flag 2), so the map solely owns its column buffers and the grow
-            //     path may free the superseded buffer (__fern_arr_push_owned).
-            // A map with an i64/f64/struct/generic column has owncols clear →
-            // %r9 bit 1 = 0 → old leak-only grow (its reads raw-alias the
-            // buffer), and an i32/interned key is never fresh → bit 0 = 0 → no
-            // overwrite key free: exactly the historical behaviour.
-            var r9bits: i32 = 0;
-            if ((o.width / 2) % 2 == 1) { r9bits = r9bits + 1; }
-            if ((o.width / 4) % 2 == 1) { r9bits = r9bits + 2; }
-            if (r9bits != 0) { s = s.write("    movq $" + util.i32_to_string(r9bits) + ", %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
+            s = emit_ir_op_map_set(o, s);
         } else if (o.kind_tag == 126) {  // map_len
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 127) {  // map_get
@@ -4526,44 +4342,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    pushq %rsi\n    pushq %rdi\n");
             s = s.write("    call __fn___fern_map_delete\n    addq $32, %rsp\n    pushq %rax\n");
         } else if (o.kind_tag == 129) {  // map_get_or
-            // [map, k, default] -> __fern_map_get, then Some payload or default.
-            // The Option box __fern_map_get allocates is consumed RIGHT HERE —
-            // tag + payload extracted, nothing else ever sees it — so it is
-            // released here. Without this every get_or leaked one box (#4357's
-            // dominant residual map leak on this path: ~16 B/call, unbounded in
-            // a loop). The payload was retained separately (__map_retain_val
-            // inside the helper's Fern twin; the asm helper hands out the raw
-            // value), so releasing the shell never touches the value.
-            var golbl: string = lp + "go" + util.i32_to_string(i);
-            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
-            if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    popq %rdx\n");
-            s = s.write("    movq (%rax), %rcx\n    movq 8(%rax), %rsi\n");
-            // The box carries an rc header, so the release has to go through
-            // __fern_arr_dec rather than a raw freelist push: a headered block
-            // threaded straight onto the freelist corrupts it.
-            s = s.write("    pushq %rdx\n    pushq %rcx\n    pushq %rsi\n    pushq %rax\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n    popq %rsi\n    popq %rcx\n    popq %rdx\n");
-            s = s.write("    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
-            s = s.write("    movq %rsi, %rax\n    jmp " + golbl + "_e\n");
-            s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
+            s = emit_ir_op_map_get_or(o, i, lp, s);
         } else if (o.kind_tag == 131) {  // map_keys
-            // parallel-array map: keys[] pointer at box+0. Scalar column
-            // (i32_imm 0, #4353): SNAPSHOT it into a fresh rc=1 copy via
-            // __fern_map_snapshot_col so the result is an owned array (the
-            // exit sweep reclaims the copy, not the map's live buffer) and a
-            // later growing m.set can free the superseded buffer without
-            // dangling this read. i64/f64/struct/generic column (i32_imm 1):
-            // keep the historical raw-buffer alias (and owncols stays clear).
-            if (o.i32_imm == 0) {
-                s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
-            } else if (o.i32_imm == 2) {
-                // String column (#4353 slice 3): snapshot + per-element
-                // rc-inc, so the read owns its strings; the SARR post-loop
-                // release deep-frees the copy via __fern_str_arr_free.
-                s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col_str\n    pushq %rax\n");
-            } else {
-                s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-            }
+            s = emit_ir_op_map_keys(o, s);
         } else if (o.kind_tag == 132) {  // map_values
             // parallel-array map: values[] pointer at box+8. Same scalar-column
             // snapshot / string-column retain-snapshot / pointer-column alias
@@ -4636,298 +4417,29 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
             s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 142) {  // tuple_make
-            // n element values on the operand stack (element n-1 on top). Box =
-            // [e0@0, e1@8, …], n*8 bytes, NO shape slot (numeric `.i` access).
-            // Pop top-down; %rax (box) stays live across the pops. The box is
-            // rc-HEADERED (via __fern_arr_box cap=n, exactly like struct_make) so
-            // a fresh, non-escaping SCALAR tuple local can be reclaimed by the exit
-            // dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) at the right size —
-            // element offsets are unchanged (element i @ i*8; __fern_arr_box writes
-            // len=cap @ data+0, which element 0 overwrites, leaving cap@data-16 for
-            // the free size). Non-reclaimed / escaping tuples just carry the header
-            // and leak as before (no reader inspects it).
-            var tn: i32 = o.i32_imm;
-            s = s.write("    movq $" + util.i32_to_string(tn) + ", %rdi\n    call __fern_arr_box\n");
-            var tem: i32 = tn - 1;
-            while (tem >= 0) {
-                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string(tem * 8) + "(%rax)\n");
-                tem = tem - 1;
-            }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_tuple_make(o, s);
         } else if (o.kind_tag == 143) {  // tuple_get
             // pop tuple box; element at index*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string(o.i32_imm * 8) + "(%rax), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 159) {  // drop
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind_tag == 149 && ircore.is_fern_helper(o.str)) {  // call_direct
-            // Runtime RC helper — asm.fern's stack-arg ABI + symbols (drop-in):
-            // the arg(s) are already on the operand stack (the helper reads
-            // 8(%rsp)); call, caller-clean the args, push the result. The
-            // helpers return the ptr (rc_inc / arr_dec) or the count
-            // (underflow_count) in %rax.
-            // __fern_i32_to_string allocates its result box, so it needs the
-            // heap runtime + its own body (gated on this need in emit_ir_runtime).
-            if (o.str == "__fern_i32_to_string") { s = s.need("heap"); s = s.need("i32_to_string"); }
-            // __fern_u32_to_string likewise allocates its result box (#2649).
-            if (o.str == "__fern_u32_to_string") { s = s.need("heap"); s = s.need("u32_to_string"); }
-            // The WIDE siblings (#5826) — same shape: each allocates its result
-            // box, so each needs the heap runtime plus its own body.
-            if (o.str == "__fern_i64_to_string") { s = s.need("heap"); s = s.need("i64_to_string"); }
-            if (o.str == "__fern_u64_to_string") { s = s.need("heap"); s = s.need("u64_to_string"); }
-            // str_to_i32 is allocation-free (parses in registers), so it needs
-            // only its own body — not the heap runtime.
-            if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
-            // i32[] sum / product + i32.pow (#3457): allocation-free Fern helpers,
-            // so each needs only its own body emitted — NOT the heap runtime. A
-            // call_direct does not imply a need, so without these the call site is
-            // emitted against a body the runtime never writes and the program calls
-            // an undefined symbol.
-            if (o.str == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
-            if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
-            if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
-            // i32_lcm's body calls gcd; runtime_need_deps carries the
-            // i32_lcm → i32_gcd edge, so close_needs emits gcd's body too.
-            if (o.str == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
-            if (o.str == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
-            if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
-            // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
-            // (the Option box they return), so they pull in the heap runtime too.
-            if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
-                s = s.need("heap");
-                s = s.need("arr_i32_min_max_opt");
-            }
-            // chr allocates its 1-char box, so pull in the heap runtime too.
-            if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
-            // arr.join(sep) needs its own body + the heap + str_concat runtime it
-            // builds the result with (mark_arr_str_join sets all three). #5328.
-            if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
-            // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
-            // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
-            // must not carry them, since the strarrarr body's inner
-            // `call __fn___fern_str_arr_free` text would trip the negative
-            // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
-            // through the freelist, so they need the heap runtime.
-            if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
-            // The VIEW-aware string[] element walk (#6544) is gated the same way
-            // and for the same reason: its body's inner
-            // `call __fn___fern_str_view_free` must not appear in a binary that
-            // never reclaims a builtin string[]. Frees through the freelist, so
-            // it needs the heap runtime.
-            // The box-VALUE-column map frees (#4353 item 3) free that column
-            // through __fern_arrarr_free, so they pull in its body as well as
-            // their own.
-            if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
-                s = s.need("heap"); s = s.need("arrarr_free"); s = s.need("map_free_va");
-            }
-            if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
-            if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
-            // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
-            // emits exactly the per-type bodies actually called; needs the heap
-            // runtime (the freelist + __fn___fern_arr_dec it frees through).
-            if (ircore.is_field_reclaim_name(o.str)) { s = s.need("heap"); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
-            // __struct_drop_<T> (#3457): record the type so emit_ir_struct_drops
-            // emits exactly the per-type bodies actually called; needs the heap
-            // runtime (the freelist + __fn___fern_arr_dec it frees through).
-            if (ircore.is_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
-            s = s.write("    call " + ircore.ir_helper_symbol(o.str) + "\n");
-            if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_call_direct_helper(o, s);
         } else if (o.kind_tag == 149) {  // call_direct
-            // User call: the IR pushes args left-to-right (arg0 deepest);
-            // asm.fern's stack ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)).
-            // Reverse the argc on-stack slots, call, pop the args, push %rax.
-            var argc: i32 = o.i32_imm;
-            // FFI __c_call<n> (#4375): a normal call to the shim __fn___c_call<n>
-            // (emitted by emit_ir_runtime). Register its need so the body is
-            // emitted; the shim reads its params off the stack ABI like any
-            // callee and marshals them into the C-ABI registers.
-            if (ircore.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
-            var h: i32 = 0;
-            while (h < argc / 2) {
-                var lo: i32 = h * 8;
-                var hi: i32 = (argc - 1 - h) * 8;
-                s = s.write("    movq " + util.i32_to_string(lo) + "(%rsp), %rax\n");
-                s = s.write("    movq " + util.i32_to_string(hi) + "(%rsp), %rcx\n");
-                s = s.write("    movq %rax, " + util.i32_to_string(hi) + "(%rsp)\n");
-                s = s.write("    movq %rcx, " + util.i32_to_string(lo) + "(%rsp)\n");
-                h = h + 1;
-            }
-            s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
-            if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_call_direct(o, s);
         } else if (o.kind_tag == 147) {  // dyn_dispatch
-            // `dyn Trait` method call. Receiver (arg0) + args are spilled in argc
-            // consecutive locals from base_slot. Read the receiver's shape pointer
-            // and dispatch to the matching `<Type>.<method>` — a compare-branch
-            // chain over every module method named o.str with a struct receiver,
-            // mirroring asm.fern's dyn dispatch. Each matched arm pushes the argc
-            // locals (arg0/receiver on top, asm.fern's ABI) and calls.
-            var dbase: i32 = o.i32_imm;
-            var dargc: i32 = o.width;
-            s = s.write("    movq " + util.i32_to_string(0 - 8 * (dbase + 1)) + "(%rbp), %rax\n");
-            s = s.write("    movq (%rax), %rcx\n");
-            var dend: string = lp + "dynend" + util.i32_to_string(i);
-            var dfi: i32 = 0;
-            var darmn: i32 = 0;
-            while (dfi < s.funcs.len()) {
-                var dfd: parser.FuncDecl = s.funcs[dfi];
-                var ddbn: string = util.base_type_name(dfd.receiver_type);
-                // Dispatch arms: every method named o.str whose receiver is a
-                // struct (value carries its shape) OR a primitive/string (value
-                // is heap-boxed at coercion — docs/DYN-TRAITS.md §4.2.3). A
-                // primitive arm UNBOXES: the receiver local holds the box pointer,
-                // so arg0 is reloaded from box+8, not pushed directly.
-                var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-                if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
-                        && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
-                    var dbn: string = ddbn;
-                    var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
-                    s = dlit.state;
-                    var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    s = s.write("    leaq " + dlit.label + "(%rip), %rdx\n");
-                    s = s.write("    cmpq %rdx, %rcx\n");
-                    s = s.write("    jne " + dnext + "\n");
-                    var dk: i32 = dargc - 1;
-                    while (dk >= 0) {
-                        if (dk == 0 && dprim) {
-                            // arg0 is the receiver: unbox the value from box+8.
-                            s = s.write("    movq " + util.i32_to_string(0 - 8 * (dbase + 1)) + "(%rbp), %rax\n");
-                            s = s.write("    pushq 8(%rax)\n");
-                        } else {
-                            s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dk + 1)) + "(%rbp)\n");
-                        }
-                        dk = dk - 1;
-                    }
-                    s = s.write("    call __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
-                    s = s.write("    addq $" + util.i32_to_string(dargc * 8) + ", %rsp\n");
-                    s = s.write("    pushq %rax\n");
-                    s = s.write("    jmp " + dend + "\n");
-                    s = s.write(dnext + ":\n");
-                    darmn = darmn + 1;
-                }
-                // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
-                // value's offset-0 shape is its VARIANT's interned shape
-                // (struct_make with the variant name — the same identity
-                // op_variant_is reads), never the enum name itself, so the
-                // struct-arm compare above can never identify it. Match the
-                // receiver against EVERY variant of the enum; on any hit call
-                // `<Enum>.<method>` with the variant box as the receiver (its
-                // body's `match (self)` re-reads the variant). Keyed
-                // per-variant — not a blanket last-arm fallback like the AST
-                // backend's — so two enums implementing the same trait
-                // dispatch to their own impls. recv_is_array excludes an
-                // array method's `T[]` receiver (base_type_name strips the
-                // `[]`, which would otherwise mis-read as an enum — #2766).
-                if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
-                        && !asmcore.recv_is_array(dfd.receiver_type)
-                        && irlower.decl_is_enum(s.struct_decls, ddbn)) {
-                    var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    var dvi: i32 = 0;
-                    while (dvi < s.struct_decls.len()) {
-                        if (s.struct_decls[dvi].enum_owner == ddbn) {
-                            var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
-                            s = vlit.state;
-                            s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
-                            s = s.write("    cmpq %rdx, %rcx\n");
-                            s = s.write("    je " + dehit + "\n");
-                        }
-                        dvi = dvi + 1;
-                    }
-                    s = s.write("    jmp " + denext + "\n");
-                    s = s.write(dehit + ":\n");
-                    var dek: i32 = dargc - 1;
-                    while (dek >= 0) {
-                        s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dek + 1)) + "(%rbp)\n");
-                        dek = dek - 1;
-                    }
-                    s = s.write("    call __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
-                    s = s.write("    addq $" + util.i32_to_string(dargc * 8) + ", %rsp\n");
-                    s = s.write("    pushq %rax\n");
-                    s = s.write("    jmp " + dend + "\n");
-                    s = s.write(denext + ":\n");
-                    darmn = darmn + 1;
-                }
-                dfi = dfi + 1;
-            }
-            // No arm matched. Unreachable for a well-typed dyn value, so abort
-            // (exit 134, like __fern_oob_abort) rather than answer 0.
-            s = s.write("    movq $60, %rax\n    movq $134, %rdi\n    syscall\n");
-            s = s.write(dend + ":\n");
+            s = emit_ir_op_dyn_dispatch(o, i, lp, s);
         } else if (o.kind_tag == 146) {  // dyn_box
-            // Heap-box a primitive/string value coerced into a `dyn Trait` slot
-            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
-            // shape = the interned primitive type name (the SAME .S label struct
-            // shapes use), so op_dyn_dispatch's offset-0 compare matches. The
-            // cell is rc-HEADERED via __fern_arr_box(cap=2) — exactly like
-            // opt_make — so a fresh, non-escaping prim/string dyn local can be
-            // freed by the exit sweep's __fern_rc_dec (#4351; the former raw
-            // __fern_alloc cell had no header, so it could never be reclaimed).
-            // Offsets unchanged (arr_box's len@0 is overwritten by the shape;
-            // cap@data-16 drives the free size). The value (one word — an
-            // i32/i64/f64 scalar OR a string box pointer) is on the operand
-            // stack; alloc first (it survives on the machine stack, like
-            // opt_make), then store shape + value, push the cell pointer.
-            var dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-            s = dbl.state;
-            s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
-            s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
-            s = s.write("    movq %rcx, (%rax)\n");
-            s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
+            s = emit_ir_op_dyn_box(o, s);
         } else if (o.kind_tag == 148) {  // dyn_downcast
-            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
-            // pointer carrying its concrete shape @0) is on top of the operand
-            // (machine) stack. Read its shape and compare to T's interned shape
-            // (the SAME .S label struct_make / dyn_dispatch use, so pointer
-            // identity holds): equal → Some(value) box [tag0@0, payload@8]; else
-            // → None box [tag1@0, 0@8] — the ordinary Option box `match` reads.
-            // The dyn value rides the machine stack across __fern_alloc (like
-            // opt_make/dyn_box), so the hit path reuses it as the Some payload.
-            var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
-            s = dcl.state;
-            var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
-            var dcend: string = lp + "dcend" + util.i32_to_string(i);
-            s = s.write("    movq (%rsp), %rax\n");        // peek dyn ptr (left on stack)
-            s = s.write("    movq (%rax), %rcx\n");        // shape @0
-            s = s.write("    leaq " + dcl.label + "(%rip), %rdx\n");
-            s = s.write("    cmpq %rdx, %rcx\n    jne " + dcmiss + "\n");
-            // hit: Some(value) — pop the dyn ptr as payload.
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-            s = s.write("    movq $0, (%rax)\n");
-            s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
-            s = s.write("    jmp " + dcend + "\n");
-            // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
-            s = s.write(dcmiss + ":\n");
-            s = s.write("    addq $8, %rsp\n");
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-            s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
-            s = s.write(dcend + ":\n");
+            s = emit_ir_op_dyn_downcast(o, i, lp, s);
         } else if (o.kind_tag == 6) {  // const_func
             // A function VALUE is the function's code address — push it. Register
             // backends need no funcref table (unlike wasm's table index): the
             // address is the value, dispatched directly by call_indirect.
             s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 150) {  // call_indirect
-            // Indirect call through a function value: the stack holds
-            // [arg0(deepest) … argN-1, fn_addr(top)]. Pop the target into a
-            // scratch reg, reverse the args so arg0 is on TOP (the stack-arg ABI
-            // the callee reads at +16+i*8(%rbp)), call through the pointer, pop
-            // the args, push the result. Same arg discipline as call_direct.
-            var icargc: i32 = o.i32_imm;
-            s = s.write("    popq %r11\n");
-            var ih: i32 = 0;
-            while (ih < icargc / 2) {
-                var ilo: i32 = ih * 8;
-                var ihi: i32 = (icargc - 1 - ih) * 8;
-                s = s.write("    movq " + util.i32_to_string(ilo) + "(%rsp), %rax\n");
-                s = s.write("    movq " + util.i32_to_string(ihi) + "(%rsp), %rcx\n");
-                s = s.write("    movq %rax, " + util.i32_to_string(ihi) + "(%rsp)\n");
-                s = s.write("    movq %rcx, " + util.i32_to_string(ilo) + "(%rsp)\n");
-                ih = ih + 1;
-            }
-            s = s.write("    call *%r11\n");
-            if (icargc > 0) { s = s.write("    addq $" + util.i32_to_string(icargc * 8) + ", %rsp\n"); }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_call_indirect(o, s);
         } else if (o.kind_tag == 4) {  // const_f64
             // Float literal: emit the EXACT IEEE-754 bits (round-to-nearest,
             // ties-to-even) as two little-endian 32-bit halves in .rodata, then
@@ -4943,31 +4455,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    .section .rodata\n" + flb.name + ": .long " + util.i32_to_string(flo) + ", " + util.i32_to_string(fhi) + "\n    .text\n");
             s = s.write("    movsd " + flb.name + "(%rip), %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 11) {  // i32_to_f64
-            // int -> f64, selected by the op's width + signedness. x86 has only
-            // the SIGNED cvtsi2sd, so the two unsigned cases need help: a u32 is
-            // zero-extended into the 64-bit source first (its value fits i64, so
-            // the signed convert is then exact), and a u64 >= 2^63 — where a bare
-            // cvtsi2sd reads the all-ones pattern as -1.0 (#6051) — goes through
-            // the round-to-odd halving `y = (x >> 1) | (x & 1)`, converts that,
-            // and doubles. Mirrors native emitFConvertI64's sequence exactly.
-            // The old unconditional cvtsi2sd was justified by "one instruction
-            // covers i32 and i64 alike"; that holds for every source EXCEPT a
-            // u64 with bit 63 set, which is the whole bug.
-            if (o.width == 64 && o.unsigned) {
-                var u2d: string = lp + "u2d" + util.i32_to_string(i);
-                s = s.write("    popq %rax\n");
-                s = s.write("    testq %rax, %rax\n    js " + u2d + "_big\n");
-                s = s.write("    cvtsi2sd %rax, %xmm0\n    jmp " + u2d + "_done\n");
-                s = s.write(u2d + "_big:\n");
-                s = s.write("    movq %rax, %rcx\n    shrq $1, %rcx\n    andl $1, %eax\n    orq %rax, %rcx\n");
-                s = s.write("    cvtsi2sd %rcx, %xmm0\n    addsd %xmm0, %xmm0\n");
-                s = s.write(u2d + "_done:\n");
-                s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
-            } else if (o.unsigned) {
-                s = s.write("    popq %rax\n    movl %eax, %eax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-            } else {
-                s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-            }
+            s = emit_ir_op_i32_to_f64(o, i, lp, s);
         } else if (o.kind_tag == 12) {  // f64_to_i32
             // Saturating f64 -> i32 / u32 (#4332); needs a per-op-unique label base.
             if (o.unsigned) { s = s.write(ir_f2u_sat(32, lp + util.i32_to_string(i))); }
@@ -5064,19 +4552,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // A loop's closing end is unused (harmless).
             s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else {
-            // binary op: pop rhs (rcx), lhs (rax), combine, push.
-            s = s.write("    popq %rcx\n    popq %rax\n");
-            if (o.kind_tag == 24 || o.kind_tag == 26 || o.kind_tag == 25 || o.kind_tag == 27) {  // div_s, rem_s, div_u, rem_u
-                // Non-trapping guarded div/rem (#4329); needs a per-op-unique
-                // label base — reuse the loop prefix + this op's index.
-                s = s.write(ir_div_guarded(o.kind_tag, o.width, lp + util.i32_to_string(i)));
-            } else {
-                var shimm: string = "";
-                if (i > 0) { shimm = ir_shift_imm_asm(o.kind_tag, o.width, r.ops[i - 1]); }
-                if (shimm.len() > 0) { s = s.write(shimm); }
-                else { s = s.write(ir_bin_asm(o.kind_tag, o.width)); }
-            }
-            s = s.write("    pushq %rax\n");
+            s = emit_ir_op_binary(o, i, lp, r, s);
         }
         i = i + 1;
     }
@@ -5098,6 +4574,650 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     s = s.write("    movq $0, %rax\n");
     s = s.write("    leave\n");
     s = s.write("    ret\n");
+    return s;
+}
+
+function emit_ir_op_const_i32(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Zero materialises as `xorl %eax, %eax` (2 bytes) rather than
+    // `movq $0, %rax` (7: REX.W + C7 /0 + imm32). Literal zero is
+    // everywhere — every source `0`, zero-init and implicit `return 0`
+    // — so the 5 bytes compound. Mirrors the native x86-64 backend's
+    // OpConstI32 zero case (#4380 lever 2).
+    //
+    // `xor` clobbers FLAGS where `mov` does not, which is only safe
+    // because FLAGS are never live across an IR-op boundary here: each
+    // comparison op emits its own cmp + setcc together, so a const
+    // materialisation can never sit between a flag-setter and its
+    // reader. Do not weaken that invariant without revisiting this.
+    if (o.i32_imm == 0) {
+        s = s.write("    xorl %eax, %eax\n    pushq %rax\n");
+    } else {
+        s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+    }
+
+    return s;
+}
+
+function emit_ir_op_arr_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // n element values on the operand stack (element n-1 on top).
+    // asm.fern 8-byte layout via __fern_arr_box: data = base+16, rc=1,
+    // len=n, element i at data+(i+1)*8. Pop top-down (element n-1 →
+    // slot n .. element 0 → slot 1); base stays live in %rax across the
+    // pops (they only touch the operand stack), then push it.
+    var n: i32 = o.i32_imm;
+    s = s.write("    movq $" + util.i32_to_string(n) + ", %rdi\n");
+    s = s.write("    call __fern_arr_box\n");
+    var em: i32 = n - 1;
+    while (em >= 0) {
+        s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
+        em = em - 1;
+    }
+    s = s.write("    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_arr_get(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // pop idx (top), base; element at data+(idx+1)*8. Bounds check first
+    // (docs/ARRAY-BOUNDS.md): idx vs the length prefix at data[0]. The
+    // UNSIGNED compare catches both idx >= len and a negative idx (which
+    // reads as a huge unsigned) with one branch to the shared abort —
+    // which lives in the heap runtime block, so mark the need (a module
+    // whose only array touch is a read must still pull the block in).
+    // Bounds-check elision (#4380 lever 3): i32_imm == 1 (op_arr_get_nc,
+    // the foreach counted reads) drops the cmp + jae — the `idx < arr_len`
+    // guard ran immediately before, so the read is provably in bounds. The
+    // existing checked path already relies on i32 indices being upper-bits
+    // clean (its cmpq compares the full %rcx), so the elided form is
+    // equally safe without a separate zero-extend.
+    s = s.need("heap");
+    if (o.i32_imm == 1) {
+        s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+    } else {
+        s = s.write("    popq %rcx\n    popq %rax\n    cmpq (%rax), %rcx\n    jae __fern_oob_abort\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+    }
+
+    return s;
+}
+
+function emit_ir_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
+    // The arena is mmap'd lazily; its base is recoverable from the
+    // recorded end (__fern_heap_end = base + heap_size), so base =
+    // end − heap_size. The cursor is 0 until the first alloc, so guard
+    // that case to report 0 (matching native's __fern_heap_bump_bytes).
+    s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");   // cursor (0 if uninit)
+    s = s.write("    movq __fern_heap_end(%rip), %rcx\n");   // arena end = base + heap_size (0 if uninit)
+    s = s.write("    movabs $17179869184, %rdx\n");           // heap_size (0x400000000, 16 GiB)
+    s = s.write("    subq %rdx, %rcx\n");                    // %rcx = base = end − heap_size
+    s = s.write("    movq %rax, %rdx\n");
+    s = s.write("    subq %rcx, %rdx\n");                    // ptr − base
+    s = s.write("    xorq %rcx, %rcx\n");
+    s = s.write("    testq %rax, %rax\n");                   // ptr == 0 ?
+    s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
+    s = s.write("    pushq %rcx\n");
+    s = s.need("heap");
+
+    return s;
+}
+
+function emit_ir_op_heap_mark(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // The arena checkpoint: the cursor, plus a snapshot of BOTH freelist
+    // head tables into their .bss shadows. The heads are snapshotted
+    // rather than cleared because a block allocated AND freed inside the
+    // window leaves a head pointing above the mark — after the rewind, a
+    // pop and a bump would both hand out that address. Restoring the
+    // pre-mark heads drops exactly those entries and keeps the older ones
+    // reusable. One live mark at a time: the shadow is a single buffer,
+    // so marks do not nest. rep movsq clobbers rcx/rsi/rdi, and the
+    // operand stack around an inline op may hold live values in them, so
+    // save and restore rather than lean on a caller-saved rule this
+    // backend does not otherwise rely on.
+    s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+    s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    leaq __fern_freelist(%rip), %rsi\n");
+    s = s.write("    leaq __fern_freelist_shadow(%rip), %rdi\n");
+    s = s.write("    movl $65536, %ecx\n    rep movsq\n");
+    s = s.write("    leaq __fern_large_freelist(%rip), %rsi\n");
+    s = s.write("    leaq __fern_large_freelist_shadow(%rip), %rdi\n");
+    s = s.write("    movl $2560, %ecx\n    rep movsq\n");
+    s = s.write("    popq %rdi\n    popq %rsi\n    popq %rcx\n");
+    s = s.write("    pushq %rax\n");
+    s = s.need("heap");
+
+    return s;
+}
+
+function emit_ir_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Rewind to the mark and restore both head tables. mark == 0 means
+    // "taken before the first allocation seeded the cursor", i.e. no
+    // checkpoint — leave the cursor alone rather than zero it and hand
+    // out the arena base. Releasing is sound only when nothing allocated
+    // after the mark is still reachable; the caller owns that invariant,
+    // exactly as it owns malloc/free pairing.
+    var hrlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    var hrl_done: string = hrlo.name;
+    s = hrlo.state;
+    s = s.write("    popq %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz " + hrl_done + "\n");
+    s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
+    s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    leaq __fern_freelist_shadow(%rip), %rsi\n");
+    s = s.write("    leaq __fern_freelist(%rip), %rdi\n");
+    s = s.write("    movl $65536, %ecx\n    rep movsq\n");
+    s = s.write("    leaq __fern_large_freelist_shadow(%rip), %rsi\n");
+    s = s.write("    leaq __fern_large_freelist(%rip), %rdi\n");
+    s = s.write("    movl $2560, %ecx\n    rep movsq\n");
+    s = s.write("    popq %rdi\n    popq %rsi\n    popq %rcx\n");
+    s = s.write(hrl_done + ":\n");
+    // Push the mark back — the one-value-per-expression invariant the
+    // whole op stream keeps (raw_store8 does the same); statement
+    // position drops it. Without this the statement's drop pops a value
+    // nothing pushed, and the next allocation runs on a corrupt frame.
+    // %rax survives both paths: rep movsq clobbers only rcx/rsi/rdi.
+    s = s.write("    pushq %rax\n");
+    s = s.need("heap");
+
+    return s;
+}
+
+function emit_ir_op_struct_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // nf field values on the operand stack (field nf-1 on top, decl
+    // order). Box = [shape_ptr@0, f0@8, f1@16, …]; shape = the interned
+    // struct-name string (asm.fern's layout). The box is rc-HEADERED so
+    // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
+    // refcount AND free it at the right size: allocate via __fern_arr_box
+    // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
+    // data-8 and the block size (cap+3 words) recoverable from cap at
+    // data-16 — exactly the array layout __fern_arr_dec frees. The
+    // returned pointer's slot offsets are unchanged (data+0=shape,
+    // data+(i+1)*8=field i), so every struct/enum reader (struct_get/_set,
+    // variant_is, dyn dispatch's shape@0) stays byte-for-byte correct.
+    // __fern_arr_box writes len=cap at data+0; we overwrite it with the
+    // shape pointer, leaving cap@data-16 (the free-size word) intact.
+    var nf: i32 = o.i32_imm;
+    var smshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+    s = smshp.state;
+    s = s.write("    movq $" + util.i32_to_string(nf + 1) + ", %rdi\n");
+    s = s.write("    call __fern_arr_box\n");
+    s = s.write("    leaq " + smshp.label + "(%rip), %rcx\n");
+    s = s.write("    movq %rcx, (%rax)\n");
+    var em: i32 = nf - 1;
+    while (em >= 0) {
+        s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
+        em = em - 1;
+    }
+    s = s.write("    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_const_struct(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // The whole box is a compile-time constant (#6149): intern its data
+    // block and push the block's address. No allocation, no field stores
+    // — where struct_make emits an __fern_arr_box call plus nf pops, this
+    // is one leaq. The block is laid out by emit_const_agg_data below to
+    // be byte-identical to what __fern_arr_box + the stores would have
+    // produced, except for the rc word, which is the immortal sentinel.
+    var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(o.str));
+    s = kshp.state;
+    var kpack: string = kshp.label + "|";
+    var kvals: string[] = ir.const_struct_values(o.str);
+    var kv: i32 = 0;
+    while (kv < kvals.len()) {
+        if (kv > 0) { kpack = kpack + ","; }
+        kpack = kpack + kvals[kv];
+        kv = kv + 1;
+    }
+    var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
+    s = kout.state;
+    s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), %rax\n    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // vretain (o.width bit 3, #6880): the VALUE is an aliased array and
+    // this runtime stores the pointer with no rc-inc, so the store owes
+    // it a retain — the exit dec-sweep releases every array slot, and
+    // without this the map's column is left naming a freed block.
+    // Emitted before the pops, off the stack top, so the value's own
+    // slot is untouched; __fn___fern_rc_inc is a leaf clobbering only
+    // %rax/%rcx (dead here — this backend keeps values on the stack).
+    if ((o.width / 8) % 2 == 1) {
+        s = s.write("    movq (%rsp), %rax\n    pushq %rax\n    call __fn___fern_rc_inc\n    addq $8, %rsp\n");
+    }
+    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+    // %r8 = derived eq fn for a struct/enum key (o.str = "K.eq"), or
+    // 0 for a scalar/string key. __fern_map_set dispatches struct
+    // keys through it (call *) instead of i32/string compare. #2671.
+    if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
+    // %r9 = per-insert flag bits:
+    //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
+    //     (o.width bit 1, set by irlower's is_fresh_str_temp). map_set
+    //     frees the discarded key on an overwrite so a recurring computed
+    //     key doesn't leak (the register twin of wasm #4876).
+    //   bit 1 = owncols (o.width bit 2, #4353/#5335): every column of the
+    //     map snapshots on read (i32 → kinds 131/132 flag 0, string →
+    //     flag 2), so the map solely owns its column buffers and the grow
+    //     path may free the superseded buffer (__fern_arr_push_owned).
+    // A map with an i64/f64/struct/generic column has owncols clear →
+    // %r9 bit 1 = 0 → old leak-only grow (its reads raw-alias the
+    // buffer), and an i32/interned key is never fresh → bit 0 = 0 → no
+    // overwrite key free: exactly the historical behaviour.
+    var r9bits: i32 = 0;
+    if ((o.width / 2) % 2 == 1) { r9bits = r9bits + 1; }
+    if ((o.width / 4) % 2 == 1) { r9bits = r9bits + 2; }
+    if (r9bits != 0) { s = s.write("    movq $" + util.i32_to_string(r9bits) + ", %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
+    s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_map_get_or(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // [map, k, default] -> __fern_map_get, then Some payload or default.
+    // The Option box __fern_map_get allocates is consumed RIGHT HERE —
+    // tag + payload extracted, nothing else ever sees it — so it is
+    // released here. Without this every get_or leaked one box (#4357's
+    // dominant residual map leak on this path: ~16 B/call, unbounded in
+    // a loop). The payload was retained separately (__map_retain_val
+    // inside the helper's Fern twin; the asm helper hands out the raw
+    // value), so releasing the shell never touches the value.
+    var golbl: string = lp + "go" + util.i32_to_string(i);
+    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
+    if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
+    s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    popq %rdx\n");
+    s = s.write("    movq (%rax), %rcx\n    movq 8(%rax), %rsi\n");
+    // The box carries an rc header, so the release has to go through
+    // __fern_arr_dec rather than a raw freelist push: a headered block
+    // threaded straight onto the freelist corrupts it.
+    s = s.write("    pushq %rdx\n    pushq %rcx\n    pushq %rsi\n    pushq %rax\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n    popq %rsi\n    popq %rcx\n    popq %rdx\n");
+    s = s.write("    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
+    s = s.write("    movq %rsi, %rax\n    jmp " + golbl + "_e\n");
+    s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_map_keys(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // parallel-array map: keys[] pointer at box+0. Scalar column
+    // (i32_imm 0, #4353): SNAPSHOT it into a fresh rc=1 copy via
+    // __fern_map_snapshot_col so the result is an owned array (the
+    // exit sweep reclaims the copy, not the map's live buffer) and a
+    // later growing m.set can free the superseded buffer without
+    // dangling this read. i64/f64/struct/generic column (i32_imm 1):
+    // keep the historical raw-buffer alias (and owncols stays clear).
+    if (o.i32_imm == 0) {
+        s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col\n    pushq %rax\n");
+    } else if (o.i32_imm == 2) {
+        // String column (#4353 slice 3): snapshot + per-element
+        // rc-inc, so the read owns its strings; the SARR post-loop
+        // release deep-frees the copy via __fern_str_arr_free.
+        s = s.write("    popq %rdi\n    movq (%rdi), %rdi\n    call __fern_map_snapshot_col_str\n    pushq %rax\n");
+    } else {
+        s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
+    }
+
+    return s;
+}
+
+function emit_ir_op_tuple_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // n element values on the operand stack (element n-1 on top). Box =
+    // [e0@0, e1@8, …], n*8 bytes, NO shape slot (numeric `.i` access).
+    // Pop top-down; %rax (box) stays live across the pops. The box is
+    // rc-HEADERED (via __fern_arr_box cap=n, exactly like struct_make) so
+    // a fresh, non-escaping SCALAR tuple local can be reclaimed by the exit
+    // dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) at the right size —
+    // element offsets are unchanged (element i @ i*8; __fern_arr_box writes
+    // len=cap @ data+0, which element 0 overwrites, leaving cap@data-16 for
+    // the free size). Non-reclaimed / escaping tuples just carry the header
+    // and leak as before (no reader inspects it).
+    var tn: i32 = o.i32_imm;
+    s = s.write("    movq $" + util.i32_to_string(tn) + ", %rdi\n    call __fern_arr_box\n");
+    var tem: i32 = tn - 1;
+    while (tem >= 0) {
+        s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string(tem * 8) + "(%rax)\n");
+        tem = tem - 1;
+    }
+    s = s.write("    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Runtime RC helper — asm.fern's stack-arg ABI + symbols (drop-in):
+    // the arg(s) are already on the operand stack (the helper reads
+    // 8(%rsp)); call, caller-clean the args, push the result. The
+    // helpers return the ptr (rc_inc / arr_dec) or the count
+    // (underflow_count) in %rax.
+    // __fern_i32_to_string allocates its result box, so it needs the
+    // heap runtime + its own body (gated on this need in emit_ir_runtime).
+    if (o.str == "__fern_i32_to_string") { s = s.need("heap"); s = s.need("i32_to_string"); }
+    // __fern_u32_to_string likewise allocates its result box (#2649).
+    if (o.str == "__fern_u32_to_string") { s = s.need("heap"); s = s.need("u32_to_string"); }
+    // The WIDE siblings (#5826) — same shape: each allocates its result
+    // box, so each needs the heap runtime plus its own body.
+    if (o.str == "__fern_i64_to_string") { s = s.need("heap"); s = s.need("i64_to_string"); }
+    if (o.str == "__fern_u64_to_string") { s = s.need("heap"); s = s.need("u64_to_string"); }
+    // str_to_i32 is allocation-free (parses in registers), so it needs
+    // only its own body — not the heap runtime.
+    if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
+    // i32[] sum / product + i32.pow (#3457): allocation-free Fern helpers,
+    // so each needs only its own body emitted — NOT the heap runtime. A
+    // call_direct does not imply a need, so without these the call site is
+    // emitted against a body the runtime never writes and the program calls
+    // an undefined symbol.
+    if (o.str == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
+    if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
+    if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
+    // i32_lcm's body calls gcd; runtime_need_deps carries the
+    // i32_lcm → i32_gcd edge, so close_needs emits gcd's body too.
+    if (o.str == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
+    if (o.str == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
+    if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
+    // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
+    // (the Option box they return), so they pull in the heap runtime too.
+    if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
+        s = s.need("heap");
+        s = s.need("arr_i32_min_max_opt");
+    }
+    // chr allocates its 1-char box, so pull in the heap runtime too.
+    if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
+    // arr.join(sep) needs its own body + the heap + str_concat runtime it
+    // builds the result with (mark_arr_str_join sets all three). #5328.
+    if (o.str == "__fern_arr_str_join") { s = s.mark_arr_str_join(); }
+    // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
+    // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
+    // must not carry them, since the strarrarr body's inner
+    // `call __fn___fern_str_arr_free` text would trip the negative
+    // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
+    // through the freelist, so they need the heap runtime.
+    if (o.str == "__fern_arrarr_free") { s = s.need("heap"); s = s.need("arrarr_free"); }
+    // The VIEW-aware string[] element walk (#6544) is gated the same way
+    // and for the same reason: its body's inner
+    // `call __fn___fern_str_view_free` must not appear in a binary that
+    // never reclaims a builtin string[]. Frees through the freelist, so
+    // it needs the heap runtime.
+    // The box-VALUE-column map frees (#4353 item 3) free that column
+    // through __fern_arrarr_free, so they pull in its body as well as
+    // their own.
+    if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
+        s = s.need("heap"); s = s.need("arrarr_free"); s = s.need("map_free_va");
+    }
+    if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
+    if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
+    // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
+    // emits exactly the per-type bodies actually called; needs the heap
+    // runtime (the freelist + __fn___fern_arr_dec it frees through).
+    if (ircore.is_field_reclaim_name(o.str)) { s = s.need("heap"); s = s.need("field_reclaim:" + ircore.field_reclaim_type(o.str)); }
+    // __struct_drop_<T> (#3457): record the type so emit_ir_struct_drops
+    // emits exactly the per-type bodies actually called; needs the heap
+    // runtime (the freelist + __fn___fern_arr_dec it frees through).
+    if (ircore.is_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("struct_drop:" + ircore.struct_drop_type(o.str)); }
+    s = s.write("    call " + ircore.ir_helper_symbol(o.str) + "\n");
+    if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
+    s = s.write("    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_call_direct(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // User call: the IR pushes args left-to-right (arg0 deepest);
+    // asm.fern's stack ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)).
+    // Reverse the argc on-stack slots, call, pop the args, push %rax.
+    var argc: i32 = o.i32_imm;
+    // FFI __c_call<n> (#4375): a normal call to the shim __fn___c_call<n>
+    // (emitted by emit_ir_runtime). Register its need so the body is
+    // emitted; the shim reads its params off the stack ABI like any
+    // callee and marshals them into the C-ABI registers.
+    if (ircore.is_c_call(o.str)) { s = s.need("ccall:" + o.str); }
+    var h: i32 = 0;
+    while (h < argc / 2) {
+        var lo: i32 = h * 8;
+        var hi: i32 = (argc - 1 - h) * 8;
+        s = s.write("    movq " + util.i32_to_string(lo) + "(%rsp), %rax\n");
+        s = s.write("    movq " + util.i32_to_string(hi) + "(%rsp), %rcx\n");
+        s = s.write("    movq %rax, " + util.i32_to_string(hi) + "(%rsp)\n");
+        s = s.write("    movq %rcx, " + util.i32_to_string(lo) + "(%rsp)\n");
+        h = h + 1;
+    }
+    s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
+    if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
+    s = s.write("    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // `dyn Trait` method call. Receiver (arg0) + args are spilled in argc
+    // consecutive locals from base_slot. Read the receiver's shape pointer
+    // and dispatch to the matching `<Type>.<method>` — a compare-branch
+    // chain over every module method named o.str with a struct receiver,
+    // mirroring asm.fern's dyn dispatch. Each matched arm pushes the argc
+    // locals (arg0/receiver on top, asm.fern's ABI) and calls.
+    var dbase: i32 = o.i32_imm;
+    var dargc: i32 = o.width;
+    s = s.write("    movq " + util.i32_to_string(0 - 8 * (dbase + 1)) + "(%rbp), %rax\n");
+    s = s.write("    movq (%rax), %rcx\n");
+    var dend: string = lp + "dynend" + util.i32_to_string(i);
+    var dfi: i32 = 0;
+    var darmn: i32 = 0;
+    while (dfi < s.funcs.len()) {
+        var dfd: parser.FuncDecl = s.funcs[dfi];
+        var ddbn: string = util.base_type_name(dfd.receiver_type);
+        // Dispatch arms: every method named o.str whose receiver is a
+        // struct (value carries its shape) OR a primitive/string (value
+        // is heap-boxed at coercion — docs/DYN-TRAITS.md §4.2.3). A
+        // primitive arm UNBOXES: the receiver local holds the box pointer,
+        // so arg0 is reloaded from box+8, not pushed directly.
+        var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
+        if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
+                && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
+            var dbn: string = ddbn;
+            var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
+            s = dlit.state;
+            var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+            s = s.write("    leaq " + dlit.label + "(%rip), %rdx\n");
+            s = s.write("    cmpq %rdx, %rcx\n");
+            s = s.write("    jne " + dnext + "\n");
+            var dk: i32 = dargc - 1;
+            while (dk >= 0) {
+                if (dk == 0 && dprim) {
+                    // arg0 is the receiver: unbox the value from box+8.
+                    s = s.write("    movq " + util.i32_to_string(0 - 8 * (dbase + 1)) + "(%rbp), %rax\n");
+                    s = s.write("    pushq 8(%rax)\n");
+                } else {
+                    s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dk + 1)) + "(%rbp)\n");
+                }
+                dk = dk - 1;
+            }
+            s = s.write("    call __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
+            s = s.write("    addq $" + util.i32_to_string(dargc * 8) + ", %rsp\n");
+            s = s.write("    pushq %rax\n");
+            s = s.write("    jmp " + dend + "\n");
+            s = s.write(dnext + ":\n");
+            darmn = darmn + 1;
+        }
+        // ENUM-receiver arm (`impl Trait for <Enum>`, #4785): an enum
+        // value's offset-0 shape is its VARIANT's interned shape
+        // (struct_make with the variant name — the same identity
+        // op_variant_is reads), never the enum name itself, so the
+        // struct-arm compare above can never identify it. Match the
+        // receiver against EVERY variant of the enum; on any hit call
+        // `<Enum>.<method>` with the variant box as the receiver (its
+        // body's `match (self)` re-reads the variant). Keyed
+        // per-variant — not a blanket last-arm fallback like the AST
+        // backend's — so two enums implementing the same trait
+        // dispatch to their own impls. recv_is_array excludes an
+        // array method's `T[]` receiver (base_type_name strips the
+        // `[]`, which would otherwise mis-read as an enum — #2766).
+        if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
+                && !asmcore.recv_is_array(dfd.receiver_type)
+                && irlower.decl_is_enum(s.struct_decls, ddbn)) {
+            var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+            var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+            var dvi: i32 = 0;
+            while (dvi < s.struct_decls.len()) {
+                if (s.struct_decls[dvi].enum_owner == ddbn) {
+                    var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
+                    s = vlit.state;
+                    s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
+                    s = s.write("    cmpq %rdx, %rcx\n");
+                    s = s.write("    je " + dehit + "\n");
+                }
+                dvi = dvi + 1;
+            }
+            s = s.write("    jmp " + denext + "\n");
+            s = s.write(dehit + ":\n");
+            var dek: i32 = dargc - 1;
+            while (dek >= 0) {
+                s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dek + 1)) + "(%rbp)\n");
+                dek = dek - 1;
+            }
+            s = s.write("    call __fn_" + asmcore.sanitize_label(ddbn + "." + dfd.name) + "\n");
+            s = s.write("    addq $" + util.i32_to_string(dargc * 8) + ", %rsp\n");
+            s = s.write("    pushq %rax\n");
+            s = s.write("    jmp " + dend + "\n");
+            s = s.write(denext + ":\n");
+            darmn = darmn + 1;
+        }
+        dfi = dfi + 1;
+    }
+    // No arm matched. Unreachable for a well-typed dyn value, so abort
+    // (exit 134, like __fern_oob_abort) rather than answer 0.
+    s = s.write("    movq $60, %rax\n    movq $134, %rdi\n    syscall\n");
+    s = s.write(dend + ":\n");
+
+    return s;
+}
+
+function emit_ir_op_dyn_box(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Heap-box a primitive/string value coerced into a `dyn Trait` slot
+    // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
+    // shape = the interned primitive type name (the SAME .S label struct
+    // shapes use), so op_dyn_dispatch's offset-0 compare matches. The
+    // cell is rc-HEADERED via __fern_arr_box(cap=2) — exactly like
+    // opt_make — so a fresh, non-escaping prim/string dyn local can be
+    // freed by the exit sweep's __fern_rc_dec (#4351; the former raw
+    // __fern_alloc cell had no header, so it could never be reclaimed).
+    // Offsets unchanged (arr_box's len@0 is overwritten by the shape;
+    // cap@data-16 drives the free size). The value (one word — an
+    // i32/i64/f64 scalar OR a string box pointer) is on the operand
+    // stack; alloc first (it survives on the machine stack, like
+    // opt_make), then store shape + value, push the cell pointer.
+    var dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+    s = dbl.state;
+    s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
+    s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
+    s = s.write("    movq %rcx, (%rax)\n");
+    s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+    // pointer carrying its concrete shape @0) is on top of the operand
+    // (machine) stack. Read its shape and compare to T's interned shape
+    // (the SAME .S label struct_make / dyn_dispatch use, so pointer
+    // identity holds): equal → Some(value) box [tag0@0, payload@8]; else
+    // → None box [tag1@0, 0@8] — the ordinary Option box `match` reads.
+    // The dyn value rides the machine stack across __fern_alloc (like
+    // opt_make/dyn_box), so the hit path reuses it as the Some payload.
+    var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+    s = dcl.state;
+    var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
+    var dcend: string = lp + "dcend" + util.i32_to_string(i);
+    s = s.write("    movq (%rsp), %rax\n");        // peek dyn ptr (left on stack)
+    s = s.write("    movq (%rax), %rcx\n");        // shape @0
+    s = s.write("    leaq " + dcl.label + "(%rip), %rdx\n");
+    s = s.write("    cmpq %rdx, %rcx\n    jne " + dcmiss + "\n");
+    // hit: Some(value) — pop the dyn ptr as payload.
+    s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+    s = s.write("    movq $0, (%rax)\n");
+    s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
+    s = s.write("    jmp " + dcend + "\n");
+    // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
+    s = s.write(dcmiss + ":\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+    s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
+    s = s.write(dcend + ":\n");
+
+    return s;
+}
+
+function emit_ir_op_call_indirect(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    // Indirect call through a function value: the stack holds
+    // [arg0(deepest) … argN-1, fn_addr(top)]. Pop the target into a
+    // scratch reg, reverse the args so arg0 is on TOP (the stack-arg ABI
+    // the callee reads at +16+i*8(%rbp)), call through the pointer, pop
+    // the args, push the result. Same arg discipline as call_direct.
+    var icargc: i32 = o.i32_imm;
+    s = s.write("    popq %r11\n");
+    var ih: i32 = 0;
+    while (ih < icargc / 2) {
+        var ilo: i32 = ih * 8;
+        var ihi: i32 = (icargc - 1 - ih) * 8;
+        s = s.write("    movq " + util.i32_to_string(ilo) + "(%rsp), %rax\n");
+        s = s.write("    movq " + util.i32_to_string(ihi) + "(%rsp), %rcx\n");
+        s = s.write("    movq %rax, " + util.i32_to_string(ihi) + "(%rsp)\n");
+        s = s.write("    movq %rcx, " + util.i32_to_string(ilo) + "(%rsp)\n");
+        ih = ih + 1;
+    }
+    s = s.write("    call *%r11\n");
+    if (icargc > 0) { s = s.write("    addq $" + util.i32_to_string(icargc * 8) + ", %rsp\n"); }
+    s = s.write("    pushq %rax\n");
+
+    return s;
+}
+
+function emit_ir_op_i32_to_f64(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    // int -> f64, selected by the op's width + signedness. x86 has only
+    // the SIGNED cvtsi2sd, so the two unsigned cases need help: a u32 is
+    // zero-extended into the 64-bit source first (its value fits i64, so
+    // the signed convert is then exact), and a u64 >= 2^63 — where a bare
+    // cvtsi2sd reads the all-ones pattern as -1.0 (#6051) — goes through
+    // the round-to-odd halving `y = (x >> 1) | (x & 1)`, converts that,
+    // and doubles. Mirrors native emitFConvertI64's sequence exactly.
+    // The old unconditional cvtsi2sd was justified by "one instruction
+    // covers i32 and i64 alike"; that holds for every source EXCEPT a
+    // u64 with bit 63 set, which is the whole bug.
+    if (o.width == 64 && o.unsigned) {
+        var u2d: string = lp + "u2d" + util.i32_to_string(i);
+        s = s.write("    popq %rax\n");
+        s = s.write("    testq %rax, %rax\n    js " + u2d + "_big\n");
+        s = s.write("    cvtsi2sd %rax, %xmm0\n    jmp " + u2d + "_done\n");
+        s = s.write(u2d + "_big:\n");
+        s = s.write("    movq %rax, %rcx\n    shrq $1, %rcx\n    andl $1, %eax\n    orq %rax, %rcx\n");
+        s = s.write("    cvtsi2sd %rcx, %xmm0\n    addsd %xmm0, %xmm0\n");
+        s = s.write(u2d + "_done:\n");
+        s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
+    } else if (o.unsigned) {
+        s = s.write("    popq %rax\n    movl %eax, %eax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
+    } else {
+        s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
+    }
+
+    return s;
+}
+
+function emit_ir_op_binary(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+    // binary op: pop rhs (rcx), lhs (rax), combine, push.
+    s = s.write("    popq %rcx\n    popq %rax\n");
+    if (o.kind_tag == 24 || o.kind_tag == 26 || o.kind_tag == 25 || o.kind_tag == 27) {  // div_s, rem_s, div_u, rem_u
+        // Non-trapping guarded div/rem (#4329); needs a per-op-unique
+        // label base — reuse the loop prefix + this op's index.
+        s = s.write(ir_div_guarded(o.kind_tag, o.width, lp + util.i32_to_string(i)));
+    } else {
+        var shimm: string = "";
+        if (i > 0) { shimm = ir_shift_imm_asm(o.kind_tag, o.width, r.ops[i - 1]); }
+        if (shimm.len() > 0) { s = s.write(shimm); }
+        else { s = s.write(ir_bin_asm(o.kind_tag, o.width)); }
+    }
+    s = s.write("    pushq %rax\n");
+
     return s;
 }
 
