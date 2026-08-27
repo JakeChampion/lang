@@ -760,6 +760,27 @@ because the frame is 16-aligned. A latent bug, not a new one: the arm64
 assembler refused it correctly, and nothing had a frame that large until a
 module this size could reach emit.
 
+### The next one: literal pools, at 26 MB of .text
+
+Past the frame fix, `wasm_modload_run` reaches the assembler and stops there:
+
+```
+arm64: ldr-literal at insn 264553 is 26676608 bytes from its pool
+       — outside the ±1 MB imm19 range (missing .ltorg?)
+```
+
+`ldr Xt, =constant` addresses its pool with the same signed 19-bit offset the
+conditional branches use, and the emitter flushes literals once. At 26 MB of
+`.text` that is nowhere near enough: pools have to be flushed periodically, each
+one hopped over, with every `ldr`-literal kept within reach of the nearest —
+which is the island placement `internal/native/arm64` already does for veneers,
+against a different limit. That machinery is now `splice`, so this is an
+addition to an existing pass rather than a new one.
+
+Note what the sequence has been: three separate ceilings, each invisible until
+the one before it was lifted, none of them about register allocation. Sizing the
+work by what is currently *reported* would have missed all three.
+
 ### The interval approximation, and what sizing it missed
 
 Sized before building it, by comparing each function's true maximum of
