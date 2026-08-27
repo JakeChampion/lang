@@ -62,13 +62,25 @@ the block-scoped program returns 1 (the definition alone) at base and 3 with the
 site key, which is the cheapest positive check that the release landed where it
 was owed rather than somewhere else.
 
-## Next lead
+## Next lead: the two remaining `slot_name` lookups are NOT this bug
 
-The same `s.locals[i].slot_name` lookup is still how `"ENVCAP:"` (the exit
-sweep's array-loop exclusion) and `"SNAP:"` resolve. Neither is a credit that
-frees, so neither leaks in this direction, but both answer differently for a
-retired slot than for the same binding at function scope — worth measuring the
-same way before assuming the class is closed.
+`"ENVCAP:"` and `"SNAP:"` are the last reclaim-adjacent families still resolving
+through `s.locals[i].slot_name`, so they read like the obvious next slice. Checked
+rather than assumed, and neither can reach the retirement hazard:
+
+- `"SNAP:"` — `slot_is_snapshot_param` returns false above `i >= s.n_params`. It
+  answers for PARAMS only, and a param slot is never retired.
+- `"ENVCAP:"` — its producer walks `fn.body` at TOP LEVEL only, over the
+  `var cap = __env[1+i]` reads `make_clo_func` synthesizes at the head of a
+  hoisted `$clo` body. Those statements are compiler-generated at function scope;
+  there is no nesting for `retire_locals` to reach.
+
+What is left on both is the *collision* half rather than the scope half — a user
+local sharing a capture's name later in the same closure body would inherit the
+`"ENVCAP:"` exclusion and lose its release. That is a leak-direction hazard on a
+shape that needs an escaping closure to construct, so it is worth a probe but it is
+not the same class as this fix, and anyone reaching for it expecting another
+62-page block-scoped leak will not find one.
 
 ## Instrument reach: this change has no creditable site in the tree
 
