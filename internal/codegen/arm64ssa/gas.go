@@ -92,7 +92,8 @@ func xreg(i int) string { return armX[i] }
 func wreg(i int) string { return armW[i] }
 
 // argRegCount is the number of integer argument registers under the AArch64 PCS
-// (x0..x7); the parameter ABI supports up to this many params.
+// (x0..x7). Arguments past it travel in the caller's outgoing-argument area —
+// see frameLayout — rather than being a limit on how many a function may take.
 const argRegCount = 8
 
 // EmitAsm lowers a single integer SSA function to a complete, runnable AArch64
@@ -135,9 +136,6 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 		if p.NumRegFile > len(armX) {
 			return "", fmt.Errorf("arm64ssa: %q needs %d registers but only %d are wired", name, p.NumRegFile, len(armX))
-		}
-		if len(p.ParamLocs) > argRegCount {
-			return "", fmt.Errorf("arm64ssa: %q has %d params, arm64 SSA supports up to %d", name, len(p.ParamLocs), argRegCount)
 		}
 		progs[name] = p
 	}
@@ -5422,6 +5420,43 @@ func calleeSavedIn(asm string, numRegFile int) []int {
 // as word characters so a label name cannot decompose into a register name.
 var armRegTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
 
+// frameLayout is where everything a function body addresses lives, in 8-byte
+// slots measured from a stack pointer that does not move for the body's
+// lifetime:
+//
+//	[0, outArgs)          outgoing stack arguments
+//	[slotBase, +NumSlots) spill slots and phi temps
+//	[callSaveBase, ...)   the call-save area
+//	[csBase, ...)         one slot per callee-saved register the body uses
+//	lrSlot                the saved link register, when the function calls
+//
+// The outgoing arguments have to be at the very bottom. A callee reads its
+// stack arguments from the sp it is entered with, which is the caller's own sp
+// — so what the caller writes at [sp, #0] upward is exactly what the callee
+// finds, and everything else the caller owns has to sit above it.
+type frameLayout struct {
+	outArgs      int
+	slotBase     int
+	callSaveBase int
+	csBase       int
+	lrSlot       int
+	bytes        int // the whole frame, 16-aligned — what the prologue subtracts
+}
+
+// slot is the byte offset of spill/phi slot n.
+func (f frameLayout) slot(n int) int { return 8 * (f.slotBase + n) }
+
+// callSave is the byte offset of the k'th register preserved across a call.
+func (f frameLayout) callSave(k int) int { return 8 * (f.callSaveBase + k) }
+
+// outArg is where the caller writes the argument that lands in the callee's
+// stack-argument position k (that is, its (argRegCount+k)'th parameter).
+func (f frameLayout) outArg(k int) int { return 8 * k }
+
+// inArg is where the callee finds that same argument. The caller wrote it at
+// the caller's sp, which this frame sits entirely below.
+func (f frameLayout) inArg(k int) int { return f.bytes + 8*k }
+
 // emitFuncBody writes one function: its label, a stack frame (spill slots, plus
 // a call-save area, one slot per callee-saved register in csSaved, and a
 // saved-x30 slot when the function makes calls), each block's straight-line body
@@ -5433,35 +5468,35 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
-	// Frame layout (8-byte slots): [0, NumSlots) spill slots, then the call-save
-	// area — as wide as the largest single call's save set, not the whole
-	// allocatable file, since a call only ever writes save-set slot 0 upward.
-	// Above that sit one slot per callee-saved register the body uses, then
-	// (when the function calls) the saved link register (x30, clobbered by `bl`).
-	callSaveBase := p.NumSlots
-	csBase := p.NumSlots + maxCallSaveSlots(p, numAlloc)
-	lrSlot := csBase + len(csSaved)
-	nslots := lrSlot
+	// The call-save area is as wide as the largest single call's save set, not
+	// the whole allocatable file, since a call only ever writes save-set slot 0
+	// upward. See frameLayout for the rest.
+	fr := frameLayout{outArgs: maxOutArgSlots(p)}
+	fr.slotBase = fr.outArgs
+	fr.callSaveBase = fr.slotBase + p.NumSlots
+	fr.csBase = fr.callSaveBase + maxCallSaveSlots(p, numAlloc)
+	fr.lrSlot = fr.csBase + len(csSaved)
+	nslots := fr.lrSlot
 	if call {
-		nslots = lrSlot + 1
+		nslots = fr.lrSlot + 1
 	}
-	frame := align16(8 * nslots)
+	fr.bytes = align16(8 * nslots)
 	scratch := p.NumRegFile - 1 // result-capture scratch; above the allocatable file
 
 	w("%s:", label)
-	if frame > 0 {
-		w("\tsub sp, sp, #%d", frame)
+	if fr.bytes > 0 {
+		w("\tsub sp, sp, #%d", fr.bytes)
 	}
 	if call {
-		w("\tstr x30, [sp, #%d]", 8*lrSlot)
+		w("\tstr x30, [sp, #%d]", 8*fr.lrSlot)
 	}
-	for _, l := range slotSaveLines(csSaved, csBase) {
+	for _, l := range slotSaveLines(csSaved, fr.csBase) {
 		w("\t%s", l)
 	}
 	// Parameter ABI: move each incoming argument register into its param's home.
 	// Must follow the frame setup (slot-homed params store to [sp]) and the
 	// callee-saved saves (a param's home may be one of them).
-	for _, l := range paramMoveLines(p.ParamLocs) {
+	for _, l := range paramMoveLines(p.ParamLocs, fr, scratch) {
 		w("\t%s", l)
 	}
 
@@ -5470,13 +5505,13 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 	// a callee-saved register that held it cannot clobber it.
 	teardown := func() {
 		if call {
-			w("\tldr x30, [sp, #%d]", 8*lrSlot)
+			w("\tldr x30, [sp, #%d]", 8*fr.lrSlot)
 		}
-		for _, l := range slotRestoreLines(csSaved, csBase) {
+		for _, l := range slotRestoreLines(csSaved, fr.csBase) {
 			w("\t%s", l)
 		}
-		if frame > 0 {
-			w("\tadd sp, sp, #%d", frame)
+		if fr.bytes > 0 {
+			w("\tadd sp, sp, #%d", fr.bytes)
 		}
 	}
 
@@ -5492,7 +5527,7 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 		w(".L%s_b%d:", label, bi)
 		for _, in := range blk.Insts {
 			if in.Op == x86.Call || in.Op == x86.CallPair {
-				lines, err := callLines(in, numAlloc, scratch, callSaveBase)
+				lines, err := callLines(in, numAlloc, scratch, fr)
 				if err != nil {
 					return err
 				}
@@ -5502,7 +5537,7 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				continue
 			}
 			if in.Op == x86.CallIndirect {
-				lines, err := callIndirectLines(in, numAlloc, callSaveBase)
+				lines, err := callIndirectLines(in, numAlloc, fr)
 				if err != nil {
 					return err
 				}
@@ -5512,7 +5547,7 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				continue
 			}
 			if in.Op == x86.MakeEnv || in.Op == x86.MakeClosure {
-				lines, err := closureLines(in, numAlloc, fnIndex)
+				lines, err := closureLines(in, numAlloc, fnIndex, fr)
 				if err != nil {
 					return err
 				}
@@ -5530,13 +5565,13 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				continue
 			}
 			if in.Op == x86.BoxDyn {
-				for _, l := range boxDynLines(in, numAlloc) {
+				for _, l := range boxDynLines(in, numAlloc, fr) {
 					w("\t%s", l)
 				}
 				continue
 			}
 			if in.Op == x86.CallDyn {
-				lines, err := callDynLines(in, numAlloc, callSaveBase)
+				lines, err := callDynLines(in, numAlloc, fr)
 				if err != nil {
 					return err
 				}
@@ -5566,7 +5601,7 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				w("\tadd %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), lbl)
 				continue
 			}
-			lines, err := asmInst(in, scratch)
+			lines, err := asmInst(in, scratch, fr)
 			if err != nil {
 				return err
 			}
@@ -5600,6 +5635,32 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 
 // maxCallSaveSlots is the width of the call-save area: the largest number of
 // caller-saved registers any one call in p has to preserve.
+// maxOutArgSlots is the width of the outgoing-argument area: the most stack
+// arguments any one call in p passes. A call's stack arguments are the ones
+// past the register half, and every call writes that area from slot 0 upward,
+// so the widest single call sizes it.
+func maxOutArgSlots(p *x86.Program) int {
+	most := 0
+	count := func(n int) {
+		if n-argRegCount > most {
+			most = n - argRegCount
+		}
+	}
+	for _, blk := range p.Blocks {
+		for _, in := range blk.Insts {
+			switch in.Op {
+			case x86.Call, x86.CallPair:
+				count(len(in.ArgLocs))
+			case x86.CallIndirect:
+				count(len(in.ArgLocs) + 1) // the env rides as the final argument
+			case x86.CallDyn:
+				count(len(in.ArgLocs) - 1) // the last operand is the vtable
+			}
+		}
+	}
+	return most
+}
+
 func maxCallSaveSlots(p *x86.Program, numAlloc int) int {
 	most := 0
 	for _, blk := range p.Blocks {
@@ -5652,10 +5713,7 @@ func usesCallIndirect(progs map[string]*x86.Program) bool {
 // plus slot loads; the result (x0) is captured into the scratch register —
 // above the allocatable file, never in the save set — before the saved
 // registers are restored, then placed into the destination.
-func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, error) {
-	if len(in.ArgLocs) > argRegCount {
-		return nil, fmt.Errorf("arm64ssa: call supports up to %d args, got %d", argRegCount, len(in.ArgLocs))
-	}
+func callLines(in x86.Inst, numAlloc, scratch int, fr frameLayout) ([]string, error) {
 	saved := callSavedSet(in, numAlloc)
 	// s0 — the first scratch register — stages the pair-return payload. It is
 	// above the allocatable file (never in the save set) and distinct from the
@@ -5670,8 +5728,8 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 	// assumption about a pass in another package.
 	direct := !inSaveSet(saved, in.Dst) && (in.Op != x86.CallPair || !inSaveSet(saved, in.Dst2))
 	var out []string
-	out = append(out, slotSaveLines(saved, callSaveBase)...)
-	out = append(out, argMoveLines(in.ArgLocs)...)
+	out = append(out, slotSaveLines(saved, fr.callSaveBase)...)
+	out = append(out, argMoveLines(in.ArgLocs, fr, scratch)...)
 	// ir.CodegenAlias resolves a Map/MapIter call target onto the stdlib `_impl`
 	// that implements it. Applied HERE, where the callee becomes a label, so
 	// there is no path that emits the unaliased name (#6609). Its twin is the
@@ -5679,7 +5737,7 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 	// either and the assembler reports the same dangling label.
 	out = append(out, fmt.Sprintf("bl %s", fnLabel(ir.CodegenAlias(in.Callee))))
 	restore := func() {
-		out = append(out, slotRestoreLines(saved, callSaveBase)...)
+		out = append(out, slotRestoreLines(saved, fr.callSaveBase)...)
 	}
 	if direct {
 		// AArch64 returns in x0 (tag) / x1 (payload), which are abstract registers
@@ -5836,7 +5894,7 @@ func captureEnvLayout(in x86.Inst) (offs, sizes []int64, total int64) {
 // __closure_drop_<target>'s function index, or 0 (the reserved null) when the
 // module has no such thunk; the duplicated env_ptr at +24 is what makes
 // {drop_idx, env_ptr} itself a dispatchable cell.
-func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, error) {
+func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int, fr frameLayout) ([]string, error) {
 	stage := numAlloc + 3 // s3 — capture value staging
 	envReg := numAlloc    // s0 — env block held across the cell alloc
 	var out []string
@@ -5878,7 +5936,7 @@ func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, 
 			if l.IsReg {
 				out = append(out, fmt.Sprintf("mov %s, %s", xreg(stage), xreg(l.Reg)))
 			} else {
-				out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(stage), 8*l.Slot))
+				out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(stage), fr.slot(l.Slot)))
 			}
 			if sizes[i] == 4 {
 				out = append(out, fmt.Sprintf("str %s, [%s, #%d]", wreg(stage), xreg(base), offs[i]))
@@ -5935,10 +5993,7 @@ func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, 
 // (x0..x11), so the resolved target (s1) and the env (s0) survive the argument
 // parallel-move untouched. Caller-saved live-across registers are preserved in
 // the call-save area exactly as callLines does.
-func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
-	if len(in.ArgLocs)+1 > argRegCount {
-		return nil, fmt.Errorf("arm64ssa: indirect call supports up to %d args incl. env, got %d", argRegCount, len(in.ArgLocs)+1)
-	}
+func callIndirectLines(in x86.Inst, numAlloc int, fr frameLayout) ([]string, error) {
 	s0, s1, s2, s3 := numAlloc, numAlloc+1, numAlloc+2, numAlloc+3
 	var out []string
 	// Stage the cell pointer, then read env (+8) and fn_idx (+0) before any
@@ -5946,7 +6001,7 @@ func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error
 	if in.IdxLoc.IsReg {
 		out = append(out, fmt.Sprintf("mov %s, %s", xreg(s2), xreg(in.IdxLoc.Reg)))
 	} else {
-		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s2), 8*in.IdxLoc.Slot))
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s2), fr.slot(in.IdxLoc.Slot)))
 	}
 	out = append(out,
 		fmt.Sprintf("ldr %s, [%s, #8]", xreg(s0), xreg(s2)), // env  = cell[8]
@@ -5960,13 +6015,13 @@ func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error
 	)
 	// Preserve the caller-saved registers live across the call.
 	saved := callSavedSet(in, numAlloc)
-	out = append(out, slotSaveLines(saved, callSaveBase)...)
+	out = append(out, slotSaveLines(saved, fr.callSaveBase)...)
 	// Move the explicit args plus the env (as the final argument) into x0..x{n}.
 	argsWithEnv := append(append([]x86.Loc{}, in.ArgLocs...), x86.Loc{IsReg: true, Reg: s0})
-	out = append(out, argMoveLines(argsWithEnv)...)
+	out = append(out, argMoveLines(argsWithEnv, fr, s2)...)
 	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
-	out = append(out, slotRestoreLines(saved, callSaveBase)...)
+	out = append(out, slotRestoreLines(saved, fr.callSaveBase)...)
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
 	out = append(out, maskFix(in.Dst, in.W)...)
 	return out, nil
@@ -5982,7 +6037,7 @@ func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error
 // carries the standard rc header (rc=1 at base, payload at base+8) so it is a
 // well-formed heap object; it leaks (this path does not wire `dyn` RC), matching
 // the arm64 native `dyn` slice.
-func boxDynLines(in x86.Inst, numAlloc int) []string {
+func boxDynLines(in x86.Inst, numAlloc int, fr frameLayout) []string {
 	s0, s1, s2 := numAlloc, numAlloc+1, numAlloc+2
 	// Allocate the 16-byte payload cell into s2, using s0 as the cursor-address
 	// temp and s1 as the rc/​bump temp, then place it into Dst at the end.
@@ -6006,7 +6061,7 @@ func boxDynLines(in x86.Inst, numAlloc int) []string {
 		if l.IsReg {
 			out = append(out, fmt.Sprintf("mov %s, %s", xreg(s0), xreg(l.Reg)))
 		} else {
-			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s0), 8*l.Slot))
+			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s0), fr.slot(l.Slot)))
 		}
 	}
 	stage(in.ArgLocs[0])
@@ -6026,16 +6081,13 @@ func boxDynLines(in x86.Inst, numAlloc int) []string {
 // parallel-move; the scratch registers sit above the allocatable file and so
 // are disjoint from both the arg registers (x0..x7) and every allocatable home,
 // so the resolved target (s1) survives the argument move.
-func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
+func callDynLines(in x86.Inst, numAlloc int, fr frameLayout) ([]string, error) {
 	n := len(in.ArgLocs)
 	if n < 1 {
 		return nil, fmt.Errorf("arm64ssa: OpCallDyn needs the vtable operand")
 	}
 	callArgs := in.ArgLocs[:n-1]
 	vtLoc := in.ArgLocs[n-1]
-	if len(callArgs) > argRegCount {
-		return nil, fmt.Errorf("arm64ssa: dyn call supports up to %d args, got %d", argRegCount, len(callArgs))
-	}
 	s1, s2, s3 := numAlloc+1, numAlloc+2, numAlloc+3
 	var out []string
 	// Stage the vtable into s2, then load slot -> target s1, before any argument
@@ -6043,7 +6095,7 @@ func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
 	if vtLoc.IsReg {
 		out = append(out, fmt.Sprintf("mov %s, %s", xreg(s2), xreg(vtLoc.Reg)))
 	} else {
-		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s2), 8*vtLoc.Slot))
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s2), fr.slot(vtLoc.Slot)))
 	}
 	if in.Imm != 0 {
 		out = append(out, fmt.Sprintf("ldr %s, [%s, #%d]", xreg(s1), xreg(s2), in.Imm*8))
@@ -6052,12 +6104,12 @@ func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
 	}
 	// Preserve the caller-saved registers live across the call.
 	saved := callSavedSet(in, numAlloc)
-	out = append(out, slotSaveLines(saved, callSaveBase)...)
+	out = append(out, slotSaveLines(saved, fr.callSaveBase)...)
 	// Move [data, method-args...] into x0..x{n-1} and dispatch.
-	out = append(out, argMoveLines(callArgs)...)
+	out = append(out, argMoveLines(callArgs, fr, s2)...)
 	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
-	out = append(out, slotRestoreLines(saved, callSaveBase)...)
+	out = append(out, slotRestoreLines(saved, fr.callSaveBase)...)
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
 	out = append(out, maskFix(in.Dst, in.W)...)
 	return out, nil
@@ -6068,17 +6120,38 @@ func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
 // so reg-homed args are a parallel register copy over abstract indices (resolved
 // by resolveRegMoves); slot-homed args load from [sp] afterward, by which point
 // every reg-homed source has been consumed.
-func argMoveLines(argLocs []x86.Loc) []string {
+func argMoveLines(argLocs []x86.Loc, fr frameLayout, scratch int) []string {
+	// The arguments past the register half go out first, while their homes are
+	// still intact: the register half below writes x0..x{argRegCount-1}, which
+	// a stack argument may well be sitting in.
+	var out []string
+	for i := argRegCount; i < len(argLocs); i++ {
+		l := argLocs[i]
+		src := scratch
+		if l.IsReg {
+			src = l.Reg
+		} else {
+			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(scratch), fr.slot(l.Slot)))
+		}
+		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(src), fr.outArg(i-argRegCount)))
+	}
+
 	var moves [][2]int // {dstArgReg=i, srcHomeReg}
 	for i, l := range argLocs {
+		if i >= argRegCount {
+			break
+		}
 		if l.IsReg && l.Reg != i {
 			moves = append(moves, [2]int{i, l.Reg})
 		}
 	}
-	out := resolveRegMoves(moves)
+	out = append(out, resolveRegMoves(moves)...)
 	for i, l := range argLocs {
+		if i >= argRegCount {
+			break
+		}
 		if !l.IsReg {
-			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(i), 8*l.Slot))
+			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(i), fr.slot(l.Slot)))
 		}
 	}
 	return out
@@ -6096,22 +6169,42 @@ func argMoveLines(argLocs []x86.Loc) []string {
 //     file maps index i onto x{i}, so the incoming physical arg register for
 //     param i is exactly abstract register i — the parallel move is over
 //     abstract indices i → home.
-func paramMoveLines(paramLocs []x86.Loc) []string {
+func paramMoveLines(paramLocs []x86.Loc, fr frameLayout, scratch int) []string {
 	var out []string
 	// Step A: slot-homed params (read arg regs, write memory).
 	for i, loc := range paramLocs {
+		if i >= argRegCount {
+			break
+		}
 		if !loc.IsReg && loc.Slot >= 0 {
-			out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(i), 8*loc.Slot))
+			out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(i), fr.slot(loc.Slot)))
 		}
 	}
 	// Step B: register-homed params — parallel register copy.
 	var moves [][2]int // {dst, src} abstract register indices
 	for i, loc := range paramLocs {
+		if i >= argRegCount {
+			break
+		}
 		if loc.IsReg && loc.Reg != i {
 			moves = append(moves, [2]int{loc.Reg, i})
 		}
 	}
-	return append(out, resolveRegMoves(moves)...)
+	out = append(out, resolveRegMoves(moves)...)
+	// Step C: the params the caller left on the stack. Last, because a home
+	// here can be one of the argument registers steps A and B still read.
+	for i := argRegCount; i < len(paramLocs); i++ {
+		loc := paramLocs[i]
+		dst := scratch
+		if loc.IsReg {
+			dst = loc.Reg
+		}
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(dst), fr.inArg(i-argRegCount)))
+		if !loc.IsReg && loc.Slot >= 0 {
+			out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(scratch), fr.slot(loc.Slot)))
+		}
+	}
+	return out
 }
 
 // resolveRegMoves renders a parallel register copy (each {dst, src} entry; dsts
@@ -6186,7 +6279,7 @@ func align16(n int) int {
 // asmInst renders one abstract instruction to AArch64 GAS lines. scratch is a
 // free above-the-file register the remainder sequence stages its quotient
 // through.
-func asmInst(in x86.Inst, scratch int) ([]string, error) {
+func asmInst(in x86.Inst, scratch int, fr frameLayout) ([]string, error) {
 	switch in.Op {
 	case x86.MovImm:
 		// The immediate is the value in the model's slot (already sign-extended for
@@ -6199,9 +6292,9 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 		}
 		return []string{fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(in.Src))}, nil
 	case x86.LoadSlot:
-		return []string{fmt.Sprintf("ldr %s, [sp, #%d]", xreg(in.Dst), 8*in.Imm)}, nil
+		return []string{fmt.Sprintf("ldr %s, [sp, #%d]", xreg(in.Dst), fr.slot(int(in.Imm)))}, nil
 	case x86.StoreSlot:
-		return []string{fmt.Sprintf("str %s, [sp, #%d]", xreg(in.Src), 8*in.Imm)}, nil
+		return []string{fmt.Sprintf("str %s, [sp, #%d]", xreg(in.Src), fr.slot(int(in.Imm)))}, nil
 	case x86.BinOp:
 		switch in.K {
 		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:

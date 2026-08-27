@@ -720,14 +720,37 @@ an index and does the label/fixup/debug-row remap, and `fitBranches` (was
 `b` the veneer pass may then have to cover and a veneer never creates a
 conditional.
 
-**What is left before the whole compiler builds this way** is the stack-argument
-ABI: `argRegCount` in `internal/codegen/arm64ssa/gas.go` is 8, and emit rejects
-anything past it rather than spilling to the stack. `checker_modload_run` stays
-inside that, so it is not what blocked here — but 14 self-host functions take
-more than 8 parameters and 43 call sites pass more than 8 arguments, so the
-modules holding them still cannot emit. Since `sp` is fixed for a whole body,
-the outgoing-argument area has to live at the bottom of the caller's frame, with
-every existing slot offset shifted above it.
+### Arguments past the eight the PCS passes in registers
+
+`argRegCount` was a ceiling, not just a count: emit refused a function with more
+than 8 parameters or a call with more than 8 arguments. `checker_modload_run`
+stayed inside it, which is why it was not what blocked the link — but 23
+self-host functions take more than 8 parameters, so the modules holding them
+could not emit at all.
+
+They go on the stack now, as the AArch64 PCS says. The wrinkle is that `sp` does
+not move for a body's lifetime here, so a caller cannot push arguments at the
+call. The outgoing-argument area instead lives at the **bottom** of the caller's
+frame: a callee reads its stack arguments from the `sp` it is entered with,
+which is the caller's own `sp`, so what the caller writes at `[sp, #0]` upward
+is exactly what the callee finds, and everything else the caller owns sits above
+it.
+
+Every offset the emitter produces now goes through one `frameLayout` value
+rather than being computed at each `str`/`ldr` site, which is what makes the
+shift a change in one place instead of seventeen.
+
+Two orderings are load-bearing and both are the opposite of the obvious one:
+
+- **Outgoing arguments go out first**, before the register half. The register
+  half writes x0..x7, and a stack argument's home may well be sitting in one of
+  them.
+- **Incoming stack parameters are read last**, after both the slot-homed stores
+  and the register parallel-copy. A stack parameter's home can be one of the
+  argument registers those two steps still read.
+
+A function whose arguments all fit in registers reserves no outgoing area, so
+nothing that does not need this pays for it.
 
 ### The interval approximation, and what sizing it missed
 
