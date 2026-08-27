@@ -116,10 +116,19 @@ function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i
 function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-local-from-producer-arm64", 0, "yes")
 
-	// STORED BY THE CALLEE excludes: `keep` puts the array in the struct it
-	// returns, so the parameter is not borrowable and the array outlives build's
-	// sweep point inside `b`. Element-walking here would free boxes `b.rows`
-	// still owns; both reads stay valid. 3 + 43 + 43 = 89.
+	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
+	// Its premise was that `keep`'s parameter is not borrowable, which is still
+	// true and is no longer the whole question: param_counted_of proves every
+	// appearance of that parameter is a COUNTED store, so the construction incs
+	// the buffer and the caller's claim survives the call. The "CNT:" tier
+	// carries that verdict to the escape walker.
+	//
+	// Granting the DEEP walk on a shallow-release justification is the part that
+	// needs stating. Two rules close it from both ends: __fern_str_arr_free is
+	// rc-gated, so only the owner that finds rc 1 walks the elements; and no
+	// element can be out UNCOUNTED, because the tier refuses ExprIndex for array
+	// params while the caller's own element-hazard rules still exclude
+	// `var t = xs[0]`. Both reads stay valid. 3 + 43 + 43 = 89.
 	run(t, `struct Box { rows: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -127,7 +136,38 @@ function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"strarr-local-stored-by-callee-excluded-arm64", 0, "no")
+		"strarr-local-stored-by-callee-counted-arm64", 0, "yes")
+
+	// The same store where the holder ESCAPES the frame that owns the array —
+	// the shape the case above was written to fear, and the one that can
+	// actually fail. `build` returns the Box, so the retain is still live when
+	// `xs` sweeps: the walk runs, finds rc 2, and decs without touching an
+	// element. Every element is read back AFTER 20 churn frames have recycled
+	// the freelist; a wrong walk returns 100, a double free 99.
+	run(t, `struct Box { rows: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function keep(xs: string[]): Box { return Box { rows: xs }; }
+function build(pre: string): Box { var xs: string[] = mk(pre); var b: Box = keep(xs); return b; }
+function churnjunk(i: i32): i32 { var a: string[] = ["zzzz", "yyyy", "xxxx"]; return a[0].len() + a[2].len(); }
+function round(i: i32): i32 {
+    var pre: string = "ab";
+    var b: Box = build(pre);
+    var j: i32 = 0; var t: i32 = 0;
+    while (j < 20) { t = t + churnjunk(j); j = j + 1; }
+    var s: i32 = 0; var k: i32 = 0;
+    while (k < b.rows.len()) { s = s + b.rows[k].len(); k = k + 1; }
+    if (s != 129) { return 0 - 1; }
+    return (t + s) % 101;
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
+    while (i < 500) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    if (bad > 0) { return 100; }
+    if (__rc_underflow() != 0) { return 99; }
+    return t % 83;
+}`,
+		"strarr-local-callee-holder-escapes-arm64", 8, "yes")
 
 	// SELF-`.with` REBIND (#6407): the in-place element store releases the
 	// superseded box and retains the stored value, which makes the rebind

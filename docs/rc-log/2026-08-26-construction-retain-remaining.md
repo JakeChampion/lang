@@ -3,7 +3,12 @@
 *2026-08-26*
 
 Written after #7548 and #7558 took the matrix from 12 leaking cells to 10, then
-updated when the enum-array group closed at 9. The per-slice records are
+updated when the enum-array group closed at 9. **The count below is the state at
+that moment and has since moved twice over: as of 2026-08-27 the matrix stands at
+FOUR leaking cells of 35** — `str_arr__fieldread`, `enum__param`,
+`enum_arr__param`, `struct_arr__param`. What survives here is the map of the
+causes, which the later records key off; the cell list does not. The per-slice
+records are
 `2026-08-26-arrstruct-append-built-producer.md`,
 `2026-08-26-arrstruct-counted-field-share.md`,
 `2026-08-26-arrenum-producer-and-append.md`,
@@ -13,7 +18,14 @@ updated when the enum-array group closed at 9. The per-slice records are
 `2026-08-26-arrstruct-borrowed-argument.md`. This one carries the map of what
 remains, so the next attempt starts from measurements rather than a reading.
 
-## The 9 remaining cells
+## The 9 cells as they stood
+
+Five have closed since. `str__local`, `str__fieldread` and `str_arr__local` went
+with the counted field share and `str_field_share_read`; `str__param` and
+`str_arr__param` with `2026-08-27-counted-param-position.md`. The two `__param`
+causes this section names were both right, and both are now recorded in their own
+slices — the borrowing-ARGUMENT half in the arrenum and arrstruct
+borrowed-argument records, the callee-STORE half in the counted-param one.
 
 | group | cells | note |
 |---|---|---|

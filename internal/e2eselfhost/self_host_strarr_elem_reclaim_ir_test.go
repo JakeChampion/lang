@@ -183,11 +183,24 @@ function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-local-borrowed-arg-flat", 0, "yes")
 
-	// STORED BY THE CALLEE excludes: `keep` puts the array in the struct it
-	// returns, so the parameter is not borrowable and the array outlives
-	// build's sweep point inside `b`. The credit must not fire — element-walking
-	// here would free boxes `b.rows` still owns. Both the struct read and the
-	// direct `xs[2]` read stay valid. 89 over 2000 calls, underflow 0.
+	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
+	// Its premise was that `keep`'s parameter is not borrowable, which is still
+	// true and is no longer the whole question: param_counted_of proves every
+	// appearance of that parameter is a COUNTED store, so the construction incs
+	// the buffer and the caller's claim survives the call. The "CNT:" tier now
+	// carries that verdict to the escape walker.
+	//
+	// Granting the DEEP walk on top of a shallow-release justification is the
+	// part that needs stating. Two rules close it from both ends, and neither is
+	// this slice's invention: __fern_str_arr_free is rc-gated, so only the owner
+	// that finds rc 1 walks the elements at all; and no element can be out
+	// UNCOUNTED, because the tier refuses ExprIndex for array params (a callee
+	// cannot extract one, nor pass the array onward to a callee that does) while
+	// the caller's own element-hazard rules still exclude `var t = xs[0]` — the
+	// alias case above.
+	//
+	// Both the struct read and the direct `xs[2]` read stay valid. 89 over 2000
+	// calls, underflow 0.
 	run(t, `struct Box { rows: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -195,7 +208,38 @@ function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"strarr-local-stored-by-callee-excluded", 0, "no")
+		"strarr-local-stored-by-callee-counted", 0, "yes")
+
+	// The same store where the holder ESCAPES the frame that owns the array —
+	// the shape the case above was written to fear, and the one that can
+	// actually fail. `build` returns the Box, so the retain is still live when
+	// `xs` sweeps: the walk runs, finds rc 2, and decs without touching an
+	// element. 500 rounds each read every element back AFTER 20 churn frames
+	// have recycled the freelist; a wrong walk returns 100, a double free 99.
+	run(t, `struct Box { rows: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function keep(xs: string[]): Box { return Box { rows: xs }; }
+function build(pre: string): Box { var xs: string[] = mk(pre); var b: Box = keep(xs); return b; }
+function churnjunk(i: i32): i32 { var a: string[] = ["zzzz", "yyyy", "xxxx"]; return a[0].len() + a[2].len(); }
+function round(i: i32): i32 {
+    var pre: string = "ab";
+    var b: Box = build(pre);
+    var j: i32 = 0; var t: i32 = 0;
+    while (j < 20) { t = t + churnjunk(j); j = j + 1; }
+    var s: i32 = 0; var k: i32 = 0;
+    while (k < b.rows.len()) { s = s + b.rows[k].len(); k = k + 1; }
+    if (s != 129) { return 0 - 1; }
+    return (t + s) % 101;
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
+    while (i < 500) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    if (bad > 0) { return 100; }
+    if (__rc_underflow() != 0) { return 99; }
+    return t % 83;
+}`,
+		"strarr-local-callee-holder-escapes", 8, "yes")
 
 	// FORWARDED RETURN excludes: `fwd` binds the producer's result and hands it
 	// straight back out, so the array escapes its frame and the credit must not

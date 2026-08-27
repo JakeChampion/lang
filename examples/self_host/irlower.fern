@@ -24919,10 +24919,22 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
             while (ai < c.args.len()) {
                 // Level 2: a DIRECT bare-ident `name` at a borrowable param position
                 // of a known free function is a BORROW, not an escape.
+                //
+                // The "CNT:" tier admits a second position, and it is the only
+                // tier on this registry that admits where the box flag REFUSES
+                // ("TUPB:" / "ELB:" both narrow it). The two ask different
+                // questions. The box flag asks whether the callee keeps a
+                // reference at all; "CNT:" asks whether every reference it does
+                // keep was RETAINED (param_counted_of). A retained one leaves
+                // the caller's own claim intact and the callee's drop gives the
+                // retain back, so exactly one release still belongs to the
+                // caller — withholding it is the leak, not the safety.
                 var arg_is_borrow: boolean = false;
                 match (c.args[ai]) {
                     ast.ExprIdent(aid) => {
-                        if (aid.name == name && callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) { arg_is_borrow = true; }
+                        if (aid.name == name && callee_name.len() > 0
+                            && (param_is_borrowable(borrowable, callee_name, ai)
+                                || param_is_borrowable(borrowable, "CNT:" + callee_name, ai))) { arg_is_borrow = true; }
                     },
                     _ => {}
                 }
@@ -32633,7 +32645,15 @@ function strarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): bo
                 var arg_ok: boolean = false;
                 match (c.args[ai]) {
                     ast.ExprIdent(aid) => {
-                        if (aid.name == name && callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) { arg_ok = true; }
+                        // The "CNT:" tier admits the whole array at a position the
+                        // callee only STORES counted. The deep walk survives it:
+                        // the store retains the BUFFER, so __fern_str_arr_free's rc
+                        // gate leaves the elements to whichever owner reaches rc 1
+                        // — and the tier's own rule refuses an element read, so the
+                        // callee can hand no element out uncounted.
+                        if (aid.name == name && callee_name.len() > 0
+                            && (param_is_borrowable(borrowable, callee_name, ai)
+                                || param_is_borrowable(borrowable, "CNT:" + callee_name, ai))) { arg_ok = true; }
                     },
                     _ => {
                         // a DIRECT `name[i]` arg to a free fn at a borrowable param
@@ -56662,6 +56682,58 @@ pub function str_param_counted_at(reg: string[], callee: string, ai: i32): boole
     return param_counted_at(reg, "SCNT:", callee, ai);
 }
 
+// borrow_reg_with_counted folds param_counted_of's verdict into the borrowability
+// registry under a "CNT:" key prefix. The verdict was reachable only from the
+// argument-temp stash, which holds the sigs; the ESCAPE walker threads the borrow
+// registry and nothing else, so a NAMED local passed at a counted position read as
+// an escape and lost its scope-exit release entirely — the callee's store retained
+// and its drop gave the retain back, and no one ever released the caller's own
+// claim, a constant 2-object leak. This closes the `string` and `string[]`
+// construction-retain `__param` cells; the enum and array-of-boxes ones are not
+// counted by either tier, which admits BY TYPE.
+//
+// Both tiers merge into one flag string: at a call argument the question is
+// whether THIS position is counted, not which type tier proved it. Keys are
+// distinct from the bare names by the prefix, so every existing lookup is inert.
+function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
+    var keys: string[] = [];
+    var flags: string[] = [];
+    var i: i32 = 0;
+    while (i < pcnt.len()) {
+        var row: string = pcnt[i];
+        var bar: i32 = 0;
+        while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
+        // "ACNT:" and "SCNT:" are both five bytes; a row with no key or no '|'
+        // is not one param_counted_of wrote.
+        if (bar < row.len() && bar > 5) {
+            var key: string = "CNT:" + slice_unchecked(row, 5, bar);
+            var fl: string = slice_unchecked(row, bar + 1, row.len()) + "";
+            var at: i32 = util.index_of_str(keys, key);
+            if (at < 0) { keys = keys.append(key); flags = flags.append(fl); }
+            else { flags = flags.with(at, merge_counted_flags(flags[at], fl)); }
+        }
+        i = i + 1;
+    }
+    var out: string[] = reg;
+    var k: i32 = 0;
+    while (k < keys.len()) { out = borrow_reg_put(out, keys[k], flags[k]); k = k + 1; }
+    return out;
+}
+
+// merge_counted_flags: '1' at a position either tier credits.
+function merge_counted_flags(a: string, b: string): string {
+    var n: i32 = a.len();
+    if (b.len() > n) { n = b.len(); }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        if ((i < a.len() && a[i] == b'1') || (i < b.len() && b[i] == b'1')) { out = out + "1"; }
+        else { out = out + "0"; }
+        i = i + 1;
+    }
+    return out;
+}
+
 // param_counted_of: the least fixpoint, over both tiers at once — the walk is
 // name-keyed and type-blind, so classifying array and string params in one pass
 // costs one traversal instead of two. Starts all-false and only ever
@@ -57620,6 +57692,10 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
     // construction-side string retain is gated on, and this walk is
     // whole-program — computing it twice would be a second pass over every body.
     var sfok: string[] = strfld_reclaim_ok_types_of(funcs, structs, bparams);
+    // The counted-retain verdict is computed here and folded into the
+    // borrowability registry the escape walker threads, so the two registries
+    // cannot disagree about a position and the walker needs no extra parameter.
+    var pcnt: string[] = param_counted_of(funcs, structs, sfok);
     return FnSigs {
         arr_ret_fns: sig_reg_of(arr_ret_fns),
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
@@ -57642,7 +57718,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         closure_fns: closure_and_fnptr_fns_of(funcs, structs),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
         const_fns: const_fns_of(funcs),
-        borrowable_params: bparams,
+        borrowable_params: borrow_reg_with_counted(bparams, pcnt),
         fn_names: sig_reg_of(fn_names_of(funcs)),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
@@ -57653,7 +57729,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         move_arr_params: move_arr_params_of(funcs),
-        param_counted: param_counted_of(funcs, structs, sfok),
+        param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
         handback_params: handback_params_of(funcs),
     };
