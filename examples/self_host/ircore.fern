@@ -73,7 +73,19 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        if (is_array_type(funcs[i].ret_type)) { out = out.append(funcs[i].name); }
+        if (is_array_type(funcs[i].ret_type)) {
+            out = out.append(funcs[i].name);
+            // A receiver METHOD additionally gets a QUALIFIED
+            // "<BaseType>.<method>" entry, so an expression-position call
+            // (`h.get().len()`) can prove array-ness from the receiver's
+            // struct type rather than from a bare name any type could share.
+            // The bare entry stays for the existing consumers, and the
+            // qualified spelling never collides with a free-fn lookup (free
+            // names carry no '.'). Mirrors strarr_ret_fns_of.
+            if (funcs[i].receiver_type.len() > 0) {
+                out = out.append(util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name);
+            }
+        }
         // A lifted if-/match-expression `__lam_` whose branch is an array literal
         // carries a default i32 ret_type, so `var xs = if (c) { [..] } else { .. }`
         // was mis-treated as a scalar. Register it (a fresh owned-array move, like
