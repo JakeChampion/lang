@@ -149,8 +149,14 @@ The big functions are not all the same shape, and the technique follows the
 shape.
 
 Finding the shape means asking, per candidate block, what it writes, what it
-reads, and whether it returns. **Detect writes with a word-boundary match, not a
-start-of-line one.** Fern packs single-statement branches onto the guard line,
+reads, and whether it returns. **Strip string literals and comment tails before
+any of those three scans** — not just before counting braces. The comments here
+quote Fern code constantly, so an unstripped `\breturn\b` scan reports early
+returns in blocks that have none, and an unstripped free-variable scan invents
+parameters for locals a comment merely names. Both readings are the wrong way
+round: they make a mechanically extractable block look untouchable.
+
+**Detect writes with a word-boundary match, not a start-of-line one.** Fern packs single-statement branches onto the guard line,
 so `{ struct_ty = bst; }` assigns in the middle of a line and a `^\s*(\w+) = `
 scan reports the block as side-effect-free — the one reading that most reliably
 sends a mechanical extraction into a compile error or, worse, a silent behaviour
@@ -283,7 +289,7 @@ a table.
 
 ## Order of work
 
-Fourteen slices in, the tree has gone from 19884 excess to 18840 and the
+Fifteen slices in, the tree has gone from 19884 excess to 18804 and the
 ceiling from 477 to 411. What is done, and what the remaining shapes are:
 
 | Function | File | Forks | Outcome |
@@ -302,6 +308,7 @@ ceiling from 477 to 411. What is done, and what the remaining shapes are:
 | `lower_call_named` | `irlower.fern` | 477 → 411 | generic tail out; **the rest is a table** |
 | `lower_stmt_var` | `irlower.fern` | 462 → 308 | two returning guards, then eight init-shape probes |
 | `bind_var_slot` | `irlower.fern` | 213 → 114 | six reclaim-marking blocks out |
+| `lower_func` | `irlower.fern` | 262 → 221 | six accumulator passes out |
 
 **Fork count alone picks the wrong target.** The cheap, provable wins are
 functions whose parts are self-contained: a match whose arms each return, an op
@@ -333,12 +340,13 @@ largest remaining showed fork count says almost nothing about which is next:
   construct spanning almost the whole function (684 and 819 lines). They are the
   slice-2 shape, so check each arm for the always-returns property before
   planning anything.
-- `lower_func` (262) — **the one that is mechanical.** Its body is a run of
-  `while` loops and guards that accumulate into locals, in the slice-14 shape:
-  five write a single local (`reclaim` ×3, `tclean`, `s`), and the loop counters
-  are dead afterwards so they can move inside the helper rather than being
-  returned. Note it declares over 100 locals, so free-variable analysis matters
-  more here than anywhere else.
+- `lower_func` (262 → 221, slice 15) — **the one that was mechanical.** Its
+  body is a run of `while` loops and guards accumulating into locals: six wrote
+  a single local (`reclaim` ×4, `tclean`, `s`), and every loop counter was dead
+  afterwards, so each moved inside its helper rather than being returned. So did
+  the working lists (`snap_locals`, `lacs`, `dccs`) that one pass alone consumes.
+  It declares over 100 locals, so free-variable analysis matters more here than
+  anywhere else.
 
 `lower_func` also shows where this campaign stops paying: two of its blocks write
 the same 19-21 parallel per-parameter arrays (`names`, `isarr`, `isstr`,
