@@ -54376,6 +54376,10 @@ function strarrfld_scan(e: ast.Expr, structs: parser.StructDecl[], binds: string
             var i: i32 = 0;
             while (i < sl2.field_names.len()) {
                 var fkt: string = decl_field_type(structs, sl2.type_name, sl2.field_names[i]);
+                // Set by the string[] admission below and read by the value walk
+                // at the end of this iteration, so it lives in the loop-body scope
+                // rather than inside that branch.
+                var share_read: boolean = false;
                 // A struct-ARRAY / enum-ARRAY field rides the SAME scan (#7067):
                 // its element boxes are freed by __field_reclaim_<T>'s walk on a
                 // rebind, so the field is admitted only when every stored value
@@ -54427,6 +54431,42 @@ function strarrfld_scan(e: ast.Expr, structs: parser.StructDecl[], binds: string
                     // the third leg of the circularity: unadmitted meant no
                     // retain, and no retain meant it could not be admitted.
                     match (sl2.field_values[i]) { ast.ExprIdent(_) => { store_ok = true; }, _ => {} }
+                    // A bare `q.f` READ of another holder's string[] field, handed
+                    // straight into a string[] field of this literal — the counted
+                    // share str_field_share_read draws for a scalar `string`, and
+                    // enum_arr_field_share_read for an `E[]`. `string[]` was the one
+                    // field kind left out, which is `str_arr__fieldread` (#5338).
+                    //
+                    // Admitting it is sound for the reason the bare-ident case above
+                    // is: the construction RETAINS an array field unconditionally
+                    // (is_array_type_name covers string[] in the ExprStructLit arm),
+                    // so the new holder co-owns a COUNTED reference and its drop's dec
+                    // is balanced against it. `str_arr__local` measures that retain
+                    // already working — the difference here is only that the value is
+                    // read out of a sibling rather than out of a local.
+                    //
+                    // Both ends are checked: the SOURCE field and the TARGET field
+                    // must both be string[], and the holder must be a bare ident so
+                    // the share has one identifiable co-owner. `foo().f` is refused —
+                    // there is no second holder to keep alive, so the read is an
+                    // ordinary escape.
+                    match (sl2.field_values[i]) {
+                        ast.ExprFieldAccess(sfa) => {
+                            match (sfa.obj) {
+                                ast.ExprIdent(_) => {
+                                    var soty: string = fnfld_obj_type(sfa.obj, structs, binds);
+                                    if (soty.len() > 0
+                                        && decl_field_type(structs, soty, sfa.field) == "string[]"
+                                        && decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "string[]") {
+                                        store_ok = true;
+                                        share_read = true;
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
                     if (!store_ok) {
                         a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]);
                         // The STORE half on its own, under an inert prefixed
@@ -54439,7 +54479,19 @@ function strarrfld_scan(e: ast.Expr, structs: parser.StructDecl[], binds: string
                         a = push_str_unique(a, "store:" + sl2.type_name + "." + sl2.field_names[i]);
                     }
                 }
-                a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, forwarders, a);
+                // The admitted share is NOT walked as a read: marking it would
+                // refuse the SOURCE holder's reclaim, and a share needs both ends
+                // alive to balance. Its holder is still walked, so a mark owed by a
+                // more complex object expression is not lost — though a non-ident
+                // holder never reaches here, since the admission above requires one.
+                if (share_read) {
+                    match (sl2.field_values[i]) {
+                        ast.ExprFieldAccess(wfa) => { a = strarrfld_scan(wfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); },
+                        _ => {}
+                    }
+                } else {
+                    a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, forwarders, a);
+                }
                 i = i + 1;
             }
             return a;
