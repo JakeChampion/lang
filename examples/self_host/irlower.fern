@@ -32835,7 +32835,26 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
-                ast.ExprIdent(fid) => { iter_unsafe = fid.name == name; },   // `for x in name`: element binding
+                ast.ExprIdent(fid) => {
+                    // `for s in name` binds an ELEMENT per iteration, which is
+                    // a LASTING alias only if the binder is one. A body that
+                    // does nothing but read it — `s.len()`, a comparison, a
+                    // borrowable call argument — leaves nothing behind for the
+                    // deep free to dangle, which is the same transient line
+                    // strarr_expr_unsafe already draws for `name[i]` in those
+                    // positions. body_unsafe_for asks it of the binder: a bind,
+                    // a return, a container or struct store, or a retaining
+                    // call argument all make the loop unsafe again.
+                    //
+                    // A binder that SHADOWS `name` is refused outright: the
+                    // walk below would then be reading a different value under
+                    // the same spelling.
+                    if (fid.name == name) {
+                        iter_unsafe = fo.var_name == name || body_unsafe_for(fo.body, fo.var_name, borrowable, []);
+                    } else {
+                        iter_unsafe = false;
+                    }
+                },
                 _ => { iter_unsafe = strarr_expr_unsafe(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
