@@ -453,6 +453,9 @@ function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolea
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
+// fern-lint: allow cyclomatic-complexity
+// The arm64 half of the same op table as asm_ir.fern: 181 guards, one per
+// op, with the bodies that could move already moved.
 pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
 

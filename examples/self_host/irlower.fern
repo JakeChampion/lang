@@ -9552,6 +9552,9 @@ function lower_fn_value_arg(a: ast.Expr, fname: string, ai: i32, s: LowerState):
 // lower_call_named lowers a call whose callee is a bare NAME — a user
 // function, a `const`, a builtin, or one of the closure / marker forms.
 // `e` is this same call as an Expr, for the two type queries that take one.
+// fern-lint: allow cyclomatic-complexity
+// 278 guards over 1192 lines — one per intercepted builtin. Splitting the
+// table would spread the same list over more functions, not shorten it.
 function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     // Closure-box constructor marker (#2994): lift_inline_closures
     // rewrites a CAPTURING inline lambda in array-element / struct-
