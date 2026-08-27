@@ -681,6 +681,54 @@ falls back to the single form. `PairLoadStore` in
 out-of-range offset would have encoded silently as a valid instruction against
 the wrong slot; `asmPair` rejects it now.
 
+### The self-host compiler links, and the sizes match
+
+With the pairing in, `examples/self_host/checker_modload_run.fern` compiles,
+links and runs under `-backend ssa` — the first time any self-host module has.
+It was the last thing the epic was for.
+
+| `checker_modload_run` `.text` | bytes | of flat |
+|---|---|---|
+| flat backend | 8,255,292 | — |
+| SSA backend | 8,278,404 | **100.3%** |
+
+163.7% at the start of the work, 112% before pairing. Parity on the hardest
+input in the tree, and it behaves: the SSA build's output is byte-identical to
+the flat build's on every self-host module it type-checks, its own `lexer.fern`
+and `parser.fern` included.
+
+**What was in the way was branch reach, not size.** `b.cond` / `cbz` / `cbnz`
+carry a signed 19-bit instruction offset (±1 MB) and `tbz` / `tbnz` a 14-bit one
+(±32 KB), against `b` / `bl`'s 26 bits. One self-host function outgrew imm19, so
+a branch between two of its own blocks stopped encoding.
+
+A veneer cannot fix that: the conditional itself is what will not reach, so the
+fix has to shorten the conditional rather than what it points at. Invert it and
+hop over an unconditional branch, which reaches 128 MB on its own and can take a
+veneer past that:
+
+```
+b.eq far        ->      b.ne .Lskip
+                        b far
+                    .Lskip:
+```
+
+One instruction, only at the branches that need it. `internal/native/arm64`'s
+island machinery is shared: `splice` takes any run of instructions to insert at
+an index and does the label/fixup/debug-row remap, and `fitBranches` (was
+`insertVeneers`) relaxes before it veneers each round, since relaxation creates
+`b` the veneer pass may then have to cover and a veneer never creates a
+conditional.
+
+**What is left before the whole compiler builds this way** is the stack-argument
+ABI: `argRegCount` in `internal/codegen/arm64ssa/gas.go` is 8, and emit rejects
+anything past it rather than spilling to the stack. `checker_modload_run` stays
+inside that, so it is not what blocked here — but 14 self-host functions take
+more than 8 parameters and 43 call sites pass more than 8 arguments, so the
+modules holding them still cannot emit. Since `sp` is fixed for a whole body,
+the outgoing-argument area has to live at the bottom of the caller's frame, with
+every existing slot offset shifted above it.
+
 ### The interval approximation, and what sizing it missed
 
 Sized before building it, by comparing each function's true maximum of

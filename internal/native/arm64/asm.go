@@ -54,6 +54,9 @@ type Assembler struct {
 	veneerReach  int
 	veneerPasses int
 	veneerErr    error
+	// relaxReach overrides the conditional branches' span (relax.go) in
+	// tests, so one need not emit a megabyte of instructions to reach it.
+	relaxReach int
 
 	// GAS numeric local labels: how many times each number has been DEFINED
 	// so far. `1:` may appear any number of times, and `1f` / `1b` name the
@@ -446,7 +449,7 @@ func (a *Assembler) Bytes() ([]byte, error) {
 // the single-segment layout (elf.StaticExecutableData / R+W+X).
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
 	a.FlushLiterals()
-	if err := a.insertVeneers(); err != nil {
+	if err := a.fitBranches(); err != nil {
 		return nil, nil, err
 	}
 	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
@@ -463,7 +466,7 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 // page size matches elf.pageAlign; pass elf.TextVAddrWX as textVAddr.
 func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
 	a.FlushLiterals()
-	if err := a.insertVeneers(); err != nil {
+	if err := a.fitBranches(); err != nil {
 		return nil, nil, err
 	}
 	const page = 0x10000 // must match elf.pageAlign
@@ -516,7 +519,7 @@ func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
 // ldr-literals) are base-independent and need no relocation.
 func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
 	a.FlushLiterals()
-	if err := a.insertVeneers(); err != nil {
+	if err := a.fitBranches(); err != nil {
 		return nil, nil, nil, err
 	}
 	const page = 0x10000 // must match elf.pageAlign
@@ -659,7 +662,7 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 // the assembler's "error, never miscompile" contract.
 //
 // The imm26 (b/bl) case is handled before it gets here on the layout
-// paths: insertVeneers plants a trampoline for any call that outruns
+// paths: fitBranches plants a trampoline for any call that outruns
 // ±128 MB (see veneer.go), so an imm26 report from here means either
 // the raw Bytes path — which has no virtual addresses and so cannot
 // resolve a veneer's adrp — or a veneering bug.

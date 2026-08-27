@@ -128,24 +128,37 @@ func (a *Assembler) margin() int {
 	return veneerMargin
 }
 
-// insertVeneers rewrites the instruction stream so every b/bl reaches
-// its target, planting veneer islands wherever the raw offset does not
-// encode. Splicing an island shifts the code after it, which can in
+// fitBranches rewrites the instruction stream so every branch reaches
+// its target: veneer islands for the b/bl that outrun imm26 (below),
+// and inversion-plus-hop for the conditional branches that outrun their
+// own much shorter span (relax.go). Both grow .text, which can in
 // principle push another branch out of range, so it iterates to a fixed
 // point. It is a no-op — not even a stream copy — when every branch
 // already encodes, which is every program but the largest.
 //
+// Relaxation goes first each round because it creates b/bl the veneer
+// pass may then have to cover; a veneer never creates a conditional.
+//
 // Call it after FlushLiterals and before any layout that depends on
 // len(insns): it changes the size of .text.
-func (a *Assembler) insertVeneers() error {
+func (a *Assembler) fitBranches() error {
 	for pass := 0; ; pass++ {
+		short := a.shortBranches()
 		far := a.farBranches()
-		if len(far) == 0 {
+		if len(short)+len(far) == 0 {
 			a.veneerPasses = pass
 			return nil
 		}
 		if pass >= maxVeneerPasses {
-			return fmt.Errorf("arm64: branch veneering did not converge after %d passes (%d branches still out of range)", maxVeneerPasses, len(far))
+			return fmt.Errorf("arm64: branch fitting did not converge after %d passes (%d branches still out of range)", maxVeneerPasses, len(short)+len(far))
+		}
+		// One transform per pass: each splice invalidates the indices the
+		// other collected.
+		if len(short) > 0 {
+			if err := a.relaxShortBranches(short); err != nil {
+				return err
+			}
+			continue
 		}
 		if err := a.plantVeneers(far); err != nil {
 			return err
@@ -281,7 +294,11 @@ func (a *Assembler) plantVeneers(far []int) error {
 	for i, fi := range far {
 		a.fixups[fi].label = retarget[i]
 	}
-	a.spliceIslands(islands)
+	runs := make([]spliceRun, len(islands))
+	for i, is := range islands {
+		runs[i] = is
+	}
+	a.splice(runs)
 	return nil
 }
 
@@ -289,13 +306,25 @@ func (a *Assembler) plantVeneers(far []int) error {
 // every recorded instruction index — labels, symbols, branch, adrp,
 // :lo12:, literal-pool, and DWARF line rows — to match, then records
 // the new veneers' own labels and fixups.
-func (a *Assembler) spliceIslands(islands []*veneerIsland) {
-	ats := make([]int, len(islands))
-	cum := make([]int, len(islands))
+// spliceRun is a run of instructions to insert before an instruction
+// index — a veneer island, or the unconditional `b` that a relaxed
+// conditional branch hops to. Both need the same index bookkeeping:
+// every label, fixup and debug row after the insertion point moves.
+type spliceRun interface {
+	anchor() int
+	size() int
+	appendTo(a *Assembler, out []uint32) []uint32
+}
+
+func (is *veneerIsland) anchor() int { return is.at }
+
+func (a *Assembler) splice(runs []spliceRun) {
+	ats := make([]int, len(runs))
+	cum := make([]int, len(runs))
 	total := 0
-	for i, is := range islands {
-		total += is.size()
-		ats[i], cum[i] = is.at, total
+	for i, r := range runs {
+		total += r.size()
+		ats[i], cum[i] = r.anchor(), total
 	}
 	// delta is how far an original index moves: the combined size of the
 	// islands spliced in at or before it. A label at an island's anchor
@@ -341,27 +370,16 @@ func (a *Assembler) spliceIslands(islands []*veneerIsland) {
 	out := make([]uint32, 0, len(a.insns)+total)
 	next := 0
 	for i, insn := range a.insns {
-		for next < len(islands) && islands[next].at == i {
-			out = a.appendIsland(out, islands[next])
+		for next < len(runs) && runs[next].anchor() == i {
+			out = runs[next].appendTo(a, out)
 			next++
 		}
 		out = append(out, insn)
 	}
-	for ; next < len(islands); next++ {
-		out = a.appendIsland(out, islands[next])
+	for ; next < len(runs); next++ {
+		out = runs[next].appendTo(a, out)
 	}
 	a.insns = out
-
-	// adrp/:lo12: resolve through syms, not labels, so a veneer to a
-	// purely local label (one defined with Label rather than TextLabel)
-	// needs a symbol of its own.
-	for _, is := range islands {
-		for _, t := range is.targets {
-			if _, ok := a.syms[t]; !ok {
-				a.syms[t] = symbol{inText: true, val: a.labels[t]}
-			}
-		}
-	}
 }
 
 // appendIsland writes one island to the new instruction stream: a `b`
@@ -373,7 +391,7 @@ func (a *Assembler) spliceIslands(islands []*veneerIsland) {
 // pass computes its anchors over the stream this one produced, so it can
 // splice an island inside this one — and a raw offset is the one thing
 // the index remap cannot correct, leaving the hop landing mid-veneer.
-func (a *Assembler) appendIsland(out []uint32, is *veneerIsland) []uint32 {
+func (is *veneerIsland) appendTo(a *Assembler, out []uint32) []uint32 {
 	end := len(out) + is.size()
 	a.labels[is.endLabel] = end
 	a.fixups = append(a.fixups, fixup{at: len(out), label: is.endLabel, kind: branchImm26})
@@ -388,6 +406,14 @@ func (a *Assembler) appendIsland(out []uint32, is *veneerIsland) []uint32 {
 	}
 	for len(out) < end {
 		out = append(out, nopInsn)
+	}
+	// adrp/:lo12: resolve through syms, not labels, so a veneer to a
+	// purely local label (one defined with Label rather than TextLabel)
+	// needs a symbol of its own.
+	for _, t := range is.targets {
+		if _, ok := a.syms[t]; !ok {
+			a.syms[t] = symbol{inText: true, val: a.labels[t]}
+		}
 	}
 	return out
 }
