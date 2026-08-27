@@ -55,7 +55,7 @@ struct__fieldread   clean clean  counted: unconditional nested-struct retain + k
 struct__call        clean clean  strict-fresh call result owned outright
 enum__fresh         clean clean  fresh variant ctor owned
 enum__local         clean clean  field share counted, and the match-expr read no longer reads as a capture
-enum__param         clean leak   param enum bare ident
+enum__param         clean clean  counted: the ECNT tier proves the callee's every use is a counted store, and a bare `match (p)` scrutinee is not one — so the payload can never be handed out
 enum__fieldread     clean clean  q.f read retained; the holder's own ctor-call is ENUM:-owned, both decs balance
 enum__call          clean clean  strict-fresh enum call result ("ENUM:" registry) owned outright
 enum_arr__fresh     clean clean  fresh [E.A(..)] literal: __enum_arr_elems_drop walks the payloads

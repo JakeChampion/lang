@@ -56687,7 +56687,7 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             // stored UNCOUNTED — crediting it would make the caller's post-call
             // free an over-release. Array slots are unconditional and unaffected.
             var scnt: boolean = true;
-            if (pfx == "SCNT:" && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
+            if ((pfx == "SCNT:" || pfx == "ECNT:") && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
             for fv in sl.field_values { if (!arrparam_use_ok(fv, pn, scnt, reg, pfx, structs, sfok)) { return false; } }
             return true;
         },
@@ -56864,6 +56864,17 @@ function str_result_cannot_alias(ret: string, structs: parser.StructDecl[]): boo
     return is_scalar_type_name(ret) || decl_is_struct(structs, ret) || decl_is_enum(structs, ret);
 }
 
+// enum_result_cannot_alias: the ENUM tier's sibling of str_result_cannot_alias.
+// The counted claim is that ONE post-call release nets the argument to the
+// owner the callee's construction retained, so a result that could BE the
+// argument breaks it. For an enum param that is any enum result — the tier is
+// name-keyed and type-blind, so it cannot tell E from some other enum, and the
+// conservative reading costs a leak rather than an over-release.
+function enum_result_cannot_alias(ret: string, structs: parser.StructDecl[]): boolean {
+    if (decl_is_enum(structs, ret)) { return false; }
+    return is_scalar_type_name(ret) || decl_is_struct(structs, ret);
+}
+
 pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], sfok: string[]): string[] {
     var reg: string[] = [];
     var round: i32 = 0;
@@ -56894,6 +56905,9 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var sflags: string = "";
             var sany: boolean = false;
             var str_ok_result: boolean = str_result_cannot_alias(fn.ret_type, structs);
+            var enum_ok_result: boolean = enum_result_cannot_alias(fn.ret_type, structs);
+            var eflags: string = "";
+            var eany: boolean = false;
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
@@ -56909,12 +56923,29 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "SCNT:", structs, sfok)) { sok = true; }
                 if (sok) { sflags = sflags + "1"; sany = true; } else { sflags = sflags + "0"; }
+                // ENUM tier. Same shape as the string one: the construction
+                // retains the payload box and the holder's field drop decs it,
+                // so the caller keeps the claim its own creation owes. Gated on
+                // the holder ROUTING field reclaim for the same reason the
+                // string slot is — a literal whose type carries no arm of the
+                // right type never gives the retain back.
+                var eok: boolean = false;
+                if (enum_ok_result
+                    && decl_is_enum(structs, fn.params[pj].type_name)
+                    && !fn.params[pj].own
+                    && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ECNT:", structs, sfok)) { eok = true; }
+                if (eok) { eflags = eflags + "1"; eany = true; } else { eflags = eflags + "0"; }
                 pj = pj + 1;
             }
             if (aany) {
                 var aent: string = "ACNT:" + borrowable_key(fn) + "|" + aflags;
                 next = next.append(aent);
                 if (util.index_of_str(reg, aent) < 0) { changed = true; }
+            }
+            if (eany) {
+                var eent: string = "ECNT:" + borrowable_key(fn) + "|" + eflags;
+                next = next.append(eent);
+                if (util.index_of_str(reg, eent) < 0) { changed = true; }
             }
             if (sany) {
                 var sent: string = "SCNT:" + borrowable_key(fn) + "|" + sflags;
