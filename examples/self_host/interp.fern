@@ -806,24 +806,25 @@ function lam_read_names(st: ast.Stmt): string[] {
 
 // body_assign_names: every name this body reassigns, at any depth. A name NOT
 // in here is captured by value, which is what keeps a loop-local `var` per
-// iteration.
+// iteration — descend_none is that stop spelled once: statement lists at
+// every depth, lambda bodies never, since those hang off expressions.
 function body_assign_names(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtAssign(asg) => { a = a.append(asg.target); },
-            ast.StmtIf(f) => { a = body_assign_names(f.then_body, a); a = body_assign_names(f.else_body, a); },
-            ast.StmtWhile(w) => { a = body_assign_names(w.body, a); },
-            ast.StmtFor(fo) => { a = body_assign_names(fo.body, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = body_assign_names(m.arms[ai].body, a); ai = ai + 1; } },
-            ast.StmtDefer(d) => { a = body_assign_names([d.action], a); },
-            _ => {}
-        }
-        i = i + 1;
-    }
+    for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_none); }
     return a;
 }
+
+// assign_target_of is one statement's contribution to the reassignment scans:
+// an assignment's TARGET, a bare string on the statement that the expression
+// visitor is never handed.
+function assign_target_of(st: ast.Stmt, acc: string[]): string[] {
+    match (st) {
+        ast.StmtAssign(asg) => { return acc.append(asg.target); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+function reads_nothing(e: ast.Expr, acc: string[]): string[] { return acc; }
 
 // cellify_captures is the per-statement pre-pass every block driver runs before
 // evaluating a statement, and it applies both capture clauses:
