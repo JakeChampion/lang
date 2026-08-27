@@ -3613,6 +3613,9 @@ struct WasmOpCtx {
 // returning its first chunk: several arms emit in more than one piece, and the
 // return form drops all but the first as dead code -- which type-checks clean
 // and surfaces only as a wasm validation error far from the cause.
+// fern-lint: allow cyclomatic-complexity
+// One guard per IR op. The multi-line cases have their own functions; what
+// is left is a single append per op.
 function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     var parts: string[] = [];
     var ns: string = cx.ns;
