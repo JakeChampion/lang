@@ -80,3 +80,38 @@ func weightedSumShifted(s string, n, base int) int {
 	}
 	return total
 }
+
+// __str_eq compares 8 bytes per iteration, then one 4-byte step, then up to 3
+// single bytes. Every length from 0 to 40 lands in a different combination of
+// the three, and a mismatch in the last residue byte is what a word compare
+// gets wrong: the equal case has to survive the tail, and a difference planted
+// in it has to still be found.
+//
+// The equal operand is sliced onto the heap rather than written as a second
+// literal, because identical literals share one .rodata label and the helper's
+// pointer-identity fast path would answer before the loop ran.
+func TestArmRunStrEqComparesEveryLengthClass(t *testing.T) {
+	for n := 0; n <= 40; n++ {
+		// Bytes differing from the probe at the first, middle and last index.
+		mutated := func(at int) string {
+			b := []byte(bcopyProbe[:n])
+			b[at] ^= 0x20
+			return string(b)
+		}
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		heap := addrCallOp(f, e, "__str_slice", constStr(f, e, bcopyProbe), constOp(f, e, 0), constOp(f, e, int64(n)))
+		acc := callOp(f, e, "__str_eq", heap, constStr(f, e, bcopyProbe[:n]))
+		want := 1
+		if n > 0 {
+			for _, at := range []int{0, n / 2, n - 1} {
+				bit := f.AddOp(e, ssa.OpMul, callOp(f, e, "__str_eq", heap, constStr(f, e, mutated(at))), constOp(f, e, 2))
+				acc = f.AddOp(e, ssa.OpAdd, acc, bit)
+			}
+		}
+		f.SetRet(e, acc)
+		if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 22); got != want {
+			t.Errorf("__str_eq at length %d = %d, want %d (1 = equal matched, no difference missed)", n, got, want)
+		}
+	}
+}

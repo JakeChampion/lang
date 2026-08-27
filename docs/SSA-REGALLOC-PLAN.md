@@ -944,7 +944,7 @@ built by the same compiler, with a measured 3 ms process-start floor subtracted:
 | `sort_ints` | 68 ms | 141 ms (2.07×) | 96 ms (1.41×) |
 | `string_slice` | 103 ms | 108 ms (1.02×) | 77 ms (0.75×) |
 | `array_append` | 43 ms | 43 ms (1.00×) | 31 ms (0.74×) |
-| `string_scan` | 89 ms | 136 ms (1.53×) | 133 ms (1.49×) |
+| `string_scan` | 89 ms | 136 ms (1.53×) | 56 ms (0.63×) |
 
 The cause was one decision repeated eight times. Each SSA runtime helper that
 copies bytes — `__str_concat`, `__str_slice`, `__fern_arr_push_grow`,
@@ -962,10 +962,21 @@ It costs **72 bytes**, once, in any program that copies: the routine itself. The
 call sites came out even — a three-instruction call replacing a nine-instruction
 loop.
 
-Two things this does not claim. The rows above 1.00× after the change —
-`string_scan` 1.49×, `tokenize` 1.26×, `map_string` 1.24×, `sort_inplace` and
-`map_int` 1.19× — are a different cause, unmeasured. And these are ~100 ms runs
-under emulation: best-of-7 makes the ranking trustworthy, not the third digit.
+`__str_eq` was the same defect one helper over, and `string_scan` — a needle
+compared against every entry of a string array, which the benchmark's own
+comment calls the self-hosted compiler's dominant shape — was paying six
+instructions a byte for it. Equality needs no first-difference position, so a
+whole word settles in one `cmp`: 8 bytes an iteration, then 4, then a tail of at
+most 3. That is 136 ms → **59 ms**, past flat's 89 ms, which compares 4 bytes at
+a time. `__str_ord` still runs byte-grain and is left alone: ordering has to
+name the first differing byte, so a word compare there needs a `rev` and a
+`clz`, and nothing measured makes it hot.
+
+Two things this does not claim. The rows still above 1.00× — `sort_ints` 1.42×,
+`map_int` 1.23×, `tokenize` 1.22×, `map_string` and `sort_inplace` 1.19× — are a
+different cause, in compiled code rather than in a helper, and unmeasured. And
+these are ~100 ms runs under emulation: best-of-7 makes the ranking trustworthy,
+not the third digit.
 
 The lesson is the one this epic keeps relearning in a new costume. Six ceilings
 were found by lifting the previous one, none of them the register allocator; the
