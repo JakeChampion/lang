@@ -47,11 +47,11 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **49** — 4 anonymous `function(…)` exprs and 45 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 2 in `parser`'s mentions family); 25 of the 49 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **51** — 4 anonymous `function(…)` exprs and 47 nested named fns (4 astwalk visitors, 17 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 4 in `parser` — the mentions and fn-value-call families); 27 of the 51 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,054** in 4 modules — 703 in `irlower.fern`, 304 in `checker.fern`, 32 in `astwalk.fern`, 15 in `visibility.fern` | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **106** across 12 modules — `parser.fern` joins with the mentions family (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **108** across 12 modules — `parser.fern` joins with the mentions and fn-value-call families (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |

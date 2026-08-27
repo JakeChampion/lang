@@ -15561,76 +15561,39 @@ pub function inline_callonly_fn_values(mod: Module): Module {
 // (irlower.lift_lambdas), so the route decision and the emitted code stay
 // consistent across backends.
 
-// fnv_name_called_in_expr reports whether `name` appears as the CALLEE of a call
-// (`name(...)`) anywhere in `e`. A bare read or a field/member access does NOT
-// count — those are the const-call interpretation.
-function fnv_name_called_in_expr(e: ast.Expr, name: string): boolean {
+// fnv_calls_name is the family's per-node contribution: one node is a call of
+// `name` when it is an ExprCall whose callee is the bare identifier. A read or a
+// field/member access does NOT count — those are the const-call interpretation.
+function fnv_calls_name(e: ast.Expr, name: string, hit: boolean): boolean {
+    if (hit) { return true; }
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { if (cid.name == name) { return true; } },
-                _ => { if (fnv_name_called_in_expr(c.callee, name)) { return true; } }
-            }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (fnv_name_called_in_expr(c.args[i], name)) { return true; }
-                i = i + 1;
+                ast.ExprIdent(cid) => { return cid.name == name; },
+                _ => { return false; }
             }
             return false;
         },
-        ast.ExprBinary(b) => { return fnv_name_called_in_expr(b.left, name) || fnv_name_called_in_expr(b.right, name); },
-        ast.ExprUnary(u) => { return fnv_name_called_in_expr(u.operand, name); },
-        ast.ExprIndex(x) => { return fnv_name_called_in_expr(x.array, name) || fnv_name_called_in_expr(x.index, name); },
-        ast.ExprSlice(sl) => { return fnv_name_called_in_expr(sl.array, name) || fnv_name_called_in_expr(sl.start, name) || fnv_name_called_in_expr(sl.end, name); },
-        ast.ExprFieldAccess(fa) => { return fnv_name_called_in_expr(fa.obj, name); },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { if (fnv_name_called_in_expr(a.elements[i], name)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (fnv_name_called_in_expr(t.elements[i], name)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprStructLit(sl) => {
-            if (sl.has_base) { if (fnv_name_called_in_expr(sl.base, name)) { return true; } }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (fnv_name_called_in_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprLambda(lm) => { return fnv_name_called_in_block(lm.body, name); },
         _ => { return false; }
     }
     return false;
 }
 
-function fnv_name_called_in_block(stmts: ast.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (fnv_name_called_in_stmt(stmts[i], name)) { return true; }
-        i = i + 1;
-    }
-    return false;
+// fnv_name_called_in_expr / _stmt / _block report whether `name` is CALLED
+// anywhere in an expression / statement / statement list.
+function fnv_name_called_in_expr(e: ast.Expr, name: string): boolean {
+    function visit(n: ast.Expr, a: boolean): boolean { return fnv_calls_name(n, name, a); }
+    return astwalk.fold_expr(e, false, visit);
 }
 
 function fnv_name_called_in_stmt(st: ast.Stmt, name: string): boolean {
-    match (st) {
-        ast.StmtVar(v) => { return fnv_name_called_in_expr(v.init, name); },
-        ast.StmtReturn(r) => { return fnv_name_called_in_expr(r.value, name); },
-        ast.StmtExpr(e) => { return fnv_name_called_in_expr(e.value, name); },
-        ast.StmtAssign(a) => { return fnv_name_called_in_expr(a.value, name); },
-        ast.StmtIf(f) => { return fnv_name_called_in_expr(f.cond, name) || fnv_name_called_in_block(f.then_body, name) || fnv_name_called_in_block(f.else_body, name); },
-        ast.StmtWhile(w) => { return fnv_name_called_in_expr(w.cond, name) || fnv_name_called_in_block(w.body, name); },
-        ast.StmtFor(fr) => { return fnv_name_called_in_expr(fr.iter, name) || fnv_name_called_in_block(fr.body, name); },
-        ast.StmtMatch(m) => {
-            if (fnv_name_called_in_expr(m.scrutinee, name)) { return true; }
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) { if (fnv_name_called_in_block(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
-            return false;
-        },
-        ast.StmtDefer(d) => { return fnv_name_called_in_stmt(d.action, name); },
-        _ => { return false; }
+    function visit(n: ast.Expr, a: boolean): boolean { return fnv_calls_name(n, name, a); }
+    return astwalk.fold_stmt(st, false, visit);
+}
+
+function fnv_name_called_in_block(stmts: ast.Stmt[], name: string): boolean {
+    for st in stmts {
+        if (fnv_name_called_in_stmt(st, name)) { return true; }
     }
     return false;
 }
