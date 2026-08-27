@@ -158,6 +158,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	withMapSeed := usesMapSeed(helpers)
 	withReadLine := usesReadLine(helpers)
 	withEnv := usesEnv(helpers)
+	withRcUnderflow := usesRcUnderflow(helpers)
 	strLabels, strOrder := collectStrings(progs, names)
 	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
@@ -349,6 +350,12 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", envpSym)
 		w("\t.quad 0")
 	}
+	if withRcUnderflow {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", rcUnderflowSym)
+		w("\t.quad 0")
+	}
 	if withStrbuf {
 		// The string-builder's length counter + byte buffer. BSS, so the large
 		// buffer costs no file space; it lands in the R+W data segment under the
@@ -378,7 +385,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.space %d", readlineBytes)
 	}
 	w(".section .note.GNU-stack,\"\",@progbits")
-	return b.String(), nil
+	asm := b.String()
+	if err := checkNoDanglingCalls(asm); err != nil {
+		return "", err
+	}
+	return asm, nil
 }
 
 // Heap symbols + size backing the arm64 SSA bump allocator: a lazy mmap
@@ -424,6 +435,12 @@ const (
 
 	// envp captured from the process stack by _start, walked by env().
 	envpSym = "__ssa_envp"
+
+	// The Phase 3 over-release counter: __fern_rc_dec bumps it when it is asked
+	// to release a refcount that is already zero, and __fern_rc_underflow_count
+	// reads it back. A test that asserts the count is zero is only meaningful if
+	// the detector actually runs, so the two ship together.
+	rcUnderflowSym = "__fern_rc_underflow"
 
 	// The global string-builder: an 8-byte length counter and a fixed .bss byte
 	// buffer that strbuf_append writes into and strbuf_take copies out of. 64 MiB,
@@ -599,6 +616,17 @@ func usesEnv(helpers []string) bool {
 
 // usesArgs reports whether the module references the args() builtin, so _start
 // captures argc/argv and the .bss slots + cache are emitted.
+// usesRcUnderflow reports whether the over-release counter is in play: either
+// the detector that bumps it or the probe that reads it was referenced.
+func usesRcUnderflow(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "__fern_rc_dec" || h == "__fern_rc_underflow_count" {
+			return true
+		}
+	}
+	return false
+}
+
 func usesArgs(helpers []string) bool {
 	for _, h := range helpers {
 		if h == "args" {
@@ -672,40 +700,41 @@ func splitDynPair(key string) (string, string) {
 // (referencedRuntimeHelpers); its `bl fn_<name>` site links the label
 // fnLabel(name) writes. Leaf functions under the AArch64 PCS (arg/result x0).
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique":  emitRcIsUniqueHelper,
-	"__fern_rc_inc":        emitRcIncHelper,
-	"__fern_rc_dec":        emitRcDecHelper,
-	"__fern_box_free":      emitBoxFreeHelper,
-	"__fern_closure_drop":  emitClosureDropHelper,
-	"__str_len":            emitStrLenHelper,
-	"__ptr_width":          emitPtrWidthHelper,
-	"__load_i32":           emitLoadI32Helper,
-	"__store_i32":          emitStoreI32Helper,
-	"__load_ptr":           emitLoadPtrHelper,
-	"__store_ptr":          emitStorePtrHelper,
-	"__load_i64":           emitLoadI64Helper,
-	"__store_i64":          emitStoreI64Helper,
-	"__memset":             emitMemsetHelper,
-	"__alloc":              emitAllocHelper,
-	"__free":               emitFreeHelper,
-	"__str_eq":             emitStrEqHelper,
-	"__str_ord":            emitStrOrdHelper,
-	"__str_concat":         emitStrConcatHelper,
-	"__fern_str_dec":       emitStrDecHelper,
-	"__fern_arr_dec":       emitArrDecHelper,
-	"__fern_drop_arr_str":  emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "das"),
-	"__fern_drop_arr_ptr":  emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dap"),
-	"__memcpy":             emitMemcpyHelper,
-	"__fern_map_drop":      emitMapDropHelper,
-	"__fern_map_hash_seed": emitMapHashSeedHelper,
-	"__alloc_reuse":        emitAllocReuseHelper,
-	"__str_idx":            emitStrIdxHelper,
-	"__fern_memchr":        emitMemchrHelper,
-	"__fern_ascii_run":     emitAsciiRunHelper,
-	"__arr_idx":            emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
-	"__arr_idx_1":          emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
-	"__arr_idx_8":          emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
-	"__arr_idx_16":         emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
+	"__fern_rc_is_unique":       emitRcIsUniqueHelper,
+	"__fern_rc_inc":             emitRcIncHelper,
+	"__fern_rc_dec":             emitRcDecHelper,
+	"__fern_rc_underflow_count": emitRcUnderflowCountHelper,
+	"__fern_box_free":           emitBoxFreeHelper,
+	"__fern_closure_drop":       emitClosureDropHelper,
+	"__str_len":                 emitStrLenHelper,
+	"__ptr_width":               emitPtrWidthHelper,
+	"__load_i32":                emitLoadI32Helper,
+	"__store_i32":               emitStoreI32Helper,
+	"__load_ptr":                emitLoadPtrHelper,
+	"__store_ptr":               emitStorePtrHelper,
+	"__load_i64":                emitLoadI64Helper,
+	"__store_i64":               emitStoreI64Helper,
+	"__memset":                  emitMemsetHelper,
+	"__alloc":                   emitAllocHelper,
+	"__free":                    emitFreeHelper,
+	"__str_eq":                  emitStrEqHelper,
+	"__str_ord":                 emitStrOrdHelper,
+	"__str_concat":              emitStrConcatHelper,
+	"__fern_str_dec":            emitStrDecHelper,
+	"__fern_arr_dec":            emitArrDecHelper,
+	"__fern_drop_arr_str":       emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "das"),
+	"__fern_drop_arr_ptr":       emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dap"),
+	"__memcpy":                  emitMemcpyHelper,
+	"__fern_map_drop":           emitMapDropHelper,
+	"__fern_map_hash_seed":      emitMapHashSeedHelper,
+	"__alloc_reuse":             emitAllocReuseHelper,
+	"__str_idx":                 emitStrIdxHelper,
+	"__fern_memchr":             emitMemchrHelper,
+	"__fern_ascii_run":          emitAsciiRunHelper,
+	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
+	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
+	"__arr_idx_8":               emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
+	"__arr_idx_16":              emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	// Bounds-check-elided variants (#4380 lever 3): same address compute, no trap.
 	"__arr_idx_nc":                  emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
 	"__arr_idx_1_nc":                emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
@@ -2165,6 +2194,48 @@ func collectSentinels(progs map[string]*x86.Program, names []string) (map[int64]
 // referencedRuntimeHelpers returns, sorted, every runtime helper any emitted
 // program calls (that arm64 has an emitter for), plus the transitive closure of
 // their helper→helper dependencies (runtimeHelperDeps).
+// checkNoDanglingCalls reports a `bl` to a label the module never defines.
+//
+// referencedRuntimeHelpers walks the call graph and emits the runtime helpers
+// it finds, but a callee with no entry in runtimeHelperEmitters is simply
+// skipped — a user function is a legitimate skip, and until this a helper the
+// table had never heard of was one too. The call went out with nothing behind
+// it and the program died in the assembler, half an hour of compilation later,
+// on a mangled label name that says nothing about which backend owed it.
+//
+// This is the same condition the assembler checks; the point is to fail here,
+// naming the helper, so a coverage gap reads as one.
+func checkNoDanglingCalls(asm string) error {
+	defined := map[string]bool{}
+	var called []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(asm, "\n") {
+		switch {
+		case strings.HasPrefix(line, "\tbl "):
+			t := strings.TrimSpace(line[len("\tbl "):])
+			if !seen[t] {
+				seen[t] = true
+				called = append(called, t)
+			}
+		case len(line) > 0 && line[0] != '\t' && line[0] != '.' && strings.HasSuffix(line, ":"):
+			defined[strings.TrimSuffix(line, ":")] = true
+		case strings.HasPrefix(line, ".L") && strings.HasSuffix(line, ":"):
+			defined[strings.TrimSuffix(line, ":")] = true
+		}
+	}
+	var missing []string
+	for _, t := range called {
+		if !defined[t] {
+			missing = append(missing, t)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("arm64ssa: %d call target(s) the module never defines — a runtime helper this backend does not emit: %s", len(missing), strings.Join(missing, ", "))
+}
+
 func referencedRuntimeHelpers(progs map[string]*x86.Program) []string {
 	seen := map[string]bool{}
 	var add func(name string)
@@ -2247,9 +2318,31 @@ func emitRcDecHelper(w func(string, ...any)) {
 	w("\tb.lo .Lssa_rcdec_ret")
 	w("\tldur w1, [x0, #-8]")
 	w("\ttbnz w1, #31, .Lssa_rcdec_ret") // static sentinel
+	w("\tcbz w1, .Lssa_rcdec_underflow")
 	w("\tsub w1, w1, #1")
 	w("\tstur w1, [x0, #-8]")
 	w(".Lssa_rcdec_ret:")
+	w("\tret")
+	// Releasing an already-zero count is an over-release. Count it and leave
+	// the refcount alone rather than wrapping it to 0xffffffff, which would
+	// turn one bug into an immortal object.
+	w(".Lssa_rcdec_underflow:")
+	w("\tadrp x2, %s", rcUnderflowSym)
+	w("\tadd x2, x2, #:lo12:%s", rcUnderflowSym)
+	w("\tldr w3, [x2]")
+	w("\tadd w3, w3, #1")
+	w("\tstr w3, [x2]")
+	w("\tret")
+}
+
+// emitRcUnderflowCountHelper emits `__fern_rc_underflow_count() -> i32`, the
+// Phase 3 probe that reads back what emitRcDecHelper counted.
+func emitRcUnderflowCountHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_underflow_count"))
+	w("\tadrp x0, %s", rcUnderflowSym)
+	w("\tadd x0, x0, #:lo12:%s", rcUnderflowSym)
+	w("\tldr w0, [x0]")
 	w("\tret")
 }
 

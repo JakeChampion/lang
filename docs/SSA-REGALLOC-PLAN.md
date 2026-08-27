@@ -793,10 +793,36 @@ and here the SSA backend is not at parity but *ahead*:
 Its output matches the flat build's exactly, on `-per-module-count` and
 `-per-module-manifest` over real modules, not just on the usage line.
 
-Note what the sequence has been: four separate ceilings — arguments, frame size,
-branch reach, literal reach — each invisible until the one before it was lifted,
-none of them about register allocation. Sizing the work by what the compiler was
-*reporting* at any point would have missed all four.
+### The fifth is not a limit at all: a helper nobody emitted
+
+Sweeping the 47 self-host drivers under `-backend ssa` past the pool fix,
+`asm_ir_run` stops on something of a different kind:
+
+```
+arm64: branch to undefined label "fn___fern_rc_underflow_count"
+```
+
+`__rc_underflow_count()` is the Phase 3 over-release probe. The flat backend
+implements it and its detector; this one implemented neither, and
+`referencedRuntimeHelpers` **skipped the call silently** — a callee with no
+entry in `runtimeHelperEmitters` is dropped, which is right for a user function
+and was wrong for a helper the table had never heard of. The call went out with
+nothing behind it and died in the assembler half an hour later, on a mangled
+label that says nothing about which backend owed it.
+
+Both halves ship: `__fern_rc_dec` counts an over-release into a `.bss` word,
+and `__fern_rc_underflow_count` reads it back. A probe wired to storage nothing
+writes would be worse than the link error — every test asserting the count is
+zero would pass while detecting nothing.
+
+And the silent skip is now an emit-time error naming the helper. It is the same
+condition the assembler already checks; the point is to fail where a coverage
+gap reads as one.
+
+Note what the sequence has been: five ceilings — arguments, frame size, branch
+reach, literal reach, and a missing helper — each invisible until the one before
+it was lifted, none of them about register allocation. Sizing the work by what
+the compiler was *reporting* at any point would have missed all five.
 
 ### The interval approximation, and what sizing it missed
 
