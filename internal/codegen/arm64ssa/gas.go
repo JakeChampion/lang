@@ -2772,26 +2772,45 @@ func emitMemsetHelper(w func(string, ...any)) {
 
 // emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
 // are byte-equal, else 0. Fast paths on pointer identity and length mismatch,
-// then a byte loop. Leaf.
+// then 8 bytes per iteration, one 4-byte step and a tail of at most 3. Equality
+// needs no first-difference position, so a whole word compares in one cmp — the
+// byte loop this replaces cost six instructions per byte, which is the whole
+// cost of a linear symbol-table lookup. Leaf; both pointers are advanced.
 func emitStrEqHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_eq"))
 	w("\tcmp x0, x1")
 	w("\tb.eq .Lssa_streq_eq") // same pointer → equal
-	w("\tldur w2, [x0, #-4]")  // len a
+	w("\tldur w2, [x0, #-4]")  // len a — also the remaining count below
 	w("\tldur w3, [x1, #-4]")  // len b
 	w("\tcmp w2, w3")
 	w("\tb.ne .Lssa_streq_neq") // different lengths
-	w("\tmov w4, #0")           // i = 0
-	w(".Lssa_streq_loop:")
-	w("\tcmp w4, w2")
-	w("\tb.hs .Lssa_streq_eq") // i >= len → all bytes matched (unsigned)
-	w("\tldrb w5, [x0, x4]")
-	w("\tldrb w6, [x1, x4]")
-	w("\tcmp w5, w6")
+	w(".Lssa_streq_8:")
+	w("\tcmp w2, #8")
+	w("\tb.lo .Lssa_streq_4")
+	w("\tldr x4, [x0], #8")
+	w("\tldr x5, [x1], #8")
+	w("\tcmp x4, x5")
 	w("\tb.ne .Lssa_streq_neq")
-	w("\tadd w4, w4, #1")
-	w("\tb .Lssa_streq_loop")
+	w("\tsub w2, w2, #8")
+	w("\tb .Lssa_streq_8")
+	w(".Lssa_streq_4:")
+	w("\tcmp w2, #4")
+	w("\tb.lo .Lssa_streq_1")
+	w("\tldr w4, [x0], #4")
+	w("\tldr w5, [x1], #4")
+	w("\tcmp w4, w5")
+	w("\tb.ne .Lssa_streq_neq")
+	w("\tsub w2, w2, #4")
+	w(".Lssa_streq_1:")
+	w("\tcbz w2, .Lssa_streq_eq")
+	w(".Lssa_streq_byte:")
+	w("\tldrb w4, [x0], #1")
+	w("\tldrb w5, [x1], #1")
+	w("\tcmp w4, w5")
+	w("\tb.ne .Lssa_streq_neq")
+	w("\tsubs w2, w2, #1")
+	w("\tb.ne .Lssa_streq_byte")
 	w(".Lssa_streq_eq:")
 	w("\tmov x0, #1")
 	w("\tret")
