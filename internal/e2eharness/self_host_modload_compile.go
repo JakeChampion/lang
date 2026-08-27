@@ -86,6 +86,14 @@ func CompileStdProgModload(t *testing.T, runner []string, driverBin string, mods
 // general counterpart of CompileStdProgModload / CompileSourceModload for
 // programs built from specific self-host modules (e.g. lexer + parser).
 // Returns the emitted asm and the program dir.
+//
+// A local import that `files` does not carry is filled in from
+// examples/self_host, transitively — so a caller names the modules its
+// program is ABOUT and cannot go stale when one of them gains an import.
+// That staleness is what broke every hand-listed bundle here at once when
+// parser.fern gained `import "./ast"` (#6993), in four different spellings.
+// An import that resolves nowhere is still left for the driver to report,
+// so a test asserting a genuinely missing module still sees it fail.
 func CompileFilesModload(t *testing.T, runner []string, driverBin string, files map[string]string, extraArgs ...string) (asm string, progDir string) {
 	t.Helper()
 	progDir = t.TempDir()
@@ -101,7 +109,45 @@ func CompileFilesModload(t *testing.T, runner []string, driverBin string, files 
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
+	fillSelfHostImports(t, progDir, files)
 	return string(RunDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"), extraArgs...)), progDir
+}
+
+// fillSelfHostImports copies into progDir every self-host module the written
+// files import but did not supply, following each copied module's own imports
+// in turn.
+func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) {
+	t.Helper()
+	have := map[string]bool{"builtins.fern": true}
+	var queue []string
+	for name, src := range files {
+		have[name] = true
+		queue = append(queue, src)
+	}
+	for len(queue) > 0 {
+		src := queue[0]
+		queue = queue[1:]
+		for _, m := range fernImportRe.FindAllStringSubmatch(src, -1) {
+			if isExternalFernImport(m[1]) {
+				continue
+			}
+			name := strings.TrimPrefix(m[1], "./") + ".fern"
+			if have[name] {
+				continue
+			}
+			sh, err := os.ReadFile(filepath.Join(selfHostSrcDir, name))
+			if err != nil {
+				// Not a self-host module. Leave it: the driver names the
+				// unresolved import, which is what a negative test wants.
+				continue
+			}
+			have[name] = true
+			if err := os.WriteFile(filepath.Join(progDir, name), sh, 0o644); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+			queue = append(queue, string(sh))
+		}
+	}
 }
 
 // CompileSourceModload compiles `entrySrc` and its FULL transitive stdlib

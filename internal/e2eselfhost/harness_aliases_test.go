@@ -62,10 +62,3 @@ func selfHostImportClosureFiles(t *testing.T, fernName string) []string {
 	t.Helper()
 	return e2eharness.SelfHostImportClosure(t, "../../examples/self_host", fernName)
 }
-
-// selfHostSourcesForEntry is the self-host closure of an in-memory entry
-// program, keyed by file name.
-func selfHostSourcesForEntry(t *testing.T, entrySrc string) map[string]string {
-	t.Helper()
-	return e2eharness.SelfHostSourcesForEntry(t, entrySrc)
-}
