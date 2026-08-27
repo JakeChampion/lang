@@ -228,6 +228,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if heap {
 		emitHeapGuard(w)
 	}
+	if usesBcopy(helpers) {
+		emitBcopy(w)
+	}
 	if usesTranscendentals(helpers) {
 		// Shared .rodata coefficient table for the exp/log/pow polynomials, emitted
 		// once (the helper bodies above reference its labels via adrp/:lo12:).
@@ -409,6 +412,7 @@ const (
 	heapEndSym   = "__ssa_heap_end"
 	heapBaseSym  = "__ssa_heap_base"
 	heapGuardSym = "__ssa_heap_guard"
+	bcopySym     = "__ssa_bcopy"
 	heapOOMLabel = ".Lssa_heap_oom"
 	heapOOMMsg   = "__ssa_msg_oom"
 
@@ -549,6 +553,95 @@ func emitHeapGuard(w func(string, ...any)) {
 	}
 	w("\t.byte %s", strings.Join(bytes, ", "))
 	w(".text")
+}
+
+// emitBcopy emits __ssa_bcopy(dst, src, n): a forward byte copy of n bytes,
+// 16 bytes per iteration through the bulk, one 8-byte step, then a byte tail of
+// at most 7. Regions must not overlap.
+//
+// It clobbers only x0, x1, x2 (its arguments) and x16 / x17 (IP0 / IP1, which a
+// veneer already clobbers across any call), so the helpers that call it keep
+// their live values in x3..x15 and need no frame beyond stacking x30 — the same
+// arrangement __ssa_heap_guard uses. Every string and array copy in this backend
+// routes here; each one previously open-coded a byte-at-a-time loop costing five
+// instructions per byte, which dominated concatenation, slicing and array
+// growth.
+func emitBcopy(w func(string, ...any)) {
+	w("")
+	w("%s:", bcopySym)
+	w("\tcmp x2, #16")
+	w("\tb.lo .Lssa_bcp_8")
+	w(".Lssa_bcp_16:")
+	w("\tldp x16, x17, [x1], #16")
+	w("\tstp x16, x17, [x0], #16")
+	w("\tsub x2, x2, #16")
+	w("\tcmp x2, #16")
+	w("\tb.hs .Lssa_bcp_16")
+	w(".Lssa_bcp_8:")
+	w("\tcmp x2, #8")
+	w("\tb.lo .Lssa_bcp_1")
+	w("\tldr x16, [x1], #8")
+	w("\tstr x16, [x0], #8")
+	w("\tsub x2, x2, #8")
+	w(".Lssa_bcp_1:")
+	w("\tcbz x2, .Lssa_bcp_done")
+	w(".Lssa_bcp_byte:")
+	w("\tldrb w16, [x1], #1")
+	w("\tstrb w16, [x0], #1")
+	w("\tsubs x2, x2, #1")
+	w("\tb.ne .Lssa_bcp_byte")
+	w(".Lssa_bcp_done:")
+	w("\tret")
+}
+
+// bcopyCallLines copies n bytes from src to dst through __ssa_bcopy. dst, src
+// and n name the x-registers holding the three arguments; they are moved into
+// x0..x2 in an order that survives any overlap between the argument registers
+// themselves. x30 is stacked because the callers are otherwise leaf helpers.
+func bcopyCallLines(dst, src, n string) []string {
+	var out []string
+	// x2 first, then x1, then x0: each move's destination is not read by a
+	// later one, so an argument already sitting in x0 or x1 is not lost.
+	for _, mv := range [][2]string{{"x2", n}, {"x1", src}, {"x0", dst}} {
+		if mv[0] != mv[1] {
+			out = append(out, fmt.Sprintf("mov %s, %s", mv[0], mv[1]))
+		}
+	}
+	return append(out,
+		"stp x29, x30, [sp, #-16]!",
+		"bl "+bcopySym,
+		"ldp x29, x30, [sp], #16",
+	)
+}
+
+// emitBcopyCall writes bcopyCallLines through a line writer.
+func emitBcopyCall(w func(string, ...any), dst, src, n string) {
+	for _, l := range bcopyCallLines(dst, src, n) {
+		w("\t%s", l)
+	}
+}
+
+// bcopyUsingHelpers are the runtime helpers that call __ssa_bcopy, so the shared
+// routine is emitted whenever one of them is.
+var bcopyUsingHelpers = map[string]bool{
+	"__memcpy":                    true,
+	"__str_concat":                true,
+	"__str_slice":                 true,
+	"__fern_arr_push_grow":        true,
+	"__fern_arr_cow_inplace":      true,
+	"string_from_bytes_unchecked": true,
+	"strbuf_append":               true,
+	"strbuf_take":                 true,
+}
+
+// usesBcopy reports whether any referenced helper calls __ssa_bcopy.
+func usesBcopy(helpers []string) bool {
+	for _, h := range helpers {
+		if bcopyUsingHelpers[h] {
+			return true
+		}
+	}
+	return false
 }
 
 // heapGuardCallLines are the instructions a bump site emits immediately after
@@ -2743,7 +2836,7 @@ func emitStrOrdHelper(w func(string, ...any)) {
 // a fresh length-prefixed string holding a's bytes then b's, and return its data
 // pointer. Inline-allocates the rc-headed block (rc=1 at base+0, total length at
 // base+4, data at base+8 — the same header ConstStr / heap strings use) and
-// byte-copies each operand, so it needs no calls. Leaf.
+// copies each operand through __ssa_bcopy.
 func emitStrConcatHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_concat"))
@@ -2764,28 +2857,13 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tadd x7, x7, x4") // new cursor = base + 8 + total
 	w("\tstr x7, [x5]")
 	emitHeapGuardCall(w)
-	w("\tadd x9, x6, #8") // x9 = data
-	// Copy a's la bytes: [data + i] = [a + i].
-	w("\tmov x10, #0")
-	w(".Lssa_strcat_a:")
-	w("\tcmp w10, w2")
-	w("\tb.hs .Lssa_strcat_b")
-	w("\tldrb w11, [x0, x10]")
-	w("\tstrb w11, [x9, x10]")
-	w("\tadd x10, x10, #1")
-	w("\tb .Lssa_strcat_a")
-	// Copy b's lb bytes after a: dest base = data + la.
-	w(".Lssa_strcat_b:")
-	w("\tadd x12, x9, x2") // x2 = la (zero-extended)
-	w("\tmov x10, #0")
-	w(".Lssa_strcat_bl:")
-	w("\tcmp w10, w3")
-	w("\tb.hs .Lssa_strcat_done")
-	w("\tldrb w11, [x1, x10]")
-	w("\tstrb w11, [x12, x10]")
-	w("\tadd x10, x10, #1")
-	w("\tb .Lssa_strcat_bl")
-	w(".Lssa_strcat_done:")
+	w("\tadd x9, x6, #8")  // x9 = data
+	w("\tadd x10, x9, x2") // x10 = data + la, where b's bytes go
+	// b and lb move clear of x0..x2 before the first copy consumes those.
+	w("\tmov x11, x1") // b
+	w("\tmov x12, x3") // lb
+	emitBcopyCall(w, "x9", "x0", "x2")
+	emitBcopyCall(w, "x10", "x11", "x12")
 	w("\tmov x0, x9") // return data
 	w("\tret")
 }
@@ -4751,30 +4829,15 @@ func emitAllocReuseHelper(w func(string, ...any)) {
 	w("\tb %s", fnLabel("__alloc")) // tail call
 }
 
-// emitMemcpyHelper writes __memcpy(dst, src, n) -> dst: copy 8 bytes at a time,
-// then the tail one byte at a time. core/map.fern uses it to move a kv buffer's
-// entries into a freshly grown one. Mirrors the stack-machine backend's
-// __fern_memcpy. Returns dst (an 8-byte pointer), so ssa.ResolveWidths classifies
-// it wide.
+// emitMemcpyHelper writes __memcpy(dst, src, n) -> dst, forwarding to
+// __ssa_bcopy. core/map.fern uses it to move a kv buffer's entries into a freshly
+// grown one. Mirrors the stack-machine backend's __fern_memcpy. Returns dst (an
+// 8-byte pointer), so ssa.ResolveWidths classifies it wide.
 func emitMemcpyHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__memcpy"))
-	w("\tmov x3, x0") // save dst for the return
-	w(".Lssa_mcp_word:")
-	w("\tcmp x2, #8")
-	w("\tb.lt .Lssa_mcp_tail")
-	w("\tldr x4, [x1], #8")
-	w("\tstr x4, [x0], #8")
-	w("\tsub x2, x2, #8")
-	w("\tb .Lssa_mcp_word")
-	w(".Lssa_mcp_tail:")
-	w("\tcmp x2, #0")
-	w("\tb.eq .Lssa_mcp_done")
-	w("\tldrb w4, [x1], #1")
-	w("\tstrb w4, [x0], #1")
-	w("\tsub x2, x2, #1")
-	w("\tb .Lssa_mcp_tail")
-	w(".Lssa_mcp_done:")
+	w("\tmov x3, x0") // save dst for the return (outside __ssa_bcopy's clobbers)
+	emitBcopyCall(w, "x0", "x1", "x2")
 	w("\tmov x0, x3")
 	w("\tret")
 }
@@ -4823,9 +4886,9 @@ func emitArrIdxHelperNChecked(name string, shift int, checked bool) func(w func(
 // length in place, returning arr. Otherwise it allocates a fresh, larger buffer
 // (newCap = max(2*newLen, 4)), lays the array header (cap@-12, rc=1@-8, len@-4
 // relative to the new data pointer, past a headerBytes = max(16, stride) prefix),
-// byte-copies the old elements, and returns the new data pointer. Unlike the
-// native helper (which calls __fern_alloc / __fern_memcpy) this inlines a raw
-// bump allocation and a byte-copy loop, so it is a leaf — mirroring __str_concat.
+// copies the old elements, and returns the new data pointer. Unlike the native
+// helper (which calls __fern_alloc) this inlines the raw bump allocation, and the
+// copy goes through __ssa_bcopy — mirroring __str_concat.
 // x0=arr, w1=oldLen, w2=stride. The bump heap doesn't reclaim, so the old buffer
 // leaks (docs/SSA-RC-RUNTIME.md).
 func emitArrPushGrowHelper(w func(string, ...any)) {
@@ -4870,17 +4933,10 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov w13, #1")
 	w("\tstur w13, [x11, #-8]") // rc = 1
 	w("\tstur w4, [x11, #-4]")  // len = newLen
-	// Byte-copy oldLen*stride bytes from arr (x0) to new_data (x11).
-	w("\tmul w14, w1, w2") // nbytes
-	w("\tmov w15, #0")     // i
-	w(".Lssa_apg_cp:")
-	w("\tcmp w15, w14")
-	w("\tb.hs .Lssa_apg_done")
-	w("\tldrb w16, [x0, x15]")
-	w("\tstrb w16, [x11, x15]")
-	w("\tadd w15, w15, #1")
-	w("\tb .Lssa_apg_cp")
-	w(".Lssa_apg_done:")
+	// Copy oldLen*stride bytes from arr (x0) to new_data (x11).
+	w("\tmul w14, w1, w2") // nbytes (a w-destination zero-extends into x14)
+	w("\tmov x15, x0")     // src, clear of __ssa_bcopy's argument registers
+	emitBcopyCall(w, "x11", "x15", "x14")
 	w("\tmov x0, x11") // return new_data
 	w("\tret")
 }
@@ -5402,7 +5458,7 @@ func emitStrbufResetHelper(w func(string, ...any)) {
 
 // emitStrbufAppendHelper writes strbuf_append(s): copy the single-word string's
 // bytes (length at [s-4]) into the builder buffer past the current tail and bump
-// the length counter. Inlines the byte-copy, so it is a leaf. Unused return is 0.
+// the length counter. Unused return is 0.
 func emitStrbufAppendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("strbuf_append"))
@@ -5413,17 +5469,11 @@ func emitStrbufAppendHelper(w func(string, ...any)) {
 	w("\tadrp x5, %s", strbufDataSym)
 	w("\tadd x5, x5, #:lo12:%s", strbufDataSym)
 	w("\tadd x5, x5, x4") // x5 = dst = data + len
-	w("\tmov w6, #0")     // i
-	w(".Lssa_sba_cp:")
-	w("\tcmp w6, w2")
-	w("\tb.hs .Lssa_sba_done")
-	w("\tldrb w7, [x0, x6]")
-	w("\tstrb w7, [x5, x6]")
-	w("\tadd w6, w6, #1")
-	w("\tb .Lssa_sba_cp")
-	w(".Lssa_sba_done:")
+	w("\tmov x6, x0")     // src, clear of __ssa_bcopy's argument registers
+	w("\tmov x7, x2")     // append length
 	w("\tadd x4, x4, x2") // len += append length
 	w("\tstr x4, [x3]")
+	emitBcopyCall(w, "x5", "x6", "x7")
 	w("\tmov x0, xzr")
 	w("\tret")
 }
@@ -5453,15 +5503,8 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 	w("\tadd x8, x4, #8")   // x8 = data
 	w("\tadrp x9, %s", strbufDataSym)
 	w("\tadd x9, x9, #:lo12:%s", strbufDataSym) // x9 = builder buffer
-	w("\tmov w10, #0")
-	w(".Lssa_sbt_cp:")
-	w("\tcmp w10, w2")
-	w("\tb.hs .Lssa_sbt_done")
-	w("\tldrb w11, [x9, x10]")
-	w("\tstrb w11, [x8, x10]")
-	w("\tadd w10, w10, #1")
-	w("\tb .Lssa_sbt_cp")
-	w(".Lssa_sbt_done:")
+	w("\tmov x10, x2")                          // len, clear of __ssa_bcopy's argument registers
+	emitBcopyCall(w, "x8", "x9", "x10")
 	w("\tstr xzr, [x1]") // reset len = 0
 	w("\tmov x0, x8")    // return data pointer
 	w("\tret")
@@ -5470,9 +5513,9 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 // emitStrSliceHelper writes __str_slice(base, low, high) -> data: allocate a
 // fresh length-prefixed string holding base[low:high]. Bounds-traps (exit 134)
 // on low < 0, high > src_len, or low > high, matching the native helper. Like
-// the other string helpers it inlines the bump allocation + byte-copy (no
-// __fern_alloc / __fern_memcpy call) into a fresh single-word rc-headered string
-// (rc=1@base, len@base+4, data@base+8), so it is a leaf. low/high arrive as i32;
+// the other string helpers it inlines the bump allocation (no __fern_alloc call)
+// into a fresh single-word rc-headered string (rc=1@base, len@base+4,
+// data@base+8), and copies through __ssa_bcopy. low/high arrive as i32;
 // they are sign-extended for the signed bound checks. x0=base, w1=low, w2=high;
 // returns x0=data.
 func emitStrSliceHelper(w func(string, ...any)) {
@@ -5504,15 +5547,8 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	emitHeapGuardCall(w)
 	// Copy new_len bytes from base+low (x0+x1) to data (x8).
 	w("\tadd x10, x0, x1") // src = base + low
-	w("\tmov w11, #0")     // i
-	w(".Lssa_strslice_cp:")
-	w("\tcmp w11, w4")
-	w("\tb.hs .Lssa_strslice_done")
-	w("\tldrb w12, [x10, x11]")
-	w("\tstrb w12, [x8, x11]")
-	w("\tadd w11, w11, #1")
-	w("\tb .Lssa_strslice_cp")
-	w(".Lssa_strslice_done:")
+	w("\tmov w11, w4")     // new_len, zero-extended into x11
+	emitBcopyCall(w, "x8", "x10", "x11")
 	w("\tmov x0, x8") // return data
 	w("\tret")
 	w(".Lssa_strslice_trap:")
@@ -5526,7 +5562,7 @@ func emitStrSliceHelper(w func(string, ...any)) {
 // round-trip companion to s.bytes(). arm64ssa strings are single-word and
 // rc-headered (rc=1@base+0, len@base+4, data@base+8 — the same layout ConstStr
 // and __str_concat use), with no small-string inline optimisation, so this is a
-// straight bump-allocate + byte-copy leaf. bs is the input u8[] data pointer;
+// straight inline bump-allocate plus an __ssa_bcopy. bs is the input u8[] data pointer;
 // its byte length is at [bs-4]. x0=bs; returns x0=data.
 func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("")
@@ -5547,15 +5583,9 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 	emitHeapGuardCall(w)
 	w("\tadd x6, x3, #8") // x6 = data
 	// Copy len bytes from bs (x0) to data (x6).
-	w("\tmov x7, #0")
-	w(".Lssa_sfb_cp:")
-	w("\tcmp w7, w1")
-	w("\tb.hs .Lssa_sfb_done")
-	w("\tldrb w8, [x0, x7]")
-	w("\tstrb w8, [x6, x7]")
-	w("\tadd x7, x7, #1")
-	w("\tb .Lssa_sfb_cp")
-	w(".Lssa_sfb_done:")
+	w("\tmov x7, x0") // src
+	w("\tmov x8, x1") // len
+	emitBcopyCall(w, "x6", "x7", "x8")
 	w("\tmov x0, x6") // return data
 	w("\tret")
 }
@@ -5565,10 +5595,10 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 // is uniquely held, return it unchanged for an in-place store. Slow path (rc >
 // 1, shared): decrement arr's rc (taking the caller's reference as we copy;
 // skip a static sentinel whose rc word has the high bit set), bump-allocate a
-// fresh buffer with the SAME cap+len, byte-copy the payload, write rc=1 on the
-// new header, and return the new data pointer. Like __fern_arr_push_grow this
-// inlines the bump allocation + byte-copy so it is a leaf (the native helper
-// calls __fern_alloc / __fern_memcpy). x0=arr, w1=stride; returns x0=buf.
+// fresh buffer with the SAME cap+len, copy the payload through __ssa_bcopy, write
+// rc=1 on the new header, and return the new data pointer. Like
+// __fern_arr_push_grow it inlines the bump allocation (the native helper calls
+// __fern_alloc). x0=arr, w1=stride; returns x0=buf.
 func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_arr_cow_inplace"))
@@ -5607,17 +5637,10 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("\tmov w13, #1")
 	w("\tstur w13, [x11, #-8]") // rc = 1
 	w("\tstur w3, [x11, #-4]")  // len
-	// Byte-copy len*stride bytes from arr (x0) to new_data (x11).
-	w("\tmul w14, w3, w1") // nbytes
-	w("\tmov w15, #0")     // i
-	w(".Lssa_cow_cp:")
-	w("\tcmp w15, w14")
-	w("\tb.hs .Lssa_cow_done")
-	w("\tldrb w16, [x0, x15]")
-	w("\tstrb w16, [x11, x15]")
-	w("\tadd w15, w15, #1")
-	w("\tb .Lssa_cow_cp")
-	w(".Lssa_cow_done:")
+	// Copy len*stride bytes from arr (x0) to new_data (x11).
+	w("\tmul w14, w3, w1") // nbytes (a w-destination zero-extends into x14)
+	w("\tmov x15, x0")     // src, clear of __ssa_bcopy's argument registers
+	emitBcopyCall(w, "x11", "x15", "x14")
 	w("\tmov x0, x11") // return new_data
 	w("\tret")
 }

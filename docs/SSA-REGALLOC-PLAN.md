@@ -928,3 +928,47 @@ holds to byte-identical behaviour:
   struct-element arrays updated through `.append` / `.with`, where the
   unique-reference in-place update appears to be lost. Same values; only the
   bump high-water mark differs, and it prints to stderr.
+
+### The epic optimised size and never once measured speed
+
+Every measurement above this line counts bytes. The corpus went from 163.7% of
+flat's `.text` to under 90%, and nothing in that record says whether the smaller
+code runs faster, slower, or the same.
+
+It ran slower. Best-of-7 over `examples/bench/*.fern` under qemu, both backends
+built by the same compiler, with a measured 3 ms process-start floor subtracted:
+
+| bench | flat | SSA before | SSA after |
+|---|---|---|---|
+| `string_build` | 194 ms | 463 ms (2.39×) | 174 ms (0.88×) |
+| `sort_ints` | 68 ms | 141 ms (2.07×) | 96 ms (1.41×) |
+| `string_slice` | 103 ms | 108 ms (1.02×) | 77 ms (0.75×) |
+| `array_append` | 43 ms | 43 ms (1.00×) | 31 ms (0.74×) |
+| `string_scan` | 89 ms | 136 ms (1.53×) | 133 ms (1.49×) |
+
+The cause was one decision repeated eight times. Each SSA runtime helper that
+copies bytes — `__str_concat`, `__str_slice`, `__fern_arr_push_grow`,
+`__fern_arr_cow_inplace`, `string_from_bytes_unchecked`, `strbuf_append`,
+`strbuf_take`, `__memcpy` — open-coded its own copy loop at one byte per
+iteration, five instructions a byte, to stay a leaf. Flat routes all of them
+through a size-classed `__fern_memcpy` moving 32 bytes an iteration. They all
+call `__ssa_bcopy` now: 16 bytes per iteration, one 8-byte step, a tail of at
+most 7. It clobbers only x0–x2 and x16/x17, so its callers keep their live
+values and stack nothing but x30 — the arrangement `__ssa_heap_guard` already
+used, which is why "so it is a leaf" was stale in those comments before this
+change touched them.
+
+It costs **72 bytes**, once, in any program that copies: the routine itself. The
+call sites came out even — a three-instruction call replacing a nine-instruction
+loop.
+
+Two things this does not claim. The rows above 1.00× after the change —
+`string_scan` 1.49×, `tokenize` 1.26×, `map_string` 1.24×, `sort_inplace` and
+`map_int` 1.19× — are a different cause, unmeasured. And these are ~100 ms runs
+under emulation: best-of-7 makes the ranking trustworthy, not the third digit.
+
+The lesson is the one this epic keeps relearning in a new costume. Six ceilings
+were found by lifting the previous one, none of them the register allocator; the
+seventh was found by measuring a quantity nobody had measured. `.text` size was
+picked as the proxy at the start and never revisited, and a 2.4× slowdown sat
+inside a corpus that was passing every gate.
