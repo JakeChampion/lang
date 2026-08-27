@@ -31,9 +31,14 @@ import (
 // THE FAILURE MODE IS AN OVER-RELEASE, not a leak, so those rows are
 // load-bearing rather than decorative: each one escapes something (an element,
 // the array, a bound element) or mutates `tt`, then reads every value back
-// after 200 rounds of churn have recycled the freelist. All five answer
-// identically on native x86-64, `bin/fern -interp` and the self-host, and stay
-// pinned at their LEAKING counts — the conservative direction.
+// after 200 rounds of churn have recycled the freelist. They answer identically
+// on native x86-64, `bin/fern -interp` and the self-host, and stay pinned at
+// their LEAKING counts — the conservative direction.
+//
+// One of them stopped being a refusal. `iterated_now_clean` was pinned leaking
+// because the walker refused an iterated array outright; a transient for-in
+// binder no longer does that, so the share behind it is admitted and the row
+// balances. Its exit never moved.
 //
 // `escaping_holder_now_clean` is the one row that moved further than the pin
 // predicted. The inline cell refuses it and stays leaking; through the bind it
@@ -189,9 +194,13 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// REFUSED: `for s in tt` binds an element per iteration, which the
-			// walker cannot see through.
-			name: "refused_iterated",
+			// Was REFUSED, and is not any more. `for s in tt` binds an element
+			// per iteration, which the walker used to refuse outright; a
+			// transient binder no longer takes the array's credit away (see
+			// self_host_forin_strarr_binder_test.go), so the share behind it is
+			// admitted too and this balances. The exit is 43 before and after —
+			// only the accounting moved — and native and interp agree.
+			name: "iterated_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     var q: P = P { f: mkv(i), n: i };
     var tt: string[] = q.f;
@@ -200,7 +209,7 @@ function round(i: i32): i32 {
     for s in tt { acc = acc + s.len(); }
     return (acc + p.n + q.n) % 101;
 }` + strarrBindPlainMain,
-			want: 43,
+			want: 43, balance: true,
 		},
 		{
 			// REFUSED: `tt` is handed to a call. The borrowable registry is not
