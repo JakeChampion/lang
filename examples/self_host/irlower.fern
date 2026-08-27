@@ -44606,8 +44606,20 @@ function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs
                     _ => {}
                 }
                 if (eb_bare) {
+                    // "CNT:" admits a SECOND position, where "ELB:" refuses —
+                    // the arrenum twin's reasoning verbatim. A callee that
+                    // STORES the array in a struct literal keeps a reference, so
+                    // the element flag says no, but that store is COUNTED: the
+                    // construction incs the array and the holder's field drop
+                    // decs it, leaving the caller's own claim intact and its
+                    // element walk still owed. Withholding it is the leak
+                    // (`struct_arr__param`, a constant 2 objects), not the
+                    // safety. param_counted_of's "DCNT:" tier proves the store
+                    // counted, and admits only where the element walk exists and
+                    // no `p[i]` hands one out.
                     if (eb_callee.len() == 0
-                        || !param_is_borrowable(borrowable, "ELB:" + eb_callee, eai)) { return true; }
+                        || !(param_is_borrowable(borrowable, "ELB:" + eb_callee, eai)
+                            || param_is_borrowable(borrowable, "CNT:" + eb_callee, eai))) { return true; }
                 } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable)) { return true; }
                 eai = eai + 1;
             }
@@ -56915,28 +56927,43 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ECNT:", structs, sfok)) { eok = true; }
                 if (eok) { eflags = eflags + "1"; eany = true; } else { eflags = eflags + "0"; }
-                // ENUM-ARRAY tier, the DEEP class. Its own key rather than a
-                // widening of "ACNT:": that tier's credit routes a plain
+                // ARRAY-OF-BOXES tier, the DEEP class. Its own key rather than
+                // a widening of "ACNT:": that tier's credit routes a plain
                 // arr_dec, and an array of BOXES owes an element walk, so its
                 // consumers must be able to tell the two apart.
                 //
-                // Admission needs the element walk to EXIST — enum_arr_elems_walk_ok
-                // is the same predicate the backends ask before emitting
-                // __enum_arr_elems_drop_<E> at the arr_dec site. Without it the
-                // credit would route a walk nothing emits, which is the leak it
-                // is trying to close rather than a fix.
+                // ENUM and STRUCT element arrays share the key. What the caller
+                // RELEASES is decided by its own local's type — emit_arrenum_
+                // deep_free or emit_arrstruct_deep_free — not by which type
+                // proved the store counted, so one tier answers both and the
+                // escape walkers differ only in which one they consult.
+                //
+                // Admission needs the element walk to EXIST, asked with the same
+                // predicate the release side asks: enum_arr_elems_walk_ok for the
+                // enum arm (what the backends check before emitting
+                // __enum_arr_elems_drop_<E>), and struct_has_reclaim_array_field
+                // for the struct one (what slot_is_reclaimable_arrstruct checks
+                // before routing emit_arrstruct_deep_free). Without it the credit
+                // would route a walk nothing emits, which is the leak it is
+                // trying to close rather than a fix.
                 //
                 // Both releases are rc-gated (the holder's walk and the source's
-                // emit_arrenum_deep_free each is_unique-gate the buffer), so the
-                // callee's counted store and the caller's own claim net to one
-                // owner: with rc 2 the first sweep decs and the second walks.
-                // The element handout the "ELB:" tier had to ask about is
-                // already refused here — arrparam_use_ok credits `p[i]` only for
-                // "SCNT:", so an element read disqualifies the param outright.
+                // deep free each is_unique-gate the buffer), so the callee's
+                // counted store and the caller's own claim net to one owner: with
+                // rc 2 the first sweep decs and the second walks. The element
+                // handout the "ELB:" tier had to ask about is already refused
+                // here — arrparam_use_ok credits `p[i]` only for "SCNT:", so an
+                // element read disqualifies the param outright.
+                var pty: string = fn.params[pj].type_name;
+                var elem_walk_ok: boolean = false;
+                if (is_enum_array_field_type(structs, pty)) {
+                    elem_walk_ok = enum_arr_elems_walk_ok(structs, slice_unchecked(pty, 0, pty.len() - 2));
+                } else if (is_struct_array_field_type(structs, pty)) {
+                    elem_walk_ok = struct_has_reclaim_array_field(structs, slice_unchecked(pty, 0, pty.len() - 2));
+                }
                 var eaok: boolean = false;
                 if (scalar_result
-                    && is_enum_array_field_type(structs, fn.params[pj].type_name)
-                    && enum_arr_elems_walk_ok(structs, slice_unchecked(fn.params[pj].type_name, 0, fn.params[pj].type_name.len() - 2))
+                    && elem_walk_ok
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "DCNT:", structs, sfok)) { eaok = true; }
                 if (eaok) { eaflags = eaflags + "1"; eaany = true; } else { eaflags = eaflags + "0"; }
