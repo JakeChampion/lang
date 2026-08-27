@@ -26821,11 +26821,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         sj = sj + 1;
     }
     // Reclaimable MAP locals — free the keys + values buffers (arr-boxed, rc-guarded
-    // __fern_rc_dec) at scope exit; the raw 16-byte mapbox leaks. Only fresh, non-
-    // escaping, non-iterated, non-aliased map locals qualify (slot_is_reclaimable_map
-    // via the "MAP:" reclaim set), so the buffers are sole-owned (rc==1) and freed
-    // exactly once. A returned/escaping map is never reclaimable → never swept (no
-    // move-on-return keep needed).
+    // __fern_rc_dec) and the mapbox at scope exit. Only fresh, non-escaping,
+    // non-iterated, non-aliased map locals qualify (slot_is_reclaimable_map via the
+    // "MAP:" reclaim set), so the buffers are sole-owned (rc==1) and freed exactly
+    // once. A returned/escaping map is never reclaimable → never swept (no
+    // move-on-return keep needed). Block-scoped slots are swept like any other: the
+    // credit is keyed on the binding site, which survives retire_locals' rename, and
+    // a slot whose block never ran holds the prologue's zero, which the helper
+    // null-guards.
     var mj: i32 = st.n_params;
     while (mj < st.locals.len()) {
         if (!slot_list_has(keeps, mj) && slot_is_reclaimable_map(st, mj)) {
@@ -31856,8 +31859,8 @@ function is_fresh_map_init(e: ast.Expr): boolean {
     }
 }
 
-// collect_mapf_call_names: var-names bound as `var m: Map[..] = mk(..)` where
-// mk is in the "MAPF:" registry (map_fresh_ret_fns_of, riding the
+// collect_mapf_call_names: the BINDING-SITE keys of every `var m: Map[..] = mk(..)`
+// where mk is in the "MAPF:" registry (map_fresh_ret_fns_of, riding the
 // tuple_fresh_ret list) — the callee provably returns a fresh sole-owned
 // scalar-column map, so the binding is as fresh as a local map_new. The
 // annotation is required (it is what marks the slot's map type for get_or
@@ -31873,7 +31876,7 @@ function collect_mapf_call_names(stmts: ast.Stmt[], registry: string[], acc: str
                         ast.ExprCall(c) => {
                             match (c.callee) {
                                 ast.ExprIdent(cid) => {
-                                    if (util.index_of_str(registry, "MAPF:" + cid.name) >= 0) { a = push_str_unique(a, v.name); }
+                                    if (util.index_of_str(registry, "MAPF:" + cid.name) >= 0) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                                 },
                                 _ => {}
                             }
@@ -31894,8 +31897,9 @@ function collect_mapf_call_names(stmts: ast.Stmt[], registry: string[], acc: str
     return a;
 }
 
-// collect_fresh_map_names gathers every var-name bound from a fresh map init,
-// recursing through nested blocks (the map sibling of collect_fresh_struct_names).
+// collect_fresh_map_names gathers the BINDING-SITE key of every local bound from
+// a fresh map init, recursing through nested blocks (the map sibling of
+// collect_fresh_struct_names).
 function collect_fresh_map_names(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts { a = collect_fresh_map_in_stmt(stmt, a); }
@@ -31904,7 +31908,7 @@ function collect_fresh_map_names(stmts: ast.Stmt[], acc: string[]): string[] {
 function collect_fresh_map_in_stmt(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
-            if (is_fresh_map_init(v.init)) { return push_str_unique(acc, v.name); }
+            if (is_fresh_map_init(v.init)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         ast.StmtIf(iff) => {
@@ -35413,6 +35417,10 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     var aliased_m: string[] = aliased_array_names_of(body);
     var mi: i32 = 0;
     while (mi < maps.len()) {
+        // `maps` holds BINDING-SITE keys (#7253); every gate below asks about the
+        // NAME, and a same-named sibling binding refuses the credit for both — the
+        // gate stays coarser than the key, which is the safe direction.
+        var mapnm: string = reclaim_site_name(maps[mi]);
         // The two POSITIONAL gates, and their one override: a map whose only
         // alias and only escape is a bare-ident element of a local, non-escaping
         // tuple keeps the credit (#7212). The tuple holds an uncounted pointer
@@ -35420,39 +35428,39 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
         // release, and scope exit is past every read of a local tuple. Asked
         // only when the plain reading has already refused — it walks the body
         // again, and the maps it can rescue are the minority that reach it.
-        var pos_ok: boolean = util.index_of_str(aliased_m, maps[mi]) < 0
-            && !body_unsafe_for(body, maps[mi], borrowable, recv_borrow);
-        if (!pos_ok) { pos_ok = map_tuple_elem_borrow_only(body, maps[mi], borrowable, recv_borrow, reassigned); }
+        var pos_ok: boolean = util.index_of_str(aliased_m, mapnm) < 0
+            && !body_unsafe_for(body, mapnm, borrowable, recv_borrow);
+        if (!pos_ok) { pos_ok = map_tuple_elem_borrow_only(body, mapnm, borrowable, recv_borrow, reassigned); }
         // The reassigned gate admits the sanctioned COW self-reassign
         // (`m = m.insert(k, v)` — map_nonself_reassigned / #4357): insert at
         // rc==1 mutates in place and returns the SAME box, so the slot's
         // value is unchanged and the exit / precise reclaim still frees
         // exactly one live box. Any other rebind disqualifies as before.
         // The iteration and identity holes below are NOT overridden.
-        if (!map_nonself_reassigned(body, maps[mi])
+        if (!map_nonself_reassigned(body, mapnm)
             && pos_ok
-            && !map_has_explicit_iter(body, maps[mi])
+            && !map_has_explicit_iter(body, mapnm)
             // Identity-carrying method hole (insert/without return the
             // receiver's own box — see expr_map_identity_use): any such use
             // can smuggle the mapbox past the borrow-only escape walk, so it
             // excludes the map from reclaim.
-            && !map_identity_escape(body, maps[mi])) {
+            && !map_identity_escape(body, mapnm)) {
             out = out.append("MAP:" + maps[mi]);
             // #4353: a reclaimable map whose every VALUE (resp. KEY) is a fresh
             // string additionally deep-releases that column — via
             // __fern_map_free_vs / _ks / _kvs on the register backends (wasm
             // already deep-releases). Sound because the map is the sole rc=1 owner
             // of each fresh value / key box.
-            if (map_str_value_reclaimable(body, maps[mi])) {
+            if (map_str_value_reclaimable(body, mapnm)) {
                 out = out.append("MAPVS:" + maps[mi]);
             }
-            if (map_str_key_reclaimable(body, maps[mi])) {
+            if (map_str_key_reclaimable(body, mapnm)) {
                 out = out.append("MAPKS:" + maps[mi]);
             }
             // #4353 item 3: an ARRAY- or STRUCT-valued column whose every value is
             // a fresh literal — released per element via __fern_map_free_va / _ksva.
             // Mutually exclusive with MAPVS: by the declared value type.
-            if (map_box_value_reclaimable(body, maps[mi], structs)) {
+            if (map_box_value_reclaimable(body, mapnm, structs)) {
                 out = out.append("MAPVA:" + maps[mi]);
             }
         }
@@ -40737,14 +40745,25 @@ function slot_is_reclaimable_scenum(s: LowerState, i: i32): boolean {
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
 // (`var m = Map { … }` / `map_new()`) credited under the "MAP:" prefix by
-// reclaimable_names_of. A non-param MAP slot (map_type set) whose name is in the
-// reclaim set. Its keys + values buffers (arr-boxed) are freed at scope exit by
-// emit_map_buffers_free; the raw 16-byte mapbox leaks.
+// reclaimable_names_of. A non-param MAP slot (map_type set) whose BINDING SITE is
+// in the reclaim set. Its keys + values buffers (arr-boxed) and the mapbox itself
+// are freed by emit_map_buffers_free at scope exit and at each loop rebind.
+//
+// Keyed on the binding SITE (#7253 step 1), not the name. The name lookup read
+// `slot_name`, which retire_locals renames on block exit — so a map declared
+// inside an `if` or a loop body resolved NO credit at the exit sweep and was
+// never freed at all, while the same map one indentation level out was flat
+// (measured 62 pages over a 2000-round steady window against 0 on native, for a
+// `Map[i32, i32]` moved into an `if` body and nothing else changed). All three
+// consumers take the site key together: the sweep, and the two loop-rebind
+// reinits that free the prior iteration's box before the store — which is the
+// same block-scoped slot, so a split verdict there would free a box the sweep
+// then frees again.
 function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].map_type.len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "MAP:", s.locals[i].slot_name);
+    return slot_credit_at(s, i, "MAP:");
 }
 
 // emit_map_buffers_free frees the map in `slot` via the per-backend
@@ -40772,9 +40791,13 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     // type), so the value column takes at most one of the two frees. A map with
     // none keeps the shallow __fern_map_free (boxes in the non-credited column leak
     // one level — sound).
-    var mvs: boolean = reclaim_has(s.reclaimable_names, "MAPVS:", s.locals[slot].slot_name);
-    var mks: boolean = reclaim_has(s.reclaimable_names, "MAPKS:", s.locals[slot].slot_name);
-    var mva: boolean = reclaim_has(s.reclaimable_names, "MAPVA:", s.locals[slot].slot_name);
+    // Site-keyed with the "MAP:" credit they qualify (#7253) — the three columns
+    // are derived from the same collector entry, so a column left on the name key
+    // would resolve nothing for a block-scoped map whose base credit resolves, and
+    // silently downgrade its deep release to the shallow free.
+    var mvs: boolean = slot_credit_at(s, slot, "MAPVS:");
+    var mks: boolean = slot_credit_at(s, slot, "MAPKS:");
+    var mva: boolean = slot_credit_at(s, slot, "MAPVA:");
     if (mks && mvs) {
         st = st.emit(ir.op_call_direct("__fern_map_free_kvs", 1));
     } else if (mks && mva) {
