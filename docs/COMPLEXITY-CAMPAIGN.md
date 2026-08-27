@@ -99,6 +99,13 @@ blind to a stable miscompile (`docs/TEST-GATES.md`). Comparing emitted bytes is
 what actually bites. Costs ~28 min a side on top of two `make selfhost-cli`
 builds, so compute the baseline once per base commit and batch extractions.
 
+**Consecutive slices share a sweep.** A slice's after-file is the next slice's
+before-file, so only the change side needs running — half the wall clock. This
+survives the rebase-merge: the new commit has a different SHA but the same tree,
+and the build is deterministic, so the binary is byte-identical to the one the
+previous slice already swept. `cmp` the two to confirm before relying on it; a
+mismatch means something else moved and you need a fresh baseline.
+
 **Code behind `-ssa`** needs `selfhost-emit-hashes --ssa`. The default sweep
 NEVER REACHES the SSA backends, so it would compare IR-emitter bytes — which
 such a change cannot affect — and report PURE for an arbitrarily broken one.
@@ -140,6 +147,15 @@ That plus `fern -check` costs seconds instead of an hour.
 
 The big functions are not all the same shape, and the technique follows the
 shape.
+
+Finding the shape means asking, per candidate block, what it writes, what it
+reads, and whether it returns. **Detect writes with a word-boundary match, not a
+start-of-line one.** Fern packs single-statement branches onto the guard line,
+so `{ struct_ty = bst; }` assigns in the middle of a line and a `^\s*(\w+) = `
+scan reports the block as side-effect-free — the one reading that most reliably
+sends a mechanical extraction into a compile error or, worse, a silent behaviour
+change. Compute reads over the WHOLE construct including its header, too: a
+guard mentions locals the body never touches.
 
 ### A flat guard chain → move the body, keep the guard
 
@@ -267,8 +283,8 @@ a table.
 
 ## Order of work
 
-Twelve slices in, the tree has gone from 19884 excess to 18940 and the ceiling
-from 477 to 411. What is done, and what the remaining shapes are:
+Fourteen slices in, the tree has gone from 19884 excess to 18840 and the
+ceiling from 477 to 411. What is done, and what the remaining shapes are:
 
 | Function | File | Forks | Outcome |
 |---|---|---|---|
@@ -284,7 +300,8 @@ from 477 to 411. What is done, and what the remaining shapes are:
 | `main` | `interp.fern` | 184 → 22 | self-test harness, 21 functions |
 | `eval_expr` | `interp.fern` | 106 → 33 | 5 arms out |
 | `lower_call_named` | `irlower.fern` | 477 → 411 | generic tail out; **the rest is a table** |
-| `lower_stmt_var` | `irlower.fern` | 462 → 387 | two returning guards out; the rest threads state |
+| `lower_stmt_var` | `irlower.fern` | 462 → 308 | two returning guards, then eight init-shape probes |
+| `bind_var_slot` | `irlower.fern` | 213 → 114 | six reclaim-marking blocks out |
 
 **Fork count alone picks the wrong target.** The cheap, provable wins are
 functions whose parts are self-contained: a match whose arms each return, an op
@@ -304,10 +321,12 @@ What is left divides into two kinds, and neither yields to extraction:
   `lift_from_ir`'s control-flow branches accumulate into a dozen or more shared
   locals. A carrier works only where the shared write-set is small.
 
-Next mechanical candidate: `bind_var_slot` (`irlower.fern`, ~213) — 854 lines
-threading one `LowerState`, with four blocks of 27-108 lines that are
-self-contained. Its tail of ~25 one-line `slot_is_reclaimable_*` guards is a
-table and will not move.
+Next mechanical candidates, in order: `lower_call_method` (295), `lower_func`
+(262), `lower_stmt_match` (187), `build_expr` (`ssa.fern`, 184). `lower_stmt_var`
+still holds 308, but what remains at its top is ~13 early-return guard blocks —
+a shape none of the slices so far has handled, since extracting one needs a way
+to say "not handled" as well as returning a state. Think before reaching for the
+mechanical treatment there.
 
 A caution for whoever scans for these: **a scanner that finds extents by
 counting braces is wrong on `parser.fern`, `printer.fern`, `interp.fern`,
