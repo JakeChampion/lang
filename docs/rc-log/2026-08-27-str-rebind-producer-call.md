@@ -101,11 +101,11 @@ Four moved, all leak→clean, and nothing else in any of the four matrices did:
 - the same pair on arm64 — `leak leak` → `leak clean`, the self-host now ahead
   of native-arm64, which still leaks the shape under #7446
 
-`str_arr__rebind__{read,unused}` did **not** move. The matrix files them as
-"the `string[]` sibling of the same refusal", and after this they are no longer
-siblings: the `"SARR:"` family has no accumulator class, so its rebind refusal
-is the real single-bind one the `"STR:"` note only claimed to be. That is the
-next lead in this shape, and it is a larger change than a registry lookup.
+`str_arr__rebind__{read,unused}` did **not** move. The `"SARR:"` family has its
+own rebind machinery — the self-`append` and self-`.with` rebinds — so its
+refusal is not the single-bind one either; what it lacked was the REBUILD form,
+plus the assign-path branch to release the old value deeply.
+`2026-08-27-strarr-rebuild-rebind.md` closes it.
 
 ## Gates
 

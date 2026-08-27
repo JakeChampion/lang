@@ -21286,6 +21286,22 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // rather than sharing an existing one, so there is no second reference to
     // count. The alias bind is a `var`, and takes the flag at the site above.
     if (slot_is_reclaimable_str(s, slot)) { return emit_str_reclaim_store(se, slot, false); }
+    // A reclaimable REBOUND string[] (`xs = [mk("y"), mk("z")]` / `xs = mkarr(i)`,
+    // credited "SARR:"): free the superseded buffer AND its element boxes before
+    // storing. Without this branch the rebind fell through to emit_arr_store's
+    // SHALLOW arr_dec, which drops the element pointers on the floor — the same
+    // gap the rc-tuple and rc-enum rebinds below were opened for, one element
+    // kind over. The `var` re-declaration has driven the deep helper all along;
+    // only the assign path was missing.
+    //
+    // The self-`append` / self-`.with` rebinds do not reach here — they are
+    // lowered above as in-place element stores — so the cow guard inside the
+    // helper is a backstop rather than the mechanism that keeps them safe.
+    // No alias_inc, for the reason the string case one line up gives: a rebuild
+    // replaces the slot's value rather than sharing one. No `target_is_arr`
+    // exclusion either: the target IS an array here, which is what makes this
+    // the branch the array classes below could not cover.
+    if (slot_is_reclaimable_strarr(s, slot)) { return emit_strarr_reclaim_store(se, slot, false); }
     // A reclaimable REBOUND Option (`o = Some(..)`, credited "OPTARR:" /
     // "OPTARRARR:" / "OPTSTRUCT:" / "OPTTUP:"): free the superseded payload + option
     // box before storing the fresh one, at the depth that payload kind needs. This
@@ -25297,7 +25313,7 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // body_unsafe_for, because a string[]'s release WALKS THE ELEMENTS — an
 // element escaping from the alias (`var e = x[0]`, `return x[0]`) is invisible
 // to the plain walker and would dangle under the deep free.
-function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], str_fresh: string[], body: ast.Stmt[], acc: string[]): string[] {
+function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], body: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -25306,7 +25322,7 @@ function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
                     ast.ExprIdent(aid) => {
                         if (aid.name == src
                             && util.index_of_str(body_assign_targets(body), v.name) < 0
-                            && !strarr_unsafe_for(body, v.name, borrowable, str_fresh)) {
+                            && !strarr_unsafe_for(body, v.name, borrowable, str_fresh, strarr_producers)) {
                             a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                         }
                     },
@@ -25314,13 +25330,13 @@ function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
                 }
             },
             ast.StmtIf(f) => {
-                a = strarr_alias_bind_sites_of(f.then_body, src, borrowable, str_fresh, body, a);
-                a = strarr_alias_bind_sites_of(f.else_body, src, borrowable, str_fresh, body, a);
+                a = strarr_alias_bind_sites_of(f.then_body, src, borrowable, str_fresh, strarr_producers, body, a);
+                a = strarr_alias_bind_sites_of(f.else_body, src, borrowable, str_fresh, strarr_producers, body, a);
             },
-            ast.StmtWhile(w) => { a = strarr_alias_bind_sites_of(w.body, src, borrowable, str_fresh, body, a); },
-            ast.StmtFor(fo) => { a = strarr_alias_bind_sites_of(fo.body, src, borrowable, str_fresh, body, a); },
+            ast.StmtWhile(w) => { a = strarr_alias_bind_sites_of(w.body, src, borrowable, str_fresh, strarr_producers, body, a); },
+            ast.StmtFor(fo) => { a = strarr_alias_bind_sites_of(fo.body, src, borrowable, str_fresh, strarr_producers, body, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = strarr_alias_bind_sites_of(arm.body, src, borrowable, str_fresh, body, a); }
+                for arm in m.arms { a = strarr_alias_bind_sites_of(arm.body, src, borrowable, str_fresh, strarr_producers, body, a); }
             },
             _ => {}
         }
@@ -32622,7 +32638,8 @@ function strarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): bo
             // the block, which can refuse a credit but never grant one.
             if (parser.is_value_block_origin(lm.origin)) {
                 var no_str_fresh: string[] = [];
-                return strarr_unsafe_for(lm.body, name, borrowable, no_str_fresh);
+                var no_producers: string[] = [];
+                return strarr_unsafe_for(lm.body, name, borrowable, no_str_fresh, no_producers);
             }
             var used: string[] = [];
             var i: i32 = 0;
@@ -32642,10 +32659,66 @@ function strarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): bo
 // that doesn't otherwise leak `name`. `for x in name` binds an element per
 // iteration (a lasting alias the walker can't see through) — conservatively
 // unsafe.
-function strarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[]): boolean {
+// strarr_producer_names_of: the whole-program `"STRARR:"` producers this frame
+// can actually see — registered as returning a freshly-built string[] on every
+// path, and not shadowed by a local or a parameter of the same name here. The
+// declaration collector asks the registry and `body_declares_name` separately;
+// the rebind gate below is inside a walker that carries neither, so the list is
+// filtered once at the entry point instead, as the string[]-field admission
+// filters its own producers.
+function strarr_producer_names_of(fresh_ret: string[], body: ast.Stmt[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < fresh_ret.len()) {
+        if (fresh_ret[i].len() > 7 && slice_unchecked(fresh_ret[i], 0, 7) == "STRARR:") {
+            var nm: string = slice_unchecked(fresh_ret[i], 7, fresh_ret[i].len()) + "";
+            if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// strarr_rebind_is_fresh: `name = <e>` rebuilds the local from a value it can
+// solely own, so the store may release what the slot held. It is the SAME
+// freshness proof collect_fresh_strarr_in_stmt applies to the declaration — an
+// array literal whose every element is element-fresh (`[]` included), or a call
+// to a visible whole-program string[] producer — asked at the rebind instead.
+//
+// The release itself already exists: emit_strarr_reclaim_store frees the old
+// buffer and its element boxes before the store, under a cow guard, which is
+// why the self-`append` and self-`.with` rebinds beside this one are safe. This
+// form differs only in that the new value shares nothing with the old, so the
+// guard never fires and the old value is always freed.
+//
+// `name` must not appear in the value: an element read would be a lasting alias
+// into the buffer the store is about to free.
+function strarr_rebind_is_fresh(e: ast.Expr, name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[]): boolean {
+    if (strarr_expr_unsafe(e, name, borrowable)) { return false; }
+    match (e) {
+        ast.ExprArray(al) => {
+            var i: i32 = 0;
+            while (i < al.elements.len()) {
+                if (!strarr_value_is_fresh(al.elements[i], str_fresh)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => { return util.index_of_str(strarr_producers, cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function strarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[]): boolean {
     var no_alias: string[] = [];
     var no_sfld: string[] = [];
-    return strarr_unsafe_for_alias(stmts, name, borrowable, str_fresh, no_alias, no_sfld);
+    return strarr_unsafe_for_alias(stmts, name, borrowable, str_fresh, strarr_producers, no_alias, no_sfld);
 }
 // strarr_unsafe_for_alias is strarr_unsafe_for carrying the #7282 alias
 // forgiveness: a plain `var v: string[] = name` bind whose own site key is in
@@ -32653,11 +32726,11 @@ function strarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[]
 // alias site is granted the same "SARR:" credit, so both slots release and
 // __fern_str_arr_free arbitrates (elements walk only at the last owner's
 // rc==1). The parameter rather than a second walker, as body_unsafe_for_clo_alias.
-function strarr_unsafe_for_alias(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[], alias_ok: string[], sfld_ok: string[]): boolean {
-    for stmt in stmts { if (stmt_strarr_unsafe_for(stmt, name, borrowable, str_fresh, alias_ok, sfld_ok)) { return true; } }
+function strarr_unsafe_for_alias(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], alias_ok: string[], sfld_ok: string[]): boolean {
+    for stmt in stmts { if (stmt_strarr_unsafe_for(stmt, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok)) { return true; } }
     return false;
 }
-function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], str_fresh: string[], alias_ok: string[], sfld_ok: string[]): boolean {
+function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], alias_ok: string[], sfld_ok: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => {
             match (v.init) {
@@ -32726,17 +32799,21 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                     },
                     _ => {}
                 }
+                // The REBUILD rebind: a value the local can solely own, sharing
+                // nothing with what the slot holds. Unlike the two self-rebinds
+                // above it is not a call shape, so it is tested after the match.
+                if (strarr_rebind_is_fresh(a.value, name, borrowable, str_fresh, strarr_producers)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             return strarr_expr_unsafe(a.value, name, borrowable);
         },
         ast.StmtIf(f) => {
             if (strarr_expr_unsafe(f.cond, name, borrowable)) { return true; }
-            return strarr_unsafe_for_alias(f.then_body, name, borrowable, str_fresh, alias_ok, sfld_ok) || strarr_unsafe_for_alias(f.else_body, name, borrowable, str_fresh, alias_ok, sfld_ok);
+            return strarr_unsafe_for_alias(f.then_body, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok) || strarr_unsafe_for_alias(f.else_body, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok);
         },
         ast.StmtWhile(w) => {
             if (strarr_expr_unsafe(w.cond, name, borrowable)) { return true; }
-            return strarr_unsafe_for_alias(w.body, name, borrowable, str_fresh, alias_ok, sfld_ok);
+            return strarr_unsafe_for_alias(w.body, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -32745,18 +32822,18 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 _ => { iter_unsafe = strarr_expr_unsafe(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
-            return strarr_unsafe_for_alias(fo.body, name, borrowable, str_fresh, alias_ok, sfld_ok);
+            return strarr_unsafe_for_alias(fo.body, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok);
         },
         ast.StmtMatch(m) => {
             // a string scrutinee only compares (transient); an element read there is safe.
             if (!strarr_elem_read(m.scrutinee, name) && strarr_expr_unsafe(m.scrutinee, name, borrowable)) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && strarr_expr_unsafe(arm.guard, name, borrowable)) { return true; }
-                if (strarr_unsafe_for_alias(arm.body, name, borrowable, str_fresh, alias_ok, sfld_ok)) { return true; }
+                if (strarr_unsafe_for_alias(arm.body, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_strarr_unsafe_for(d.action, name, borrowable, str_fresh, alias_ok, sfld_ok); },
+        ast.StmtDefer(d) => { return stmt_strarr_unsafe_for(d.action, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok); },
         _ => { return false; }
     }
     return false;
@@ -34810,14 +34887,15 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // __fern_str_arr_free walk frees each element box exactly once. NOT excluded
     // on `reassigned` — the self-append rebind IS a reassignment; the gate
     // validates each one individually.
+    var sarr_producers: string[] = strarr_producer_names_of(fresh_ret, body);
     var sarrs: string[] = collect_fresh_strarr_names(body, body, fresh_ret, str_fresh_ret, []);
-    out = reclaimable_strarr(body, borrowable, msites, sarrs, sfok, str_fresh_ret, structs, out);
+    out = reclaimable_strarr(body, borrowable, msites, sarrs, sfok, str_fresh_ret, sarr_producers, structs, out);
     // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
     // own prefix so the binding-site type confirmation is required alongside.
     // Same strarr_unsafe_for gate: it is the non-escape half of the proof, and
     // it is name-level, so it applies here unchanged.
     var bsarrs: string[] = collect_builtin_strarr_names(body, []);
-    out = reclaimable_builtin_strarr(body, borrowable, bsarrs, str_fresh_ret, out);
+    out = reclaimable_builtin_strarr(body, borrowable, bsarrs, str_fresh_ret, sarr_producers, out);
     // Fresh arr-of-arr locals (#4355 slice 9): `var g = [[..], [..]]` where
     // every element is an ARRAY LITERAL of scalar literals / fresh strings —
     // credited "ARRARR:<name>" so only slot_is_reclaimable_arrarr matches.
@@ -53673,7 +53751,8 @@ function strarrfld_bind_read(v: ast.StmtVar, stmts: ast.Stmt[], structs: parser.
                     if (sfld_ok.len() == 0) { return v.init; }
                     var no_alias: string[] = [];
                     var no_borrow: string[] = [];
-                    if (strarr_unsafe_for_alias(stmts, v.name, no_borrow, str_fresh, no_alias, sfld_ok)) { return v.init; }
+                    var no_producers: string[] = [];
+                    if (strarr_unsafe_for_alias(stmts, v.name, no_borrow, str_fresh, no_producers, no_alias, sfld_ok)) { return v.init; }
                     return fa.obj;
                 },
                 _ => { return v.init; }
@@ -67941,7 +68020,7 @@ while (mi < maps.len()) {
     return out;
 }
 
-function reclaimable_strarr(body: ast.Stmt[], borrowable: string[], msites: string[], sarrs: string[], sfok: string[], str_fresh_ret: string[], structs: parser.StructDecl[], out: string[]): string[] {
+function reclaimable_strarr(body: ast.Stmt[], borrowable: string[], msites: string[], sarrs: string[], sfok: string[], str_fresh_ret: string[], strarr_producers: string[], structs: parser.StructDecl[], out: string[]): string[] {
 var sri: i32 = 0;
 while (sri < sarrs.len()) {
     // #7282 string[] limb (#7391): a plain `var x: string[] = xs` alias
@@ -67952,7 +68031,7 @@ while (sri < sarrs.len()) {
     // what lets the alias take the SAME deep "SARR:" class where a struct
     // alias must take box-only "NODEEP:" — the walk cannot run twice.
     var sanm: string = reclaim_site_name(sarrs[sri]);
-    var sasal: string[] = strarr_alias_bind_sites_of(body, sanm, borrowable, str_fresh_ret, body, []);
+    var sasal: string[] = strarr_alias_bind_sites_of(body, sanm, borrowable, str_fresh_ret, strarr_producers, body, []);
     // A struct-literal `string[]` field is a counted share on the same terms
     // the string family took in #7557, and it needs the DEEP class rather
     // than a box-only one: the element walk must survive a path where the
@@ -67960,7 +68039,7 @@ while (sri < sarrs.len()) {
     // makes granting both owners the walk safe — only the last one at rc 1
     // performs it.
     var sasfld: string[] = rc_counted_field_sites(body, sanm, structs, sfok, msites, out, "string[]", []);
-    if (!strarr_unsafe_for_alias(body, sanm, borrowable, str_fresh_ret, sasal, sasfld)) {
+    if (!strarr_unsafe_for_alias(body, sanm, borrowable, str_fresh_ret, strarr_producers, sasal, sasfld)) {
         out = out.append("SARR:" + sarrs[sri]);
         out = credit_alias_sites(out, "SARR:", sasal);
     }
@@ -67970,10 +68049,10 @@ while (sri < sarrs.len()) {
     return out;
 }
 
-function reclaimable_builtin_strarr(body: ast.Stmt[], borrowable: string[], bsarrs: string[], str_fresh_ret: string[], out: string[]): string[] {
+function reclaimable_builtin_strarr(body: ast.Stmt[], borrowable: string[], bsarrs: string[], str_fresh_ret: string[], strarr_producers: string[], out: string[]): string[] {
 var bri: i32 = 0;
 while (bri < bsarrs.len()) {
-    if (!strarr_unsafe_for(body, reclaim_site_name(bsarrs[bri]), borrowable, str_fresh_ret)) { out = out.append("SARRB:" + bsarrs[bri]); }
+    if (!strarr_unsafe_for(body, reclaim_site_name(bsarrs[bri]), borrowable, str_fresh_ret, strarr_producers)) { out = out.append("SARRB:" + bsarrs[bri]); }
     bri = bri + 1;
 }
 

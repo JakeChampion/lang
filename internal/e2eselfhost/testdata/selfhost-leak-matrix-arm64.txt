@@ -35,8 +35,8 @@ str_arr__if_block__read                       clean  clean  clean on both sides
 str_arr__if_block__unused                     clean  clean  clean on both sides
 str_arr__loop_local__read                     clean  clean  clean on both sides
 str_arr__loop_local__unused                   clean  clean  clean on both sides
-str_arr__rebind__read                         leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
-str_arr__rebind__unused                       leak   leak   #7446: native-arm64 allocates what x86 SSO keeps inline, then leaks the shape
+str_arr__rebind__read                         leak   clean  self-host ahead of native here: the rebuild-rebind admission lands, while #7446 still leaks native-arm64
+str_arr__rebind__unused                       leak   clean  same as str_arr__rebind__read: self-host clean, native-arm64 still #7446
 str_arr__shadow_siblings__read                clean  clean  clean on both sides
 str_arr__shadow_siblings__unused              clean  clean  clean on both sides
 struct_arr_field__fnscope__read               clean  clean  clean on both sides
