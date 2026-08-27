@@ -101,10 +101,12 @@ builds, so compute the baseline once per base commit and batch extractions.
 
 **Consecutive slices share a sweep.** A slice's after-file is the next slice's
 before-file, so only the change side needs running — half the wall clock. This
-survives the rebase-merge: the new commit has a different SHA but the same tree,
-and the build is deterministic, so the binary is byte-identical to the one the
-previous slice already swept. `cmp` the two to confirm before relying on it; a
-mismatch means something else moved and you need a fresh baseline.
+survives the rebase-merge, because the build is deterministic and the rebased
+commit compiles the same sources. The precondition is that **the self-host
+sources are unchanged**, not that the tree is: doc-only commits routinely land
+between two slices, so check `git diff --name-only <swept> <base> -- . ':!docs'`
+is empty rather than requiring the whole diff to be. If a compiled file did
+move, you need a fresh baseline.
 
 **Code behind `-ssa`** needs `selfhost-emit-hashes --ssa`. The default sweep
 NEVER REACHES the SSA backends, so it would compare IR-emitter bytes — which
@@ -131,6 +133,14 @@ Two rules that make the choice reliable:
   produces. Breaking one extracted helper took the lift-coverage scan from
   66/66 functions to 29/66; a `main`-split's mutation must exit with that
   case's own code.
+- **`cmp` differing is not enough on its own.** Slice 16 made the gap concrete:
+  breaking `build_expr_ident` left the emitted BYTES unchanged, because
+  `try_ssa` caught the failure and fell back to the IR path. The default sweep,
+  a naive `-ssa` hash, and all 70 CI jobs reported that broken compiler as
+  clean. Only the `--ssa` mode's per-row CLASSIFICATION caught it, as 21 cases
+  moving out of the SSA class into `IR-FALLBACK`. Where a fallback can absorb
+  the breakage, ask what the gate would report if the moved code stopped
+  running at all — not merely whether its inputs differ.
 
 ### The cheap check that runs first
 
@@ -289,7 +299,7 @@ a table.
 
 ## Order of work
 
-Fifteen slices in, the tree has gone from 19884 excess to 18804 and the
+Sixteen slices in, the tree has gone from 19884 excess to 18763 and the
 ceiling from 477 to 411. What is done, and what the remaining shapes are:
 
 | Function | File | Forks | Outcome |
@@ -309,6 +319,7 @@ ceiling from 477 to 411. What is done, and what the remaining shapes are:
 | `lower_stmt_var` | `irlower.fern` | 462 → 308 | two returning guards, then eight init-shape probes |
 | `bind_var_slot` | `irlower.fern` | 213 → 114 | six reclaim-marking blocks out |
 | `lower_func` | `irlower.fern` | 262 → 221 | six accumulator passes out |
+| `build_expr` | `ssa.fern` | 184 → 143 | 12 of 14 match arms out |
 
 **Fork count alone picks the wrong target.** The cheap, provable wins are
 functions whose parts are self-contained: a match whose arms each return, an op
@@ -336,10 +347,16 @@ largest remaining showed fork count says almost nothing about which is next:
   fall-through guards, the shape that needs a decline signal. Not mechanical.
 - `lower_stmt_var` (308) — same story at its top: ~13 early-return guard blocks,
   each of which can fall through to a later one.
-- `lower_stmt_match` (187) and `build_expr` (`ssa.fern`, 184) — each is ONE
-  construct spanning almost the whole function (684 and 819 lines). They are the
-  slice-2 shape, so check each arm for the always-returns property before
-  planning anything.
+- `build_expr` (`ssa.fern`, 184 → 143, slice 16) — one 819-line `match`, and
+  almost pure slice-2 shape: 12 of its 14 arms bind one pattern variable, read
+  nothing else, and return. All twelve helpers landed under the limit. The
+  `ExprCall` arm (507 lines) stays inline because it falls out of the match.
+- `lower_stmt_match` (187) — **not** the same shape, despite the similar size.
+  Its 684-line construct is `for each_arm in m.arms`, a loop accumulating state,
+  so it belongs with `lower_func` in the accumulator family. Grouping it with
+  `build_expr` on line count alone was wrong; a per-arm always-returns check
+  reports "0 always-return, 0 fall through" on it, which is the tell that there
+  are no arms to check.
 - `lower_func` (262 → 221, slice 15) — **the one that was mechanical.** Its
   body is a run of `while` loops and guards accumulating into locals: six wrote
   a single local (`reclaim` ×4, `tclean`, `s`), and every loop counter was dead
