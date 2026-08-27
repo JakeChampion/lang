@@ -223,6 +223,131 @@ function main(): i32 {
     if (w != x) { return 97; }
     return 0;
 }`, 0},
+
+	// --- the "STRARR:" half: a producer whose ELEMENTS this frame allocated ---
+	//
+	// "ARROWN:" admits a returned array LITERAL only at a scalar element type,
+	// because its release is the element-blind __fern_rc_dec — right for a
+	// retained alias at any element kind, and right for a moved literal only
+	// where shallow and complete coincide. A `string[]` literal is neither, so
+	// its producer earns "STRARR:" instead, whose release is the DEEP
+	// __fern_str_arr_free.
+	//
+	// The `mk()[i]` read reclaim already made that split. The `.len()` receiver
+	// and the discarded statement carried only the shallow half, so they matched
+	// no admission at all and released nothing: frees=0 outright, 144 B/round and
+	// unbounded, where native is flat at zero.
+	{"strarr-producer-len-recv", `function w(a: string): string { return a + "!"; }
+function mks(): string[] { return [w("a"), w("b"), w("c")]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mks().len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	{"strarr-producer-discarded", `function w(a: string): string { return a + "!"; }
+function mks(): string[] { return [w("a"), w("b"), w("c")]; }
+function churn(n: i32): i32 {
+    var i: i32 = 0;
+    while (i < n) { mks(); i = i + 1; }
+    return n % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// The read reclaim, which already had the deep release — a control that must
+	// not move, and the site the two above were modelled on.
+	{"strarr-producer-index-unchanged", `function w(a: string): string { return a + "!"; }
+function mks(): string[] { return [w("a"), w("b"), w("c")]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mks()[1].len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// A string[] producer whose result IS bound pays from the slot's exit sweep.
+	// It was already clean; the new in-place release must not double it — an
+	// over-release here reads 99, not a byte count.
+	{"strarr-producer-bound-balanced", `function w(a: string): string { return a + "!"; }
+function mks(): string[] { return [w("a"), w("b"), w("c")]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var v: string[] = mks(); t = t + v.len() + v[0].len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// A string[] FIELD read reaches `.len()` through the same site but is NOT a
+	// STRARR: producer — the buffer belongs to the struct, and the elements with
+	// it — so the new deep arm must stay OFF. It takes the "ARROWN:" shallow
+	// path instead, which `!alfresh` gates it behind.
+	//
+	// The receiver is read twice more AFTER the `.get()`, which is what makes a
+	// wrong deep free visible: __fern_str_arr_free would take the element boxes
+	// the struct still owns, so the later reads return garbage (97) or the rc
+	// underflows (99). That is a sharper signal for this property than a byte
+	// rate, and deliberately what is asserted here — this shape carries a
+	// pre-existing wasm-only leak (47 B/round; the `i32[]` twin above is clean on
+	// the same leg), which reproduces identically with this change reverted and
+	// is tracked separately. Pinning the rate here would pin that bug, not this
+	// one.
+	{"strarr-field-len-not-deep-freed", `function w(a: string): string { return a + "!"; }
+struct H { xs: string[] }
+function (h: H) get(): string[] { return h.xs; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var keep: H = H { xs: [w("a"), w("b"), w("c")] };
+        t = t + keep.get().len() + keep.get().len() + keep.xs[0].len() + keep.xs[2].len();
+        i = i + 1;
+    }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var x: i32 = churn(200);
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    if (w1 != (200 * 10) % 251) { return 96; }
+    return 0;
+}`, 0},
 }
 
 const arrOwnedRetFailFmt = "%s = %d, want %d (a small non-zero is the leaked bytes per round; 99 = over-release; 97 = value corrupted)"
