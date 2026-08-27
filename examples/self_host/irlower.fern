@@ -27075,12 +27075,22 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
 // xblock_pairings_for returns the "recip|donor" cross-block pairings for statement
 // k of block `b_stmts` — only when k is an IF (then / else arms scanned). `consumed`
 // is the set of donors a same-block reuse already claimed, so the two never collide.
+//
+// The two arms each start from THAT entry set rather than from the other arm's
+// result, so one dead donor feeds a construction in BOTH arms (#4402 opt 3, the
+// self-host twin of native's cross-branch sharing). Only one arm runs per pass,
+// so the token is claimed at most once. Safety does not rest on that: the
+// consumer zeroes the donor's slot (emit_cross_struct_reuse), so a second claim
+// on one pass would read a null token and __fern_alloc_reuse would allocate
+// fresh. Exclusivity is what makes the second token sequence worth its code.
+// Sequential recipients WITHIN one arm still share nothing — xblock_scan_body
+// threads `cons` across the arm's own statements.
 function xblock_pairings_for(b_stmts: parser.Stmt[], structs: parser.StructDecl[], k: i32, so_bases: string[], consumed: string[], fresh_ret: string[]): string[] {
     var acc: XbScan = XbScan { pairs: [], cons: consumed };
     match (b_stmts[k]) {
         parser.StmtIf(iff) => {
-            acc = xblock_scan_body(iff.then_body, b_stmts, k, structs, so_bases, acc, fresh_ret);
-            acc = xblock_scan_body(iff.else_body, b_stmts, k, structs, so_bases, acc, fresh_ret);
+            var t: XbScan = xblock_scan_body(iff.then_body, b_stmts, k, structs, so_bases, acc, fresh_ret);
+            acc = xblock_scan_body(iff.else_body, b_stmts, k, structs, so_bases, XbScan { pairs: t.pairs, cons: consumed }, fresh_ret);
         },
         _ => {}
     }
