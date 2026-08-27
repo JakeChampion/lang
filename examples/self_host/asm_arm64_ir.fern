@@ -1570,13 +1570,6 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             if (o.str == "__fern_i32_gcd") { s = s.mark_i32_gcd(); }
             if (o.str == "__fern_i32_lcm") { s = s.mark_i32_lcm(); }
             if (o.str == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
-            // The string[] sibling. Its body was ALREADY emitted below (gated on
-            // has_need) while nothing marked the need from a call site — the same
-            // asymmetry as the gcd/lcm pair above and the arm64 dangling symbol in
-            // #5944, and it stayed invisible because irlower had no lowering for
-            // string[] index_of / contains until now, so no call site existed.
-            // mark_arr_str_index_of adds the str_eq dep the body compares with.
-            if (o.str == "__fern_arr_str_index_of") { s = s.mark_arr_str_index_of(); }
             // min/max return a freshly allocated Option box, so unlike the fold
             // helpers they need the heap runtime as well as their own bodies.
             if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
@@ -6049,12 +6042,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("arr_i32_sum")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s.struct_decls, s);
-    }
-    // __fern_arr_str_index_of is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_arr_str_index_of. It calls str_eq (also Fern); the dep is
-    // marked by mark_arr_str_index_of so str_eq's body is emitted alongside.
-    if (s.has_need("arr_str_index_of")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_index_of(), s.struct_decls, s);
     }
     // __fern_arr_i32_index_of is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_i32_index_of. Linear scan returning the first index

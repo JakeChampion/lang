@@ -42,7 +42,7 @@ import (
 var allRuntimeNeedRoots = []string{
 	"alloc_u8", "args", "arr_i32_index_of", "arr_i32_min_max",
 	"arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_slice",
-	"arr_str_index_of", "arr_str_join", "chr", "eprint", "heap", "i32_pow",
+	"arr_str_join", "chr", "eprint", "heap", "i32_pow",
 	"i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
 	"print_int", "putchar", "random_bytes", "random_i32", "read_file",
 	"read_file_bytes", "read_int", "sleep_ms", "str_bytes", "str_case", "str_cmp",

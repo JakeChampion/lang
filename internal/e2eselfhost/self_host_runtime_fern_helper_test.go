@@ -46,9 +46,8 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_i32_gcd:", ".Lgcd_loop"},
 		},
 		{
-			// i32_lcm — pure-scalar helper that calls another (gcd) via `.gcd()`,
-			// the scalar analogue of arr_str_index_of→str_eq. Both Fern bodies
-			// must be present and the hand-asm gone.
+			// i32_lcm — pure-scalar helper that calls another (gcd) via
+			// `.gcd()`. Both Fern bodies must be present and the hand-asm gone.
 			"i32_lcm",
 			"function main(): i32 { var n: i32 = 4; return n.lcm(6); }",
 			"__fn___fern_i32_lcm",
