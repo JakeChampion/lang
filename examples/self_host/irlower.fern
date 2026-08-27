@@ -20159,15 +20159,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // `qs[i].field` / `qs[i].method()` dispatch) would be lost. Copy it
     // from the source slot. (is_arr / alias_inc are already set by the
     // ExprIdent arm above.)
-    if (struct_ty == "") {
-        match (v.init) {
-            ast.ExprIdent(aid) => {
-                var asl: i32 = se.slot_of(aid.name);
-                if (se.is_arr_slot(asl)) { struct_ty = se.struct_type_of_slot(asl); }
-            },
-            _ => {}
-        }
-    }
+    struct_ty = struct_ty_from_arr_alias(se, v, struct_ty);
     // string[] tracking (element typing for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
     var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
@@ -20319,68 +20311,14 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // foreach / index element path strips the trailing `[]`). The
     // construction analogue of the `var a: Option[T][] = …` annotation
     // above (#3024 array sibling). `None`-only literals stay untyped.
-    if (opt_ty == "") {
-        match (v.init) {
-            ast.ExprArray(oalit) => {
-                var oali: i32 = 0;
-                while (oali < oalit.elements.len()) {
-                    var oaet: string = some_opt_type(oalit.elements[oali], se);
-                    if (oaet != "") { opt_ty = oaet + "[]"; oali = oalit.elements.len(); }
-                    else {
-                        // A 2D Option literal (`[[Some(1)], …]`): the element
-                        // is itself an array — recurse for the innermost
-                        // Option type and append "[][]" (the depth-2 sibling;
-                        // the annotated `Option[T][][]` form already works via
-                        // the array-foreach opt propagation). #3073.
-                        match (oalit.elements[oali]) {
-                            ast.ExprArray(oinner) => {
-                                var ioi: i32 = 0;
-                                while (ioi < oinner.elements.len()) {
-                                    var ioet: string = some_opt_type(oinner.elements[ioi], se);
-                                    if (ioet != "") { opt_ty = ioet + "[][]"; ioi = oinner.elements.len(); }
-                                    else { ioi = ioi + 1; }
-                                }
-                            },
-                            _ => {}
-                        }
-                        if (opt_ty != "") { oali = oalit.elements.len(); } else { oali = oali + 1; }
-                    }
-                }
-            },
-            _ => {}
-        }
-    }
+    opt_ty = opt_ty_from_array_literal(se, v, opt_ty);
     // `var a = if (c) { [Some(1)] } else { … }` — an Option-array bound
     // from an if-/match-EXPRESSION (IIFE: ExprCall{callee: ExprLambda}).
     // Recover the slot's "Option[T][]" from the first branch's array literal
     // (the IIFE sibling of the array-literal case above), so `match (a[i])`
     // / `for o in a` recover the element payload. The slot is already marked
     // is_arr for an IIFE-array result (#3141).
-    if (opt_ty == "") {
-        match (v.init) {
-            ast.ExprCall(oic) => {
-                match (oic.callee) {
-                    ast.ExprLambda(oilam) => {
-                        if (oilam.body.len() > 0) {
-                            match (iife_leaf_value(v.init)) {
-                                ast.ExprArray(obra) => {
-                                    var obi: i32 = 0;
-                                    while (obi < obra.elements.len()) {
-                                        var obaet: string = some_opt_type(obra.elements[obi], se);
-                                        if (obaet != "") { opt_ty = obaet + "[]"; obi = obra.elements.len(); }
-                                        else { obi = obi + 1; }
-                                    }
-                                },
-                                _ => {}
-                            }
-                        }
-                    },
-                    _ => {}
-                }
-            },
-            _ => {}
-        }
-    }
+    opt_ty = opt_ty_from_iife_result(se, v, opt_ty);
     // `var o = a[i]` where `a` is an Option/Result ARRAY — the element is
     // an Option/Result value, so record o's opt_type (strip the array's
     // `[]`) so a later `match (o)` recovers the payload. This also drives
@@ -20388,30 +20326,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // __foreach_iter[idx]`). The ExprIdent arm preserves the array's
     // opt_type across the foreach's `var __foreach_iter = a` alias so the
     // element recovery still fires (mirrors the struct-element alias above).
-    if (opt_ty == "") {
-        match (v.init) {
-            ast.ExprIndex(oix) => {
-                match (oix.array) {
-                    ast.ExprIdent(oaid) => {
-                        var oaot: string = se.opt_type_of_slot(se.slot_of(oaid.name));
-                        if (oaot.len() >= 2 && slice_unchecked(oaot, oaot.len() - 2, oaot.len()) == "[]") {
-                            var oelt: str = slice_unchecked(oaot, 0, oaot.len() - 2);
-                            if (oelt.len() >= 8 && (slice_unchecked(oelt, 0, 7) == "Option[" || slice_unchecked(oelt, 0, 7) == "Result[")) { opt_ty = oelt + ""; }
-                        }
-                    },
-                    _ => {}
-                }
-            },
-            ast.ExprIdent(oaid2) => {
-                var oasl: i32 = se.slot_of(oaid2.name);
-                if (se.is_arr_slot(oasl)) {
-                    var oaot2: string = se.opt_type_of_slot(oasl);
-                    if (oaot2.len() >= 2 && slice_unchecked(oaot2, oaot2.len() - 2, oaot2.len()) == "[]") { opt_ty = oaot2; }
-                }
-            },
-            _ => {}
-        }
-    }
+    opt_ty = opt_ty_from_index_alias(se, v, opt_ty);
     // An explicitly array-typed binding (`var w: u32[] = f()`) is an
     // array regardless of how the init was classified — the init-based
     // checks above miss an array-returning call when the array-return
@@ -20448,45 +20363,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // elements are function VALUES (lambdas or calls to closure-returning
     // fns). Mark the slot so a later `var c = fns[i]` / `for f in fns`
     // types the element as a closure (its call unpacks the env box).
-    var is_closurearr: boolean = false;
-    match (v.init) {
-        ast.ExprArray(carr) => {
-            if (carr.elements.len() > 0 && arr_elem_is_closure_box(carr.elements[0], se)) { is_closurearr = true; }
-        },
-        // `var arr = mk()` where mk returns a closure-array (`((T) => R)[]`):
-        // arr's elements are closure boxes, so mark it is_closurearr for the
-        // env-first `arr[i](args)` dispatch. Without this, `arr[i]()` bare-calls
-        // the box pointer as code — SIGSEGV. The `is_arr` mark comes from the
-        // arr-returning-call branch above.
-        ast.ExprCall(cac) => {
-            match (cac.callee) {
-                ast.ExprIdent(cacid) => { if (se.is_closurearr_ret_fn(cacid.name)) { is_closurearr = true; } },
-                // A value-position if/match (an IIFE) whose every arm yields a
-                // closure ARRAY. Same argument as the closure-returning call
-                // above, one container out: leaving it unclassified made
-                // `xs[i](args)` bare-call the box pointer as code.
-                ast.ExprLambda(_) => { if (cac.args.len() == 0 && iife_callee_closurearr_arms(cac.callee, se)) { is_closurearr = true; } },
-                // `var w = fns.with(i, f)` / `fns.append(f)`: the clone those
-                // produce carries the RECEIVER's element ABI, so it inherits the
-                // receiver's closure-array mark. Without it `w[i](args)`
-                // bare-calls a box pointer as code — SIGSEGV, the same failure
-                // the closure-returning-call arm above answers one construction
-                // site over.
-                ast.ExprFieldAccess(cwfa) => {
-                    if ((cwfa.field == "with" && cac.args.len() == 2) || (cwfa.field == "append" && cac.args.len() == 1)) {
-                        match (cwfa.obj) {
-                            ast.ExprIdent(cwid) => { if (se.is_closurearr_slot(se.slot_of(cwid.name))) { is_closurearr = true; } },
-                            _ => { if (field_access_is_closurearr(cwfa.obj, se) || expr_is_closure_array(cwfa.obj, se)) { is_closurearr = true; } }
-                        }
-                    }
-                },
-                _ => { }
-            }
-        },
-        // `var d = arr` aliasing an existing closure-array local.
-        ast.ExprIdent(caaid) => { if (se.is_closurearr_slot(se.slot_of(caaid.name))) { is_closurearr = true; } },
-        _ => { }
-    }
+    var is_closurearr: boolean = closurearr_of_init(is_arr, s, se, v);
     // Array-of-arrays (`i32[][]`, `string[][]`, …): set from a depth-2
     // array ANNOTATION, an array-of-array LITERAL (first element is itself
     // an array), or ALIASING an existing array-of-arrays local. Lets a
@@ -20494,24 +20371,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // array (so `for x in row` flows). One nesting level (depth 2).
     var is_arrarr: boolean = false;
     if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 2))) { is_arrarr = true; }
-    match (v.init) {
-        ast.ExprArray(aarr) => {
-            // Type-driven (#5326): the first element is an array by ANY
-            // classification expr_is_arr_src knows — a nested literal, an
-            // array-marked local (`var m = [inner, …]`), or a registered
-            // T[]-returning call (`var m = [mk(), …]`). The literal-shape-only
-            // match this replaces silently left `m` un-arr-arr-marked for the
-            // call/ident shapes, so nested reads m[i][j] took the 4-byte
-            // default stride — a wrong-value miscompile for f64/string inner
-            // elements (caught differentially vs the interp oracle).
-            if (aarr.elements.len() > 0 && expr_is_arr_src(aarr.elements[0], se)) { is_arrarr = true; }
-        },
-        ast.ExprIdent(aaid) => { if (se.is_arrarr_slot(se.slot_of(aaid.name))) { is_arrarr = true; } },
-        // A `T[][]` struct FIELD read (`var rows = a.xs`): no slot records that
-        // level, but the field's declaration does (#7208).
-        ast.ExprFieldAccess(_) => { if (nested_arr_field_read_type(v.init, se) != "") { is_arrarr = true; } },
-        _ => {}
-    }
+    is_arrarr = arrarr_from_init_shape(s, se, v, is_arrarr);
     // Inner element kind of a T[][] binding ("i64"/"f64"/"string"/"") so a
     // nested read m[i][j] picks the right load (8-byte instead of
     // truncating, #2691) AND `.len()` on a nested string element dispatches
@@ -20519,32 +20379,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // but arr_len reads offset 0, the data pointer, giving a layout-
     // dependent garbage length). expr_is_strarr's ExprIndex case keys off
     // the "string" tag to recognise `m[i]` of a string[][] as a string[].
-    var arrarr_e: string = "";
-    if (is_arrarr) {
-        arrarr_e = arrarr_elem_kind_of_type(v.type_name);
-        match (v.init) {
-            ast.ExprArray(aarr2) => {
-                if (aarr2.elements.len() > 0) {
-                    // Don't let the literal-first-element i64 probe DOWNGRADE a
-                    // u64[][] annotation to "i64": a bare wide literal element
-                    // (`[big, 1]`) reads i64arr but the annotation already
-                    // recorded the unsigned sign (#5206).
-                    if (arrarr_e != "u64" && expr_is_i64arr(aarr2.elements[0], se)) { arrarr_e = "i64"; }
-                    if (expr_is_f64arr(aarr2.elements[0], se)) { arrarr_e = "f64"; }
-                    if (expr_is_strarr(aarr2.elements[0], se)) { arrarr_e = "string"; }
-                }
-            },
-            ast.ExprIdent(aaid2) => { arrarr_e = se.arrarr_elem_of_slot(se.slot_of(aaid2.name)); },
-            // A `T[][]` field read: the field declaration names the inner kind an
-            // unannotated binding has nowhere else to get. It never DOWNGRADES an
-            // annotation — a "" answer leaves what the spelling recorded.
-            ast.ExprFieldAccess(_) => {
-                var nfk: string = arrarr_elem_kind_of_type(nested_arr_field_read_type(v.init, se));
-                if (nfk != "") { arrarr_e = nfk; }
-            },
-            _ => {}
-        }
-    }
+    var arrarr_e: string = arrarr_elem_kind_of_init(is_arrarr, se, v);
     // #4365 ARRTUP: an `(<tuple-with-array>)[]` array-of-tuples slot stays plain
     // is_arr (its elements are tuple boxes, not arrays, so is_arrarr is false) but
     // records its ELEMENT TUPLE TYPE in arrarr_elem so slot_is_reclaimable_arrtup's
@@ -20576,40 +20411,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // of falling through to bogus method dispatch and bailing the module.
     // Reclaim-inert: ARRTUP crediting requires an annotated decl, so this tag only
     // feeds the read/dispatch side (the array stays leak-only).
-    if (is_arr && !is_arrarr && arrarr_e == "") {
-        match (v.init) {
-            ast.ExprArray(atl2) => {
-                if (atl2.elements.len() > 0) {
-                    match (atl2.elements[0]) {
-                        ast.ExprTuple(_) => {
-                            var att2: string = elem_type_tag(atl2.elements[0], se);
-                            if (att2.len() >= 2 && slice_unchecked(att2, 0, 1) == "(") { arrarr_e = att2; }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            // UNANNOTATED array-of-tuples from a CALL (`var ps = mk()` where
-            // `mk(): (i32, f64)[]`). The literal arm above covers the inline
-            // form; this is the same gap one step out, and it is the SOURCE of
-            // the missing tag rather than another place to paper over it —
-            // populating arrarr_e here serves every consumer that reads a tuple
-            // tag off the slot, including `for p in ps`, which has no
-            // ExprIndex node and so cannot use the per-consumer `.ty` fallback
-            // that `ps[0].N` and `var (a, b) = ps[0]` rely on.
-            ast.ExprCall(atc) => {
-                match (atc.callee) {
-                    ast.ExprIdent(atcid) => { arrarr_e = se.arrtup_ret_type(atcid.name); },
-                    ast.ExprFieldAccess(atcfa) => {
-                        var atcrty: string = expr_struct_type(atcfa.obj, se);
-                        if (atcrty != "") { arrarr_e = se.arrtup_ret_type(atcrty + "." + atcfa.field); }
-                    },
-                    _ => {}
-                }
-            },
-            _ => {}
-        }
-    }
+    arrarr_e = arrtup_elem_tag_of_init(is_arr, is_arrarr, se, v, arrarr_e);
     var vt: VarTypes = VarTypes {
         is_arr: is_arr,
         alias_inc: alias_inc,
@@ -67979,4 +67781,250 @@ pub function grow_exempt_names_of_stmt(st: ast.Stmt): string[] {
 
 pub function (s: LowerState) with_grow_exempt(names: string[]): LowerState {
     return LowerState { ...s, grow_exempt: names };
+}
+
+function struct_ty_from_arr_alias(se: LowerState, v: ast.StmtVar, struct_ty: string): string {
+if (struct_ty == "") {
+    match (v.init) {
+        ast.ExprIdent(aid) => {
+            var asl: i32 = se.slot_of(aid.name);
+            if (se.is_arr_slot(asl)) { struct_ty = se.struct_type_of_slot(asl); }
+        },
+        _ => {}
+    }
+}
+
+    return struct_ty;
+}
+
+function opt_ty_from_array_literal(se: LowerState, v: ast.StmtVar, opt_ty: string): string {
+if (opt_ty == "") {
+    match (v.init) {
+        ast.ExprArray(oalit) => {
+            var oali: i32 = 0;
+            while (oali < oalit.elements.len()) {
+                var oaet: string = some_opt_type(oalit.elements[oali], se);
+                if (oaet != "") { opt_ty = oaet + "[]"; oali = oalit.elements.len(); }
+                else {
+                    // A 2D Option literal (`[[Some(1)], …]`): the element
+                    // is itself an array — recurse for the innermost
+                    // Option type and append "[][]" (the depth-2 sibling;
+                    // the annotated `Option[T][][]` form already works via
+                    // the array-foreach opt propagation). #3073.
+                    match (oalit.elements[oali]) {
+                        ast.ExprArray(oinner) => {
+                            var ioi: i32 = 0;
+                            while (ioi < oinner.elements.len()) {
+                                var ioet: string = some_opt_type(oinner.elements[ioi], se);
+                                if (ioet != "") { opt_ty = ioet + "[][]"; ioi = oinner.elements.len(); }
+                                else { ioi = ioi + 1; }
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (opt_ty != "") { oali = oalit.elements.len(); } else { oali = oali + 1; }
+                }
+            }
+        },
+        _ => {}
+    }
+}
+
+    return opt_ty;
+}
+
+function opt_ty_from_iife_result(se: LowerState, v: ast.StmtVar, opt_ty: string): string {
+if (opt_ty == "") {
+    match (v.init) {
+        ast.ExprCall(oic) => {
+            match (oic.callee) {
+                ast.ExprLambda(oilam) => {
+                    if (oilam.body.len() > 0) {
+                        match (iife_leaf_value(v.init)) {
+                            ast.ExprArray(obra) => {
+                                var obi: i32 = 0;
+                                while (obi < obra.elements.len()) {
+                                    var obaet: string = some_opt_type(obra.elements[obi], se);
+                                    if (obaet != "") { opt_ty = obaet + "[]"; obi = obra.elements.len(); }
+                                    else { obi = obi + 1; }
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+}
+
+    return opt_ty;
+}
+
+function opt_ty_from_index_alias(se: LowerState, v: ast.StmtVar, opt_ty: string): string {
+if (opt_ty == "") {
+    match (v.init) {
+        ast.ExprIndex(oix) => {
+            match (oix.array) {
+                ast.ExprIdent(oaid) => {
+                    var oaot: string = se.opt_type_of_slot(se.slot_of(oaid.name));
+                    if (oaot.len() >= 2 && slice_unchecked(oaot, oaot.len() - 2, oaot.len()) == "[]") {
+                        var oelt: str = slice_unchecked(oaot, 0, oaot.len() - 2);
+                        if (oelt.len() >= 8 && (slice_unchecked(oelt, 0, 7) == "Option[" || slice_unchecked(oelt, 0, 7) == "Result[")) { opt_ty = oelt + ""; }
+                    }
+                },
+                _ => {}
+            }
+        },
+        ast.ExprIdent(oaid2) => {
+            var oasl: i32 = se.slot_of(oaid2.name);
+            if (se.is_arr_slot(oasl)) {
+                var oaot2: string = se.opt_type_of_slot(oasl);
+                if (oaot2.len() >= 2 && slice_unchecked(oaot2, oaot2.len() - 2, oaot2.len()) == "[]") { opt_ty = oaot2; }
+            }
+        },
+        _ => {}
+    }
+}
+
+    return opt_ty;
+}
+
+function closurearr_of_init(is_arr: boolean, s: LowerState, se: LowerState, v: ast.StmtVar): boolean {
+var is_closurearr: boolean = false;
+match (v.init) {
+    ast.ExprArray(carr) => {
+        if (carr.elements.len() > 0 && arr_elem_is_closure_box(carr.elements[0], se)) { is_closurearr = true; }
+    },
+    // `var arr = mk()` where mk returns a closure-array (`((T) => R)[]`):
+    // arr's elements are closure boxes, so mark it is_closurearr for the
+    // env-first `arr[i](args)` dispatch. Without this, `arr[i]()` bare-calls
+    // the box pointer as code — SIGSEGV. The `is_arr` mark comes from the
+    // arr-returning-call branch above.
+    ast.ExprCall(cac) => {
+        match (cac.callee) {
+            ast.ExprIdent(cacid) => { if (se.is_closurearr_ret_fn(cacid.name)) { is_closurearr = true; } },
+            // A value-position if/match (an IIFE) whose every arm yields a
+            // closure ARRAY. Same argument as the closure-returning call
+            // above, one container out: leaving it unclassified made
+            // `xs[i](args)` bare-call the box pointer as code.
+            ast.ExprLambda(_) => { if (cac.args.len() == 0 && iife_callee_closurearr_arms(cac.callee, se)) { is_closurearr = true; } },
+            // `var w = fns.with(i, f)` / `fns.append(f)`: the clone those
+            // produce carries the RECEIVER's element ABI, so it inherits the
+            // receiver's closure-array mark. Without it `w[i](args)`
+            // bare-calls a box pointer as code — SIGSEGV, the same failure
+            // the closure-returning-call arm above answers one construction
+            // site over.
+            ast.ExprFieldAccess(cwfa) => {
+                if ((cwfa.field == "with" && cac.args.len() == 2) || (cwfa.field == "append" && cac.args.len() == 1)) {
+                    match (cwfa.obj) {
+                        ast.ExprIdent(cwid) => { if (se.is_closurearr_slot(se.slot_of(cwid.name))) { is_closurearr = true; } },
+                        _ => { if (field_access_is_closurearr(cwfa.obj, se) || expr_is_closure_array(cwfa.obj, se)) { is_closurearr = true; } }
+                    }
+                }
+            },
+            _ => { }
+        }
+    },
+    // `var d = arr` aliasing an existing closure-array local.
+    ast.ExprIdent(caaid) => { if (se.is_closurearr_slot(se.slot_of(caaid.name))) { is_closurearr = true; } },
+    _ => { }
+}
+
+    return is_closurearr;
+}
+
+function arrarr_from_init_shape(s: LowerState, se: LowerState, v: ast.StmtVar, is_arrarr: boolean): boolean {
+match (v.init) {
+    ast.ExprArray(aarr) => {
+        // Type-driven (#5326): the first element is an array by ANY
+        // classification expr_is_arr_src knows — a nested literal, an
+        // array-marked local (`var m = [inner, …]`), or a registered
+        // T[]-returning call (`var m = [mk(), …]`). The literal-shape-only
+        // match this replaces silently left `m` un-arr-arr-marked for the
+        // call/ident shapes, so nested reads m[i][j] took the 4-byte
+        // default stride — a wrong-value miscompile for f64/string inner
+        // elements (caught differentially vs the interp oracle).
+        if (aarr.elements.len() > 0 && expr_is_arr_src(aarr.elements[0], se)) { is_arrarr = true; }
+    },
+    ast.ExprIdent(aaid) => { if (se.is_arrarr_slot(se.slot_of(aaid.name))) { is_arrarr = true; } },
+    // A `T[][]` struct FIELD read (`var rows = a.xs`): no slot records that
+    // level, but the field's declaration does (#7208).
+    ast.ExprFieldAccess(_) => { if (nested_arr_field_read_type(v.init, se) != "") { is_arrarr = true; } },
+    _ => {}
+}
+
+    return is_arrarr;
+}
+
+function arrarr_elem_kind_of_init(is_arrarr: boolean, se: LowerState, v: ast.StmtVar): string {
+var arrarr_e: string = "";
+if (is_arrarr) {
+    arrarr_e = arrarr_elem_kind_of_type(v.type_name);
+    match (v.init) {
+        ast.ExprArray(aarr2) => {
+            if (aarr2.elements.len() > 0) {
+                // Don't let the literal-first-element i64 probe DOWNGRADE a
+                // u64[][] annotation to "i64": a bare wide literal element
+                // (`[big, 1]`) reads i64arr but the annotation already
+                // recorded the unsigned sign (#5206).
+                if (arrarr_e != "u64" && expr_is_i64arr(aarr2.elements[0], se)) { arrarr_e = "i64"; }
+                if (expr_is_f64arr(aarr2.elements[0], se)) { arrarr_e = "f64"; }
+                if (expr_is_strarr(aarr2.elements[0], se)) { arrarr_e = "string"; }
+            }
+        },
+        ast.ExprIdent(aaid2) => { arrarr_e = se.arrarr_elem_of_slot(se.slot_of(aaid2.name)); },
+        // A `T[][]` field read: the field declaration names the inner kind an
+        // unannotated binding has nowhere else to get. It never DOWNGRADES an
+        // annotation — a "" answer leaves what the spelling recorded.
+        ast.ExprFieldAccess(_) => {
+            var nfk: string = arrarr_elem_kind_of_type(nested_arr_field_read_type(v.init, se));
+            if (nfk != "") { arrarr_e = nfk; }
+        },
+        _ => {}
+    }
+}
+
+    return arrarr_e;
+}
+
+function arrtup_elem_tag_of_init(is_arr: boolean, is_arrarr: boolean, se: LowerState, v: ast.StmtVar, arrarr_e: string): string {
+if (is_arr && !is_arrarr && arrarr_e == "") {
+    match (v.init) {
+        ast.ExprArray(atl2) => {
+            if (atl2.elements.len() > 0) {
+                match (atl2.elements[0]) {
+                    ast.ExprTuple(_) => {
+                        var att2: string = elem_type_tag(atl2.elements[0], se);
+                        if (att2.len() >= 2 && slice_unchecked(att2, 0, 1) == "(") { arrarr_e = att2; }
+                    },
+                    _ => {}
+                }
+            }
+        },
+        // UNANNOTATED array-of-tuples from a CALL (`var ps = mk()` where
+        // `mk(): (i32, f64)[]`). The literal arm above covers the inline
+        // form; this is the same gap one step out, and it is the SOURCE of
+        // the missing tag rather than another place to paper over it —
+        // populating arrarr_e here serves every consumer that reads a tuple
+        // tag off the slot, including `for p in ps`, which has no
+        // ExprIndex node and so cannot use the per-consumer `.ty` fallback
+        // that `ps[0].N` and `var (a, b) = ps[0]` rely on.
+        ast.ExprCall(atc) => {
+            match (atc.callee) {
+                ast.ExprIdent(atcid) => { arrarr_e = se.arrtup_ret_type(atcid.name); },
+                ast.ExprFieldAccess(atcfa) => {
+                    var atcrty: string = expr_struct_type(atcfa.obj, se);
+                    if (atcrty != "") { arrarr_e = se.arrtup_ret_type(atcrty + "." + atcfa.field); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+}
+
+    return arrarr_e;
 }
