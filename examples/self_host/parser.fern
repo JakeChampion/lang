@@ -15052,95 +15052,54 @@ function elb_is_nonneg_int(e: ast.Expr): boolean {
 // elb_assigns_stmts / elb_assigns_stmt report whether any `name = …` assignment
 // appears in the statement subtree. Assignments are always statements (the only
 // expr that carries statements is a lambda, which cannot assign the outer name),
-// so no expression walk is needed.
-function elb_assigns_stmts(stmts: ast.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (elb_assigns_stmt(stmts[i], name)) { return true; } i = i + 1; }
-    return false;
-}
+// so the walk is descend_none: statement lists at every depth, lambda bodies
+// never.
 function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
-    match (st) {
-        ast.StmtAssign(a) => { return a.target == name; },
-        ast.StmtIf(f) => { return elb_assigns_stmts(f.then_body, name) || elb_assigns_stmts(f.else_body, name); },
-        ast.StmtWhile(w) => { return elb_assigns_stmts(w.body, name); },
-        ast.StmtFor(fr) => { return elb_assigns_stmts(fr.body, name); },
-        ast.StmtMatch(m) => {
-            var i: i32 = 0;
-            while (i < m.arms.len()) { if (elb_assigns_stmts(m.arms[i].body, name)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.StmtDefer(d) => { return elb_assigns_stmt(d.action, name); },
-        _ => { return false; }
+    function vs(s: ast.Stmt, hit: boolean): boolean {
+        if (hit) { return true; }
+        match (s) {
+            ast.StmtAssign(a) => { return a.target == name; },
+            _ => { return false; }
+        }
+        return false;
     }
+    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
+    return astwalk.fold_stmt_nodes(st, false, vs, ve, astwalk.descend_none);
+}
+function elb_assigns_stmts(stmts: ast.Stmt[], name: string): boolean {
+    for st in stmts { if (elb_assigns_stmt(st, name)) { return true; } }
     return false;
 }
 
-// elb_binds_stmts / elb_binds_stmt report whether the statement subtree rebinds
-// (declares / shadows / iterates) `name` via a `var`, a `for` loop variable, or
-// a match-arm pattern binding.
+// elb_binds_stmts reports whether the statement subtree rebinds (declares /
+// shadows / iterates) `name` via a `var`, a `for` loop variable, or a match-arm
+// pattern binding. It rides the shared binder collector, which WIDENS the guard
+// onto binders the hand-written walk never matched: a comma-joined destructure
+// binder ("i,x" against "i") and a match arm's `@` whole-value binder now
+// refuse the elision too — the safe direction for a gate.
 function elb_binds_stmts(stmts: ast.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (elb_binds_stmt(stmts[i], name)) { return true; } i = i + 1; }
-    return false;
-}
-function elb_binds_stmt(st: ast.Stmt, name: string): boolean {
-    match (st) {
-        ast.StmtVar(v) => { return v.name == name; },
-        ast.StmtFor(fr) => { if (fr.var_name == name) { return true; } return elb_binds_stmts(fr.body, name); },
-        ast.StmtIf(f) => { return elb_binds_stmts(f.then_body, name) || elb_binds_stmts(f.else_body, name); },
-        ast.StmtWhile(w) => { return elb_binds_stmts(w.body, name); },
-        ast.StmtMatch(m) => {
-            var i: i32 = 0;
-            while (i < m.arms.len()) {
-                if (elb_pat_binds(m.arms[i].pattern, name)) { return true; }
-                if (elb_binds_stmts(m.arms[i].body, name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.StmtDefer(d) => { return elb_binds_stmt(d.action, name); },
-        _ => { return false; }
-    }
-    return false;
-}
-function elb_pat_binds(p: ast.Pattern, name: string): boolean {
-    match (p) {
-        ast.PatVariant(pv) => {
-            if (pv.binding == name) { return true; }
-            var i: i32 = 0;
-            while (i < pv.extra_bindings.len()) { if (pv.extra_bindings[i] == name) { return true; } i = i + 1; }
-            var j: i32 = 0;
-            while (j < pv.nested.len()) { if (elb_pat_binds(pv.nested[j], name)) { return true; } j = j + 1; }
-            return false;
-        },
-        _ => { return false; }
-    }
-    return false;
+    return util.has_str(astwalk.collect_bound_stmts(stmts, []), name);
 }
 
 // elb_idx_monotonic_stmts / _stmt report whether EVERY assignment to `idx` in
 // the subtree is `idx = idx + <non-negative int literal>` (keeps idx monotonic
 // non-decreasing). Any other shape fails.
 function elb_idx_monotonic_stmts(stmts: ast.Stmt[], idx: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) { if (!elb_idx_monotonic_stmt(stmts[i], idx)) { return false; } i = i + 1; }
-    return true;
-}
-function elb_idx_monotonic_stmt(st: ast.Stmt, idx: string): boolean {
-    match (st) {
-        ast.StmtAssign(a) => { if (a.target == idx) { return elb_is_monotonic_incr(a.value, idx); } return true; },
-        ast.StmtIf(f) => { return elb_idx_monotonic_stmts(f.then_body, idx) && elb_idx_monotonic_stmts(f.else_body, idx); },
-        ast.StmtWhile(w) => { return elb_idx_monotonic_stmts(w.body, idx); },
-        ast.StmtFor(fr) => { return elb_idx_monotonic_stmts(fr.body, idx); },
-        ast.StmtMatch(m) => {
-            var i: i32 = 0;
-            while (i < m.arms.len()) { if (!elb_idx_monotonic_stmts(m.arms[i].body, idx)) { return false; } i = i + 1; }
-            return true;
-        },
-        ast.StmtDefer(d) => { return elb_idx_monotonic_stmt(d.action, idx); },
-        _ => { return true; }
+    function vs(s: ast.Stmt, ok: boolean): boolean {
+        if (!ok) { return false; }
+        match (s) {
+            ast.StmtAssign(a) => {
+                if (a.target == idx) { return elb_is_monotonic_incr(a.value, idx); }
+                return true;
+            },
+            _ => { return true; }
+        }
+        return true;
     }
-    return true;
+    function ve(e: ast.Expr, ok: boolean): boolean { return ok; }
+    var ok: boolean = true;
+    for st in stmts { ok = astwalk.fold_stmt_nodes(st, ok, vs, ve, astwalk.descend_none); }
+    return ok;
 }
 function elb_is_monotonic_incr(v: ast.Expr, idx: string): boolean {
     match (v) {

@@ -75,6 +75,41 @@ var boundsElideCases = []struct {
     while (i < xs.len()) { s = s + xs[i]; xs = ys; i = i + 1; }
     return s;
 }`},
+	// The loop index shadowed by a match arm's `@` whole-value binder → NOT
+	// elided: the binder guard rides the shared collector, which sees `@`
+	// binders where the hand-written walk matched only the payload slots.
+	// 2t then +xs[i] per round: 1, 4, 11, 26.
+	{"at_binder_shadow_not_elided", `enum W { One(i32), Two(i32) }
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        match (W.One(t)) {
+            i @ W.One(v) => { t = t + v; },
+            _ => {},
+        }
+        t = t + xs[i];
+        i = i + 1;
+    }
+    return t;
+}`},
+	// The loop index shadowed by a tuple-destructure binder in a nested block →
+	// NOT elided: the destructure's comma-joined "i,y" binder never
+	// string-matched "i" in the hand-written walk. The branch never runs, so
+	// the answer is the plain sum, 10.
+	{"destructure_shadow_not_elided", `function pair(): (i32, i32) { return (0, 9); }
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (t > 100) { var (i, y) = pair(); t = t + i + y; }
+        t = t + xs[i];
+        i = i + 1;
+    }
+    return t;
+}`},
 }
 
 // TestSelfHostBoundsElideIRX86_64 asserts each case (1) lowers through the IR
