@@ -12,7 +12,7 @@ import (
 // failure is held until LinkMachO, which can report it.
 func (a *Assembler) MachOTextLen() int {
 	a.FlushLiterals()
-	a.veneerErr = a.insertVeneers()
+	a.veneerErr = a.fitBranches()
 	return len(a.insns) * 4
 }
 
@@ -63,7 +63,7 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 	if a.veneerErr != nil {
 		return nil, nil, a.veneerErr
 	}
-	if err := a.insertVeneers(); err != nil {
+	if err := a.fitBranches(); err != nil {
 		return nil, nil, err
 	}
 	for _, f := range a.litFixups {
