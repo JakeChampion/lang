@@ -348,6 +348,157 @@ function main(): i32 {
     if (w1 != (200 * 10) % 251) { return 96; }
     return 0;
 }`, 0},
+
+	// --- the STRUCT-element producers (#7445's registries) ---
+	//
+	// A struct array from a producer call earned its BOUND credit in #7445, but
+	// the in-place consumers matched no admission at either registry class and
+	// released nothing at all: frees=0 outright, ~200 B/round and unbounded,
+	// where native is flat at zero. The release is the same split the exit
+	// sweep gives a credited slot of the class: a field-routing or
+	// rc-array-field element ("ARRSTRUCTF:") walks __struct_drop_<T> per
+	// element; a scalar-field one ("STRUCTARRF:") frees box-per-element via
+	// __fern_arrarr_free.
+	{"arrstruct-producer-len-recv", `struct Inner { k: i32, ys: i32[] }
+function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mk().len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	{"arrstruct-producer-discarded", `struct Inner { k: i32, ys: i32[] }
+function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
+function churn(n: i32): i32 {
+    var i: i32 = 0;
+    while (i < n) { mk(); i = i + 1; }
+    return n % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	{"structarr-producer-len-recv", `function w(a: string): string { return a + "!"; }
+struct P { s: string, n: i32 }
+function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mkp().len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	{"structarr-producer-discarded", `function w(a: string): string { return a + "!"; }
+struct P { s: string, n: i32 }
+function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
+function churn(n: i32): i32 {
+    var i: i32 = 0;
+    while (i < n) { mkp(); i = i + 1; }
+    return n % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// A pure-scalar element takes the plain __fern_arrarr_free half of the
+	// split — no field routing, no rc-array field.
+	{"structarr-scalar-producer-len-recv", `struct Q { a: i32, b: i32 }
+function mkq(): Q[] { return [Q { a: 1, b: 2 }, Q { a: 3, b: 4 }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + mkq().len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// A producer whose result IS bound pays from the slot's exit sweep — it was
+	// already clean (#7445), and the new in-place release must not double it.
+	// An over-release here reads 99, not a byte count.
+	{"arrstruct-producer-bound-balanced", `struct Inner { k: i32, ys: i32[] }
+function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var v: Inner[] = mk(); t = t + v.len() + v[0].k; i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// A struct-array FIELD-returning method reaches `.len()` through the same
+	// site but is in NEITHER producer registry (both require a receiver-less
+	// fresh-returning free function), so the new arms must stay OFF: freeing
+	// the field's elements would take boxes the struct still owns. The
+	// receiver is read again after the call, which is what makes a wrong deep
+	// free visible as 97/99 rather than a byte rate.
+	{"arrstruct-field-len-not-deep-freed", `struct Inner { k: i32, ys: i32[] }
+struct H { xs: Inner[] }
+function (h: H) get(): Inner[] { return h.xs; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var keep: H = H { xs: [Inner { k: 3, ys: [1] }, Inner { k: 4, ys: [2] }] };
+        t = t + keep.get().len() + keep.xs[0].k + keep.xs[1].k;
+        i = i + 1;
+    }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var x: i32 = churn(200);
+    if (__rc_underflow() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    if (w1 != (200 * 9) % 251) { return 96; }
+    return 0;
+}`, 0},
 }
 
 const arrOwnedRetFailFmt = "%s = %d, want %d (a small non-zero is the leaked bytes per round; 99 = over-release; 97 = value corrupted)"
