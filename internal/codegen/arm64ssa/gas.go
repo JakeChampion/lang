@@ -5849,8 +5849,21 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 
 	for bi, blk := range p.Blocks {
 		w(".L%s_b%d:", label, bi)
-		for _, in := range blk.Insts {
+		for ii, in := range blk.Insts {
 			if in.Op == x86.Call || in.Op == x86.CallPair {
+				// An array index is address arithmetic, not a call: inline it
+				// rather than making the allocator spill around it. The seed
+				// keeps the bounds-check label unique per site.
+				if lines, ok := inlineArrIdxLines(in, fr, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+					for _, l := range lines {
+						if strings.HasSuffix(l, ":") {
+							w("%s", l)
+						} else {
+							w("\t%s", l)
+						}
+					}
+					continue
+				}
 				lines, err := callLines(in, numAlloc, scratch, fr)
 				if err != nil {
 					return err
@@ -6025,6 +6038,82 @@ func usesCallIndirect(progs map[string]*x86.Program) bool {
 		}
 	}
 	return false
+}
+
+// arrIdxInline maps an array-index helper onto its element-stride shift and
+// whether it bounds-checks. These are the calls the IR emits for `a[i]`
+// (internal/ir), and every one of them is four instructions or fewer of address
+// arithmetic — so the call machinery around them costs more than the work. The
+// stack-machine backend has always inlined them (emitInlineIdxHelper in
+// internal/codegen/arm64); this is the SSA side of the same decision.
+//
+// __str_idx is absent on purpose: two-word strings make it a different shape,
+// not an address compute.
+var arrIdxInline = map[string]struct {
+	shift   int
+	checked bool
+}{
+	"__arr_idx":       {2, true}, // stride 4 (i32)
+	"__arr_idx_1":     {0, true}, // stride 1 (byte array)
+	"__arr_idx_8":     {3, true}, // stride 8 (i64 / pointer)
+	"__arr_idx_16":    {4, true}, // stride 16 (two-word string[])
+	"__arr_idx_nc":    {2, false},
+	"__arr_idx_1_nc":  {0, false},
+	"__arr_idx_8_nc":  {3, false},
+	"__arr_idx_16_nc": {4, false},
+}
+
+// inlineArrIdxLines renders an array-index call as the address compute it is,
+// or reports false when the callee is something else.
+//
+// The saving is not the `bl`. A call makes the allocator spill every
+// caller-saved register holding a value live across it, and indexing sits in
+// the innermost loop of anything that walks an array — 22 of the 75 calls in
+// cmp.sort's monomorphised body were this helper, against flat's zero.
+//
+// It reproduces the helper exactly, including the detail that the bounds check
+// is what makes the wide add safe: `cmp w` rejects a negative index as a huge
+// unsigned, so the full x-register add below only ever sees an index whose top
+// half is clear. The `_nc` variants keep the helper's own (unchecked) semantics.
+func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) ([]string, bool) {
+	form, ok := arrIdxInline[ir.CodegenAlias(in.Callee)]
+	if !ok || in.Op != x86.Call || len(in.ArgLocs) != 2 {
+		return nil, false
+	}
+	// s0..s2 are the scratch pool, above the allocatable file: a slot-homed
+	// argument lands in one, and the length read needs a third register that is
+	// neither operand nor the destination.
+	s0, s1, s2 := numAlloc, numAlloc+1, numAlloc+2
+	var out []string
+	materialise := func(l x86.Loc, tmp int) int {
+		if l.IsReg {
+			return l.Reg
+		}
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(tmp), fr.slot(l.Slot)))
+		return tmp
+	}
+	base := materialise(in.ArgLocs[0], s0)
+	idx := materialise(in.ArgLocs[1], s1)
+	if form.checked {
+		ok := fmt.Sprintf(".Lssa_idx_%s_ok", seed)
+		out = append(out,
+			fmt.Sprintf("ldur %s, [%s, #-4]", wreg(s2), xreg(base)),
+			fmt.Sprintf("cmp %s, %s", wreg(idx), wreg(s2)),
+			fmt.Sprintf("b.lo %s", ok),
+			"mov x0, #134",
+			"mov x8, #94", // exit_group
+			"svc #0",
+			ok+":",
+		)
+	}
+	// The add reads both operands and writes the destination, so a destination
+	// that already IS one of them is fine: nothing is clobbered before its use.
+	if form.shift == 0 {
+		out = append(out, fmt.Sprintf("add %s, %s, %s", xreg(in.Dst), xreg(base), xreg(idx)))
+	} else {
+		out = append(out, fmt.Sprintf("add %s, %s, %s, lsl #%d", xreg(in.Dst), xreg(base), xreg(idx), form.shift))
+	}
+	return append(out, maskFix(in.Dst, in.W)...), true
 }
 
 // callLines renders a direct call under the AArch64 PCS. The CALLER-SAVED
