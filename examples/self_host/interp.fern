@@ -3272,6 +3272,53 @@ function run_module(src: string): Value {
 }
 
 function main(): i32 {
+    var rc: i32 = check_arithmetic_and_idents();
+    if (rc != 0) { return rc; }
+    rc = check_conditionals_and_assignment();
+    if (rc != 0) { return rc; }
+    rc = check_while_loops();
+    if (rc != 0) { return rc; }
+    rc = check_functions_and_recursion();
+    if (rc != 0) { return rc; }
+    rc = check_arrays();
+    if (rc != 0) { return rc; }
+    rc = check_string_indexing();
+    if (rc != 0) { return rc; }
+    rc = check_slicing();
+    if (rc != 0) { return rc; }
+    rc = check_compound_assignment();
+    if (rc != 0) { return rc; }
+    rc = check_structs_and_fields();
+    if (rc != 0) { return rc; }
+    rc = check_match_statements();
+    if (rc != 0) { return rc; }
+    rc = check_receiver_methods();
+    if (rc != 0) { return rc; }
+    rc = check_floats();
+    if (rc != 0) { return rc; }
+    rc = check_for_in_loops();
+    if (rc != 0) { return rc; }
+    rc = check_tuples();
+    if (rc != 0) { return rc; }
+    rc = check_break_and_continue();
+    if (rc != 0) { return rc; }
+    rc = check_primitive_receivers();
+    if (rc != 0) { return rc; }
+    rc = check_structural_equality();
+    if (rc != 0) { return rc; }
+    rc = check_union_receiver_method();
+    if (rc != 0) { return rc; }
+    rc = check_lambdas_and_closures();
+    if (rc != 0) { return rc; }
+    rc = check_maps();
+    if (rc != 0) { return rc; }
+    rc = check_numeric_widths();
+    if (rc != 0) { return rc; }
+
+    return 0;
+}
+
+function check_arithmetic_and_idents(): i32 {
     // Arithmetic + ident lookup. var x = 7; var y = 9; return x + y.
     var r1: Value = run_source("var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;");
     match (r1) {
@@ -3329,6 +3376,10 @@ function main(): i32 {
         _ => { return 70; }
     }
 
+    return 0;
+}
+
+function check_conditionals_and_assignment(): i32 {
     // If/else, then-branch taken: `var x = 5; if (x < 10) { return 1; } else { return 2; }`
     var r8: Value = run_source("var x = 5; if (x < 10) { return 1; } else { return 2; }");
     match (r8) {
@@ -3365,6 +3416,10 @@ function main(): i32 {
         _ => { return 121; }
     }
 
+    return 0;
+}
+
+function check_while_loops(): i32 {
     // While loop, counter. Sum of 1..=5 == 15.
     var r13: Value = run_source(
         "var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;"
@@ -3390,6 +3445,10 @@ function main(): i32 {
         _ => { return 151; }
     }
 
+    return 0;
+}
+
+function check_functions_and_recursion(): i32 {
     // Function decl + call: `add(2, 3)` via `main` → 5.
     var r16: Value = run_module(
         "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }"
@@ -3437,6 +3496,10 @@ function main(): i32 {
         _ => { return 200; }
     }
 
+    return 0;
+}
+
+function check_arrays(): i32 {
     // Array literal + indexing: `a[0] == 10`, `a[2] == 30`.
     var r21: Value = run_source(
         "var a = [10, 20, 30]; return a[2];"
@@ -3476,6 +3539,10 @@ function main(): i32 {
         _ => { return 251; }
     }
 
+    return 0;
+}
+
+function check_string_indexing(): i32 {
     // String indexing returns the byte at position as i32.
     // ASCII 'h' is 104.
     var r26: Value = run_source("var s = \"hello\"; return s[0];");
@@ -3498,6 +3565,10 @@ function main(): i32 {
         _ => { return 280; }
     }
 
+    return 0;
+}
+
+function check_slicing(): i32 {
     // String slicing is checked (#5634): `"hello"[1:4]` → `Some("ell")`.
     var r29: Value = run_source("var s = \"hello\"; return s[1:4];");
     match (r29) {
@@ -3552,6 +3623,10 @@ function main(): i32 {
         _ => { return 324; }
     }
 
+    return 0;
+}
+
+function check_compound_assignment(): i32 {
     // Compound assignment lowers to plain assign at parse time —
     // `x += 1` is `x = x + 1` by the time the interp sees it.
     // Sum 1..=10 via `+=` in the body: 55.
@@ -3570,6 +3645,10 @@ function main(): i32 {
         _ => { return 341; }
     }
 
+    return 0;
+}
+
+function check_structs_and_fields(): i32 {
     // Struct literal + field access: `Point { x: 3, y: 4 }.x` → 3.
     var r35: Value = run_source("return Point { x: 3, y: 4 }.x;");
     match (r35) {
@@ -3604,6 +3683,10 @@ function main(): i32 {
         _ => { return 380; }
     }
 
+    return 0;
+}
+
+function check_match_statements(): i32 {
     // StmtMatch — variant pattern binds the scrutinee and the
     // body reads a field off it.
     var src39: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
@@ -3669,6 +3752,10 @@ function main(): i32 {
         _ => { return 451; }
     }
 
+    return 0;
+}
+
+function check_receiver_methods(): i32 {
     // Receiver method on a struct: `c.area()` dispatches to
     // the method whose receiver_type matches the struct type
     // (Circle). The method body reads the receiver via its
@@ -3706,6 +3793,10 @@ function main(): i32 {
         _ => { return 490; }
     }
 
+    return 0;
+}
+
+function check_floats(): i32 {
     // Float literal — `3.14` evaluates to a VFloat.
     var r50: Value = run_source("return 3.14;");
     match (r50) {
@@ -3762,6 +3853,10 @@ function main(): i32 {
         _ => { return 571; }
     }
 
+    return 0;
+}
+
+function check_for_in_loops(): i32 {
     // For-in: sum [1, 2, 3] via in-loop accumulator.
     var src58: string = "function main(): i32 { var arr = [1, 2, 3]; var s: i32 = 0; for n in arr { s = s + n; } return s; }";
     var r58: Value = run_module(src58);
@@ -3786,6 +3881,10 @@ function main(): i32 {
         _ => { return 600; }
     }
 
+    return 0;
+}
+
+function check_tuples(): i32 {
     // Tuple literal — evaluates to VTuple.
     var r61: Value = run_source("var t = (1, 2, 3); return 0;");
     match (r61) {
@@ -3821,6 +3920,10 @@ function main(): i32 {
         _ => { return 651; }
     }
 
+    return 0;
+}
+
+function check_break_and_continue(): i32 {
     // break inside a while exits the loop. The accumulator
     // stops growing once i hits 3.
     var src66: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
@@ -3856,6 +3959,10 @@ function main(): i32 {
         _ => { return 691; }
     }
 
+    return 0;
+}
+
+function check_primitive_receivers(): i32 {
     // Method on a primitive receiver — `function (s: string)
     // doubled(): string { return s + s; }` dispatches when
     // called on a string value.
@@ -3874,6 +3981,10 @@ function main(): i32 {
         _ => { return 711; }
     }
 
+    return 0;
+}
+
+function check_structural_equality(): i32 {
     // Tuple structural equality.
     var r72: Value = run_source("return (1, 2, 3) == (1, 2, 3);");
     match (r72) {
@@ -3932,6 +4043,10 @@ function main(): i32 {
         _ => { return 791; }
     }
 
+    return 0;
+}
+
+function check_union_receiver_method(): i32 {
     // Union-receiver method: a method declared on a union
     // (`function (sh: Shape) tag(): i32`) dispatches when the
     // receiver is one of the union's variant structs.
@@ -3942,6 +4057,10 @@ function main(): i32 {
         _ => { return 801; }
     }
 
+    return 0;
+}
+
+function check_lambdas_and_closures(): i32 {
     // Lambda expression bound to a var, then called.
     var src81: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
     var r81: Value = run_module(src81);
@@ -3966,6 +4085,10 @@ function main(): i32 {
         _ => { return 831; }
     }
 
+    return 0;
+}
+
+function check_maps(): i32 {
     // Map: set / get_or / has / len.
     var src84: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
     var r84: Value = run_module(src84);
@@ -4015,6 +4138,10 @@ function main(): i32 {
         _ => { return 881; }
     }
 
+    return 0;
+}
+
+function check_numeric_widths(): i32 {
     // u32 unsigned semantics (#4348 final slice): logical `>>` on a
     // high-bit pattern (arithmetic shift would smear the sign) and
     // unsigned div/compare (signed would see -6).
