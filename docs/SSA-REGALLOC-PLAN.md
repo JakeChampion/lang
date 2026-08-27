@@ -752,6 +752,14 @@ Two orderings are load-bearing and both are the opposite of the obvious one:
 A function whose arguments all fit in registers reserves no outgoing area, so
 nothing that does not need this pays for it.
 
+Getting past the ceiling surfaced the next one immediately, on
+`wasm_modload_run`: `sub sp, sp, #20304`. The ADD/SUB immediate is 12 bits with
+an optional 12-bit left shift, so a frame past 4095 bytes takes two
+instructions — the 4096-multiple part and the remainder, both of which encode
+because the frame is 16-aligned. A latent bug, not a new one: the arm64
+assembler refused it correctly, and nothing had a frame that large until a
+module this size could reach emit.
+
 ### The interval approximation, and what sizing it missed
 
 Sized before building it, by comparing each function's true maximum of
