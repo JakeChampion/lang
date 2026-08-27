@@ -50338,28 +50338,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // 2-call escaping shape). Register them under the "ENVCAP:" prefix so the
     // sweep's array loop skips them; the env box itself (owned by the CALLER)
     // keeps its normal release path.
-    if (fn.params.len() > 0 && fn.params[0].name == "__env") {
-        var evi: i32 = 0;
-        while (evi < fn.body.len()) {
-            match (fn.body[evi]) {
-                ast.StmtVar(ev) => {
-                    match (ev.init) {
-                        ast.ExprIndex(evix) => {
-                            match (evix.array) {
-                                ast.ExprIdent(evid) => {
-                                    if (evid.name == "__env") { reclaim = reclaim.append("ENVCAP:" + ev.name); }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            evi = evi + 1;
-        }
-    }
+    reclaim = reclaim_env_capture_params(fn, reclaim);
     // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
     // "SNAP:<name>" so slot_is_reclaimable_struct (bare-name lookup) stays false
@@ -50379,27 +50358,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // final is kept by the struct move-on-return in StmtReturn. Sound because the
     // binding is a FRESH-struct-returning call (st owns a fresh box, not an alias
     // of the borrowed receiver — sg.fresh_struct_ret_fns is the guard).
-    var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params);
-    var sli: i32 = 0;
-    while (sli < snap_locals.len()) {
-        // Key-to-key against the credits reclaimable_names_of already published,
-        // and the comparison gets SHARPER for it: two same-named bindings no
-        // longer collapse into one another.
-        if (util.index_of_str(reclaim, snap_locals[sli]) < 0) {
-            reclaim = reclaim.append(snap_locals[sli]);
-            // Same "NODEEP:" marking reclaimable_names_of applies to its own
-            // bare credits (#3425 residual): a snapshot-LOCAL used as a method
-            // receiver / bare call arg with the result bound ELSEWHERE (e.g.
-            // `return vsb.emit(op)` — receiver moved into the RETURN value, not
-            // rebound to vsb) may have its rc fields shared with that other
-            // live value, so the sweeps must keep its free BOX-ONLY. The classic
-            // chain (`var st = se.emit(op); st = st.emit(..); return st`) stays
-            // unmarked — self-rebinds are exempt and a bare `return st` is a
-            // read — so its rebind field-reclaim and deep sweep both survive.
-            if (moves_fields_stmts(fn.body, reclaim_site_name(snap_locals[sli]), [])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
-        }
-        sli = sli + 1;
-    }
+    reclaim = reclaim_snapshot_locals(fn, sg, structs, reclaim);
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
@@ -50515,47 +50474,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // entries per lower_func into an arena that never frees and inflated
     // every later reclaimable_names scan — the per-module whole-compiler
     // emit OOM-killed on it. Same prefix-tag convention; inert elsewhere.
-    var lacs: string[] = [];
-    var laci: i32 = 0;
-    while (laci < fn.body.len()) { lacs = lit_arg_callees_stmt(fn.body[laci], lacs); laci = laci + 1; }
-    if (lacs.len() > 0) {
-        var bpk: i32 = 0;
-        while (bpk < sg.borrowable_params.len()) {
-            // borrowable_params is a HASH TABLE: each element is a bucket
-            // holding zero or more "<key>|<flags>\n" lines, so a bucket is not
-            // itself a lookup entry. Seeding one wholesale registered only the
-            // key that happened to land first in it — and tagged_value_start
-            // anchors at position 0, so that was also the only key a lookup
-            // could ever resolve. Every callee sharing a bucket behind another
-            // was silently unborrowable, and its callers' fresh-argument temps
-            // went unreclaimed. Walk the lines and seed each match on its own.
-            var buck: string = sg.borrowable_params[bpk];
-            var bl: i32 = 0;
-            while (bl < buck.len()) {
-                var ble: i32 = bl;
-                while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
-                // Offsets into `buck`, not a copy of the line: this walk visits
-                // every row of the whole-program registry for every function
-                // lowered, and materialising each row cost an allocation and a
-                // copy per row per function. Only a row that MATCHES is built.
-                var bpbar: i32 = bl;
-                while (bpbar < ble && buck[bpbar] != b'|') { bpbar = bpbar + 1; }
-                if (bpbar < ble) {
-                    // A METHOD key is "<Type>.<method>" and the census can only
-                    // see the bare method name, so match on the part after the
-                    // last '.'. A free function's key holds no '.' (module
-                    // mangling uses '__'), so it still compares whole.
-                    var bpdot: i32 = bpbar;
-                    while (bpdot > bl && buck[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
-                    if (util.index_of_str(lacs, slice_unchecked(buck, bpdot, bpbar)) >= 0) {
-                        reclaim = reclaim.append("BORROW:" + slice_unchecked(buck, bl, ble));
-                    }
-                }
-                bl = ble + 1;
-            }
-            bpk = bpk + 1;
-        }
-    }
+    reclaim = reclaim_lit_arg_callees(fn, sg, reclaim);
     // #4365 (discarded rc-field tuple temps): seed "TUPRET:<name>|<flags>" from
     // the sg.tuple_fresh_ret_fns "ARRF:" entries, but ONLY for callees this body
     // DISCARDS as a bare call statement (`mk(i);`) — the same narrow-seeding
@@ -50564,23 +50483,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // array positions and free the box. "MAPF:" builder entries seed the same
     // way as "MAPRET:<name>" — a discarded builder call's fresh scalar-column
     // map frees whole via __fern_map_free (#4357).
-    var dccs: string[] = [];
-    var dcci: i32 = 0;
-    while (dcci < fn.body.len()) { dccs = discarded_call_callees_stmt(fn.body[dcci], dccs); dcci = dcci + 1; }
-    if (dccs.len() > 0) {
-        var tfk: i32 = 0;
-        while (tfk < sg.tuple_fresh_ret_fns.len()) {
-            var tfe: string = sg.tuple_fresh_ret_fns[tfk];
-            if (tfe.len() > 6 && slice_unchecked(tfe, 0, 5) == "ARRF:") {
-                var tfbar: i32 = 5;
-                while (tfbar < tfe.len() && tfe[tfbar] != b'|') { tfbar = tfbar + 1; }
-                if (util.index_of_str(dccs, slice_unchecked(tfe, 5, tfbar)) >= 0) { reclaim = reclaim.append("TUPRET:" + slice_unchecked(tfe, 5, tfe.len())); }
-            } else if (tfe.len() > 5 && slice_unchecked(tfe, 0, 5) == "MAPF:") {
-                if (util.index_of_str(dccs, slice_unchecked(tfe, 5, tfe.len())) >= 0) { reclaim = reclaim.append("MAPRET:" + slice_unchecked(tfe, 5, tfe.len())); }
-            }
-            tfk = tfk + 1;
-        }
-    }
+    reclaim = reclaim_discarded_call_callees(fn, sg, reclaim);
     // len-receiver seeding (#4357 fallout, the native #5141 twin): a
     // str-fresh-ret callee whose result this body consumes as a `.len()`
     // RECEIVER (`f(i).len()`) gets an "SFRLEN:<name>" entry, so the len
@@ -50605,22 +50508,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // marker blocks themselves also lower normally below as dead code (their
     // guard flags are always 0), so a missed extraction degrades to today's
     // skip, never to wrong code.
-    var tclean: ast.Stmt[] = [];
-    var tci: i32 = 0;
-    while (tci < fn.body.len()) {
-        match (fn.body[tci]) {
-            ast.StmtIf(tcf) => {
-                match (tcf.cond) {
-                    ast.ExprIdent(tcid) => {
-                        if (tcid.name == "__dfa_tryall" || tcid.name == "__dfa_tryerr") { tclean = tclean.append(fn.body[tci]); }
-                    },
-                    _ => {}
-                }
-            },
-            _ => {}
-        }
-        tci = tci + 1;
-    }
+    var tclean: ast.Stmt[] = tail_cleanup_stmts_of(fn);
     var ret_arrdyn0: i32 = 0;
     if (ret_i64arr) { ret_arrdyn0 = ret_arrdyn0 + 1; }
     if (ret_dyn) { ret_arrdyn0 = ret_arrdyn0 + 2; }
@@ -50670,16 +50558,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // "$snap$<name>" local. Emitted FIRST (before any body op). Each reassign then
     // frees the old box only when it differs from this snapshot, so the caller's
     // original is never freed. Only struct slots qualify.
-    var sni: i32 = 0;
-    while (sni < snaps.len()) {
-        var psl: i32 = s.slot_of(snaps[sni]);
-        if (psl >= 0 && s.struct_type_of_slot(psl).len() > 0) {
-            s = s.add_local("$snap$" + snaps[sni]);
-            s = s.emit(ir.op_load_local(psl));
-            s = s.emit(ir.op_store_local(s.slot_of("$snap$" + snaps[sni])));
-        }
-        sni = sni + 1;
-    }
+    s = seed_snapshot_slots(snaps, s);
     // Perceus precise drops: release each linear, owned array-literal local right
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
@@ -68027,4 +67906,161 @@ if (is_arr && !is_arrarr && arrarr_e == "") {
 }
 
     return arrarr_e;
+}
+
+function reclaim_env_capture_params(fn: parser.FuncDecl, reclaim: string[]): string[] {
+if (fn.params.len() > 0 && fn.params[0].name == "__env") {
+    var evi: i32 = 0;
+    while (evi < fn.body.len()) {
+        match (fn.body[evi]) {
+            ast.StmtVar(ev) => {
+                match (ev.init) {
+                    ast.ExprIndex(evix) => {
+                        match (evix.array) {
+                            ast.ExprIdent(evid) => {
+                                if (evid.name == "__env") { reclaim = reclaim.append("ENVCAP:" + ev.name); }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        evi = evi + 1;
+    }
+}
+
+    return reclaim;
+}
+
+function reclaim_snapshot_locals(fn: parser.FuncDecl, sg: FnSigs, structs: parser.StructDecl[], reclaim: string[]): string[] {
+var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params);
+var sli: i32 = 0;
+while (sli < snap_locals.len()) {
+    // Key-to-key against the credits reclaimable_names_of already published,
+    // and the comparison gets SHARPER for it: two same-named bindings no
+    // longer collapse into one another.
+    if (util.index_of_str(reclaim, snap_locals[sli]) < 0) {
+        reclaim = reclaim.append(snap_locals[sli]);
+        // Same "NODEEP:" marking reclaimable_names_of applies to its own
+        // bare credits (#3425 residual): a snapshot-LOCAL used as a method
+        // receiver / bare call arg with the result bound ELSEWHERE (e.g.
+        // `return vsb.emit(op)` — receiver moved into the RETURN value, not
+        // rebound to vsb) may have its rc fields shared with that other
+        // live value, so the sweeps must keep its free BOX-ONLY. The classic
+        // chain (`var st = se.emit(op); st = st.emit(..); return st`) stays
+        // unmarked — self-rebinds are exempt and a bare `return st` is a
+        // read — so its rebind field-reclaim and deep sweep both survive.
+        if (moves_fields_stmts(fn.body, reclaim_site_name(snap_locals[sli]), [])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
+    }
+    sli = sli + 1;
+}
+
+    return reclaim;
+}
+
+function reclaim_lit_arg_callees(fn: parser.FuncDecl, sg: FnSigs, reclaim: string[]): string[] {
+var lacs: string[] = [];
+var laci: i32 = 0;
+while (laci < fn.body.len()) { lacs = lit_arg_callees_stmt(fn.body[laci], lacs); laci = laci + 1; }
+if (lacs.len() > 0) {
+    var bpk: i32 = 0;
+    while (bpk < sg.borrowable_params.len()) {
+        // borrowable_params is a HASH TABLE: each element is a bucket
+        // holding zero or more "<key>|<flags>\n" lines, so a bucket is not
+        // itself a lookup entry. Seeding one wholesale registered only the
+        // key that happened to land first in it — and tagged_value_start
+        // anchors at position 0, so that was also the only key a lookup
+        // could ever resolve. Every callee sharing a bucket behind another
+        // was silently unborrowable, and its callers' fresh-argument temps
+        // went unreclaimed. Walk the lines and seed each match on its own.
+        var buck: string = sg.borrowable_params[bpk];
+        var bl: i32 = 0;
+        while (bl < buck.len()) {
+            var ble: i32 = bl;
+            while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
+            // Offsets into `buck`, not a copy of the line: this walk visits
+            // every row of the whole-program registry for every function
+            // lowered, and materialising each row cost an allocation and a
+            // copy per row per function. Only a row that MATCHES is built.
+            var bpbar: i32 = bl;
+            while (bpbar < ble && buck[bpbar] != b'|') { bpbar = bpbar + 1; }
+            if (bpbar < ble) {
+                // A METHOD key is "<Type>.<method>" and the census can only
+                // see the bare method name, so match on the part after the
+                // last '.'. A free function's key holds no '.' (module
+                // mangling uses '__'), so it still compares whole.
+                var bpdot: i32 = bpbar;
+                while (bpdot > bl && buck[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
+                if (util.index_of_str(lacs, slice_unchecked(buck, bpdot, bpbar)) >= 0) {
+                    reclaim = reclaim.append("BORROW:" + slice_unchecked(buck, bl, ble));
+                }
+            }
+            bl = ble + 1;
+        }
+        bpk = bpk + 1;
+    }
+}
+
+    return reclaim;
+}
+
+function reclaim_discarded_call_callees(fn: parser.FuncDecl, sg: FnSigs, reclaim: string[]): string[] {
+var dccs: string[] = [];
+var dcci: i32 = 0;
+while (dcci < fn.body.len()) { dccs = discarded_call_callees_stmt(fn.body[dcci], dccs); dcci = dcci + 1; }
+if (dccs.len() > 0) {
+    var tfk: i32 = 0;
+    while (tfk < sg.tuple_fresh_ret_fns.len()) {
+        var tfe: string = sg.tuple_fresh_ret_fns[tfk];
+        if (tfe.len() > 6 && slice_unchecked(tfe, 0, 5) == "ARRF:") {
+            var tfbar: i32 = 5;
+            while (tfbar < tfe.len() && tfe[tfbar] != b'|') { tfbar = tfbar + 1; }
+            if (util.index_of_str(dccs, slice_unchecked(tfe, 5, tfbar)) >= 0) { reclaim = reclaim.append("TUPRET:" + slice_unchecked(tfe, 5, tfe.len())); }
+        } else if (tfe.len() > 5 && slice_unchecked(tfe, 0, 5) == "MAPF:") {
+            if (util.index_of_str(dccs, slice_unchecked(tfe, 5, tfe.len())) >= 0) { reclaim = reclaim.append("MAPRET:" + slice_unchecked(tfe, 5, tfe.len())); }
+        }
+        tfk = tfk + 1;
+    }
+}
+
+    return reclaim;
+}
+
+function tail_cleanup_stmts_of(fn: parser.FuncDecl): ast.Stmt[] {
+var tclean: ast.Stmt[] = [];
+var tci: i32 = 0;
+while (tci < fn.body.len()) {
+    match (fn.body[tci]) {
+        ast.StmtIf(tcf) => {
+            match (tcf.cond) {
+                ast.ExprIdent(tcid) => {
+                    if (tcid.name == "__dfa_tryall" || tcid.name == "__dfa_tryerr") { tclean = tclean.append(fn.body[tci]); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    tci = tci + 1;
+}
+
+    return tclean;
+}
+
+function seed_snapshot_slots(snaps: string[], s: LowerState): LowerState {
+var sni: i32 = 0;
+while (sni < snaps.len()) {
+    var psl: i32 = s.slot_of(snaps[sni]);
+    if (psl >= 0 && s.struct_type_of_slot(psl).len() > 0) {
+        s = s.add_local("$snap$" + snaps[sni]);
+        s = s.emit(ir.op_load_local(psl));
+        s = s.emit(ir.op_store_local(s.slot_of("$snap$" + snaps[sni])));
+    }
+    sni = sni + 1;
+}
+
+    return s;
 }
