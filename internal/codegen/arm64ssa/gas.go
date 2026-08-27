@@ -5420,6 +5420,32 @@ func calleeSavedIn(asm string, numRegFile int) []int {
 // as word characters so a label name cannot decompose into a register name.
 var armRegTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
 
+// maxFrameBytes is the largest frame the two-instruction adjustment below can
+// reach: both halves of an ADD/SUB immediate are 12 bits, one of them shifted
+// left by 12.
+const maxFrameBytes = 4095<<12 | 4095
+
+// spAdjustLines moves sp by n bytes — "sub" to open a frame, "add" to close it.
+//
+// The immediate is 12 bits with an optional 12-bit left shift, so anything past
+// 4095 bytes needs two instructions: the 4096-multiple part and the remainder.
+// A single self-host function reaches 20 KB of spill slots, which is where this
+// stopped being hypothetical.
+func spAdjustLines(op string, n int) ([]string, error) {
+	if n > maxFrameBytes {
+		return nil, fmt.Errorf("arm64ssa: frame of %d bytes exceeds the %d an sp adjustment can reach", n, maxFrameBytes)
+	}
+	if hi := n &^ 0xfff; hi != 0 {
+		// n is 16-aligned and hi is a multiple of 4096, so the remainder is too.
+		out := []string{fmt.Sprintf("%s sp, sp, #%d", op, hi)}
+		if lo := n & 0xfff; lo != 0 {
+			out = append(out, fmt.Sprintf("%s sp, sp, #%d", op, lo))
+		}
+		return out, nil
+	}
+	return []string{fmt.Sprintf("%s sp, sp, #%d", op, n)}, nil
+}
+
 // frameLayout is where everything a function body addresses lives, in 8-byte
 // slots measured from a stack pointer that does not move for the body's
 // lifetime:
@@ -5485,7 +5511,13 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 
 	w("%s:", label)
 	if fr.bytes > 0 {
-		w("\tsub sp, sp, #%d", fr.bytes)
+		lines, err := spAdjustLines("sub", fr.bytes)
+		if err != nil {
+			return err
+		}
+		for _, l := range lines {
+			w("\t%s", l)
+		}
 	}
 	if call {
 		w("\tstr x30, [sp, #%d]", 8*fr.lrSlot)
@@ -5511,7 +5543,11 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 			w("\t%s", l)
 		}
 		if fr.bytes > 0 {
-			w("\tadd sp, sp, #%d", fr.bytes)
+			// The prologue already proved this frame fits.
+			lines, _ := spAdjustLines("add", fr.bytes)
+			for _, l := range lines {
+				w("\t%s", l)
+			}
 		}
 	}
 
