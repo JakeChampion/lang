@@ -1006,17 +1006,22 @@ a miscompile, not nondeterminism. A three-line program reproduces it.
 
 **Cause.** `ssa.ResolveWidths` marks values that hold a machine address, so the
 backend skips the `sxtw` that would corrupt a pointer above `0x7fffffff`. The
-marking is deliberately conservative. Two steps let that conservatism escape:
+marking is deliberately conservative. What broke is that the guess did not stay
+inside the function that made it: `mark` overwrote a callee's **declared**
+`ParamAddrs` entry, which then marked every OTHER caller's argument at that
+position. `Addr` stamps `Width 64`, which is exactly how `memLoadSeq` is told to
+skip its `maskFix`, so a negative i32 loaded through one of those stayed
+zero-extended — and arm64ssa compares at 64 bits, so every signed test on it read
+positive. `util.i32_to_string(-1)` rendered `"4294967295"`.
 
-- `ptrA - ptrB` is an integer — a length, an offset — and the `OpSub` case's own
-  comment says so, yet it marks the difference as an address.
-- Passing such a value to a function made `mark` overwrite the callee's
-  **declared** `ParamAddrs` entry, which then marked every OTHER caller's
-  argument at that position. `Addr` stamps `Width 64`, which is exactly how
-  `memLoadSeq` is told to skip its `maskFix`, so a negative i32 loaded through
-  one of those stayed zero-extended — and arm64ssa compares at 64 bits, so every
-  signed test on it read positive. `util.i32_to_string(-1)` rendered
-  `"4294967295"`.
+Which value first seeded each cascade is not established. `ptrA - ptrB` is an
+integer — a length, an offset — and the `OpSub` case's own comment says so while
+the code marks it as an address whenever `Args[0]` is one; that is a real
+over-approximation and it is what the regression test constructs. It is not the
+seed here, though: instrumenting the pass to report an `OpSub` of two marked
+addresses finds **none** over the whole self-host compile. The propagation rule
+was wrong independently of what fed it, and closing it fixed the miscompile; the
+seed is still open.
 
 Instrumenting the pass counted **588 such loads across 201 functions** — 165 in
 `irlower`, 14 in `parser`, 10 in `asm_ir`, including `emit_ir_op_const_i32`
