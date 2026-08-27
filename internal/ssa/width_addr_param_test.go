@@ -7,11 +7,9 @@ import "testing"
 // is deliberately conservative — over-marking protects pointers — but it must
 // stay inside the function that made the guess.
 //
-// It did not. `ptrA - ptrB` is an integer (a length, an offset), and the OpSub
-// case's own comment says so, yet it marks the difference as an address. Pass
-// that i32 to a function and mark() overwrote the callee's DECLARED
-// ParamAddrs[i], which then marked every OTHER caller's argument at the same
-// position — stamping Width 64 on the defining op, which is how memLoadSeq is
+// It did not. Pass an address-marked i32 to a function and mark() overwrote the
+// callee's DECLARED ParamAddrs[i], which then marked every OTHER caller's
+// argument at the same position — stamping Width 64 on the defining op, which is how memLoadSeq is
 // told to skip its maskFix. A negative i32 loaded through one of those stayed
 // zero-extended, and arm64ssa compares at 64 bits, so every signed test on it
 // read positive.
@@ -29,6 +27,9 @@ func TestAddrInferenceDoesNotCrossIntoAnotherCallersArgument(t *testing.T) {
 	callee.ParamAddrs = []bool{false}
 
 	// One caller passes a pointer DIFFERENCE — an integer standing on an address.
+	// The OpSub case marks it, since Args[0] is an address; that over-approximation
+	// is a convenient way to obtain a marked scalar here, not the seed observed in
+	// the self-host, where no OpSub of two addresses is marked at all.
 	diffCaller := NewFunc("diffCaller")
 	db := diffCaller.NewBlock()
 	size := diffCaller.AddOp(db, OpConstInt)
