@@ -321,12 +321,31 @@ What is left divides into two kinds, and neither yields to extraction:
   `lift_from_ir`'s control-flow branches accumulate into a dozen or more shared
   locals. A carrier works only where the shared write-set is small.
 
-Next mechanical candidates, in order: `lower_call_method` (295), `lower_func`
-(262), `lower_stmt_match` (187), `build_expr` (`ssa.fern`, 184). `lower_stmt_var`
-still holds 308, but what remains at its top is ~13 early-return guard blocks —
-a shape none of the slices so far has handled, since extracting one needs a way
-to say "not handled" as well as returning a state. Think before reaching for the
-mechanical treatment there.
+**Rank candidates by shape, not by what is left over.** Probing the four
+largest remaining showed fork count says almost nothing about which is next:
+
+- `lower_call_method` (295) — 14 blocks left, and only **three** of them always
+  return. The first slice took the always-returning families; what remains are
+  fall-through guards, the shape that needs a decline signal. Not mechanical.
+- `lower_stmt_var` (308) — same story at its top: ~13 early-return guard blocks,
+  each of which can fall through to a later one.
+- `lower_stmt_match` (187) and `build_expr` (`ssa.fern`, 184) — each is ONE
+  construct spanning almost the whole function (684 and 819 lines). They are the
+  slice-2 shape, so check each arm for the always-returns property before
+  planning anything.
+- `lower_func` (262) — **the one that is mechanical.** Its body is a run of
+  `while` loops and guards that accumulate into locals, in the slice-14 shape:
+  five write a single local (`reclaim` ×3, `tclean`, `s`), and the loop counters
+  are dead afterwards so they can move inside the helper rather than being
+  returned. Note it declares over 100 locals, so free-variable analysis matters
+  more here than anywhere else.
+
+`lower_func` also shows where this campaign stops paying: two of its blocks write
+the same 19-21 parallel per-parameter arrays (`names`, `isarr`, `isstr`,
+`structty`, …). A carrier for that write-set is not a refactor of `lower_func`,
+it is the admission that those arrays are one missing struct. Worth doing, but as
+its own change with its own justification — not smuggled in under a complexity
+slice.
 
 A caution for whoever scans for these: **a scanner that finds extents by
 counting braces is wrong on `parser.fern`, `printer.fern`, `interp.fern`,
