@@ -1049,6 +1049,18 @@ Rebuilt properly — one compiler, only the backend differing — the picture is
 clean. Before the fix, 4 of the 5 probe programs differ on the constant; after
 it, none do. The harness now rebuilds both sides.
 
+The whole corpus, re-run that way with the fix in, is the number to quote:
+
+| driver | match | differ | skip |
+|---|---|---|---|
+| `interp_run` | 285 | 0 | 1 |
+| `asm_run` | **286** | **0** | 0 |
+
+`interp_run`'s one skip is `examples/bench/array_append.fern`, where the
+interpreter runs out of memory under qemu — a skip on both sides, not a
+mismatch. Every other program in the corpus now compiles to the same bytes
+through either backend.
+
 **What this says about the gates.** The bug predates the whole size campaign —
 the compiler built at the commit before #7643 reproduces it byte for byte. It
 survived the per-module fixpoint, all 335 fixtures, the 281-program corpus
