@@ -2815,6 +2815,453 @@ pub function ty_friendly(t: Ty): string {
     return ty_tag(t);
 }
 
+// infer_call_method_type infers the result of a call whose callee is a field
+// access — a receiver method, a builtin on a string/array/map, or a call
+// through a closure-valued field.
+function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
+    var rt: Ty = infer_expr_type(fa.obj, s);
+    if (fa.field == "read_chunk") { return ty_option(ty_string()); }
+    if (fa.field == "read_line") { return ty_option(ty_string()); }
+    // Writer.write(s) -> i32 bytes written / -errno (#4372). Like
+    // read_chunk above, the real non-struct-receiver gate is applied
+    // at lower time (irlower's resource-method dispatch).
+    if (fa.field == "write") { return ty_i32(); }
+    if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
+    if (is_map(rt) && fa.field == "get") {
+        return ty_option(map_val(rt));
+    }
+    if (is_map(rt) && fa.field == "get_or") {
+        return map_val(rt);
+    }
+    if (is_map(rt) && (fa.field == "insert")) { return rt; }
+    if (is_map(rt) && fa.field == "has") { return ty_bool(); }
+    if (is_map(rt) && fa.field == "len") { return ty_i32(); }
+    if (is_map(rt) && fa.field == "keys") {
+        if (map_key_is_i32(rt)) { return ty_array_i32(); }
+        return ty_array_string();
+    }
+    if (is_map(rt) && fa.field == "values") {
+        var vt: Ty = map_val(rt);
+        if (ty_is_i32(vt)) { return ty_array_i32(); }
+        if (ty_is_string(vt)) { return ty_array_string(); }
+        return ty_array();
+    }
+    if (is_map(rt) && fa.field == "iter") {
+        return ty_mapiter(map_val(rt));
+    }
+    if (is_mapiter(rt) && fa.field == "has_next") { return ty_bool(); }
+    if (is_mapiter(rt) && fa.field == "key") { return ty_string(); }
+    if (is_mapiter(rt) && fa.field == "value") { return mapiter_val(rt); }
+    if ((is_int_tag(rt) || ty_is_string(rt)) && fa.field == "to_string") {
+        return ty_string();
+    }
+    if (ty_is_f64(rt) && fa.field == "to_string") {
+        return ty_string();
+    }
+    if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "gcd" || fa.field == "lcm")) {
+        return ty_i32();
+    }
+    // Byte case folds: u8 receiver, u8 result (a byte fold
+    // yields a byte). digit_value / hex_value stay i32 below --
+    // they convert a byte to a numeric value.
+    if (ty_is_u8(rt) && (fa.field == "to_ascii_lower" || fa.field == "to_ascii_upper")) {
+        return ty_u8();
+    }
+    if (ty_is_u8(rt) && (fa.field == "digit_value" || fa.field == "hex_value")) {
+        return ty_i32();
+    }
+    if (ty_is_u8(rt) && (fa.field == "to_ascii_string" || fa.field == "hex_digit")) {
+        return ty_string();
+    }
+    if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
+        return ty_bool();
+    }
+    if (ty_is_u8(rt) && (fa.field == "is_ascii_digit" || fa.field == "is_ascii_alpha" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_alnum" || fa.field == "is_ascii_lower" || fa.field == "is_ascii_upper" || fa.field == "is_ascii_hex_digit" || fa.field == "is_ascii" || fa.field == "is_ascii_punct" || fa.field == "is_ascii_white_space" || fa.field == "is_ascii_newline" || fa.field == "is_ascii_vowel" || fa.field == "is_ascii_printable" || fa.field == "is_ascii_control" || fa.field == "matches_any")) {
+        return ty_bool();
+    }
+    if (fa.field == "len"
+            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+        return ty_i32();
+    }
+    if (fa.field == "is_empty"
+            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+        return ty_bool();
+    }
+    // `.append(x)` / `.reverse()` / `.concat(b)` return the same array type.
+    if ((fa.field == "append" || fa.field == "reverse" || fa.field == "concat")
+            && (is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+        return rt;
+    }
+    // `.first()` / `.last()` return the element type.
+    if ((fa.field == "first" || fa.field == "last")
+            && (is_int_array_tag(rt) || ty_is_array_string(rt))) {
+        if (ty_is_array_i32(rt)) { return ty_i32(); }
+        if (ty_is_array_u32(rt)) { return ty_u32(); }
+        if (ty_is_array_u64(rt)) { return ty_u64(); }
+        if (ty_is_array_i64(rt)) { return ty_i64(); }
+        return ty_string();
+    }
+    // i32/string-array search methods.
+    if (ty_is_array_i32(rt) || ty_is_array_string(rt)) {
+        if (fa.field == "index_of") { return ty_i32(); }
+        if (fa.field == "contains") { return ty_bool(); }
+    }
+    if (ty_is_array_i32(rt)
+            && (fa.field == "sum" || fa.field == "product")) {
+        return ty_i32();
+    }
+    // .min()/.max() on an i32 array → Option[i32] (None on
+    // empty); the Some payload is i32 (match_payload_type).
+    if (ty_is_array_i32(rt) && (fa.field == "min" || fa.field == "max")) {
+        return ty_option(ty_i32());
+    }
+    if (ty_is_array_string(rt) && fa.field == "join") {
+        return ty_string();
+    }
+    // String methods that mirror existing builtins.
+    if (ty_is_string(rt)) {
+        if (fa.field == "split") { return ty_array_string(); }
+        if (fa.field == "lines") { return ty_array_string(); }
+        if (fa.field == "bytes") { return ty_array_i32(); }
+        if (fa.field == "as_bytes") { return ty_array_i32(); }
+        if (fa.field == "reverse") { return ty_string(); }
+        if (fa.field == "first_byte" || fa.field == "last_byte") { return ty_i32(); }
+        if (fa.field == "contains") { return ty_bool(); }
+        if (fa.field == "starts_with") { return ty_bool(); }
+        if (fa.field == "ends_with") { return ty_bool(); }
+        if (fa.field == "index_of") { return ty_i32(); }
+        if (fa.field == "trim") { return ty_string(); }
+        if (fa.field == "to_ascii_upper") { return ty_string(); }
+        if (fa.field == "to_ascii_lower") { return ty_string(); }
+        if (fa.field == "repeat") { return ty_string(); }
+        if (fa.field == "replace") { return ty_string(); }
+    }
+    if (ty_is_string(rt) || ty_is_i32(rt) || ty_is_bool(rt) || ty_is_f64(rt)) {
+        var mi: i32 = 0;
+        while (mi < s.funcs.len()) {
+            if (s.funcs[mi].name == fa.field && ty_eq(ty_from_name(s.funcs[mi].receiver_type), rt)) {
+                return ty_from_name(s.funcs[mi].ret_type);
+            }
+            mi = mi + 1;
+        }
+    }
+    // Method call on a struct receiver: resolve by
+    // method name alone (the coarse "struct" tag loses
+    // the receiver's name).
+    var mj: i32 = 0;
+    while (mj < s.funcs.len()) {
+        if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {
+            return ty_from_name(s.funcs[mj].ret_type);
+        }
+        mj = mj + 1;
+    }
+    return ty_unknown();
+}
+
+// infer_call_named_type infers the result of a call to a NAMED callee: the
+// builtin table first, then a user function's declared return type.
+function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
+    if (id.name == "Some" && c.args.len() == 1) {
+        return ty_option(infer_expr_type(c.args[0], s));
+    }
+    if (id.name == "Ok" && c.args.len() == 1) {
+        return ty_result(infer_expr_type(c.args[0], s));
+    }
+    if (id.name == "Err" && c.args.len() == 1) { return ty_result(ty_unknown()); }
+    if (id.name == "read_file") { return ty_result(ty_string()); }
+    if (id.name == "read_file_bytes") { return ty_result(ty_array_i32()); }
+    if (id.name == "write_file") { return ty_result(ty_unknown()); }
+    if (id.name == "write_file_exec") { return ty_result(ty_unknown()); }
+    // now_unix_ms / monotonic_ns return i64. The self-host
+    // has no distinct i64 tag — integers live in 64-bit x0
+    // slots and compare via cmp — so "i32" routes them
+    // through the integer path without truncation.
+    if (id.name == "now_unix_ms") { return ty_i32(); }
+    if (id.name == "monotonic_ns") { return ty_i32(); }
+    // poll(fds, timeout_ms) -> i32 (ready index, or -1).
+    if (id.name == "poll") { return ty_i32(); }
+    // timer_fd(ms) -> i32 fd; wasm_timer_pollable(ns) -> i32
+    // (-1 native); wasm_pollable_drop(p) -> i32 (0 native);
+    // wasm_block(p) -> i32 (0 native; on wasm blocks until ready).
+    if (id.name == "timer_fd") { return ty_i32(); }
+    // isatty(fd) -> boolean, which the self-host carries in an
+    // integer slot like every other 0/1 value.
+    if (id.name == "isatty") { return ty_i32(); }
+    if (id.name == "wasm_timer_pollable") { return ty_i32(); }
+    if (id.name == "wasm_pollable_drop") { return ty_i32(); }
+    if (id.name == "wasm_block") { return ty_i32(); }
+    // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
+    if (id.name == "wasm_poll") { return ty_i32(); }
+    // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
+    // byte count / pollable token / -errno).
+    if (id.name == "tcp_recv") { return ty_array_i32(); }
+    if (id.name == "tcp_connect") { return ty_i32(); }
+    // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
+    // connection fd / -errno. The server half of the edge-handler
+    // use case (#4371); both are plain i32 like the client ops.
+    if (id.name == "tcp_listen") { return ty_i32(); }
+    if (id.name == "tcp_accept") { return ty_i32(); }
+    if (id.name == "tcp_send") { return ty_i32(); }
+    if (id.name == "tcp_close") { return ty_i32(); }
+    if (id.name == "tcp_pollable") { return ty_i32(); }
+    // See asm.fern for rationale.
+    if (id.name == "sleep_ms") { return ty_i32(); }
+    // proc_fork() → 0 in the child / child pid in the parent /
+    // -errno; proc_waitpid(pid) → the child's exit status
+    // (shell convention: 128 + signal on a signal death).
+    // Both plain i32, matching native's FuncSigs (#5686).
+    if (id.name == "proc_fork") { return ty_i32(); }
+    if (id.name == "proc_waitpid") { return ty_i32(); }
+    // proc_exec(path, args) → i32, but only on FAILURE (-errno):
+    // on success execve has replaced the process image, so there
+    // is nothing left to return to. Matches native's FuncSigs.
+    if (id.name == "proc_exec") { return ty_i32(); }
+    if (id.name == "remove_file") { return ty_option(ty_unknown()); }
+    if (id.name == "create_dir_all") { return ty_option(ty_unknown()); }
+    // subprocess(cmd, args, stdin) → ProcessResult struct.
+    // See asm.fern: returns "unknown" because the struct's
+    // fields resolve through the shape-pointer dispatch path
+    // (parser.inject_builtin_enums injects the decl).
+    if (id.name == "subprocess") { return ty_unknown(); }
+    if (id.name == "temp_dir") { return ty_result(ty_string()); }
+    if (id.name == "read_dir") { return ty_result(ty_array_string()); }
+    if (id.name == "stat") { return ty_result(ty_unknown()); }
+    if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
+    if (id.name == "f64_bits" || id.name == "f32_bits") { return ty_i32(); }
+    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
+    // env(name): Option[string] — Some(value) if the
+    // variable is set (including empty), None otherwise.
+    if (id.name == "env") { return ty_option(ty_string()); }
+    if (id.name == "len") { return ty_i32(); }
+    if (id.name == "read_int") { return ty_i32(); }
+    // stdout()/stderr() -> Writer (a bare fd i32; fds 1/2). The
+    // write-half sibling of stdin() (#4372); a Writer is just its
+    // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
+    if (id.name == "stdout" || id.name == "stderr") { return ty_i32(); }
+    // open_reader/open_writer/open_appender(path) -> a Reader/Writer
+    // (a bare fd i32) or -errno (#4372 file half). The caller uses
+    // r.read_chunk / w.write / .close off the fd, then checks < 0.
+    if (id.name == "open_reader" || id.name == "open_writer"
+        || id.name == "open_appender") { return ty_i32(); }
+    // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
+    // — matches native (#4369). read_all_stdin stays a plain string.
+    if (id.name == "read_line") { return ty_option(ty_string()); }
+    if (id.name == "read_all_stdin") { return ty_string(); }
+    if (id.name == "i32_to_string") { return ty_string(); }
+    if (id.name == "int__int_to_string") { return ty_string(); }
+    if (id.name == "str_to_i32") { return ty_i32(); }
+    if (id.name == "str_starts_with") { return ty_bool(); }
+    if (id.name == "str_ends_with") { return ty_bool(); }
+    if (id.name == "str_contains") { return ty_bool(); }
+    if (id.name == "str_index_of") { return ty_i32(); }
+    if (id.name == "str_trim") { return ty_string(); }
+    if (id.name == "str_to_upper") { return ty_string(); }
+    if (id.name == "str_to_lower") { return ty_string(); }
+    if (id.name == "str_repeat") { return ty_string(); }
+    if (id.name == "str_replace") { return ty_string(); }
+    if (id.name == "chr") { return ty_string(); }
+    // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
+    // machine words carried as i32; __raw_string is the one that
+    // produces a typed string. The stores return i32 (the value
+    // written) so they stay value-expressions, not void.
+    if (id.name == "__raw_alloc") { return ty_i32(); }
+    if (id.name == "__raw_store8") { return ty_i32(); }
+    if (id.name == "__raw_load8") { return ty_i32(); }
+    if (id.name == "__raw_store_ptr") { return ty_i32(); }
+    if (id.name == "__raw_load_ptr") { return ty_i32(); }
+    if (id.name == "__raw_string") { return ty_string(); }
+    // The inverse (#2649): a live string's data pointer, which
+    // is slot 0 of the box the string value already points at.
+    if (id.name == "__raw_data") { return ty_i32(); }
+    // Pointer + offset at full machine width (#2649) — `p + off`
+    // in the source would be narrowed to i32 by arm64.
+    if (id.name == "__raw_addr") { return ty_i32(); }
+    // Fresh array box (#2649): __raw_arr_box hands back the data
+    // pointer as i32, __raw_array retypes it as the array value
+    // it already is — the array sibling of __raw_string.
+    if (id.name == "__raw_arr_box") { return ty_i32(); }
+    if (id.name == "__raw_array") { return ty_array_i32(); }
+    // Syscall sub-floor (#2649): the raw-memory floor's I/O
+    // sibling. Returns the syscall result as i32.
+    if (id.name == "__syscall3") { return ty_i32(); }
+    if (id.name == "__syscall4") { return ty_i32(); }
+    if (id.name == "__syscall5") { return ty_i32(); }
+    if (id.name == "__raw_environ") { return ty_i32(); }
+    // Runtime-symbol spelling of the string comparison (#2649),
+    // for helper sources whose strings are raw box pointers.
+    if (id.name == "__fern_str_eq") { return ty_bool(); }
+    // Fixed static scratch buffer for syscall leaves (timespec /
+    // stat) — reused, never freed. Returns the buffer ptr as i32.
+    if (id.name == "__raw_scratch") { return ty_i32(); }
+    // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
+    if (id.name == "__load_i64") { return ty_i64(); }
+    // __heap_bump_bytes(): the bump high-water mark. i64, not
+    // i32 — the arena is 16 GiB, so the mark passes 2^31 on a
+    // long enough run and an i32 result would report it
+    // negative. Matches native's FuncSigs; the wasm backend
+    // zero-extends its i32 cursor difference to suit.
+    if (id.name == "__heap_bump_bytes") { return ty_i64(); }
+    // __heap_mark(): the arena checkpoint, an absolute cursor
+    // value — i64 for the bump mark's reason and then some, since
+    // this is the pointer itself rather than a difference (#6728).
+    if (id.name == "__heap_mark") { return ty_i64(); }
+    // Bit-counting intrinsics (#6197): all six return an i32
+    // COUNT regardless of operand width, so a 64-bit form does
+    // not widen its result.
+    if (id.name == "__clz32" || id.name == "__ctz32" || id.name == "__popcount32"
+        || id.name == "__clz64" || id.name == "__ctz64" || id.name == "__popcount64") { return ty_i32(); }
+    // __arr_push_shared_count(): the rc==1 cliff counter. i32,
+    // unlike the bump mark above — it counts appends, not bytes,
+    // and a healthy run reports 0. Matches native's FuncSigs.
+    if (id.name == "__arr_push_shared_count") { return ty_i32(); }
+    // __arr_push_shared_bytes(): the SAME cliff weighted by the
+    // bytes each crossing copied. i64, like the bump mark and
+    // for the same reason — the quantity is arena-scale, and an
+    // i32 would wrap on exactly the runs it exists to measure.
+    // Matches native's FuncSigs.
+    if (id.name == "__arr_push_shared_bytes") { return ty_i64(); }
+    // __map_hash_seed(): core/map's per-process string-hash
+    // seed (#6194). i32, never 0. Matches native's FuncSigs.
+    if (id.name == "__map_hash_seed") { return ty_i32(); }
+    // __memchr(s, byte, from): the index of the first `byte`
+    // at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3). i32
+    // for both the index and the not-found sentinel; the
+    // haystack length it searches is an i32 everywhere.
+    if (id.name == "__memchr") { return ty_i32(); }
+    // __ascii_run(s, from): the index of the first byte at or
+    // after `from` with its high bit set, or the LENGTH if the
+    // rest is ASCII (ATLAS-PLATFORM-PLAN §3). i32 either way —
+    // both answers are offsets into an i32-length string, which
+    // is why the miss value can be a real index rather than a
+    // sentinel outside the type.
+    if (id.name == "__ascii_run") { return ty_i32(); }
+    if (id.name == "__load_i32") { return ty_i32(); }
+    if (id.name == "exit") { return ty_i32(); }
+    if (id.name == "args_count") { return ty_i32(); }
+    if (id.name == "arg_at") { return ty_string(); }
+    if (id.name == "args") { return ty_array_string(); }
+    if (id.name == "__alloc_u8") { return ty_array_i32(); }
+    if (id.name == "string_from_bytes_unchecked") { return ty_string(); }
+    if (id.name == "random_bytes") { return ty_array_i32(); }
+    if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
+    if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
+    if (id.name == "cell_new" && c.args.len() == 1) { return ty_cell(infer_expr_type(c.args[0], s)); }
+    if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
+            || id.name == "__floor_f64" || id.name == "__ceil_f64"
+            || id.name == "__trunc_f64" || id.name == "__round_f64"
+            || id.name == "__sin_f64" || id.name == "__cos_f64"
+            || id.name == "__exp_f64" || id.name == "__log_f64"
+            || id.name == "__pow_f64") {
+        return ty_f64();
+    }
+    if (id.name == "str_split") { return ty_array_string(); }
+    // Local-callee path: when `f()` invokes a
+    // local var that was bound to a lambda, its
+    // recorded type is `fn_<ret>` (see the
+    // ExprLambda match arm above). Strip the
+    // prefix so downstream dispatch (`print(f())`,
+    // string concat, etc.) sees the actual return
+    // type rather than `"unknown"`.
+    if (s.has_local(id.name)) {
+        var lt: Ty = s.local_type_of(id.name);
+        if (is_fn(lt)) { return fn_ret(lt); }
+    }
+    var fi: i32 = 0;
+    while (fi < s.funcs.len()) {
+        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
+            return ty_from_name(s.funcs[fi].ret_type);
+        }
+        fi = fi + 1;
+    }
+    return ty_unknown();
+}
+
+// infer_expr_call_type infers the result type of a call expression — the
+// builtin table, a method on a receiver, and a user function's declared return.
+function infer_expr_call_type(c: ast.ExprCall, s: EmitState): Ty {
+    match (c.callee) {
+        ast.ExprIdent(id) => { return infer_call_named_type(id, c, s); },
+        ast.ExprFieldAccess(fa) => { return infer_call_method_type(fa, c, s); },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+// infer_expr_unary_type infers the result type of a unary operator.
+function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
+    if (u.op == "!") { return ty_bool(); }
+    if (u.op == "-") { return infer_expr_type(u.operand, s); }
+    if (u.op.len() >= 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+        var ct: str = slice_unchecked(u.op, 3, u.op.len());
+        if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
+        // A cast HAS the named type. u32/i64/u64 used to erase to
+        // i32 here (all ints ride 64-bit slots, so arithmetic is
+        // width-agnostic) — but the TAG drives method dispatch,
+        // signed-vs-unsigned compares, and divq/idivq selection, so
+        // erasing sent `(3 as u64).checked_sub(10 as u64)` to
+        // std/i32's SIGNED method (no underflow at -7) and compared
+        // u64 values with setl. Type the cast truthfully; u8/usize
+        // stay on the i32 tag (subword/pointer-size — no distinct
+        // dispatch surface).
+        if (ct == "u8") { return ty_u8(); }
+        if (ct == "i32" || ct == "usize" || ct == "char") { return ty_i32(); }
+        if (ct == "u32") { return ty_u32(); }
+        if (ct == "i64") { return ty_i64(); }
+        if (ct == "u64") { return ty_u64(); }
+        // `E as T` type ascription (non-numeric T): the value HAS
+        // type T. This arm used to return i32 for every non-float
+        // target, so `None as Option[i32]` read as i32 and the
+        // pre-IR check gate (#4327) rejected valid Option returns.
+        return ty_from_name(ct);
+    }
+    // `expr?` (parsed as unary `try_`) HAS the operand's Ok/Some payload
+    // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
+    // the `?` result fell through to i32 below, so `var o: Option[i32] =
+    // f()?` (f: Result[Option[i32], i32]) was rejected E003 "initializer
+    // has type i32". Only bit the Option/struct payload case — a string /
+    // array / scalar payload slipped through the lenient assignable check.
+    if (u.op == "try_") {
+        var ot: Ty = infer_expr_type(u.operand, s);
+        match (ot) {
+            TyResult(_) => { return result_inner(ot); },
+            TyOption(_) => { return option_inner(ot); },
+            _ => { return ty_i32(); }
+        }
+    }
+    return ty_i32();
+}
+
+// infer_expr_binary_type infers the result type of a binary operator: a
+// comparison is bool, an arithmetic op takes the wider of its operands.
+function infer_expr_binary_type(b: ast.ExprBinary, s: EmitState): Ty {
+    if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
+            || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
+        return ty_bool();
+    }
+    if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+        var lt: Ty = infer_expr_type(b.left, s);
+        var rt: Ty = infer_expr_type(b.right, s);
+        if (ty_is_string(lt) || ty_is_string(rt)) { return ty_string(); }
+        if (ty_is_f64(lt) || ty_is_f64(rt)) { return ty_f64(); }
+        return ty_i32();
+    }
+    // Saturating arithmetic (#5542) is integer-only, so the
+    // result type is just the (already-unified) operand type.
+    if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
+        var slt: Ty = infer_expr_type(b.left, s);
+        if (ty_is_i32(slt)) { return infer_expr_type(b.right, s); }
+        return slt;
+    }
+    // Checked arithmetic (#5542) wraps the operand type in an
+    // Option — `Some(result)` when it fits, `None` on overflow.
+    if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
+        var clt: Ty = infer_expr_type(b.left, s);
+        if (ty_is_i32(clt)) { return ty_option(infer_expr_type(b.right, s)); }
+        return ty_option(clt);
+    }
+    return ty_i32();
+}
+
 pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
     match (e) {
         ast.ExprNumber(n) => { if (n.is_float) { return ty_f64(); } return ty_i32(); },
@@ -2855,436 +3302,9 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             }
             return s.local_type_of(id.name);
         },
-        ast.ExprBinary(b) => {
-            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
-                    || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
-                return ty_bool();
-            }
-            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-                var lt: Ty = infer_expr_type(b.left, s);
-                var rt: Ty = infer_expr_type(b.right, s);
-                if (ty_is_string(lt) || ty_is_string(rt)) { return ty_string(); }
-                if (ty_is_f64(lt) || ty_is_f64(rt)) { return ty_f64(); }
-                return ty_i32();
-            }
-            // Saturating arithmetic (#5542) is integer-only, so the
-            // result type is just the (already-unified) operand type.
-            if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-                var slt: Ty = infer_expr_type(b.left, s);
-                if (ty_is_i32(slt)) { return infer_expr_type(b.right, s); }
-                return slt;
-            }
-            // Checked arithmetic (#5542) wraps the operand type in an
-            // Option — `Some(result)` when it fits, `None` on overflow.
-            if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
-                var clt: Ty = infer_expr_type(b.left, s);
-                if (ty_is_i32(clt)) { return ty_option(infer_expr_type(b.right, s)); }
-                return ty_option(clt);
-            }
-            return ty_i32();
-        },
-        ast.ExprUnary(u) => {
-            if (u.op == "!") { return ty_bool(); }
-            if (u.op == "-") { return infer_expr_type(u.operand, s); }
-            if (u.op.len() >= 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-                var ct: str = slice_unchecked(u.op, 3, u.op.len());
-                if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
-                // A cast HAS the named type. u32/i64/u64 used to erase to
-                // i32 here (all ints ride 64-bit slots, so arithmetic is
-                // width-agnostic) — but the TAG drives method dispatch,
-                // signed-vs-unsigned compares, and divq/idivq selection, so
-                // erasing sent `(3 as u64).checked_sub(10 as u64)` to
-                // std/i32's SIGNED method (no underflow at -7) and compared
-                // u64 values with setl. Type the cast truthfully; u8/usize
-                // stay on the i32 tag (subword/pointer-size — no distinct
-                // dispatch surface).
-                if (ct == "u8") { return ty_u8(); }
-                if (ct == "i32" || ct == "usize" || ct == "char") { return ty_i32(); }
-                if (ct == "u32") { return ty_u32(); }
-                if (ct == "i64") { return ty_i64(); }
-                if (ct == "u64") { return ty_u64(); }
-                // `E as T` type ascription (non-numeric T): the value HAS
-                // type T. This arm used to return i32 for every non-float
-                // target, so `None as Option[i32]` read as i32 and the
-                // pre-IR check gate (#4327) rejected valid Option returns.
-                return ty_from_name(ct);
-            }
-            // `expr?` (parsed as unary `try_`) HAS the operand's Ok/Some payload
-            // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
-            // the `?` result fell through to i32 below, so `var o: Option[i32] =
-            // f()?` (f: Result[Option[i32], i32]) was rejected E003 "initializer
-            // has type i32". Only bit the Option/struct payload case — a string /
-            // array / scalar payload slipped through the lenient assignable check.
-            if (u.op == "try_") {
-                var ot: Ty = infer_expr_type(u.operand, s);
-                match (ot) {
-                    TyResult(_) => { return result_inner(ot); },
-                    TyOption(_) => { return option_inner(ot); },
-                    _ => { return ty_i32(); }
-                }
-            }
-            return ty_i32();
-        },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(id) => {
-                    if (id.name == "Some" && c.args.len() == 1) {
-                        return ty_option(infer_expr_type(c.args[0], s));
-                    }
-                    if (id.name == "Ok" && c.args.len() == 1) {
-                        return ty_result(infer_expr_type(c.args[0], s));
-                    }
-                    if (id.name == "Err" && c.args.len() == 1) { return ty_result(ty_unknown()); }
-                    if (id.name == "read_file") { return ty_result(ty_string()); }
-                    if (id.name == "read_file_bytes") { return ty_result(ty_array_i32()); }
-                    if (id.name == "write_file") { return ty_result(ty_unknown()); }
-                    if (id.name == "write_file_exec") { return ty_result(ty_unknown()); }
-                    // now_unix_ms / monotonic_ns return i64. The self-host
-                    // has no distinct i64 tag — integers live in 64-bit x0
-                    // slots and compare via cmp — so "i32" routes them
-                    // through the integer path without truncation.
-                    if (id.name == "now_unix_ms") { return ty_i32(); }
-                    if (id.name == "monotonic_ns") { return ty_i32(); }
-                    // poll(fds, timeout_ms) -> i32 (ready index, or -1).
-                    if (id.name == "poll") { return ty_i32(); }
-                    // timer_fd(ms) -> i32 fd; wasm_timer_pollable(ns) -> i32
-                    // (-1 native); wasm_pollable_drop(p) -> i32 (0 native);
-                    // wasm_block(p) -> i32 (0 native; on wasm blocks until ready).
-                    if (id.name == "timer_fd") { return ty_i32(); }
-                    // isatty(fd) -> boolean, which the self-host carries in an
-                    // integer slot like every other 0/1 value.
-                    if (id.name == "isatty") { return ty_i32(); }
-                    if (id.name == "wasm_timer_pollable") { return ty_i32(); }
-                    if (id.name == "wasm_pollable_drop") { return ty_i32(); }
-                    if (id.name == "wasm_block") { return ty_i32(); }
-                    // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
-                    if (id.name == "wasm_poll") { return ty_i32(); }
-                    // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
-                    // byte count / pollable token / -errno).
-                    if (id.name == "tcp_recv") { return ty_array_i32(); }
-                    if (id.name == "tcp_connect") { return ty_i32(); }
-                    // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
-                    // connection fd / -errno. The server half of the edge-handler
-                    // use case (#4371); both are plain i32 like the client ops.
-                    if (id.name == "tcp_listen") { return ty_i32(); }
-                    if (id.name == "tcp_accept") { return ty_i32(); }
-                    if (id.name == "tcp_send") { return ty_i32(); }
-                    if (id.name == "tcp_close") { return ty_i32(); }
-                    if (id.name == "tcp_pollable") { return ty_i32(); }
-                    // See asm.fern for rationale.
-                    if (id.name == "sleep_ms") { return ty_i32(); }
-                    // proc_fork() → 0 in the child / child pid in the parent /
-                    // -errno; proc_waitpid(pid) → the child's exit status
-                    // (shell convention: 128 + signal on a signal death).
-                    // Both plain i32, matching native's FuncSigs (#5686).
-                    if (id.name == "proc_fork") { return ty_i32(); }
-                    if (id.name == "proc_waitpid") { return ty_i32(); }
-                    // proc_exec(path, args) → i32, but only on FAILURE (-errno):
-                    // on success execve has replaced the process image, so there
-                    // is nothing left to return to. Matches native's FuncSigs.
-                    if (id.name == "proc_exec") { return ty_i32(); }
-                    if (id.name == "remove_file") { return ty_option(ty_unknown()); }
-                    if (id.name == "create_dir_all") { return ty_option(ty_unknown()); }
-                    // subprocess(cmd, args, stdin) → ProcessResult struct.
-                    // See asm.fern: returns "unknown" because the struct's
-                    // fields resolve through the shape-pointer dispatch path
-                    // (parser.inject_builtin_enums injects the decl).
-                    if (id.name == "subprocess") { return ty_unknown(); }
-                    if (id.name == "temp_dir") { return ty_result(ty_string()); }
-                    if (id.name == "read_dir") { return ty_result(ty_array_string()); }
-                    if (id.name == "stat") { return ty_result(ty_unknown()); }
-                    if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
-                    if (id.name == "f64_bits" || id.name == "f32_bits") { return ty_i32(); }
-                    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
-                    // env(name): Option[string] — Some(value) if the
-                    // variable is set (including empty), None otherwise.
-                    if (id.name == "env") { return ty_option(ty_string()); }
-                    if (id.name == "len") { return ty_i32(); }
-                    if (id.name == "read_int") { return ty_i32(); }
-                    // stdout()/stderr() -> Writer (a bare fd i32; fds 1/2). The
-                    // write-half sibling of stdin() (#4372); a Writer is just its
-                    // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
-                    if (id.name == "stdout" || id.name == "stderr") { return ty_i32(); }
-                    // open_reader/open_writer/open_appender(path) -> a Reader/Writer
-                    // (a bare fd i32) or -errno (#4372 file half). The caller uses
-                    // r.read_chunk / w.write / .close off the fd, then checks < 0.
-                    if (id.name == "open_reader" || id.name == "open_writer"
-                        || id.name == "open_appender") { return ty_i32(); }
-                    // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
-                    // — matches native (#4369). read_all_stdin stays a plain string.
-                    if (id.name == "read_line") { return ty_option(ty_string()); }
-                    if (id.name == "read_all_stdin") { return ty_string(); }
-                    if (id.name == "i32_to_string") { return ty_string(); }
-                    if (id.name == "int__int_to_string") { return ty_string(); }
-                    if (id.name == "str_to_i32") { return ty_i32(); }
-                    if (id.name == "str_starts_with") { return ty_bool(); }
-                    if (id.name == "str_ends_with") { return ty_bool(); }
-                    if (id.name == "str_contains") { return ty_bool(); }
-                    if (id.name == "str_index_of") { return ty_i32(); }
-                    if (id.name == "str_trim") { return ty_string(); }
-                    if (id.name == "str_to_upper") { return ty_string(); }
-                    if (id.name == "str_to_lower") { return ty_string(); }
-                    if (id.name == "str_repeat") { return ty_string(); }
-                    if (id.name == "str_replace") { return ty_string(); }
-                    if (id.name == "chr") { return ty_string(); }
-                    // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
-                    // machine words carried as i32; __raw_string is the one that
-                    // produces a typed string. The stores return i32 (the value
-                    // written) so they stay value-expressions, not void.
-                    if (id.name == "__raw_alloc") { return ty_i32(); }
-                    if (id.name == "__raw_store8") { return ty_i32(); }
-                    if (id.name == "__raw_load8") { return ty_i32(); }
-                    if (id.name == "__raw_store_ptr") { return ty_i32(); }
-                    if (id.name == "__raw_load_ptr") { return ty_i32(); }
-                    if (id.name == "__raw_string") { return ty_string(); }
-                    // The inverse (#2649): a live string's data pointer, which
-                    // is slot 0 of the box the string value already points at.
-                    if (id.name == "__raw_data") { return ty_i32(); }
-                    // Pointer + offset at full machine width (#2649) — `p + off`
-                    // in the source would be narrowed to i32 by arm64.
-                    if (id.name == "__raw_addr") { return ty_i32(); }
-                    // Fresh array box (#2649): __raw_arr_box hands back the data
-                    // pointer as i32, __raw_array retypes it as the array value
-                    // it already is — the array sibling of __raw_string.
-                    if (id.name == "__raw_arr_box") { return ty_i32(); }
-                    if (id.name == "__raw_array") { return ty_array_i32(); }
-                    // Syscall sub-floor (#2649): the raw-memory floor's I/O
-                    // sibling. Returns the syscall result as i32.
-                    if (id.name == "__syscall3") { return ty_i32(); }
-                    if (id.name == "__syscall4") { return ty_i32(); }
-                    if (id.name == "__syscall5") { return ty_i32(); }
-                    if (id.name == "__raw_environ") { return ty_i32(); }
-                    // Runtime-symbol spelling of the string comparison (#2649),
-                    // for helper sources whose strings are raw box pointers.
-                    if (id.name == "__fern_str_eq") { return ty_bool(); }
-                    // Fixed static scratch buffer for syscall leaves (timespec /
-                    // stat) — reused, never freed. Returns the buffer ptr as i32.
-                    if (id.name == "__raw_scratch") { return ty_i32(); }
-                    // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
-                    if (id.name == "__load_i64") { return ty_i64(); }
-                    // __heap_bump_bytes(): the bump high-water mark. i64, not
-                    // i32 — the arena is 16 GiB, so the mark passes 2^31 on a
-                    // long enough run and an i32 result would report it
-                    // negative. Matches native's FuncSigs; the wasm backend
-                    // zero-extends its i32 cursor difference to suit.
-                    if (id.name == "__heap_bump_bytes") { return ty_i64(); }
-                    // __heap_mark(): the arena checkpoint, an absolute cursor
-                    // value — i64 for the bump mark's reason and then some, since
-                    // this is the pointer itself rather than a difference (#6728).
-                    if (id.name == "__heap_mark") { return ty_i64(); }
-                    // Bit-counting intrinsics (#6197): all six return an i32
-                    // COUNT regardless of operand width, so a 64-bit form does
-                    // not widen its result.
-                    if (id.name == "__clz32" || id.name == "__ctz32" || id.name == "__popcount32"
-                        || id.name == "__clz64" || id.name == "__ctz64" || id.name == "__popcount64") { return ty_i32(); }
-                    // __arr_push_shared_count(): the rc==1 cliff counter. i32,
-                    // unlike the bump mark above — it counts appends, not bytes,
-                    // and a healthy run reports 0. Matches native's FuncSigs.
-                    if (id.name == "__arr_push_shared_count") { return ty_i32(); }
-                    // __arr_push_shared_bytes(): the SAME cliff weighted by the
-                    // bytes each crossing copied. i64, like the bump mark and
-                    // for the same reason — the quantity is arena-scale, and an
-                    // i32 would wrap on exactly the runs it exists to measure.
-                    // Matches native's FuncSigs.
-                    if (id.name == "__arr_push_shared_bytes") { return ty_i64(); }
-                    // __map_hash_seed(): core/map's per-process string-hash
-                    // seed (#6194). i32, never 0. Matches native's FuncSigs.
-                    if (id.name == "__map_hash_seed") { return ty_i32(); }
-                    // __memchr(s, byte, from): the index of the first `byte`
-                    // at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3). i32
-                    // for both the index and the not-found sentinel; the
-                    // haystack length it searches is an i32 everywhere.
-                    if (id.name == "__memchr") { return ty_i32(); }
-                    // __ascii_run(s, from): the index of the first byte at or
-                    // after `from` with its high bit set, or the LENGTH if the
-                    // rest is ASCII (ATLAS-PLATFORM-PLAN §3). i32 either way —
-                    // both answers are offsets into an i32-length string, which
-                    // is why the miss value can be a real index rather than a
-                    // sentinel outside the type.
-                    if (id.name == "__ascii_run") { return ty_i32(); }
-                    if (id.name == "__load_i32") { return ty_i32(); }
-                    if (id.name == "exit") { return ty_i32(); }
-                    if (id.name == "args_count") { return ty_i32(); }
-                    if (id.name == "arg_at") { return ty_string(); }
-                    if (id.name == "args") { return ty_array_string(); }
-                    if (id.name == "__alloc_u8") { return ty_array_i32(); }
-                    if (id.name == "string_from_bytes_unchecked") { return ty_string(); }
-                    if (id.name == "random_bytes") { return ty_array_i32(); }
-                    if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
-                    if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
-                    if (id.name == "cell_new" && c.args.len() == 1) { return ty_cell(infer_expr_type(c.args[0], s)); }
-                    if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
-                            || id.name == "__floor_f64" || id.name == "__ceil_f64"
-                            || id.name == "__trunc_f64" || id.name == "__round_f64"
-                            || id.name == "__sin_f64" || id.name == "__cos_f64"
-                            || id.name == "__exp_f64" || id.name == "__log_f64"
-                            || id.name == "__pow_f64") {
-                        return ty_f64();
-                    }
-                    if (id.name == "str_split") { return ty_array_string(); }
-                    // Local-callee path: when `f()` invokes a
-                    // local var that was bound to a lambda, its
-                    // recorded type is `fn_<ret>` (see the
-                    // ExprLambda match arm above). Strip the
-                    // prefix so downstream dispatch (`print(f())`,
-                    // string concat, etc.) sees the actual return
-                    // type rather than `"unknown"`.
-                    if (s.has_local(id.name)) {
-                        var lt: Ty = s.local_type_of(id.name);
-                        if (is_fn(lt)) { return fn_ret(lt); }
-                    }
-                    var fi: i32 = 0;
-                    while (fi < s.funcs.len()) {
-                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-                            return ty_from_name(s.funcs[fi].ret_type);
-                        }
-                        fi = fi + 1;
-                    }
-                    return ty_unknown();
-                },
-                ast.ExprFieldAccess(fa) => {
-                    var rt: Ty = infer_expr_type(fa.obj, s);
-                    if (fa.field == "read_chunk") { return ty_option(ty_string()); }
-                    if (fa.field == "read_line") { return ty_option(ty_string()); }
-                    // Writer.write(s) -> i32 bytes written / -errno (#4372). Like
-                    // read_chunk above, the real non-struct-receiver gate is applied
-                    // at lower time (irlower's resource-method dispatch).
-                    if (fa.field == "write") { return ty_i32(); }
-                    if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
-                    if (is_map(rt) && fa.field == "get") {
-                        return ty_option(map_val(rt));
-                    }
-                    if (is_map(rt) && fa.field == "get_or") {
-                        return map_val(rt);
-                    }
-                    if (is_map(rt) && (fa.field == "insert")) { return rt; }
-                    if (is_map(rt) && fa.field == "has") { return ty_bool(); }
-                    if (is_map(rt) && fa.field == "len") { return ty_i32(); }
-                    if (is_map(rt) && fa.field == "keys") {
-                        if (map_key_is_i32(rt)) { return ty_array_i32(); }
-                        return ty_array_string();
-                    }
-                    if (is_map(rt) && fa.field == "values") {
-                        var vt: Ty = map_val(rt);
-                        if (ty_is_i32(vt)) { return ty_array_i32(); }
-                        if (ty_is_string(vt)) { return ty_array_string(); }
-                        return ty_array();
-                    }
-                    if (is_map(rt) && fa.field == "iter") {
-                        return ty_mapiter(map_val(rt));
-                    }
-                    if (is_mapiter(rt) && fa.field == "has_next") { return ty_bool(); }
-                    if (is_mapiter(rt) && fa.field == "key") { return ty_string(); }
-                    if (is_mapiter(rt) && fa.field == "value") { return mapiter_val(rt); }
-                    if ((is_int_tag(rt) || ty_is_string(rt)) && fa.field == "to_string") {
-                        return ty_string();
-                    }
-                    if (ty_is_f64(rt) && fa.field == "to_string") {
-                        return ty_string();
-                    }
-                    if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "gcd" || fa.field == "lcm")) {
-                        return ty_i32();
-                    }
-                    // Byte case folds: u8 receiver, u8 result (a byte fold
-                    // yields a byte). digit_value / hex_value stay i32 below --
-                    // they convert a byte to a numeric value.
-                    if (ty_is_u8(rt) && (fa.field == "to_ascii_lower" || fa.field == "to_ascii_upper")) {
-                        return ty_u8();
-                    }
-                    if (ty_is_u8(rt) && (fa.field == "digit_value" || fa.field == "hex_value")) {
-                        return ty_i32();
-                    }
-                    if (ty_is_u8(rt) && (fa.field == "to_ascii_string" || fa.field == "hex_digit")) {
-                        return ty_string();
-                    }
-                    if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
-                        return ty_bool();
-                    }
-                    if (ty_is_u8(rt) && (fa.field == "is_ascii_digit" || fa.field == "is_ascii_alpha" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_alnum" || fa.field == "is_ascii_lower" || fa.field == "is_ascii_upper" || fa.field == "is_ascii_hex_digit" || fa.field == "is_ascii" || fa.field == "is_ascii_punct" || fa.field == "is_ascii_white_space" || fa.field == "is_ascii_newline" || fa.field == "is_ascii_vowel" || fa.field == "is_ascii_printable" || fa.field == "is_ascii_control" || fa.field == "matches_any")) {
-                        return ty_bool();
-                    }
-                    if (fa.field == "len"
-                            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
-                        return ty_i32();
-                    }
-                    if (fa.field == "is_empty"
-                            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
-                        return ty_bool();
-                    }
-                    // `.append(x)` / `.reverse()` / `.concat(b)` return the same array type.
-                    if ((fa.field == "append" || fa.field == "reverse" || fa.field == "concat")
-                            && (is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
-                        return rt;
-                    }
-                    // `.first()` / `.last()` return the element type.
-                    if ((fa.field == "first" || fa.field == "last")
-                            && (is_int_array_tag(rt) || ty_is_array_string(rt))) {
-                        if (ty_is_array_i32(rt)) { return ty_i32(); }
-                        if (ty_is_array_u32(rt)) { return ty_u32(); }
-                        if (ty_is_array_u64(rt)) { return ty_u64(); }
-                        if (ty_is_array_i64(rt)) { return ty_i64(); }
-                        return ty_string();
-                    }
-                    // i32/string-array search methods.
-                    if (ty_is_array_i32(rt) || ty_is_array_string(rt)) {
-                        if (fa.field == "index_of") { return ty_i32(); }
-                        if (fa.field == "contains") { return ty_bool(); }
-                    }
-                    if (ty_is_array_i32(rt)
-                            && (fa.field == "sum" || fa.field == "product")) {
-                        return ty_i32();
-                    }
-                    // .min()/.max() on an i32 array → Option[i32] (None on
-                    // empty); the Some payload is i32 (match_payload_type).
-                    if (ty_is_array_i32(rt) && (fa.field == "min" || fa.field == "max")) {
-                        return ty_option(ty_i32());
-                    }
-                    if (ty_is_array_string(rt) && fa.field == "join") {
-                        return ty_string();
-                    }
-                    // String methods that mirror existing builtins.
-                    if (ty_is_string(rt)) {
-                        if (fa.field == "split") { return ty_array_string(); }
-                        if (fa.field == "lines") { return ty_array_string(); }
-                        if (fa.field == "bytes") { return ty_array_i32(); }
-                        if (fa.field == "as_bytes") { return ty_array_i32(); }
-                        if (fa.field == "reverse") { return ty_string(); }
-                        if (fa.field == "first_byte" || fa.field == "last_byte") { return ty_i32(); }
-                        if (fa.field == "contains") { return ty_bool(); }
-                        if (fa.field == "starts_with") { return ty_bool(); }
-                        if (fa.field == "ends_with") { return ty_bool(); }
-                        if (fa.field == "index_of") { return ty_i32(); }
-                        if (fa.field == "trim") { return ty_string(); }
-                        if (fa.field == "to_ascii_upper") { return ty_string(); }
-                        if (fa.field == "to_ascii_lower") { return ty_string(); }
-                        if (fa.field == "repeat") { return ty_string(); }
-                        if (fa.field == "replace") { return ty_string(); }
-                    }
-                    if (ty_is_string(rt) || ty_is_i32(rt) || ty_is_bool(rt) || ty_is_f64(rt)) {
-                        var mi: i32 = 0;
-                        while (mi < s.funcs.len()) {
-                            if (s.funcs[mi].name == fa.field && ty_eq(ty_from_name(s.funcs[mi].receiver_type), rt)) {
-                                return ty_from_name(s.funcs[mi].ret_type);
-                            }
-                            mi = mi + 1;
-                        }
-                    }
-                    // Method call on a struct receiver: resolve by
-                    // method name alone (the coarse "struct" tag loses
-                    // the receiver's name).
-                    var mj: i32 = 0;
-                    while (mj < s.funcs.len()) {
-                        if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {
-                            return ty_from_name(s.funcs[mj].ret_type);
-                        }
-                        mj = mj + 1;
-                    }
-                    return ty_unknown();
-                },
-                _ => { return ty_unknown(); }
-            }
-            return ty_unknown();
-        },
+        ast.ExprBinary(b) => { return infer_expr_binary_type(b, s); },
+        ast.ExprUnary(u) => { return infer_expr_unary_type(u, s); },
+        ast.ExprCall(c) => { return infer_expr_call_type(c, s); },
         ast.ExprIndex(x) => {
             // Container type drives element type:
             //   string → "u8"  (the byte type, #5629)

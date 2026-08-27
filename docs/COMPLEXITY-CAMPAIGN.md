@@ -24,6 +24,19 @@ Progress:
 | — | base (`81af9ae`) | 477 | 19884 |
 | 1 | 11 families out of `lower_call_method` (472 → 317) | 477 | — |
 | 2 | 11 arms out of `lower_expr_dispatch` (1692 lines → 38) | 477 | 19732 |
+| 3 | `infer_expr_type` in `asmcore.fern` (503 lines → 76) | 477 | 19694 |
+
+Slice 3 is the case where the metric under-reports the win. `infer_expr_type`
+went 345 forks → 36, but most of that did not vanish, it MOVED: the 358-line
+`ExprCall` arm became `infer_expr_call_type`, which was still 264 until its own
+two-arm inner match was split again into `infer_call_named_type` (124) and
+`infer_call_method_type` (139). Net excess −38 for a 503-line function becoming
+six named ones, the largest 139.
+
+That is the honest shape of this work at the second level: splitting a
+dispatcher moves complexity into named pieces long before it reduces it. The
+excess only really falls once the leaves get simpler, which is a different and
+slower job than extraction.
 
 The ceiling is held by `lower_call_named`, which neither slice touches.
 
