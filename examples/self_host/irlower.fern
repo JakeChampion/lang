@@ -11550,14 +11550,24 @@ function lower_call_len(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState)
     // re-deriving it.
     var alfresh: boolean = owned_fresh_call_callee(fa.obj, "ARR:", s) != ""
         || owned_fresh_call_callee(fa.obj, "ARROWN:", s) != "";
-    if (alfresh) {
+    // A "STRARR:" producer takes the DEEP free instead: its elements are string
+    // boxes this frame allocated, so the element-blind dec above would give back
+    // the buffer and strand every one of them. That is the same split the
+    // `mk()[i]` read reclaim makes (#6491) — this site carried only the shallow
+    // half, so `mks().len()` stranded the whole container, 144 B/round and
+    // unbounded (#7259). The two admissions are disjoint: "ARROWN:" refuses a
+    // returned string[] LITERAL (is_leaksafe_array_field is false for it) and
+    // "STRARR:" refuses a returned field, which is not frame-fresh.
+    var alstrdeep: boolean = !alfresh && owned_fresh_call_callee(fa.obj, "STRARR:", s) != "";
+    if (alfresh || alstrdeep) {
         var ascr: string = "$lenra" + util.i32_to_string(sl.locals.len());
         sl = sl.add_local(ascr);
         var aslot: i32 = sl.slot_of(ascr);
         sl = sl.emit(ir.op_store_local(aslot));
         sl = sl.emit(ir.op_load_local(aslot));
         sl = sl.emit(ir.op_arr_len());
-        sl = sl.release(aslot, "__fern_rc_dec", "len-fresh-arr");
+        if (alstrdeep) { sl = sl.release(aslot, "__fern_str_arr_free", "len-fresh-strarr"); }
+        else { sl = sl.release(aslot, "__fern_rc_dec", "len-fresh-arr"); }
         return sl;
     }
     return sl.emit(ir.op_arr_len());
@@ -17660,6 +17670,13 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                                 // which the "ARR:" scalar-element contract makes sound
                                 // one way and the surviving owner the other.
                                 se = se.release_tos("__fern_rc_dec", "discard-arr-ret");
+                            } else if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "STRARR:" + dcid.name) >= 0) {
+                                // A discarded call to a "STRARR:" producer: every
+                                // element is a string box this frame allocated, so the
+                                // shallow dec above would return the buffer and strand
+                                // all of them. __fern_str_arr_free is the deep sibling
+                                // the read reclaim already uses (#6491, #7259).
+                                se = se.release_tos("__fern_str_arr_free", "discard-strarr-ret");
                             } else if (reclaim_has(s.reclaimable_names, "MAPRET:", dcid.name)) {
                                 // A discarded call to a MAPF-registered map builder
                                 // (`mk(i);`, #4357): the result is a fresh sole-owner
