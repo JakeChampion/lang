@@ -35026,7 +35026,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // `for p in g { … p.field … }` iteration and `g[i].field` reads are fine). The
     // detector's struct_has_reclaim_array_field guard keeps this DISJOINT from
     // ARRSTRUCT — field structs deep-drop there, scalar structs shallow-free here.
-    var sarrs2: string[] = collect_fresh_structarr_names(body, fresh_ret, []);
+    var sarrs2: string[] = collect_fresh_structarr_names(body, body, structs, fresh_ret, []);
     out = reclaimable_structarr(body, borrowable, fresh_ret, sarrs2, out);
     // dyn-Trait payload locals (#4351): `var d: dyn T = <literal>`. A STRUCT
     // literal flows UNBOXED behind the dyn coercion (the local holds the
@@ -36334,10 +36334,18 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         if (fn_returns_fresh_arrstruct(fn, structs)) {
             out = out.append("ARRSTRUCTF:" + fn.name);
         }
-        // "ARENUMF:<name>|<Enum>" — the array-of-ENUM sibling of the two above,
-        // the last element kind with no producer registry at all. The enum rides
-        // the row because an `E[]` slot records its element type nowhere, the
-        // same reason the "ARRENUM:" credit carries it.
+        // "STRUCTARRF:<name>" — the same for the SCALAR-FIELD struct arrays the
+        // row above does not claim (#7445). It was the one element kind whose
+        // producer had no registry: a `var v: P[] = mk()` binding earned no
+        // credit at all, so its exit sweep took the generic shallow buffer dec
+        // and stranded every element box — 160 B per round, unbounded, where the
+        // byte-identical literal init was flat.
+        if (fn_returns_fresh_structarr(fn, structs)) {
+            out = out.append("STRUCTARRF:" + fn.name);
+        }
+        // "ARENUMF:<name>|<Enum>" — the array-of-ENUM sibling of the rows above.
+        // The enum rides the row because an `E[]` slot records its element type
+        // nowhere, the same reason the "ARRENUM:" credit carries it.
         var aef: string = arrenum_producer_enum(fn, structs);
         if (aef.len() > 0) {
             out = out.append("ARENUMF:" + fn.name + "|" + aef);
@@ -40710,13 +40718,14 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
 }
 
 // collect_fresh_structarr_names: `var g = [P { .. }, P { .. }]` bindings whose
-// init is a fresh struct-literal array (structarr_lit_is_fresh), recursing
-// nested blocks. Escape gates (body_unsafe_for + not-reassigned +
-// structarr_elem_escapes) are applied by reclaimable_names_of. No annotation
-// check is needed — the all-struct-literal init both proves freshness AND makes
-// the declaration path mark the slot is_arr with its element struct type, which
-// slot_is_reclaimable_structarr consults.
-function collect_fresh_structarr_names(stmts: ast.Stmt[], fresh_ret: string[], acc: string[]): string[] {
+// init is a fresh struct-literal array (structarr_lit_is_fresh), or a call to a
+// "STRUCTARRF:" producer, recursing nested blocks. Escape gates (body_unsafe_for
+// + not-reassigned + structarr_elem_escapes) are applied by reclaimable_names_of.
+// The literal arms need no annotation check — an all-struct-literal init both
+// proves freshness AND makes the declaration path mark the slot is_arr with its
+// element struct type, which slot_is_reclaimable_structarr consults; a call init
+// carries no such evidence, so the producer arm reads the annotation instead.
+function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -40736,12 +40745,21 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], fresh_ret: string[], a
                     // trick collect_fresh_arrarr_names uses for its "S|" rows.
                     a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
+                // A producer CALL, the "STRUCTARRF:" sibling of the arrstruct arm
+                // (#7445): the annotation supplies the element struct type and the
+                // registry proves every returned element box is the callee's own,
+                // so the binding earns exactly the credit the literal it returns
+                // would have earned one frame in.
+                else if (structarr_elem_struct_type(v.type_name, structs) != ""
+                    && struct_arr_call_producer(v.init, body, fresh_ret, "STRUCTARRF:")) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
             },
-            ast.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, fresh_ret, a); a = collect_fresh_structarr_names(f.else_body, fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, body, structs, fresh_ret, a); a = collect_fresh_structarr_names(f.else_body, body, structs, fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, body, structs, fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, body, structs, fresh_ret, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_structarr_names(arm.body, fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_structarr_names(arm.body, body, structs, fresh_ret, a); }
             },
             _ => {}
         }
@@ -43066,6 +43084,20 @@ function arrstruct_elem_struct_type(type_name: string, structs: parser.StructDec
     return elem + "";
 }
 
+// structarr_elem_struct_type: the element struct of a SCALAR-FIELD struct array,
+// the DISJOINT sibling of the above — arrstruct owns the rc-array-field structs,
+// this class the rest. `dyn T[]` answers "" through decl_is_struct, which is what
+// keeps the dyn sweep's slots out.
+function structarr_elem_struct_type(type_name: string, structs: parser.StructDecl[]): string {
+    var n: i32 = type_name.len();
+    if (n < 3) { return ""; }
+    if (slice_unchecked(type_name, n - 2, n) != "[]") { return ""; }
+    var elem: str = slice_unchecked(type_name, 0, n - 2);
+    if (!decl_is_struct(structs, elem)) { return ""; }
+    if (struct_has_reclaim_array_field(structs, elem)) { return ""; }
+    return elem + "";
+}
+
 // arrstruct_lit_is_fresh: `e` is a non-empty array literal whose EVERY element the
 // array may own — a fresh struct literal (is_fresh_struct_init), or, when
 // `bare_ok`, a bare IDENT. The literal RETAINS a bare ident exactly as the
@@ -43655,14 +43687,15 @@ function arrstruct_fresh_store_elem(e: ast.Expr, name: string, structs: parser.S
     return false;
 }
 
-// arrstruct_call_producer: `e` is a direct call to an "ARRSTRUCTF:" producer that
-// the body does not shadow with a local of the same name.
-function arrstruct_call_producer(e: ast.Expr, body: ast.Stmt[], fresh_ret: string[]): boolean {
+// struct_arr_call_producer: `e` is a direct call to a producer registered under
+// `tag` ("ARRSTRUCTF:" for the deep class, "STRUCTARRF:" for the scalar-field
+// one) that the body does not shadow with a local of the same name.
+function struct_arr_call_producer(e: ast.Expr, body: ast.Stmt[], fresh_ret: string[], tag: string): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    return util.index_of_str(fresh_ret, "ARRSTRUCTF:" + cid.name) >= 0
+                    return util.index_of_str(fresh_ret, tag + cid.name) >= 0
                         && !body_declares_name(body, cid.name);
                 },
                 _ => { return false; }
@@ -43682,6 +43715,18 @@ function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: parser.StructD
     return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs);
 }
 
+// fn_returns_fresh_structarr: the SCALAR-FIELD sibling of the above, registered
+// "STRUCTARRF:<name>" (#7445). The body proof is the SAME — every return either a
+// fresh struct-literal array or a local built by self-append and handed back — and
+// only the element-struct test differs, so the two registries are as disjoint as
+// the credits they feed and a function is claimed by exactly one.
+function fn_returns_fresh_structarr(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    if (fn.receiver_type.len() > 0) { return false; }
+    if (structarr_elem_struct_type(fn.ret_type, structs) == "") { return false; }
+    if (!body_has_return(fn.body)) { return false; }
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs);
+}
+
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
 // literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body,
 // from an "ARRSTRUCTF:" producer call, or — #6535 — from an EMPTY literal the body
@@ -43695,7 +43740,7 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
-                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_call_producer(v.init, body, fresh_ret)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && struct_arr_call_producer(v.init, body, fresh_ret, "ARRSTRUCTF:")) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // APPEND-BUILT candidate (#6535): `var vals: Val[] = []` grown by
                 // `vals = vals.append(Val { .. })`. arrstruct_lit_is_fresh rejects
                 // `[]` (no elements to prove fresh), which left every append-built
