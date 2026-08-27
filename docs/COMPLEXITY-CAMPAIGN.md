@@ -371,10 +371,35 @@ that matters. Do not annotate a function until its bodies really have moved
 out; the annotation is a claim about shape, and a 1752-line `if` chain is not
 a table.
 
+**Done for four:** `lower_call_named`, `emit_ir_op`, `emit_function_via_ir_pre`
+and `emit_function_via_ir` — 782 guards over 4568 lines between them, and
+`emit_function_via_ir_pre` with no multi-line body left at all. Excess 18576 →
+17609; the ceiling stayed at 411, since `lower_call_named` still reaches it.
+That drop is bookkeeping, not work — say so wherever the number is quoted.
+
+**`x86_gas_emit` is the case for NOT annotating**, and it is the more useful
+half of the rule. Its twelve multi-line bodies are movable in shape — the
+extraction was written and its round-trip was clean — and they stay inline only
+because moving them breaks reuse (above). That is a limitation of today's
+analysis, not a property of the code: if the Perceus port improves it, the
+extraction becomes possible again. An `allow` would hide 126 recoverable points
+and go stale in silence. Annotate a table; never annotate a function that is
+merely blocked.
+
 ## Order of work
 
-Twenty slices in, the tree has gone from 19884 excess to 18576 and the
-ceiling from 477 to 411. One more was written and thrown away — slice 18, see
+Twenty slices in, the tree has gone from 19884 excess to 17609 and the
+ceiling from 477 to 411 — of which 1308 is work and 967 is the four tables
+being annotated rather than split.
+
+**Extraction is finished.** Every function still above the limit now has a
+recorded reason it stays there: it is an annotated table, it is a fall-through
+guard chain needing a decline signal the return type cannot carry
+(`lower_stmt_var`, `lower_call_method`), it is a missing struct wearing 21
+parallel arrays (`lower_func`), or it is blocked on reuse (`x86_gas_emit`).
+None of those yields to moving a body somewhere else. What is left for this
+campaign is the stdlib — ceiling 68, excess 780, gated by the ordinary test
+suites rather than an emit-hash oracle. One more was written and thrown away — slice 18, see
 "not worth removing". What is done, and what the remaining shapes are:
 
 | Function | File | Forks | Outcome |
