@@ -321,12 +321,11 @@ function main(): i32 {
 	// The receiver is read twice more AFTER the `.get()`, which is what makes a
 	// wrong deep free visible: __fern_str_arr_free would take the element boxes
 	// the struct still owns, so the later reads return garbage (97) or the rc
-	// underflows (99). That is a sharper signal for this property than a byte
-	// rate, and deliberately what is asserted here — this shape carries a
-	// pre-existing wasm-only leak (47 B/round; the `i32[]` twin above is clean on
-	// the same leg), which reproduces identically with this change reverted and
-	// is tracked separately. Pinning the rate here would pin that bug, not this
-	// one.
+	// underflows (99). The byte rate is asserted too, now that #7648 is fixed:
+	// the wasm loop-rebind's field reclaim used the shallow $__fern_arr_dec on
+	// a string[] field where the register backends deep-free under the same
+	// "arr:<T>" admission, stranding the element boxes at 47 B/round on that
+	// leg alone while the exit path's $__struct_drop_<T> walked deep.
 	{"strarr-field-len-not-deep-freed", `function w(a: string): string { return a + "!"; }
 struct H { xs: string[] }
 function (h: H) get(): string[] { return h.xs; }
@@ -342,11 +341,13 @@ function churn(n: i32): i32 {
 }
 function main(): i32 {
     var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
     if (__rc_underflow() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 10) % 251) { return 96; }
-    return 0;
+    return ((b2 - b1) / 200) as i32;
 }`, 0},
 
 	// --- the STRUCT-element producers (#7445's registries) ---
