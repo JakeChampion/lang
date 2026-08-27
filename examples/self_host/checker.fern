@@ -10352,7 +10352,7 @@ function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: s
 // calls to non-`fip` functions, any other method call, indirect calls, and
 // index/field writes not rooted at an `own` parameter.
 //
-// `fbip function` (fully in place with borrowing) runs the SAME walk with one
+// `fbip function` (the reuse-paired tier) runs the SAME walk with one
 // relaxation: constructor expressions — struct / tuple literals and payload-
 // carrying enum variants — are allowed, because irfipverify.fern's E068 checks
 // each such site is reuse-paired or inside the graded allowance. A graded
