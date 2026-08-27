@@ -4052,6 +4052,14 @@ function enum_arr_field_share_read(fv: ast.Expr, cfft: string, s: LowerState): s
 // strfld_safe_operand forgives a direct field-read init and the #4768 read-side
 // retain counts it. This is that spelling written inline.
 //
+// That equivalence is a STRING fact and does not carry to `string[]`. The array
+// flavour measures identically hoisted and inline (800 allocs / 300 frees against
+// native's 600/600), because strarrfld_scan's field-access arm marks
+// `<T>.<field>` for any read that is not a `.len()` receiver or a registered
+// forwarder — so the READ, however spelled, refuses the holder's field reclaim
+// before any share position is reached. `str_arr__fieldread` is that cell and is
+// #5338, not this predicate's limb.
+//
 // BOTH holders' types must route field reclaim: the flip only grants a drop the
 // backend will emit, and a source whose type does not route would keep leaking
 // while the target released a box it now co-owns.
