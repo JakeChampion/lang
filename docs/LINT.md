@@ -121,19 +121,35 @@ The self-host compiler and the stdlib are held to `DefaultMaxComplexity`
 via a RATCHET rather than a hard limit, because 1128 of their 7724 functions
 are over it today and a limit nobody can meet is a limit nobody keeps. Two
 numbers per tree — the highest complexity any function reaches, and the total
-distance over the limit — and the test fails when either MOVES:
+distance over the limit — each with a **5% tolerance**:
 
-- **up**, because a change made the tree worse. Split the new function, or
-  annotate it.
-- **down**, because a change made it better and the recorded number now
-  claims less than the tree has earned. Bank it in the same diff.
+- growth past the tolerance **fails**;
+- a shrink past it **logs**, asking for the improvement to be banked;
+- anything inside it is silent.
 
-So the gate is real from the day it lands — nothing may regress — and
-cannot quietly go slack. Measured 2026-08-26:
+### Why a tolerance, and why the asymmetry
+
+The first draft was exact in both directions. Measuring it against real main
+traffic killed that: in one two-hour window main landed rc commits that moved
+the ceiling 468 → 477 (+1.9%) and the excess 19847 → 19869 → 19878 (+0.11%,
+then +0.05%), while a full CI run on a PR takes about three and a half hours.
+An exact gate is therefore stale before it can land, and once landed would
+red-light main for whoever pushed the next rc commit. A gate nobody can keep
+fails the same way a limit nobody can meet does.
+
+Five per cent absorbs that churn and still bites — a ceiling past 500 fails,
+and enough new complexity to move a 20,000-point excess by 5% is a thousand
+forks. The shape (checked-in baseline, tolerance, growth fatal, both
+directions reported) is the one `scripts/ci-check-perf` and
+`scripts/ci-check-driver-sizes` already use in this repo for the same reason.
+
+A shrink never fails, because making an unrelated PR red for simplifying
+something is how a gate gets deleted. A stale-low baseline only makes the
+gate stricter, so it rots in the safe direction. Measured 2026-08-27:
 
 | Tree | Ceiling | Total excess |
 |---|---|---|
-| `examples/self_host` | 477 (`lower_call_named`) | 19869 across 1035 functions |
+| `examples/self_host` | 477 (`lower_call_named`) | 19878 across 1035 functions |
 | `internal/stdlib/std` | 68 (`_wb_break`) | 780 across 93 functions |
 
 ### Why summed distance, and not a count
