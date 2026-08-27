@@ -69,3 +69,30 @@ sweep's array-loop exclusion) and `"SNAP:"` resolve. Neither is a credit that
 frees, so neither leaks in this direction, but both answer differently for a
 retired slot than for the same binding at function scope — worth measuring the
 same way before assuming the class is closed.
+
+## Instrument reach: this change has no creditable site in the tree
+
+Worth counting rather than assuming, because the number decides which gate carries
+signal. Fresh map-local declarations, by whether they sit at function scope or
+inside a block:
+
+| corpus | function scope | inside a block |
+|---|---|---|
+| `conformance/cases` | 43 | **0** |
+| `internal/stdlib` | 8 | **0** |
+| `examples/self_host` | 11 | **0** |
+
+Nothing in the tree declares a map inside an `if`, a loop, or a match arm. So the
+emitted asm is byte-identical between compilers built either side of the change
+across all 503 conformance cases — verified, no diffs and no exit-code changes —
+and the self-compile fixpoint cannot move either. Both are **scope** instruments
+here: they say nothing else changed, and they carry no correctness signal
+whatsoever about the class being fixed.
+
+The only instrument with reach is the new suite, which is why it is worth its five
+cases across three backends: each of its three leaking shapes is red at base with
+its own page count, on x86-64, arm64 and wasm. This is the same reach arithmetic
+#7282's string limb recorded — "conformance/cases has 0 instances" understates a
+gate and "fixtures link stdlib" overstates it; the number that matters is how many
+reachable sites survive the class's own admission gates, and here it is zero on
+both counts.
