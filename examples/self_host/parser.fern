@@ -12015,61 +12015,28 @@ function dl_stmts_have_defer(stmts: ast.Stmt[]): boolean {
     return false;
 }
 
-// dl_stmts_have_defer_deep is the pre-scan for the SCOPE-aware pass: it also
-// reports a defer sitting inside a lambda body. dl_stmts_have_defer
-// deliberately does not — the collect walk it guards must not reach into a
-// lambda, whose defers are a scope of their own — but the early-out in
-// lower_defers_func has to, or a function whose only defer is in a lambda is
-// returned unchanged and that lambda is never lowered (#7174).
+// dl_stmts_have_defer_deep is the pre-scan for the SCOPE-aware pass: unlike
+// dl_stmts_have_defer it also reports a defer sitting inside a lambda body —
+// the early-out in lower_defers_func has to, or a function whose only defer is
+// in a lambda is returned unchanged and that lambda is never lowered (#7174).
+// "Shallow or lambda-borne" unions to "a StmtDefer anywhere in the subtree",
+// which is the spine's whole-subtree walk verbatim — the shallow/deep split
+// constrains only the shallow half.
 function dl_stmts_have_defer_deep(stmts: ast.Stmt[]): boolean {
-    if (dl_stmts_have_defer(stmts)) { return true; }
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (dl_stmt_has_lambda_defer(stmts[i])) { return true; }
-        i = i + 1;
+    function vs(st: ast.Stmt, hit: boolean): boolean {
+        if (hit) { return true; }
+        match (st) {
+            ast.StmtDefer(_) => { return true; },
+            _ => { return false; }
+        }
+        return false;
     }
-    return false;
-}
-
-function dl_stmt_has_lambda_defer(st: ast.Stmt): boolean {
-    match (st) {
-        ast.StmtVar(v) => { return dl_expr_has_lambda_defer(v.init); },
-        ast.StmtReturn(r) => { return dl_expr_has_lambda_defer(r.value); },
-        ast.StmtExpr(x) => { return dl_expr_has_lambda_defer(x.value); },
-        ast.StmtAssign(a) => { return dl_expr_has_lambda_defer(a.value); },
-        ast.StmtIf(f) => {
-            return dl_expr_has_lambda_defer(f.cond) || dl_stmts_have_defer_deep(f.then_body) || dl_stmts_have_defer_deep(f.else_body);
-        },
-        ast.StmtWhile(w) => { return dl_expr_has_lambda_defer(w.cond) || dl_stmts_have_defer_deep(w.body); },
-        ast.StmtFor(fo) => { return dl_expr_has_lambda_defer(fo.iter) || dl_stmts_have_defer_deep(fo.body); },
-        ast.StmtMatch(m) => {
-            if (dl_expr_has_lambda_defer(m.scrutinee)) { return true; }
-            var i: i32 = 0;
-            while (i < m.arms.len()) {
-                if (m.arms[i].has_guard && dl_expr_has_lambda_defer(m.arms[i].guard)) { return true; }
-                if (dl_stmts_have_defer_deep(m.arms[i].body)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.StmtDefer(d) => { return dl_stmt_has_lambda_defer(d.action); },
-        _ => { return false; }
+    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
+    var hit: boolean = false;
+    for st in stmts {
+        hit = astwalk.fold_stmt_nodes(st, hit, vs, ve, astwalk.descend_all);
     }
-    return false;
-}
-
-function dl_expr_has_lambda_defer(e: ast.Expr): boolean {
-    match (e) {
-        ast.ExprLambda(lm) => { return dl_stmts_have_defer_deep(lm.body); },
-        _ => { }
-    }
-    var kids: ast.Expr[] = dl_expr_kids(e);
-    var i: i32 = 0;
-    while (i < kids.len()) {
-        if (dl_expr_has_lambda_defer(kids[i])) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return hit;
 }
 
 function dl_stmt_has_defer(st: ast.Stmt): boolean {
