@@ -19,10 +19,7 @@ import (
 // THE BLOCK WAS IN THE ADMISSION WALK, NOT AT THE SHARE POSITION. strarrfld_scan
 // marks `<T>.<field>` for any field access, so the read of `q.f` refused P's
 // string[]-field reclaim outright and NEITHER holder emitted __struct_drop_P or
-// __field_reclaim_P — the identical `E[]` program emits both. That is why the
-// hoisted spelling (`var tt = q.f; P { f: tt }`) leaks identically and is still
-// leaking after this change: it is the local-BIND read, a different admission
-// question, pinned below so the row moves with whatever closes it.
+// __field_reclaim_P — the identical `E[]` program emits both.
 //
 // Admitting the inline share is sound for the reason the bare-ident store is:
 // the construction RETAINS an array field unconditionally, so the new holder
@@ -31,6 +28,12 @@ import (
 // here is that the value is read out of a sibling rather than out of a local.
 // The read is also not walked as a read, so the SOURCE holder keeps its reclaim
 // — a share needs both ends alive to balance.
+//
+// The HOISTED spelling (`var tt = q.f; P { f: tt }`) was left leaking here and
+// is now closed too, by the local-BIND admission in
+// self_host_strarr_field_bind_share_test.go. It needed a proof this position
+// gets for free — that the bound local reaches nothing but the store — so it
+// lives in that file with the rows refusing every other use of the local.
 //
 // THE FAILURE MODE HERE IS AN OVER-RELEASE, not a leak, which is what separates
 // this cell from the five `__param` ones. str_field_share_read states it: "one
@@ -83,18 +86,19 @@ function main(): i32 {
 			want: 71, balance: true,
 		},
 		{
-			// The HOISTED spelling, pinned at its leaking count. It is the
-			// local-BIND read rather than the inline share, a separate admission
-			// question — and the row that proves this change did not quietly
-			// widen into it. Moves with whatever closes that one.
-			name: "hoisted_bind_still_leaks",
+			// The HOISTED spelling, closed by the local-BIND admission in
+			// self_host_strarr_field_bind_share_test.go, which owns the shape
+			// and the rows refusing everything around it. Kept here as the
+			// pair: the two programs differ only in whether the read is named,
+			// so they must agree — on the exit AND on the accounting.
+			name: "hoisted_bind_now_clean",
 			src: strarrShareReadDecl + `function round(i: i32): i32 {
     var q: P = P { f: mkv(i), n: i };
     var tt: string[] = q.f;
     var p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + loop,
-			want: 72,
+			want: 72, balance: true,
 		},
 		{
 			// THE SOUNDNESS CASE. The source holder dies inside `make` while the
