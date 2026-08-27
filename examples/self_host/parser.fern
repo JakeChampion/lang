@@ -13281,104 +13281,69 @@ function callee_param_is_borrow(funcs: FuncDecl[], fname: string, pos: i32): boo
     return false;
 }
 
-// expr_moves_handle / stmts_move_handle report whether `name` occurs anywhere
-// other than as a call argument bound to a `borrow` parameter — a return, an
-// alias, an assignment, a struct/array/tuple/closure capture, an argument to an
-// unresolvable callee. The traversal SKIPS the borrow-argument positions, so
-// reaching an ident at all is a move; that skip is what the Go movedHandles
-// expresses as *ast.Ident pointer identity.
-function expr_moves_handle(e: ast.Expr, funcs: FuncDecl[], name: string): boolean {
+// moves_net_of is the moves-handle walk's expression contribution, counted
+// rather than short-circuited: an identifier reading `name` adds one, and a
+// call subtracts back each immediate argument that is `name` bound to a
+// `borrow` parameter — the positions the hand-written walk expressed by not
+// recursing into them, and the Go movedHandles by *ast.Ident pointer identity.
+// The spine visits the call before its arguments, so a subtraction can land
+// before the count it cancels; only the final sum is read.
+function moves_net_of(e: ast.Expr, funcs: FuncDecl[], name: string, acc: i32): i32 {
     match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },
-        ast.ExprBinary(b) => { return expr_moves_handle(b.left, funcs, name) || expr_moves_handle(b.right, funcs, name); },
-        ast.ExprUnary(u) => { return expr_moves_handle(u.operand, funcs, name); },
+        ast.ExprIdent(id) => {
+            if (id.name == name) { return acc + 1; }
+            return acc;
+        },
         ast.ExprCall(c) => {
-            if (expr_moves_handle(c.callee, funcs, name)) { return true; }
             var cname: string = "";
             match (c.callee) {
                 ast.ExprIdent(cid) => { cname = cid.name; },
                 _ => {},
             }
+            if (cname.len() == 0) { return acc; }
             var i: i32 = 0;
             while (i < c.args.len()) {
-                var borrowed: boolean = false;
-                if (cname.len() > 0) {
-                    match (c.args[i]) {
-                        ast.ExprIdent(aid) => {
-                            if (aid.name == name && callee_param_is_borrow(funcs, cname, i)) { borrowed = true; }
-                        },
-                        _ => {},
-                    }
+                match (c.args[i]) {
+                    ast.ExprIdent(aid) => {
+                        if (aid.name == name && callee_param_is_borrow(funcs, cname, i)) { acc = acc - 1; }
+                    },
+                    _ => {},
                 }
-                if (!borrowed && expr_moves_handle(c.args[i], funcs, name)) { return true; }
                 i = i + 1;
             }
-            return false;
+            return acc;
         },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                if (expr_moves_handle(a.elements[i], funcs, name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                if (expr_moves_handle(t.elements[i], funcs, name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprIndex(ix) => { return expr_moves_handle(ix.array, funcs, name) || expr_moves_handle(ix.index, funcs, name); },
-        ast.ExprSlice(sl) => { return expr_moves_handle(sl.array, funcs, name) || expr_moves_handle(sl.start, funcs, name) || expr_moves_handle(sl.end, funcs, name); },
-        ast.ExprFieldAccess(fa) => { return expr_moves_handle(fa.obj, funcs, name); },
-        ast.ExprStructLit(sl2) => {
-            if (sl2.has_base && expr_moves_handle(sl2.base, funcs, name)) { return true; }
-            var i: i32 = 0;
-            while (i < sl2.field_values.len()) {
-                if (expr_moves_handle(sl2.field_values[i], funcs, name)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        ast.ExprLambda(lm) => { return stmts_move_handle(lm.body, funcs, name); },
-        _ => { return false; }
+        _ => { return acc; }
     }
+    return acc;
 }
 
-function stmt_moves_handle(st: ast.Stmt, funcs: FuncDecl[], name: string): boolean {
+// moves_target_of is the statement half: an assignment's TARGET is a use of
+// the name carried on the statement, which the expression visitor is never
+// handed.
+function moves_target_of(st: ast.Stmt, name: string, acc: i32): i32 {
     match (st) {
-        ast.StmtVar(v) => { return expr_moves_handle(v.init, funcs, name); },
-        ast.StmtReturn(r) => { return expr_moves_handle(r.value, funcs, name); },
-        ast.StmtExpr(e) => { return expr_moves_handle(e.value, funcs, name); },
-        ast.StmtAssign(a) => { return a.target == name || expr_moves_handle(a.value, funcs, name); },
-        ast.StmtDefer(d) => { return stmt_moves_handle(d.action, funcs, name); },
-        ast.StmtIf(f) => { return expr_moves_handle(f.cond, funcs, name) || stmts_move_handle(f.then_body, funcs, name) || stmts_move_handle(f.else_body, funcs, name); },
-        ast.StmtWhile(w) => { return expr_moves_handle(w.cond, funcs, name) || stmts_move_handle(w.body, funcs, name); },
-        ast.StmtFor(fr) => { return expr_moves_handle(fr.iter, funcs, name) || stmts_move_handle(fr.body, funcs, name); },
-        ast.StmtMatch(m) => {
-            if (expr_moves_handle(m.scrutinee, funcs, name)) { return true; }
-            var k: i32 = 0;
-            while (k < m.arms.len()) {
-                if (m.arms[k].has_guard && expr_moves_handle(m.arms[k].guard, funcs, name)) { return true; }
-                if (stmts_move_handle(m.arms[k].body, funcs, name)) { return true; }
-                k = k + 1;
-            }
-            return false;
+        ast.StmtAssign(a) => {
+            if (a.target == name) { return acc + 1; }
+            return acc;
         },
-        _ => { return false; }
+        _ => { return acc; }
     }
+    return acc;
 }
 
+// stmts_move_handle reports whether `name` occurs anywhere other than as a
+// call argument bound to a `borrow` parameter — a return, an alias, an
+// assignment, a struct/array/tuple/closure capture, an argument to an
+// unresolvable callee. Any such occurrence leaves the net count positive.
 function stmts_move_handle(stmts: ast.Stmt[], funcs: FuncDecl[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if (stmt_moves_handle(stmts[i], funcs, name)) { return true; }
-        i = i + 1;
+    function ve(e: ast.Expr, acc: i32): i32 { return moves_net_of(e, funcs, name, acc); }
+    function vs(st: ast.Stmt, acc: i32): i32 { return moves_target_of(st, name, acc); }
+    var net: i32 = 0;
+    for st in stmts {
+        net = astwalk.fold_stmt_nodes(st, net, vs, ve, astwalk.descend_all);
     }
-    return false;
+    return net > 0;
 }
 
 // kept_handle_res returns the resource a declaration's owned handle is
