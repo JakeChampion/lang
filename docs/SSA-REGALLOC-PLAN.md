@@ -972,11 +972,46 @@ a time. `__str_ord` still runs byte-grain and is left alone: ordering has to
 name the first differing byte, so a word compare there needs a `rev` and a
 `clz`, and nothing measured makes it hot.
 
-Two things this does not claim. The rows still above 1.00× — `sort_ints` 1.42×,
-`map_int` 1.23×, `tokenize` 1.22×, `map_string` and `sort_inplace` 1.19× — are a
-different cause, in compiled code rather than in a helper, and unmeasured. And
-these are ~100 ms runs under emulation: best-of-7 makes the ranking trustworthy,
+These are ~100 ms runs under emulation: best-of-7 makes the ranking trustworthy,
 not the third digit.
+
+### Where that leaves phase 4
+
+Phase 4 of #4112 is "arm64 SSA emit **+ default**". The flip needs three things,
+and after the two helper fixes above the evidence stands like this.
+
+**Size — settled.** SSA is smaller on all 17 benchmarks, from 24.7% of flat
+(`call_overhead`) to 91.1% (`map_int`).
+
+**Correctness — settled.** The corpus run differential is 286/0 on `asm_run` and
+285/0/1 on `interp_run`, both drivers built from one compiler.
+
+**Speed — the open blocker.** Ten of seventeen are at or faster than flat; seven
+are slower:
+
+| slower | ratio | faster | ratio |
+|---|---|---|---|
+| `sort_ints` | 1.49× | `int_loop` | 0.44× |
+| `map_int` | 1.28× | `string_scan` | 0.62× |
+| `map_string` | 1.23× | `closure_call` | 0.70× |
+| `tokenize` | 1.22× | `string_slice` | 0.73× |
+| `sort_inplace` | 1.15× | `array_append` | 0.76× |
+| `enum_match` | 1.15× | `struct_drop` | 0.76× |
+| `utf8_ingest_validated` | 1.11× | `string_build` | 0.89× |
+
+Geometric mean is about 0.92× — SSA is ~8% faster on average and much smaller —
+but an average is the wrong test for a default. Flipping it ships a 20–49%
+slowdown to anyone whose workload looks like `cmp.sort` or `core/map`.
+
+The seven share a shape, and it is not the one the helper fixes addressed:
+`cmp.sort`, `core/map`, the tokenizer's scan loop. All are **compiled Fern with
+hot loops over arrays and maps**, so the cost is in generated code quality —
+register allocation, spill placement, bounds-check and RC traffic in a loop body
+— not in a hand-written runtime helper. That is the harder class, and the one
+the allocator work in this plan was originally about.
+
+So phase 4 is blocked on codegen quality in loop bodies, with seven named
+reproducers to work against. Nothing else about it is outstanding.
 
 The lesson is the one this epic keeps relearning in a new costume. Six ceilings
 were found by lifting the previous one, none of them the register allocator; the
