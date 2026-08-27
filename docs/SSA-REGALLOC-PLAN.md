@@ -992,7 +992,8 @@ That proves link-ability, not behaviour. The run differential feeds each of the
 and exit status.
 
 `interp_run` came back clean — 285 match, 0 differ, 1 skip. `asm_run` did not:
-283 match, **3 differ**. On all three the SSA-built compiler emitted
+283 match, 3 differ. Two of those three are this bug; the third was an artifact
+of the harness (below). On the real ones the SSA-built compiler emitted
 
 ```
 movq $4294967295, %rax      # SSA build
@@ -1033,6 +1034,20 @@ eight bytes cannot be a machine address here (`ResolveWidths` runs only for the
 64-bit arm64 backend, whose lift renders every pointer-width load as the 8-byte
 `OpLoad`), and inference may not overturn a parameter's declared classification.
 The first mirrors the guard `mark` already applied to integer constants.
+
+**One compiler, both backends.** The first comparison ran a freshly built SSA
+driver against a flat driver compiled hours earlier, because `drvrun.sh` rebuilt
+only the SSA side. That varies the compiler VERSION as well as the backend, and
+one of the three differing programs — `examples/probes/retained_param_leak.fern`
+— was exactly that: a frame-size and RC-drop difference between two mains, not
+between two backends. It matches once both drivers come from one compiler. The
+tell was `irlower_run -slots`, which reports `main` with 9 locals in both builds:
+the SSA driver emitted `movq $9` agreeing with it, and the STALE flat driver
+emitted `movq $8`. The odd one out was the old binary.
+
+Rebuilt properly — one compiler, only the backend differing — the picture is
+clean. Before the fix, 4 of the 5 probe programs differ on the constant; after
+it, none do. The harness now rebuilds both sides.
 
 **What this says about the gates.** The bug predates the whole size campaign —
 the compiler built at the commit before #7643 reproduces it byte for byte. It
