@@ -14693,80 +14693,58 @@ function cf_is_zero_arg_fn(funcs: FuncDecl[], name: string): boolean {
     return false;
 }
 
-function cf_scan_expr(e: ast.Expr, f: string): CFScan {
+// cf_use_of is the per-node contribution shared by the two const-rule
+// scanners' expression halves: a matching identifier is one VALUE use.
+//
+// The call arm is the discrimination, and it is parent-dependent — `f(x)` is a
+// CALL of f, not a value of it, and the hand-written walk expressed that by not
+// recursing into the callee. The spine visits every node, so the same rule is a
+// signed contribution: the call node adds a call and subtracts the value its
+// callee child is about to add. Only the sum is read, so the order the two
+// land in does not matter.
+function cf_use_of(e: ast.Expr, f: string, acc: CFScan): CFScan {
     match (e) {
-        ast.ExprIdent(id) => { if (id.name == f) { return CFScan { vals: 1, calls: 0 }; } return cf_zero(); },
-        ast.ExprBinary(b) => { return cf_add(cf_scan_expr(b.left, f), cf_scan_expr(b.right, f)); },
-        ast.ExprUnary(u) => { return cf_scan_expr(u.operand, f); },
+        ast.ExprIdent(id) => {
+            if (id.name == f) { return CFScan { vals: acc.vals + 1, calls: acc.calls }; }
+            return acc;
+        },
         ast.ExprCall(c) => {
-            var acc: CFScan = cf_zero();
-            var callee_is_f: boolean = false;
             match (c.callee) {
-                ast.ExprIdent(cid) => { if (cid.name == f) { callee_is_f = true; } },
+                ast.ExprIdent(cid) => {
+                    if (cid.name == f) { return CFScan { vals: acc.vals - 1, calls: acc.calls + 1 }; }
+                },
                 _ => { }
             }
-            if (callee_is_f) { acc = CFScan { vals: 0, calls: 1 }; }
-            else { acc = cf_scan_expr(c.callee, f); }
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = cf_add(acc, cf_scan_expr(c.args[i], f)); i = i + 1; }
             return acc;
         },
-        ast.ExprArray(a) => {
-            var acc: CFScan = cf_zero();
-            var i: i32 = 0;
-            while (i < a.elements.len()) { acc = cf_add(acc, cf_scan_expr(a.elements[i], f)); i = i + 1; }
-            return acc;
-        },
-        ast.ExprTuple(t) => {
-            var acc: CFScan = cf_zero();
-            var i: i32 = 0;
-            while (i < t.elements.len()) { acc = cf_add(acc, cf_scan_expr(t.elements[i], f)); i = i + 1; }
-            return acc;
-        },
-        ast.ExprIndex(ix) => { return cf_add(cf_scan_expr(ix.array, f), cf_scan_expr(ix.index, f)); },
-        ast.ExprSlice(sl) => { return cf_add(cf_scan_expr(sl.array, f), cf_add(cf_scan_expr(sl.start, f), cf_scan_expr(sl.end, f))); },
-        ast.ExprStructLit(sl) => {
-            var acc: CFScan = cf_scan_expr(sl.base, f);
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { acc = cf_add(acc, cf_scan_expr(sl.field_values[i], f)); i = i + 1; }
-            return acc;
-        },
-        ast.ExprFieldAccess(fa) => { return cf_scan_expr(fa.obj, f); },
-        ast.ExprLambda(lm) => { return cf_scan_stmts(lm.body, f); },
-        _ => { return cf_zero(); }
+        _ => { return acc; }
     }
-    return cf_zero();
+    return acc;
 }
 
-function cf_scan_stmt(st: ast.Stmt, f: string): CFScan {
+// cf_assign_target_of is the statement-shaped half: an assignment TARGET names
+// the local without being an expression the walk can hand to cf_use_of.
+function cf_assign_target_of(st: ast.Stmt, f: string, acc: CFScan): CFScan {
     match (st) {
-        ast.StmtVar(v) => { return cf_scan_expr(v.init, f); },
-        ast.StmtReturn(r) => { return cf_scan_expr(r.value, f); },
-        ast.StmtExpr(x) => { return cf_scan_expr(x.value, f); },
         ast.StmtAssign(a) => {
-            var base: CFScan = cf_scan_expr(a.value, f);
-            if (a.target == f) { return cf_add(base, CFScan { vals: 1, calls: 0 }); }
-            return base;
-        },
-        ast.StmtIf(fst) => { return cf_add(cf_scan_expr(fst.cond, f), cf_add(cf_scan_stmts(fst.then_body, f), cf_scan_stmts(fst.else_body, f))); },
-        ast.StmtWhile(w) => { return cf_add(cf_scan_expr(w.cond, f), cf_scan_stmts(w.body, f)); },
-        ast.StmtFor(fr) => { return cf_add(cf_scan_expr(fr.iter, f), cf_scan_stmts(fr.body, f)); },
-        ast.StmtMatch(m) => {
-            var acc: CFScan = cf_scan_expr(m.scrutinee, f);
-            var i: i32 = 0;
-            while (i < m.arms.len()) { acc = cf_add(acc, cf_add(cf_scan_expr(m.arms[i].guard, f), cf_scan_stmts(m.arms[i].body, f))); i = i + 1; }
+            if (a.target == f) { return CFScan { vals: acc.vals + 1, calls: acc.calls }; }
             return acc;
         },
-        ast.StmtDefer(d) => { return cf_scan_stmt(d.action, f); },
-        _ => { return cf_zero(); }
+        _ => { return acc; }
     }
-    return cf_zero();
+    return acc;
+}
+
+function cf_scan_expr(e: ast.Expr, f: string): CFScan {
+    function ve(n: ast.Expr, a: CFScan): CFScan { return cf_use_of(n, f, a); }
+    return astwalk.fold_expr(e, cf_zero(), ve);
 }
 
 function cf_scan_stmts(stmts: ast.Stmt[], f: string): CFScan {
+    function ve(n: ast.Expr, a: CFScan): CFScan { return cf_use_of(n, f, a); }
+    function vs(s: ast.Stmt, a: CFScan): CFScan { return cf_assign_target_of(s, f, a); }
     var acc: CFScan = cf_zero();
-    var i: i32 = 0;
-    while (i < stmts.len()) { acc = cf_add(acc, cf_scan_stmt(stmts[i], f)); i = i + 1; }
+    for st in stmts { acc = astwalk.fold_stmt_nodes(st, acc, vs, ve, astwalk.descend_all); }
     return acc;
 }
 
@@ -14792,76 +14770,36 @@ function cf_decl_count(stmts: ast.Stmt[], name: string): i32 {
 }
 
 // cf_rw_expr rewrites every direct call `f(args)` to `target(args)`.
-function cf_rw_expr(e: ast.Expr, f: string, target: string): ast.Expr {
-    match (e) {
-        ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: cf_rw_expr(b.left, f, target), right: cf_rw_expr(b.right, f, target), line: b.line, col: b.col, ty: b.ty }; },
-        ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: cf_rw_expr(u.operand, f, target), line: u.line, col: u.col, ty: u.ty }; },
+// cf_rw_expr / cf_rw_stmts rewrite every direct call `f(args)` to
+// `target(args)`, rebuilding every other node verbatim around its rewritten
+// children — which is map_expr's contract, so only the one changed node is
+// spelled here. POST-order costs nothing: a bare `f` ident is not rewritten by
+// either version, so the callee the rebuilt call node sees is the one the
+// hand-written walk tested.
+function cf_rw_call(x: ast.Expr, f: string, target: string): ast.Expr {
+    match (x) {
         ast.ExprCall(c) => {
-            var na: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { na = na.append(cf_rw_expr(c.args[i], f, target)); i = i + 1; }
-            var ncallee: ast.Expr = c.callee;
-            var done: boolean = false;
             match (c.callee) {
-                ast.ExprIdent(cid) => { if (cid.name == f) { ncallee = ast.ExprIdent { name: target, line: cid.line, col: cid.col, ty: cid.ty }; done = true; } },
+                ast.ExprIdent(cid) => {
+                    if (cid.name == f) { return ast.ExprCall { ...c, callee: ast.ExprIdent { ...cid, name: target } }; }
+                },
                 _ => { }
             }
-            if (!done) { ncallee = cf_rw_expr(c.callee, f, target); }
-            return ast.ExprCall { callee: ncallee, args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            return x;
         },
-        ast.ExprArray(a) => {
-            var ne: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < a.elements.len()) { ne = ne.append(cf_rw_expr(a.elements[i], f, target)); i = i + 1; }
-            return ast.ExprArray { ...a, elements: ne };
-        },
-        ast.ExprTuple(t) => {
-            var ne: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) { ne = ne.append(cf_rw_expr(t.elements[i], f, target)); i = i + 1; }
-            return ast.ExprTuple { elements: ne, line: t.line, col: t.col };
-        },
-        ast.ExprIndex(ix) => { return ast.ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target), unchecked: ix.unchecked, ty: ix.ty }; },
-        ast.ExprSlice(sl) => { return ast.ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target), ty: sl.ty, open_end: sl.open_end }; },
-        ast.ExprStructLit(sl) => {
-            var nv: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { nv = nv.append(cf_rw_expr(sl.field_values[i], f, target)); i = i + 1; }
-            return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: cf_rw_expr(sl.base, f, target), line: sl.line, col: sl.col };
-        },
-        ast.ExprFieldAccess(fa) => { return ast.ExprFieldAccess { obj: cf_rw_expr(fa.obj, f, target), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: cf_rw_stmts(lm.body, f, target) }; },
-        _ => { return e; }
+        _ => { return x; }
     }
-    return e;
+    return x;
 }
 
-function cf_rw_stmt(st: ast.Stmt, f: string, target: string): ast.Stmt {
-    match (st) {
-        ast.StmtVar(v) => { return ast.StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; },
-        ast.StmtReturn(r) => { return ast.StmtReturn { value: cf_rw_expr(r.value, f, target), line: r.line, col: r.col }; },
-        ast.StmtExpr(x) => { return ast.StmtExpr { value: cf_rw_expr(x.value, f, target), line: x.line }; },
-        ast.StmtAssign(a) => { return ast.StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        ast.StmtIf(fst) => { return ast.StmtIf { ...fst, cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target) }; },
-        ast.StmtWhile(w) => { return ast.StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label, line: w.line, is_loop: w.is_loop }; },
-        ast.StmtFor(fr) => { return ast.StmtFor { var_name: fr.var_name, iter: cf_rw_expr(fr.iter, f, target), body: cf_rw_stmts(fr.body, f, target), label: fr.label, line: fr.line }; },
-        ast.StmtMatch(m) => {
-            var arms: ast.MatchArm[] = [];
-            var i: i32 = 0;
-            while (i < m.arms.len()) { arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: cf_rw_stmts(m.arms[i].body, f, target), line: m.arms[i].line, col: m.arms[i].col, guard: cf_rw_expr(m.arms[i].guard, f, target), has_guard: m.arms[i].has_guard, alt_cont: false }); i = i + 1; }
-            return ast.StmtMatch { ...m, scrutinee: cf_rw_expr(m.scrutinee, f, target), arms: arms };
-        },
-        ast.StmtDefer(d) => { return ast.StmtDefer { action: cf_rw_stmt(d.action, f, target), on_error: d.on_error, line: d.line }; },
-        _ => { return st; }
-    }
-    return st;
+function cf_rw_expr(e: ast.Expr, f: string, target: string): ast.Expr {
+    function rw(x: ast.Expr): ast.Expr { return cf_rw_call(x, f, target); }
+    return astwalk.map_expr(e, rw);
 }
 
 function cf_rw_stmts(stmts: ast.Stmt[], f: string, target: string): ast.Stmt[] {
-    var out: ast.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) { out = out.append(cf_rw_stmt(stmts[i], f, target)); i = i + 1; }
-    return out;
+    function rw(x: ast.Expr): ast.Expr { return cf_rw_call(x, f, target); }
+    return astwalk.map_stmts(stmts, rw);
 }
 
 // ===================================================================
@@ -15219,84 +15157,46 @@ function cf_all_zero_arg_fn_elems(elems: ast.Expr[], funcs: FuncDecl[]): boolean
 // any OTHER use (vals: `f[i]` as a value, `f` passed / stored / a bare ref). A
 // `var f = [fns…]` used only as indexed calls is a fn-pointer array; a value use
 // means the elements are meant as const CALLS (an `i32[]` of `mk()` results).
-function cf_arr_scan_expr(e: ast.Expr, f: string): CFScan {
+// cf_arr_use_of is cf_use_of's sibling for the fn-pointer-ARRAY rule: the call
+// shape is `f[i](…)`, so the callee is an index whose array is the name. Same
+// signed contribution — the call node adds a call and subtracts the value the
+// ident inside the index is about to add — and the index EXPRESSION is still
+// scanned, because the spine walks the whole callee.
+function cf_arr_use_of(e: ast.Expr, f: string, acc: CFScan): CFScan {
     match (e) {
-        ast.ExprIdent(id) => { if (id.name == f) { return CFScan { vals: 1, calls: 0 }; } return cf_zero(); },
-        ast.ExprBinary(b) => { return cf_add(cf_arr_scan_expr(b.left, f), cf_arr_scan_expr(b.right, f)); },
-        ast.ExprUnary(u) => { return cf_arr_scan_expr(u.operand, f); },
+        ast.ExprIdent(id) => {
+            if (id.name == f) { return CFScan { vals: acc.vals + 1, calls: acc.calls }; }
+            return acc;
+        },
         ast.ExprCall(c) => {
-            var acc: CFScan = cf_zero();
-            var indexed_f: boolean = false;
             match (c.callee) {
                 ast.ExprIndex(ix) => {
                     match (ix.array) {
-                        ast.ExprIdent(aid) => { if (aid.name == f) { indexed_f = true; acc = cf_add(CFScan { vals: 0, calls: 1 }, cf_arr_scan_expr(ix.index, f)); } },
+                        ast.ExprIdent(aid) => {
+                            if (aid.name == f) { return CFScan { vals: acc.vals - 1, calls: acc.calls + 1 }; }
+                        },
                         _ => { }
                     }
                 },
                 _ => { }
             }
-            if (!indexed_f) { acc = cf_arr_scan_expr(c.callee, f); }
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = cf_add(acc, cf_arr_scan_expr(c.args[i], f)); i = i + 1; }
             return acc;
         },
-        ast.ExprArray(a) => {
-            var acc: CFScan = cf_zero();
-            var i: i32 = 0;
-            while (i < a.elements.len()) { acc = cf_add(acc, cf_arr_scan_expr(a.elements[i], f)); i = i + 1; }
-            return acc;
-        },
-        ast.ExprTuple(t) => {
-            var acc: CFScan = cf_zero();
-            var i: i32 = 0;
-            while (i < t.elements.len()) { acc = cf_add(acc, cf_arr_scan_expr(t.elements[i], f)); i = i + 1; }
-            return acc;
-        },
-        ast.ExprIndex(ix) => { return cf_add(cf_arr_scan_expr(ix.array, f), cf_arr_scan_expr(ix.index, f)); },
-        ast.ExprSlice(sl) => { return cf_add(cf_arr_scan_expr(sl.array, f), cf_add(cf_arr_scan_expr(sl.start, f), cf_arr_scan_expr(sl.end, f))); },
-        ast.ExprStructLit(sl) => {
-            var acc: CFScan = cf_arr_scan_expr(sl.base, f);
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { acc = cf_add(acc, cf_arr_scan_expr(sl.field_values[i], f)); i = i + 1; }
-            return acc;
-        },
-        ast.ExprFieldAccess(fa) => { return cf_arr_scan_expr(fa.obj, f); },
-        ast.ExprLambda(lm) => { return cf_arr_scan_stmts(lm.body, f); },
-        _ => { return cf_zero(); }
+        _ => { return acc; }
     }
-    return cf_zero();
+    return acc;
 }
 
-function cf_arr_scan_stmt(st: ast.Stmt, f: string): CFScan {
-    match (st) {
-        ast.StmtVar(v) => { return cf_arr_scan_expr(v.init, f); },
-        ast.StmtReturn(r) => { return cf_arr_scan_expr(r.value, f); },
-        ast.StmtExpr(x) => { return cf_arr_scan_expr(x.value, f); },
-        ast.StmtAssign(a) => {
-            var base: CFScan = cf_arr_scan_expr(a.value, f);
-            if (a.target == f) { return cf_add(base, CFScan { vals: 1, calls: 0 }); }
-            return base;
-        },
-        ast.StmtIf(fst) => { return cf_add(cf_arr_scan_expr(fst.cond, f), cf_add(cf_arr_scan_stmts(fst.then_body, f), cf_arr_scan_stmts(fst.else_body, f))); },
-        ast.StmtWhile(w) => { return cf_add(cf_arr_scan_expr(w.cond, f), cf_arr_scan_stmts(w.body, f)); },
-        ast.StmtFor(fr) => { return cf_add(cf_arr_scan_expr(fr.iter, f), cf_arr_scan_stmts(fr.body, f)); },
-        ast.StmtMatch(m) => {
-            var acc: CFScan = cf_arr_scan_expr(m.scrutinee, f);
-            var i: i32 = 0;
-            while (i < m.arms.len()) { acc = cf_add(acc, cf_add(cf_arr_scan_expr(m.arms[i].guard, f), cf_arr_scan_stmts(m.arms[i].body, f))); i = i + 1; }
-            return acc;
-        },
-        ast.StmtDefer(d) => { return cf_arr_scan_stmt(d.action, f); },
-        _ => { return cf_zero(); }
-    }
-    return cf_zero();
+function cf_arr_scan_expr(e: ast.Expr, f: string): CFScan {
+    function ve(n: ast.Expr, a: CFScan): CFScan { return cf_arr_use_of(n, f, a); }
+    return astwalk.fold_expr(e, cf_zero(), ve);
 }
 
 function cf_arr_scan_stmts(stmts: ast.Stmt[], f: string): CFScan {
+    function ve(n: ast.Expr, a: CFScan): CFScan { return cf_arr_use_of(n, f, a); }
+    function vs(s: ast.Stmt, a: CFScan): CFScan { return cf_assign_target_of(s, f, a); }
     var acc: CFScan = cf_zero();
-    var i: i32 = 0;
-    while (i < stmts.len()) { acc = cf_add(acc, cf_arr_scan_stmt(stmts[i], f)); i = i + 1; }
+    for st in stmts { acc = astwalk.fold_stmt_nodes(st, acc, vs, ve, astwalk.descend_all); }
     return acc;
 }
 
