@@ -71,35 +71,41 @@
 # every driver: the tracked artifact by 42.5%, the front-end-only drivers by
 # over 80%.
 #
-# REFRESHED after #7519's attribution, which is the precondition that issue set:
-# every step over 300 KB between the previous baseline (`dbf7d94d3`) and this
-# refresh is named there — the #6993 for..in migration, the #6888 registry
-# index, native RC codegen (#6911, #7345), the shared pattern grammar (#2698),
-# and a −3.0 MB dispatch-split shrink — with ~4.7 MB of sub-300 KB organic
-# scatter. The audit rows for #6888 and #6911 now carry their size prices.
-# All fifteen figures were linked locally with the method the previous refresh
-# validated against CI byte-for-byte; the anchor rebuild at `dbf7d94d3`
-# reproduced the old irlower_run baseline exactly before any new number was
-# trusted.
+# THE PREVIOUS REFRESH'S FIGURES DID NOT REPRODUCE, and the first complete
+# comparison is what caught it. #7677 recorded fifteen numbers that read 13-16%
+# HIGH against what the same tree links: thirteen of them tripped the shrink
+# check on the first `driver-sizes` run, uniformly, on a diff that touches no
+# compiler code. Three things were established before these numbers replaced
+# them, because a baseline nobody can reproduce is how this file failed before:
 #
-# Five figures came from run 31959802603's warm-asm job. The other ten were
-# linked locally — which is sound BECAUSE the host-independence claim below was
-# checked rather than trusted: rebuilding four of CI's five reproduced its byte
-# counts exactly (asm_run 82275084, asm_pathprobe_run 13791740, irlower_run
-# 12318492, asm_ir_elig_run 12967852). That is the determinism this file
-# asserts, demonstrated on this commit.
+#   1. The method reproduces CI EXACTLY. checker_modload_run rebuilt off-CI at
+#      the head CI measured gives 7,053,860 against CI's 7,053,860 — the
+#      determinism this file asserts, demonstrated rather than trusted.
+#   2. It also DISCRIMINATES, which an agreeing number alone does not show.
+#      Walking that driver back over the commits that touch its import closure
+#      moves it 7,033,212 -> 7,205,244, so the measurement follows the source.
+#   3. The old figure is not a stale checkout. checker_modload_run's closure is
+#      unchanged between #7677's own commit and this one, so its size cannot
+#      have moved in that window, and 8,171,948 — what #7677 wrote for it —
+#      occurs nowhere in the surrounding history.
 #
-# Every figure below is CI's own, from run 31782687541 (`cli` + the three `warm`
-# jobs), pasted from the blocks those jobs printed. The three that #6826 measured
-# off-CI independently agree to within 0.05% — fern.fern 155,895,596 vs
-# 155,973,500, asm_ir_run 146,081,148 vs 146,105,772, wasm_ir_run 77,378,268 vs
-# 77,402,892 — which is the evidence for the host-independence claim above.
+# So the drivers did not shrink; the previous numbers were wrong when written.
+# What produced them is NOT known, and that is the honest state: they are not
+# this tree's output at that commit, at the commit before it, or at any commit
+# sampled around it. #7519's attribution of the GROWTH before #7677 stands on
+# its own evidence and is unaffected.
 #
-# Note the two tiers: the six drivers at 6-7 MB link a front-end slice only,
-# while the whole-compiler drivers sit at 145-156 MB. A 6 MB driver moving 5% is
-# 300 KB and means something different from the tracked artifact moving 5%; the
-# percentage is what is compared, deliberately, so a small driver's regression is
-# not lost inside a big one's noise.
+# Every figure below is CI's own, from the `driver-sizes` job's union of the
+# `cli` and three `warm` reports on the head that recorded them — the first
+# time all fifteen were compared in one place. The two the union did not print
+# (ssa_run, ssa_emit_run, both inside tolerance and so not in its paste block)
+# were linked off-CI with the method item 1 validates.
+#
+# Note the two tiers: the three drivers at 6.4-7.1 MB link a front-end slice
+# only, while the rest sit at 22-30 MB. A 6 MB driver moving 5% is 300 KB and
+# means something different from the tracked artifact moving 5%; the percentage
+# is what is compared, deliberately, so a small driver's regression is not lost
+# inside a big one's noise.
 #
 # WHAT THE FIFTEEN DO NOT SEE (#7519). These drivers are not a sample of the
 # compiler. Each links one import closure, and a module outside it contributes
@@ -140,18 +146,18 @@
 # not link checker.fern at all, and found one irlower slice reading +6.8% or
 # +9.2% for the same absolute growth depending only on which driver divided it.
 
-fern.fern 36121156
-asm_load_run.fern 31570580
-asm_modload_run.fern 29547212
-asm_ir_run.fern 29407084
-asm_run.fern 28858428
-wasm_ir_run.fern 28882668
-wasm_run.fern 28829068
-wasm_runio_run.fern 28790828
-asm_pathprobe_run.fern 28083868
-ssa_lift_scan_run.fern 27533436
-asm_ir_elig_run.fern 26317820
-irlower_run.fern 27509500
-checker_modload_run.fern 8171948
-ssa_emit_run.fern 6716188
-ssa_run.fern 6509820
+fern.fern 30366508
+asm_load_run.fern 26544900
+asm_modload_run.fern 25160412
+asm_ir_run.fern 25020284
+asm_run.fern 24471628
+wasm_ir_run.fern 24495868
+wasm_run.fern 24442268
+wasm_runio_run.fern 24404028
+asm_pathprobe_run.fern 23697068
+ssa_lift_scan_run.fern 23416972
+asm_ir_elig_run.fern 22385692
+irlower_run.fern 23393036
+checker_modload_run.fern 7053860
+ssa_emit_run.fern 6658876
+ssa_run.fern 6452492
