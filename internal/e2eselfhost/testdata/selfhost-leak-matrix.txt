@@ -127,7 +127,7 @@ struct_arr_field__if_block__alias_param       clean  clean  same as fnscope
 tuple_mixed__fnscope__alias_local             clean  clean  clean on both sides
 tuple_mixed__if_block__alias_local            clean  clean  clean on both sides
 tuple_mixed__loop_local__alias_local          clean  clean  clean on both sides
-tuple_mixed__ownedret_alias__bind_local       clean  leak   owned-return admission refuses an aliased producer local (frame-fresh walks with empty alias lists); no registry entry, no caller credit
+tuple_mixed__ownedret_alias__bind_local       clean  clean  frame-fresh forgives payload-confined alias binds (rctuple_param_alias_bind_sites via the #7667 idiom); returned/chained/extracted/call-arg aliases still sink the admission
 tuple_mixed__elemret__payload_refused         clean  leak   callee returns src.1: box-borrowable but TUPB payload flag 0, deep reclaim refused (granting it was a sanitizer-confirmed UAF); native is clean via dup-at-extract
 tuple_mixed__elemret__box_tier_only           clean  clean  call-producer flavor: payload tier refuses element kinds, box tier still frees the box; element ownership rides out to main's is_arr sweep
 tuple_mixed__fnscope__borrowed_arg            clean  clean  rc-tuple passed to a borrowing callee keeps its deep reclaim (the escape scan's call arm applies the shared gate's borrow rule)
