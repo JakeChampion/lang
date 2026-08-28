@@ -56778,6 +56778,48 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     }
     return out;
 }
+// tuple_param_alias_sites: the alias-bind sites the "TUPB:" payload scan may
+// forgive for param `src` — `var x = src` locals that are BOTH box-safe
+// (body_unsafe_for under an EMPTY registry, matching this tier's
+// registry-independence) AND payload-safe in their own right (the same
+// rctuple_payload_escapes_alias question, asked of the alias). The second
+// proof is what the box tier's param_alias_bind_sites does not ask, and it is
+// load-bearing: `var x = src; return x.1;` hands out an element one alias hop
+// removed — the same grant the tuple_mixed__elemret__payload_refused row pins
+// as a sanitizer-confirmed use-after-free in its direct form.
+function tuple_param_alias_sites(stmts: ast.Stmt[], src: string, pty: string, structs: parser.StructDecl[], body: ast.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var no_reg: string[] = [];
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if let ast.ExprIdent(aid) = v.init {
+                    if (aid.name == src
+                        && !body_unsafe_for(body, v.name, no_reg, no_reg)
+                        && !rctuple_payload_escapes_alias(body, v.name, pty, structs, no_reg, no_reg)) {
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                a = tuple_param_alias_sites(f.then_body, src, pty, structs, body, a);
+                a = tuple_param_alias_sites(f.else_body, src, pty, structs, body, a);
+            },
+            ast.StmtWhile(w) => { a = tuple_param_alias_sites(w.body, src, pty, structs, body, a); },
+            ast.StmtFor(fo) => { a = tuple_param_alias_sites(fo.body, src, pty, structs, body, a); },
+            ast.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = tuple_param_alias_sites(m.arms[ai].body, src, pty, structs, body, a); ai = ai + 1; }
+            },
+            ast.StmtDefer(d) => {
+                if let ast.StmtWhile(dw) = d.action { a = tuple_param_alias_sites(dw.body, src, pty, structs, body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
 // tuple_payload_borrow_flags: the "TUPB:" tier for one function — per-param
 // flag '1' iff the box flag is '1', the param is tuple-typed, and the rc-tuple
 // payload walker proves no PAYLOAD of the param escapes the callee's body.
@@ -56786,9 +56828,15 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
 // stronger question — a callee returning src.1 keys box-borrowable while its
 // caller's deep free would dangle the handed-out element (native's
 // taintedReachesSlot draws the same payload line). Registry-independent (empty
-// borrowable inside — an onward pass of the param is an escape) and
-// structs-blind (a struct-element field read is a conservative escape), so
-// the interproc fixpoint cannot oscillate and both builders share it.
+// borrowable inside — an onward pass of the param is an escape; the alias
+// sites are collected under the same empty registry) and structs-blind (a
+// struct-element field read is a conservative escape), so the interproc
+// fixpoint cannot oscillate and both builders share it.
+//
+// A non-escaping alias bind (`var x = src` read only through x.0 / x.1.len())
+// is forgiven via tuple_param_alias_sites — the payload-tier port of the box
+// tier's aliased-param forgiveness, which left the tuple alias_param matrix
+// cells at a constant keep-sweep leak while the box flag was already '1'.
 function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): string {
     var no_structs: parser.StructDecl[] = [];
     var no_strs: string[] = [];
@@ -56797,9 +56845,13 @@ function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): stri
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
         var pty: string = fn.params[pj].type_name;
+        var tpb_ok: boolean = false;
         if (pj < boxflags.len() && boxflags[pj] == b'1'
-            && pty.len() >= 2 && slice_unchecked(pty, 0, 1) == "(" && !util.contains(pty, "=>")
-            && !rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, no_strs)) {
+            && pty.len() >= 2 && slice_unchecked(pty, 0, 1) == "(" && !util.contains(pty, "=>")) {
+            var tp_psal: string[] = tuple_param_alias_sites(fn.body, fn.params[pj].name, pty, no_structs, fn.body, []);
+            tpb_ok = !rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, tp_psal);
+        }
+        if (tpb_ok) {
             tupb = tupb + "1";
             any1 = true;
         } else { tupb = tupb + "0"; }
