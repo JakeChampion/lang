@@ -93,7 +93,24 @@ and is invisible to it, so the counter is the only witness.
 
 ## What remains
 
-The `string[]` and struct/enum-array results still bail — the same boundary
-the destructure retain draws, and for the same reason. Closing either needs
-the per-arm fresh/borrowed split this entry defers, which is the real design
-question #7686 names.
+Nothing, and the reason the first cut thought otherwise is worth keeping.
+
+This entry originally excluded `string[]` and struct/enum-array results, on
+the reasoning that *"their release is an element WALK a borrowed temp cannot
+describe"*. That had it backwards. The temp is BORROWED — it is never released
+— so the walk never runs from here, and there is nothing for it to describe.
+The exclusion was caution carried over from the destructure retain one entry
+up, where it IS load-bearing (that binding really is swept, so the shallow-dec
+set is exactly the admissible set), and it does not transfer.
+
+`iife_borrowable_array_result` now names the wider set, and the marking site
+stamps the element kind the reads need: `mark_strarr` for a string element,
+the element struct/enum name for a struct one. Measured, oracle-matched and
+sanitizer-clean on both new kinds, including the reads (`v[0].len()`,
+`v[0].k`) that the marks buy — and a 30-round underflow probe, since a
+borrowed temp that ever DID release would double-free the elements.
+
+The per-arm fresh/borrowed split #7686 names as "the real design question" is
+therefore not needed to make these compile. It is still what a future entry
+needs to make them RECLAIM: every arm leaks today, which is the bargain, not
+the destination.

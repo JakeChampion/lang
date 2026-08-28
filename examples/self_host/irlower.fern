@@ -16729,11 +16729,23 @@ function iife_payload_result_kind(m: ast.StmtMatch, s: LowerState): string {
 // instead, which is the polarity this whole gate is built on. Scoped to
 // is_leaksafe_array_field: a string[] / struct-array element needs a deep walk
 // the borrowed temp cannot describe.
+// iife_borrowable_array_result reports whether `t` is an array type the IIFE
+// temp can carry BORROWED. The temp is never swept (mark_borrowed_arr), so the
+// question is only whether the slot can be typed correctly — not whether its
+// release is describable, which is why the deeper-release kinds qualify too:
+// their walk never runs from here. `string[]` needs mark_strarr and a struct /
+// enum array needs its element name, both stamped at the marking site.
+function iife_borrowable_array_result(t: string, s: LowerState): boolean {
+    if (is_leaksafe_array_field(t)) { return true; }
+    if (t == "string[]") { return true; }
+    return is_struct_array_field_type(s.structs, t) || is_enum_array_field_type(s.structs, t);
+}
+
 function iife_type_is_composite(t: string, s: LowerState): boolean {
     if (t == "") { return false; }
     if (decl_is_struct(s.structs, t) && !is_enum_like_name(t, s.structs)) { return decl_is_leaksafe(s.structs, t); }
     if (is_enum_like_name(t, s.structs)) { return true; }
-    if (is_leaksafe_array_field(t)) { return true; }
+    if (iife_borrowable_array_result(t, s)) { return true; }
     if (tuple_elems_lowerable(t, s.structs)) { return true; }
     return false;
 }
@@ -16785,7 +16797,7 @@ function iife_arr_lit_result_type(e: ast.Expr, s: LowerState): string {
             var et: string = elem_type_tag(al.elements[0], s);
             if (et == "") { return ""; }
             var at: string = et + "[]";
-            if (!is_leaksafe_array_field(at)) { return ""; }
+            if (!iife_borrowable_array_result(at, s)) { return ""; }
             return at;
         },
         _ => {}
@@ -16887,7 +16899,7 @@ function iife_result_is_tuple(t: string, s: LowerState): boolean {
     // perfectly lowerable ONE-element tuple spelling, so without this the array
     // temp would take mark_tuple_elems and every later read would resolve
     // against the wrong shape.
-    if (is_leaksafe_array_field(t)) { return false; }
+    if (iife_borrowable_array_result(t, s)) { return false; }
     return tuple_elems_lowerable("(" + t + ")", s.structs);
 }
 
@@ -17005,12 +17017,16 @@ function lower_iife_match(m: ast.StmtMatch, s: LowerState, force_i64: boolean): 
             // sweep, so the borrowed arm is safe and the fresh arm leaks —
             // the bargain iife_type_is_composite is built on. The element-kind
             // marks ride along so an 8-byte element reads at its own width.
-            if (is_leaksafe_array_field(comp_ty0)) {
+            if (iife_borrowable_array_result(comp_ty0, ts)) {
                 ts = ts.mark_arr(tslot, true);
                 ts = ts.mark_borrowed_arr(tslot, true);
                 if (is_float_array_type_name(comp_ty0)) { ts = ts.mark_f64arr(tslot, true); }
                 else if (comp_ty0 == "i64[]") { ts = ts.mark_i64arr(tslot, true); }
                 else if (comp_ty0 == "u32[]") { ts = ts.mark_u32(tslot, true); }
+                else if (comp_ty0 == "string[]") { ts = ts.mark_strarr(tslot, true); }
+                else if (is_struct_array_field_type(ts.structs, comp_ty0) || is_enum_array_field_type(ts.structs, comp_ty0)) {
+                    ts = ts.mark_struct_type(tslot, slice_unchecked(comp_ty0, 0, comp_ty0.len() - 2));
+                }
             }
             else if (iife_result_is_tuple(comp_ty0, ts)) { ts = ts.mark_tuple_elems(tslot, comp_ty0); }
             else { ts = ts.mark_struct_type(tslot, comp_ty0); }
