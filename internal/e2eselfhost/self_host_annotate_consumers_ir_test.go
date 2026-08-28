@@ -504,6 +504,42 @@ function main(): i32 {
 function main(): i32 {
     return mk()[0].1.len() + 38;
 }`},
+	// gap g17 — was: bail (lift-captype); fixed one level down in the checker:
+	// type_from_name_with_names_and_unions had no builtin-generic-enum arm,
+	// so an Option[...] struct FIELD typed unknown and stamped "" (#5986).
+	{"lift_cap_match_scrutinee_field", `struct S { o: Option[i32] }
+
+function f(s: S): i32 {
+    match (s.o) {
+        Some(v) => {
+            var g = () => v + 1;
+            return g();
+        },
+        None => { return 9; }
+    }
+    return 8;
+}
+
+function main(): i32 {
+    return f(S { o: Some(41) });
+}`},
+	{"lift_cap_match_scrutinee_field_control", `struct S { o: Option[i32] }
+
+function f(s: S): i32 {
+    var so: Option[i32] = s.o;
+    match (so) {
+        Some(v) => {
+            var g = () => v + 1;
+            return g();
+        },
+        None => { return 9; }
+    }
+    return 8;
+}
+
+function main(): i32 {
+    return f(S { o: Some(41) });
+}`},
 	// A call through a REASSIGNED closure-typed local carries the checker's
 	// TypeFunc return, so these pin the same consumers on the one fn-value
 	// shape the checker can stamp today. The fn-typed PARAM/FIELD siblings

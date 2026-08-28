@@ -11,7 +11,8 @@ import (
 // SH-021 slice 5, docs/SELF-HOST-AUDIT.md T2). Unlike the richest resolver
 // (_with_structs_unions, slice 4), these model only scalars, the `Elem[]` array
 // suffix, and struct / union NAMES — a tuple or generic resolves to unknown by
-// its full spelling. This slice retargets their array-suffix decode from the
+// its full spelling, except a builtin `Option[…]` / `Result[…]` instantiation
+// in the names+unions resolver (#5986). This slice retargets their array-suffix decode from the
 // magic-byte `[`(91)/`]`(93) scan onto the structured TypeRef's array_depth (the
 // same peel proven byte-identical in slice 4).
 //
@@ -53,7 +54,10 @@ func TestSelfHostTypeResolveSimple(t *testing.T) {
 		"Bar[][][] => structs=array<array<array<struct:Bar>>> names=array<array<array<struct:Bar>>> names+unions=array<array<array<struct:Bar>>>\n" +
 		"(i32, string) => structs=unknown(unrecognised type name: (i32, string)) names=unknown(unrecognised type name: (i32, string)) names+unions=unknown(unrecognised type name: (i32, string))\n" +
 		"Map[string, i32] => structs=unknown(unrecognised type name: Map[string, i32]) names=unknown(unrecognised type name: Map[string, i32]) names+unions=unknown(unrecognised type name: Map[string, i32])\n" +
-		"Option[i32] => structs=unknown(unrecognised type name: Option[i32]) names=unknown(unrecognised type name: Option[i32]) names+unions=unknown(unrecognised type name: Option[i32])\n" +
+		// Builtin generic enum instantiation resolves to the union in the
+		// names+unions resolver (#5986); the two struct-only resolvers
+		// still don't model it.
+		"Option[i32] => structs=unknown(unrecognised type name: Option[i32]) names=unknown(unrecognised type name: Option[i32]) names+unions=union:Option\n" +
 		"Vec[T] => structs=unknown(unrecognised type name: Vec[T]) names=unknown(unrecognised type name: Vec[T]) names+unions=unknown(unrecognised type name: Vec[T])\n" +
 		"(i32, string)[] => structs=array<unknown(unrecognised type name: (i32, string))> names=array<unknown(unrecognised type name: (i32, string))> names+unions=array<unknown(unrecognised type name: (i32, string))>\n" +
 		"Map[string, i32][] => structs=array<unknown(unrecognised type name: Map[string, i32])> names=array<unknown(unrecognised type name: Map[string, i32])> names+unions=array<unknown(unrecognised type name: Map[string, i32])>\n" +
