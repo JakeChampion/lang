@@ -44740,6 +44740,30 @@ function arrenum_param_arm_ok(arm: ast.MatchArm): boolean {
     return true;
 }
 
+// arrenum_vb_stmts: the INLINED statements of a value-block IIFE, or [] when `e`
+// is not one. A match-/if-EXPRESSION desugars to a zero-arg call of a zero-param
+// lambda that irlower INLINES rather than calls (parser.is_value_block), so a
+// param it appears to capture is read in THIS frame and dies with the statement.
+// arrenum_esc_expr's lambda arm refuses any capture — right for a real lambda,
+// which carries the name out of the frame, and wrong for this shape, which is
+// why `return (match (src[0]) { … })` was refused where its statement form is
+// admitted. Looking through it applies the SAME walk to the inlined statements,
+// so every arm proof the statement form gets, this gets too.
+function arrenum_vb_stmts(e: ast.Expr): ast.Stmt[] {
+    var none: ast.Stmt[] = [];
+    match (e) {
+        ast.ExprCall(c) => {
+            if (!parser.is_value_block(c)) { return none; }
+            match (c.callee) {
+                ast.ExprLambda(l) => { return l.body; },
+                _ => { return none; }
+            }
+        },
+        _ => { return none; }
+    }
+    return none;
+}
+
 // arrenum_param_escapes: arrenum_escapes for the "ELB:" flag question only —
 // the callee-side walk of a borrowed array-of-boxes PARAM, widened with the
 // extract-then-die admissions the borrowed-arg suites' callee_extracts_element
@@ -44774,6 +44798,13 @@ function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]
                     && !body_unsafe_for_match_borrow(body, v.name, no_reg, no_reg)
                     && !param_match_binding_escapes(body, v.name)) {
                     st_esc = false;
+                } else if (arrenum_vb_stmts(v.init).len() > 0
+                        && !arrenum_param_escapes(arrenum_vb_stmts(v.init), name, body)) {
+                    // `var x = (match (name[i]) { … })` — the same inlined block,
+                    // bound rather than returned. What the bound value may then do
+                    // is decided by the arm proofs inside, exactly as it is for the
+                    // statement form.
+                    st_esc = false;
                 } else if (whole_alias && !arrenum_param_escapes(body, v.name, body)) {
                     // A whole-array alias (`var x = src`) is admissible when the
                     // alias itself passes this same walk — its element reads get
@@ -44790,8 +44821,16 @@ function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]
                 if (a.target == name) { st_esc = true; }
                 else { st_esc = arrenum_esc_expr(a.value, name, no_reg); }
             },
-            ast.StmtReturn(r) => { st_esc = arrenum_esc_expr(r.value, name, no_reg); },
-            ast.StmtExpr(e) => { st_esc = arrenum_esc_expr(e.value, name, no_reg); },
+            ast.StmtReturn(r) => {
+                var vbr: ast.Stmt[] = arrenum_vb_stmts(r.value);
+                if (vbr.len() > 0) { st_esc = arrenum_param_escapes(vbr, name, body); }
+                else { st_esc = arrenum_esc_expr(r.value, name, no_reg); }
+            },
+            ast.StmtExpr(e) => {
+                var vbe: ast.Stmt[] = arrenum_vb_stmts(e.value);
+                if (vbe.len() > 0) { st_esc = arrenum_param_escapes(vbe, name, body); }
+                else { st_esc = arrenum_esc_expr(e.value, name, no_reg); }
+            },
             ast.StmtIf(f) => {
                 st_esc = arrenum_esc_expr(f.cond, name, no_reg)
                     || arrenum_param_escapes(f.then_body, name, body)

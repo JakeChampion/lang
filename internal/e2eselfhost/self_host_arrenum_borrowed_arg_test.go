@@ -127,6 +127,53 @@ function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.
 			want: 9, balance: true,
 		},
 		{
+			// The match-EXPRESSION form of the row above, and the shape both
+			// rc-log entries left as the next lead: `(match (src[0]) { … })`
+			// desugars to a zero-arg call of a zero-param lambda, so the walk
+			// met a lambda whose capture set holds the param — the
+			// lambda-capture escape — where its statement form is admitted. A
+			// value block is INLINED rather than called (parser.is_value_block),
+			// so the read happens in this frame and the walk now looks through
+			// it, applying the same arm proofs to the inlined statements.
+			// 400/100 (11,200 live) before, balanced after; the neighbouring
+			// statement row is unmoved.
+			//
+			// The block must be the WHOLE returned value, which is the shape the
+			// lead names. Nested inside arithmetic (`(match …) + i`) the walk
+			// still meets it through arrenum_esc_expr and still refuses — a
+			// separate extension, left as the residual lead rather than claimed
+			// here.
+			name: "callee_extracts_element_match_expr",
+			src: mk(`function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => xs.len(), E.B => 0 }); }`,
+				producer, "rd(keep, r)"),
+			want: 6, balance: true,
+		},
+		{
+			// The same look-through must not admit a HANDOUT. The element is
+			// stored into a struct the block returns, so it outlives the array;
+			// the walk refuses and the old leak-safe fallback stands. Exit and
+			// underflow are the assertion — a wrong admission here is a
+			// use-after-free, which a byte count cannot see.
+			name: "element_handed_out_match_expr",
+			src: `enum E { A(i32[]), B }
+struct H { e: E, n: i32 }
+function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function grab(src: E[], i: i32): H { return (match (src[0]) { E.A(xs) => H { e: src[0], n: i }, E.B => H { e: E.B, n: i } }); }
+function f(i: i32): H { var keep: E[] = mkv(i); return grab(keep, i); }
+function round(i: i32): i32 {
+    var h: H = f(i);
+    match (h.e) { E.A(xs) => { return xs.len(); }, E.B => { return 0; } }
+    return 0;
+}
+function main(): i32 {
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 6,
+		},
+		{
 			// REFUSED: the element is pushed into another container.
 			name: "callee_appends_element",
 			src: mk(`function rd(src: E[], i: i32): i32 { var o: E[] = []; o = o.append(src[0]); return o.len() + i; }`,
