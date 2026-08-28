@@ -183,6 +183,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// function type now, so assigning it where a scalar is declared
 		// draws native's E003 instead of an unknown-typed silence.
 		{"e003-bare-fn-value-mismatch", "function mk(n: i32): i32 { return n + 1; }\nfunction main(): i32 { var x: i32 = mk; return x; }\n", []string{"E003"}},
+		// The shadowing guard on that fallback: a binding typed opaquely
+		// unknown (here a builtin variant payload) still shadows the module
+		// function table. Without the is_bound gate, `Some(pair)` with a
+		// user function named `pair` resolved the PAYLOAD read to the
+		// function and E043'd ("field access on non-struct value of type
+		// fn") — which broke std/unicode for every program defining `pair`.
+		// The row wants NO codes; the uncoded #4346 unrepresentable-type
+		// note this shape also prints carries none.
+		{"fn-value-shadowed-by-payload-binding", "function pair(): i32 { return 7; }\nfunction main(): i32 {\n    var o: Option[(i32, i32)] = Some((1, 2));\n    match (o) {\n        Some(pair) => { return pair.0 + pair.1; },\n        None => { return 0; }\n    }\n    return 0;\n}\n", nil},
 		// An annotation on a LAMBDA parameter or return, which the two
 		// annotation reporters could not see at all: both walked statements
 		// for `var` and nothing else, so `((x: Wibble) => 1)` was accepted
