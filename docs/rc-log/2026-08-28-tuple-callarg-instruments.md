@@ -1,5 +1,17 @@
 # Instrumenting the tuple wave — and a gap the instrument found
 
+> **Step 1 landed, in a different shape than planned below.** See
+> `2026-08-28-tuple-structfield-counted-store.md`. Two predictions here were
+> wrong: the release is IR-level in `emit_struct_field_drops` (no `k_tuple`
+> asm arm, no four-backend fan-out — the asm ladder has no arm matching a
+> tuple type, so the IR can own the whole walk), and the pair is a TRIO — the
+> source's own credit has to be granted in the same change or the box is
+> pinned at the shared count. The drop-only knockout predicted below also
+> does not exit 99 on its own: with no retain the store is a MOVE, and the
+> census reads clean while the second owner reads a freed header. It exits 99
+> only once the credit half is present.
+
+
 Setting up to route the tuple release families through the plan, the first
 step was an instrument: a cell the routing would move. Measuring it first
 changed what the wave looks like.
