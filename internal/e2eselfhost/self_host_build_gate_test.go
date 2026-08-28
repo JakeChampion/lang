@@ -108,6 +108,35 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
+			// #7447: a function named with a reserved keyword. The permissive
+			// parser leaves an empty name and consumes nothing, so the body
+			// parsed on as top-level statements and the CHECKER reported E052
+			// plus an E001 per parameter — every diagnostic pointing away from
+			// the cause, and none of them gating the build. asmcore's
+			// check_decl_names already had the right message; it was wired only
+			// into two wasm drivers, never into the compiler. Native reports
+			// P001 here, so this is code-set parity as well as a better message.
+			name:     "keyword-fn-name-P001",
+			src:      "struct B { items: i32[] }\nfunction use(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { var a: B = B { items: [] }; return use(a); }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			// The sibling the same gate already carried: a struct named with a
+			// keyword. Unreachable from the compiler until the gate was wired in.
+			name:     "keyword-struct-name-P001",
+			src:      "struct use { x: i32 }\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			// The negative control, and the one that matters: renaming the
+			// function is all it takes, so the gate must fire on the NAME and
+			// nothing else. 320 sources (the whole stdlib, every self-host
+			// module, the fixtures) were scanned for a false positive here.
+			name:     "non-keyword-fn-name-compiles",
+			src:      "function consume(n: i32): i32 { return n + 1; }\nfunction main(): i32 { return consume(1); }\n",
+			wantDiag: "",
+		},
+		{
 			// #7311's remaining half: the STRING builtins and the free
 			// builtins had no arity rule either — `s.len(1)` and
 			// `print("a", "b")` reached lowering and were refused as "not
