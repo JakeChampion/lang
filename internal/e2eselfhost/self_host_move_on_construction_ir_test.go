@@ -138,7 +138,15 @@ function main(): i32 { return f().inner[0]; }`,
     return a[0] + b;
 }
 function main(): i32 { return f(); }`,
-			moved: "t", incs: 0,
+			// The one inc is the destructure's dup-at-extract (#7682), NOT a
+			// construction inc — the move verdict below is unchanged, which is
+			// the half this table is about. Both destructure rows read 0 here
+			// until that fix, and both OVER-RELEASED at that count: measured
+			// exit 99 (`__rc_underflow()`) on the parent against 30 / 57 on
+			// native, balanced either way, so the census could not see it. The
+			// count is a proxy for "every inc in f", so a legitimately-new one
+			// lands in it.
+			moved: "t", incs: 1,
 		},
 
 		// --- the analysis declines these, native keeps the inc ------------
@@ -178,7 +186,10 @@ function main(): i32 { return f(true); }`,
     return a[0] + b + t.1;
 }
 function main(): i32 { return f(); }`,
-			moved: "", incs: 0,
+			// Same dup-at-extract as the row above. This shape is #7682's own
+			// repro — `t` stays live for the `t.1` read, so its reclaim and the
+			// extracted `a`'s sweep both dec the same buffer.
+			moved: "", incs: 1,
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
