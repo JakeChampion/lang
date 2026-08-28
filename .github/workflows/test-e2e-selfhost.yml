@@ -302,15 +302,28 @@ jobs:
       # so a partial warm still reports the sizes it did produce.
       #
       # continue-on-error because all 18 shards `needs: warm`: a measurement
-      # step must not be able to hold the lane. Unlike the #6164 case, this
-      # hides nothing that was ever enforced — the findings ARE the annotations
-      # and the job summary, and the script exits 0 on every finding by design.
-      # Escalating to a real gate means dropping this flag AND setting
-      # FERN_CI_SIZE_GATE_STRICT.
+      # step must not be able to hold the lane. This slice stays advisory for
+      # that reason — the enforcing copy is the leaf `driver-sizes` job below,
+      # which gates nothing and so can fail. What this step is for is feedback
+      # where the drivers were actually linked; each leg compares only the
+      # drivers it linked — 5, 6 and 3 of the fifteen baselined names — and
+      # every run states that coverage rather than implying it had them all
+      # (#7519).
       - name: check linked driver sizes against the baseline
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
+      # Publish this slice for the `driver-sizes` job to union with the others.
+      # Per-job artifact, NOT merge-multiple on the far side: all four reports
+      # are named driver-sizes.txt, so merging by filename would keep one and
+      # drop three — the exact silent-partial-measurement failure #7519 is about.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: driver-sizes-x86_64-${{ matrix.key }}
+          path: ${{ runner.temp }}/driver-sizes.txt
+          retention-days: 1
+          if-no-files-found: warn
       # Publish each warmed driver for the `test` shards to download.
       - uses: actions/upload-artifact@v7
         with:
@@ -388,6 +401,15 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
+      # The tracked artifact's own slice, for the `driver-sizes` union. Without
+      # it that job is missing the one number "the self-host binary" means.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: driver-sizes-x86_64-cli
+          path: ${{ runner.temp }}/driver-sizes.txt
+          retention-days: 1
+          if-no-files-found: warn
       - name: run isolated fern.fern driver tests (in-process, local cache)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -399,6 +421,80 @@ jobs:
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
+
+  # THE COMPLETE SIZE COMPARISON, AND THE ONE THAT FAILS (#7519).
+  #
+  # The four jobs above each link a disjoint set of drivers and each check the
+  # set it linked, so every one of them compares a slice: `warm` sees 5, 6 and 3
+  # of the fifteen baselined names, `cli` sees fern.fern alone. A slice that is
+  # within tolerance printed "every driver is within 5% of its baseline", which
+  # is how five rows of a fifteen-row table read as the whole compiler while the
+  # drivers grew 2.3x — #6826 built the gate, and it warned into a channel where
+  # a per-job partial pass was indistinguishable from a full one.
+  #
+  # This job unions the four reports and compares the result ONCE, so:
+  #   * the fifteen numbers are weighed as a set, and the summary is the whole
+  #     table rather than a quarter of it;
+  #   * a baselined driver that reached no report is a MISSING finding
+  #     (FERN_SIZE_REPORT_COMPLETE=1) instead of a row nobody notices is absent
+  #     — a dead warm job used to subtract five drivers and still report green;
+  #   * findings FAIL (FERN_CI_SIZE_GATE_STRICT=1, and no continue-on-error).
+  #
+  # Strict is affordable here and nowhere else in the lane: this is a leaf.
+  # Nothing `needs:` it, so a red size gate blocks the merge and holds no other
+  # job — unlike the `warm` copy, whose 18 dependent shards are why that one
+  # stays advisory. The escalation #7519 asked for is these two variables plus
+  # the absent continue-on-error; the baselines were refreshed to measured main
+  # in the same issue, so drift here starts at zero and any finding is real.
+  #
+  # `!cancelled()` rather than success(): when a warm job fails outright its
+  # drivers go unmeasured, and saying so is this job's whole purpose.
+  driver-sizes:
+    needs: [warm, cli]
+    # Runs when a producer FAILED — that is the case worth reporting — but not
+    # when both were SKIPPED, which means `build` fell over and no driver was
+    # ever going to be linked. Without the second clause a red build earns a
+    # second, more confusing red here for measuring nothing. Same guard, same
+    # reason, as the `verify` job's `needs.test.result != 'skipped'`.
+    if: ${{ !cancelled() && (needs.warm.result != 'skipped' || needs.cli.result != 'skipped') }}
+    name: driver-sizes-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # continue-on-error: download-artifact hard-fails when its pattern matches
+      # nothing (every producing job died, say). Let it through so the check
+      # below fails on its own "nothing was measured" rather than the job dying
+      # on an opaque "unable to find any artifacts". A download that brings back
+      # some reports and not others reaches the check too, and that is the case
+      # where it names the drivers it never saw.
+      #
+      # No merge-multiple: all four artifacts contain a file called
+      # driver-sizes.txt, so merging by filename would keep one and silently
+      # drop three. Each lands in its own subdirectory and the step below cats
+      # them, which is the idiom the shard jobs already use.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: driver-sizes-x86_64-*
+          path: ${{ runner.temp }}/driver-sizes
+      - name: union the per-job size reports
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/driver-sizes"
+          # Truncate first: the union must be exactly what this run produced.
+          : >"$RUNNER_TEMP/union.txt"
+          find "$RUNNER_TEMP/driver-sizes" -type f -name 'driver-sizes.txt' -print0 |
+            sort -z |
+            xargs -0 -r cat >>"$RUNNER_TEMP/union.txt"
+          echo "reports found: $(find "$RUNNER_TEMP/driver-sizes" -type f -name 'driver-sizes.txt' | wc -l)"
+          echo "driver lines:  $(wc -l <"$RUNNER_TEMP/union.txt")"
+          cat "$RUNNER_TEMP/union.txt"
+      - name: check every baselined driver against the baseline
+        env:
+          FERN_SIZE_REPORT_COMPLETE: "1"
+          FERN_CI_SIZE_GATE_STRICT: "1"
+        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/union.txt"
 
   gen2:
     needs: build
