@@ -52,6 +52,14 @@ anything is not shipped.
 | `tuple_mixed__callarg__read` (guard row) | clean / clean | clean / clean |
 | `tuple_mixed__callarg__stored_struct` | clean / leak (unchanged) | clean / leak (unchanged) |
 
+The new `struct_tuple_field_reclaim` conformance case covers three
+positions — a moved store, an aliased store whose local is read after it,
+and a struct held across every round — and passes on native plus all three
+self-host targets. Its sentinels are 251-253, above the `% 113` the success
+path returns: a sentinel inside that range is indistinguishable from a
+correct answer landing on it, which cost me a phantom "native rc underflow"
+before I noticed the collision.
+
 All 134 arm64 matrix cells: zero errors, zero failures. Stage-2 fixpoint
 green.
 
@@ -59,6 +67,27 @@ green.
 interprocedural row, and its credit gate is steps 2-3 of the wave. Those
 steps are unaffected by this entry except that step 1, as previously
 scoped, no longer exists.
+
+## Widening on the type alone was a compile failure
+
+The first version admitted a tuple field on the FIELD TYPE alone. That is
+wrong, and the reason is the same `s.fail()` this entry opened with: once a
+tuple field enters the block, a value shape no arm validates leaves
+`fav_ok` false and BAILS the lowering. `Hold { t: (7, [7, 8]) }` — a tuple
+literal, which no arm matched — went from a leak to
+`module is not IR-eligible`.
+
+Neither existing gate could see it. The leak-matrix cells build their tuple
+through a local, never a literal in the field slot, and the 1533-row
+emit-hash corpus had no struct-with-tuple-field at all — which is why the
+sweep across this change is byte-identical everywhere and says nothing.
+The fixture added alongside is what catches it.
+
+The admission is therefore a conjunction of field TYPE and value SHAPE
+(`tuple_field_reclaim_ok`): a fresh tuple literal, or a bare ident naming a
+tuple-box local. Anything else never enters the block and keeps the prior
+leaking-but-sound behaviour. Widening a gate that bails is not the same
+kind of change as widening a gate that merely enables.
 
 ## The instrument trap this sat on
 
