@@ -1,0 +1,36 @@
+// A struct producer that RETURNS A LOCAL — the ordinary way real code builds
+// a value — beside the two variants a credit must refuse: returning a
+// parameter, and returning a reassigned local. The corpus held 21
+// literal-returning producers and 3 parameter-returning ones and none of
+// this form, so every change to producer crediting swept back byte-identical
+// whether right or wrong (#7362, #7357 shape 4).
+//
+// The exits, the underflow check and keep's intact buffer are the
+// assertions — crediting pass(keep) or re()'s superseded first literal would
+// release what another owner holds. The census is NOT balanced on the
+// self-host today: measured 241 B/round, doubling with the round count
+// (1204/400 live=24120 at 100 rounds, 48120 at 200) against native's
+// 602/602/0 — the rc-array-field struct producer's local return is a live
+// uncredited class this fixture makes corpus-visible for the first time.
+struct P { xs: i32[], s: string }
+
+function w(s: string): string { return s + ""; }
+
+function mk(i: i32): P { var p: P = P { xs: [i, i + 1], s: w("f") }; return p; }
+function pass(p: P): P { return p; }
+function re(i: i32): P { var p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
+
+function main(): i32 {
+    var keep: P = P { xs: [9, 9], s: w("k") };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var a: P = mk(i);      t = t + a.xs.len();
+        var b: P = pass(keep); t = t + b.xs.len();
+        var c: P = re(i);      t = t + c.xs.len();
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (keep.xs.len() != 2) { return 98; }
+    return t % 113;
+}

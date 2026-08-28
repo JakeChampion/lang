@@ -1,0 +1,34 @@
+// A BINDER — a for-in element — sharing a name with a credited declaration in
+// a sibling block. The binder is not a StmtVar, so no collector ever credits
+// it; but it has a NAME, and a name-keyed reclaim credit hands it the
+// sibling's verdict: two stray releases a round on payloads `keep` still owns
+// (#7356's binder_forin_collide, #7357 shape 2). Structurally different from
+// shadow_rc_struct_sibling_scopes: a collector-side fix does not cover a
+// binder, which is why this shape gets its own fixture.
+//
+// MEASURE WITH THE SELF-HOST, NOT NATIVE. Native and interp are correct on
+// both sides of the fix; the defect class lives in irlower.
+//
+// The underflow counter is the assertion, not the answer: a stray release of
+// a block another owner still holds returns it to the freelist, so
+// FERN_LEAKCHECK reads allocs == frees at live_bytes == 0 on both sides of
+// the fault. The positive control is the census staying FLAT in the round
+// count: an uncredited Some([..]) would leak once per round, and the
+// self-host measures 208 live bytes at 100 and at 200 rounds alike (a
+// bounded safe floor), so the sibling block's credit fires on this shape.
+function main(): i32 {
+    var keep: Option[i32[]][] = [Some([1, 2]), None, Some([3, 4, 5])];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        { var o: Option[i32[]] = Some([i + 7, i + 8]); match (o) { Some(q) => { t = t + q.len(); }, None => {} } }
+        for o in keep { match (o) { Some(p) => { t = t + p[0]; }, None => {} } }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    // keep's payloads must still be intact after 100 rounds of collisions.
+    var s: i32 = 0;
+    for o in keep { match (o) { Some(p) => { s = s + p.len(); }, None => {} } }
+    if (s != 5) { return 98; }
+    return t % 113;
+}
