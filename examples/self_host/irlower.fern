@@ -44644,6 +44644,142 @@ function arrenum_escapes(stmts: ast.Stmt[], name: string, borrowable: string[]):
     return false;
 }
 
+// arrenum_elem_read_of: `e` is exactly an indexed read `name[i]` whose index
+// does not itself mention `name`; the admissible-extraction shape the two
+// arms below share.
+function arrenum_elem_read_of(e: ast.Expr, name: string): boolean {
+    var no_reg: string[] = [];
+    match (e) {
+        ast.ExprIndex(x) => {
+            match (x.array) {
+                ast.ExprIdent(aid) => {
+                    if (aid.name == name) { return !arrenum_esc_expr(x.index, name, no_reg); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// arrenum_param_arm_ok: every binding a match arm takes from an admitted
+// element read stays confined to its arm — vetted by binding_escapes_arm,
+// the strict form (a bare re-bind or bare assign of the binding refuses;
+// `.len()`, indexing, arithmetic over reads admit). The at-binding holds the
+// ELEMENT BOX itself and gets the same vet: confined-to-the-arm means it dies
+// before the caller's walk frees the box.
+function arrenum_param_arm_ok(arm: ast.MatchArm): boolean {
+    var no_reg: string[] = [];
+    match (arm.pattern) {
+        ast.PatVariant(pv) => {
+            if (pv.binding.len() > 0 && pv.binding != "_" && binding_escapes_arm(arm, pv.binding, no_reg)) { return false; }
+            var bi: i32 = 0;
+            while (bi < pv.extra_bindings.len()) {
+                var bn: string = pv.extra_bindings[bi];
+                if (bn.len() > 0 && bn != "_" && binding_escapes_arm(arm, bn, no_reg)) { return false; }
+                bi = bi + 1;
+            }
+            if (pv.at_binding.len() > 0 && pv.at_binding != "_" && binding_escapes_arm(arm, pv.at_binding, no_reg)) { return false; }
+        },
+        _ => {}
+    }
+    return true;
+}
+
+// arrenum_param_escapes: arrenum_escapes for the "ELB:" flag question only —
+// the callee-side walk of a borrowed array-of-boxes PARAM, widened with the
+// extract-then-die admissions the borrowed-arg suites' callee_extracts_element
+// rows name. Two shapes of an element read `name[i]` are admitted:
+//
+//   - the exact scrutinee of a `match`, when every arm binding (payloads and
+//     the at-binding) is confined to its arm (arrenum_param_arm_ok);
+//   - the whole init of `var e = name[i]`, when the local is confined by the
+//     same proof pair the box flag trusts for a param name —
+//     body_unsafe_for_match_borrow (a bare-ident `match (e)` is a borrow) and
+//     param_match_binding_escapes (its arms' bindings stay confined).
+//
+// In both, the extracted box dies inside the callee before the CALLER's
+// element walk frees it. Every other position of `name[i]` — a struct-literal
+// slot, an append or call argument, a return value — stays an escape: that
+// boundary is what keeps element_handed_out refused, and weakening it was a
+// measured rc underflow (exit 99) with a perfect-looking census. All inner
+// proofs run under empty registries, so the flag this feeds stays
+// registry-independent and the interproc fixpoint cannot oscillate.
+function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]): boolean {
+    var no_reg: string[] = [];
+    for stmt in stmts {
+        var st_esc: boolean = true;
+        match (stmt) {
+            ast.StmtVar(v) => {
+                var whole_alias: boolean = false;
+                match (v.init) {
+                    ast.ExprIdent(vaid) => { if (vaid.name == name) { whole_alias = true; } },
+                    _ => {}
+                }
+                if (arrenum_elem_read_of(v.init, name)
+                    && !body_unsafe_for_match_borrow(body, v.name, no_reg, no_reg)
+                    && !param_match_binding_escapes(body, v.name)) {
+                    st_esc = false;
+                } else if (whole_alias && !arrenum_param_escapes(body, v.name, body)) {
+                    // A whole-array alias (`var x = src`) is admissible when the
+                    // alias itself passes this same walk — its element reads get
+                    // the admissions above, its bare uses (a return, a store, an
+                    // append) refuse. Recursion is bounded by the def chain: the
+                    // alias's own walk asks about x, and only another
+                    // `var y = x` recurses further down it.
+                    st_esc = false;
+                } else {
+                    st_esc = arrenum_esc_expr(v.init, name, no_reg);
+                }
+            },
+            ast.StmtAssign(a) => {
+                if (a.target == name) { st_esc = true; }
+                else { st_esc = arrenum_esc_expr(a.value, name, no_reg); }
+            },
+            ast.StmtReturn(r) => { st_esc = arrenum_esc_expr(r.value, name, no_reg); },
+            ast.StmtExpr(e) => { st_esc = arrenum_esc_expr(e.value, name, no_reg); },
+            ast.StmtIf(f) => {
+                st_esc = arrenum_esc_expr(f.cond, name, no_reg)
+                    || arrenum_param_escapes(f.then_body, name, body)
+                    || arrenum_param_escapes(f.else_body, name, body);
+            },
+            ast.StmtWhile(w) => {
+                st_esc = arrenum_esc_expr(w.cond, name, no_reg) || arrenum_param_escapes(w.body, name, body);
+            },
+            ast.StmtFor(fo) => {
+                st_esc = arrenum_esc_expr(fo.iter, name, no_reg) || arrenum_param_escapes(fo.body, name, body);
+            },
+            ast.StmtMatch(m) => {
+                var m_esc: boolean = false;
+                if (arrenum_elem_read_of(m.scrutinee, name)) {
+                    for arm in m.arms {
+                        if (!arrenum_param_arm_ok(arm)) { m_esc = true; }
+                        if (arm.has_guard && arrenum_esc_expr(arm.guard, name, no_reg)) { m_esc = true; }
+                        if (arrenum_param_escapes(arm.body, name, body)) { m_esc = true; }
+                    }
+                } else {
+                    m_esc = arrenum_esc_expr(m.scrutinee, name, no_reg);
+                    if (!m_esc) {
+                        for arm in m.arms {
+                            if (arm.has_guard && arrenum_esc_expr(arm.guard, name, no_reg)) { m_esc = true; }
+                            if (arrenum_param_escapes(arm.body, name, body)) { m_esc = true; }
+                        }
+                    }
+                }
+                st_esc = m_esc;
+            },
+            ast.StmtDefer(d) => {
+                var dl: ast.Stmt[] = [d.action];
+                st_esc = arrenum_param_escapes(dl, name, body);
+            },
+            _ => { st_esc = false; },
+        }
+        if (st_esc) { return true; }
+    }
+    return false;
+}
+
 // ── the APPEND-BUILT half of the arrenum class ───────────────────────────────
 //
 // `var xs: E[] = []` grown by `xs = xs.append(E.A(..))`. arrenum_lit_enum rejects
@@ -56896,7 +57032,7 @@ function arrenum_elem_borrow_flags(fn: parser.FuncDecl, boxflags: string): strin
         var pty: string = fn.params[pj].type_name;
         if (pj < boxflags.len() && boxflags[pj] == b'1'
             && pty.len() >= 3 && slice_unchecked(pty, pty.len() - 2, pty.len()) == "[]"
-            && !arrenum_escapes(fn.body, fn.params[pj].name, none)) {
+            && !arrenum_param_escapes(fn.body, fn.params[pj].name, fn.body)) {
             elb = elb + "1";
             any1 = true;
         } else { elb = elb + "0"; }

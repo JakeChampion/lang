@@ -136,14 +136,18 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			want: 6, balance: true,
 		},
 		{
-			// REFUSED: an element extraction. Sound to admit in this exact shape
-			// — the extracted box dies inside the callee — but "ELB:" is the
-			// class's own len()-only element rule and does not model that,
-			// exactly as on the enum side. The floor is a leak either way.
+			// ADMITTED by the extract-then-die widening: `var e = src[0]` with a
+			// confined local (the same body_unsafe_for_match_borrow +
+			// param_match_binding_escapes pair the box flag trusts for a param
+			// name) keeps the "ELB:" flag, because the extracted box dies inside
+			// the callee before the caller's element walk frees it. This is NOT
+			// the box-flag weakening this row used to guard against — the four
+			// handout witnesses below still refuse, and the widening's own
+			// grant is what the balance pins now.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { var e: Inner = src[0]; return e.xs.len() + i; }`,
 				producer, "rd(keep, r)"),
-			want: 9, leaks: true,
+			want: 9, balance: true,
 		},
 		{
 			// REFUSED by the BOX flag itself, before the element tier is
