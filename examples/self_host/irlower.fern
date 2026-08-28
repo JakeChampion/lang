@@ -43170,6 +43170,51 @@ function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan
     return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name) && !name_is_alias_bound(stmts, name);
 }
 
+// unmatched_optopt_ann_is / unmatched_optopt_init_is_fresh: the NESTED-OPTION
+// members of the set emit_optarr_deep_free can release with a flat dec (#7714).
+// The payload of an `Option[Option[<scalar>]]` IS the inner option box — an
+// rc-headered block owning no pointer — so the emitter's existing payload dec is
+// its complete release. No new emitter and no deep walk; the credit was the only
+// missing piece, exactly as the Result widening above rides the same emitter.
+//
+// type_is_scalar_union is the gate for the same reason it is elsewhere: a flat
+// dec frees the inner box but nothing the box owns, so an rc inner payload
+// (`Option[Option[string]]`) would be stranded. Those want the deep release and
+// stay uncredited here.
+function unmatched_optopt_ann_is(type_name: string): boolean {
+    return type_is_scalar_union(opttup_inner_type(type_name));
+}
+
+// The construction must ALLOCATE the inner box here rather than alias one the
+// caller owns: `Some(Some(x))`, `Some(None)`, or a bare `None`. A `Some(inner)`
+// of an existing local is refused — the family's usual freshness requirement,
+// and load-bearing for the same reason (the payload is stored uncounted).
+function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprIdent(nid) => { return nid.name == "None"; },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (cid.name != "Some" || c.args.len() != 1) { return false; }
+                    match (c.args[0]) {
+                        ast.ExprIdent(aid) => { return aid.name == "None"; },
+                        ast.ExprCall(ic) => {
+                            match (ic.callee) {
+                                ast.ExprIdent(icid) => { return (icid.name == "Some" || icid.name == "Ok" || icid.name == "Err") && ic.args.len() == 1; },
+                                _ => { return false; }
+                            }
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -43177,8 +43222,8 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
         match (stmt) {
             ast.StmtVar(v) => {
                 var oa_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
-                if (unmatched_optarr_ann_is(v.type_name)
-                    && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
+                if (((unmatched_optarr_ann_is(v.type_name) && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg))
+                        || (unmatched_optopt_ann_is(v.type_name) && unmatched_optopt_init_is_fresh(v.init)))
                     && util.index_of_str(reassigned, v.name) < 0
                     && oa_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
