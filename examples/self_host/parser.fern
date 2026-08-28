@@ -6403,7 +6403,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 // the fn value to a real type (#5986). The irlower registry
                 // consumers all reject tuple / array / bracketed spellings, so
                 // neither adds a spurious registry entry.
-                else if (rr_name.len() >= 2 && slice_unchecked(rr_name, 0, 1) == "(") { fn_ret_ty = rr_name; }
+                else if (util.is_tuple_type_name(rr_name)) { fn_ret_ty = rr_name; }
                 else if (r_is_arr) { fn_ret_ty = rr_name; }
                 // `-fmt` keeps the declared signature instead of the flat tag:
                 // `fn` names neither what the callback takes nor what it
@@ -8401,8 +8401,8 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     // pairwise, so a tuple (or tuple-array, via the array case above) parameter
     // recovers its element type vars. first_bracket only finds `[`, so without
     // this a tuple param's vars never bind (`from[K,V](pairs: (K,V)[])`).
-    if (pattern.len() >= 2 && slice_unchecked(pattern, 0, 1) == "(" && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == ")"
-            && concrete.len() >= 2 && slice_unchecked(concrete, 0, 1) == "(" && slice_unchecked(concrete, concrete.len() - 1, concrete.len()) == ")") {
+    if (util.is_tuple_type_name(pattern) && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == ")"
+            && util.is_tuple_type_name(concrete) && slice_unchecked(concrete, concrete.len() - 1, concrete.len()) == ")") {
         var tpparts: string[] = split_top_commas(slice_unchecked(pattern, 1, pattern.len() - 1));
         var tcparts: string[] = split_top_commas(slice_unchecked(concrete, 1, concrete.len() - 1));
         if (tpparts.len() == tcparts.len()) {
@@ -9416,7 +9416,7 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
     if (type_ends_arr(name)) {
         return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
     }
-    if (name.len() >= 2 && slice_unchecked(name, 0, 1) == "(" && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
+    if (util.is_tuple_type_name(name) && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
         var tparts: string[] = split_top_commas(slice_unchecked(name, 1, name.len() - 1));
         var tnin: string = "";
         var tj: i32 = 0;
@@ -9942,7 +9942,7 @@ function collect_tvars(name: string, acc: string[]): string[] {
         return acc.append(name);
     }
     if (type_ends_arr(name)) { return collect_tvars(slice_unchecked(name, 0, name.len() - 2), acc); }
-    if (name.len() >= 2 && slice_unchecked(name, 0, 1) == "(" && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
+    if (util.is_tuple_type_name(name) && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
         var tparts: string[] = split_top_commas(slice_unchecked(name, 1, name.len() - 1));
         var tcur: string[] = acc;
         var tj: i32 = 0;
@@ -10233,7 +10233,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
         var r: TyIns = mg_ty(slice_unchecked(ty, 0, ty.len() - 2), gstructs, ins);
         return TyIns { ty: r.ty + "[]", mins: r.mins };
     }
-    if (ty.len() >= 2 && slice_unchecked(ty, 0, 1) == "(" && slice_unchecked(ty, ty.len() - 1, ty.len()) == ")") {
+    if (util.is_tuple_type_name(ty) && slice_unchecked(ty, ty.len() - 1, ty.len()) == ")") {
         var tps: string[] = split_top_commas(slice_unchecked(ty, 1, ty.len() - 1));
         var tcur: Insts = ins;
         var tnin2: string = "";
