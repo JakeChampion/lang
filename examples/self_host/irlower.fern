@@ -14527,7 +14527,16 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                         // arm below. Both are pre-cleared by tuple_field_reclaim_ok,
                         // which is what keeps an unadmitted shape out of this block
                         // and away from its s.fail().
-                        if (tuple_field_reclaim_ok(cfft, fav, s)) { fav_ok = true; }
+                        // The retain half of the pair emit_struct_tuple_field_drops
+                        // documents: its child walk is __fern_rc_is_unique-gated and
+                        // that gate is only sound if a SHARED tuple field was
+                        // alias-inc'd here, so two owners cannot each read unique.
+                        // fav_alias_inc also routes the move analysis, which elides
+                        // both the inc and the sweep dec when the store is a last use.
+                        if (tuple_field_reclaim_ok(cfft, fav, s)) {
+                            fav_ok = true;
+                            fav_alias_inc = true;
+                        }
                     },
                     // A BARE array-field COPY (`State { xs: s.xs }`, or
                     // array-of-struct `S { ops: s.ops }`): the field read
@@ -23933,6 +23942,11 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
         // struct's __struct_drop is emitted; the construction alias-inc balances the
         // dec. #4297 A2.
         if (decl_is_enum(structs, fdt)) { return true; }
+        // A DIRECT tuple field: emit_struct_field_drops already routes one
+        // through emit_struct_tuple_field_drops, but a struct whose only rc
+        // field is a tuple never reached that code because this admission
+        // predicate had no tuple case, so its drops were never emitted at all.
+        if (util.is_tuple_type_name(fdt) && is_leaksafe_tuple_field(fdt)) { return true; }
         fi = fi + 1;
     }
     return false;
