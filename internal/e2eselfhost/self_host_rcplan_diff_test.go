@@ -1285,6 +1285,38 @@ function main(): i32 { return raw(3); }`,
 				"raw": {"aliasBindIncs": {native: "", selfhost: "3:2=addr"}},
 			},
 		},
+		{
+			// The dup-at-extract gap, pinned at analysis level ahead of the
+			// tuple wave of the rc-plan promotion
+			// (docs/SELFHOST-RC-PLAN-PROMOTION.md; the wave order in
+			// docs/rc-log/2026-08-24-scenums-plan-routing.md sequences
+			// str/tuple last, behind this retain-side port). The BIND half
+			// already agrees: both sides retain `var e = src.1` (anchored
+			// below), which is why the elemret leak is one free short rather
+			// than a dangle. What the self-host is missing at analysis level
+			// is OWNERSHIP of the extracted element: native marks e
+			// freeEligible with a last use; the self-host tracks neither, so
+			// no reclaim can ever attach — and the direct `return src.1`
+			// spelling (no bind at all) takes native's return-transfer inc,
+			// which no dumped table shows. Both feed the elemret UAF
+			// boundary (matrix rows tuple_mixed__elemret__*: a retain-only
+			// or grant-only half-fix moves those two rows in OPPOSITE
+			// directions). When the port lands, these pins flip to anchored
+			// agreements and the matrix rows move together.
+			name: "tuple-elem-extract-bind",
+			src: `function get(src: (i32, i32[])): i32[] {
+	var e: i32[] = src.1;
+	return e;
+}
+function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).len(); }`,
+			anchor: map[string]map[string]string{"get": {"aliasBindIncs": "2:2=e"}},
+			diverge: map[string]map[string]divergence{
+				"get": {
+					"freeEligible": {native: "e", selfhost: ""},
+					"lastUses":     {native: "e=1", selfhost: ""},
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {
