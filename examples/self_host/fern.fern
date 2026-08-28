@@ -105,6 +105,7 @@ import "./platforms";
 import "./caps";
 import "./modloader";
 import "./visibility";
+import "./asmcore";
 import "./fern_toml";
 import "./literate";
 import "./ferndoc";
@@ -1278,12 +1279,43 @@ function bundle_visibility_diags(b: Bundle): boolean {
     return vis_diags.len() > 0;
 }
 
+// report_decl_name_errors prints asmcore's nameless-declaration diagnostics and
+// reports whether any were found, so the `-check` and build paths share one
+// gate rather than two copies of the loop (#7447). The parser has no error
+// channel, so a keyword written where a declaration name belongs leaves an
+// EMPTY name and consumes nothing — asmcore.check_decl_names is where that is
+// caught, and it was reachable only from the two wasm drivers.
+function report_decl_name_errors(mod: parser.Module): boolean {
+    var ds: util.Diag[] = asmcore.check_decl_names(mod);
+    if (ds.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var d: util.Diag = ds[i];
+        if (d.line > 0) {
+            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+        } else {
+            eprint("error[" + d.code + "]: " + d.message + "\n");
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // check_bundle type-checks a loaded program and reports its diagnostics,
 // returning the exit code `-check` answers with: 0 well-typed and within
 // every capability grant, 1 otherwise.
 function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     var merged: parser.Module = b.merged;
     var pkgs: caps.Pkg[] = b.pkgs;
+    // Nameless-declaration gate (#7447), ahead of the checker and returning
+    // without it. The permissive parser leaves an empty name where a keyword
+    // was written (`function use()`) and consumes nothing, so the body parses
+    // on as top-level statements: the checker then reported E052 plus an E001
+    // per parameter name, every one of them pointing AWAY from the cause.
+    // Native stops at its parse error and prints only that, so reporting this
+    // alone is both the honest diagnostic and the code-set parity — anything
+    // downstream of a declaration that did not parse is noise.
+    if (report_decl_name_errors(merged)) { return 1; }
     var mt: checker.ModuleTypes = checker.check_module(merged);
     // Surface the coded diagnostics (the same E0XX codes the Go
     // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
@@ -2140,6 +2172,12 @@ function run(): i32 {
         }
         return 254;
     }
+
+    // The nameless-declaration gate the `-check` path runs (#7447), for the
+    // same reason the checker gate below exists: without it a build is MORE
+    // permissive than `-check`, and a keyword-named function reaches codegen
+    // as a nameless declaration.
+    if (report_decl_name_errors(merged)) { return 1; }
 
     // Build gate: reject what the checker rejects BEFORE codegen, so the
     // compiler is not MORE permissive than the native compiler / `-check`
