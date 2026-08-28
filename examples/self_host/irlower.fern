@@ -37729,6 +37729,18 @@ pub function enum_arr_elems_walk_ok(structs: parser.StructDecl[], ename: string)
     return any_arr;
 }
 
+// enum_arr_release_walk_ok: the enum-array element release may run for E —
+// either the payload walk is provably balanced (enum_arr_elems_walk_ok), or
+// every variant's payloads are scalar, where the release degenerates to a
+// box-only free per element with no payload dec to protect (#7678: without
+// it an all-scalar enum array stranded every element box). A wrapper on
+// purpose: enum_arr_elems_walk_ok keeps its meaning, so the field-walk
+// emitters keyed on it emit no empty-dispatch helper for the scalar case.
+pub function enum_arr_release_walk_ok(structs: parser.StructDecl[], ename: string): boolean {
+    if (enum_arr_elems_walk_ok(structs, ename)) { return true; }
+    return decl_is_enum(structs, ename) && enum_all_variants_scalar(structs, ename);
+}
+
 // enum_walk_payload_offsets: for one variant, the byte offsets of its
 // leak-safe-array payload fields ((k+1)*8 — shape@0, fields@8+), for the
 // element-walk emitters.
@@ -44468,6 +44480,10 @@ function arrenum_lit_enum(e: ast.Expr, structs: parser.StructDecl[]): string {
             var i: i32 = 0;
             while (i < arr.elements.len()) {
                 var o: string = fresh_rcpayload_enum_init(arr.elements[i], structs, [], [], false);
+                // An all-scalar enum's fresh ctor qualifies too (#7678): its
+                // element release is a box-only free, so the same sole-owner
+                // argument holds with no payload counting to prove.
+                if (o.len() == 0) { o = fresh_scalar_enum_init(arr.elements[i], structs); }
                 if (o.len() == 0) { return ""; }
                 if (owner.len() == 0) { owner = o; }
                 if (o != owner) { return ""; }
@@ -44822,7 +44838,9 @@ function arrenum_self_append_elem(e: ast.Expr, name: string, structs: parser.Str
                         ast.ExprIdent(rid) => {
                             if (rid.name != name) { return false; }
                             if (arrenum_esc_expr(c.args[0], name, borrowable)) { return false; }
-                            return fresh_rcpayload_enum_init(c.args[0], structs, [], [], false) == ename;
+                            if (fresh_rcpayload_enum_init(c.args[0], structs, [], [], false) == ename) { return true; }
+                            // The all-scalar sibling of the line above (#7678).
+                            return fresh_scalar_enum_init(c.args[0], structs) == ename;
                         },
                         _ => { return false; }
                     }
@@ -45049,7 +45067,7 @@ function arrenum_append_built_enum(stmts: ast.Stmt[], name: string, tname: strin
     if (tname.len() < 3) { return ""; }
     if (slice_unchecked(tname, tname.len() - 2, tname.len()) != "[]") { return ""; }
     var ename: string = slice_unchecked(tname, 0, tname.len() - 2) + "";
-    if (!enum_arr_elems_walk_ok(structs, ename)) { return ""; }
+    if (!enum_arr_release_walk_ok(structs, ename)) { return ""; }
     if (!arrenum_name_is_appended(stmts, name, structs, ename, [])) { return ""; }
     return ename;
 }
@@ -51977,7 +51995,7 @@ function arrenum_producer_enum(fn: parser.FuncDecl, structs: parser.StructDecl[]
     if (rt.len() < 3) { return ""; }
     if (slice_unchecked(rt, rt.len() - 2, rt.len()) != "[]") { return ""; }
     var ename: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
-    if (!enum_arr_elems_walk_ok(structs, ename)) { return ""; }
+    if (!enum_arr_release_walk_ok(structs, ename)) { return ""; }
     if (!body_has_return(fn.body)) { return ""; }
     if (body_has_nonfresh_arrenum_return(fn.body, fn.body, structs, ename, [])) { return ""; }
     return ename;
