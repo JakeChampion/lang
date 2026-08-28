@@ -518,11 +518,24 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 	if body == nil {
 		return false
 	}
+	// A field access in CALLEE position ((x.f)(…), dyn dispatch) hands the
+	// receiver to a call no escape oracle covers — concrete method calls are
+	// already mangled to Ident-callee __method_* form by rc time, so only
+	// the unanalyzable shapes remain. Leave those targets unexcused.
+	calleeField := map[*ast.FieldAccess]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if fa, ok := c.Callee.(*ast.FieldAccess); ok {
+				calleeField[fa] = true
+			}
+		}
+		return true
+	})
 	excused := map[*ast.Ident]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FieldAccess:
-			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name && !calleeField[x] {
 				excused[id] = true
 			}
 		case *ast.Index:

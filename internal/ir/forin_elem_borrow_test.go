@@ -94,6 +94,58 @@ function main(): i32 { return scan_local() + scan_call(); }`)
 	}
 }
 
+// The user-callee leg of bindingConfinedToArm delegates to the paramEscapes
+// oracle (borrowingCallArg): a callee whose parameter provably does not escape
+// accepts the borrow, one that stores its parameter refuses it. This pins both
+// directions of that delegation through the for-in path.
+func TestForinElemBorrowUserCalleeEscape(t *testing.T) {
+	ip := lowerForTest(t, forinScanPrelude+`
+function note(s: S): i32 { return s.fields.len(); }
+function stash(acc: S[], s: S): S[] { return acc.append(s); }
+function scan_note(xs: S[]): i32 {
+    var n: i32 = 0;
+    for sd in xs { n = n + note(sd); }
+    return n;
+}
+function scan_stash(xs: S[]): i32 {
+    var acc: S[] = [];
+    for sd in xs { acc = stash(acc, sd); }
+    return acc.len();
+}
+function main(): i32 { return scan_note(mks()) + scan_stash(mks()); }`)
+	ni, _, ndr := rcTraffic(ip, "scan_note")
+	if ni != 1 || ndr != 0 {
+		t.Errorf("non-escaping user callee should accept the borrow (only the iterand pair): inc=%d drops=%d", ni, ndr)
+	}
+	si, _, _ := rcTraffic(ip, "scan_stash")
+	if si <= 1 {
+		t.Errorf("escaping user callee should keep the owned element: inc=%d", si)
+	}
+}
+
+// The nested scanner (the decl_field_type shape from #6888): the outer element
+// borrows, the inner iterand is an owned field alias retained once per OUTER
+// iteration, and the inner element borrows from it — so the whole nest emits
+// no drop calls and exactly two retains (outer iterand + inner iterand).
+func TestForinElemBorrowNested(t *testing.T) {
+	ip := lowerForTest(t, forinScanPrelude+`
+function scan_nested(xs: S[]): i32 {
+    var n: i32 = 0;
+    for sd in xs {
+        for f in sd.fields { n = n + f.len(); }
+    }
+    return n;
+}
+function main(): i32 { return scan_nested(mks()); }`)
+	incs, _, drops := rcTraffic(ip, "scan_nested")
+	if drops != 0 {
+		t.Errorf("read-only nested for-in should emit no drop calls, got %d", drops)
+	}
+	if incs > 2 {
+		t.Errorf("nested for-in should retain only the two iterands, got %d rc_inc", incs)
+	}
+}
+
 // Each escaping shape must refuse the borrow: the element keeps its retain,
 // so the function carries strictly more rc_inc than its confined sibling.
 // The confined sibling in every pair is scan_ok, byte-for-byte the happy path.
