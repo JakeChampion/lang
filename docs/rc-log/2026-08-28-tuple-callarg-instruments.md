@@ -33,17 +33,54 @@ family. It is one row again.
 ## What that does to the wave's shape
 
 The tuple routing is therefore not a no-op convergence change: it has a
-real row to gain. But the row it gains is the counted-sink channel, which
-is the one the struct wave needed `struct_arg_to_handback` and a
-`handback_params` registry for — the plan grants a call arg unconditionally
-and cannot see what the callee did with it. Granting this shape is correct
-only because the store is counted, and consuming the plan's verdict is
-sound only once the self-host's struct-literal store is proven to retain a
-tuple field co-extensively (the #7253 discipline).
+real row to gain. But a follow-up pass established that the row is further
+away than "route the gate", and in the dangerous direction.
 
-So the next increment is not "route the gate". It is: establish the
-counted-store retain for tuple fields, then route, with this pair of cells
-as the instrument — the guard row must hold clean while the gap row flips.
+**Native's store is counted; the self-host's is neither counted nor
+dropped.** `needsRcIncOnAlias` has a tuple arm, so native's struct-literal
+field store retains, and `genStructDropFn` emits a child drop for a tuple
+field (`arrElemIsRcTracked` includes `TupleType`) — the pair that makes the
+caller's release balanced. The self-host has **neither half**:
+`lower_expr_struct_lit`'s `fav_alias_inc` fires for arrays, nested structs,
+enums and strings and has no tuple arm at all, and `emit_ir_struct_drop_one`
+has no `k_tuple` — `struct_has_reclaim_array_field` says so in its own
+comment. So today's self-host is internally consistent in the LEAKING
+direction: no inc, no dec, the tuple leaks with the struct, sound.
+
+That inverts the ordering. Granting the caller's credit now is a
+use-after-free, not a leak fix. The cell as written does not observe it
+(`h` dies in the same frame), but this does:
+
+```fern
+function mk(): Hold { var k: (i32, i32[]) = (5, [6, 7]); return keepit(k); }
+```
+
+`k` would take its deep free at exit while the returned `Hold.t` still
+points at it — the exit-99 / sanitizer class, not a matrix leak.
+
+## The ordering this implies
+
+1. **The co-extensive retain + drop pair** (#7253 discipline, both halves in
+   one commit): a tuple arm in `lower_expr_struct_lit`, a `k_tuple` arm in
+   `emit_ir_struct_drop_one` and its arm64/wasm twins, and
+   `struct_has_reclaim_array_field` admitting a tuple field. Instrument: a
+   CALLER-LOCAL cell (`var k = …; var h = Hold { t: k, n: 1 };`), which
+   measures the pair with no interprocedural component, plus a knockout each
+   way — retain-only leaks, drop-only exits 99.
+2. **A `"TCNT:"` counted tier** in `param_counted_of`, folded by
+   `borrow_reg_with_counted` (5-byte key, so it satisfies the `bar > 5`
+   guard). Note `arrparam_use_ok`'s struct-lit arm defaults `scnt` true and
+   would credit the new tier unconditionally — it needs the
+   `struct_routes_field_reclaim_at` conjunct first.
+3. **Then the routing**, telling BOTH escape scans: `rctuple_esc_expr`'s
+   call arm consults only `"TUPB:"` today, so the shared-gate fix alone
+   leaves the row refused — the standing "a class consults more than one
+   escape scan" warning. Watch `emit_rctuple_deep_free`: it is not
+   `is_unique`-gated, so two owners each walking the children is the exit-99
+   shape the struct family needed `emit_struct_field_drops_gated` for.
+
+The two cells stay the instrument throughout: the guard row holds clean,
+the gap row flips.
 
 ## Also recorded
 
