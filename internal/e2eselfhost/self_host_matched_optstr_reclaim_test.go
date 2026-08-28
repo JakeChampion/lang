@@ -32,6 +32,14 @@ import (
 // and for the string kind released nothing. `collect_fresh_optstr_names` fills
 // it, disjoint from its sibling for exactly that reason.
 //
+// #7712 then fills the REBIND quadrant of the same collector: a reassigned name
+// whose every rebind is itself fresh, which its OPTARRARR and OPTSTRUCT siblings
+// already admitted via `opt_rebinds_all_fresh`. Nothing new releases it — the
+// assign path already routed an OPTSTR slot to `emit_optstr_reclaim_store`, so
+// only the credit was missing. Admitting reassignment must not weaken either
+// proof, which is what `refuses_rebind_aliasing_param` (an aliased rebind) and
+// `refuses_reassigned_escaping` (the escape gate) pin.
+//
 // THE REFUSALS ARE THE LOAD-BEARING HALF. A string payload is stored UNCOUNTED
 // (`op_opt_make`) and a string assignment BORROWS, so the arm binding takes no
 // retain — which is why the credit is safe when the arm only reads, and why
@@ -124,6 +132,63 @@ func matchedOptstrCases() []matchedOptstrCase {
     return 0;
 }` + matchedOptstrMain,
 			want: 4, balance: true,
+		},
+		{
+			// THE REBIND QUADRANT (#7712): reassigned, every rebind itself fresh.
+			// Was 900/0 live 21600 — neither the superseded box at the rebind nor
+			// the final one at exit. The release machinery already existed (the
+			// assign path routes an OPTSTR slot to emit_optstr_reclaim_store); only
+			// the credit was missing, because the collector refused a reassigned
+			// name outright where its OPTARRARR and OPTSTRUCT siblings admit one
+			// whose rebinds are all fresh.
+			name: "reassigned_all_rebinds_fresh",
+			src: matchedOptstrW + `function round(i: i32): i32 {
+    var o: Option[string] = Some(w("ab"));
+    if (i % 2 == 0) { o = Some(w("cd")); }
+    match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
+    return 0;
+}` + matchedOptstrMain,
+			want: 19, balance: true,
+		},
+		{
+			// The flat-ARRAY payload reassigned: reassignment is precisely
+			// collect_fresh_optarr_names' own class, so this always worked and must
+			// stay working.
+			name: "reassigned_array_control",
+			src: `function round(i: i32): i32 {
+    var o: Option[i32[]] = Some([i, i + 1]);
+    if (i % 2 == 0) { o = Some([i + 2, i + 3]); }
+    match (o) { Some(a) => { return a[0]; }, None => { return 2; } }
+    return 0;
+}` + matchedOptstrMain,
+			want: 14, balance: true,
+		},
+		{
+			// REFUSED: a rebind that is NOT fresh — `Some(p)` of a parameter the
+			// caller owns. Admitting reassignment must not admit an aliased rebind,
+			// which would release a live reference at the NEXT rebind.
+			name: "refuses_rebind_aliasing_param",
+			src: matchedOptstrW + `function run(p: string, i: i32): i32 {
+    var o: Option[string] = Some(w("ab"));
+    if (i % 2 == 0) { o = Some(p); }
+    match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
+    return 0;
+}
+function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + matchedOptstrMain,
+			want: 19, wantFrees: 0,
+		},
+		{
+			// REFUSED: reassigned AND the payload escapes. The escape gate must
+			// still bite once reassignment is admitted.
+			name: "refuses_reassigned_escaping",
+			src: matchedOptstrW + `function round(i: i32): i32 {
+    var held: string = "";
+    var o: Option[string] = Some(w("ab"));
+    if (i % 2 == 0) { o = Some(w("cd")); }
+    match (o) { Some(v) => { held = v; }, None => {} }
+    return held.len();
+}` + matchedOptstrMain,
+			want: 19, wantFrees: 0,
 		},
 		{
 			// REFUSED: the arm RETURNS the payload, so the caller owns it.

@@ -41496,7 +41496,7 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], structs: parser.StructDec
                 if (opttup_ann_is(v.type_name, structs)
                     && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init, structs)
                     && (util.index_of_str(reassigned, v.name) < 0
-                        || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs, sig_reg_empty(), []))) {
                     // The consuming match may sit one block deeper (#6319). No
                     // nested_ok flag is needed here, unlike the scalar and rc-payload
                     // collectors: NOTHING else claims this shape at either scope —
@@ -42617,7 +42617,7 @@ function collect_fresh_optstruct_names(stmts: ast.Stmt[], structs: parser.Struct
                 if (optstruct_ann_is(v.type_name, structs)
                     && optstruct_init_is_fresh(v.init, structs)
                     && (util.index_of_str(reassigned, v.name) < 0
-                        || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs, sig_reg_empty(), []))) {
                     // The consuming match may sit one block deeper, or be a match
                     // EXPRESSION in a `return` (#6319 + the IIFE arm) — the same
                     // reader the OPTTUP sibling already uses, which OPTSTRUCT was
@@ -42895,10 +42895,14 @@ function optarr_init_is_fresh(e: ast.Expr): boolean {
 //   "arrarr"  Option[<scalar arr-of-arr>]        (OPTARRARR:)
 //   "struct"  Option[<struct-with-array>]        (OPTSTRUCT:)
 //   "tup"     Option[<tuple-with-array>]         (OPTTUP:)
-function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: parser.StructDecl[]): boolean {
+function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: parser.StructDecl[], opt_fresh_reg: SigReg, str_fresh_ret: string[]): boolean {
     if (kind == "tup") { return opttup_init_is_fresh(inner, e, structs); }
     if (kind == "struct") { return optstruct_init_is_fresh(e, structs); }
     if (kind == "arrarr") { return optarrarr_init_is_fresh(e); }
+    // A STRING payload's freshness is not a purely syntactic test — a producer
+    // call qualifies only through the registry's "f" flag — so this kind is the
+    // reason the walker carries the two registries at all (#7712).
+    if (kind == "str") { return unmatched_optstr_init_is_fresh(e, opt_fresh_reg, str_fresh_ret); }
     return optarr_init_is_fresh(e);
 }
 
@@ -42910,21 +42914,21 @@ function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: 
 // One walker for the whole family (#6127). The four collectors are structurally
 // identical and differ only in which freshness predicate they apply, so the
 // recursion belongs in one place; opt_assign_is_fresh carries the difference.
-function opt_rebinds_all_fresh(stmts: ast.Stmt[], name: string, kind: string, inner: string, structs: parser.StructDecl[]): boolean {
+function opt_rebinds_all_fresh(stmts: ast.Stmt[], name: string, kind: string, inner: string, structs: parser.StructDecl[], opt_fresh_reg: SigReg, str_fresh_ret: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtAssign(a) => {
-                if (a.target == name && !opt_assign_is_fresh(a.value, kind, inner, structs)) { return false; }
+                if (a.target == name && !opt_assign_is_fresh(a.value, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
             },
             ast.StmtIf(f) => {
-                if (!opt_rebinds_all_fresh(f.then_body, name, kind, inner, structs)) { return false; }
-                if (!opt_rebinds_all_fresh(f.else_body, name, kind, inner, structs)) { return false; }
+                if (!opt_rebinds_all_fresh(f.then_body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
+                if (!opt_rebinds_all_fresh(f.else_body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
             },
-            ast.StmtWhile(w) => { if (!opt_rebinds_all_fresh(w.body, name, kind, inner, structs)) { return false; } },
-            ast.StmtFor(fo) => { if (!opt_rebinds_all_fresh(fo.body, name, kind, inner, structs)) { return false; } },
+            ast.StmtWhile(w) => { if (!opt_rebinds_all_fresh(w.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; } },
+            ast.StmtFor(fo) => { if (!opt_rebinds_all_fresh(fo.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; } },
             ast.StmtMatch(m) => {
                 for arm in m.arms {
-                    if (!opt_rebinds_all_fresh(arm.body, name, kind, inner, structs)) { return false; }
+                    if (!opt_rebinds_all_fresh(arm.body, name, kind, inner, structs, opt_fresh_reg, str_fresh_ret)) { return false; }
                 }
             },
             _ => {}
@@ -43241,7 +43245,7 @@ function collect_fresh_optarr_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe
                 if (optarr_ann_is(v.type_name)
                     && optarr_init_is_fresh(v.init)
                     && util.index_of_str(reassigned, v.name) >= 0
-                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", [])
+                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", [], sig_reg_empty(), [])
                     && optarr_rebound_credit_ok(stmts, v, vi, plan_on, plan_fe)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
@@ -43551,7 +43555,7 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], acc: string[]): string
                 if (optarrarr_ann_is(v.type_name)
                     && optarrarr_init_is_fresh(v.init)
                     && (util.index_of_str(reassigned, v.name) < 0
-                        || opt_rebinds_all_fresh(stmts, v.name, "arrarr", "", []))) {
+                        || opt_rebinds_all_fresh(stmts, v.name, "arrarr", "", [], sig_reg_empty(), []))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -43739,7 +43743,8 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, st
             ast.StmtVar(v) => {
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
-                    && util.index_of_str(reassigned, v.name) < 0) {
+                    && (util.index_of_str(reassigned, v.name) < 0
+                        || opt_rebinds_all_fresh(stmts, v.name, "str", "", [], opt_fresh_reg, str_fresh_ret))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
