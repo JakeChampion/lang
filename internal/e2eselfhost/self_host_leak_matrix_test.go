@@ -439,15 +439,19 @@ function main(): i32 {
 }
 `},
 		// The CALLER-LOCAL half of the same question, and the instrument for
-		// the retain/drop pair itself: the struct literal storing a tuple
-		// field is in the SAME body as the tuple local, so no
-		// interprocedural verdict is involved. Native counts the store
-		// (needsRcIncOnAlias's tuple arm) and gives it back in
-		// __drop_struct_Hold. The self-host does neither — no tuple arm in
-		// lower_expr_struct_lit, no k_tuple in emit_ir_struct_drop_one — so
-		// it is consistent in the leaking direction. When the co-extensive
-		// pair lands this row flips, and a knockout of either half moves it
-		// the other way: retain-only leaks harder, drop-only exits 99.
+		// the counted store itself: the struct literal storing a tuple field
+		// is in the SAME body as the tuple local, so no interprocedural
+		// verdict is involved. Both sides now count it — the self-host
+		// retains in lower_expr_struct_lit's tuple arm, releases in
+		// emit_struct_tuple_field_drops, and forgives the store in the TUPRC
+		// credit gate (rctuple_counted_field_share), all three gated on
+		// struct_has_deep_tuple_field so none can widen alone.
+		//
+		// Keep the two_holders shape in mind when touching any of them: with
+		// the drop alone this row still reads clean, because the second
+		// holder's __fern_rc_is_unique reads a header the first holder
+		// already freed. The row is only meaningful alongside the counted
+		// pair (docs/rc-log/2026-08-28-tuple-structfield-counted-store.md).
 		leakCell{name: "tuple_mixed__structfield__local_store", src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
     var k: (i32, i32[]) = (i, [i, i + 1]);
