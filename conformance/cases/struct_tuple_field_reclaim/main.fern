@@ -1,0 +1,53 @@
+// A TUPLE carrying an owned pointer, stored into a STRUCT FIELD. The corpus
+// had no case of this shape at all: the whole 1533-row emit-hash sweep is
+// byte-identical across the change that made this class reclaimable, so
+// every future change to tuple-field crediting would sweep back clean
+// whether right or wrong. That is the gap this closes (#7357 shape 4, the
+// #7259 tuple wave).
+//
+// Three positions, because they balance for different reasons:
+//   moved  — `Hold { t: k }` as k's last use. The construction MOVES: the
+//            box takes over the local's reference, so the struct's field
+//            drop is the only free.
+//   alias  — the same store, but k.1 is read AFTER it. If the store were
+//            wrongly treated as a move here, this read chases a freed
+//            buffer; the assertion is that it still reads what was written.
+//   keep   — a struct built once and held across every round, proving the
+//            field drop does not release a buffer another owner still has.
+//
+// The sentinels are 251-253, deliberately ABOVE the `% 113` the success path
+// returns. A sentinel inside that range is indistinguishable from a correct
+// answer that happens to land on it, which turns a passing run into a
+// phantom failure and vice versa.
+struct Hold { t: (i32, i32[]), n: i32 }
+
+function moved(i: i32): i32 {
+    var k: (i32, i32[]) = (i, [i, i + 1]);
+    var h: Hold = Hold { t: k, n: i };
+    return h.n + h.t.1[1];
+}
+
+function alias(i: i32): i32 {
+    var k: (i32, i32[]) = (i, [i, i + 2]);
+    var h: Hold = Hold { t: k, n: i };
+    var viah: i32 = h.t.1[0];
+    var viak: i32 = k.1[1];
+    if (viak != i + 2) { return 0 - 1; }
+    return viah + viak;
+}
+
+function main(): i32 {
+    var keep: Hold = Hold { t: (7, [7, 8]), n: 7 };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        t = t + moved(i);
+        var a: i32 = alias(i);
+        if (a < 0) { return 253; }
+        t = t + a;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    if (keep.t.1[1] != 8) { return 252; }
+    return t % 113;
+}
