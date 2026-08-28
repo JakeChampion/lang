@@ -195,9 +195,14 @@ consumer wiring could see them. Three changes closed it:
   a live false E038 ("calling non-function value of type unknown") on every
   closure-field call under `-check`.
 
-Deferred on purpose: `FuncSig.param_types` still resolves `"fn"` to unknown,
-so CALL-SITE argument checks against fn-typed params stay skipped — making
-them live is a diagnostic-behaviour change needing its own differential run.
+The call-site half is live too now: `FuncSig.param_types` and
+`MethodSig.param_types` resolve `"fn"` params through the same sidecars, and a
+bare non-const function name used as a value types as its signature's function
+type (without which a known fn param would read a named-function argument as a
+mismatch and untype the call). A non-function argument to a fn-typed param
+draws native's E038; a bare fn name assigned where a scalar is declared draws
+native's E003 — both pinned in the checker-codes corpus, with `-check` over
+the compiler's own sources byte-identical.
 
 The sidecar audit found the widened spellings mostly inert (every irlower
 registry consumer filters by prefix or `is_struct_ret_name`), with one real
