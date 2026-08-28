@@ -1322,7 +1322,7 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: Type): Scope
     var nm: string = names[i];
     var et: Type = t_unknown("binding");
     if (i < elems.len()) { et = elems[i]; }
-    if (nm.len() >= 2 && slice_unchecked(nm, 0, 1) == "(") {
+    if (util.is_tuple_type_name(nm)) {
       out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1) + ""), et);
     } else if (nm.len() > 0) {
       out = out.bind(nm, et);

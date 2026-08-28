@@ -287,6 +287,18 @@ pub function base_type_name(t: string): string {
     return t;
 }
 
+// is_tuple_type_name reports whether a type SPELLING names a tuple, i.e.
+// starts with `(`. The single home for a test that was open-coded 43 times
+// across irlower, parser and checker.
+//
+// Three sites keep their own spelling because their length guard differs and
+// the difference is load-bearing at the edge: is_enum_like_name reaches its
+// check only past an empty-string early return, and the two Map-key/value
+// spelling checks guard on `> 2` and `> 0`.
+pub function is_tuple_type_name(t: string): boolean {
+    return t.len() >= 2 && slice_unchecked(t, 0, 1) == "(";
+}
+
 // mangled_module returns the bundle prefix of a mangled name
 // (`io__read_all` -> `io`), or "" for an unmangled entry-module name. A
 // leading `__` (a lifted lambda, `__lam_0`) is not a module prefix.
