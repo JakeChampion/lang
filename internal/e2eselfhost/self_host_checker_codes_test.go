@@ -247,6 +247,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-view-annotated-clean", "function f(t: string): i32 { var v: str = slice_unchecked(t, 0, 3); return v.len(); }\nfunction main(): i32 { return f(\"abcdef\"); }\n", nil},
 		{"str-view-arg-borrow-clean", "function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n", nil},
 		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
+		// #7311's remaining half: string-builtin and free-builtin arity.
+		// These used to fall through to IR lowering and surface as the
+		// whole-function #4346 ineligibility hint; native reports E004 at
+		// the call. The clean row pins the arity constants AND the new
+		// builtin result types (print is void, as_bytes u8[]) — before
+		// them, even `print("a")` marked the function ill-typed under
+		// -check.
+		{"string-len-arity-e004", "function main(): i32 { var s: string = \"abc\"; return s.len(1); }\n", []string{"E004"}},
+		{"string-as-bytes-arity-e004", "function main(): i32 { var s: string = \"abc\"; return s.as_bytes(1).len(); }\n", []string{"E004"}},
+		{"print-arity-e004", "function main(): i32 { print(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
+		{"eprint-arity-e004", "function main(): i32 { eprint(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
+		{"slice-unchecked-arity-e004", "function main(): i32 { var s: string = \"abcdef\"; var t: str = slice_unchecked(s, 1); return t.len(); }\n", []string{"E004"}},
+		{"builtins-correct-arity-clean", "function main(): i32 { print(\"a\"); var s: string = \"abc\"; return s.len() + s.as_bytes().len(); }\n", nil},
 		// User generic-struct instantiation (#4346 piece 2): a `Box[i32]`
 		// annotation resolves to the name-only struct `Box`, and constructing
 		// `Box { v: 3 }` type-checks (the opaque generic field `v: T` accepts any
