@@ -14462,7 +14462,8 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // could alias a swept local with no counted handle → bail.
             var cfft: string = decl_field_type(s.structs, slit.type_name, slit.field_names[found]);
             var fav_alias_inc: boolean = false;
-            if (is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft)) {
+            if (is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft)
+                || (util.is_tuple_type_name(cfft) && is_leaksafe_tuple_field(cfft))) {
                 // A fresh array LITERAL, or an if-/match-expression whose
                 // every branch returns a fresh array literal (#3175) — both
                 // are owned by the struct (no aliasing). A bare ident naming
@@ -14493,6 +14494,15 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                             && s.is_arr_slot(s.slot_of(faid.name))) {
                             fav_ok = true;
                             fav_alias_inc = true;
+                        }
+                        // A TUPLE field set from a tuple-box local (`Hold { t: k }`).
+                        // slot_is_tuple_box is the tuple analogue of is_arr_slot.
+                        // No retain: a tuple reaching a struct literal is an escape,
+                        // so rctuple_esc_expr refuses the local its "TUPRCS:" exit
+                        // sweep, leaving the struct's field drop the only free.
+                        if (util.is_tuple_type_name(cfft) && is_leaksafe_tuple_field(cfft)
+                            && s.slot_is_tuple_box(s.slot_of(faid.name))) {
+                            fav_ok = true;
                         }
                     },
                     // A BARE array-field COPY (`State { xs: s.xs }`, or
