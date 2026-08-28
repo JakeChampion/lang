@@ -103,6 +103,37 @@ harder (a count nobody gives back); drop-only exits 99 (a dec with no inc).
 If a single knockout does not move exactly this row, the halves are not
 co-extensive and the grant in steps 2-3 is not safe to consume.
 
+## Step 1 is two steps, and only the second moves the row
+
+Scoping the drop half against the code split it again. The backends'
+`__struct_drop_<T>` is emitted as raw asm, one `k_*` arm per field kind,
+and **no backend has a tuple drop helper at all**: the tuple deep-free
+(`emit_rctuple_deep_free` → `emit_tuple_type_child_drops`) is IR-level and
+works off a LOCAL SLOT's known `tuple_elems`, not off a field inside a box.
+Native is clean here precisely because it has the mechanism the self-host
+lacks — `dropFnNameFor` routes a tuple field to `__drop_tuple_<mangled>`.
+
+So the drop half has two possible cuts, and they buy different things:
+
+| | cost | what it buys |
+|---|---|---|
+| **Shallow** — a `k_tuple` arm decing the box via `__fern_arr_dec`, on the `k_struct`/`k_enum` model | ~110 lines over five files (scan, assembler entry, four backend gates, retain) | frees the tuple BOX; the element buffer inside still leaks, so `tuple_mixed__structfield__local_store` stays `leak` — fewer bytes, same verdict |
+| **Deep** — per-tuple-shape `__drop_tuple_<mangled>` helpers emitted in asm_ir, asm_arm64_ir and wasm_ir | a new emit mechanism, the class of `__struct_arr_elems_drop_<E>` | frees box AND elements, so the row flips |
+
+Only the deep cut moves the instrument. That is worth knowing before
+starting: the shallow cut is the natural-looking first step, matches the
+existing arms, and would leave the measurement unmoved — which reads as
+"the change did nothing" rather than "the change did half".
+
+Both cuts share the same front half — the admission scan and the retain —
+and that half carries the subsystem's sharpest hazard:
+`strfld_reclaim_ok_types_of` is the SINGLE verdict the four backends (via
+`strfldok:*` needs) and the lowering (via FnSigs) both read, and its own
+comment records what a mismatch cost (#3425): a backend freeing fields the
+lowering never retained, corrupting the freelist and crashing the IR-built
+compiler on its first `lower_func`. A tuple tier must be seeded from that
+one scan, not a second one.
+
 ## Also recorded
 
 Nothing in the compiler changed here. Both rows were measured with
