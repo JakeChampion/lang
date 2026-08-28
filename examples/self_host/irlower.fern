@@ -35871,7 +35871,15 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
     var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
-    out = reclaimable_unmatched_optstr(ufs, out);
+    out = reclaimable_optstr(ufs, out);
+    // The MATCH-CONSUMED quadrant of the same family (#7710). The array payload
+    // kinds are reclaimed whether or not a match consumes them; the string one was
+    // reclaimed only when NEVER matched, so `var o: Option[string] = Some(w("ab"));
+    // match (o) { .. }` freed nothing at all — 72 B/round, unbounded, against 0 on
+    // native. Same tag and same exit sweep; see collect_fresh_optstr_names for why
+    // the two collectors cannot overlap.
+    var mfs: string[] = collect_fresh_optstr_names(body, opt_fresh_ret, str_fresh_ret, []);
+    out = reclaimable_optstr(mfs, out);
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
     // arrays. Credited "ARRTUP:" so slot_is_reclaimable_arrtup routes the loop-rebind
@@ -43559,6 +43567,194 @@ function collect_fresh_optarrarr_names(stmts: ast.Stmt[], acc: string[]): string
             ast.StmtFor(fo) => { a = collect_fresh_optarrarr_names(fo.body, a); },
             ast.StmtMatch(m) => {
                 for arm in m.arms { a = collect_fresh_optarrarr_names(arm.body, a); }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
+// optstr_arm_expr_escapes / optstr_arm_stmt_escapes: the STRING-payload sibling
+// of optarrarr_arm_expr_escapes (#7710). A matched `Option[string]`'s arm binding
+// is a BORROW — op_opt_make stores the payload uncounted and a string assignment
+// does not retain — so the exit sweep may free that payload only if the arm never
+// lets it outlive the match.
+//
+// Allow-list rather than deny-list: a bare mention of the binding escapes unless
+// it is one of the scalar-producing reads below, so a use this does not recognise
+// denies the credit (the shape keeps leaking) instead of releasing a live
+// reference. `len()` is the only method admitted — a string method returning a
+// VIEW of the receiver would hand the payload out, and none is worth admitting
+// without its own proof.
+function optstr_arm_expr_escapes(e: ast.Expr, g: string): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name == g; },
+        ast.ExprNumber(_) => { return false; },
+        ast.ExprString(_) => { return false; },
+        ast.ExprBool(_) => { return false; },
+        // `g[i]` — a byte read, a scalar, so the payload does not leave.
+        ast.ExprIndex(ix) => {
+            match (ix.array) {
+                ast.ExprIdent(aid) => { if (aid.name == g) { return optstr_arm_expr_escapes(ix.index, g); } },
+                _ => {}
+            }
+            return optstr_arm_expr_escapes(ix.array, g) || optstr_arm_expr_escapes(ix.index, g);
+        },
+        ast.ExprFieldAccess(fa) => { return optstr_arm_expr_escapes(fa.obj, g); },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        var recv_is_g: boolean = false;
+                        match (cfa.obj) {
+                            ast.ExprIdent(rid) => { if (rid.name == g) { recv_is_g = true; } },
+                            _ => {}
+                        }
+                        if (recv_is_g) {
+                            for arg in c.args { if (optstr_arm_expr_escapes(arg, g)) { return true; } }
+                            return false;
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (optstr_arm_expr_escapes(c.callee, g)) { return true; }
+            for arg in c.args { if (optstr_arm_expr_escapes(arg, g)) { return true; } }
+            return false;
+        },
+        ast.ExprBinary(b) => { return optstr_arm_expr_escapes(b.left, g) || optstr_arm_expr_escapes(b.right, g); },
+        ast.ExprUnary(u) => { return optstr_arm_expr_escapes(u.operand, g); },
+        ast.ExprSlice(sl) => { return optstr_arm_expr_escapes(sl.array, g) || optstr_arm_expr_escapes(sl.start, g) || optstr_arm_expr_escapes(sl.end, g); },
+        ast.ExprArray(ar) => { var ai: i32 = 0; while (ai < ar.elements.len()) { if (optstr_arm_expr_escapes(ar.elements[ai], g)) { return true; } ai = ai + 1; } return false; },
+        ast.ExprTuple(t) => { for el in t.elements { if (optstr_arm_expr_escapes(el, g)) { return true; } } return false; },
+        ast.ExprStructLit(slb) => {
+            if (slb.has_base && optstr_arm_expr_escapes(slb.base, g)) { return true; }
+            var si: i32 = 0;
+            while (si < slb.field_values.len()) { if (optstr_arm_expr_escapes(slb.field_values[si], g)) { return true; } si = si + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function optstr_arm_stmt_escapes(st: ast.Stmt, g: string): boolean {
+    match (st) {
+        ast.StmtVar(v) => { return optstr_arm_expr_escapes(v.init, g); },
+        ast.StmtReturn(r) => { return optstr_arm_expr_escapes(r.value, g); },
+        ast.StmtExpr(e) => { return optstr_arm_expr_escapes(e.value, g); },
+        ast.StmtAssign(a) => { return optstr_arm_expr_escapes(a.value, g); },
+        ast.StmtIf(f) => {
+            if (optstr_arm_expr_escapes(f.cond, g)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (optstr_arm_stmt_escapes(f.then_body[ti], g)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (optstr_arm_stmt_escapes(f.else_body[ei], g)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        ast.StmtWhile(w) => {
+            if (optstr_arm_expr_escapes(w.cond, g)) { return true; }
+            var wi: i32 = 0;
+            while (wi < w.body.len()) { if (optstr_arm_stmt_escapes(w.body[wi], g)) { return true; } wi = wi + 1; }
+            return false;
+        },
+        ast.StmtFor(fo) => {
+            if (optstr_arm_expr_escapes(fo.iter, g)) { return true; }
+            var fi: i32 = 0;
+            while (fi < fo.body.len()) { if (optstr_arm_stmt_escapes(fo.body[fi], g)) { return true; } fi = fi + 1; }
+            return false;
+        },
+        ast.StmtMatch(m) => {
+            if (optstr_arm_expr_escapes(m.scrutinee, g)) { return true; }
+            for arm in m.arms {
+                var mi: i32 = 0;
+                while (mi < arm.body.len()) { if (optstr_arm_stmt_escapes(arm.body[mi], g)) { return true; } mi = mi + 1; }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optstr_payload_escapes: does the `match (name)` arm binding outlive the match?
+// The string sibling of optarrarr_payload_escapes.
+function optstr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtMatch(m) => {
+                var is_scrut: boolean = false;
+                match (m.scrutinee) {
+                    ast.ExprIdent(sid) => { if (sid.name == name) { is_scrut = true; } },
+                    _ => {}
+                }
+                if (is_scrut) {
+                    for arm in m.arms {
+                        match (arm.pattern) {
+                            ast.PatVariant(pv) => {
+                                var vn: string = pv.type_name;
+                                var vc: i32 = 0;
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == b'.') { vn = slice_unchecked(pv.type_name, vc + 1, pv.type_name.len()) + ""; } vc = vc + 1; }
+                                if ((vn == "Some" || vn == "Ok") && pv.binding != "" && pv.binding != "_") {
+                                    if (arm.has_guard && optstr_arm_expr_escapes(arm.guard, pv.binding)) { return true; }
+                                    var bi: i32 = 0;
+                                    while (bi < arm.body.len()) { if (optstr_arm_stmt_escapes(arm.body[bi], pv.binding)) { return true; } bi = bi + 1; }
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
+                for arm in m.arms { if (optstr_payload_escapes(arm.body, name)) { return true; } }
+            },
+            ast.StmtIf(f) => { if (optstr_payload_escapes(f.then_body, name) || optstr_payload_escapes(f.else_body, name)) { return true; } },
+            ast.StmtWhile(w) => { if (optstr_payload_escapes(w.body, name)) { return true; } },
+            ast.StmtFor(fo) => { if (optstr_payload_escapes(fo.body, name)) { return true; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// collect_fresh_optstr_names: the MATCH-CONSUMED quadrant of the OPTSTR family
+// (#7710) — a fresh `Some(<fresh string>)` / None under an `Option[string]` /
+// `Result[string, _]` annotation, consumed by exactly one borrow-only match in
+// the same block, not escaping. The string sibling of
+// collect_fresh_optarrarr_names, and the complement of
+// collect_unmatched_optstr_names: that collector's escape gate reads a bare-ident
+// match scrutinee as an escape, so it refuses every match-consumed Option
+// outright, which is precisely the set this one admits. The two are therefore
+// disjoint by construction and no box is credited twice.
+//
+// Freshness is required for the same reason the unmatched sibling requires it: a
+// string payload is stored uncounted and assignment borrows it, so an aliased
+// payload would be released under a live reference.
+function collect_fresh_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, str_fresh_ret: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            ast.StmtVar(v) => {
+                if (unmatched_optstr_ann_is(v.type_name)
+                    && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
+                    && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (match_idx > vi
+                        && !match_arms_use_name(stmts[match_idx], v.name)
+                        && !optstr_payload_escapes(stmts, v.name)
+                        && !name_used_after(stmts, v.name, match_idx)
+                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    }
+                }
+            },
+            ast.StmtIf(f) => { a = collect_fresh_optstr_names(f.then_body, opt_fresh_reg, str_fresh_ret, a); a = collect_fresh_optstr_names(f.else_body, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_optstr_names(w.body, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_optstr_names(fo.body, opt_fresh_reg, str_fresh_ret, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_fresh_optstr_names(arm.body, opt_fresh_reg, str_fresh_ret, a); }
             },
             _ => {}
         }
@@ -69681,7 +69877,7 @@ while (ufai < ufa.len()) {
     return out;
 }
 
-function reclaimable_unmatched_optstr(ufs: string[], out: string[]): string[] {
+function reclaimable_optstr(ufs: string[], out: string[]): string[] {
 var ufsi: i32 = 0;
 while (ufsi < ufs.len()) {
     out = out.append("OPTSTR:" + ufs[ufsi]);
