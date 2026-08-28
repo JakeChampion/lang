@@ -20867,6 +20867,26 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // type (like an enum local/param) so `match (c)` / `c.method()`
         // on the bound slot dispatches to `<Enum>.<variant/method>`.
         else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
+        // Dup-at-extract (#7682). `op_tuple_get` hands out the element POINTER,
+        // but the marks above make this slot one the scope-exit sweep RELEASES
+        // — so without a retain the binding gives back a reference it never
+        // took, and wherever the source tuple also carries a reclaim credit the
+        // same buffer was decremented twice: the first dec frees it, the second
+        // underflows into the quarantined block (a use-after-free the balanced
+        // census cannot see). The dup pairs them: rc 1 →inc 2 →this binding's
+        // sweep 1 →the tuple's own drop 0.
+        //
+        // is_leaksafe_array_field is exactly the set the sweep releases with a
+        // shallow `__fern_rc_dec`, and exactly the set measured to over-release.
+        // The deeper-release kinds are deliberately NOT here — a `string[]`
+        // (__fern_str_arr_free) and a struct / enum array (element walk) LEAK
+        // rather than over-release, so retaining one would deepen a leak instead
+        // of closing a double-dec; each is its own measured increment.
+        if (is_leaksafe_array_field(dtag)) {
+            dt = dt.emit(ir.op_load_local(dkslot));
+            dt = dt.emit(ir.op_call_direct("__fern_rc_inc", 1));
+            dt = dt.emit(ir.op_drop());
+        }
         // The temp is bound and its element tags are marked, so the inner
         // level lowers as an ordinary destructure of that temp — the same
         // recursion the source spelling describes.
