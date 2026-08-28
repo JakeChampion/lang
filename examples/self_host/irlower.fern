@@ -16650,15 +16650,26 @@ function iife_payload_result_kind(m: ast.StmtMatch, s: LowerState): string {
 
 // iife_type_is_composite reports whether `t` names a COMPOSITE result type the
 // IIFE temp can carry as a single pointer slot: a leak-safe struct, a nominal
-// enum, or a lowerable tuple. A non-leak-safe struct (RC'd array fields) is
-// excluded — a payload borrowed from the enum box must leak cleanly, and a
-// constructed-then-returned struct of that shape needs reuse analysis the IIFE
-// path doesn't model. Scalars / strings / Option / arrays are NOT composite here
-// (they have their own kind-recovery / slot-typing paths).
+// enum, a lowerable tuple, or a leak-safe SCALAR ARRAY. A non-leak-safe struct
+// (RC'd array fields) is excluded — a payload borrowed from the enum box must
+// leak cleanly, and a constructed-then-returned struct of that shape needs reuse
+// analysis the IIFE path doesn't model. Scalars / strings / Option are NOT
+// composite here (they have their own kind-recovery / slot-typing paths).
+//
+// The array admission (#7686) takes the same leak-cleanly bargain the struct arm
+// takes, and needs it more: an arm may hand back a BORROWED payload
+// (`E.A(xs) => xs`, a buffer the enum box still owns) while a sibling arm builds
+// a FRESH one (`E.B => [i]`), and one temp carries both. The temp is therefore
+// marked BORROWED at the classification site, so the exit sweep never decs it —
+// releasing it would be the double-free the ELB tier fences. The fresh arm leaks
+// instead, which is the polarity this whole gate is built on. Scoped to
+// is_leaksafe_array_field: a string[] / struct-array element needs a deep walk
+// the borrowed temp cannot describe.
 function iife_type_is_composite(t: string, s: LowerState): boolean {
     if (t == "") { return false; }
     if (decl_is_struct(s.structs, t) && !is_enum_like_name(t, s.structs)) { return decl_is_leaksafe(s.structs, t); }
     if (is_enum_like_name(t, s.structs)) { return true; }
+    if (is_leaksafe_array_field(t)) { return true; }
     if (tuple_elems_lowerable(t, s.structs)) { return true; }
     return false;
 }
@@ -16697,8 +16708,29 @@ function iife_tuple_lit_tags(e: ast.Expr, s: LowerState): string {
 //     `_ => (a, b)`): a struct literal (expr_struct_type), an enum-variant
 //     construction (expr_enum_type), or a tuple literal — its type is named at the
 //     constructor, so it can be read directly from the tail expression.
+// iife_arr_lit_result_type names the leak-safe scalar-array type an ARRAY LITERAL
+// arm tail produces (`[i]` -> "i32[]"), or "" when it is not one this temp can
+// carry. Read off the first element's tag: the array literal has no declaration to
+// consult, and elem_type_tag is the same recovery the tuple-element path uses. An
+// EMPTY literal answers "" — there is no element to read a width from, and the
+// borrowed temp must not guess one.
+function iife_arr_lit_result_type(e: ast.Expr, s: LowerState): string {
+    match (e) {
+        ast.ExprArray(al) => {
+            if (al.elements.len() == 0) { return ""; }
+            var et: string = elem_type_tag(al.elements[0], s);
+            if (et == "") { return ""; }
+            var at: string = et + "[]";
+            if (!is_leaksafe_array_field(at)) { return ""; }
+            return at;
+        },
+        _ => {}
+    }
+    return "";
+}
+
 // Only a composite (iife_type_is_composite) is returned; "" for a scalar / string /
-// Option / array result, an unrecoverable shape, or a tail that isn't a return.
+// Option result, an unrecoverable shape, or a tail that isn't a return.
 // Tuple results carry the comma-joined element TAGS (mark_tuple_elems form); struct
 // / enum results carry the type NAME (mark_struct_type form).
 function iife_arm_composite_result_type(arm: ast.MatchArm, opt_srt: string, scrut_enum: string, s: LowerState): string {
@@ -16729,14 +16761,22 @@ function iife_arm_composite_result_type(arm: ast.MatchArm, opt_srt: string, scru
         _ => {}
     }
     // Fresh composite construction in the arm tail: a struct literal, an enum
-    // variant construction, or a tuple literal. The type is named at the
-    // constructor, so it's recoverable WITHOUT any payload binding in scope.
+    // variant construction, a tuple literal, or an ARRAY literal. The type is
+    // named at the constructor, so it's recoverable WITHOUT any payload binding
+    // in scope.
     match (rval) {
         ast.ExprTuple(_) => {
             var tt: string = iife_tuple_lit_tags(rval, s);
             if (tt != "" && tuple_elems_lowerable("(" + tt + ")", s.structs)) { return tt; }
             return "";
         },
+        // `E.B => [i]` (#7686): the fresh sibling of a borrowed array payload
+        // arm. Recovered from the ELEMENT tag rather than a declaration, so a
+        // mis-tag cannot miscompile — the consensus check in
+        // iife_match_composite_result_type requires every arm to agree, and a
+        // wrong spelling simply fails to match the payload arm's declared type
+        // and bails, which is where this shape already was.
+        ast.ExprArray(_) => { return iife_arr_lit_result_type(rval, s); },
         _ => {}
     }
     var st: string = expr_struct_type(rval, s);
@@ -16779,6 +16819,11 @@ function iife_match_composite_result_type(m: ast.StmtMatch, s: LowerState): stri
 function iife_result_is_tuple(t: string, s: LowerState): boolean {
     if (t == "") { return false; }
     if (decl_is_struct(s.structs, t) || is_enum_like_name(t, s.structs)) { return false; }
+    // An ARRAY result (#7686) is not a tuple: `"(" + "i32[]" + ")"` is a
+    // perfectly lowerable ONE-element tuple spelling, so without this the array
+    // temp would take mark_tuple_elems and every later read would resolve
+    // against the wrong shape.
+    if (is_leaksafe_array_field(t)) { return false; }
     return tuple_elems_lowerable("(" + t + ")", s.structs);
 }
 
@@ -16888,7 +16933,22 @@ function lower_iife_match(m: ast.StmtMatch, s: LowerState, force_i64: boolean): 
         else if (expr_is_str(mfre, ts)) { ts = ts.mark_str(tslot, true); }
         else if (pay_k == "string") { ts = ts.mark_str(tslot, true); }
         else if (comp_ty0 != "") {
-            if (iife_result_is_tuple(comp_ty0, ts)) { ts = ts.mark_tuple_elems(tslot, comp_ty0); }
+            // An ARRAY result (#7686) is marked BORROWED as well as typed: the
+            // temp must carry the array-ness so a later `.len()` / `v[i]`
+            // resolves, but one arm may hand back a payload the enum box still
+            // owns while another builds a fresh buffer, and the exit sweep
+            // cannot tell them apart at one slot. Borrowed opts it out of that
+            // sweep, so the borrowed arm is safe and the fresh arm leaks —
+            // the bargain iife_type_is_composite is built on. The element-kind
+            // marks ride along so an 8-byte element reads at its own width.
+            if (is_leaksafe_array_field(comp_ty0)) {
+                ts = ts.mark_arr(tslot, true);
+                ts = ts.mark_borrowed_arr(tslot, true);
+                if (is_float_array_type_name(comp_ty0)) { ts = ts.mark_f64arr(tslot, true); }
+                else if (comp_ty0 == "i64[]") { ts = ts.mark_i64arr(tslot, true); }
+                else if (comp_ty0 == "u32[]") { ts = ts.mark_u32(tslot, true); }
+            }
+            else if (iife_result_is_tuple(comp_ty0, ts)) { ts = ts.mark_tuple_elems(tslot, comp_ty0); }
             else { ts = ts.mark_struct_type(tslot, comp_ty0); }
         }
     }
