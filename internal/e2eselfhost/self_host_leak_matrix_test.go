@@ -466,18 +466,19 @@ function main(): i32 {
     return acc % 83;
 }
 `},
-		// A NEWLY SURFACED GAP, found while instrumenting the tuple wave of
-		// the rc-plan promotion: the callee KEEPS the tuple, in a struct
-		// literal it returns. That store is a COUNTED construction, so the
-		// caller's release is balanced and native frees keep — while the
-		// self-host's credit gate reads any call arg at a non-borrowable
-		// position as an escape and refuses, leaking the box and its
-		// element. Exits agree and the underflow counter stays 0, so it is
-		// the safe direction; it is a gap, not a hazard. Closing it is the
-		// counted-sink half of the tuple wave: the plan grants this shape,
-		// but routing may only consume that verdict once the self-host's
-		// struct-literal store is proven to retain a tuple field
-		// co-extensively (the #7253 discipline).
+		// The INTERPROCEDURAL half of the counted store: the callee KEEPS
+		// the tuple, in a struct literal it returns. Both sides count it —
+		// the "TCNT:" tier in param_counted_of credits the param, so the
+		// caller keeps its own deep free and the holder's field drop gives
+		// the retain back. The tier is admitted only when the callee's
+		// RESULT routes field reclaim, which Hold began doing when the
+		// same-body counted store landed; this row could not have flipped
+		// before that one.
+		//
+		// The guard on the tier is the element handout: a callee that
+		// returns `t.<i>` is outside arrparam_use_ok's credited vocabulary,
+		// so the param loses the flag and the caller keeps its refusal
+		// rather than freeing an element the callee handed out.
 		leakCell{name: "tuple_mixed__callarg__stored_struct", src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
 function main(): i32 {

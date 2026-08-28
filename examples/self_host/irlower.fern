@@ -26991,6 +26991,11 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         tj = tj + 1;
     }
+    // ORDER MATTERS: the struct loop above must stay ahead of this one. This deep
+    // free is NOT is_unique-gated, so it walks the children whatever the box's
+    // count; a struct holding a counted share of the same tuple relies on running
+    // first, finding the box non-unique, and taking the box-only dec. Swap the two
+    // loops and this walk frees children the struct's drop then walks again.
     // Sweepable rc-TUPLE locals (`var t: (i32, i32[]) = (i, [i, i+1])`, "TUPRCS:"):
     // deep-free the final value's rc children then its box (#6127). "TUPRC:" on its
     // own is consumed only by the StmtVar rebind path, so this class was credited
@@ -29807,6 +29812,21 @@ function rctuple_esc_expr(e: ast.Expr, name: string, ttype: string, structs: par
                     ast.ExprIdent(raid) => {
                         if (raid.name == name && resc_callee.len() > 0
                             && param_is_borrowable(borrowable, "TUPB:" + resc_callee, rai)) { rarg_borrow = true; }
+                        // …or the param is COUNTED ("TCNT:", folded into the
+                        // shared "CNT:" key): the callee does not merely borrow,
+                        // it stores the tuple into a struct literal that RETAINS
+                        // it, so the caller's deep free and the holder's field
+                        // drop net to one owner. A different question from
+                        // TUPB's, which is why a payload-refusing callee can
+                        // still qualify here.
+                        //
+                        // The shared key ORs every tier, but only "TCNT:" can
+                        // have flagged a position whose param type is a tuple —
+                        // the array, string, enum and array-of-boxes tiers each
+                        // test a type this argument does not have — so reading
+                        // the merged flag cannot borrow another tier's verdict.
+                        if (!rarg_borrow && raid.name == name && resc_callee.len() > 0
+                            && param_is_borrowable(borrowable, "CNT:" + resc_callee, rai)) { rarg_borrow = true; }
                     },
                     _ => {}
                 }
@@ -57160,12 +57180,13 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             // A functional-update BASE copies field pointers without a counted
             // store, so it is not a credited slot.
             if (sl.has_base && !arrparam_use_ok(sl.base, pn, false, reg, pfx, structs, sfok)) { return false; }
-            // The construction-side string retain is gated on slit_reclaim, so a
-            // STRING slot in a literal whose type does not route field reclaim is
-            // stored UNCOUNTED — crediting it would make the caller's post-call
-            // free an over-release. Array slots are unconditional and unaffected.
+            // The construction-side string, enum and TUPLE retains are gated on
+            // slit_reclaim, so such a slot in a literal whose type does not route
+            // field reclaim is stored UNCOUNTED — crediting it would make the
+            // caller's post-call free an over-release. Array slots are
+            // unconditional and unaffected.
             var scnt: boolean = true;
-            if ((pfx == "SCNT:" || pfx == "ECNT:") && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
+            if ((pfx == "SCNT:" || pfx == "ECNT:" || pfx == "TCNT:") && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
             for fv in sl.field_values { if (!arrparam_use_ok(fv, pn, scnt, reg, pfx, structs, sfok)) { return false; } }
             return true;
         },
@@ -57292,7 +57313,8 @@ function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
         var row: string = pcnt[i];
         var bar: i32 = 0;
         while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
-        // Every tier key is five bytes ("ACNT:" / "SCNT:" / "ECNT:" / "DCNT:");
+        // Every tier key is five bytes ("ACNT:" / "SCNT:" / "ECNT:" / "DCNT:" /
+        // "TCNT:") — the slice below hard-codes that width;
         // a row with no key or no '|' is not one param_counted_of wrote.
         if (bar < row.len() && bar > 5) {
             var key: string = "CNT:" + slice_unchecked(row, 5, bar);
@@ -57391,6 +57413,8 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var eany: boolean = false;
             var eaflags: string = "";
             var eaany: boolean = false;
+            var tflags: string = "";
+            var tany: boolean = false;
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
@@ -57452,6 +57476,26 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 } else if (is_struct_array_field_type(structs, pty)) {
                     elem_walk_ok = struct_has_reclaim_array_field(structs, slice_unchecked(pty, 0, pty.len() - 2));
                 }
+                // TUPLE tier. `keepit(t) { return Hold { t: t, n: 1 } }`: the
+                // callee stores a borrowed tuple param into a struct literal,
+                // which since the counted-store trio RETAINS it, so the caller's
+                // own deep free and the holder's field drop net to one owner —
+                // rc 2, the struct loop's box-only dec, then the rc-tuple loop's
+                // walk. Gated on the result routing field reclaim for the same
+                // reason the string and enum tiers are: a holder whose drop
+                // carries no arm of the right type never gives the retain back.
+                //
+                // The element handout that sinks the "TUPB:" payload tier is
+                // already refused here — arrparam_use_ok credits `p[i]` only for
+                // "SCNT:", and a `p.<i>` field read is not in its credited
+                // vocabulary at all, so a callee that extracts an element never
+                // reaches this flag.
+                var tok: boolean = false;
+                if (struct_routes_field_reclaim_at(structs, sfok, fn.ret_type)
+                    && tuple_field_deep_droppable(fn.params[pj].type_name, structs)
+                    && !fn.params[pj].own
+                    && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "TCNT:", structs, sfok)) { tok = true; }
+                if (tok) { tflags = tflags + "1"; tany = true; } else { tflags = tflags + "0"; }
                 var eaok: boolean = false;
                 if (scalar_result
                     && elem_walk_ok
@@ -57479,6 +57523,11 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 var sent: string = "SCNT:" + borrowable_key(fn) + "|" + sflags;
                 next = next.append(sent);
                 if (util.index_of_str(reg, sent) < 0) { changed = true; }
+            }
+            if (tany) {
+                var tent: string = "TCNT:" + borrowable_key(fn) + "|" + tflags;
+                next = next.append(tent);
+                if (util.index_of_str(reg, tent) < 0) { changed = true; }
             }
         }
         reg = next;
