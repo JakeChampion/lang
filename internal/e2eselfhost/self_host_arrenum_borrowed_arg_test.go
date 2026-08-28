@@ -116,14 +116,15 @@ function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.
 			want: 3,
 		},
 		{
-			// REFUSED: an element extraction. Sound to admit in this exact
-			// shape (the extracted box dies inside the callee), but the class's
-			// element rule is deliberately `len()`-only — widening it needs the
-			// arm-binding analysis, and the floor is a leak either way.
+			// ADMITTED by the extract-then-die widening the old comment here
+			// asked for: `var e = src[0]` with a confined local keeps the flag
+			// (arrenum_param_escapes), so the caller's element walk is owed and
+			// granted — pinned at the balance, not only the exit, per the
+			// stale-row lesson the struct twin's callee_stores_field taught.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: E[], i: i32): i32 { var e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
 				producer, "rd(keep, r)"),
-			want: 9,
+			want: 9, balance: true,
 		},
 		{
 			// REFUSED: the element is pushed into another container.
