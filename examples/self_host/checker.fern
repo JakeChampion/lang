@@ -2701,6 +2701,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
   if (!is_method && name == "cell_new") {
     return t_struct("Cell");
   }
+  // print/eprint yield no value (TypeVoid). Leaving them unknown made every
+  // printing function trip the #4346 catch-all under -check (#7311). Arity
+  // is call_diags' E004 rule; a wrong count here stays unknown.
+  if (!is_method && (name == "print" || name == "eprint") && c.args.len() == 1) {
+    return t_void();
+  }
   // slice_unchecked(s, a, b) builtin — the byte slice s[a:b] under its
   // honest name (#5634). Returns the borrowed `str` view, as native does
   // (#7293), so an owning sink refuses it without .to_owned().
@@ -2731,6 +2737,14 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
   if (is_method && name == "len" && c.args.len() == 0) {
     match (recv_ty) {
       TypeString(_) => { return t_i32(); },
+      _ => {}
+    }
+  }
+  // `s.as_bytes()` — the string's other builtin (registerStringMethod's
+  // sibling of `len` above): a u8 view of the bytes, typed u8[] here.
+  if (is_method && name == "as_bytes" && c.args.len() == 0) {
+    match (recv_ty) {
+      TypeString(_) => { return t_array(t_u8()); },
       _ => {}
     }
   }
@@ -7618,6 +7632,20 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             }
           }
         }
+        // E004 (#7311): free-builtin arity. These have no FuncSig, so the
+        // rule above never sees them, and a wrong count used to fall
+        // through to IR lowering and surface as the whole-function #4346
+        // ineligibility hint; native reports E004 at the call. Expected
+        // counts mirror native's builtin signatures. Only when no user
+        // function shadows the name.
+        if (sig.name.len() == 0) {
+          var bexp: i32 = 0 - 1;
+          if (id.name == "print" || id.name == "eprint") { bexp = 1; }
+          if (id.name == "slice_unchecked") { bexp = 3; }
+          if (bexp >= 0 && c.args.len() != bexp) {
+            out = out.append(dg_at("E004", "function expects " + util.i32_to_string(bexp) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
+          }
+        }
         if (s.lookup_sig(id.name).name.len() == 0) {
           out = util.append_diags(out, variant_ctor_diags(id.name, c, s));
         }
@@ -7667,6 +7695,15 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // scalar case above.
           if (mfa.field != "len" && mfa.field != "as_bytes" && s.lookup_method(mfa.field, "string").name.len() == 0) {
             out = out.append(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col));
+          }
+          // E004 (#7311): the two string builtins take no arguments. A wrong
+          // count used to fall through to IR lowering and surface as the
+          // whole-function #4346 ineligibility hint; native reports E004 at
+          // the call. Only when no user method shadows the name — a user
+          // `(s: string) len(…)` resolves through the MethodSig path below,
+          // which has its own arity rule.
+          if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
+            out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects 0 argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
         },
         TypeArray(ar) => {

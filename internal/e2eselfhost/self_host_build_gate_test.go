@@ -108,6 +108,31 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
+			// #7311's remaining half: the STRING builtins and the free
+			// builtins had no arity rule either — `s.len(1)` and
+			// `print("a", "b")` reached lowering and were refused as "not
+			// IR-eligible", naming neither the call nor the mistake. Native
+			// reports E004 at the call; now the self-host does too, and the
+			// gate makes it a build rejection.
+			name:     "string-builtin-arity-E004",
+			src:      "function main(): i32 { var s: string = \"abc\"; return s.len(1); }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			name:     "free-builtin-arity-E004",
+			src:      "function main(): i32 { print(\"a\", \"b\"); return 0; }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			// Negative control: the same builtins at the correct arity, in a
+			// program whose statements all now carry types (print is void,
+			// as_bytes is u8[]) — a wrong arity constant or type arm here
+			// would reject real programs, because E004 gates the build.
+			name:     "string-and-free-builtins-at-correct-arity-compile",
+			src:      "function main(): i32 { print(\"a\"); var s: string = \"abc\"; return s.len() + s.as_bytes().len(); }\n",
+			wantDiag: "",
+		},
+		{
 			// A valid i64 program compiles. This drew a spurious E043 when the
 			// checker ignored integer width; #7011 closed that, and both
 			// checkers are now silent here. The case stays as the regression
