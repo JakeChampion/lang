@@ -76,8 +76,13 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 			// The v1-killer must stay refused: the alias hands the rc element
 			// out, so blessing this site would have the caller's deep free
 			// dangle every `out` the loop holds. The payload scan on x sees
-			// `return x.1` and refuses the site; keep's sweep stays denied
-			// and the cell stays a safe constant leak (keep's 2 allocs).
+			// `return x.1` and refuses the site (ret_dup_ok=false on the
+			// alias vet — an unannotated alias slot could not retain), so
+			// keep's sweep stays denied. Since the dup-at-extract port, the
+			// annotated x's `return x.1` IS retained, so the element leaks
+			// WITH keep's box (frees = churn only, 100) instead of being
+			// freed under keep's live reference — strictly safer, one leak
+			// deeper. TUPB staying refused is what this row pins.
 			name: "handout_elem_keeps_refused",
 			src: `function get(src: (i32, i32[]), i: i32): i32[] {
     var x: (i32, i32[]) = src;
@@ -97,7 +102,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 20, wantFrees: 101,
+			want: 20, wantFrees: 100,
 		},
 		{
 			// A chained alias refuses: vetting x scans `var y = x` as a
