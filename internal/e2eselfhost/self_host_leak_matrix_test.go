@@ -422,6 +422,44 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
+		// The plan-routing instrument for the tuple release families: a
+		// tuple local passed to a READ-ONLY callee. The credit gate reads a
+		// call arg as an escape (its walker cannot see into the callee), so
+		// keep's TUPRCS deep reclaim is refused and the box plus its element
+		// leak. The ported plan grants it — a call arg is not an escape
+		// there, and native agrees, which is why native is clean. Pinned at
+		// the credit gate's verdict so routing that gate through the plan
+		// moves THIS row and nothing else.
+		leakCell{name: "tuple_mixed__callarg__read", src: `function peek(t: (i32, i32[])): i32 { return t.0 + t.1.len(); }
+function main(): i32 {
+    var keep: (i32, i32[]) = (5, [6, 7]);
+    var acc: i32 = peek(keep) + keep.0;
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
+		// A NEWLY SURFACED GAP, found while instrumenting the tuple wave of
+		// the rc-plan promotion: the callee KEEPS the tuple, in a struct
+		// literal it returns. That store is a COUNTED construction, so the
+		// caller's release is balanced and native frees keep — while the
+		// self-host's credit gate reads any call arg at a non-borrowable
+		// position as an escape and refuses, leaking the box and its
+		// element. Exits agree and the underflow counter stays 0, so it is
+		// the safe direction; it is a gap, not a hazard. Closing it is the
+		// counted-sink half of the tuple wave: the plan grants this shape,
+		// but routing may only consume that verdict once the self-host's
+		// struct-literal store is proven to retain a tuple field
+		// co-extensively (the #7253 discipline).
+		leakCell{name: "tuple_mixed__callarg__stored_struct", src: `struct Hold { t: (i32, i32[]), n: i32 }
+function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
+function main(): i32 {
+    var keep: (i32, i32[]) = (5, [6, 7]);
+    var h: Hold = keepit(keep);
+    var acc: i32 = h.n + keep.0;
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
 		// THE PAYLOAD-TIER REFUSAL, literal-init flavor: get's param is
 		// box-borrowable (a field read walks as a borrow in the shared gate)
 		// but its "TUPB:" payload flag is 0 — it hands src.1 out — so the
