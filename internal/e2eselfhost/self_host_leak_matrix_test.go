@@ -438,6 +438,30 @@ function main(): i32 {
     return acc % 83;
 }
 `},
+		// The CALLER-LOCAL half of the same question, and the instrument for
+		// the retain/drop pair itself: the struct literal storing a tuple
+		// field is in the SAME body as the tuple local, so no
+		// interprocedural verdict is involved. Native counts the store
+		// (needsRcIncOnAlias's tuple arm) and gives it back in
+		// __drop_struct_Hold. The self-host does neither — no tuple arm in
+		// lower_expr_struct_lit, no k_tuple in emit_ir_struct_drop_one — so
+		// it is consistent in the leaking direction. When the co-extensive
+		// pair lands this row flips, and a knockout of either half moves it
+		// the other way: retain-only leaks harder, drop-only exits 99.
+		leakCell{name: "tuple_mixed__structfield__local_store", src: `struct Hold { t: (i32, i32[]), n: i32 }
+function round(i: i32): i32 {
+    var k: (i32, i32[]) = (i, [i, i + 1]);
+    var h: Hold = Hold { t: k, n: i };
+    return h.n + k.0;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { acc = acc + round(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return acc % 83;
+}
+`},
 		// A NEWLY SURFACED GAP, found while instrumenting the tuple wave of
 		// the rc-plan promotion: the callee KEEPS the tuple, in a struct
 		// literal it returns. That store is a COUNTED construction, so the
