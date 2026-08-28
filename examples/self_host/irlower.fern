@@ -31394,18 +31394,27 @@ function body_has_nonfresh_tuple_return(stmts: ast.Stmt[], body: ast.Stmt[]): bo
 // tuple_ret_local_is_frame_fresh: `name` is a tuple local the function may
 // hand to the caller as an owned box — declared exactly once, from a DIRECT
 // tuple literal (the same fresh-box proof as a return-position literal),
-// never reassigned, and touched by nothing but reads and the bare return
-// itself (the ret-forgiving escape walk; empty borrow lists keep it
-// conservative — any call-arg use refuses). The tuple sibling of
+// never reassigned, and touched by nothing but reads, payload-confined
+// alias binds, and the bare return itself. The alias forgiveness is the
+// #7667 idiom one mechanism over: rctuple_param_alias_bind_sites vets each
+// `var a = name` through the rc-tuple payload scan on the ALIAS's own name
+// (empty registries — any call-arg use refuses), so a dead-ended reader
+// alias no longer sinks the admission while an alias that hands a payload
+// out, chains, or is itself returned still does. The frame's second
+// reference dies with the frame; every admitted return path leaves the
+// caller owning exactly one reference either way. The tuple sibling of
 // struct_ret_local_is_frame_fresh (#7343) and of "ARROWN:"'s moved-literal
-// arm: every admitted return path leaves the caller owning exactly one
-// reference either way.
+// arm.
 function tuple_ret_local_is_frame_fresh(body: ast.Stmt[], name: string): boolean {
     if (local_decl_count(body, name) != 1) { return false; }
     if (util.index_of_str(body_assign_targets(body), name) >= 0) { return false; }
     if (tuple_ret_local_init_shape(body, name) == "") { return false; }
+    var no_structs: parser.StructDecl[] = [];
     var no_strs: string[] = [];
-    return !body_unsafe_for_alias_ret_ok(body, name, no_strs, no_strs, no_strs, true);
+    var tal: string[] = no_strs;
+    var tty: string = rctuple_type_of_decl(body, name);
+    if (tty != "") { tal = rctuple_param_alias_bind_sites(body, name, tty, no_structs, body, no_strs); }
+    return !body_unsafe_for_alias_ret_ok(body, name, no_strs, no_strs, tal, true);
 }
 
 // tuple_ret_local_names_of: the frame-fresh tuple locals this body hands to
