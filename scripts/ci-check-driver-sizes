@@ -16,13 +16,23 @@
 # driver is linked in CI on every run, so the number was produced dozens of
 # times a day and never recorded, compared or asserted on.
 #
-# WARN, DO NOT FAIL (for now). Findings are a job-summary line plus a warning
-# annotation; the exit status is 0. Set FERN_CI_SIZE_GATE_STRICT=1 to make them
-# fatal — deliberately a one-variable escalation.
+# WARN BY DEFAULT, FAIL WHERE IT COUNTS. Findings are a job-summary line plus a
+# warning annotation and exit 0; FERN_CI_SIZE_GATE_STRICT=1 makes them fatal.
+# CI sets it on the one job that compares the union of every report and gates
+# nothing else, so a finding blocks the merge without holding the test shards
+# (#7519). The per-job callers stay advisory — their jobs the shards wait on.
 #
 # BOTH DIRECTIONS. A shrink is reported as well as a growth. Leaving the
 # baseline high after a win means the next regression is measured against a
 # ceiling nobody holds, which is exactly how the 16% went unnoticed.
+#
+# THE REPORT IS A SLICE UNLESS YOU SAY OTHERWISE. Each caller measures only the
+# drivers it linked, so a lone `warm` job compares 5 of the 15 baselined names.
+# Every run therefore states its own coverage, and a driver the baseline names
+# but the report omits is a finding under FERN_SIZE_REPORT_COMPLETE=1 — set by
+# the one caller whose report is the union of all of them. Without that check a
+# vanished job is indistinguishable from a passing one: #7519 read a five-row
+# table ending in "every driver is within tolerance" as the whole compiler.
 
 set -euo pipefail
 
@@ -54,10 +64,20 @@ if [ ! -s "$REPORT" ]; then
   else
     echo "WARNING: driver size check ran blind: no driver sizes were recorded at $REPORT"
   fi
+  # Blind is a finding like any other, so strict mode has to fail on it. An
+  # empty union is the loudest form of the thing this check exists to catch.
+  if [ "${FERN_CI_SIZE_GATE_STRICT:-0}" = "1" ]; then
+    echo "ci-check-driver-sizes: nothing was measured and FERN_CI_SIZE_GATE_STRICT=1" >&2
+    exit 1
+  fi
   exit 0
 fi
 
-routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
+# Whether this report is meant to name every baselined driver. Off for the
+# per-job callers, whose reports are partial by construction.
+COMPLETE="${FERN_SIZE_REPORT_COMPLETE:-0}"
+
+routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" -v complete="$COMPLETE" '
   function mb(bytes) { return sprintf("%.1f MB", bytes / 1000000) }
   BEGIN {
     tracked = ""
@@ -70,6 +90,7 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
       }
       if (line ~ /^[ \t]*(#|$)/) continue
       if (split(line, fld, /[ \t]+/) < 2) continue
+      if (!(fld[1] in base)) border[++bn] = fld[1]
       base[fld[1]] = fld[2] + 0
     }
     close(B)
@@ -121,6 +142,25 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
       printf "ANNOTATE\t%d driver(s) have no size baseline\tthey are linked and measured but nothing compares them; add the lines from the job summary to .github/selfhost-driver-sizes.txt (#6826)\n", nunbased
     }
 
+    # A baselined driver absent from the report was not weighed at all. Only
+    # the caller holding the union of every job'"'"'s report can tell that apart
+    # from a slice, so this is off unless that caller says so.
+    nmissing = 0
+    missing = ""
+    if (complete == "1") {
+      for (i = 1; i <= bn; i++) {
+        d = border[i]
+        if (d in measured) continue
+        nmissing++
+        missing = missing (missing == "" ? "" : ", ") d
+      }
+    }
+    if (nmissing > 0) {
+      printf "SUMMARY\tMISSING: %d of %d baselined driver(s) are in the baseline but were not measured — %s.\n", nmissing, bn, missing
+      printf "SUMMARY\tNothing compared them, so their size is unknown on this commit. A warm job that died, a driver dropped from FERN_WARM_DRIVER, and a name that drifted from the baseline all land here.\n"
+      printf "ANNOTATE\t%d baselined driver(s) were not measured\t%s produced no size on this commit, so the comparison is incomplete; check every warm job published its size report (#7519)\n", nmissing, missing
+    }
+
     nsug = 0
     for (i = 1; i <= n; i++) {
       d = order[i]
@@ -129,8 +169,20 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
       printf "SUMMARY\t    %s %d\n", d, paste[d]
     }
 
-    if (nfind == 0 && nunbased == 0) printf "SUMMARY\tEvery driver is within %s%% of its baseline.\n", tol
-    printf "FINDINGS\t%d\n", nfind + nunbased
+    # Always state the denominator. "Every driver is within tolerance" over a
+    # five-row slice of fifteen is how this gate read as whole-compiler cover
+    # while two thirds of it went unweighed (#7519).
+    ncompared = n - nunbased
+    if (complete == "1") {
+      printf "SUMMARY\tCoverage: %d of %d baselined drivers measured — this report is the union of every job'"'"'s, so it is meant to name them all.\n", ncompared, bn
+    } else if (ncompared < bn) {
+      printf "SUMMARY\tCoverage: %d of %d baselined drivers measured HERE — this report is one job'"'"'s slice, not the whole compiler. The union is compared in the driver-sizes job.\n", ncompared, bn
+    } else {
+      printf "SUMMARY\tCoverage: %d of %d baselined drivers measured.\n", ncompared, bn
+    }
+
+    if (nfind == 0 && nunbased == 0 && nmissing == 0) printf "SUMMARY\tEvery driver measured here is within %s%% of its baseline.\n", tol
+    printf "FINDINGS\t%d\n", nfind + nunbased + nmissing
   }
 ' "$REPORT")"
 

@@ -439,10 +439,17 @@ variable). The desugar is the reason — each `for` opens with an alias of the
 iterand and a captured `.len()`, two live locals plus their RC traffic where the
 index form had one `i32`, times 311 loops. The elided per-element bounds check
 pays some of it back and not all. That is inside `ci-check-driver-sizes`'
-5% advisory tolerance, but it is most of it, and a second module converted the
+5% tolerance, but it is most of it, and a second module converted the
 same way will not fit under it: whoever does the next one should expect to
-refresh `.github/selfhost-driver-sizes.txt` and should read this as the real
+refresh `.github/selfhost-driver-sizes.txt` — the `driver-sizes` job fails on
+that drift now rather than warning — and should read this as the real
 per-loop price of the construct, not as noise.
+
+Read the per-loop figure with the denominator in mind. #7519 measured four
+slices of this same rewrite at 0.2, 4.3, 18.0 and 18.3 KiB/loop, so loop count
+is not what the cost tracks; and it found the checker slice above registering
+exactly 0 bytes against `irlower_run.fern`, which does not link `checker.fern`.
+Divide a module's growth by the smallest driver that links that module.
 
 This is the first slice whose subject is the ratchet's own two rows rather than
 a feature row: `for..in` 15 → 326, `x = x + 1` 5,039 → 4,728. Nothing had to be

@@ -23,11 +23,23 @@
 # same byte count on any runner — a difference here is a real change in the
 # compiler's output, not runner noise.
 #
-# ADVISORY, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
-# default) is a job-summary line plus a warning annotation, never a failed job.
-# A SHRINK is flagged too: an un-updated baseline after a win silently raises
-# the ceiling the next regression is measured against, which is how 16% of
-# growth went unnoticed for eight days.
+# ENFORCED, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
+# default) is a job-summary line plus a warning annotation in whichever job
+# linked the driver, and a FAILED `driver-sizes` job. That leaf compares the
+# UNION of every measuring job's report and is the only place the fifteen are
+# weighed as a set; the per-job checks stay advisory because their jobs gate the
+# test shards, and a measurement step must not hold the lane. A SHRINK is
+# flagged too: an un-updated baseline after a win silently raises the ceiling
+# the next regression is measured against, which is how 16% of growth went
+# unnoticed for eight days — and, in the other direction, how a 3.0 MB win was
+# never recorded either (#7519).
+#
+# A DRIVER THAT WENT UNMEASURED FAILS TOO. `driver-sizes` sets
+# FERN_SIZE_REPORT_COMPLETE=1, so a name in this file that reached no report is
+# a finding instead of a row nobody notices is absent. Every measuring job links
+# a disjoint set and used to check only that set, so a five-row table ending in
+# "every driver is within 5% of its baseline" was indistinguishable from a
+# fifteen-row one — which is how the drivers grew 2.3x with the gate green.
 #
 # WHEN A NUMBER MOVES ON PURPOSE, update it in the same PR — the job summary
 # prints the corrected lines ready to paste. Keep the reason in the PR, not
@@ -88,6 +100,45 @@
 # 300 KB and means something different from the tracked artifact moving 5%; the
 # percentage is what is compared, deliberately, so a small driver's regression is
 # not lost inside a big one's noise.
+#
+# WHAT THE FIFTEEN DO NOT SEE (#7519). These drivers are not a sample of the
+# compiler. Each links one import closure, and a module outside it contributes
+# nothing to that driver's bytes — so a change of any size registers at its full
+# cost against some of these numbers and as exactly zero against others. Three
+# consequences, before you quote a figure or add a driver:
+#
+#   * FOURTEEN MODULES ARE VISIBLE ONLY THROUGH fern.fern: both native back
+#     ends (x86_native, arm64_native), elf, watbin, ssa_wasm, interp, printer,
+#     constfold, literate, ferndoc, mvs, caps, platforms, visibility. A change
+#     confined to one of them moves a single number in this file, and moves it
+#     against the largest denominator here, where 300 KB is 0.8% and vanishes
+#     under the tolerance. The claim above that the smaller drivers "localise a
+#     regression to a backend" holds for the IR, asm and wasm-IR backends and
+#     NOT for the native emitters, which have no localising driver at all.
+#   * THREE LIBRARY MODULES ARE LINKED BY NO BASELINED DRIVER: wit_decode
+#     (1,127 lines, imported nowhere in the tree), wit_compose, and
+#     wasm_objfile — the last reachable only from wasm_modload_run, which
+#     wasm-wholecompiler-link builds as a WASM module rather than an x86-64
+#     ELF, a size that does not belong in this file's one architecture.
+#     Covering it means paying for an x86-64 link of a driver nothing else
+#     needs. Three neighbours look like they belong on this list and do not:
+#     builtins.fern is never imported — modloader READS it at runtime
+#     (`read_file(dir + "builtins.fern")`), so it is a source input rather
+#     than linked code — while pipeline.fern and wasm_units_probe.fern carry
+#     their own `main` and are unbaselined PROGRAMS, not unlinked modules.
+#   * FIVE DRIVERS COVER TWO CLOSURES: asm_pathprobe_run and asm_ir_elig_run
+#     have identical import closures, as do wasm_ir_run, wasm_run and
+#     wasm_runio_run. They differ in what their `main` reaches, not in what
+#     they link, so the three wasm rows are close to one measurement.
+#
+# PICK THE DENOMINATOR THAT SEES YOUR CHANGE. A change confined to one module is
+# honestly measured against the SMALLEST driver linking it, not against the
+# tracked artifact: checker.fern -> checker_modload_run (8.2 MB), the front end
+# or ssa -> ssa_run (6.5 MB), irlower.fern -> asm_ir_elig_run (26.3 MB).
+# Dividing by the wrong one is not a small error. #7519 found the 311-loop
+# checker migration registering EXACTLY 0 bytes against irlower_run, which does
+# not link checker.fern at all, and found one irlower slice reading +6.8% or
+# +9.2% for the same absolute growth depending only on which driver divided it.
 
 fern.fern 36121156
 asm_load_run.fern 31570580

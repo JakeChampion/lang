@@ -95,7 +95,8 @@ backend it imports, so nothing in it was unreachable, and the self-host
 sources use no `dyn` at all — there was no over-root to remove. The fix
 is worth having for what it prevents: a driver that stops driving one
 backend, or grows a `dyn`-dispatched emitter table, would otherwise keep
-the dead half with nothing to notice but the advisory size gate.
+the dead half with nothing to notice but the size gate — which fails on
+5% drift now, but only for a module some baselined driver links (#7519).
 
 ## Reproducing
 
@@ -106,4 +107,6 @@ the dead half with nothing to notice but the advisory size gate.
   follow reachability in both directions.
 - `internal/platforms/enforce_test.go` — the E066 contract.
 - Driver sizes are tracked per-commit by `scripts/ci-check-driver-sizes`
-  against `FERN_DRIVER_SIZE_REPORT`.
+  against `FERN_DRIVER_SIZE_REPORT`. The `driver-sizes` job compares the
+  union of every measuring job's report and fails on drift or on a
+  baselined driver nothing measured.

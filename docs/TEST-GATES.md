@@ -130,7 +130,12 @@ added **1.11 MB, +10.3%,** to `irlower_run.fern` while leaving `ackermann`,
 call it PURE. It is a MISCOMPILE gate, not a cost gate: green here means the
 output is the same, never that the change was free. For anything touching
 `internal/ir` or a hot path in the self-host, link a driver before and after and
-compare sizes as well (#7519).
+compare sizes as well (#7519). Link the SMALLEST driver that imports the module
+you changed — `checker_modload_run` for `checker.fern`, `ssa_run` for the front
+end, `asm_ir_elig_run` for `irlower.fern` — because a driver that does not link
+it reports your change as 0 bytes, and `fern.fern` divides it by 36 MB.
+`.github/selfhost-driver-sizes.txt` lists what each driver does and does not
+see; CI's `driver-sizes` job now fails on 5% drift rather than warning.
 
 **Any change to `examples/self_host/*.fern` must run
 `TestSelfHostFeatureCensus`, whatever the change is about.** Every other gate
