@@ -82,6 +82,27 @@ points at it — the exit-99 / sanitizer class, not a matrix leak.
 The two cells stay the instrument throughout: the guard row holds clean,
 the gap row flips.
 
+## The pair's own instrument
+
+Step 1 gets a third cell, `tuple_mixed__structfield__local_store`, because
+the two above cannot isolate it: both cross a call boundary, so a move in
+either could come from the store pair OR from the interprocedural verdict.
+This one is caller-local —
+
+```fern
+var k: (i32, i32[]) = (i, [i, i + 1]);
+var h: Hold = Hold { t: k, n: i };
+```
+
+— so the only thing that can move it is the retain/drop pair. Measured
+**clean / leak** on both architectures, exits agreeing (23 = 23).
+
+That gives step 1 a knockout matrix of its own, the shape the elemret pair
+established: with both halves in, the row is clean; retain-only leaks
+harder (a count nobody gives back); drop-only exits 99 (a dec with no inc).
+If a single knockout does not move exactly this row, the halves are not
+co-extensive and the grant in steps 2-3 is not safe to consume.
+
 ## Also recorded
 
 Nothing in the compiler changed here. Both rows were measured with
