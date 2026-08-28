@@ -137,13 +137,18 @@ function main(): i32 {
 }`,
 	},
 	{
-		// A loop element RETURNED out of the iteration must keep the owned
-		// model: a borrowed element handed to the caller dangles once the
-		// container's exit sweep deep-drops the buffer. The returned guard
-		// (and bindingConfinedToArm) refuse the borrow here; with either
-		// removed, the returned string's bytes are read after free.
-		// The hit must be BOUND in the caller before the container dies, so
-		// the read happens after pick's sweep ran.
+		// A loop element RETURNED out of the iteration: the returned guard
+		// (with bindingConfinedToArm and movedLocals behind it) refuses the
+		// borrow, so sd keeps the owned model. Pinned here as cross-backend
+		// value correctness — content compare after the container dies, with
+		// same-size churn after the drop. Measured with every walk-3 guard
+		// knocked out: this still exits 0 on all three backends, because a
+		// wrongly-borrowed return goes uncounted through move-on-return and
+		// the caller's may-alias-result conservatism degrades its container
+		// drops to FLAT decs — a leak, which this corpus reads as 0 by
+		// design. The failing-mode net for these guards is the IR layer:
+		// internal/ir/forin_elem_borrow_test.go, whose returned case DOES
+		// fail with the guard removed.
 		name: "forin_elem_escape_return_keeps_retain",
 		src: `
 struct S { name: string, fields: string[] }
@@ -154,30 +159,50 @@ function pick(xs: S[]): S {
     }
     return S{ name: mkstr("z"), fields: [] };
 }
+function use_returned(): i32 {
+    var src: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }];
+    var hit: S = pick(src);
+    src = [];
+    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
+    var ok: i32 = 0;
+    if (hit.name == "aaaaaaaaaa!") { ok = 1; }
+    return ok + churn.len() - 1;
+}
 function main(): i32 {
-    var hit: S = pick([S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }]);
-    return (hit.name.len() - 11) + __rc_underflow_count();
+    var c: i32 = use_returned();
+    return (c - 1) + __rc_underflow_count();
 }`,
 	},
 	{
-		// A loop element STORED into an accumulator array must keep the owned
-		// model: appending an un-retained borrow gives the accumulator an
-		// uncounted reference, so the element is released once through the
-		// source container and again through the accumulator — the underflow
-		// counter fires. bindingConfinedToArm refuses (append is a retain
-		// sink per calleeRetainsAnyArg).
+		// A loop element STORED into an accumulator array: movedLocals and
+		// bindingConfinedToArm (append is a retain sink per
+		// calleeRetainsAnyArg) refuse the borrow. Same story as the return
+		// case above: pinned as cross-backend value correctness with
+		// in-function container death and churn; the escape site takes its
+		// own transfer inc, so even a wrongly-taken borrow shows up as a
+		// leak-shaped imbalance, not an exit-code failure — the IR tests
+		// carry the guard-removal net.
 		name: "forin_elem_escape_append_keeps_retain",
 		src: `
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
-function main(): i32 {
+function collect(): i32 {
     var xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
                    S{ name: mkstr("b"), fields: [] }];
     var acc: S[] = [];
     for sd in xs {
         if (sd.fields.len() == 1) { acc = acc.append(sd); }
     }
-    return (acc[0].name.len() - 11) + __rc_underflow_count();
+    xs = [];
+    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("y")] },
+                      S{ name: mkstr("xxxxxxxxxx"), fields: [mkstr("w")] }];
+    var ok: i32 = 0;
+    if (acc[0].name == "aaaaaaaaaa!") { ok = 1; }
+    return ok + churn.len() - 2;
+}
+function main(): i32 {
+    var c: i32 = collect();
+    return (c - 1) + __rc_underflow_count();
 }`,
 	},
 	{

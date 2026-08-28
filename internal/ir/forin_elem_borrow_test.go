@@ -97,6 +97,16 @@ function main(): i32 { return scan_local() + scan_call(); }`)
 // Each escaping shape must refuse the borrow: the element keeps its retain,
 // so the function carries strictly more rc_inc than its confined sibling.
 // The confined sibling in every pair is scan_ok, byte-for-byte the happy path.
+//
+// These are the failing-mode net for the walk-3 guards — the e2e corpus
+// cannot be: measured with every guard knocked out, the rcCorpus escape
+// programs still exit 0 on all three backends (escape sites take their own
+// transfer inc, and the one uncounted route, move-on-return, is absorbed as
+// a LEAK by the caller's may-alias-result flat dec). Per-case coverage,
+// also measured by knockout: returned falls to the returned[y]+confinement
+// pair, bound_alias to walk 2's role marking, stored_into_array to
+// movedLocals, match_scrutinee to scrutinee[y], reassigned_elem to
+// reassigned[y].
 func TestForinElemBorrowRefusesEscapes(t *testing.T) {
 	cases := []struct {
 		name string
