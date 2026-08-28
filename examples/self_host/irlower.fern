@@ -3777,6 +3777,28 @@ pub function arrarr_elem_kind_of_type(t: string): string {
 // (`m[i][j]` over T[][][], whose recorded inner kind is "arr"). The element
 // KIND is irrelevant here (arrarr_elem records "" for the flat scalar kinds);
 // this asks only whether the read hands back an rc-counted array pointer.
+// ret_is_tuple_elem_dup: the EMISSION entry point of tuple_elem_ret_dup —
+// resolves the tuple type off the source slot's tuple_elems (params carry the
+// declared type, annotated locals the annotation — the same declarations the
+// scans read, so the two entries see one fact). The sibling of
+// index_read_is_arr, asked in the same place for the same reason.
+function ret_is_tuple_elem_dup(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(id) => {
+                    var sl: i32 = s.slot_of(id.name);
+                    if (sl < 0 || s.locals[sl].tuple_elems.len() == 0) { return false; }
+                    return tuple_elem_ret_dup(e, id.name, "(" + s.locals[sl].tuple_elems + ")");
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function index_read_is_arr(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprIndex(ix) => {
@@ -17474,6 +17496,24 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 ris = emit_dec_sweep_except(ris, 0 - 1);   // element NOT moved out of the container
                 return ris.emit(ir.op_return());
             }
+            // Returning a TUPLE ELEMENT (`return src.1`) — native's
+            // dup-at-extract (needsRcIncOnAlias's FieldAccess arm): the
+            // element leaves the box to a NEW owner, so retain it before the
+            // sweep. A borrowed tuple param's caller now holds the deep claim
+            // TUPB admits (element rc: construction 1 -> retain 2 -> caller's
+            // deep free 1 -> final owner's sweep 0); a TUPRCS local of THIS
+            // frame settles its own claim in the sweep below the retain.
+            // Retain-only or grant-only is measurably wrong in opposite
+            // directions (rc-log 2026-08-28 elemret scoping pin) — this arm
+            // and the scans' tuple_elem_ret_dup admission are one predicate
+            // and MUST move together.
+            if (ret_is_tuple_elem_dup(r.value, s)) {
+                var rts: LowerState = lower_expr(r.value, s);   // element ptr on stack
+                if (!rts.ok) { return rts; }
+                rts = rts.retain_tos("ret-tuple-elem");
+                rts = emit_dec_sweep_except(rts, 0 - 1);   // element NOT moved out of the container
+                return rts.emit(ir.op_return());
+            }
             // Returning a bare PARAM array (`return a`, a a borrowed param) —
             // the native return-transfer inc, ported (#4357 probe). The CALLER
             // binds the result as an owned move (its slot is exit-swept), but
@@ -29446,6 +29486,32 @@ function rctuple_scrutinee_is_elem_read(e: ast.Expr, name: string): boolean {
     return false;
 }
 
+// tuple_elem_ret_dup: THE dup-at-extract admission — `e` is exactly
+// `name.<i>` and element <i> of `ttype` is an rc ARRAY. This one predicate
+// has two entry points and no near-copy (the 08-22 struct-producer rule):
+// the return lowering's ret_is_tuple_elem_dup gates the retain for
+// exactly this shape, and the rc-tuple escape scans forgive exactly this
+// shape — so "the escape stops being an escape" is true by construction,
+// never by two conditions happening to line up. String / struct / nested
+// tuple elements are refused here ON BOTH SIDES (their retain protocol is
+// a separate port), which keeps unretained shapes refused.
+pub function tuple_elem_ret_dup(e: ast.Expr, name: string, ttype: string): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            if (!util.is_all_digits(fa.field)) { return false; }
+            match (fa.obj) {
+                ast.ExprIdent(id) => {
+                    if (id.name != name) { return false; }
+                    return is_array_type_name(tuple_type_elem_tag(ttype, util.digits_to_i32(fa.field)));
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // rctuple_esc_stmt_alias carries the #7282 alias forgiveness THROUGH the
 // recursion, which is the whole point: a first version checked the forgiven
 // bind only at the top level of the statement list and fell into the plain
@@ -29453,7 +29519,7 @@ function rctuple_scrutinee_is_elem_read(e: ast.Expr, name: string): boolean {
 // the credit. The function-scope sibling measured clean while the block-scoped
 // one sat at exactly its unfixed number — two dec sites missing from the emitted
 // asm, and nothing else to see.
-function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[]): boolean {
+function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], ret_dup_ok: boolean): boolean {
     match (st) {
         ast.StmtVar(v) => {
             if (alias_ok.len() > 0) {
@@ -29467,27 +29533,30 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
             }
             return rctuple_esc_expr(v.init, name, ttype, structs, borrowable);
         },
-        ast.StmtReturn(r) => { return rctuple_esc_expr(r.value, name, ttype, structs, borrowable); },
+        ast.StmtReturn(r) => {
+            if (ret_dup_ok && tuple_elem_ret_dup(r.value, name, ttype)) { return false; }
+            return rctuple_esc_expr(r.value, name, ttype, structs, borrowable);
+        },
         ast.StmtExpr(e) => { return rctuple_esc_expr(e.value, name, ttype, structs, borrowable); },
         ast.StmtAssign(a) => { return rctuple_esc_expr(a.value, name, ttype, structs, borrowable); },
         ast.StmtIf(f) => {
             if (rctuple_esc_expr(f.cond, name, ttype, structs, borrowable)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, borrowable, alias_ok)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, borrowable, alias_ok)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } ei = ei + 1; }
             return false;
         },
         ast.StmtWhile(w) => {
             if (rctuple_esc_expr(w.cond, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, borrowable, alias_ok)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } i = i + 1; }
             return false;
         },
         ast.StmtFor(fo) => {
             if (rctuple_esc_expr(fo.iter, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, borrowable, alias_ok)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } i = i + 1; }
             return false;
         },
         ast.StmtMatch(m) => {
@@ -29506,11 +29575,11 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
             for arm in m.arms {
                 if (arm.has_guard && rctuple_esc_expr(arm.guard, name, ttype, structs, borrowable)) { return true; }
                 var bi: i32 = 0;
-                while (bi < arm.body.len()) { if (rctuple_esc_stmt_alias(arm.body[bi], name, ttype, structs, borrowable, alias_ok)) { return true; } bi = bi + 1; }
+                while (bi < arm.body.len()) { if (rctuple_esc_stmt_alias(arm.body[bi], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } bi = bi + 1; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, borrowable, alias_ok); },
+        ast.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, borrowable, alias_ok, ret_dup_ok); },
         _ => { return false; }
     }
     return false;
@@ -29525,23 +29594,26 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
 // and forgiving only the first left "TUPRC:" denied and the shape measuring
 // exactly its unfixed 8000 while the scalar-tuple sibling went to 0. Enumerate
 // the scans a class consults, not just the shared one.
-function rctuple_payload_escapes_alias(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[]): boolean {
+function rctuple_payload_escapes_alias(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], ret_dup_ok: boolean): boolean {
     for stmt in stmts {
-        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok)) { return true; }
+        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; }
     }
     return false;
 }
 
 // rctuple_payload_escapes_alias_ret_ok: the same scan with the owned-return
 // admission's one exemption — a bare top-level `return <name>` of the WHOLE
-// tuple is the move-out, not a payload escape (an ELEMENT return, `return
-// name.1`, stays refused: that hands the element's reference to a new owner).
+// tuple is the move-out, not a payload escape. An ELEMENT return, `return
+// name.1`, hands the element's reference to a new owner; under ret_dup_ok it
+// is forgiven exactly when the return lowering RETAINS that hand-off
+// (tuple_elem_ret_dup — one predicate, two entry points), and stays refused
+// otherwise.
 // This is the rc-tuple class's second escape scan being told what the shared
 // gate (body_unsafe_for_alias_ret_ok) already learned — the trap the comment
 // above names. Compound statements recurse HERE so a nested return in an
 // if-arm is forgiven too.
-function rctuple_payload_escapes_alias_ret_ok(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], bare_ret_ok: boolean): boolean {
-    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, borrowable, alias_ok); }
+function rctuple_payload_escapes_alias_ret_ok(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], bare_ret_ok: boolean, ret_dup_ok: boolean): boolean {
+    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, borrowable, alias_ok, ret_dup_ok); }
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
@@ -29550,30 +29622,31 @@ function rctuple_payload_escapes_alias_ret_ok(stmts: ast.Stmt[], name: string, t
                     ast.ExprIdent(rid) => { bare = rid.name == name; },
                     _ => {}
                 }
-                if (!bare && rctuple_esc_expr(r.value, name, ttype, structs, borrowable)) { return true; }
+                if (!bare && !(ret_dup_ok && tuple_elem_ret_dup(r.value, name, ttype))
+                    && rctuple_esc_expr(r.value, name, ttype, structs, borrowable)) { return true; }
             },
             ast.StmtIf(f) => {
                 if (rctuple_esc_expr(f.cond, name, ttype, structs, borrowable)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
             },
             ast.StmtWhile(w) => {
                 if (rctuple_esc_expr(w.cond, name, ttype, structs, borrowable)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
             },
             ast.StmtFor(fo) => {
                 if (rctuple_esc_expr(fo.iter, name, ttype, structs, borrowable)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
             },
             ast.StmtMatch(m) => {
                 if (rctuple_esc_expr(m.scrutinee, name, ttype, structs, borrowable)) { return true; }
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
-                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, borrowable, alias_ok, true)) { return true; }
+                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
                     mi = mi + 1;
                 }
             },
-            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok)) { return true; } }
+            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } }
         }
     }
     return false;
@@ -29670,7 +29743,7 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], structs: parser.StructDec
                 var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
                     || all_assigns_fresh_scalar_enum(stmts, v.name, structs);
                 // The escape gate is the routed half (promotion step 2): the
-                // plan's free_eligible_of verdict replaces body_unsafe_for.
+                // plan's free_eligible_sites_of verdict replaces body_unsafe_for.
                 // The other three conjuncts stay family knowledge the
                 // name-level plan cannot supply: the fresh-ctor init
                 // identifies the kind, the rebind check keeps a non-fresh
@@ -57011,7 +57084,7 @@ function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): stri
         if (pj < boxflags.len() && boxflags[pj] == b'1'
             && pty.len() >= 2 && slice_unchecked(pty, 0, 1) == "(" && !util.contains(pty, "=>")) {
             var tal: string[] = rctuple_param_alias_bind_sites(fn.body, fn.params[pj].name, pty, no_structs, fn.body, no_strs);
-            if (!rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, tal)) {
+            if (!rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, tal, true)) {
                 tupb = tupb + "1";
                 any1 = true;
             } else { tupb = tupb + "0"; }
@@ -57039,7 +57112,7 @@ function rctuple_param_alias_bind_sites(stmts: ast.Stmt[], src: string, pty: str
             ast.StmtVar(v) => {
                 if let ast.ExprIdent(aid) = v.init {
                     if (aid.name == src
-                        && !rctuple_payload_escapes_alias(body, v.name, pty, structs, no_strs, no_strs)) {
+                        && !rctuple_payload_escapes_alias(body, v.name, pty, structs, no_strs, no_strs, false)) {
                         a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
@@ -58847,7 +58920,27 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
         ast.ExprNumber(_) => { return false; },
         ast.ExprBool(_) => { return false; },
         ast.ExprString(_) => { return false; },
-        ast.ExprFieldAccess(_) => { return true; },
+        ast.ExprFieldAccess(fa) => {
+            // Dup-at-extract, analysis half — native rhsTainted's FieldAccess
+            // arm: an element read out of a TUPLE-typed local/param is a
+            // COUNTED alias (the bind's container-read alias_inc / the
+            // return-transfer retain), and the tuple's deep drop releases its
+            // own claim, so the destination owns its reference. Map elements
+            // stay tainted (their slot drop deep-frees the value column).
+            // The STRUCT-source half of native's arm is deliberately not
+            // ported — the conservative taint is the documented cut.
+            if (util.is_all_digits(fa.field)) {
+                match (fa.obj) {
+                    ast.ExprIdent(_) => {
+                        var fot: string = rc_fe_expr_type(fa.obj, types_n, types_t, structs);
+                        if (fot.len() >= 2 && slice_unchecked(fot, 0, 1) == "(" && !util.contains(fot, "=>")
+                            && !is_map_type_name(tuple_type_elem_tag(fot, util.digits_to_i32(fa.field)))) { return false; }
+                    },
+                    _ => {}
+                }
+            }
+            return true;
+        },
         ast.ExprIndex(_) => { return true; },
         ast.ExprSlice(sl) => {
             if (rc_fe_expr_type(sl.array, types_n, types_t, structs) == "string") { return false; }
@@ -68366,7 +68459,7 @@ while (ti < tups.len()) {
         // extraction, and the wrong guess here is an over-release. An un-annotated
         // tuple keeps "TUP:" and simply does not earn the element release.
         var tupelemty: string = rctuple_type_of_decl(body, tnm);
-        if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal)) {
+        if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal, true)) {
             out = out.append("TUPELEMOK:" + tups[ti]);
         }
     }
@@ -68385,7 +68478,7 @@ while (rti < rctups.len()) {
     ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
     if (!body_unsafe_for_alias_ret_ok(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0)) {
         var rctty: string = rctuple_type_of_decl(body, rnm);
-        if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0)) {
+        if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0, true)) {
             out = out.append("TUPRC:" + rctups[rti]);
             // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
             // this is the general rule the struct case taught: only the BOX
@@ -68824,15 +68917,14 @@ while (oai < oaas.len()) {
     // VARIABLE, so each takes the bare name back out of the key.
     var oanm: string = reclaim_site_name(oaas[oai]);
     // The whole-name escape gate is plan-routed (step 2, the SCENUMS
-    // pattern); the element-alias and payload gates stay — a bound
-    // `var o = xs[i]` takes no counted retain here (native's Index-shape
-    // dup is not ported), so the name-level plan cannot license them.
-    // The two grants are individually sound, so their UNION is the staged
-    // gate: the credit-side escape proof keeps every pre-routing grant
-    // (the plan still lacks native's returnsNoParamEscape oracle, so a
-    // call-provenance local is plan-tainted through its own init args),
-    // and the plan adds the call-arg/counted-sink grants the credit gate
-    // cannot see. The credit half retires with that oracle's port.
+    // pattern) and the plan verdict is now the WHOLE gate when the plan is
+    // on — the staged union with the credit-side escape proof retired with
+    // the per-site verdicts, which give the plan a key precise enough to
+    // grant one binding and refuse its same-named neighbour. The
+    // element-alias conjunct stays: a bound `var o = xs[i]` takes no
+    // counted retain here (native's Index-shape dup is unported for
+    // ARRAYS — the tuple-element half is tuple_elem_ret_dup), so no
+    // ownership verdict can license it. It retires with that dup.
     var oa_esc_ok: boolean = false;
     if (!plan_on) { oa_esc_ok = !body_unsafe_for(body, oanm, borrowable, recv_borrow); }
     else if (!name_is_alias_bound(body, oanm)) {
