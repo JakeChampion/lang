@@ -17743,7 +17743,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
                 ast.ExprTuple(dte) => {
                     if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
-                    else if (tuple_lit_rc_reclaimable(es.value, "", s.structs)) {
+                    else if (tuple_lit_rc_reclaimable(es.value, "", s.structs, s.sigs.str_fresh_ret_fns)) {
                         // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);` or
                         // the nested `((w, [w, w+1]), w);` — #4365): every element
                         // scalar-shaped, a DIRECT array literal, or a nested tuple
@@ -24201,14 +24201,14 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: ast
                 s = s.emit(ir.op_drop());
             },
             ast.ExprBinary(_) => {
-                if (tuple_str_elem_fresh(tup.elements[k])) {
+                if (tuple_str_elem_fresh_reg(tup.elements[k], s.sigs.str_fresh_ret_fns)) {
                     s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
                     s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
                     s = s.emit(ir.op_drop());
                 }
             },
             ast.ExprCall(_) => {
-                if (tuple_str_elem_fresh(tup.elements[k])) {
+                if (tuple_str_elem_fresh_reg(tup.elements[k], s.sigs.str_fresh_ret_fns)) {
                     s = emit_load_tuple_path(s, slot, path_child(path, k));   // string ptr
                     s = s.emit(ir.op_call_direct("__fern_str_free", 1));     // rc-aware free
                     s = s.emit(ir.op_drop());
@@ -24486,7 +24486,7 @@ function tuple_union_arg_freefn(arg: ast.Expr, s: LowerState): string {
             return "";
         },
         _ => {
-            if (tuple_str_elem_fresh(arg)) { return "__fern_str_free"; }
+            if (tuple_str_elem_fresh_reg(arg, s.sigs.str_fresh_ret_fns)) { return "__fern_str_free"; }
         }
     }
     return "";
@@ -24605,7 +24605,13 @@ function tuple_field_deep_droppable(t: string, structs: parser.StructDecl[]): bo
 // so a site that frees the payload without also freeing the tuple's own box is
 // balanced. Scalar positions accept any expression (value-copied, never rc-tracked).
 function tuple_arg_payload_fresh(ttype: string, arg: ast.Expr, structs: parser.StructDecl[]): boolean {
-    return tuple_arg_payload_droppable(ttype, arg, structs, false);
+    // The sole-owner flavour keeps the SYNTACTIC string admission (empty
+    // registry): its consumers (an Option's Some payload, an array-of-tuples
+    // element) free the payload without freeing a box the same statement
+    // built, and widening each is its own measured increment — #7374 records
+    // the scope split. Only the retained flavour below learns the registry.
+    var no_reg: string[] = [];
+    return tuple_arg_payload_droppable(ttype, arg, structs, false, no_reg);
 }
 
 // tuple_arg_payload_retained is the same admission widened by one position form: a
@@ -24620,11 +24626,11 @@ function tuple_arg_payload_fresh(ttype: string, arg: ast.Expr, structs: parser.S
 // scope-exit sweep). The strict form stays the gate everywhere the payload outlives
 // the box or is reached without one — an Option's Some payload, an array-of-tuples
 // element — since there a mere counted reference is not enough to free by.
-function tuple_arg_payload_retained(ttype: string, arg: ast.Expr, structs: parser.StructDecl[]): boolean {
-    return tuple_arg_payload_droppable(ttype, arg, structs, true);
+function tuple_arg_payload_retained(ttype: string, arg: ast.Expr, structs: parser.StructDecl[], str_fresh_ret: string[]): boolean {
+    return tuple_arg_payload_droppable(ttype, arg, structs, true, str_fresh_ret);
 }
 
-function tuple_arg_payload_droppable(ttype: string, arg: ast.Expr, structs: parser.StructDecl[], ident_arr_ok: boolean): boolean {
+function tuple_arg_payload_droppable(ttype: string, arg: ast.Expr, structs: parser.StructDecl[], ident_arr_ok: boolean, str_fresh_ret: string[]): boolean {
     match (arg) {
         ast.ExprTuple(tl) => {
             var k: i32 = 0;
@@ -24649,17 +24655,18 @@ function tuple_arg_payload_droppable(ttype: string, arg: ast.Expr, structs: pars
                     if (!tuple_strarr_elem_fresh(tl.elements[k])) { return false; }
                 } else if (tag == "string") {
                     // A string position must be a LITERAL (construction copies it
-                    // fresh) or a fresh producer (concat / .to_string(),
-                    // tuple_str_elem_fresh) — a bare-ident element would put a
-                    // live local's box under the blind type-driven str_free.
+                    // fresh) or a fresh producer (concat / .to_string() / a
+                    // registered fresh-string function, tuple_str_elem_fresh_reg)
+                    // — a bare-ident element would put a live local's box under
+                    // the blind type-driven str_free.
                     var isfs: boolean = false;
                     match (tl.elements[k]) {
                         ast.ExprString(_) => { isfs = true; },
-                        _ => { isfs = tuple_str_elem_fresh(tl.elements[k]); }
+                        _ => { isfs = tuple_str_elem_fresh_reg(tl.elements[k], str_fresh_ret); }
                     }
                     if (!isfs) { return false; }
                 } else if (tag.len() >= 2 && slice_unchecked(tag, 0, 1) == "(") {
-                    if (!tuple_arg_payload_droppable(tag, tl.elements[k], structs, ident_arr_ok)) { return false; }
+                    if (!tuple_arg_payload_droppable(tag, tl.elements[k], structs, ident_arr_ok, str_fresh_ret)) { return false; }
                 } else if (decl_is_struct(structs, tag)) {
                     // A reclaim-STRUCT position must be a FRESH struct literal so the
                     // type-driven drop dec's a sole-owned box (an ident alias would
@@ -28790,6 +28797,36 @@ function tuple_str_elem_fresh(e: ast.Expr): boolean {
     return false;
 }
 
+// tuple_str_elem_fresh_reg widens tuple_str_elem_fresh by the whole-program
+// fresh-string registry (#7374): a direct call to a registered producer
+// (str_fresh_ret_fns' bare-name entries) hands back a fresh sole-owned box by
+// the registry's own fixpoint — the same admission the syntactic form already
+// gives `.to_string()`. A separate named predicate so every gate that widens
+// says so at its call site (the #7553/OPTSTR lesson); concat operands recurse
+// through the widened form, so `w("p") + q` counts too (the registry proves
+// the `+` is a string concat, and a concat always allocates).
+function tuple_str_elem_fresh_reg(e: ast.Expr, str_fresh_ret: string[]): boolean {
+    if (tuple_str_elem_fresh(e)) { return true; }
+    match (e) {
+        ast.ExprBinary(b) => {
+            if (b.op != "+") { return false; }
+            if (tuple_str_elem_fresh_reg(b.left, str_fresh_ret)) { return true; }
+            return tuple_str_elem_fresh_reg(b.right, str_fresh_ret);
+        },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    return util.index_of_str(str_fresh_ret, cid.name) >= 0;
+                },
+                _ => {}
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // tuple_strarr_elem_fresh reports whether `e` is a non-empty string-ARRAY literal
 // whose every element is a provably fresh string box (a literal, or a
 // tuple_str_elem_fresh producer). Such a position sole-owns the buffer AND every
@@ -28824,11 +28861,11 @@ function tuple_strarr_elem_fresh(e: ast.Expr): boolean {
 // box whose rc children are themselves sole-owned (rc=1, aliased nowhere), so
 // the deep reclaim — free each fresh child, then the box — is exactly balanced
 // (#4357). A tuple with nothing to free stays on the SHALLOW scalar-tuple path.
-function tuple_lit_rc_reclaimable(e: ast.Expr, ttype: string, structs: parser.StructDecl[]): boolean {
+function tuple_lit_rc_reclaimable(e: ast.Expr, ttype: string, structs: parser.StructDecl[], str_fresh_ret: string[]): boolean {
     match (e) {
         ast.ExprTuple(tl) => {
             if (tl.elements.len() == 0) { return false; }
-            return tuple_lit_elems_admissible(tl, structs) && tuple_lit_has_rc_child(tl, ttype, structs);
+            return tuple_lit_elems_admissible(tl, structs) && tuple_lit_has_rc_child(tl, ttype, structs, str_fresh_ret);
         },
         _ => { return false; }
     }
@@ -28878,7 +28915,7 @@ function tuple_lit_elems_admissible(tup: ast.ExprTuple, structs: parser.StructDe
 // requiring the INNER to carry an array is what left that shape, and any outer
 // tuple holding one, with no reclaim at all. The shallow scalar-tuple path does
 // not cover it either: expr_scalar_leaf excludes a tuple element by design.
-function tuple_lit_has_rc_child(tup: ast.ExprTuple, ttype: string, structs: parser.StructDecl[]): boolean {
+function tuple_lit_has_rc_child(tup: ast.ExprTuple, ttype: string, structs: parser.StructDecl[], str_fresh_ret: string[]): boolean {
     var i: i32 = 0;
     while (i < tup.elements.len()) {
         match (tup.elements[i]) {
@@ -28886,7 +28923,7 @@ function tuple_lit_has_rc_child(tup: ast.ExprTuple, ttype: string, structs: pars
             ast.ExprTuple(_) => { return true; },
             ast.ExprString(_) => { return true; },
             ast.ExprStructLit(slit) => { if (decl_is_struct(structs, slit.type_name) && struct_has_reclaim_array_field(structs, slit.type_name)) { return true; } },
-            ast.ExprBinary(_) => { if (tuple_str_elem_fresh(tup.elements[i])) { return true; } },
+            ast.ExprBinary(_) => { if (tuple_str_elem_fresh_reg(tup.elements[i], str_fresh_ret)) { return true; } },
             // A CALL at a union-typed position: emit_tuple_child_drops releases
             // the box there, so the tuple has a child worth freeing. The declared
             // TAG is what makes this countable, and it is also what keeps the
@@ -28894,7 +28931,7 @@ function tuple_lit_has_rc_child(tup: ast.ExprTuple, ttype: string, structs: pars
             // carrying a union position is never all-scalar, so the two can
             // never both credit the same local and double-free its box.
             ast.ExprCall(_) => {
-                if (tuple_str_elem_fresh(tup.elements[i])) { return true; }
+                if (tuple_str_elem_fresh_reg(tup.elements[i], str_fresh_ret)) { return true; }
                 if (tuple_elem_tag_is_union(tuple_type_elem_tag(ttype, i), structs)) { return true; }
             },
             _ => {}
@@ -29063,29 +29100,29 @@ function stmt_assigns_fresh_scalar_tuple(st: ast.Stmt, name: string, ann_ok: boo
 // element, then the box) fires, instead of the scalar-tuple shallow box dec that
 // leaks the array element. The escape gate (body_unsafe_for) is applied by
 // reclaimable_names_of before crediting, so an escaping tuple is never freed.
-function collect_fresh_rc_tuple_names(stmts: ast.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_fresh_rc_tuple_names(stmts: ast.Stmt[], structs: parser.StructDecl[], str_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    for stmt in stmts { a = collect_fresh_rc_tuple_in_stmt(stmt, structs, a); }
+    for stmt in stmts { a = collect_fresh_rc_tuple_in_stmt(stmt, structs, str_fresh_ret, a); }
     return a;
 }
-function collect_fresh_rc_tuple_in_stmt(st: ast.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_fresh_rc_tuple_in_stmt(st: ast.Stmt, structs: parser.StructDecl[], str_fresh_ret: string[], acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
-            if (tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
+            if (tuple_lit_rc_reclaimable(v.init, v.type_name, structs, str_fresh_ret)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         ast.StmtIf(iff) => {
-            var a: string[] = collect_fresh_rc_tuple_names(iff.then_body, structs, acc);
-            return collect_fresh_rc_tuple_names(iff.else_body, structs, a);
+            var a: string[] = collect_fresh_rc_tuple_names(iff.then_body, structs, str_fresh_ret, acc);
+            return collect_fresh_rc_tuple_names(iff.else_body, structs, str_fresh_ret, a);
         },
-        ast.StmtWhile(w) => { return collect_fresh_rc_tuple_names(w.body, structs, acc); },
-        ast.StmtFor(f) => { return collect_fresh_rc_tuple_names(f.body, structs, acc); },
+        ast.StmtWhile(w) => { return collect_fresh_rc_tuple_names(w.body, structs, str_fresh_ret, acc); },
+        ast.StmtFor(f) => { return collect_fresh_rc_tuple_names(f.body, structs, str_fresh_ret, acc); },
         ast.StmtMatch(m) => {
             var a: string[] = acc;
-            for arm in m.arms { a = collect_fresh_rc_tuple_names(arm.body, structs, a); }
+            for arm in m.arms { a = collect_fresh_rc_tuple_names(arm.body, structs, str_fresh_ret, a); }
             return a;
         },
-        ast.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, structs, acc); },
+        ast.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, structs, str_fresh_ret, acc); },
         _ => { return acc; },
     }
 }
@@ -29133,62 +29170,62 @@ function collect_fresh_rc_tuple_in_stmt(st: ast.Stmt, structs: parser.StructDecl
 // Both halves are needed and #6232 is the worked example of why: the assign-site
 // release alone still leaks the LAST chain, and this credit alone still leaks
 // every superseded one.
-function all_assigns_fresh_rc_tuple(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+function all_assigns_fresh_rc_tuple(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], str_fresh_ret: string[]): boolean {
     for stmt in stmts {
-        if (!stmt_assigns_fresh_rc_tuple(stmt, name, ttype, structs)) { return false; }
+        if (!stmt_assigns_fresh_rc_tuple(stmt, name, ttype, structs, str_fresh_ret)) { return false; }
     }
     return true;
 }
 
-function stmt_assigns_fresh_rc_tuple(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+function stmt_assigns_fresh_rc_tuple(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[], str_fresh_ret: string[]): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target != name) { return true; }
-            return tuple_lit_rc_reclaimable(a.value, ttype, structs)
-                && tuple_arg_payload_retained(ttype, a.value, structs);
+            return tuple_lit_rc_reclaimable(a.value, ttype, structs, str_fresh_ret)
+                && tuple_arg_payload_retained(ttype, a.value, structs, str_fresh_ret);
         },
         ast.StmtIf(f) => {
-            return all_assigns_fresh_rc_tuple(f.then_body, name, ttype, structs)
-                && all_assigns_fresh_rc_tuple(f.else_body, name, ttype, structs);
+            return all_assigns_fresh_rc_tuple(f.then_body, name, ttype, structs, str_fresh_ret)
+                && all_assigns_fresh_rc_tuple(f.else_body, name, ttype, structs, str_fresh_ret);
         },
-        ast.StmtWhile(w) => { return all_assigns_fresh_rc_tuple(w.body, name, ttype, structs); },
-        ast.StmtFor(fo) => { return all_assigns_fresh_rc_tuple(fo.body, name, ttype, structs); },
+        ast.StmtWhile(w) => { return all_assigns_fresh_rc_tuple(w.body, name, ttype, structs, str_fresh_ret); },
+        ast.StmtFor(fo) => { return all_assigns_fresh_rc_tuple(fo.body, name, ttype, structs, str_fresh_ret); },
         ast.StmtMatch(m) => {
             for arm in m.arms {
-                if (!all_assigns_fresh_rc_tuple(arm.body, name, ttype, structs)) { return false; }
+                if (!all_assigns_fresh_rc_tuple(arm.body, name, ttype, structs, str_fresh_ret)) { return false; }
             }
             return true;
         },
-        ast.StmtDefer(d) => { return stmt_assigns_fresh_rc_tuple(d.action, name, ttype, structs); },
+        ast.StmtDefer(d) => { return stmt_assigns_fresh_rc_tuple(d.action, name, ttype, structs, str_fresh_ret); },
         _ => { return true; }
     }
 }
 
-function collect_sweepable_rc_tuple_names(stmts: ast.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_sweepable_rc_tuple_names(stmts: ast.Stmt[], structs: parser.StructDecl[], str_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    for stmt in stmts { a = collect_sweepable_rc_tuple_in_stmt(stmt, structs, a); }
+    for stmt in stmts { a = collect_sweepable_rc_tuple_in_stmt(stmt, structs, str_fresh_ret, a); }
     return a;
 }
-function collect_sweepable_rc_tuple_in_stmt(st: ast.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_sweepable_rc_tuple_in_stmt(st: ast.Stmt, structs: parser.StructDecl[], str_fresh_ret: string[], acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
             if (v.type_name.len() < 2 || slice_unchecked(v.type_name, 0, 1) != "(") { return acc; }
-            if (!tuple_lit_rc_reclaimable(v.init, v.type_name, structs)) { return acc; }
-            if (!tuple_arg_payload_retained(v.type_name, v.init, structs)) { return acc; }
+            if (!tuple_lit_rc_reclaimable(v.init, v.type_name, structs, str_fresh_ret)) { return acc; }
+            if (!tuple_arg_payload_retained(v.type_name, v.init, structs, str_fresh_ret)) { return acc; }
             return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
         },
         ast.StmtIf(iff) => {
-            var a: string[] = collect_sweepable_rc_tuple_names(iff.then_body, structs, acc);
-            return collect_sweepable_rc_tuple_names(iff.else_body, structs, a);
+            var a: string[] = collect_sweepable_rc_tuple_names(iff.then_body, structs, str_fresh_ret, acc);
+            return collect_sweepable_rc_tuple_names(iff.else_body, structs, str_fresh_ret, a);
         },
-        ast.StmtWhile(w) => { return collect_sweepable_rc_tuple_names(w.body, structs, acc); },
-        ast.StmtFor(f) => { return collect_sweepable_rc_tuple_names(f.body, structs, acc); },
+        ast.StmtWhile(w) => { return collect_sweepable_rc_tuple_names(w.body, structs, str_fresh_ret, acc); },
+        ast.StmtFor(f) => { return collect_sweepable_rc_tuple_names(f.body, structs, str_fresh_ret, acc); },
         ast.StmtMatch(m) => {
             var a: string[] = acc;
-            for arm in m.arms { a = collect_sweepable_rc_tuple_names(arm.body, structs, a); }
+            for arm in m.arms { a = collect_sweepable_rc_tuple_names(arm.body, structs, str_fresh_ret, a); }
             return a;
         },
-        ast.StmtDefer(d) => { return collect_sweepable_rc_tuple_in_stmt(d.action, structs, acc); },
+        ast.StmtDefer(d) => { return collect_sweepable_rc_tuple_in_stmt(d.action, structs, str_fresh_ret, acc); },
         _ => { return acc; },
     }
 }
@@ -34991,9 +35028,9 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // A scalar read `t.0`, an indexed array read `t.1[j]`, a struct scalar-field read
     // `t.1.y`, and their `.len()` stay borrows and still reclaim. Un-annotated bindings
     // (no type) skip the second gate, preserving prior behaviour. #4365.
-    var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
-    var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, []);
-    out = reclaimable_rc_tuple(body, borrowable, rctups, reassigned, recv_borrow, structs, sweeprc, tretn, out);
+    var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, str_fresh_ret, []);
+    var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, str_fresh_ret, []);
+    out = reclaimable_rc_tuple(body, borrowable, rctups, reassigned, recv_borrow, structs, sweeprc, tretn, str_fresh_ret, out);
     // Fresh rc-payload ENUM locals (`var b = Full([i, i+1])` consumed by a match in
     // the same block): credited "RCENUM:" so slot_is_reclaimable_rcenum drives the
     // DEEP loop-rebind reclaim (emit_enum_deep_reinit_store → emit_enum_variant_drops
@@ -68321,7 +68358,7 @@ while (ti < tups.len()) {
     return out;
 }
 
-function reclaimable_rc_tuple(body: ast.Stmt[], borrowable: string[], rctups: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], sweeprc: string[], tretn: string[], out: string[]): string[] {
+function reclaimable_rc_tuple(body: ast.Stmt[], borrowable: string[], rctups: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], sweeprc: string[], tretn: string[], str_fresh_ret: string[], out: string[]): string[] {
 var rti: i32 = 0;
 while (rti < rctups.len()) {
     // Binding-SITE keys here too (#7272); the gates take the bare name.
@@ -68372,7 +68409,7 @@ while (rti < rctups.len()) {
             //     what makes the declaration's type a sound description of the
             //     final value the sweep frees by.
             var rc_rebind_ok: boolean = util.index_of_str(reassigned, rnm) < 0
-                || all_assigns_fresh_rc_tuple(body, rnm, rctty, structs);
+                || all_assigns_fresh_rc_tuple(body, rnm, rctty, structs, str_fresh_ret);
             if (rctty != "" && rc_rebind_ok
                     && util.index_of_str(sweeprc, rctups[rti]) >= 0) {
                 out = out.append("TUPRCS:" + rctups[rti]);
