@@ -14691,6 +14691,27 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                     fav_alias_inc = true;
                 }
             }
+            // A direct TUPLE field, now released by emit_struct_tuple_field_drops
+            // (child walk under is_unique, one box dec per owner). The retain is
+            // that dec's other half and is gated on the SAME routing predicate,
+            // so widening one widens the other by construction (#7253).
+            //
+            // Retain UNLESS the value is a fresh tuple LITERAL — `(a, [b])` builds
+            // a sole-owned rc=1 box per evaluation, so the struct owns it outright
+            // and the field drop reclaims it with no inc to balance. Every other
+            // source (a bare tuple local/param, a `.f` read, a tuple-returning
+            // call) may alias a box someone else still sweeps, so the store is
+            // COUNTED: rc 1 -> inc 2 -> source's sweep 1 -> field drop 0. An
+            // over-conservative inc on a genuinely-fresh non-literal source leaks,
+            // never dangles.
+            if (!fav_alias_inc && slit_reclaim && tuple_field_deep_droppable(cfft, s.structs)) {
+                var tup_fresh: boolean = false;
+                match (slit.field_values[found]) {
+                    ast.ExprTuple(_) => { tup_fresh = true; },
+                    _ => {}
+                }
+                if (!tup_fresh) { fav_alias_inc = true; }
+            }
             // A `string` field is rc-headered and deep-dropped on the
             // struct's reclamation (emit_struct_field_drops). The values safe
             // to FREE are exactly the fresh, sole-owned HEAP strings whose data
@@ -24967,6 +24988,9 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     // variant payload survives the sweep. Release it here first, while the box is
     // still readable.
     var st: LowerState = emit_struct_enum_field_payload_drops(s, slot, sty);
+    // Direct tuple fields, for the same reason the enum payloads above need
+    // their own arm: no k_* arm of __struct_drop_<sty> matches a "(…)" type.
+    st = emit_struct_tuple_field_drops(st, slot, sty);
     st = st.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
@@ -25019,6 +25043,77 @@ function emit_struct_enum_field_payload_drops(se: LowerState, slot: i32, sty: st
             var no_moved: string[] = [];
             st = emit_enum_variant_payload_drops(st, etmp, ft, no_moved);
             st = st.emit(ir.op_end());
+            st = st.emit(ir.op_end());
+        }
+        fi = fi + 1;
+    }
+    return st;
+}
+
+// struct_has_deep_tuple_field: `sty` has a direct tuple field whose shape
+// tuple_field_deep_droppable admits. The tuple sibling of
+// struct_has_reclaim_array_field, and the routing predicate both the
+// construction retain and emit_struct_tuple_field_drops read.
+function struct_has_deep_tuple_field(structs: parser.StructDecl[], sty: string): boolean {
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(structs, sty, fi);
+        if (tuple_field_deep_droppable(ft, structs)) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// emit_struct_tuple_field_drops releases every direct deep-droppable TUPLE
+// field of struct `sty` — its rc children and then its box. The tuple sibling
+// of emit_struct_enum_field_payload_drops, and it exists for the same reason
+// that one does: the asm __struct_drop_<sty> ladder has no arm that matches a
+// "(…)" field type, so without this the tuple box and everything it owns
+// survives the sweep. Runs BEFORE the __struct_drop_ call, while the box is
+// still readable.
+//
+// Two guards, both the enum sibling's:
+//   - the struct box is null-guarded (op_struct_get faults on a zeroed slot);
+//   - the CHILD WALK is __fern_rc_is_unique-gated. A non-fresh tuple field was
+//     alias-inc'd at construction (the ExprStructLit tuple arm, gated on this
+//     same routing predicate), so a shared box is still reachable through the
+//     other owner: deep-dropping it here would free a live value and the other
+//     owner's sweep would double-release.
+//
+// The BOX dec is outside that gate — one per owner, unconditionally, the way
+// __struct_drop_'s k_enum arm decs an enum field box while the payload walk
+// above it stays is_unique-gated. Gating the dec too would leave the box at the
+// shared count forever: every owner would find it non-unique and none would
+// free it. __fern_rc_dec is null- and low-address-safe, so the struct-box guard
+// is the only one it needs.
+function emit_struct_tuple_field_drops(se: LowerState, slot: i32, sty: string): LowerState {
+    var st: LowerState = se;
+    var n: i32 = decl_field_count(st.structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(st.structs, sty, fi);
+        if (tuple_field_deep_droppable(ft, st.structs)) {
+            var tsc: string = "$stfd" + util.i32_to_string(st.locals.len());
+            st = st.add_local(tsc);
+            var ttmp: i32 = st.slot_of(tsc);
+            st = st.mark_tuple_elems(ttmp, slice_unchecked(ft, 1, ft.len() - 1));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_bin("ne", 0, false));                                      // struct box != 0
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_struct_get(fi, struct_field_width(st.structs, sty, fi)));   // tuple box
+            st = st.emit(ir.op_store_local(ttmp));
+            st = st.emit(ir.op_load_local(ttmp));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));                     // last owner (and null-safe)
+            st = st.emit(ir.op_if(0));
+            var tpath: i32[] = [];
+            st = emit_tuple_type_child_drops(st, ttmp, tpath, ft);
+            st = st.emit(ir.op_end());
+            st = st.emit(ir.op_load_local(ttmp));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));                           // this owner's share of the box
+            st = st.emit(ir.op_drop());
             st = st.emit(ir.op_end());
         }
         fi = fi + 1;
@@ -25757,6 +25852,16 @@ function body_unsafe_for_alias_vb(stmts: ast.Stmt[], name: string, borrowable: s
 // an if-arm is forgiven too; every other statement delegates to the strict
 // walker.
 function body_unsafe_for_alias_ret_ok(stmts: ast.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[], bare_ret_ok: boolean): boolean {
+    var no_counted: string[] = [];
+    return body_unsafe_for_alias_ret_counted(stmts, name, borrowable, recv_borrow, alias_ok, bare_ret_ok, no_counted);
+}
+
+// body_unsafe_for_alias_ret_counted is that gate with the counted-store
+// forgiveness: a struct literal at a site in `counted_ok` took a COUNTED share
+// of `name` (rctuple_counted_field_share), so storing into it is not an escape
+// — both owners release, and the box reaches zero exactly once. Keyed by site,
+// so the forgiveness cannot outrun the retain that pays for it (#7253).
+function body_unsafe_for_alias_ret_counted(stmts: ast.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[], bare_ret_ok: boolean, counted_ok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
@@ -25765,16 +25870,29 @@ function body_unsafe_for_alias_ret_ok(stmts: ast.Stmt[], name: string, borrowabl
                     ast.ExprIdent(rid) => { bare = bare_ret_ok && rid.name == name; },
                     _ => {}
                 }
+                if (rctuple_counted_store_at(r.value, counted_ok)) { bare = true; }
                 if (!bare && expr_unsafe_for(r.value, name, borrowable, recv_borrow)) { return true; }
+            },
+            ast.StmtVar(v) => {
+                if (!rctuple_counted_store_at(v.init, counted_ok)
+                        && stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; }
+            },
+            ast.StmtExpr(e) => {
+                if (!rctuple_counted_store_at(e.value, counted_ok)
+                        && stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; }
+            },
+            ast.StmtAssign(asg) => {
+                if (!(asg.target != name && rctuple_counted_store_at(asg.value, counted_ok))
+                        && stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; }
             },
             ast.StmtIf(f) => {
                 if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
-                if (body_unsafe_for_alias_ret_ok(f.then_body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
-                if (body_unsafe_for_alias_ret_ok(f.else_body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+                if (body_unsafe_for_alias_ret_counted(f.then_body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok, counted_ok)) { return true; }
+                if (body_unsafe_for_alias_ret_counted(f.else_body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok, counted_ok)) { return true; }
             },
             ast.StmtWhile(w) => {
                 if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
-                if (body_unsafe_for_alias_ret_ok(w.body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+                if (body_unsafe_for_alias_ret_counted(w.body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok, counted_ok)) { return true; }
             },
             ast.StmtFor(fo) => {
                 var fiter: boolean = true;
@@ -25783,14 +25901,14 @@ function body_unsafe_for_alias_ret_ok(stmts: ast.Stmt[], name: string, borrowabl
                     _ => { fiter = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
                 }
                 if (fiter) { return true; }
-                if (body_unsafe_for_alias_ret_ok(fo.body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+                if (body_unsafe_for_alias_ret_counted(fo.body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok, counted_ok)) { return true; }
             },
             ast.StmtMatch(m) => {
                 if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
                     if (m.arms[mi].has_guard && expr_unsafe_for(m.arms[mi].guard, name, borrowable, recv_borrow)) { return true; }
-                    if (body_unsafe_for_alias_ret_ok(m.arms[mi].body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok)) { return true; }
+                    if (body_unsafe_for_alias_ret_counted(m.arms[mi].body, name, borrowable, recv_borrow, alias_ok, bare_ret_ok, counted_ok)) { return true; }
                     mi = mi + 1;
                 }
             },
@@ -29378,6 +29496,128 @@ function rctuple_type_of_decl(stmts: ast.Stmt[], name: string): string {
     return "";
 }
 
+// rctuple_counted_field_share: `e` is a struct literal that mentions the
+// rc-tuple local `name` ONLY as the bare-ident value of a direct tuple field
+// that takes the construction retain — the tuple sibling of
+// arrstruct_counted_field_share, and it exists for the same reason. The field
+// holds a COUNTED share (the ExprStructLit tuple arm inc'd the box), so reading
+// the store as an escape sinks the source's whole reclaim and the box is pinned
+// at the shared count forever: nobody reaches zero.
+//
+// Both releases are rc-aware, which is what makes granting this safe rather than
+// a double free. The source's is emit_rctuple_deep_free; the holder's is
+// emit_struct_tuple_field_drops, whose child walk is __fern_rc_is_unique-gated
+// and whose box dec is not. Whichever owner finds rc 1 walks the children; every
+// owner decs the box exactly once.
+//
+// Refused, each for the reason its array sibling refuses it:
+//   - a `{ ...base }` update, whose copied fields carry no inc;
+//   - a MOVED share (moved_ident_at), where the retain is elided and the box
+//     takes over the local's reference — crediting the source there frees a box
+//     whose ownership left the frame. `return T { t: src, … }` is that shape.
+// The credit therefore asks exactly the question the retain asks.
+function rctuple_counted_field_share(e: ast.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
+    match (e) {
+        ast.ExprStructLit(sl) => {
+            if (sl.has_base) { return false; }
+            if (!struct_has_deep_tuple_field(structs, sl.type_name)) { return false; }
+            var seen: boolean = false;
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                match (sl.field_values[i]) {
+                    ast.ExprIdent(fid) => {
+                        if (fid.name == name) {
+                            if (!tuple_field_deep_droppable(decl_field_type(structs, sl.type_name, sl.field_names[i]), structs)) { return false; }
+                            if (moved_ident_at(sl.field_values[i], msites)) { return false; }
+                            seen = true;
+                        }
+                    },
+                    _ => { if (expr_unsafe_for(sl.field_values[i], name, [], [])) { return false; } }
+                }
+                i = i + 1;
+            }
+            return seen;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// rctuple_counted_store_sites: the line:col of every struct literal in `stmts`
+// that takes a counted share of `name`. Keyed by SITE so the escape gate's
+// forgiveness covers exactly the literals the retain fired for, the way
+// alias_ok keys the #7282 bind forgiveness.
+function rctuple_counted_store_sites(stmts: ast.Stmt[], name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { a = rctuple_counted_store_site_of(v.init, name, structs, msites, a); },
+            ast.StmtReturn(r) => { a = rctuple_counted_store_site_of(r.value, name, structs, msites, a); },
+            ast.StmtExpr(e) => { a = rctuple_counted_store_site_of(e.value, name, structs, msites, a); },
+            ast.StmtAssign(asg) => {
+                if (asg.target != name) { a = rctuple_counted_store_site_of(asg.value, name, structs, msites, a); }
+            },
+            ast.StmtIf(f) => {
+                a = rctuple_counted_store_sites(f.then_body, name, structs, msites, a);
+                a = rctuple_counted_store_sites(f.else_body, name, structs, msites, a);
+            },
+            ast.StmtWhile(w) => { a = rctuple_counted_store_sites(w.body, name, structs, msites, a); },
+            ast.StmtFor(fo) => { a = rctuple_counted_store_sites(fo.body, name, structs, msites, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = rctuple_counted_store_sites(arm.body, name, structs, msites, a); }
+            },
+            ast.StmtDefer(d) => { a = rctuple_counted_store_sites([d.action], name, structs, msites, a); },
+            _ => {}
+        }
+    }
+    return a;
+}
+function rctuple_counted_store_site_of(e: ast.Expr, name: string, structs: parser.StructDecl[], msites: string[], acc: string[]): string[] {
+    if (!rctuple_counted_field_share(e, name, structs, msites)) { return acc; }
+    match (e) {
+        ast.ExprStructLit(sl) => { return push_str_unique(acc, util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col)); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// rctuple_counted_store_at reports whether `e` is a struct literal whose site is
+// in the counted-store list.
+function rctuple_counted_store_at(e: ast.Expr, counted_ok: string[]): boolean {
+    if (counted_ok.len() == 0) { return false; }
+    match (e) {
+        ast.ExprStructLit(sl) => {
+            return util.index_of_str(counted_ok, util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col)) >= 0;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// rctuple_esc_expr_is_ident reports whether `e` is exactly the bare ident
+// `name` — the only field-value spelling the counted-store forgiveness admits.
+function rctuple_esc_expr_is_ident(e: ast.Expr, name: string): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name == name; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// rctuple_struct_field_counted_store: field `fi` of literal `sl` is a direct
+// tuple field whose store the construction arm RETAINS and
+// emit_struct_tuple_field_drops releases. struct_has_deep_tuple_field is the
+// narrower half of the retain's slit_reclaim gate, so this implies the retain
+// fired; the field's own type must be deep-droppable too, or the drop emits no
+// arm for it.
+function rctuple_struct_field_counted_store(sl: ast.ExprStructLit, fi: i32, name: string, structs: parser.StructDecl[]): boolean {
+    if (!struct_has_deep_tuple_field(structs, sl.type_name)) { return false; }
+    if (fi < 0 || fi >= sl.field_names.len()) { return false; }
+    var di: i32 = decl_field_index(structs, sl.type_name, sl.field_names[fi]);
+    if (di < 0) { return false; }
+    return tuple_field_deep_droppable(decl_field_type_at(structs, sl.type_name, di), structs);
+}
+
 // rctuple_esc_expr: does `e` use the fresh rc-tuple local `name` (declared tuple type
 // `ttype`) in a way that ESCAPES an owned pointer the whole-tuple deep-drop would free?
 // The tuple carries at least one owned pointer element (an array / a reclaim-struct box);
@@ -29542,7 +29782,23 @@ function rctuple_esc_expr(e: ast.Expr, name: string, ttype: string, structs: par
         },
         ast.ExprStructLit(sl) => {
             if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs, borrowable)) { return true; }
-            for fv in sl.field_values { if (rctuple_esc_expr(fv, name, ttype, structs, borrowable)) { return true; } }
+            var sfi: i32 = 0;
+            for fv in sl.field_values {
+                // `S { t: name, ... }` into a deep-droppable tuple field of a
+                // type that routes tuple field reclaim is a COUNTED store, not
+                // an escape: the construction arm inc'd the box and
+                // emit_struct_tuple_field_drops decs it once per owner, so the
+                // source keeps its own release (rc 1 -> inc 2 -> this sweep 1 ->
+                // the struct's field drop 0). Forgiven on the same predicate
+                // that gates the retain, so the two cannot come apart (#7253) —
+                // and on the narrower half of it, so a forgiven store is always
+                // one the retain actually fired for.
+                if (!(rctuple_struct_field_counted_store(sl, sfi, name, structs)
+                        && rctuple_esc_expr_is_ident(fv, name))) {
+                    if (rctuple_esc_expr(fv, name, ttype, structs, borrowable)) { return true; }
+                }
+                sfi = sfi + 1;
+            }
             return false;
         },
         _ => { return false; }
@@ -35183,7 +35439,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // (no type) skip the second gate, preserving prior behaviour. #4365.
     var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, str_fresh_ret, []);
     var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, str_fresh_ret, []);
-    out = reclaimable_rc_tuple(body, borrowable, rctups, reassigned, recv_borrow, structs, sweeprc, tretn, str_fresh_ret, out);
+    out = reclaimable_rc_tuple(body, borrowable, rctups, reassigned, recv_borrow, structs, sweeprc, tretn, str_fresh_ret, msites, out);
     // Fresh rc-payload ENUM locals (`var b = Full([i, i+1])` consumed by a match in
     // the same block): credited "RCENUM:" so slot_is_reclaimable_rcenum drives the
     // DEEP loop-rebind reclaim (emit_enum_deep_reinit_store → emit_enum_variant_drops
@@ -52874,6 +53130,16 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
 // does not honour is an over-release, not a missed optimisation.
 pub function struct_routes_field_reclaim_at(structs: parser.StructDecl[], sfok: string[], sty: string): boolean {
     if (struct_has_reclaim_array_field(structs, sty)) { return true; }
+    // A direct TUPLE field whose shape is deep-droppable: routes so the
+    // IR-level emit_struct_tuple_field_drops reaches it. The admission is
+    // TYPE-level (tuple_field_deep_droppable — flat scalars, leak-safe arrays,
+    // nested droppable tuples), the same shape struct_has_reclaim_array_field
+    // uses for arrays, so no whole-program scan is involved and the
+    // construction retain reads this very predicate (slit_reclaim). The asm
+    // __struct_drop ladder has no tuple arm — every k_* test is false for a
+    // "(…)" type — so the IR side owns the child walk AND the box dec with no
+    // second releaser.
+    if (struct_has_deep_tuple_field(structs, sty)) { return true; }
     // string[]-fielded type admitted by the strarrfld scan (the "arr:"-tagged
     // half of strfld_reclaim_ok_types_of) — routes so the backend
     // __struct_drop k_str_arr arm reaches the field.
@@ -68578,14 +68844,17 @@ while (ti < tups.len()) {
     return out;
 }
 
-function reclaimable_rc_tuple(body: ast.Stmt[], borrowable: string[], rctups: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], sweeprc: string[], tretn: string[], str_fresh_ret: string[], out: string[]): string[] {
+function reclaimable_rc_tuple(body: ast.Stmt[], borrowable: string[], rctups: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], sweeprc: string[], tretn: string[], str_fresh_ret: string[], msites: string[], out: string[]): string[] {
 var rti: i32 = 0;
 while (rti < rctups.len()) {
     // Binding-SITE keys here too (#7272); the gates take the bare name.
     var rnm: string = reclaim_site_name(rctups[rti]);
     var ral: string[] = [];
     ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
-    if (!body_unsafe_for_alias_ret_ok(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0)) {
+    // Struct literals that took a COUNTED share of this tuple (the field retain
+    // + emit_struct_tuple_field_drops pair). Not escapes: both owners release.
+    var rcnt: string[] = rctuple_counted_store_sites(body, rnm, structs, msites, []);
+    if (!body_unsafe_for_alias_ret_counted(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0, rcnt)) {
         var rctty: string = rctuple_type_of_decl(body, rnm);
         if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0, true)) {
             out = out.append("TUPRC:" + rctups[rti]);
