@@ -27690,7 +27690,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     // computed over fn.body FLAT, exactly like edon, so a nested-block box can
     // never have been donated to a cross-reuse recipient — which is what the
     // fn-level emission's ecross.donors suppression guards against.
-    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, s.sigs.str_fresh_ret_fns, s.move_sites);
+    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, s.sigs.str_fresh_ret_fns, s.move_sites, s.sigs.borrowable_params);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -38688,7 +38688,7 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // exit sweep, and this pass emits the free the credit assumes. Admitting the
 // call form there and not here left `var v: E = mkv(i)` with a sole consuming
 // match reclaiming nothing at all.
-function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[], msites: string[]): RcEnumFrees {
+function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], borrowable: string[]): RcEnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var enums: string[] = [];
@@ -38715,7 +38715,11 @@ function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructD
                         // `name` handed to an enum-typed struct-literal field is
                         // retained there, and this release is is_unique-gated, so the
                         // share is safe — see emit_enum_variant_drops_gated.
-                        var escapes: boolean = name_escapes_outside_stmt_enumfield(body, v.name, match_idx, structs);
+                        // A CONFINED alias bind is not an escape (#7687's proof,
+                        // reaching this second scan): it takes no release, so the
+                        // source stays the sole releaser.
+                        var escapes: boolean = name_escapes_outside_stmt_enumfield_alias(body, v.name, match_idx, structs,
+                            rcenum_alias_bind_sites_of(body, v.name, borrowable, structs, body, []));
                         // An arm binding an ESCAPING rc payload no longer rejects
                         // the candidate (#4400): the free site skips the dec of
                         // each moved (variant, field) pair instead — see
@@ -46836,13 +46840,54 @@ function ef_escape_stmt(st: ast.Stmt, structs: parser.StructDecl[], acc: string[
 // name_escapes_outside_stmt_enumfield: name_escapes_outside_stmt under the
 // counted-enum-field carve-out above.
 function name_escapes_outside_stmt_enumfield(body: ast.Stmt[], name: string, skip: i32, structs: parser.StructDecl[]): boolean {
+    var no_alias: string[] = [];
+    return name_escapes_outside_stmt_enumfield_alias(body, name, skip, structs, no_alias);
+}
+
+// …with the #7687 confinement forgiveness, which that change gave to the
+// EXIT-SWEEP credit's scan (body_unsafe_for_enumfield_alias) and not to this
+// one. Both decide the same question for the same source, so a class that
+// consults two escape scans needs both told: `var src = E.Full([…]); var x =
+// src; match (src) { … }` was refused here and leaked 200/0 against native's
+// 200/200, while the very same program with the match on the ALIAS was already
+// clean. Bisected: two matches on the source with no alias are clean, and the
+// dead alias alone is what denies the source, so the match is not the cause.
+//
+// A CONFINED alias (rcenum_alias_bind_sites_of: it does not escape the frame
+// and does not hand the payload out) needs no release of its own and takes
+// none, so skipping its bind leaves the source the sole releaser — the same
+// "one releaser, not two" reasoning, reaching the source's other credit path.
+// Only the bind statement is skipped, and its whole init IS the bare ident, so
+// nothing else in it goes unscanned.
+function name_escapes_outside_stmt_enumfield_alias(body: ast.Stmt[], name: string, skip: i32, structs: parser.StructDecl[], alias_ok: string[]): boolean {
     var esc: string[] = [];
     var i: i32 = 0;
     while (i < body.len()) {
-        if (i != skip) { esc = ef_escape_stmt(body[i], structs, esc); }
+        if (i != skip && !stmt_is_confined_enum_alias_bind(body[i], name, alias_ok)) {
+            esc = ef_escape_stmt(body[i], structs, esc);
+        }
         i = i + 1;
     }
     return util.index_of_str(esc, name) >= 0;
+}
+
+// stmt_is_confined_enum_alias_bind: `st` is `var v = name` whose own site key
+// rcenum_alias_bind_sites_of vetted as confined.
+function stmt_is_confined_enum_alias_bind(st: ast.Stmt, name: string, alias_ok: string[]): boolean {
+    if (alias_ok.len() == 0) { return false; }
+    match (st) {
+        ast.StmtVar(v) => {
+            match (v.init) {
+                ast.ExprIdent(aid) => {
+                    if (aid.name != name) { return false; }
+                    return util.index_of_str(alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // body_unsafe_for_enumfield / ef_unsafe_stmt / ef_unsafe_expr: body_unsafe_for
@@ -51229,7 +51274,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant_is guard releasing that variant's rc fields) then freed right after
     // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
     // fed to the donor path, so an rc-payload box is freed exactly once here.
-    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs));
+    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs), sg.borrowable_params);
     // Consumed RC-PAYLOAD option/result frees: a function-local `var o = Some([..])`
     // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
     // one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
