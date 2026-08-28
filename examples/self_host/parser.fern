@@ -13938,94 +13938,23 @@ function fda_resolve_named(params: ast.ParamDecl[], args: ast.Expr[]): ast.Expr[
     return out;
 }
 
-// stmts_have_named / expr_has_named detect whether a module contains any
-// named-argument marker, so fill_default_args_module runs the resolving
-// walk even for a module with no default-valued parameters (named args and
-// defaults are independent features).
-function expr_has_named(e: ast.Expr, depth: i32): boolean {
-    if (depth > 256) { return false; }
-    match (e) {
-        ast.ExprCall(c) => {
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (fda_is_named_marker(c.args[i])) { return true; }
-                if (expr_has_named(c.args[i], depth + 1)) { return true; }
-                i = i + 1;
-            }
-            return expr_has_named(c.callee, depth + 1);
-        },
-        ast.ExprBinary(b) => {
-            if (b.op == "__named_arg") { return true; }
-            if (expr_has_named(b.left, depth + 1)) { return true; }
-            return expr_has_named(b.right, depth + 1);
-        },
-        ast.ExprUnary(u) => { return expr_has_named(u.operand, depth + 1); },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_has_named(a.elements[i], depth + 1)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { if (expr_has_named(t.elements[i], depth + 1)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprIndex(ix) => {
-            if (expr_has_named(ix.array, depth + 1)) { return true; }
-            return expr_has_named(ix.index, depth + 1);
-        },
-        ast.ExprSlice(sl) => {
-            if (expr_has_named(sl.array, depth + 1)) { return true; }
-            if (expr_has_named(sl.start, depth + 1)) { return true; }
-            return expr_has_named(sl.end, depth + 1);
-        },
-        ast.ExprFieldAccess(fa) => { return expr_has_named(fa.obj, depth + 1); },
-        ast.ExprStructLit(s) => {
-            var i: i32 = 0;
-            while (i < s.field_values.len()) { if (expr_has_named(s.field_values[i], depth + 1)) { return true; } i = i + 1; }
-            if (s.has_base) { return expr_has_named(s.base, depth + 1); }
-            return false;
-        },
-        ast.ExprLambda(lm) => { return stmts_have_named(lm.body); },
-        _ => { return false; }
-    }
-    return false;
+// stmts_have_named detects whether a module contains any named-argument
+// marker, so fill_default_args_module runs the resolving walk even for a
+// module with no default-valued parameters (named args and defaults are
+// independent features).
+//
+// A marker is an ExprBinary node, so the marker check alone is the whole
+// contribution: the spine reaches every expression, and only the total's
+// sign is read.
+function fda_named_count_of(e: ast.Expr, acc: i32): i32 {
+    if (fda_is_named_marker(e)) { return acc + 1; }
+    return acc;
 }
 
 function stmts_have_named(stmts: ast.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => { if (expr_has_named(v.init, 0)) { return true; } },
-            ast.StmtReturn(r) => { if (expr_has_named(r.value, 0)) { return true; } },
-            ast.StmtExpr(e) => { if (expr_has_named(e.value, 0)) { return true; } },
-            ast.StmtAssign(a) => { if (expr_has_named(a.value, 0)) { return true; } },
-            ast.StmtIf(f) => {
-                if (expr_has_named(f.cond, 0)) { return true; }
-                if (stmts_have_named(f.then_body)) { return true; }
-                if (stmts_have_named(f.else_body)) { return true; }
-            },
-            ast.StmtWhile(w) => {
-                if (expr_has_named(w.cond, 0)) { return true; }
-                if (stmts_have_named(w.body)) { return true; }
-            },
-            ast.StmtFor(fr) => {
-                if (expr_has_named(fr.iter, 0)) { return true; }
-                if (stmts_have_named(fr.body)) { return true; }
-            },
-            ast.StmtMatch(m) => {
-                if (expr_has_named(m.scrutinee, 0)) { return true; }
-                var a: i32 = 0;
-                while (a < m.arms.len()) {
-                    if (stmts_have_named(m.arms[a].body)) { return true; }
-                    a = a + 1;
-                }
-            },
-            _ => {},
-        }
-        i = i + 1;
-    }
-    return false;
+    var n: i32 = 0;
+    for st in stmts { n = astwalk.fold_stmt(st, n, fda_named_count_of); }
+    return n > 0;
 }
 
 function module_has_named_args(mod: Module): boolean {
@@ -14037,13 +13966,21 @@ function module_has_named_args(mod: Module): boolean {
     return stmts_have_named(mod.top_stmts);
 }
 
-function fda_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
-    match (e) {
+// fda_call_of resolves ONE call's arguments: it fills omitted trailing
+// defaults from the callee's parameter list, and reorders a mixed
+// positional/named list into a plain positional one. ExprCall is the only
+// node it changes; map_expr rebuilds every other verbatim around its
+// rewritten children.
+//
+// map_expr is post-order, so `c` arrives with its callee and args already
+// rewritten — the order the hand-written walk used, which matters because a
+// default_value is spliced in AFTER the arguments beside it are resolved.
+// Rewriting never turns an ident callee into something else, so the callee
+// this tests is the one the old walk tested.
+function fda_call_of(x: ast.Expr, funcs: FuncDecl[]): ast.Expr {
+    match (x) {
         ast.ExprCall(c) => {
-            var new_callee: ast.Expr = fda_expr(c.callee, funcs);
-            var new_args: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { new_args = new_args.append(fda_expr(c.args[i], funcs)); i = i + 1; }
+            var new_args: ast.Expr[] = c.args;
             var has_named: boolean = fda_args_have_named(new_args);
             match (c.callee) {
                 ast.ExprIdent(id) => {
@@ -14072,70 +14009,23 @@ function fda_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
                     if (has_named) { new_args = fda_strip_named(new_args); }
                 }
             }
-            return ast.ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            return ast.ExprCall { ...c, args: new_args };
         },
-        ast.ExprBinary(b) => { return e_binary(b.op, fda_expr(b.left, funcs), fda_expr(b.right, funcs)); },
-        ast.ExprUnary(u) => { return e_unary(u.op, fda_expr(u.operand, funcs)); },
-        ast.ExprArray(a) => {
-            var els: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < a.elements.len()) { els = els.append(fda_expr(a.elements[i], funcs)); i = i + 1; }
-            return e_array(els);
-        },
-        ast.ExprTuple(t) => {
-            var els: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) { els = els.append(fda_expr(t.elements[i], funcs)); i = i + 1; }
-            return e_tuple_at(els, t.line, t.col);
-        },
-        ast.ExprIndex(ix) => { return e_index(fda_expr(ix.array, funcs), fda_expr(ix.index, funcs)); },
-        ast.ExprSlice(sl) => { return e_slice(fda_expr(sl.array, funcs), fda_expr(sl.start, funcs), fda_expr(sl.end, funcs)); },
-        ast.ExprFieldAccess(fa) => { return e_field_access(fda_expr(fa.obj, funcs), fa.field); },
-        ast.ExprStructLit(s) => {
-            var vals: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < s.field_values.len()) { vals = vals.append(fda_expr(s.field_values[i], funcs)); i = i + 1; }
-            var nb: ast.Expr = s.base;
-            if (s.has_base) { nb = fda_expr(s.base, funcs); }
-            return ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: nb, line: s.line, col: s.col };
-        },
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: fda_stmts(lm.body, funcs) }; },
-        _ => { return e; }
+        _ => { return x; }
     }
+    return x;
+}
+
+function fda_expr(e: ast.Expr, funcs: FuncDecl[]): ast.Expr {
+    function rw(x: ast.Expr): ast.Expr { return fda_call_of(x, funcs); }
+    return astwalk.map_expr(e, rw);
 }
 
 function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
-    var out: ast.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => { out = out.append(s_var_at(v.name, v.type_name, fda_expr(v.init, funcs), v.line, v.col)); },
-            ast.StmtReturn(r) => { out = out.append(s_return_at(fda_expr(r.value, funcs), r.line, r.col)); },
-            ast.StmtExpr(e) => { out = out.append(s_expr(fda_expr(e.value, funcs))); },
-            ast.StmtAssign(a) => { out = out.append(s_assign_at(a.target, fda_expr(a.value, funcs), a.line, a.col, a.target_line, a.target_col)); },
-            ast.StmtIf(f) => { out = out.append(s_if(fda_expr(f.cond, funcs), fda_stmts(f.then_body, funcs), fda_stmts(f.else_body, funcs))); },
-            ast.StmtWhile(w) => { out = out.append(s_while(fda_expr(w.cond, funcs), fda_stmts(w.body, funcs))); },
-            ast.StmtFor(fr) => { out = out.append(s_for(fr.var_name, fda_expr(fr.iter, funcs), fda_stmts(fr.body, funcs))); },
-            ast.StmtMatch(m) => {
-                var arms: ast.MatchArm[] = [];
-                var a: i32 = 0;
-                while (a < m.arms.len()) {
-                    arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: fda_stmts(m.arms[a].body, funcs), line: m.arms[a].line, col: m.arms[a].col, guard: fda_expr(m.arms[a].guard, funcs), has_guard: m.arms[a].has_guard, alt_cont: false });
-                    a = a + 1;
-                }
-                out = out.append(s_match_at(fda_expr(m.scrutinee, funcs), arms, m.line, m.col));
-            },
-            ast.StmtDefer(d) => {
-                var one: ast.Stmt[] = [d.action];
-                var rd: ast.Stmt[] = fda_stmts(one, funcs);
-                if (rd.len() >= 1) { out = out.append(s_defer(rd[0])); }
-            },
-            _ => { out = out.append(stmts[i]); },
-        }
-        i = i + 1;
-    }
-    return out;
+    function rw(x: ast.Expr): ast.Expr { return fda_call_of(x, funcs); }
+    return astwalk.map_stmts(stmts, rw);
 }
+
 
 pub function fill_default_args_module(mod: Module): Module {
     if (!module_has_default_params(mod) && !module_has_named_args(mod)) { return mod; }
