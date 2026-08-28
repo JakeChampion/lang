@@ -187,14 +187,20 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 0,
 		},
 		{
-			// REFUSED — the local is reassigned, so its declaration's init is not
-			// the whole story about the final value. Unchanged.
-			name: "refused_reassigned",
+			// ADMITTED — the local is reassigned, but EVERY write is itself a
+			// strict-fresh literal, so the final box is frame-fresh whichever
+			// write produced it: the caller's binding earns the credit and the
+			// callee's rebind frees the superseded literal (the widened
+			// struct_ret_local_is_frame_fresh + the snapshot-local literal arm).
+			// This row pinned the pre-widening refusal at frees=0; an alias, a
+			// second declaration, or a field move still sink the credit — the
+			// refused rows below are the soundness boundary.
+			name: "admitted_reassigned_all_fresh",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; p = P { xs: [i + 2, i + 3] }; return p; }
 function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 400, frees: 0,
+			want: 34, allocs: 400, frees: 400,
 		},
 		{
 			// REFUSED — two declarations of the same name in the body, so the
