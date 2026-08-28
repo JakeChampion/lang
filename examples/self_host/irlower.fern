@@ -25807,6 +25807,53 @@ function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
     return a;
 }
 
+// rcenum_alias_bind_sites_of is alias_bind_sites_of for the rc-enum classes,
+// with the substitution strarr_alias_bind_sites_of makes for "SARR:": the alias
+// vets through the ENUM gate rather than body_unsafe_for, because an rc-enum's
+// release DEEP-DROPS THE PAYLOAD — a payload extracted from the alias is
+// invisible to the plain walker and would dangle under it (#7687).
+function rcenum_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], structs: parser.StructDecl[], body: ast.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                match (v.init) {
+                    ast.ExprIdent(aid) => {
+                        if (aid.name == src
+                            && util.index_of_str(body_assign_targets(body), v.name) < 0
+                            && !body_unsafe_for_enumfield(body, v.name, borrowable, structs)
+                            // …AND the alias must not hand its PAYLOAD out. The
+                            // escape scan above reads a bare-ident match scrutinee
+                            // as a borrow, which it is for the BOX — but an arm
+                            // that binds and returns the rc payload
+                            // (`match (x) { Full(xs) => xs }`) moves the payload
+                            // out from under the source's deep release. Measured:
+                            // without this the shape over-releases
+                            // (`__rc_underflow` fires) where stock merely leaks.
+                            // This is the same condition the source's own
+                            // match-consumed branch applies to itself.
+                            && !enum_body_binds_rc_payload(body, v.name, structs)) {
+                            a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            ast.StmtIf(f) => {
+                a = rcenum_alias_bind_sites_of(f.then_body, src, borrowable, structs, body, a);
+                a = rcenum_alias_bind_sites_of(f.else_body, src, borrowable, structs, body, a);
+            },
+            ast.StmtWhile(w) => { a = rcenum_alias_bind_sites_of(w.body, src, borrowable, structs, body, a); },
+            ast.StmtFor(fo) => { a = rcenum_alias_bind_sites_of(fo.body, src, borrowable, structs, body, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = rcenum_alias_bind_sites_of(arm.body, src, borrowable, structs, body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
 // credit_alias_sites appends `pfx` for every alias site in `sites`, so a shared
 // box is released by whichever slot's sweep runs — both hold a counted
 // reference and the refcount arbitrates.
@@ -30138,7 +30185,7 @@ function collect_fresh_rcenum_names(stmts: ast.Stmt[], structs: parser.StructDec
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt_enumfield(stmts, v.name, match_idx, structs)) {
                         a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                    } else if (match_idx < 0 && !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs)) {
+                    } else if (match_idx < 0 && !body_unsafe_for_enumfield_alias(stmts, v.name, borrowable, structs, rcenum_alias_bind_sites_of(stmts, v.name, borrowable, structs, stmts, []))) {
                         // NO consuming match in this block. Every gate above exists to
                         // prove the match neither retains the box nor hands out its
                         // payload; with no match there is nothing to prove but that
@@ -46783,7 +46830,32 @@ function name_escapes_outside_stmt_enumfield(body: ast.Stmt[], name: string, ski
 // expression delegates to the strict walker, so each of its refusals still
 // stands and an admitted name is one whose every OTHER use was already safe.
 function body_unsafe_for_enumfield(stmts: ast.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
-    for stmt in stmts { if (ef_unsafe_stmt(stmt, name, borrowable, structs)) { return true; } }
+    var no_alias: string[] = [];
+    return body_unsafe_for_enumfield_alias(stmts, name, borrowable, structs, no_alias);
+}
+
+// body_unsafe_for_enumfield_alias is the scan above with the #7282 forgiveness
+// the enum flavour never grew (#7687): a plain `var v: E = name` bind whose own
+// site key is listed in `alias_ok` does NOT flag `name`. A dead alias bind used
+// to deny the source its entire reclaim credit — 200 allocs / 0 frees against
+// native's 200/200, with the alias never read.
+//
+// ONE releaser, not two. The tuple / string / strarr families pair their
+// forgiveness with a retain and a credit for the alias, because there the alias
+// is allowed to outlive or share. Here the alias is admitted ONLY when
+// rcenum_alias_bind_sites_of proves it confined — it does not escape the frame
+// and it does not hand the payload out — so it needs no release of its own and
+// takes none: the source keeps its credit and remains the sole releaser. That
+// is why no ExprIdent retain limb and no alias credit appear in this change;
+// both were built, measured to change nothing, and dropped.
+//
+// The confinement proof is the whole safety argument, and its second half is
+// load-bearing: without the payload-escape check an alias that returns its
+// match payload makes the source's deep release free a buffer the caller still
+// holds — measured as `__rc_underflow` firing where stock merely leaks, with a
+// perfectly balanced census either way.
+function body_unsafe_for_enumfield_alias(stmts: ast.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[], alias_ok: string[]): boolean {
+    for stmt in stmts { if (ef_unsafe_stmt_alias(stmt, name, borrowable, structs, alias_ok)) { return true; } }
     return false;
 }
 
@@ -46816,20 +46888,38 @@ function ef_unsafe_expr(e: ast.Expr, name: string, borrowable: string[], structs
 }
 
 function ef_unsafe_stmt(st: ast.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    var no_alias: string[] = [];
+    return ef_unsafe_stmt_alias(st, name, borrowable, structs, no_alias);
+}
+
+function ef_unsafe_stmt_alias(st: ast.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[], alias_ok: string[]): boolean {
     var none: string[] = [];
     match (st) {
-        ast.StmtVar(v) => { return ef_unsafe_expr(v.init, name, borrowable, structs); },
+        ast.StmtVar(v) => {
+            // The forgiven alias bind (#7687): only a BARE-IDENT init, only at a
+            // `var`, and only when this exact site earned the matching credit.
+            if (alias_ok.len() > 0) {
+                match (v.init) {
+                    ast.ExprIdent(aid) => {
+                        if (aid.name == name
+                            && util.index_of_str(alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0) { return false; }
+                    },
+                    _ => {}
+                }
+            }
+            return ef_unsafe_expr(v.init, name, borrowable, structs);
+        },
         ast.StmtReturn(r) => { return ef_unsafe_expr(r.value, name, borrowable, structs); },
         ast.StmtExpr(e) => { return ef_unsafe_expr(e.value, name, borrowable, structs); },
         ast.StmtAssign(a) => { return ef_unsafe_expr(a.value, name, borrowable, structs); },
         ast.StmtIf(f) => {
             if (ef_unsafe_expr(f.cond, name, borrowable, structs)) { return true; }
-            return body_unsafe_for_enumfield(f.then_body, name, borrowable, structs)
-                || body_unsafe_for_enumfield(f.else_body, name, borrowable, structs);
+            return body_unsafe_for_enumfield_alias(f.then_body, name, borrowable, structs, alias_ok)
+                || body_unsafe_for_enumfield_alias(f.else_body, name, borrowable, structs, alias_ok);
         },
         ast.StmtWhile(w) => {
             if (ef_unsafe_expr(w.cond, name, borrowable, structs)) { return true; }
-            return body_unsafe_for_enumfield(w.body, name, borrowable, structs);
+            return body_unsafe_for_enumfield_alias(w.body, name, borrowable, structs, alias_ok);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -46838,7 +46928,7 @@ function ef_unsafe_stmt(st: ast.Stmt, name: string, borrowable: string[], struct
                 _ => { iter_unsafe = ef_unsafe_expr(fo.iter, name, borrowable, structs); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for_enumfield(fo.body, name, borrowable, structs);
+            return body_unsafe_for_enumfield_alias(fo.body, name, borrowable, structs, alias_ok);
         },
         ast.StmtMatch(m) => {
             // A bare-ident scrutinee is a BORROW, the reading
