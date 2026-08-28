@@ -109,6 +109,56 @@ function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.
 			want: 6, balance: true,
 		},
 		{
+			// The match-EXPRESSION form of callee_extracts_element. Its desugar
+			// is a zero-param IIFE, so the walker met an ExprLambda whose
+			// capture set holds the param and refused it as carried out of the
+			// frame — while the statement-form sibling above balanced, one
+			// token apart. lower_iife lowers such a body INLINE with no env
+			// box, so the read is the enclosing frame's own and earns the same
+			// admissions.
+			name: "callee_extracts_element_expr",
+			src: mk(`function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => xs.len(), E.B => 0 }) + i - i; }`,
+				producer, "rd(keep, r)"),
+			want: 6, balance: true,
+		},
+		{
+			// The IIFE handout fence: the value-position `if` hands an element
+			// out inside the struct it returns. Admitting this is the
+			// element_handed_out double free one desugar removed, so it must
+			// keep refusing however the read is spelled.
+			name: "iife_element_handed_out",
+			src: `enum E { A(i32[]), B }
+struct H { e: E, n: i32 }
+function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function grab(src: E[], i: i32): H { return (if (i >= 0) { H { e: src[0], n: i } } else { H { e: E.B, n: 0 } }); }
+function f(i: i32): H { var keep: E[] = mkv(i); return grab(keep, i); }
+function round(i: i32): i32 {
+    var h: H = f(i);
+    var v: i32 = 0;
+    match (h.e) { E.A(xs) => { v = xs[0] + xs[1]; }, E.B => { v = 0 - 1; } }
+    if (v != i + i + 1) { return 0 - 1; }
+    return v % 101;
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
+    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    if (bad > 0) { return 100; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 83;
+}`,
+			want: 25,
+		},
+		{
+			// The arm-binding vet reaches through the IIFE too: the payload
+			// goes to a call argument, conservatively a retain, so the flag
+			// refuses and the caller keeps its safe leak.
+			name: "iife_arm_binding_escapes",
+			src: mk(`function take(xs: i32[]): i32 { return xs.len(); }
+function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => take(xs), E.B => 0 }) + i - i; }`,
+				producer, "rd(keep, r)"),
+			want: 6,
+		},
+		{
 			// REFUSED by the BOX flag, before this tier is consulted at all.
 			name: "callee_returns_param",
 			src: mk(`function rd(src: E[], i: i32): E[] { return src; }`,
