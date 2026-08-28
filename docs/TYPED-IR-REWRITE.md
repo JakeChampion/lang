@@ -139,6 +139,69 @@ leaves every `ty` empty and gets the structural walk unchanged.
 **Phase A's carrier set is complete** with these two — every node type #5986's
 table proposed now carries the checker's answer.
 
+### The consumer sweep (#5986): every stamped carrier now has its readers
+
+An audit of every predicate, binding mark, and lift-time resolver in irlower
+found 28 consumers re-deriving a type structurally while the stamp on the same
+node went unread — each one demonstrated as a live defect against the interp
+oracle before fixing (13 silent wrong answers, 11 bails) and pinned by
+`internal/e2eselfhost/self_host_annotate_consumers_ir_test.go` (oracle-compared,
+x86-64 + wasm, each gap with a walk-path control). The wirings follow the
+ordering rules above; the sweep's own findings, for whoever wires the next one:
+
+- **The checker's tag vocabulary is wider than the walks' spelling set, and
+  guards written for one do not hold for the other.** `is_enum_like_name`'s
+  scalar exclusion list holds only the spellings declarations use — feed it a
+  checker tag and `"u64"` reads as a nominal enum, which typed every
+  `x as u64` as a struct value and bailed every stdlib `checked_mul`.
+  `struct_tag_from_ty` is the admission helper that rejects the scalar tag
+  vocabulary first; route struct/enum tag admissions through it.
+- **A walk that answers "" on purpose is not a hole.** `some_opt_type` returns
+  "" for a `Some(x)` whose payload kind the tuple-element machinery cannot
+  carry; a tag fallback that "fixed" that rejection lowered the payload down a
+  path that cannot hold it. `expr_opt_elem_tag`'s tag admission holds the tag
+  to the same payload set the walk admits, and `opt_recv_base_type`'s fallback
+  skips Some/Ok/Err constructions outright. Before filling a "", read why it
+  is empty.
+- **A lift-time "" can be a checker resolver hole, not a consumer gap.**
+  `match (s.o)` on an `Option[i32]` FIELD kept declining the lift after its
+  consumer was wired, because `type_from_name_with_names_and_unions` (behind
+  `collect_struct_sigs`) had no builtin-generic-enum arm and the field typed
+  unknown — the stamp was never made. The resolver has the arm now, mirroring
+  `type_from_ref_su`; pinned in the `TestSelfHostTypeResolveSimple` goldens.
+- `method_recv_tyname` resolves an associated bare-type receiver
+  (`Counter.start()`) to its registry-key spelling now — a walk fix, so the
+  unannotated build gets it too.
+
+### The boundary: a fn-typed param or field cannot stamp anything yet
+
+Four audited shapes remain structurally unreachable, all one cause: **a call
+through a fn-typed param or struct field types unknown, so its stamp is ""**
+and no consumer wiring can see it. Measured precisely:
+
+- The parser coarsens every fn-type spelling to the flat tag `"fn"`
+  (parser.fern:6352-6409); `build_func_scope` resolves it through
+  `type_from_name_erasing_tparams`, which has no `"fn"` arm, so the param
+  binds `TypeUnknown` (checker.fern:4279, 4021) and `check_call_expr`'s
+  closure arm (2736) never fires. **The checker reads `ParamDecl.fn_ret`
+  nowhere** — the sidecar exists for irlower only.
+- A fn-typed struct FIELD additionally has no closure-field-call arm at all:
+  an `ExprFieldAccess` callee falls into unconditional method dispatch
+  (checker.fern:2528) and types `undefined method`.
+- `fn_ret_ty` keeps bracketed nominal returns (`Option[i32]`, `Map[K, V]`)
+  but drops tuple (`(a, b)`) and array (`T[]`) returns — parser.fern:6101,
+  and the `!r_is_arr` gate at 6384; `StructFieldDecl` has no `ret_arr` bit.
+
+The reassigned-closure-LOCAL form of each shape passes (the checker binds the
+local to the lambda's `TypeFunc`), which is what the `fnvalue_*` cases pin.
+Closing the param/field half means binding `"fn"`-tagged decls to `TypeFunc`
+from the sidecars plus a closure-field-call arm — its own slice, because the
+sidecar audit is real: `fn_sig_of`'s wasm funcref width (irlower.fern:1431)
+starts seeing tuple/array returns as `'w'` where it fell back to the
+arity-keyed `$fnN` type, the arg-mismatch checks at checker.fern:2703/2745
+become live for fn-typed params, and the `fn_spelling_of` round-trip and
+flatten's cross-module `rewrite_type_name` both meet the wider spellings.
+
 ### What `ExprIdent.ty` is for: the half no slot carries
 
 A bare name is typed in irlower from the SLOT it reads, and the slot walk is

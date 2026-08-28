@@ -4201,6 +4201,19 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
       return t_union(name);
     }
   }
+  // Builtin generic enum instantiation `Option[T]` / `Result[T, E]` (#5986):
+  // resolve to the union with captured args, mirroring type_from_ref_su, so a
+  // struct FIELD declared with one (collect_struct_sigs resolves here) types
+  // as the union the typed-IR annotation spells its tag from, instead of
+  // unknown. Gated on args present so a bare name keeps today's resolution
+  // (e064_unknown_bare reads this resolver for plain identifiers only).
+  if (r.args.len() > 0 && is_reserved_enum_name(r.base)) {
+    var uargs: Type[] = [];
+    for arg in r.args {
+      uargs = uargs.append(type_from_name_with_names_and_unions(parser.render_type_ref(arg), struct_names, union_names));
+    }
+    return t_union_g(r.base, uargs);
+  }
   return t_unknown("unrecognised type name: " + name);
 }
 
