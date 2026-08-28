@@ -1494,6 +1494,20 @@ function (s: Scope) lookup(name: string): Type {
   return t_unknown("undefined identifier:" + name);
 }
 
+// is_bound reports whether `name` has a binding in scope, however typed —
+// lookup's unknown result conflates "bound opaquely" with "not bound", and
+// the function-value shadowing question needs the difference.
+function (s: Scope) is_bound(name: string): boolean {
+  var i: i32 = s.names.len() - 1;
+  while (i >= 0) {
+    if (s.names[i] == name) {
+      return true;
+    }
+    i = i - 1;
+  }
+  return false;
+}
+
 function (s: Scope) lookup_sig(name: string): FuncSig {
   var i: i32 = s.sigs.head[sig_name_bucket(name)];
   while (i >= 0) {
@@ -2984,8 +2998,13 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       // `var g = mk;`) types as its signature's function type — the
       // call-site half of #5986's fn typing: with fn-typed params resolving
       // to TypeFunc, an unknown-typed named-function argument would read as
-      // a mismatch and untype the call it feeds.
-      if (csig.name.len() > 0) {
+      // a mismatch and untype the call it feeds. Only for a name with NO
+      // binding at all: a binding typed opaquely-unknown (a builtin variant
+      // payload, a generic) still SHADOWS the function table — lookup's
+      // unknown return conflates the two, and resolving the shadowed name
+      // to the function turned `Some(pair) => pair.0` into an E043 inside
+      // std the moment a user function was named `pair`.
+      if (csig.name.len() > 0 && !s.is_bound(id.name)) {
         return t_func(csig.param_types, csig.ret_type);
       }
       return bound;
