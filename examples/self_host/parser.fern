@@ -6397,6 +6397,14 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 // non-empty, non-string, unbracketed fn_ret as a STRUCT name now
                 // asks is_struct_ret_name directly, which rejects every scalar.
                 else if (!r_is_arr && is_scalar_ret_name(rr_name)) { fn_ret_ty = rr_name; }
+                // A TUPLE return (`() => (string, i32)`) and an ARRAY return
+                // (`() => string[]`, riding beside the ret_arr bit) keep their
+                // full spelling too, so the checker can resolve a call through
+                // the fn value to a real type (#5986). The irlower registry
+                // consumers all reject tuple / array / bracketed spellings, so
+                // neither adds a spurious registry entry.
+                else if (rr_name.len() >= 2 && slice_unchecked(rr_name, 0, 1) == "(") { fn_ret_ty = rr_name; }
+                else if (r_is_arr) { fn_ret_ty = rr_name; }
                 // `-fmt` keeps the declared signature instead of the flat tag:
                 // `fn` names neither what the callback takes nor what it
                 // returns, so a reformatted `cmp: (T, T) => i32` would lose

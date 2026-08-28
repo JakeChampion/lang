@@ -541,10 +541,8 @@ function main(): i32 {
     return f(S { o: Some(41) });
 }`},
 	// A call through a REASSIGNED closure-typed local carries the checker's
-	// TypeFunc return, so these pin the same consumers on the one fn-value
-	// shape the checker can stamp today. The fn-typed PARAM/FIELD siblings
-	// stamp "" (the parser coarsens fn types to "fn" and the checker never
-	// reads fn_ret) — that widening is scoped in docs/TYPED-IR-REWRITE.md.
+	// TypeFunc return; these pin the fn-value shape that stamped before the
+	// fn_ret widening gave the param/field siblings (below) the same footing.
 	{"fnvalue_local_strarr_index", `function main(): i32 {
     var flip: boolean = false;
     var g = function (): string[] { return ["ab", "c"]; };
@@ -584,6 +582,87 @@ function main(): i32 {
     }
     var m = g();
     return m.get_or("k", 7) + 41;
+}`},
+	// The fn-typed PARAM / FIELD shapes: the parser coarsens fn types to
+	// "fn", and until the fn_ret widening the checker read the sidecar
+	// nowhere, so these four stamped "" and no consumer wiring could see
+	// them. build_func_scope now binds such a param to a real TypeFunc and
+	// collect_struct_sigs types a fn field from its fn_ret (#5986).
+	{"fnparam_field_strarr_index", `struct H { f: () => string[] }
+
+function main(): i32 {
+    var h: H = H { f: function (): string[] { return ["ab", "c"]; } };
+    var n: i32 = h.f()[0].len();
+    if (n == 2) { return 42; }
+    return 1;
+}`},
+	{"fnparam_option_unwrap", `import "std/option";
+
+function mk(n: i32): Option[i32] {
+    return Some(n + 41);
+}
+
+function apply(f: (i32) => Option[i32]): i32 {
+    return f(1).unwrap_or(9);
+}
+
+function main(): i32 {
+    return apply(mk);
+}`},
+	{"fnparam_tuple_elem", `function mk(): (string, i32) {
+    return ("abcd", 7);
+}
+
+function apply(f: () => (string, i32)): i32 {
+    var t = f();
+    return t.0.len() + 38;
+}
+
+function main(): i32 {
+    return apply(mk);
+}`},
+	{"fnparam_map_get_or", `import "core/map";
+
+function mk(): Map[string, i32] {
+    var m: Map[string, i32] = Map { "k": 1 };
+    return m;
+}
+
+function apply(f: () => Map[string, i32]): i32 {
+    var m = f();
+    return m.get_or("k", 7) + 41;
+}
+
+function main(): i32 {
+    return apply(mk);
+}`},
+	// The widened fn_ret spellings (tuple and array returns) through the
+	// sidecar consumers. w1 was a live wasm miscompile (the fn param mixes
+	// an i64 param with an array return, so fn_sig_of now emits the
+	// width-typed funcref signature instead of the arity fallback); w3 a
+	// live x86-64 miscompile (annotated tuple-returning fn var). w2/w4 pin
+	// the shapes that already worked through the same paths.
+	{"fnwiden_funcref_width", `function pick(f: (i64) => i32[]): i32 {
+    var xs: i32[] = f(5000000042i64);
+    return xs[0];
+}
+function mk(n: i64): i32[] { return [(n % 100i64) as i32, 7]; }
+function main(): i32 { return pick(mk); }`},
+	{"fnwiden_tuple_ret_capture", `function main(): i32 {
+    var flip: boolean = false;
+    var g = function (): (string, i32) { return ("abcd", 4); };
+    if (flip) { g = function (): (string, i32) { return ("z", 1); }; }
+    var h = () => g().1 + 38;
+    return h();
+}`},
+	{"fnwiden_annotated_tuple_fn", `function main(): i32 {
+    var f: () => (string, i32) = () => ("abcd", 4);
+    var t = f();
+    return t.0.len() + t.1 + 34;
+}`},
+	{"fnwiden_annotated_arr_fn", `function main(): i32 {
+    var f: (i32) => string[] = (n: i32) => ["ab", "c"];
+    return f(1)[0].len() + 40;
 }`},
 }
 
