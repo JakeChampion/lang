@@ -1321,6 +1321,17 @@ self-host side roughly halved across #7020/#7026/#7036/#7046/#7048, #7097,
 10.5 M lines from the Go path against 1.79 M from the self-host one — so this
 ratio compares compile TIME for the same input, not work per line.
 
+**Landed since this section was measured — the for-in element borrow** (the
+lead from the issue thread's 2026-08-25 comment): a read-only `for … in` loop
+element now borrows from the iterand instead of paying a retain plus a deep
+drop per iteration (`internal/ir` `computeBorrowedAliases`, third walk). The
+whole-compiler x86-64 emit dropped **12.4%** (10.78 M → 9.44 M lines,
+176.0 MB → 155.4 MB) and native compile user time ~8% (26.1 s → 23.9 s);
+`decl_is_struct`-family scanners lose their per-iteration
+`__drop_struct` calls entirely. The bench corpus does not exercise the shape,
+so the perf gate reads +0.00% across the board — the win is in emitted drop
+code, which only whole-program emits show.
+
 **System time is still a third of the run** (26.2 s of 66.9 s) and §4d's
 account of it stands: it is the kernel zeroing arena pages, so it tracks bytes
 bumped and no user-code profile will show it.
@@ -1348,7 +1359,7 @@ absolute speed drifts ~40% over an hour, so only interleaved pairs compare.
 The corpus and the gate landed with this audit:
 
 ```
-scripts/perf-bench /tmp/report.txt          # ~15 s, all 15 benchmarks
+scripts/perf-bench /tmp/report.txt          # ~15 s, the whole corpus
 scripts/ci-check-perf .github/perf-baseline.txt /tmp/report.txt
 ```
 

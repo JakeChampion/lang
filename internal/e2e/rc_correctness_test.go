@@ -118,6 +118,92 @@ function main(): i32 {
 }`,
 	},
 	{
+		// For-in element borrow (#6888): a read-only loop element takes no
+		// retain and no per-iteration deep drop — the container's buffer
+		// keeps it alive. This is the happy path: values must be exact and
+		// the underflow counter must stay 0, which catches the borrow
+		// wrongly widening into a release (the element or the container
+		// dec'd while borrowed). 11+1 + 1+1 = 14.
+		name: "forin_elem_borrow_reads_only",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function main(): i32 {
+    var xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                   S{ name: mkstr(""), fields: [mkstr("")] }];
+    var n: i32 = 0;
+    for sd in xs { n = n + sd.name.len() + sd.fields.len(); }
+    return (n - 14) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A loop element RETURNED out of the iteration must keep the owned
+		// model: a borrowed element handed to the caller dangles once the
+		// container's exit sweep deep-drops the buffer. The returned guard
+		// (and bindingConfinedToArm) refuse the borrow here; with either
+		// removed, the returned string's bytes are read after free.
+		// The hit must be BOUND in the caller before the container dies, so
+		// the read happens after pick's sweep ran.
+		name: "forin_elem_escape_return_keeps_retain",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function pick(xs: S[]): S {
+    for sd in xs {
+        if (sd.fields.len() == 1) { return sd; }
+    }
+    return S{ name: mkstr("z"), fields: [] };
+}
+function main(): i32 {
+    var hit: S = pick([S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }]);
+    return (hit.name.len() - 11) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A loop element STORED into an accumulator array must keep the owned
+		// model: appending an un-retained borrow gives the accumulator an
+		// uncounted reference, so the element is released once through the
+		// source container and again through the accumulator — the underflow
+		// counter fires. bindingConfinedToArm refuses (append is a retain
+		// sink per calleeRetainsAnyArg).
+		name: "forin_elem_escape_append_keeps_retain",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function main(): i32 {
+    var xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                   S{ name: mkstr("b"), fields: [] }];
+    var acc: S[] = [];
+    for sd in xs {
+        if (sd.fields.len() == 1) { acc = acc.append(sd); }
+    }
+    return (acc[0].name.len() - 11) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Iterating while the LOOP'S OWN iterand is consumed by an in-place
+		// `.with`: the synthetic iter local's retain is the only thing
+		// holding the buffer at rc 2, forcing __fern_arr_cow_inplace to
+		// copy. The loop must keep reading the ORIGINAL elements (snapshot
+		// semantics) while the rebound xs sees the replacement. If the
+		// element borrow ever cancelled the ITERAND's retain as well, the
+		// mutation would become visible mid-loop and the overwritten
+		// element would be deep-dropped under the borrow.
+		// 11 + 1 = 12 from the snapshot, 3 from the replacement.
+		name: "forin_iterand_with_inplace_snapshot",
+		src: `
+function mkstr(p: string): string { return p + "!"; }
+function main(): i32 {
+    var xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("")];
+    var n: i32 = 0;
+    for s in xs {
+        n = n + s.len();
+        xs = xs.with(0, mkstr("zz"));
+    }
+    return (n - 12) + (xs[0].len() - 3) + __rc_underflow_count();
+}`,
+	},
+	{
 		// string[] whose elements alias a live local. Exercises the native
 		// single-word x86-64 string[] element reclaim (__fern_drop_arr_str:
 		// per-element __fern_str_dec then free the buffer); elements are

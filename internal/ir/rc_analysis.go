@@ -4615,6 +4615,10 @@ func overriddenSpread(lit *ast.StructLit, q, p place) bool {
 // x's release stays the exit dec sweep — after every statement, hence after
 // every read through y — enforced by the borrowSources exclusions in
 // computePreciseDrops and computeReuseSources' donor gate.
+//
+// A second accepted shape, with its own gate set (documented at the walk):
+// the for-in element binding `var y = __foreach_iter_N[idx]`, whose
+// container is the desugar's synthetic iterand local.
 // computeBorrowedMapFieldResults finds locals bound to a Map COW-mutator call
 // whose receiver is a field access (`var m = s.m.insert(k, v)`) — see the
 // borrowedMapFieldResults field doc (issue #4871). Purely syntactic: the walk
@@ -4772,6 +4776,83 @@ func (b *builder) computeBorrowedAliases() {
 		}
 		if !needsRcIncOnAlias(v.Init, b) {
 			return true // untracked shape: no inc to cancel
+		}
+		b.rc.borrowedAlias[y] = true
+		b.rc.borrowedAliasSites[v] = true
+		b.rc.borrowSources[x] = true
+		return true
+	})
+	// For-in element borrow (#6888): the desugar's per-iteration element
+	// binding `var y = __foreach_iter_N[__foreach_idx_N]`
+	// (ast.DesugarForEachArray) reads an element the iterand array owns.
+	// When every use of y is a read THROUGH the value (bindingConfinedToArm
+	// over the whole body — a bind, return, store, capture, or unproven call
+	// all refuse), y needs no reference of its own: the element stays alive
+	// because the container's buffer does.
+	//
+	// The container here is the synthetic iter local, which user code cannot
+	// name (ast.ForEachIterPrefix), so its release sites are exactly the ones
+	// this marking pins: precise/nested drops refused via borrowSources, FBIP
+	// donorship refused, leaving the exit sweeps — each on a function exit,
+	// after the loop body's reads on that path. In-place element overwrite
+	// cannot reach it either: `arr[i] = v` does not exist (checker E056), a
+	// consumed `.with` receiver is refused below, and an unconsumed one incs
+	// first, so __fern_arr_cow_inplace sees rc >= 2 and copies.
+	//
+	// Two deliberate departures from the bare-Ident shape above:
+	//   - no freeEligible gate on x. That gate stands in for "x's buffer
+	//     cannot be released before the borrow's last read", which holds
+	//     structurally here — a borrowed-param-backed iter is freeEligible-
+	//     tainted precisely BECAUSE the caller owns it, which makes it a
+	//     safer borrow source, not a worse one.
+	//   - x may itself be a borrowed alias (the walk above marks
+	//     `var __foreach_iter_N = xs` when xs qualifies): xs is then already
+	//     pinned to exit-sweep-only release, the same guarantee one level up.
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		f, ok := n.(*ast.For)
+		if !ok {
+			return true
+		}
+		body, ok := f.Body.(*ast.Block)
+		if !ok || len(body.Stmts) == 0 {
+			return true
+		}
+		v, ok := body.Stmts[0].(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		ix, ok := v.Init.(*ast.Index)
+		if !ok || !ix.Unchecked || ix.IsString || ix.IsSlice {
+			return true
+		}
+		src, ok := ix.Array.(*ast.Ident)
+		if !ok || !strings.HasPrefix(src.Name, ast.ForEachIterPrefix) {
+			return true
+		}
+		y, x := v.Name, src.Name
+		if b.rc.borrowedAlias[y] || b.rc.borrowSources[y] || b.rc.borrowSources[x] {
+			return true
+		}
+		if !b.isOwnedRcLocal(x) || !b.isOwnedRcLocal(y) {
+			return true
+		}
+		if reassigned[x] || reassigned[y] || returned[y] || scrutinee[x] || scrutinee[y] {
+			return true
+		}
+		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
+			return true
+		}
+		if b.rc.arraySetConsumed[x] || b.rc.arraySetConsumed[y] {
+			return true
+		}
+		if !b.localNameUnique(x) || !b.localNameUnique(y) {
+			return true
+		}
+		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
+			return true
+		}
+		if !b.bindingConfinedToArm(b.fn.Body, y) {
+			return true
 		}
 		b.rc.borrowedAlias[y] = true
 		b.rc.borrowedAliasSites[v] = true

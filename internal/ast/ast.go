@@ -2633,10 +2633,15 @@ type ForEach struct {
 	Pattern *Destructure
 }
 
+// ForEachIterPrefix prefixes every synthetic iterand local; user code cannot
+// name one, which is what lets the rc pass treat its buffer as unreachable
+// from the loop body (the for-in element borrow keys on it).
+const ForEachIterPrefix = "__foreach_iter_"
+
 // ForEachIterName is the synthetic local a foreach's iterand is bound to. The
 // lowering evaluates the iterand once, into this slot; a type-aware caller
 // binds it first and reads its type back to choose between the lowerings below.
-func ForEachIterName(id int) string { return fmt.Sprintf("__foreach_iter_%d", id) }
+func ForEachIterName(id int) string { return fmt.Sprintf("%s%d", ForEachIterPrefix, id) }
 
 // ForEachElemName is the synthetic local a destructuring foreach binds each
 // element to before the pattern reads it. An `@` binding replaces it with the
