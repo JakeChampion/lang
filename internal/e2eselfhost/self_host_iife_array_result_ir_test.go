@@ -67,6 +67,40 @@ function main(): i32 {
     return __rc_underflow_count();
 }`, 0},
 
+	// The DEEPER-RELEASE element kinds (#7686's remaining half). These bailed
+	// after the first widening, on the reasoning that "their release is an
+	// element WALK a borrowed temp cannot describe" — which had it backwards:
+	// the temp is BORROWED, so it is never released and the walk never runs.
+	// The borrowed bargain carries them exactly as it carries a scalar array,
+	// and the reads below are what the element-kind marks buy (mark_strarr for
+	// a string element, the element struct name for a struct one).
+	{"iife-strarr-payload", `enum E { A(string[]), B }
+function rd(e: E): string[] { return (match (e) { E.A(xs) => xs, E.B => ["z"] }); }
+function main(): i32 { return rd(E.A(["a", "b"])).len() + rd(E.B).len(); }`, 3},
+	{"iife-structarr-payload", `struct Q { k: i32 }
+enum E { A(Q[]), B }
+function rd(e: E): Q[] { return (match (e) { E.A(xs) => xs, E.B => [Q { k: 1 }] }); }
+function main(): i32 { return rd(E.A([Q { k: 1 }, Q { k: 2 }])).len() + rd(E.B).len(); }`, 3},
+	{"iife-strarr-bound-and-read", `enum E { A(string[]), B }
+function rd(e: E): i32 { var v: string[] = (match (e) { E.A(xs) => xs, E.B => ["zz"] }); return v[0].len() + v.len(); }
+function main(): i32 { return rd(E.A(["abc", "d"])) + rd(E.B); }`, 8},
+	{"iife-structarr-bound-and-field", `struct Q { k: i32 }
+enum E { A(Q[]), B }
+function rd(e: E): i32 { var v: Q[] = (match (e) { E.A(xs) => xs, E.B => [Q { k: 5 }] }); return v[0].k + v.len(); }
+function main(): i32 { return rd(E.A([Q { k: 3 }, Q { k: 4 }])) + rd(E.B); }`, 11},
+	// The safe half for the deeper kinds: a borrowed temp must never release,
+	// so an element walk can never double-free one. 30 rounds, returning the
+	// underflow counter's verdict through the answer.
+	{"iife-strarr-no-underflow", `enum E { A(string[]), B }
+function rd(e: E): string[] { return (match (e) { E.A(xs) => xs, E.B => ["z"] }); }
+function round(i: i32): i32 { var k: E = E.A(["a", "b"]); return rd(k).len() + rd(E.B).len(); }
+function main(): i32 {
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 30) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}`, 90},
+
 	// --- controls: these lowered BEFORE the widening and must not move -------
 	{"iife-array-literals-only", `function rd(i: i32): i32[] { return (match (i) { 0 => [1, 2], _ => [3] }); }
 function main(): i32 { return rd(0).len() + rd(1).len(); }`, 3},
