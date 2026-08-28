@@ -35585,7 +35585,17 @@ function struct_ret_local_is_frame_fresh(name: string, structs: parser.StructDec
         if (fnparams[pi].name == name) { return false; }
         pi = pi + 1;
     }
-    if (util.index_of_str(body_assign_targets(fnbody), name) >= 0) { return false; }
+    // A REASSIGNED local is admitted only when every assignment carries a
+    // strict-fresh struct value itself: the box the return hands out is then
+    // frame-fresh whichever write produced it, and the escape gates below
+    // still sink the credit if any reference was taken along the way. One
+    // write outside the classifier keeps the refusal — the final value's
+    // provenance is unknowable to a flow-free scan. Without this arm the
+    // ordinary rebuild-and-return producer freed nothing at all: the caller's
+    // binding earned no credit, and 240 B leaked per call (#7357's
+    // struct_producer_returns_local decomposition).
+    if (util.index_of_str(body_assign_targets(fnbody), name) >= 0
+        && !struct_local_assigns_all_strictfresh(fnbody, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
     if (!struct_ret_local_init_strictfresh(fnbody, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
     // A FIELD read out of the local is refused as well, and this is the one
     // condition the escape gate above does not cover: `var stolen = p.xs;` is
@@ -35603,6 +35613,38 @@ function struct_ret_local_is_frame_fresh(name: string, structs: parser.StructDec
     if (mvsty != "" && optstruct_body_moves_field(fnbody, name, mvsty, structs, no_mv_borrow)) { return false; }
     var no_borrow: string[] = [];
     return !body_unsafe_for_allow_bare_ret(fnbody, name, no_borrow);
+}
+
+// struct_local_assigns_all_strictfresh: every `name = …` assignment anywhere in
+// the subtree (nested blocks and defer actions included) carries a value the
+// strict-fresh classifier admits. Vacuously true for an unassigned name; the
+// caller pairs it with body_assign_targets so it is only consulted when at
+// least one assignment exists.
+function struct_local_assigns_all_strictfresh(stmts: ast.Stmt[], name: string, structs: parser.StructDecl[], fnbody: ast.Stmt[], arr_fresh: string[], fwd: string[], fnparams: ast.ParamDecl[], sfok: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtAssign(a) => {
+                if (a.target == name && !return_value_is_strictfresh_struct(a.value, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
+            },
+            ast.StmtIf(f) => {
+                if (!struct_local_assigns_all_strictfresh(f.then_body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
+                if (!struct_local_assigns_all_strictfresh(f.else_body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
+            },
+            ast.StmtWhile(w) => { if (!struct_local_assigns_all_strictfresh(w.body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; } },
+            ast.StmtFor(fo) => { if (!struct_local_assigns_all_strictfresh(fo.body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    if (!struct_local_assigns_all_strictfresh(arm.body, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
+                }
+            },
+            ast.StmtDefer(d) => {
+                var one: ast.Stmt[] = [d.action];
+                if (!struct_local_assigns_all_strictfresh(one, name, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
+            },
+            _ => {}
+        }
+    }
+    return true;
 }
 
 // struct_ret_local_init_strictfresh finds `name`'s single declaration anywhere in
@@ -36579,11 +36621,11 @@ function is_fresh_ret_binding(e: ast.Expr, recv_type: string, fresh_ret: string[
 // analogue of snapshot_param_names_of. No entry snapshot (a pure local has no
 // caller original); each rebind reclaims via emit_field_reclaim_store (snap = 0)
 // and the moved-out final is kept by struct move-on-return.
-function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[]): string[] {
+function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], ret_fresh: string[]): string[] {
     var reassigned: string[] = body_assign_targets(fn.body);
-    return collect_snap_locals(fn.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, []);
+    return collect_snap_locals(fn.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, []);
 }
-function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], reassigned: string[], acc: string[]): string[] {
+function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], reassigned: string[], ret_fresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -36594,23 +36636,66 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: pa
                 // allocating field walk (struct_has_reclaim_array_field) or the
                 // O(body) borrow check — keeping this per-function pass affordable
                 // on the large modules (the native-emit heap is at its limit, #3452).
+                var snap_init_ok: boolean = is_fresh_ret_binding(v.init, v.type_name, fresh_ret);
+                // A strict-fresh LITERAL init rides the same rebind reclaim when
+                // this function's own bare row in the strict-fresh registry
+                // proves the whole rebuild-and-return shape: the row exists only
+                // if every return is strict-fresh, and a `return <name>` return
+                // required this local's init and every assignment to be
+                // strict-fresh with no second reference taken. Without this arm
+                // the superseded literal leaked at every rebind — the callee
+                // half of #7357's producer decomposition, 112 B per call.
+                if (!snap_init_ok && v.type_name.len() > 0
+                    && util.index_of_str(ret_fresh, fn.name) >= 0
+                    && body_returns_bare_name(fn.body, v.name)) {
+                    match (v.init) {
+                        ast.ExprStructLit(snsl) => { if (snsl.type_name == v.type_name && !snsl.has_base) { snap_init_ok = true; } },
+                        _ => {}
+                    }
+                }
                 if (v.type_name.len() > 0
                     && util.index_of_str(reassigned, v.name) >= 0
-                    && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)
+                    && snap_init_ok
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
                     && struct_has_reclaim_array_field(structs, v.type_name)
                     && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [])) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
-            ast.StmtWhile(w) => { a = collect_snap_locals(w.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
-            ast.StmtFor(fo) => { a = collect_snap_locals(fo.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_snap_locals(m.arms[ai].body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); ai = ai + 1; } },
+            ast.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); },
+            ast.StmtWhile(w) => { a = collect_snap_locals(w.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); },
+            ast.StmtFor(fo) => { a = collect_snap_locals(fo.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_snap_locals(m.arms[ai].body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); ai = ai + 1; } },
             _ => {}
         }
     }
     return a;
+}
+
+// body_returns_bare_name: some `return <name>;` occurs in the subtree — the
+// read the snapshot-local literal arm keys on, since the strict-fresh registry
+// row only vouches for locals a bare return actually hands out.
+function body_returns_bare_name(stmts: ast.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtReturn(r) => {
+                match (r.value) {
+                    ast.ExprIdent(rid) => { if (rid.name == name) { return true; } },
+                    _ => {}
+                }
+            },
+            ast.StmtIf(f) => { if (body_returns_bare_name(f.then_body, name) || body_returns_bare_name(f.else_body, name)) { return true; } },
+            ast.StmtWhile(w) => { if (body_returns_bare_name(w.body, name)) { return true; } },
+            ast.StmtFor(fo) => { if (body_returns_bare_name(fo.body, name)) { return true; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    if (body_returns_bare_name(arm.body, name)) { return true; }
+                }
+            },
+            _ => {}
+        }
+    }
+    return false;
 }
 
 // --- consumed scalar-payload enum scrutinee free (Perceus) -------------------
@@ -67673,7 +67758,7 @@ if (fn.params.len() > 0 && fn.params[0].name == "__env") {
 }
 
 function reclaim_snapshot_locals(fn: parser.FuncDecl, sg: FnSigs, structs: parser.StructDecl[], reclaim: string[]): string[] {
-var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params);
+var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params, sg.return_fresh_struct_ret_fns);
 var sli: i32 = 0;
 while (sli < snap_locals.len()) {
     // Key-to-key against the credits reclaimable_names_of already published,

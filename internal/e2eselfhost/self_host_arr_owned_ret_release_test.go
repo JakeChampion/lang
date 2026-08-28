@@ -432,6 +432,60 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
+	// A producer whose local is REASSIGNED before return, every write a
+	// strict-fresh literal. The registry used to refuse any reassignment, so
+	// the caller's binding earned no credit and the callee's rebind freed
+	// nothing: 240 B/round, frees=0 outright, where native balances both. The
+	// caller half rides the widened struct_ret_local_is_frame_fresh (all
+	// writes strict-fresh); the callee half rides the snapshot-local literal
+	// arm, vouched by the function's own strict-fresh registry row.
+	{"struct-producer-reassigned-local", `struct P { xs: i32[], s: string }
+function w(s: string): string { return s + ""; }
+function re(i: i32): P { var p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var c: P = re(i); t = t + c.xs.len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var b1: i64 = __heap_bump_bytes();
+    var x: i32 = churn(200);
+    var b2: i64 = __heap_bump_bytes();
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    return ((b2 - b1) / 200) as i32;
+}`, 0},
+
+	// An ALIAS of the intermediate value taken before the rebind must sink the
+	// whole credit — releasing the superseded box would free what `q` still
+	// holds. The refusal keeps the old (safe) leak, so the assertion is the
+	// exit and the underflow, deliberately not a byte rate.
+	{"struct-producer-reassigned-alias-refused", `struct P { xs: i32[], s: string }
+function w(s: string): string { return s + ""; }
+function re2(i: i32): P {
+    var p: P = P { xs: [i], s: w("r") };
+    var q: P = p;
+    p = P { xs: [i, i, i], s: w("q") };
+    if (q.xs.len() != 1) { return p; }
+    return p;
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var c: P = re2(i); t = t + c.xs.len(); i = i + 1; }
+    return t % 251;
+}
+function main(): i32 {
+    var w1: i32 = churn(200);
+    var x: i32 = churn(200);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (w1 != x) { return 97; }
+    if (w1 != (200 * 3) % 251) { return 96; }
+    return 0;
+}`, 0},
+
 	// A pure-scalar element takes the plain __fern_arrarr_free half of the
 	// split — no field routing, no rc-array field.
 	{"structarr-scalar-producer-len-recv", `struct Q { a: i32, b: i32 }
