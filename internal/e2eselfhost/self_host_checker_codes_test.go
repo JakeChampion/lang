@@ -171,6 +171,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// Call-site checks against a fn-typed PARAM (#5986's last half): the
+		// param resolves to a real TypeFunc from its sidecars, so a
+		// non-function argument draws E038 — the same code native emits —
+		// while a named function (which now types as its signature's
+		// function type) and a lambda both stay clean.
+		{"e038-fn-param-bad-arg", "function mk(n: i32): i32 { return n + 1; }\nfunction apply(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return apply(3); }\n", []string{"E038"}},
+		{"e038-fn-param-named-fn-clean", "function mk(n: i32): i32 { return n + 1; }\nfunction apply(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return apply(mk); }\n", nil},
+		{"e038-fn-param-lambda-clean", "function apply(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return apply((n: i32) => n + 2); }\n", nil},
+		// A bare function name used as a value types as its signature's
+		// function type now, so assigning it where a scalar is declared
+		// draws native's E003 instead of an unknown-typed silence.
+		{"e003-bare-fn-value-mismatch", "function mk(n: i32): i32 { return n + 1; }\nfunction main(): i32 { var x: i32 = mk; return x; }\n", []string{"E003"}},
 		// An annotation on a LAMBDA parameter or return, which the two
 		// annotation reporters could not see at all: both walked statements
 		// for `var` and nothing else, so `((x: Wibble) => 1)` was accepted

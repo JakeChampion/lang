@@ -2980,6 +2980,14 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       if (csig.is_const) {
         return csig.ret_type;
       }
+      // A bare NON-const function name used as a VALUE (`apply(mk)`,
+      // `var g = mk;`) types as its signature's function type — the
+      // call-site half of #5986's fn typing: with fn-typed params resolving
+      // to TypeFunc, an unknown-typed named-function argument would read as
+      // a mismatch and untype the call it feeds.
+      if (csig.name.len() > 0) {
+        return t_func(csig.param_types, csig.ret_type);
+      }
       return bound;
     },
     ast.ExprBinary(b) => {
@@ -3682,7 +3690,15 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
     var pbnd: string[] = [];
     var ptn: string[] = [];
     for param in fd.params {
-      pts = pts.append(type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
+      // A fn-typed param resolves through its sidecars to a real TypeFunc
+      // (#5986's call-site half), so argument checks against it are live —
+      // a lambda or named-function argument passes the fn-to-fn arm, a
+      // non-function argument is a real mismatch.
+      var fpt: Type = fn_param_decl_type(param, fd.type_params, structs, unions);
+      if (is_unknown(fpt)) {
+        fpt = type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions);
+      }
+      pts = pts.append(fpt);
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(param.type_name);
     }
@@ -3702,7 +3718,12 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
     if (fd.receiver_name.len() > 0) {
       var pts: Type[] = [];
       for param in fd.params {
-        pts = pts.append(type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
+        // Same sidecar resolution as collect_func_sigs (#5986).
+        var mpt: Type = fn_param_decl_type(param, fd.type_params, structs, unions);
+        if (is_unknown(mpt)) {
+          mpt = type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions);
+        }
+        pts = pts.append(mpt);
       }
       out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), ret_type_name: fd.ret_type });
     }
