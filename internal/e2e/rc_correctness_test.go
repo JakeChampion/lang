@@ -123,17 +123,85 @@ function main(): i32 {
 		// keeps it alive. This is the happy path: values must be exact and
 		// the underflow counter must stay 0, which catches the borrow
 		// wrongly widening into a release (the element or the container
-		// dec'd while borrowed). 11+1 + 1+1 = 14.
+		// dec'd while borrowed). The loop lives in a HELPER so its exit
+		// sweep — where every suppressed dec of this change would sit — has
+		// run before main reads the counter; a main-resident loop reads the
+		// counter inside its own return expression, before its sweep.
+		// 11+1 + 1+1 = 14.
 		name: "forin_elem_borrow_reads_only",
 		src: `
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
-function main(): i32 {
+function scan(): i32 {
     var xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
                    S{ name: mkstr(""), fields: [mkstr("")] }];
     var n: i32 = 0;
     for sd in xs { n = n + sd.name.len() + sd.fields.len(); }
-    return (n - 14) + __rc_underflow_count();
+    return n;
+}
+function main(): i32 {
+    var c: i32 = scan();
+    return (c - 14) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A mid-loop early return whose value never names the element is the
+		// one shape where the borrow is TAKEN and a function exit runs mid-
+		// iteration: the sweep at that return releases the iterand while the
+		// element stays unswept (borrowed), which is the ordering the design
+		// leans on ("exit sweeps run at returns, after any read on that
+		// path"). 11+1 = 12 crosses the threshold on the first element.
+		name: "forin_elem_borrow_early_return",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function scan_early(xs: S[]): i32 {
+    var n: i32 = 0;
+    for sd in xs {
+        n = n + sd.name.len() + sd.fields.len();
+        if (n > 11) { return n; }
+    }
+    return n;
+}
+function main(): i32 {
+    var c: i32 = scan_early([S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                             S{ name: mkstr("b"), fields: [] }]);
+    return (c - 12) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The return-escape shape where the returned guard is LOAD-BEARING
+		// at runtime: the iterand is an owned CALL RESULT, so the sweep at
+		// the in-loop return deep-frees the container inside the callee —
+		// there is no caller-side may-alias conservatism to absorb an
+		// uncounted return (unlike the param-container case below, where a
+		// wrong borrow degrades to a leak). @noinline keeps the call
+		// boundary real — inlined, the return becomes an assignment that
+		// takes its own transfer inc and the case goes vacuous.
+		// Verified non-vacuous: with returned[y] and bindingConfinedToArm
+		// knocked out of walk 3 this fails under free-on on x86-64, arm64
+		// AND wasm (recycled churn read), and passes with the guards
+		// restored.
+		name: "forin_elem_escape_return_owned_container",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }]; }
+@noinline function pick_owned(): S {
+    for sd in mks() {
+        if (sd.fields.len() == 1) { return sd; }
+    }
+    return S{ name: mkstr("z"), fields: [] };
+}
+function use_owned(): i32 {
+    var hit: S = pick_owned();
+    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
+    var ok: i32 = 0;
+    if (hit.name == "aaaaaaaaaa!") { ok = 1; }
+    return ok + churn.len() - 1;
+}
+function main(): i32 {
+    return (use_owned() - 1) + __rc_underflow_count();
 }`,
 	},
 	{
@@ -218,14 +286,18 @@ function main(): i32 {
 		name: "forin_iterand_with_inplace_snapshot",
 		src: `
 function mkstr(p: string): string { return p + "!"; }
-function main(): i32 {
+function snap(): i32 {
     var xs: string[] = [mkstr("aaaaaaaaaa"), mkstr("")];
     var n: i32 = 0;
     for s in xs {
         n = n + s.len();
         xs = xs.with(0, mkstr("zz"));
     }
-    return (n - 12) + (xs[0].len() - 3) + __rc_underflow_count();
+    return (n - 12) + (xs[0].len() - 3);
+}
+function main(): i32 {
+    var c: i32 = snap();
+    return c + __rc_underflow_count();
 }`,
 	},
 	{
