@@ -1,0 +1,49 @@
+// TWO live owners of one tuple box, and a tuple PARAMETER stored into a struct
+// the callee returns. Both are shapes the struct-with-tuple-field reclaim has
+// to get right, and neither was in the corpus.
+//
+// The two-owner case is the one that pins the construction retain. The struct's
+// deep drop (emit_struct_tuple_field_drops) walks the tuple's children under a
+// __fern_rc_is_unique gate, and that gate is only sound if a SHARED field was
+// retained at construction: without the retain both owners read unique, and the
+// second walk frees children the first already released. The assertion is that
+// every element still reads back after both structs exist.
+//
+// keepit() is the interprocedural half: the tuple arrives as a borrowed param
+// and is stored into the returned struct, so the box outlives the callee frame.
+struct Hold { t: (i32, i32[]), n: i32 }
+
+function keepit(t: (i32, i32[]), n: i32): Hold { return Hold { t: t, n: n }; }
+
+function shared(i: i32): i32 {
+    var k: (i32, i32[]) = (i, [i, i + 1]);
+    var h1: Hold = Hold { t: k, n: 1 };
+    var h2: Hold = Hold { t: k, n: 2 };
+    var a: i32 = h1.t.1[0];
+    var b: i32 = h2.t.1[1];
+    if (a != i) { return 0 - 1; }
+    if (b != i + 1) { return 0 - 1; }
+    return a + b + h1.n + h2.n;
+}
+
+function viaparam(i: i32): i32 {
+    var k: (i32, i32[]) = (i, [i, i + 3]);
+    var h: Hold = keepit(k, 4);
+    var v: i32 = h.t.1[1];
+    if (v != i + 3) { return 0 - 1; }
+    return v + h.n;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var s: i32 = shared(i);
+        var p: i32 = viaparam(i);
+        if (s < 0 || p < 0) { return 253; }
+        acc = acc + s + p;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
