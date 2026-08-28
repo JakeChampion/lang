@@ -504,6 +504,51 @@ function main(): i32 {
 function main(): i32 {
     return mk()[0].1.len() + 38;
 }`},
+	// A call through a REASSIGNED closure-typed local carries the checker's
+	// TypeFunc return, so these pin the same consumers on the one fn-value
+	// shape the checker can stamp today. The fn-typed PARAM/FIELD siblings
+	// stamp "" (the parser coarsens fn types to "fn" and the checker never
+	// reads fn_ret) — that widening is scoped in docs/TYPED-IR-REWRITE.md.
+	{"fnvalue_local_strarr_index", `function main(): i32 {
+    var flip: boolean = false;
+    var g = function (): string[] { return ["ab", "c"]; };
+    if (flip) { g = function (): string[] { return ["zz", "y"]; }; }
+    var n: i32 = g()[0].len();
+    if (n == 2) { return 42; }
+    return 1;
+}`},
+	{"fnvalue_local_option_unwrap", `import "std/option";
+
+function main(): i32 {
+    var flip: boolean = false;
+    var g = function (n: i32): Option[i32] { return Some(n + 41); };
+    if (flip) { g = function (n: i32): Option[i32] { return Some(n); }; }
+    return g(1).unwrap_or(9);
+}`},
+	{"fnvalue_local_tuple_elem", `function main(): i32 {
+    var flip: boolean = false;
+    var g = function (): (string, i32) { return ("abcd", 7); };
+    if (flip) { g = function (): (string, i32) { return ("zz", 1); }; }
+    var t = g();
+    return t.0.len() + 38;
+}`},
+	{"fnvalue_local_map_get_or", `import "core/map";
+
+function main(): i32 {
+    var flip: boolean = false;
+    var g = function (): Map[string, i32] {
+        var m: Map[string, i32] = Map { "k": 1 };
+        return m;
+    };
+    if (flip) {
+        g = function (): Map[string, i32] {
+            var m: Map[string, i32] = Map { "k": 2 };
+            return m;
+        };
+    }
+    var m = g();
+    return m.get_or("k", 7) + 41;
+}`},
 }
 
 // TestSelfHostAnnotateConsumersX86_64 runs the cases on the self-host x86-64
