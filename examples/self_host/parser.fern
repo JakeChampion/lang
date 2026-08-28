@@ -9031,7 +9031,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                                 var fk: i32 = 0;
                                 while (fk < nargs.len()) { folded = folded.append(nargs[fk]); fk = fk + 1; }
                                 cur = cur.iadd(amn, ct3);
-                                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col, ty: "" }, args: folded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col, ty: "" }, args: folded, line: c.line, col: c.col, type_argc: 0, ty: c.ty }, rins: cur };
                             }
                         }
                     }
@@ -9057,7 +9057,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                                 var mfk: i32 = 0;
                                 while (mfk < nargs.len()) { mfolded = mfolded.append(nargs[mfk]); mfk = mfk + 1; }
                                 cur = cur.iadd(mmn, mct);
-                                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col, ty: "" }, args: mfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col, ty: "" }, args: mfolded, line: c.line, col: c.col, type_argc: 0, ty: c.ty }, rins: cur };
                             }
                         }
                     }
@@ -9085,7 +9085,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                                 var sfk: i32 = 0;
                                 while (sfk < nargs.len()) { sfolded = sfolded.append(nargs[sfk]); sfk = sfk + 1; }
                                 cur = cur.iadd(smn, sct);
-                                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: smn + "__" + sanitize_key(sct), line: fac.line, col: fac.col, ty: "" }, args: sfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: smn + "__" + sanitize_key(sct), line: fac.line, col: fac.col, ty: "" }, args: sfolded, line: c.line, col: c.col, type_argc: 0, ty: c.ty }, rins: cur };
                             }
                         }
                     }

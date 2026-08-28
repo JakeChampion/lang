@@ -2345,15 +2345,22 @@ pub function expr_tuple_elem_tag(e: ast.Expr, n: i32, s: LowerState): string {
         ast.ExprFieldAccess(fa) => {
             // `t.K.N` where `t.K` is itself a (nested) tuple element: recover the
             // outer element K's tuple-type tag, then read element N out of it.
+            // Walk first; when it cannot type `fa`, the checker-stamped fa.ty
+            // carries this node's own "(t0, t1, …)" spelling (#5986).
             if (util.is_all_digits(fa.field)) {
                 var ot: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                return tuple_type_elem_tag(ot, n);
+                var ett: string = tuple_type_elem_tag(ot, n);
+                if (ett != "") { return ett; }
+                return tuple_type_elem_tag(fa.ty, n);
             }
             // `p.t.N` where `t` is a tuple struct field — element n's tag from the
             // field's tuple type string.
             var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return ""; }
-            return tuple_type_elem_tag(decl_field_type(s.structs, oty, fa.field), n);
+            if (oty != "") {
+                var dtt: string = tuple_type_elem_tag(decl_field_type(s.structs, oty, fa.field), n);
+                if (dtt != "") { return dtt; }
+            }
+            return tuple_type_elem_tag(fa.ty, n);
         },
         ast.ExprIndex(ix) => {
             // `arr[i].N` where arr is a `(tuple)[]` array-of-tuples local: the element
@@ -2588,9 +2595,11 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
                     }
                     var rt: string = resolve_argref_opt_type(s.opt_ret_type(cid.name), c.args, s);
                     if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[") { return rt; }
-                    return "";
+                    return opt_elem_tag_from_ty(c.ty);
                 },
-                _ => { return ""; }
+                // typed-IR (#5986): an Option-returning METHOD call (`st.find(x)`)
+                // has no registry key here; the checker's stamped tag answers.
+                _ => { return opt_elem_tag_from_ty(c.ty); }
             }
         },
         ast.ExprIdent(id) => {
@@ -2600,6 +2609,18 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
         },
         _ => { return ""; }
     }
+    return "";
+}
+
+// opt_elem_tag_from_ty admits a checker-stamped "Option[T]" for tuple-element
+// typing under the same payload constraint the Some-construction walk
+// enforces: the element machinery handles exactly these payload kinds, and a
+// wider tag (Option[u64], a struct payload) admitted here routes the element
+// into lowering the walk's rejection deliberately kept it out of.
+function opt_elem_tag_from_ty(ty: string): string {
+    if (ty.len() < 8 || slice_unchecked(ty, 0, 7) != "Option[") { return ""; }
+    var pt: string = opt_payload_type(ty, "Some");
+    if (pt == "i32" || pt == "string" || pt == "i64" || pt == "f64" || pt == "boolean") { return ty; }
     return "";
 }
 
@@ -2740,6 +2761,19 @@ pub function opt_recv_base_type(e: ast.Expr, s: LowerState): string {
                         }
                     },
                     _ => {}
+                }
+            }
+            // typed-IR (#5986): an Option/Result-returning call no registry can
+            // key (a fn-typed local, an IIFE) answers from the checker's stamp;
+            // the prefix classification below rejects everything else. Never a
+            // direct Some/Ok/Err construction: some_opt_type's "" for those is a
+            // deliberate payload-kind rejection, not a hole to fill.
+            if (t == "") {
+                match (c.callee) {
+                    ast.ExprIdent(fbid) => {
+                        if (fbid.name != "Some" && fbid.name != "Ok" && fbid.name != "Err") { t = c.ty; }
+                    },
+                    _ => { t = c.ty; }
                 }
             }
         },
@@ -2930,6 +2964,23 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
                 _ => { return 0 - 1; }
             }
         },
+        // A map ELEMENT of a map-array (`ms[i]`) — the kind sibling of
+        // expr_map_type_tag's ExprIndex arm (#5986): slot walk first, the
+        // checker-stamped ix.ty filling its holes.
+        ast.ExprIndex(kix) => {
+            match (kix.array) {
+                ast.ExprIdent(kaid) => {
+                    var kasl: i32 = s.slot_of(kaid.name);
+                    if (kasl >= 0 && s.is_arr_slot(kasl)) {
+                        var kmt: string = s.map_type_of(kasl);
+                        if (kmt != "") { return map_key_kind_of(kmt); }
+                    }
+                },
+                _ => {}
+            }
+            if (is_map_type_name(kix.ty)) { return map_key_kind_of(kix.ty); }
+            return 0 - 1;
+        },
         _ => { return 0 - 1; }
     }
     return 0 - 1;
@@ -3032,6 +3083,23 @@ pub function expr_map_type_tag(e: ast.Expr, s: LowerState): string {
         ast.ExprFieldAccess(mfa) => {
             var fmt: string = fa_type_tag(mfa, s);
             if (is_map_type_name(fmt)) { return fmt; }
+        },
+        // A map ELEMENT of a map-array (`ms[i]`): the (is_arr) slot's map
+        // column records the ELEMENT map type; the checker-stamped ix.ty fills
+        // the walk's holes (a call-result array, an IIFE) with the same
+        // canonical "Map[K, V]" spelling (#5986).
+        ast.ExprIndex(mix) => {
+            match (mix.array) {
+                ast.ExprIdent(mixid) => {
+                    var mixsl: i32 = s.slot_of(mixid.name);
+                    if (mixsl >= 0 && s.is_arr_slot(mixsl)) {
+                        var mixt: string = s.map_type_of(mixsl);
+                        if (is_map_type_name(mixt)) { return mixt; }
+                    }
+                },
+                _ => {}
+            }
+            if (is_map_type_name(mix.ty)) { return mix.ty; }
         },
         _ => {}
     }
@@ -4808,6 +4876,18 @@ function iife_lambda_composite_tuple_tags(lam: ast.ExprLambda, s: LowerState): s
 
 // expr_struct_type returns the struct type name an expression evaluates to, or
 // "" — a struct literal's type, or a struct-tracked local/param slot.
+// struct_tag_from_ty admits a checker-stamped tag when it names a known struct
+// or nominal enum — the same guard every structural case of expr_struct_type
+// applies. The scalar tag vocabulary is rejected FIRST: is_enum_like_name's
+// exclusion list holds only the spellings declarations use, so a checker tag
+// like "u64" (which no declaration walk ever produced here) would read as
+// enum-like and type a cast/overload result as a struct (#5986).
+function struct_tag_from_ty(ty: string, s: LowerState): string {
+    if (ty == "" || is_int_irtag(ty) || ty == "char" || ty == "f64" || ty == "string") { return ""; }
+    if (decl_is_struct(s.structs, ty) || is_enum_like_name(ty, s.structs)) { return ty; }
+    return "";
+}
+
 pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
     match (e) {
         ast.ExprStructLit(sl) => { return sl.type_name; },
@@ -4845,7 +4925,7 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
                             var telt: str = slice_unchecked(ttag, 0, ttag.len() - 2);
                             if (decl_is_struct(s.structs, telt) || is_enum_like_name(telt, s.structs)) { return telt + ""; }
                         }
-                        return "";
+                        return struct_tag_from_ty(ix.ty, s);
                     }
                     var oty: string = expr_struct_type(fa.obj, s);
                     if (oty != "") {
@@ -4919,7 +4999,10 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
                 },
                 _ => {}
             }
-            return "";
+            // typed-IR (#5986): a struct element indexed out of an array no walk
+            // case reaches (a sliced base, an IIFE array) answers from the
+            // checker-stamped element tag.
+            return struct_tag_from_ty(ix.ty, s);
         },
         ast.ExprFieldAccess(fa) => {
             // A struct-typed tuple element `t.N`, or a struct-typed field read
@@ -5061,7 +5144,10 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
                     return s.struct_ret_type(olt + "." + binop_overload_method(opb.op));
                 }
             }
-            return "";
+            // typed-IR (#5986): a struct-returning overload whose LEFT operand's
+            // struct type is not walk-recoverable answers from the stamp; the
+            // known-struct guard keeps every scalar-overload result out.
+            return struct_tag_from_ty(opb.ty, s);
         },
         ast.ExprUnary(opu) => {
             // Composite unary minus result: `-a` evaluates to `a.neg()`'s return
@@ -5073,7 +5159,8 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
                     return s.struct_ret_type(out0 + ".neg");
                 }
             }
-            return "";
+            // The unary sibling of the binary-overload tag fallback above (#5986).
+            return struct_tag_from_ty(opu.ty, s);
         },
         _ => { return ""; }
     }
@@ -5101,6 +5188,15 @@ function arr_tag_of(e: ast.Expr, s: LowerState): string {
             return decl_field_type(s.structs, oty, afa.field);
         },
         ast.ExprIndex(aix) => { return strip_arr_suffix(arr_tag_of(aix.array, s)); },
+        // A sliced base (`a[lo:hi][i]`): slicing preserves the array type, and
+        // ExprSlice.ty is the one carrier with a dedicated array spelling —
+        // type_to_arrtag stamps the SOURCE array's tag, exactly what this walk
+        // wants. Walk first, tag fills the hole (#5986).
+        ast.ExprSlice(asl) => {
+            var slt: string = arr_tag_of(asl.array, s);
+            if (slt != "") { return slt; }
+            return asl.ty;
+        },
         _ => { return ""; }
     }
 }
@@ -5184,19 +5280,23 @@ function expr_is_bool(e: ast.Expr, s: LowerState): boolean {
         // one expression kind over. A method is keyed by its receiver's base
         // type, so a name shared across receivers cannot answer for another.
         ast.ExprCall(bc) => {
+            // typed-IR (#5986): the checker's stamped result type answers where
+            // the registry cannot key the callee (a closure-typed local, an IIFE).
             match (bc.callee) {
                 ast.ExprIdent(bcid) => {
-                    return sig_reg_has_exact(s.sigs.bool_ret_fns, bcid.name);
+                    return sig_reg_has_exact(s.sigs.bool_ret_fns, bcid.name) || bc.ty == "boolean";
                 },
                 ast.ExprFieldAccess(bcfa) => {
                     var brecv: string = expr_struct_type(bcfa.obj, s);
-                    if (brecv.len() == 0) { return false; }
-                    return sig_reg_has_exact(s.sigs.bool_ret_fns, brecv + "." + bcfa.field);
+                    if (brecv.len() == 0) { return bc.ty == "boolean"; }
+                    return sig_reg_has_exact(s.sigs.bool_ret_fns, brecv + "." + bcfa.field) || bc.ty == "boolean";
                 },
-                _ => { return false; }
+                _ => { return bc.ty == "boolean"; }
             }
         },
-        ast.ExprUnary(u) => { return u.op == "!"; },
+        // A composite `neg` overload can return boolean; only the checker's tag
+        // can see it (#5986) — the unary sibling of the ExprBinary arm below.
+        ast.ExprUnary(u) => { return u.op == "!" || u.ty == "boolean"; },
         // An element of a boolean[] is a boolean, so `bs[i].to_json()` keys
         // "boolean.to_json" instead of rendering 1/0 through i32's impl. The
         // structural walk runs first and the checker's stamped tag fills its
@@ -5209,12 +5309,10 @@ function expr_is_bool(e: ast.Expr, s: LowerState): boolean {
             // An arithmetic operator overload can return boolean too (#5986).
             return b.ty == "boolean";
         },
-        ast.ExprFieldAccess(fa) => {
-            if (util.is_all_digits(fa.field)) { return false; }
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "boolean";
-        },
+        // A boolean tuple element `t.N` or struct field `p.b`, resolved through
+        // the same shared leaf as the numeric-kind predicates (#5520): the
+        // declaration walk first, the checker-stamped fa.ty filling its holes.
+        ast.ExprFieldAccess(fa) => { return fa_type_tag(fa, s) == "boolean"; },
         _ => { return false; }
     }
     return false;
@@ -6206,19 +6304,15 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
             }
             return false;
         },
-        ast.ExprFieldAccess(fa) => {
-            // A string tuple element `t.N` is a string.
-            if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "string";
-            }
-            // A string-typed struct field read `p.name` is a string.
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "string";
-        },
+        // A string tuple element `t.N` or struct field `p.name`, via the shared
+        // leaf (#5520): the declaration walk first, fa.ty filling its holes.
+        ast.ExprFieldAccess(fa) => { return fa_type_tag(fa, s) == "string"; },
         ast.ExprIndex(ix) => {
-            // Indexing a string[] array yields a string element.
-            return expr_is_strarr(ix.array, s);
+            // Indexing a string[] array yields a string element. The stamped
+            // ix.ty answers where the array walk cannot (a call result, an
+            // IIFE) — read directly, not via ix_type_tag, which resolves
+            // element WIDTH; string-ness is not a width (#5986).
+            return expr_is_strarr(ix.array, s) || ix.ty == "string";
         },
         ast.ExprSlice(_) => {
             // `s[a:b]` on a string is `Option[str]`, not a string (#5634) — an
@@ -6238,7 +6332,9 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                 if (tot.len() >= 8 && slice_unchecked(tot, 0, 7) == "Option[") { return opt_payload_type(tot, "Some") == "string"; }
                 if (tot.len() >= 8 && slice_unchecked(tot, 0, 7) == "Result[") { return opt_payload_type(tot, "Ok") == "string"; }
             }
-            return false;
+            // A composite `neg` overload returning string — only the checker's
+            // tag can see it (#5986), matching the ExprBinary arm above.
+            return tu.ty == "string";
         },
         _ => { return false; }
     }
@@ -8291,11 +8387,14 @@ pub function expr_is_u32(e: ast.Expr, s: LowerState): boolean {
             // marked u32 (a u32-array); a u32[] literal / slice element likewise —
             // so `[big, …][0] >> 1` / `a[lo:hi][0] >> 1` selects shr_u on wasm.
             match (ix.array) {
-                ast.ExprIdent(aid) => { return s.is_u32_slot(s.slot_of(aid.name)); },
-                ast.ExprArray(al) => { return al.elements.len() > 0 && expr_is_u32(al.elements[0], s); },
-                ast.ExprSlice(sl2) => { return expr_is_u32arr(sl2.array, s); },
-                _ => { return false; }
+                ast.ExprIdent(aid) => { if (s.is_u32_slot(s.slot_of(aid.name))) { return true; } },
+                ast.ExprArray(al) => { if (al.elements.len() > 0 && expr_is_u32(al.elements[0], s)) { return true; } },
+                ast.ExprSlice(sl2) => { if (expr_is_u32arr(sl2.array, s)) { return true; } },
+                _ => {}
             }
+            // A u32 element of an array the walk cannot classify (a call
+            // result, an IIFE) answers from the checker's stamp (#5986).
+            return ix.ty == "u32";
         },
         // A u32 TUPLE element `t.N` or u32 STRUCT field `p.n`: the value is u32, so
         // a chained `>> 1` / `/ x` selects the unsigned form. The u32 sibling of
@@ -8306,7 +8405,8 @@ pub function expr_is_u32(e: ast.Expr, s: LowerState): boolean {
         },
         ast.ExprUnary(u) => {
             if (u.op == "as_u32") { return true; }
-            return false;
+            // A composite `neg` overload returning u32 — only the tag sees it (#5986).
+            return u.ty == "u32";
         },
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return false; }
@@ -8407,18 +8507,21 @@ pub function expr_is_u64(e: ast.Expr, s: LowerState): boolean {
         ast.ExprIdent(id) => { return s.is_u64_slot(s.slot_of(id.name)) || id_type_tag(id, s) == "u64"; },
         ast.ExprIndex(ix) => {
             match (ix.array) {
-                ast.ExprIdent(aid) => { return s.is_u64_slot(s.slot_of(aid.name)); },
+                ast.ExprIdent(aid) => { if (s.is_u64_slot(s.slot_of(aid.name))) { return true; } },
                 // Nested index of a u64[][] (`m[i][j]`): the inner array `m[i]`
                 // names a u64[][] slot or field whose arrarr layer records "u64",
                 // so a chained `>> 1` / `> x` selects shr_u / gt_u. #5206.
-                ast.ExprIndex(_) => { return arrarr_index_elem_kind(ix.array, s) == "u64"; },
+                ast.ExprIndex(_) => { if (arrarr_index_elem_kind(ix.array, s) == "u64") { return true; } },
                 // Direct index of a u64[] LITERAL (`[big, …][i]`) or a u64[] SLICE
                 // (`a[lo:hi][i]`): the element is u64, so a chained `>> 1` / `> x`
                 // selects shr_u / gt_u. Mirrors arr_index_is_i64's width arms.
-                ast.ExprArray(al) => { return al.elements.len() > 0 && expr_is_u64(al.elements[0], s); },
-                ast.ExprSlice(sl2) => { return expr_is_u64arr(sl2.array, s); },
-                _ => { return false; }
+                ast.ExprArray(al) => { if (al.elements.len() > 0 && expr_is_u64(al.elements[0], s)) { return true; } },
+                ast.ExprSlice(sl2) => { if (expr_is_u64arr(sl2.array, s)) { return true; } },
+                _ => {}
             }
+            // A u64 element of an array the walk cannot classify answers from
+            // the checker's stamp (#5986) — the u64 sibling of the u32 arm.
+            return ix.ty == "u64";
         },
         ast.ExprFieldAccess(fa) => {
             // A u64 tuple element `t.N` (tag from the tuple's annotated `(u64, …)`
@@ -8430,7 +8533,8 @@ pub function expr_is_u64(e: ast.Expr, s: LowerState): boolean {
         },
         ast.ExprUnary(u) => {
             if (u.op == "as_u64") { return true; }
-            return false;
+            // A composite `neg` overload returning u64 — only the tag sees it (#5986).
+            return u.ty == "u64";
         },
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return false; }
@@ -8796,6 +8900,20 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
 pub function method_recv_tyname(obj: ast.Expr, s: LowerState): string {
     var st: string = expr_struct_type(obj, s);
     if (st != "") { return st; }
+    // An associated call's receiver is the bare TYPE name (`Counter.start()`):
+    // not a value, so expr_struct_type reports "", but the name itself is the
+    // "<Type>.<method>" registry key spelling — the same resolution
+    // expr_struct_type's associated-call arm applies. Without it an impl
+    // method's declared i64 return was invisible to the width registries and
+    // `var t: i64 = Counter.start()` truncated (#5986). A name that is not a
+    // real type cannot false-positive: every consumer keys a registry, and
+    // only real types register.
+    match (obj) {
+        ast.ExprIdent(tid) => {
+            if (s.slot_of(tid.name) < 0 && (decl_is_struct(s.structs, tid.name) || is_enum_like_name(tid.name, s.structs))) { return tid.name; }
+        },
+        _ => {}
+    }
     return expr_recv_prim_type(obj, s);
 }
 
@@ -9041,6 +9159,13 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     _ => {}
                 }
             }
+            // typed-IR (#5986): the width half (infer_expr_width's ExprCall arm)
+            // is tag-first, so the LOAD site reads the same tag — split across
+            // two derivations, a call 64-bit only by the checker's stamp typed
+            // wide downstream while lowering through the width-32 sign-extend
+            // below, a widen of an already-wide operand the wasm validator
+            // rejects.
+            if (c.ty == "i64" || c.ty == "u64") { return lower_expr(e, s); }
             // A call to an i64-returning free function OR method IS an i64 value:
             // lower it via the normal call path (which pushes the result).
             match (c.callee) {
@@ -18948,6 +19073,9 @@ if (!is_map_type_name(v.type_name) && sb.map_type_of(slot) == "") {
                 },
                 _ => {}
             }
+            // typed-IR (#5986): a map-returning call no registry keys (a
+            // fn-typed local, an IIFE) answers from the checker's stamp.
+            if (sb.map_type_of(slot) == "" && is_map_type_name(mrc.ty)) { sb = sb.mark_map_type(slot, mrc.ty); }
         },
         // UNANNOTATED binding from a map TUPLE element (`var m = t.0`):
         // recover the slot's map type from the element's recorded tuple
@@ -18971,6 +19099,9 @@ if (!is_map_type_name(v.type_name) && sb.map_type_of(slot) == "") {
                 },
                 _ => {}
             }
+            // A map element of an array the walk cannot classify: the stamped
+            // element tag carries the same canonical spelling (#5986).
+            if (sb.map_type_of(slot) == "" && is_map_type_name(maix.ty)) { sb = sb.mark_map_type(slot, maix.ty); }
         },
         _ => {}
     }
@@ -19011,7 +19142,7 @@ match (v.init) {
                 var ctasl: i32 = sb.slot_of(ctaid.name);
                 if (ctasl >= 0 && sb.is_arr_slot(ctasl)) {
                     var ctaet: string = sb.arrarr_elem_of_slot(ctasl);
-                    if (ctaet.len() >= 2 && slice_unchecked(ctaet, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
+                    if (ctaet.len() >= 2 && slice_unchecked(ctaet, 0, 1) == "(") { return sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
                 }
             },
             // `var p = r.pairs[0]` — indexing a tuple-ARRAY struct FIELD
@@ -19026,13 +19157,18 @@ match (v.init) {
                         var ctaft: string = decl_field_type(sb.structs, ctaoty, ctafa.field);
                         if (ctaft.len() >= 4 && slice_unchecked(ctaft, ctaft.len() - 2, ctaft.len()) == "[]") {
                             var ctael: str = slice_unchecked(ctaft, 0, ctaft.len() - 2);
-                            if (ctael.len() >= 2 && slice_unchecked(ctael, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
+                            if (ctael.len() >= 2 && slice_unchecked(ctael, 0, 1) == "(") { return sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
                         }
                     }
                 }
             },
             _ => {}
         }
+        // typed-IR (#5986): `var t = mk()[0]` — a tuple element of an array
+        // neither walk case reaches. The third reader of the arrarr_elem
+        // walk, and the one that never got the ix.ty fallback its two
+        // siblings (expr_tuple_elem_tag, the destructure) did.
+        if (ctix.ty.len() >= 2 && slice_unchecked(ctix.ty, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctix.ty)); }
     },
     _ => {}
 }
@@ -19055,7 +19191,7 @@ match (v.init) {
                 // erased-generic callee's "$arg<i>" segments resolve to
                 // the actual arguments' inferred tags here.
                 var mctt: string = sb.tuple_ret_type(mcid.name);
-                if (mctt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mctt, mc.args, sb)); }
+                if (mctt.len() > 0) { return sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mctt, mc.args, sb)); }
             },
             ast.ExprFieldAccess(mfa) => {
                 // `var t = obj.f()` where the method returns a tuple:
@@ -19063,7 +19199,7 @@ match (v.init) {
                 var mrty: string = expr_struct_type(mfa.obj, sb);
                 if (mrty != "") {
                     var mmtt: string = sb.tuple_ret_type(mrty + "." + mfa.field);
-                    if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mmtt, mc.args, sb)); }
+                    if (mmtt.len() > 0) { return sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mmtt, mc.args, sb)); }
                 }
             },
             // `var t = match (e) { V(p) => p, .. }` where the result is a
@@ -19075,14 +19211,17 @@ match (v.init) {
             // Result[T,E] element's E that a bare construction can't.
             ast.ExprLambda(mlam) => {
                 if (v.type_name.len() >= 2 && slice_unchecked(v.type_name, 0, 1) == "(") {
-                    sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
-                } else {
-                    var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
-                    if (mltt != "") { sb = sb.mark_tuple_elems(slot, mltt); }
+                    return sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
                 }
+                var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
+                if (mltt != "") { return sb.mark_tuple_elems(slot, mltt); }
             },
             _ => {}
         }
+        // typed-IR (#5986): a tuple-returning call no registry keys (a
+        // fn-typed local, a method on an unresolvable receiver) answers
+        // from the checker's stamped "(t0, t1, …)" spelling.
+        if (mc.ty.len() >= 2 && slice_unchecked(mc.ty, 0, 1) == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(mc.ty)); }
     },
     ast.ExprTuple(tlit) => {
         var enc: string = "";
@@ -54903,18 +55042,29 @@ function detector_expr_type(e: ast.Expr, fn: parser.FuncDecl, structs: parser.St
                 if (fn.params[pi].name == id.name) { return fn.params[pi].type_name; }
                 pi = pi + 1;
             }
-            return body_local_decl_type(fn.body, id.name);
+            var bt: string = body_local_decl_type(fn.body, id.name);
+            if (bt.len() > 0) { return bt; }
+            // typed-IR (#5986): an unannotated local (or the receiver, which
+            // the param loop never sees) answers from the checker's stamp.
+            return id.ty;
         },
         ast.ExprIndex(ix) => {
             var at: string = detector_expr_type(ix.array, fn, structs);
             if (at.len() >= 2 && slice_unchecked(at, at.len() - 2, at.len()) == "[]") { return slice_unchecked(at, 0, at.len() - 2) + ""; }
-            return "";
+            // The stamped tag carries the ELEMENT type directly (#5986).
+            return ix.ty;
         },
         ast.ExprFieldAccess(fa) => {
             var ot: string = detector_expr_type(fa.obj, fn, structs);
-            if (ot.len() == 0) { return ""; }
-            return decl_field_type(structs, ot, fa.field);
+            if (ot.len() > 0) {
+                var dft: string = decl_field_type(structs, ot, fa.field);
+                if (dft.len() > 0) { return dft; }
+            }
+            return fa.ty;
         },
+        // A call-valued object in a return chain (`mk(41).hs[0]`) — no walk
+        // exists at lift time; the stamp carries the callee's result (#5986).
+        ast.ExprCall(c) => { return c.ty; },
         _ => { return ""; }
     }
 }
@@ -62349,6 +62499,10 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
                     },
                     _ => {}
                 }
+                // typed-IR (#5986): a scrutinee shape the hand-rolled walk above
+                // cannot resolve — a field read (`s.o`), a builtin method call —
+                // answers from the node's own stamped tag.
+                if (scrut_ty.len() == 0) { scrut_ty = stamped_expr_ty(m.scrutinee); }
                 for arm in m.arms {
                     match (arm.pattern) {
                         ast.PatVariant(pv) => {
@@ -62383,6 +62537,21 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
     return "";
 }
 
+// stamped_expr_ty reads the checker-stamped `ty` off any carrier node type,
+// "" for an unstamped build or a node with no carrier (#5986).
+function stamped_expr_ty(e: ast.Expr): string {
+    match (e) {
+        ast.ExprIdent(id) => { return id.ty; },
+        ast.ExprCall(c) => { return c.ty; },
+        ast.ExprFieldAccess(fa) => { return fa.ty; },
+        ast.ExprIndex(ix) => { return ix.ty; },
+        ast.ExprBinary(b) => { return b.ty; },
+        ast.ExprUnary(u) => { return u.ty; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // cap_type_expr infers an initializer expression's type for capture-param
 // labelling: literals via lit_init_type; a bare ident by resolving ITS binding
 // (depth-bounded so a cycle terminates as ""); comparisons/logic → boolean;
@@ -62395,14 +62564,23 @@ function cap_type_expr(e: ast.Expr, fd: parser.FuncDecl, depth: i32, structs: pa
     if (lt.len() > 0) { return lt; }
     if (depth <= 0) { return ""; }
     match (e) {
-        ast.ExprIdent(id) => { return cap_type_at(id.name, fd, depth - 1, structs, mfuncs); },
+        ast.ExprIdent(id) => {
+            var ct: string = cap_type_at(id.name, fd, depth - 1, structs, mfuncs);
+            if (ct.len() > 0) { return ct; }
+            // typed-IR (#5986): a name no receiver/param/body decl binds — a
+            // module const — answers from the stamp, which names its DECLARED type.
+            return id.ty;
+        },
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") { return "boolean"; }
             var l: string = cap_type_expr(b.left, fd, depth - 1, structs, mfuncs);
             var r: string = cap_type_expr(b.right, fd, depth - 1, structs, mfuncs);
             if (l == "i32" && r == "i32") { return "i32"; }
             if (b.op == "+" && l == "string" && r == "string") { return "string"; }
-            return "";
+            // typed-IR (#5986): wide arithmetic (i64/u64/u32/f64) the two
+            // clauses above discard answers from the stamp — int_result types
+            // the binary from the settled operand, so the tag is width-correct.
+            return b.ty;
         },
         // `var b = s.field` — the object's struct type resolves through the same
         // recursion, then the field's DECLARED type. cap_type_in_stmts already did
@@ -62438,23 +62616,32 @@ function cap_type_expr(e: ast.Expr, fd: parser.FuncDecl, depth: i32, structs: pa
                 // time a sibling closure's capture is typed.
                 ast.ExprIdent(cid) => {
                     if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") { return "fn"; }
-                    return callee_ret_type(mfuncs, "", cid.name);
+                    var crt: string = callee_ret_type(mfuncs, "", cid.name);
+                    if (crt.len() > 0) { return crt; }
+                    // typed-IR (#5986): a BUILTIN call (`args()`, `map_new(…)`)
+                    // declares nothing in mfuncs; the stamp carries its result.
+                    return c.ty;
                 },
                 ast.ExprFieldAccess(cfa) => {
                     var rty: string = cap_type_expr(cfa.obj, fd, depth - 1, structs, mfuncs);
-                    if (rty.len() == 0) { return ""; }
-                    return callee_ret_type(mfuncs, rty, cfa.field);
+                    if (rty.len() > 0) {
+                        var mrt: string = callee_ret_type(mfuncs, rty, cfa.field);
+                        if (mrt.len() > 0) { return mrt; }
+                    }
+                    // A builtin METHOD call (`s.len()`, `m.get_or(…)`) — same (#5986).
+                    return c.ty;
                 },
-                _ => { return ""; }
+                _ => { return c.ty; }
             }
             return "";
         },
         // `var b = xs[i]` — the element type of the indexed array (`T[]` → T).
-        // A non-array (map / string index) resolves "" and still declines.
+        // A non-array (map / string index) resolves "" and still declines
+        // unless the checker's stamped element tag answers (#5986).
         ast.ExprIndex(ix) => {
             var aty: string = cap_type_expr(ix.array, fd, depth - 1, structs, mfuncs);
             if (aty.len() > 2 && slice_unchecked(aty, aty.len() - 2, aty.len()) == "[]") { return slice_unchecked(aty, 0, aty.len() - 2) + ""; }
-            return "";
+            return ix.ty;
         },
         _ => { return ""; }
     }
