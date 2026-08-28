@@ -230,6 +230,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// call path is pinned by the self_host_cli_test exit-code test.
 		{"generic-call-mismatch", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { var x: string = ident(3); return 0; }\n", []string{"E003"}},
 		{"generic-call-clean", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n", nil},
+		// `str`, the borrowed-string view (#7293). The parser erases the
+		// spelling to "string", so view-ness re-enters the type system through
+		// the sidecars (StmtVar.is_str, FuncDecl.ret_str) and the
+		// slice_unchecked builtin; every owning sink then refuses the view
+		// exactly as native does — E003 on a var init and an assignment, E002
+		// on a return, E043 on a struct-literal field — while a `str`
+		// destination, an argument position (params are borrowed), and a
+		// `str`-returning function stay clean. Before the fix the self-host
+		// accepted every one of the mismatch rows.
+		{"str-view-into-string-var-e003", "function main(): i32 { var t: string = \"abcdef\"; var s: string = slice_unchecked(t, 0, 3); return 0; }\n", []string{"E003"}},
+		{"str-view-assign-e003", "function main(): i32 { var t: string = \"abcdef\"; var s: string = \"x\"; s = slice_unchecked(t, 0, 3); return 0; }\n", []string{"E003"}},
+		{"str-view-return-e002", "function f(t: string): string { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"str-view-field-e043", "struct Q { tag: string }\nfunction mk(t: string): Q { return Q { tag: slice_unchecked(t, 0, 3) }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"str-ret-fn-into-string-e003", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var s: string = f(\"abcdef\"); return 0; }\n", []string{"E003"}},
+		{"str-view-annotated-clean", "function f(t: string): i32 { var v: str = slice_unchecked(t, 0, 3); return v.len(); }\nfunction main(): i32 { return f(\"abcdef\"); }\n", nil},
+		{"str-view-arg-borrow-clean", "function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n", nil},
+		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
 		// User generic-struct instantiation (#4346 piece 2): a `Box[i32]`
 		// annotation resolves to the name-only struct `Box`, and constructing
 		// `Box { v: 3 }` type-checks (the opaque generic field `v: T` accepts any
@@ -1970,6 +1987,19 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"string-starts-with-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.starts_with(\"a\")) { return 1; } return 0; }\n"},
 		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
 		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"  a \"; var t = s.trim(); return 0; }\n"},
+		// `str` through an IMPORTED method's declared return (#7293): std/string's
+		// trim family returns the borrowed view, recorded on FuncDecl.ret_str and
+		// carried through flatten into the method-sig table, so an owning sink
+		// refuses the view (E003 / E002) while a `str` binding, `.to_owned()`,
+		// and an argument position (params are borrowed) stay clean. The
+		// mismatch rows are the issue's repro: before the fix the self-host
+		// compiled them to running binaries.
+		{"str-trim-into-string-e003", "import \"std/string\";\nfunction main(): i32 { var raw: string = \"  ab  \"; var s: string = raw.trim(); return s.len(); }\n"},
+		{"str-trim-assign-e003", "import \"std/string\";\nfunction main(): i32 { var raw: string = \"  ab  \"; var s: string = \"x\"; s = raw.trim(); return s.len(); }\n"},
+		{"str-trim-return-e002", "import \"std/string\";\nfunction f(s: string): string { return s.trim(); }\nfunction main(): i32 { return 0; }\n"},
+		{"str-trim-annotated-clean", "import \"std/string\";\nfunction main(): i32 { var raw: string = \"  ab  \"; var t: str = raw.trim(); return t.len(); }\n"},
+		{"str-trim-to-owned-clean", "import \"std/string\";\nfunction main(): i32 { var raw: string = \"  ab  \"; var s: string = raw.trim().to_owned(); return s.len(); }\n"},
+		{"str-trim-arg-borrow-clean", "import \"std/string\";\nfunction g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var raw: string = \"  ab  \"; return g(raw.trim()); }\n"},
 		{"string-to-lower-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"AB\"; var t = s.to_lower(); return 0; }\n"},
 		// Auto-discovered std/array methods (__method_Array_*) must resolve once
 		// std/array is imported — the import-side companion to the single-module

@@ -118,6 +118,19 @@ function main(): i32 {
 		code:     "E056",
 		spelling: "`arr = arr.with(i, value)`",
 	},
+	// A borrowed `str` view at an owning `string` sink (#7293): the hint names
+	// the materialiser to write. slice_unchecked is the import-free `str`
+	// producer, so the single-module driver reaches it.
+	{
+		name: "E003 str view into owned string",
+		src: `function main(): i32 {
+    var t: string = "abcdef";
+    var s: string = slice_unchecked(t, 0, 3);
+    return s.len();
+}`,
+		code:     "E003",
+		spelling: "add `.to_owned()`",
+	},
 	{
 		name: "E026 wildcard arm placement",
 		src: `enum C { R, G }

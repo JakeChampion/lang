@@ -6469,10 +6469,11 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
     // `str` -- the borrowed-string view type (#4813). The self-host ERASES
     // it to "string" at the parse boundary: the parse-time mirror of the
     // native ir/erase_str.go choke point. A view lowers to exactly the
-    // string box shape, and the view-discipline enforcement (E065 / the
-    // borrow rules) is the native checker's job, so normalizing here keeps
-    // every downstream `== "string"` dispatch site working unchanged -- the
-    // self-host COMPILES str programs, natively-checked. A qualified
+    // string box shape, so normalizing here keeps every downstream
+    // `== "string"` dispatch site working unchanged. View-ness the checker
+    // enforces rides the sidecars recorded before this erasure
+    // (StmtVar.is_str, FuncDecl.ret_str -> checker t_str, #7293; the E065
+    // view-escape chase). A qualified
     // `str.Foo` keeps its nominal spelling (the dot-chain above already
     // extended base past the bare name). `-fmt` opts out (Par.verbatim): the
     // erasure rewrites the program's ownership on a reformat, `str` being a
