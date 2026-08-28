@@ -35241,7 +35241,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
-    var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
+    var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_unmatched_optstr(ufs, out);
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -42139,7 +42139,18 @@ function unmatched_optstr_ann_is(type_name: string): boolean {
     return opt_payload_type(type_name, "Ok") == "string";
 }
 
-function unmatched_optstr_init_is_fresh(e: ast.Expr, opt_fresh_reg: SigReg): boolean {
+// unmatched_optstr_payload_is_fresh: the Some/Ok payload proof — a
+// syntactically fresh string, or a call to a str_fresh_ret_fns_of-registered
+// producer (every return a fresh string, aliased returns refused by the
+// registry's own fixpoint). The same disjunction the RCENUM string-payload arm
+// already makes; OPTSTR was the one rc family still asking only the syntactic
+// half, which is what kept `Some(mk("abc"))` off its credit.
+function unmatched_optstr_payload_is_fresh(e: ast.Expr, str_fresh_ret: string[]): boolean {
+    if (str_call_ret_is_fresh_reg(e, str_fresh_ret)) { return true; }
+    return str_local_binding_is_fresh(e);
+}
+
+function unmatched_optstr_init_is_fresh(e: ast.Expr, opt_fresh_reg: SigReg, str_fresh_ret: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -42148,7 +42159,7 @@ function unmatched_optstr_init_is_fresh(e: ast.Expr, opt_fresh_reg: SigReg): boo
                         if (c.args.len() != 1) { return false; }
                         match (c.args[0]) {
                             ast.ExprString(_) => { return true; },
-                            _ => { return str_local_binding_is_fresh(c.args[0]); }
+                            _ => { return unmatched_optstr_payload_is_fresh(c.args[0], str_fresh_ret); }
                         }
                     }
                     // `Err(<anything>)` on a Result[string, _]: the Ok-only payload
@@ -42463,7 +42474,7 @@ function unmatched_optarr_err_str_fresh(stmts: ast.Stmt[], name: string, opt_fre
     return false;
 }
 
-function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, str_fresh_ret: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     for stmt in stmts {
@@ -42475,17 +42486,17 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
                 // call-arg grants, still refusing any matched local.
                 var os_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
                 if (unmatched_optstr_ann_is(v.type_name)
-                    && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
+                    && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
                     && util.index_of_str(reassigned, v.name) < 0
                     && os_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_fresh_reg, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_fresh_reg, plan_on, plan_fe, a); },
+            ast.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, opt_fresh_reg, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_unmatched_optstr_names(arm.body, opt_fresh_reg, str_fresh_ret, plan_on, plan_fe, a); }
             },
             _ => {}
         }
