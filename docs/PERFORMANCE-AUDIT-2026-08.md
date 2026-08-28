@@ -379,7 +379,7 @@ contradict comments in the tree:
 | 6 | ~~`ir.Inline` on the natives~~ — **done** under a unit-size ceiling; the dead-funcs half landed earlier | `internal/codegen/{x86_64,arm64}` | **−5.0% retired on `examples/bench`, compiler emit byte-identical** — below |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
-| 10 | ~~The reclaim / sig registries: allocation-free decode, stop copying module-wide rows per function, then INDEX the sig registries~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048, and the index in #6888 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the first five and the index took another 7% |
+| 10 | ~~The reclaim / sig registries: allocation-free decode, stop copying module-wide rows per function, then INDEX the sig registries~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048, and the index in #6888 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the first five and the index took another 7%. The index cost **+2.42 MB (+17.6%) of `irlower_run` binary size** (#7519's bisect) — a space-for-time trade this row now prices |
 | 11 | **The method-receiver accumulator ratchet** — `arr_push_grow_ptr` is now the top cost and half of it is copies nothing needed | `internal/ir` (native rc) | §4d.5 — 71/400 samples, 52% of copies at `RC >= 2`, concentrated in `LowerState.emit` and `Scope.bind` |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
@@ -478,7 +478,10 @@ parts: the x86 in-process assembler got the `own` treatment `arm64_native.fern`
 got in #6011 (97 s → 19 s), and `fieldPlaceAppendCopies` stopped treating a
 container handed to a scalar-returning call as captured (19 s → 9.3 s). The
 append cliff on `checker.fern` went 21.4 GB → 988 bytes, output byte-identical
-throughout. §4c has the mechanism and the minimal repro.
+throughout. §4c has the mechanism and the minimal repro. Byte-identical on the
+CORPUS only: on the compiler itself the threading-chain releases cost
+**+1.11 MB (+10.3%) of `irlower_run` binary size** (#7519's bisect) — the
+emit-hash sweep cannot see a cost that lands only on chain-heavy programs.
 
 **Then the assembler's label table, which the same profiles surfaced.** With
 the rc traffic gone, a 200-sample run of the 9.3 s build put
