@@ -54,3 +54,39 @@ func TestLocalFunctionBodyRuleControls(t *testing.T) {
 		})
 	}
 }
+
+// An IMPL method must have a body too — the third context of the same defect
+// (#7705). A body-less one passed `-check` clean and then crashed the native
+// build (ir.computeFreeEligible walking a typed-nil *ast.Block) and the
+// interpreter, with no source position.
+//
+// A trait's signature-only methods are the shape that makes this look
+// plausible, and they stay legal: parseTraitDecl does not share parseFunction,
+// so the rule cannot reach them. The controls below pin both directions.
+func TestImplMethodMustHaveBody(t *testing.T) {
+	const prelude = "struct P { x: i32 }\ntrait T { function get(self: Self): i32; }\n"
+	_, err := Parse(prelude + `impl T for P { function get(self: Self): i32; }`)
+	if err == nil {
+		t.Fatalf("a body-less impl method must be refused, got no error")
+	}
+	if !strings.Contains(err.Error(), "has no body") {
+		t.Errorf("error should name the missing body, got: %v", err)
+	}
+}
+
+func TestImplMethodBodyRuleControls(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"impl-with-body", "struct P { x: i32 }\ntrait T { function get(self: Self): i32; }\n" +
+			`impl T for P { function get(self: Self): i32 { return self.x; } }`},
+		{"assoc-fn-impl", "struct P { x: i32 }\ntrait Z { function zero(): Self; }\n" +
+			`impl Z for P { function zero(): Self { return P { x: 0 }; } }`},
+		// The trait's own signature-only method: body-less and legal.
+		{"trait-signature-only", `trait T { function get(self: Self): i32; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse(tc.src); err != nil {
+				t.Errorf("should still parse: %v", err)
+			}
+		})
+	}
+}
