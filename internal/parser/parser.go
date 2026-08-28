@@ -1733,6 +1733,18 @@ func (p *parser) parseLocalFunction() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A local function must have a body. The top-level path already refuses a
+	// body-less declaration, and its one exemption — `@import` — is a top-level
+	// attribute, so the rule is unconditional here. Without it a bodiless
+	// `function A();` nested in a body produced a FuncDecl with a nil Body that
+	// every consumer then assumed was non-nil: `function A(){function A();}`
+	// crashed the parser's for-each desugar, the checker's stream-for-each
+	// lowering and checkLocalFunc, each with its own nil dereference (#7694,
+	// found by FuzzParse).
+	if fn.Body == nil {
+		p.errors = append(p.errors, p.errorf(fn.P,
+			"function %q has no body (only @import functions may omit a body)", fn.Name))
+	}
 	fn.IsLocal = true
 	return fn, nil
 }
@@ -3333,6 +3345,12 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		// A nested named function is a STATEMENT here, and its body is a
 		// separate block this walk has to enter: nothing else lowers it, and a
 		// ForEach left standing reaches IR, which has no case for one.
+		//
+		// Bodiless (`function A();` — the shape an @import declaration takes,
+		// and one the parser also produces for a nested `function A();`) has a
+		// nil Body, and a nil *ast.Block in an ast.Stmt is not `== nil`, so it
+		// reaches the Block case and dereferences. The top-level walks above
+		// guard the same way.
 		x.Body = desugarForEachStmt(x.Body, streamFns).(*ast.Block)
 	}
 	return s
