@@ -12765,92 +12765,43 @@ function hl_capture_list(lam: ast.ExprLambda, own_name: string, enclosing: strin
 // lambda-lift to thread a lifted function's captured variables through its
 // call sites. ExprCall is the only node it changes; the rest are rebuilt
 // verbatim around their rewritten children.
-function rw_call_expr(e: ast.Expr, fname: string, caps: string[]): ast.Expr {
-    match (e) {
+// rw_call_of is the capture-threading rewrite's ONLY changed node: a direct
+// call of the lifted function gains that function's captures as trailing ident
+// arguments. Every other node is rebuilt verbatim around its rewritten
+// children, which is map_expr's contract, so nothing else is spelled here.
+//
+// Riding map_expr also stops the rebuild LOSING fields. The hand-written walk
+// rebuilt through the e_* / s_* constructor helpers, which take only the
+// children and fill the rest with defaults — so a binary or unary inside a
+// lifted body came back with line 0, col 0 and an empty `ty`, and a `while`
+// came back with no label and is_loop false. The functional update map_expr
+// and map_stmt use carries all of them through untouched.
+function rw_call_of(x: ast.Expr, fname: string, caps: string[]): ast.Expr {
+    match (x) {
         ast.ExprCall(c) => {
-            var new_callee: ast.Expr = rw_call_expr(c.callee, fname, caps);
-            var new_args: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) { new_args = new_args.append(rw_call_expr(c.args[i], fname, caps)); i = i + 1; }
-            // If this is a call of the lifted function, append the captures.
             var is_target: boolean = false;
             match (c.callee) {
                 ast.ExprIdent(id) => { if (id.name == fname) { is_target = true; } },
                 _ => { }
             }
-            if (is_target) {
-                var k: i32 = 0;
-                while (k < caps.len()) { new_args = new_args.append(e_ident(caps[k])); k = k + 1; }
-            }
-            return ast.ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            if (!is_target) { return x; }
+            var new_args: ast.Expr[] = c.args;
+            for cp in caps { new_args = new_args.append(e_ident(cp)); }
+            return ast.ExprCall { ...c, args: new_args };
         },
-        ast.ExprBinary(b) => { return e_binary(b.op, rw_call_expr(b.left, fname, caps), rw_call_expr(b.right, fname, caps)); },
-        ast.ExprUnary(u) => { return e_unary(u.op, rw_call_expr(u.operand, fname, caps)); },
-        ast.ExprArray(a) => {
-            var els: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < a.elements.len()) { els = els.append(rw_call_expr(a.elements[i], fname, caps)); i = i + 1; }
-            return e_array(els);
-        },
-        ast.ExprTuple(t) => {
-            var els: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < t.elements.len()) { els = els.append(rw_call_expr(t.elements[i], fname, caps)); i = i + 1; }
-            return e_tuple_at(els, t.line, t.col);
-        },
-        ast.ExprIndex(ix) => { return e_index(rw_call_expr(ix.array, fname, caps), rw_call_expr(ix.index, fname, caps)); },
-        ast.ExprSlice(sl) => { return e_slice(rw_call_expr(sl.array, fname, caps), rw_call_expr(sl.start, fname, caps), rw_call_expr(sl.end, fname, caps)); },
-        ast.ExprFieldAccess(fa) => { return e_field_access(rw_call_expr(fa.obj, fname, caps), fa.field); },
-        ast.ExprStructLit(s) => {
-            var vals: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < s.field_values.len()) { vals = vals.append(rw_call_expr(s.field_values[i], fname, caps)); i = i + 1; }
-            var nb: ast.Expr = s.base;
-            if (s.has_base) { nb = rw_call_expr(s.base, fname, caps); }
-            return ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: nb, line: s.line, col: s.col };
-        },
-        ast.ExprLambda(lm) => {
-            // A nested lambda can call the lifted function too; rewrite its body.
-            return ast.ExprLambda { ...lm, body: rw_call_stmts(lm.body, fname, caps) };
-        },
-        _ => { return e; }
+        _ => { return x; }
     }
+    return x;
 }
 
-// rw_call_stmts applies rw_call_expr to every expression in a statement
-// list (descending into nested blocks), rebuilding the statements around
-// the rewritten expressions.
+function rw_call_expr(e: ast.Expr, fname: string, caps: string[]): ast.Expr {
+    function rw(x: ast.Expr): ast.Expr { return rw_call_of(x, fname, caps); }
+    return astwalk.map_expr(e, rw);
+}
+
 function rw_call_stmts(stmts: ast.Stmt[], fname: string, caps: string[]): ast.Stmt[] {
-    var out: ast.Stmt[] = [];
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => { out = out.append(s_var_at(v.name, v.type_name, rw_call_expr(v.init, fname, caps), v.line, v.col)); },
-            ast.StmtReturn(r) => { out = out.append(s_return_at(rw_call_expr(r.value, fname, caps), r.line, r.col)); },
-            ast.StmtExpr(e) => { out = out.append(s_expr(rw_call_expr(e.value, fname, caps))); },
-            ast.StmtAssign(a) => { out = out.append(s_assign_at(a.target, rw_call_expr(a.value, fname, caps), a.line, a.col, a.target_line, a.target_col)); },
-            ast.StmtIf(f) => { out = out.append(s_if(rw_call_expr(f.cond, fname, caps), rw_call_stmts(f.then_body, fname, caps), rw_call_stmts(f.else_body, fname, caps))); },
-            ast.StmtWhile(w) => { out = out.append(s_while(rw_call_expr(w.cond, fname, caps), rw_call_stmts(w.body, fname, caps))); },
-            ast.StmtFor(fr) => { out = out.append(s_for(fr.var_name, rw_call_expr(fr.iter, fname, caps), rw_call_stmts(fr.body, fname, caps))); },
-            ast.StmtMatch(m) => {
-                var arms: ast.MatchArm[] = [];
-                var a: i32 = 0;
-                while (a < m.arms.len()) {
-                    arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard, alt_cont: false });
-                    a = a + 1;
-                }
-                out = out.append(s_match_at(rw_call_expr(m.scrutinee, fname, caps), arms, m.line, m.col));
-            },
-            ast.StmtDefer(d) => {
-                var one: ast.Stmt[] = [d.action];
-                var rd: ast.Stmt[] = rw_call_stmts(one, fname, caps);
-                if (rd.len() >= 1) { out = out.append(s_defer(rd[0])); }
-            },
-            _ => { out = out.append(stmts[i]); },
-        }
-        i = i + 1;
-    }
-    return out;
+    function rw(x: ast.Expr): ast.Expr { return rw_call_of(x, fname, caps); }
+    return astwalk.map_stmts(stmts, rw);
 }
 
 function hl_rewrite_match(m: ast.StmtMatch, enclosing: string[], hoisted: FuncDecl[]): (ast.Stmt[], FuncDecl[], CapLift[]) {
