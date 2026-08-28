@@ -56798,15 +56798,58 @@ function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): stri
     while (pj < fn.params.len()) {
         var pty: string = fn.params[pj].type_name;
         if (pj < boxflags.len() && boxflags[pj] == b'1'
-            && pty.len() >= 2 && slice_unchecked(pty, 0, 1) == "(" && !util.contains(pty, "=>")
-            && !rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, no_strs)) {
-            tupb = tupb + "1";
-            any1 = true;
+            && pty.len() >= 2 && slice_unchecked(pty, 0, 1) == "(" && !util.contains(pty, "=>")) {
+            var tal: string[] = rctuple_param_alias_bind_sites(fn.body, fn.params[pj].name, pty, no_structs, fn.body, no_strs);
+            if (!rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, tal)) {
+                tupb = tupb + "1";
+                any1 = true;
+            } else { tupb = tupb + "0"; }
         } else { tupb = tupb + "0"; }
         pj = pj + 1;
     }
     if (!any1) { return ""; }
     return tupb;
+}
+
+// rctuple_param_alias_bind_sites: alias binds of a tuple PARAM whose payloads
+// provably stay confined — the "TUPB:" flavor of param_alias_bind_sites. The
+// vet is the rc-tuple payload scan on the ALIAS's own name, never the plain
+// box walker: box-level vetting would bless `var x = src; return x.1;`, whose
+// caller's TUPRCS deep free walks every rc position and frees the handed-out
+// element (the sanitizer-confirmed UAF that killed v1 of the tier). Scanning
+// the alias over the whole body with empty alias_ok also keeps a chained
+// alias (`var y = x`) and a reassigned alias refused. Empty registries only,
+// so the flag stays registry-independent for the interproc fixpoint.
+function rctuple_param_alias_bind_sites(stmts: ast.Stmt[], src: string, pty: string, structs: parser.StructDecl[], body: ast.Stmt[], acc: string[]): string[] {
+    var no_strs: string[] = [];
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if let ast.ExprIdent(aid) = v.init {
+                    if (aid.name == src
+                        && !rctuple_payload_escapes_alias(body, v.name, pty, structs, no_strs, no_strs)) {
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                a = rctuple_param_alias_bind_sites(f.then_body, src, pty, structs, body, a);
+                a = rctuple_param_alias_bind_sites(f.else_body, src, pty, structs, body, a);
+            },
+            ast.StmtWhile(w) => { a = rctuple_param_alias_bind_sites(w.body, src, pty, structs, body, a); },
+            ast.StmtFor(fo) => { a = rctuple_param_alias_bind_sites(fo.body, src, pty, structs, body, a); },
+            ast.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = rctuple_param_alias_bind_sites(m.arms[ai].body, src, pty, structs, body, a); ai = ai + 1; }
+            },
+            ast.StmtDefer(d) => {
+                if let ast.StmtWhile(dw) = d.action { a = rctuple_param_alias_bind_sites(dw.body, src, pty, structs, body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
 }
 
 // arrenum_elem_borrow_flags: the "ELB:" tier for one function — per-param flag
