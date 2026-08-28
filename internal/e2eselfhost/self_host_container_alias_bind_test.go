@@ -233,17 +233,25 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 23, allocs: 200, frees: 0,
 		},
 		{
-			// AN ENUM with an rc payload, aliased. Unchanged, and this is the row
-			// that pins the #7368 discrimination from the credit side: enum locals
-			// carry their enum NAME in the same struct_type field a type test would
-			// have read, but they earn "RCENUM:" / "SCENUMS:" rather than the struct
-			// credit, so slot_is_reclaimable_struct refuses them.
-			name: "enum_alias_unchanged",
+			// AN ENUM with an rc payload, aliased. This row pins the #7368
+			// discrimination from the credit side: enum locals carry their enum
+			// NAME in the same struct_type field a type test would have read, but
+			// they earn "RCENUM:" / "SCENUMS:" rather than the struct credit, so
+			// slot_is_reclaimable_struct refuses them.
+			//
+			// It used to be named "unchanged" and pin frees: 0 — the enum flavour
+			// of the escape scan had never grown the #7282 alias forgiveness, so a
+			// bind alone (even a DEAD one) denied the source its whole credit.
+			// #7687 gives it that forgiveness, vetted through the enum gate and
+			// refused when the alias hands its payload out, so the shape now
+			// balances. Native is 100/100 here; the remaining alloc-count gap is a
+			// volume divergence, not a reclaim one.
+			name: "enum_alias_reclaimed",
 			src: `enum E { A(i32[]), B }
 function mke(i: i32): E { if (i % 2 == 0) { return E.A([i, i + 1]); } return E.B; }
 function round(i: i32): i32 { var e: E = mke(i); var f: E = e; var n: i32 = 0; match (f) { E.A(k) => { n = k[0]; }, E.B => { n = 1; } } return n; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 10, allocs: 150, frees: 0,
+			want: 10, allocs: 150, frees: 150,
 		},
 		{
 			// A STRUCT ARRAY, aliased. Unchanged, and the second half of the same
