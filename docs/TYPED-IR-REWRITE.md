@@ -173,34 +173,43 @@ ordering rules above; the sweep's own findings, for whoever wires the next one:
   (`Counter.start()`) to its registry-key spelling now — a walk fix, so the
   unannotated build gets it too.
 
-### The boundary: a fn-typed param or field cannot stamp anything yet
+### The fn-typed param/field boundary — CLOSED by the fn_ret widening
 
-Four audited shapes remain structurally unreachable, all one cause: **a call
-through a fn-typed param or struct field types unknown, so its stamp is ""**
-and no consumer wiring can see it. Measured precisely:
+A call through a fn-typed param or struct field used to type unknown — the
+parser coarsens every fn-type spelling to the flat `"fn"` tag and the checker
+read the `fn_ret` sidecar nowhere — so those calls stamped `""` and no
+consumer wiring could see them. Three changes closed it:
 
-- The parser coarsens every fn-type spelling to the flat tag `"fn"`
-  (parser.fern:6352-6409); `build_func_scope` resolves it through
-  `type_from_name_erasing_tparams`, which has no `"fn"` arm, so the param
-  binds `TypeUnknown` (checker.fern:4279, 4021) and `check_call_expr`'s
-  closure arm (2736) never fires. **The checker reads `ParamDecl.fn_ret`
-  nowhere** — the sidecar exists for irlower only.
-- A fn-typed struct FIELD additionally has no closure-field-call arm at all:
-  an `ExprFieldAccess` callee falls into unconditional method dispatch
-  (checker.fern:2528) and types `undefined method`.
-- `fn_ret_ty` keeps bracketed nominal returns (`Option[i32]`, `Map[K, V]`)
-  but drops tuple (`(a, b)`) and array (`T[]`) returns — parser.fern:6101,
-  and the `!r_is_arr` gate at 6384; `StructFieldDecl` has no `ret_arr` bit.
+- `fn_ret_ty` (parser) keeps tuple (`(a, b)`) and array (`T[]`) return
+  spellings alongside the struct/nominal/string/scalar set it already kept.
+- `build_func_scope` binds a `"fn"`-tagged PARAM to a real `TypeFunc` built
+  from `fn_param_types` + `fn_ret` (`fn_param_decl_type`), so the existing
+  closure-call arm types calls through it.
+- `collect_struct_sigs` types a fn FIELD as `TypeFunc` from its `fn_ret`
+  (empty param list — a `StructFieldDecl` carries no param spellings), a new
+  closure-field-call arm in `check_call_expr` types `h.f(args)` from it ahead
+  of the undefined-method failure, and `type_assignable` gained a deliberately
+  COARSE fn-to-fn arm: comparing signatures would reject constructions the
+  unknown-typed field accepted, and the empty field param list cannot be
+  compared. Tightening it needs field param spellings first. This also killed
+  a live false E038 ("calling non-function value of type unknown") on every
+  closure-field call under `-check`.
 
-The reassigned-closure-LOCAL form of each shape passes (the checker binds the
-local to the lambda's `TypeFunc`), which is what the `fnvalue_*` cases pin.
-Closing the param/field half means binding `"fn"`-tagged decls to `TypeFunc`
-from the sidecars plus a closure-field-call arm — its own slice, because the
-sidecar audit is real: `fn_sig_of`'s wasm funcref width (irlower.fern:1431)
-starts seeing tuple/array returns as `'w'` where it fell back to the
-arity-keyed `$fnN` type, the arg-mismatch checks at checker.fern:2703/2745
-become live for fn-typed params, and the `fn_spelling_of` round-trip and
-flatten's cross-module `rewrite_type_name` both meet the wider spellings.
+Deferred on purpose: `FuncSig.param_types` still resolves `"fn"` to unknown,
+so CALL-SITE argument checks against fn-typed params stay skipped — making
+them live is a diagnostic-behaviour change needing its own differential run.
+
+The sidecar audit found the widened spellings mostly inert (every irlower
+registry consumer filters by prefix or `is_struct_ret_name`), with one real
+behaviour change that turned out to be a live fix: `fn_sig_of` now sees a
+tuple/array return as `'w'`, so a fn param mixing i64/f64 params with such a
+return emits the width-typed wasm funcref signature where it silently fell
+back to the arity-keyed `$fn<N>` type — the pre-widening module ran and
+answered wrong (exit 1 vs oracle 42). An annotated tuple-returning fn var was
+likewise a silent x86-64 miscompile via `stamp_lambda_ret`. Both are pinned
+(`fnwiden_*` cases), as are the four previously-unreachable param/field
+shapes (`fnparam_*`) and `-check` byte-identity over the compiler's own
+sources.
 
 ### What `ExprIdent.ty` is for: the half no slot carries
 

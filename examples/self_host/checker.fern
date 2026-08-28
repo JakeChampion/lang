@@ -2369,6 +2369,20 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
       // parameter accepts any argument (#4346 piece 2, dyn Trait).
       return true;
     },
+    TypeFunc(_) => {
+      // A function value flows into any fn-typed slot. Coarse on purpose
+      // (#5986): a "fn"-coarsened FIELD's TypeFunc carries an empty param
+      // list, so comparing signatures would reject constructions the
+      // unknown-typed field accepted before fn fields were typed at all.
+      match (from) {
+        TypeFunc(_) => {
+          return true;
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
     _ => {
       return false;
     }
@@ -2692,6 +2706,27 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
     }
     var msig: MethodSig = s.lookup_method(name, recv_type_name);
     if (msig.name.len() == 0) {
+      // A closure-FIELD call `h.f(args)`: no method `f`, but the struct
+      // declares a fn-typed field `f` — the call yields the field's declared
+      // return (#5986). No arity or argument check: a StructFieldDecl
+      // carries no param spellings, so the TypeFunc's param list is empty.
+      match (recv_ty) {
+        TypeStruct(cfsn) => {
+          var cfsig: StructSig = s.lookup_struct(cfsn.name);
+          if (cfsig.name.len() > 0) {
+            var cfi: i32 = field_index(cfsig, name);
+            if (cfi >= 0) {
+              match (cfsig.field_types[cfi]) {
+                TypeFunc(cff) => {
+                  return cff.ret_type;
+                },
+                _ => {}
+              }
+            }
+          }
+        },
+        _ => {}
+      }
       return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
     }
     if (c.args.len() != msig.param_types.len()) {
@@ -3700,7 +3735,18 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
     var ftnames: string[] = [];
     for elem in sd.fields {
       fnames = fnames.append(elem.name);
-      ftypes = ftypes.append(type_from_name_with_names_and_unions(elem.type_name, names, union_names));
+      // A fn-typed field ("fn"-coarsened spelling) resolves to a TypeFunc
+      // from its fn_ret sidecar (#5986), so a closure-field call `h.f()`
+      // types to the declared return instead of unknown (which also E038'd
+      // as "calling non-function value"). The param list is empty — a
+      // StructFieldDecl carries no param spellings — so no caller may
+      // arity-check against it; type_assignable's fn arm is coarse for the
+      // same reason.
+      if (elem.type_name == "fn" && elem.fn_ret.len() > 0) {
+        ftypes = ftypes.append(t_func([], type_from_name_with_names_and_unions(elem.fn_ret, names, union_names)));
+      } else {
+        ftypes = ftypes.append(type_from_name_with_names_and_unions(elem.type_name, names, union_names));
+      }
       // The field's raw declared type spelling — kept so field access on
       // a generic-struct instantiation can recognise a field typed by a
       // type parameter (`v: T`) and substitute the concrete arg (#4346
@@ -4290,12 +4336,57 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
     s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, fd.type_params, structs.structs, unions));
   }
   for param in fd.params {
-    s = s.bind(param.name, type_from_name_erasing_tparams(param.type_name, fd.type_params, structs.structs, unions));
+    var pbt: Type = fn_param_decl_type(param, fd.type_params, structs.structs, unions);
+    if (is_unknown(pbt)) {
+      pbt = type_from_name_erasing_tparams(param.type_name, fd.type_params, structs.structs, unions);
+    }
+    s = s.bind(param.name, pbt);
     if (util.index_of_str(fd.type_params, param.type_name) >= 0) {
       s = s.bind_tpvar(param.name, param.type_name);
     }
   }
   return s;
+}
+
+// split_fn_param_spellings splits ParamDecl.fn_param_types — the comma-encoded
+// param spellings of a fn-typed parameter — at depth-zero commas only, so a
+// bracketed or parenthesised element ("Map[string,i32]", "(a,b)") stays whole.
+function split_fn_param_spellings(csv: string): string[] {
+  var out: string[] = [];
+  var start: i32 = 0;
+  var depth: i32 = 0;
+  var i: i32 = 0;
+  while (i <= csv.len()) {
+    if (i == csv.len() || (csv[i] == b',' && depth == 0)) {
+      out = out.append(slice_unchecked(csv, start, i));
+      start = i + 1;
+    } else if (csv[i] == b'(' || csv[i] == b'[') {
+      depth = depth + 1;
+    } else if (csv[i] == b')' || csv[i] == b']') {
+      depth = depth - 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// fn_param_decl_type resolves a "fn"-coarsened PARAMETER to a real TypeFunc
+// from its sidecars — param types from fn_param_types, the return from fn_ret
+// (#5986) — so a call through the param types to the declared return instead
+// of "undefined function", and the typed-IR annotation stamps it. Unknown when
+// the declaration carries no return spelling, keeping the opaque tag for an
+// unannotated or void fn type.
+function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], structs: StructSig[], unions: UnionSig[]): Type {
+  if (p.type_name != "fn" || p.fn_ret.len() == 0) {
+    return t_unknown("opaque fn param");
+  }
+  var pts: Type[] = [];
+  if (p.fn_param_types.len() > 0) {
+    for seg in split_fn_param_spellings(p.fn_param_types) {
+      pts = pts.append(type_from_name_erasing_tparams(seg, tparams, structs, unions));
+    }
+  }
+  return t_func(pts, type_from_name_erasing_tparams(p.fn_ret, tparams, structs, unions));
 }
 
 // `s` is the function's body scope, built by build_func_scope and carrying the
