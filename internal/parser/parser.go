@@ -1158,6 +1158,21 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			return nil, nil, p.errorf(fn.P,
 				"impl method %q must not declare a receiver clause; its first parameter is `self: Self`", fn.Name)
 		}
+		// An impl method is an IMPLEMENTATION, so it must have a body — the
+		// same standing `@export` has at the top level. Only a top-level
+		// `@import` may omit one, and a trait's signature-only methods parse
+		// through parseTraitDecl rather than here, so they are unaffected.
+		//
+		// Without this the method reached the checker with a nil Body and
+		// passed `-check` clean, then crashed the native build
+		// (ir.computeFreeEligible walking a typed-nil *ast.Block) and the
+		// interpreter alike, with no source position (#7705). It is the third
+		// context of the same defect: the top-level path always refused a
+		// body-less declaration and #7694 added the local one.
+		if fn.Body == nil {
+			return nil, nil, p.errorf(fn.P,
+				"impl method %q has no body (only @import functions may omit a body)", fn.Name)
+		}
 		// A receiver-less impl method is an *associated function*: no
 		// `self`, called as `Type.f(args)`. Substitute Self across the
 		// signature and stamp AssocType so the checker hoists it to
