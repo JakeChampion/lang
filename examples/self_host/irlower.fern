@@ -2635,6 +2635,13 @@ function opt_elem_tag_from_ty(ty: string): string {
 // inner Option type (mark_opt_type) so a nested `match (b)` resolves it. A
 // nested-RESULT payload (whose type spelling carries a comma) and a fn payload
 // are deferred ("").
+//
+// A bare `None` payload is NOT recoverable, and is not reported as such: `None`
+// is an ExprIdent with no slot, so elem_type_tag falls to its "i32" default and
+// `Some(None)` answers "Option[i32]" for a payload it never read. An ANNOTATED
+// binding replaces exactly that answer with its declared type (#7217); an
+// unannotated one keeps it, its payload being a type var the checker resolves
+// nowhere and accepts only while it goes unread.
 pub function some_opt_type(e: ast.Expr, s: LowerState): string {
     match (e) {
         ast.ExprCall(c) => {
@@ -2681,6 +2688,29 @@ pub function some_opt_type(e: ast.Expr, s: LowerState): string {
         _ => { return ""; }
     }
     return "";
+}
+
+// some_payload_is_bare_none reports whether `e` is a direct `Some(None)`. That
+// is the one construction some_opt_type cannot type: `None` is an ExprIdent
+// with no slot, so elem_type_tag falls to its "i32" default and the walk
+// answers "Option[i32]" for a payload it never read.
+function some_payload_is_bare_none(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (cid.name != "Some" || c.args.len() != 1) { return false; }
+                    match (c.args[0]) {
+                        ast.ExprIdent(aid) => { return aid.name == "None"; },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // opt_recv_base_type returns "Option" / "Result" if `e` is an Option/Result
@@ -20663,7 +20693,29 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // records o's opt_type so a later `match (o)`
                     // recovers the payload (the construction analogue of
                     // the Option-returning call above).
-                    if (opt_ty == "") { opt_ty = some_opt_type(v.init, se); }
+                    if (opt_ty == "") {
+                        opt_ty = some_opt_type(v.init, se);
+                        // `Some(None)` is the one payload the walk cannot type
+                        // at all: `None` is an ExprIdent with no slot, so
+                        // elem_type_tag falls to its "i32" default and the
+                        // construction answers a FABRICATED "Option[i32]".
+                        // That beat the declared type of `var o:
+                        // Option[Option[i32]] = Some(None)`, binding the
+                        // `Some(inner)` arm's payload as a scalar and bailing
+                        // the nested `match (inner)` (#7217).
+                        //
+                        // Only here does the annotation win. This column is a
+                        // lowering TAG, not the declared type — a scalar-array
+                        // payload deliberately keeps a bare "i32" where the
+                        // annotation spells `Option[i32[]]` — so substituting
+                        // the annotation wholesale silently drops the payload's
+                        // reclaim.
+                        if (opt_ty != "" && some_payload_is_bare_none(v.init)
+                                && v.type_name.len() >= 8
+                                && (slice_unchecked(v.type_name, 0, 7) == "Option[" || slice_unchecked(v.type_name, 0, 7) == "Result[")) {
+                            opt_ty = v.type_name;
+                        }
+                    }
                 },
                 ast.ExprFieldAccess(ifa) => {
                     // A built-in array method returning Option (`var o = xs.min()`)
