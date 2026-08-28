@@ -251,6 +251,57 @@ function t_string(): Type {
   return TypeString { tag: 0 };
 }
 
+// `str` — the borrowed-string view (#4813). The parser erases the SPELLING to
+// "string" (parse_type_name), so view-ness rides the sidecars (StmtVar.is_str,
+// FuncDecl.ret_str); this constructor is how they re-enter the type system.
+// tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
+// tag-blind — a view IS a string box everywhere but at an owning sink, which
+// is the one place type_assignable reads the tag (#7293).
+function t_str(): Type {
+  return TypeString { tag: 1 };
+}
+
+function is_str_view(t: Type): boolean {
+  match (t) {
+    TypeString(st) => {
+      return st.tag == 1;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function is_owned_string(t: Type): boolean {
+  match (t) {
+    TypeString(st) => {
+      return st.tag == 0;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// str_copy_hint mirrors native strCopyHint: the remedy suffix when a borrowed
+// `str` view reaches an owning `string` sink. Empty for any other pair, so it
+// only fires where it applies.
+function str_copy_hint(from: Type, to: Type): string {
+  if (is_str_view(from) && is_owned_string(to)) {
+    return " — `str` is a borrowed view of a string; add `.to_owned()` to copy it into an owned string";
+  }
+  return "";
+}
+
+// str_arg_borrow mirrors native argAssignable's carve-out: params are borrowed
+// by default, so a `str` view may flow into a `string` PARAMETER — and nowhere
+// else.
+function str_arg_borrow(from: Type, to: Type): boolean {
+  return is_str_view(from) && is_owned_string(to);
+}
+
 function t_float(): Type {
   return TypeFloat { tag: 0 };
 }
@@ -2277,6 +2328,15 @@ function is_variant_of(struct_name: string, union_name: string, unions: UnionSig
 // is assignable to a TypeUnion "U" iff C appears in U's
 // variant list.
 function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
+  // `str` (#4813): a borrowed view never silently promotes to an owned
+  // `string` — an owning sink must materialise a copy via .to_owned().
+  // Checked BEFORE type_eq, which is deliberately tag-blind. The reverse
+  // direction (an owned string into a `str` slot) borrows freely and rides
+  // the type_eq below. Argument positions re-allow the lend via
+  // str_arg_borrow at their call sites, mirroring native argAssignable.
+  if (is_str_view(from) && is_owned_string(to)) {
+    return false;
+  }
   if (type_eq(from, to)) {
     return true;
   }
@@ -2628,8 +2688,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
     return t_struct("Cell");
   }
   // slice_unchecked(s, a, b) builtin — the byte slice s[a:b] under its
-  // honest name (#5634). The self-host has no str view type, so it types
-  // as string, same as ExprSlice on a string source.
+  // honest name (#5634). Returns the borrowed `str` view, as native does
+  // (#7293), so an owning sink refuses it without .to_owned().
   if (!is_method && name == "slice_unchecked") {
     if (c.args.len() != 3) {
       return t_unknown("slice_unchecked takes 3 arguments");
@@ -2640,7 +2700,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
     }
     match (sut) {
       TypeString(_) => {
-        return t_string();
+        return t_str();
       },
       _ => {}
     }
@@ -3391,7 +3451,7 @@ function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       // variant value flows into a union slot via the
       // existing type_assignable widening).
       if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
-        var declared: Type = s.resolve_type(v.type_name);
+        var declared: Type = var_declared_type(v, s);
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
         }
@@ -3668,6 +3728,24 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // to Types via type_from_name. The table is built in one pass and
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
+// func_ret_type resolves a FuncDecl's declared return type, re-entering the
+// `str` view-ness the parse-time erasure recorded on ret_str (#7293).
+function func_ret_type(fd: parser.FuncDecl, structs: StructSig[], unions: UnionSig[]): Type {
+  if (fd.ret_str) {
+    return t_str();
+  }
+  return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions);
+}
+
+// var_declared_type resolves a StmtVar's annotation, re-entering the `str`
+// view-ness the parse-time erasure recorded on is_str (#7293).
+function var_declared_type(v: ast.StmtVar, s: Scope): Type {
+  if (v.is_str) {
+    return t_str();
+  }
+  return s.resolve_type(v.type_name);
+}
+
 function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], unions: UnionSig[]): FuncSig[] {
   var out: FuncSig[] = [];
   var i: i32 = 0;
@@ -3686,7 +3764,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(param.type_name);
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: func_ret_type(fd, structs, unions), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -3704,7 +3782,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
       for param in fd.params {
         pts = pts.append(type_from_name_erasing_tparams(param.type_name, fd.type_params, structs, unions));
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions), ret_type_name: fd.ret_type });
+      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: func_ret_type(fd, structs, unions), ret_type_name: fd.ret_type });
     }
   }
   return out;
@@ -4330,7 +4408,7 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   var s: Scope = new_scope_full(st, structs, unions, methods, imports);
   s = s.with_tparams(fd.type_params, fd.bound_traits);
   if (fd.ret_type.len() > 0) {
-    s = s.with_ret_type(type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs.structs, unions));
+    s = s.with_ret_type(func_ret_type(fd, structs.structs, unions));
   }
   if (fd.receiver_name.len() > 0) {
     s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, fd.type_params, structs.structs, unions));
@@ -4443,7 +4521,10 @@ function type_label(t: Type): string {
     TypeBool(_) => {
       return "boolean";
     },
-    TypeString(_) => {
+    TypeString(st) => {
+      if (st.tag == 1) {
+        return "str";
+      }
       return "string";
     },
     TypeFloat(_) => {
@@ -4526,7 +4607,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: Type, unions: UnionSig[]
         } else {
           var t: Type = check_expr(r.value, cur);
           if (!is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !type_assignable(t, ret_ty, unions)) {
-            out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t), r.line, r.col));
+            out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
           }
         }
       },
@@ -7484,7 +7565,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               // unknown) — the arg can't be checked against
               // it, so skip rather than mis-flag E038. (An
               // unknown ARG is already skipped above.)
-              if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !type_assignable(at, sig.param_types[ai], s.unions)) {
+              if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !str_arg_borrow(at, sig.param_types[ai]) && !type_assignable(at, sig.param_types[ai], s.unions)) {
                 out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               // E034: a composite-array literal argument's
@@ -7558,13 +7639,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // (uninferred receiver) or unknown arg is skipped.
           if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
             var aat: Type = check_expr(c.args[0], s);
-            if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !type_assignable(aat, ar.elem, s.unions)) {
+            if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !str_arg_borrow(aat, ar.elem) && !type_assignable(aat, ar.elem, s.unions)) {
               out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat), expr_line(c.args[0]), expr_col(c.args[0])));
             }
           }
           if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
             var wvt: Type = check_expr(c.args[1], s);
-            if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !type_assignable(wvt, ar.elem, s.unions)) {
+            if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !str_arg_borrow(wvt, ar.elem) && !type_assignable(wvt, ar.elem, s.unions)) {
               out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
             }
           }
@@ -7623,7 +7704,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 var mat: Type = check_expr(c.args[mi], s);
                 // Skip an opaque generic param type (see
                 // the free-function E038 note above).
-                if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
+                if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !str_arg_borrow(mat, msig.param_types[mi]) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
                   out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                 }
                 // E034: composite-array method argument
@@ -8168,7 +8249,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
         var ft: Type = ssig.field_types[fidx];
         var vt: Type = check_expr(sl.field_values[fi], s);
         if (!is_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[fi], ft, s) && !type_assignable(vt, ft, s.unions)) {
-          out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
+          out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt) + str_copy_hint(vt, ft), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
         }
         // E034: a struct-literal field of composite-array type
         // whose value is an array literal — its elements checked
@@ -8826,10 +8907,10 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
     match (st) {
       ast.StmtVar(v) => {
         if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
-          var declared: Type = cur.resolve_type(v.type_name);
+          var declared: Type = var_declared_type(v, cur);
           var initt: Type = check_expr(v.init, cur);
           if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !type_assignable(initt, declared, unions)) {
-            out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
+            out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
           }
         }
         // E024: a tuple destructure `var (a, b) = E` (the parser
@@ -8867,7 +8948,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           var tt: Type = cur.lookup(a.target);
           var vt: Type = check_expr(a.value, cur);
           if (!is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !type_assignable(vt, tt, unions)) {
-            out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
+            out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt) + str_copy_hint(vt, tt), a.line, a.col));
           }
         }
       },
@@ -13556,7 +13637,7 @@ function annotate_advance(st: ast.Stmt, s: Scope): Scope {
   match (st) {
     ast.StmtVar(v) => {
       if (v.type_name.len() > 0) {
-        return s.bind(v.name, s.resolve_type(v.type_name));
+        return s.bind(v.name, var_declared_type(v, s));
       }
       return s.bind(v.name, check_expr(v.init, s));
     },
