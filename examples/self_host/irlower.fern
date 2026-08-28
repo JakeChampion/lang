@@ -44813,6 +44813,35 @@ function arrenum_param_arm_ok(arm: ast.MatchArm): boolean {
     return true;
 }
 
+// arrenum_param_esc_expr: the expression half of arrenum_param_escapes. It
+// widens arrenum_esc_expr in exactly ONE place — a zero-param IIFE, the shape
+// the parser builds for an `if` / `match` in VALUE position. lower_iife lowers
+// such a body INLINE in the enclosing frame and builds no env box
+// (is_iife_callee's own argument), so an element read inside it is the same
+// read the statement form makes and earns the same admissions. Without it the
+// lambda-capture arm reads the param as carried out of the frame entirely and
+// refuses, which is why `return (match (src[0]) { … })` leaked where its
+// statement sibling balanced. Every other form delegates to the stricter
+// walker, so the widening cannot reach past this shape.
+function arrenum_param_esc_expr(e: ast.Expr, name: string, body: ast.Stmt[]): boolean {
+    var no_reg: string[] = [];
+    match (e) {
+        ast.ExprCall(c) => {
+            if (is_iife_callee(c)) {
+                match (c.callee) {
+                    ast.ExprLambda(lm) => { return arrenum_param_escapes(lm.body, name, body); },
+                    _ => {}
+                }
+            }
+            return arrenum_esc_expr(e, name, no_reg);
+        },
+        ast.ExprBinary(b) => { return arrenum_param_esc_expr(b.left, name, body) || arrenum_param_esc_expr(b.right, name, body); },
+        ast.ExprUnary(u) => { return arrenum_param_esc_expr(u.operand, name, body); },
+        _ => { return arrenum_esc_expr(e, name, no_reg); }
+    }
+    return arrenum_esc_expr(e, name, no_reg);
+}
+
 // arrenum_param_escapes: arrenum_escapes for the "ELB:" flag question only —
 // the callee-side walk of a borrowed array-of-boxes PARAM, widened with the
 // extract-then-die admissions the borrowed-arg suites' callee_extracts_element
@@ -44856,15 +44885,15 @@ function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]
                     // `var y = x` recurses further down it.
                     st_esc = false;
                 } else {
-                    st_esc = arrenum_esc_expr(v.init, name, no_reg);
+                    st_esc = arrenum_param_esc_expr(v.init, name, body);
                 }
             },
             ast.StmtAssign(a) => {
                 if (a.target == name) { st_esc = true; }
-                else { st_esc = arrenum_esc_expr(a.value, name, no_reg); }
+                else { st_esc = arrenum_param_esc_expr(a.value, name, body); }
             },
-            ast.StmtReturn(r) => { st_esc = arrenum_esc_expr(r.value, name, no_reg); },
-            ast.StmtExpr(e) => { st_esc = arrenum_esc_expr(e.value, name, no_reg); },
+            ast.StmtReturn(r) => { st_esc = arrenum_param_esc_expr(r.value, name, body); },
+            ast.StmtExpr(e) => { st_esc = arrenum_param_esc_expr(e.value, name, body); },
             ast.StmtIf(f) => {
                 st_esc = arrenum_esc_expr(f.cond, name, no_reg)
                     || arrenum_param_escapes(f.then_body, name, body)
