@@ -717,6 +717,15 @@ pub function str_join_range(parts: string[], lo: i32, hi: i32): string {
     return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
 }
 
+// append_all concatenates `more` onto `into`. One generic replaces the five
+// per-element-type copies this tree carried — funcs / structs / aliases /
+// enum decls in flatten.fern, and a second structs copy in modloader.fern.
+pub function append_all[T](into: T[], more: T[]): T[] {
+    var i: i32 = 0;
+    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
+    return into;
+}
+
 pub function str_join_chunks(parts: string[]): string {
     return str_join_range(parts, 0, parts.len());
 }

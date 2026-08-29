@@ -230,6 +230,27 @@ on the self-host IR path under `FERN_STRICT_IR=1` on all three targets, and the
 per-module fixpoint is unaffected. Two things it hit that the next conversion
 will hit too:
 
+**The second adoption (SH-028): `util.append_all[T]`.** The payoff the first
+slice predicted, collected. Six byte-identical concat helpers — `append_funcs`
+/ `append_structs` / `append_aliases` / `append_enum_decls` in `flatten.fern`,
+plus a second `append_structs` and an `append_enums` in `modloader.fern` — are
+one generic. The audit row said four; the two in `modloader.fern` were the
+usual drift, found by grepping for the shape rather than trusting the row.
+
+Two things this one establishes that the first could not:
+
+- **An import does not instantiate.** `util.fern` is imported by nearly every
+  module, which looks like the riskiest possible home for the tree's first
+  non-astwalk generic. It is not: monomorphisation follows CALLS, so
+  `append_all` instantiates only in `flatten.fern` and `modloader.fern`, over
+  four element types. Placement in a widely-imported module costs nothing;
+  placement near the callers is what would have cost a duplicate.
+- **The census pin is the thing that makes adoption deliberate.** Adding the
+  generic failed `TestSelfHostFeatureCensus` with "counts 9, pinned at 8" and
+  the instruction to move both the number and this row. That gate, not review,
+  is what stops generic surface growing unnoticed on the one path the fixpoint
+  monomorphises.
+
 - **The visitor could not be an arrow lambda — until it could.** A lambda's
   declared parameter types were resolved only when the enclosing function was
   generic (`checker.go`'s `resolveTypesInBlock` did not descend into

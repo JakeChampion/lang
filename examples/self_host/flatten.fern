@@ -795,21 +795,6 @@ pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: strin
 // AST. The bundler mangles each one to `name__*` before merging.
 pub struct LoadedModule { name: string, mod: parser.Module }
 
-function append_funcs(into: parser.FuncDecl[], more: parser.FuncDecl[]): parser.FuncDecl[] {
-    var i: i32 = 0;
-    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
-    return into;
-}
-function append_structs(into: parser.StructDecl[], more: parser.StructDecl[]): parser.StructDecl[] {
-    var i: i32 = 0;
-    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
-    return into;
-}
-function append_aliases(into: parser.TypeAlias[], more: parser.TypeAlias[]): parser.TypeAlias[] {
-    var i: i32 = 0;
-    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
-    return into;
-}
 
 // MethodDedup is disambiguate_methods' answer: the rewritten module, and the
 // claim table extended with the keys it took.
@@ -917,10 +902,10 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
         mclaims = md.keys;
         var m: parser.Module = md.mod;
-        funcs = append_funcs(funcs, m.funcs);
-        structs = append_structs(structs, m.structs);
-        aliases = append_aliases(aliases, m.aliases);
-        enums = append_enum_decls(enums, m.enums);
+        funcs = util.append_all(funcs, m.funcs);
+        structs = util.append_all(structs, m.structs);
+        aliases = util.append_all(aliases, m.aliases);
+        enums = util.append_all(enums, m.enums);
         var ri: i32 = 0;
         while (ri < m.resources.len()) { resources = resources.append(m.resources[ri]); ri = ri + 1; }
         var mxi: i32 = 0;
@@ -934,10 +919,10 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         i = i + 1;
     }
     var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
-    funcs = append_funcs(funcs, e.funcs);
-    structs = append_structs(structs, e.structs);
-    aliases = append_aliases(aliases, e.aliases);
-    enums = append_enum_decls(enums, e.enums);
+    funcs = util.append_all(funcs, e.funcs);
+    structs = util.append_all(structs, e.structs);
+    aliases = util.append_all(aliases, e.aliases);
+    enums = util.append_all(enums, e.enums);
     var rj: i32 = 0;
     while (rj < e.resources.len()) { resources = resources.append(e.resources[rj]); rj = rj + 1; }
     var exj: i32 = 0;
@@ -1059,14 +1044,6 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
     }
     var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
     out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
-    return out;
-}
-
-// append_enum_decls concatenates two enum-decl lists (bundle merging).
-function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.EnumDecl[] {
-    var out: parser.EnumDecl[] = into;
-    var i: i32 = 0;
-    while (i < more.len()) { out = out.append(more[i]); i = i + 1; }
     return out;
 }
 
