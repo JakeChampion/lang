@@ -134,9 +134,10 @@ a half-migrated backend re-introduces the dual-path parity hazard.
 
 The staging that follows from the readiness table:
 
-1. **Measure wasm.** Build the corpus differential wasm has never had. It
-   either comes back clean like arm64's did, or it produces a gap list — and
-   either answer is what the decision needs.
+1. **Give wasm multi-function support**, then build its corpus differential as
+   the proof. Not the other way round: measured above, `wasmssa` refuses any
+   program that calls a second user function, so a differential built first
+   would report `ssa-refused` almost everywhere and gate nothing.
 2. **Make x86-64 reachable.** A module-level asm emitter for `x86_64ssa`,
    then the same corpus differential. This is the long pole.
 3. **Flip the shared lowering** once all three are differentially clean,
