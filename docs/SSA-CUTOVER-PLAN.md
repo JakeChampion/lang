@@ -154,7 +154,7 @@ The staging that follows from the readiness table:
 Steps 1 and 2 are ordinary engineering with a measurable finish line. Step 4 is
 the one that changes what is possible.
 
-## The cheaper route to step 4, which may make steps 1-3 optional
+## The cheaper route to step 4 — measured, and it works
 
 Steps 1-3 exist to make SSA the **codegen** path. But the Perceus unlock does
 not need that — it needs SSA as an **analysis** representation.
@@ -175,15 +175,47 @@ That closes the 32% blind spot, gives #7786 a representation it can summarise,
 and makes per-path unit accounting reachable — without touching `wasmssa`'s
 single-function limit or writing x86-64 a module assembler.
 
-It is not free: the decisions have to survive the round trip back to op
-positions, and a lift that is faithful for *codegen* is not automatically
-faithful for *ownership* (it must preserve the RC-relevant structure, not just
-the computed answer). That is the thing to prove first, and it is a much
-smaller experiment than either step 1 or step 2.
+### Measured 2026-08-29: the lift already gives every RC operation a name
 
-**Recommendation: try this before committing to the backend cutover.** If the
-round trip holds, the cutover becomes a separate question decided on codegen
-merits alone, and Perceus stops waiting on it.
+The half of this that could have killed it is whether a lift faithful for
+*codegen* is also faithful for *ownership*. It is, and the mechanism is already
+in `lift.go`: `ir.OpRcInc` / `OpRcDec` / `OpRcIsUnique` each become an `OpCall`
+whose arguments are **SSA `Value`s popped off the lift's abstract stack**. What
+the flat IR leaves anonymous on the operand stack, the lift has already bound
+to a name.
+
+Over the same corpus the 32%-blind-spot figure came from:
+
+| | |
+|---|---|
+| functions that lift | **15,718 / 15,821 — 99.3%** |
+| RC operations in the lifted SSA | **22,125** |
+| …with a named operand | **22,125 — 100.0%** |
+| `__fern_rc_inc` / `_dec` / `_is_unique` | 5,103 / 10,335 / 6,687, none unnamed |
+
+(That population counts all three helpers, so it is not the same denominator as
+the 15,516 figure above, which counted the inc/dec pair only.)
+
+**The 32% blind spot is 0% after lifting.** Not reduced — gone, by
+construction, because in SSA there is no anonymous operand.
+
+The 103 functions that do not lift are a short list, and the tail is short too:
+80 `OpStoreLocal`, 16 `call`, 4 `OpIf`, 2 `add`, 1 `OpCallDyn`. That is a
+finishable list, not a research programme.
+
+### What is left to prove
+
+Only the return trip: the decisions have to map back onto op positions the
+existing emitters consume. The forward direction — can ownership even be
+*expressed* over this representation — is answered.
+
+**Recommendation: do this before committing to the backend cutover.** It needs
+no change to `wasmssa`'s single-function limit and no module assembler for
+x86-64, it runs on a lift that arm64's differential shows is behaviourally
+faithful across 281 whole programs, and it closes the ceiling that
+`SSA-DECISION.md`'s tripwire 4 is really about. The cutover then becomes a
+separate question, decided on codegen merits alone, with Perceus no longer
+waiting on it.
 
 ## The conflict that has to be resolved with it
 
