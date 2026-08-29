@@ -1,0 +1,215 @@
+// examples/vcl/runtime.fern — the state a VCL transaction reads and writes.
+//
+// VCL's variables look like fields on five HTTP messages — `req`, `bereq`,
+// `beresp`, `resp`, `obj` — plus a handful of session and object
+// scalars. This module is those messages and the cache they move through;
+// `vars.fern` maps VCL names onto them and `eval.fern` runs the code.
+//
+// Every mutator returns a new value rather than mutating in place, since
+// Fern struct fields are immutable after construction. The evaluator
+// threads one `Txn` through the whole transaction, which also makes the
+// state at any point in the state machine trivially inspectable — the
+// transaction log in `vclrun` is just that.
+import "std/string";
+import "std/i64";
+import "std/float";
+import "./value";
+
+// An HTTP header set, as parallel name/value arrays. Lookup is
+// case-insensitive per RFC 9110; insertion order is preserved so a
+// printed transaction is stable and diffable.
+//
+// A linear scan, deliberately: a request carries a dozen headers, and an
+// order-preserving map would cost more code than the scan costs time.
+pub struct Headers { names: string[], values: string[] }
+
+pub function headers_new(): Headers {
+  var n: string[] = [];
+  var v: string[] = [];
+  return Headers { names: n, values: v };
+}
+
+// index_of returns the slot holding `name`, or -1.
+function index_of(h: Headers, name: string): i32 {
+  var i: i32 = 0;
+  while (i < h.names.len()) {
+    if (h.names[i].eq_ignore_ascii_case(name)) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// get returns the header's value, or VNone when it is not set. The
+// distinction matters: `if (req.http.Cookie)` tests presence, and VNone
+// is the only value that is false there.
+pub function (h: Headers) get(name: string): value.Value {
+  var i: i32 = index_of(h, name);
+  if (i < 0) {
+    return VNone;
+  }
+  return VString(h.values[i]);
+}
+
+pub function (h: Headers) has(name: string): boolean {
+  return index_of(h, name) >= 0;
+}
+
+// set overwrites in place when the header exists, keeping its position,
+// and appends otherwise.
+pub function (h: Headers) set(name: string, v: string): Headers {
+  var i: i32 = index_of(h, name);
+  if (i < 0) {
+    return Headers { names: h.names.append(name), values: h.values.append(v) };
+  }
+  return Headers { names: h.names, values: h.values.with(i, v) };
+}
+
+pub function (h: Headers) unset(name: string): Headers {
+  var names: string[] = [];
+  var vals: string[] = [];
+  var i: i32 = 0;
+  while (i < h.names.len()) {
+    if (!h.names[i].eq_ignore_ascii_case(name)) {
+      names = names.append(h.names[i]);
+      vals = vals.append(h.values[i]);
+    }
+    i = i + 1;
+  }
+  return Headers { names: names, values: vals };
+}
+
+// One HTTP message. A request uses method/url/proto, a response uses
+// status/reason/proto, and both carry headers — one struct rather than
+// two because VCL's variable names already say which half is meaningful
+// (`req.method`, `beresp.status`), and a checker is what should reject
+// `req.status`, not the shape of the runtime.
+pub struct Msg { method: string, url: string, proto: string, status: i64, reason: string, headers: Headers }
+
+pub function msg_new(): Msg {
+  return Msg { method: "", url: "", proto: "HTTP/1.1", status: 0, reason: "", headers: headers_new() };
+}
+
+pub function request(method: string, url: string): Msg {
+  return Msg { method: method, url: url, proto: "HTTP/1.1", status: 0, reason: "", headers: headers_new() };
+}
+
+pub function response(status: i64, reason: string): Msg {
+  return Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: reason, headers: headers_new() };
+}
+
+// The whole transaction. The five messages are VCL's, and the scalars
+// beside them are the object metadata that has no message to live on:
+// `beresp.ttl` and its grace/keep siblings, `obj.hits`, and the
+// `beresp.uncacheable` flag that decides whether the result is stored.
+//
+// `backend_hint` is a backend NAME rather than a resolved backend: this
+// evaluator's backends are declarations in the parsed program, and
+// resolving one is a lookup at fetch time.
+pub struct Txn {
+  req: Msg,
+  bereq: Msg,
+  beresp: Msg,
+  resp: Msg,
+  obj: Msg,
+  client_ip: string,
+  server_ip: string,
+  backend_hint: string,
+  beresp_ttl: f64,
+  beresp_grace: f64,
+  beresp_keep: f64,
+  beresp_uncacheable: boolean,
+  obj_ttl: f64,
+  obj_hits: i64,
+  // What `hash_data()` has contributed to the cache key so far. VCL makes
+  // hashing a subroutine rather than a fixed rule, so a policy can key on
+  // whatever it likes; an empty list means `vcl_hash` never ran or never
+  // called `hash_data`, and the state machine falls back to the built-in
+  // URL + Host key.
+  hash_parts: string[],
+  log: string[],
+}
+
+pub function txn_new(method: string, url: string, client_ip: string): Txn {
+  var empty: string[] = [];
+  return Txn { req: request(method, url), bereq: msg_new(), beresp: msg_new(), resp: msg_new(), obj: msg_new(), client_ip: client_ip, server_ip: "127.0.0.1", backend_hint: "", beresp_ttl: 0.0, beresp_grace: 10.0, beresp_keep: 0.0, beresp_uncacheable: false, obj_ttl: 0.0, obj_hits: 0, hash_parts: empty, log: empty };
+}
+
+// add_hash appends one component to the cache key under construction.
+pub function (t: Txn) add_hash(part: string): Txn {
+  return Txn { ...t, hash_parts: t.hash_parts.append(part) };
+}
+
+// note appends a line to the transaction log — what `std.log()` writes,
+// and what the state machine records as it moves between subroutines.
+pub function (t: Txn) note(line: string): Txn {
+  return Txn { ...t, log: t.log.append(line) };
+}
+
+// One stored object. `key` is the hash `vcl_hash` produced, so a policy
+// that hashes the URL alone and one that also hashes Host store under
+// different keys — which is the point of making hashing a VCL subroutine
+// rather than a fixed rule.
+pub struct CacheEntry { key: string, status: i64, reason: string, headers: Headers, ttl: f64, hits: i64 }
+
+pub struct Cache { entries: CacheEntry[] }
+
+pub function cache_new(): Cache {
+  var e: CacheEntry[] = [];
+  return Cache { entries: e };
+}
+
+// find returns the index of the entry under `key`, or -1.
+function cache_index(c: Cache, key: string): i32 {
+  var i: i32 = 0;
+  while (i < c.entries.len()) {
+    if (c.entries[i].key == key) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+pub function (c: Cache) lookup(key: string): Option[CacheEntry] {
+  var i: i32 = cache_index(c, key);
+  if (i < 0) {
+    return None;
+  }
+  return Some(c.entries[i]);
+}
+
+// store inserts or replaces the object under `key`. A replaced entry
+// resets its hit count: it is a different object.
+pub function (c: Cache) store(e: CacheEntry): Cache {
+  var i: i32 = cache_index(c, e.key);
+  if (i < 0) {
+    return Cache { entries: c.entries.append(e) };
+  }
+  return Cache { entries: c.entries.with(i, e) };
+}
+
+// touch records a hit against a stored object, which is what `obj.hits`
+// reads on the next lookup.
+pub function (c: Cache) touch(key: string): Cache {
+  var i: i32 = cache_index(c, key);
+  if (i < 0) {
+    return c;
+  }
+  var e: CacheEntry = c.entries[i];
+  return Cache { entries: c.entries.with(i, CacheEntry { ...e, hits: e.hits + 1 }) };
+}
+
+// evict removes an object, which is what a `purge` return does.
+pub function (c: Cache) evict(key: string): Cache {
+  var out: CacheEntry[] = [];
+  var i: i32 = 0;
+  while (i < c.entries.len()) {
+    if (c.entries[i].key != key) {
+      out = out.append(c.entries[i]);
+    }
+    i = i + 1;
+  }
+  return Cache { entries: out };
+}

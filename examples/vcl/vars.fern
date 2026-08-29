@@ -1,0 +1,429 @@
+// examples/vcl/vars.fern — VCL's variable namespace and its scoping.
+//
+// VCL variables are not free-floating: each is legal to READ in some
+// subroutines and to WRITE in a smaller set, and getting that wrong is
+// the most common real VCL bug. `req` is not available while fetching
+// from a backend — that is what `bereq` is for — and reaching for
+// `beresp` outside a backend-response subroutine is the same mistake
+// from the other side.
+//
+// So the table below is the point of this module, and `read` / `write`
+// consult it before touching the transaction at all. It encodes the
+// well-known distinctions (req vs bereq, beresp only in the backend
+// response subroutines, resp only in deliver and synth, obj only on a
+// hit) rather than Varnish's complete per-variable matrix; what is here
+// is enforced, and an unknown name is rejected rather than silently read
+// as empty.
+//
+// A `call`ed subroutine runs in its CALLER's context, so every check
+// takes the enclosing `vcl_*` method rather than the name of whatever
+// custom subroutine happens to be executing.
+import "std/string";
+import "std/i64";
+import "std/float";
+import "./value";
+import "./runtime";
+
+// The client-side subroutines, where `req` lives.
+pub function client_subs(): string[] {
+  return ["vcl_recv", "vcl_pipe", "vcl_pass", "vcl_hash", "vcl_purge", "vcl_miss", "vcl_hit", "vcl_deliver", "vcl_synth"];
+}
+
+// The backend-side subroutines, where `bereq` lives.
+pub function backend_subs(): string[] {
+  return ["vcl_backend_fetch", "vcl_backend_response", "vcl_backend_error"];
+}
+
+// Where a fetched response is still in hand and `beresp` is writable.
+function beresp_subs(): string[] {
+  return ["vcl_backend_response", "vcl_backend_error"];
+}
+
+// Where the request line may still be rewritten.
+function req_write_subs(): string[] {
+  return ["vcl_recv", "vcl_pipe", "vcl_pass", "vcl_miss", "vcl_hit"];
+}
+
+// `bereq` is also reachable from vcl_pipe, which hands the connection
+// straight to the backend.
+function bereq_subs(): string[] {
+  return ["vcl_backend_fetch", "vcl_backend_response", "vcl_backend_error", "vcl_pipe"];
+}
+
+function deliver_subs(): string[] {
+  return ["vcl_deliver", "vcl_synth"];
+}
+
+function none_of(): string[] {
+  var e: string[] = [];
+
+  return e;
+}
+
+// One entry in the namespace. `is_prefix` marks a header set: the name
+// `req.http.` matches `req.http.Host` and every other suffix.
+pub struct VarSpec { name: string, is_prefix: boolean, read_in: string[], write_in: string[] }
+
+function scalar(name: string, r: string[], w: string[]): VarSpec {
+  return VarSpec { name: name, is_prefix: false, read_in: r, write_in: w };
+}
+
+function headers(name: string, r: string[], w: string[]): VarSpec {
+  return VarSpec { name: name, is_prefix: true, read_in: r, write_in: w };
+}
+
+// The namespace. Read-only entries carry an empty write set, which is
+// what makes `set obj.hits = 1;` an error naming the variable rather
+// than a silent no-op.
+pub function var_table(): VarSpec[] {
+  return [scalar("req.method", client_subs(), req_write_subs()), scalar("req.url", client_subs(), req_write_subs()), scalar("req.proto", client_subs(), none_of()), scalar("req.backend_hint", client_subs(), ["vcl_recv", "vcl_pass", "vcl_miss", "vcl_hit"]), headers("req.http.", client_subs(), client_subs()), scalar("bereq.method", bereq_subs(), bereq_subs()), scalar("bereq.url", bereq_subs(), bereq_subs()), scalar("bereq.proto", bereq_subs(), bereq_subs()), headers("bereq.http.", bereq_subs(), bereq_subs()), scalar("beresp.status", beresp_subs(), beresp_subs()), scalar("beresp.reason", beresp_subs(), beresp_subs()), scalar("beresp.proto", beresp_subs(), beresp_subs()), scalar("beresp.ttl", beresp_subs(), beresp_subs()), scalar("beresp.grace", beresp_subs(), beresp_subs()), scalar("beresp.keep", beresp_subs(), beresp_subs()), scalar("beresp.uncacheable", beresp_subs(), beresp_subs()), headers("beresp.http.", beresp_subs(), beresp_subs()), scalar("resp.status", deliver_subs(), deliver_subs()), scalar("resp.reason", deliver_subs(), deliver_subs()), scalar("resp.proto", deliver_subs(), deliver_subs()), headers("resp.http.", deliver_subs(), deliver_subs()), scalar("obj.status", ["vcl_hit"], none_of()), scalar("obj.reason", ["vcl_hit"], none_of()), scalar("obj.ttl", ["vcl_hit"], none_of()), scalar("obj.hits", ["vcl_hit", "vcl_deliver"], none_of()), headers("obj.http.", ["vcl_hit"], none_of()), scalar("client.ip", client_subs(), none_of()), scalar("server.ip", client_subs(), none_of())];
+}
+
+function in_list(s: string, items: string[]): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i] == s) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// find_spec resolves a written name to its table entry.
+pub function find_spec(name: string): Option[VarSpec] {
+  var t: VarSpec[] = var_table();
+  var i: i32 = 0;
+  while (i < t.len()) {
+    var s: VarSpec = t[i];
+    if (s.is_prefix) {
+      if (name.starts_with(s.name) && name.len() > s.name.len()) {
+        return Some(s);
+      }
+    } else if (name == s.name) {
+      return Some(s);
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// suffix_of returns the header name from a full variable name.
+function suffix_of(name: string, prefix: string): string {
+  return slice_unchecked(name, prefix.len(), name.len()).to_owned();
+}
+
+// is_var reports whether a name denotes a variable at all, which is how
+// the evaluator tells `req.url` from a bare backend or ACL name.
+pub function is_var(name: string): boolean {
+  match (find_spec(name)) {
+    Some(s) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- reading
+function read_req(t: runtime.Txn, name: string): value.Value {
+  if (name == "req.method") {
+    return VString(t.req.method);
+  }
+  if (name == "req.url") {
+    return VString(t.req.url);
+  }
+  if (name == "req.proto") {
+    return VString(t.req.proto);
+  }
+  if (name == "req.backend_hint") {
+    return VBackend(t.backend_hint);
+  }
+  return t.req.headers.get(suffix_of(name, "req.http."));
+}
+
+function read_bereq(t: runtime.Txn, name: string): value.Value {
+  if (name == "bereq.method") {
+    return VString(t.bereq.method);
+  }
+  if (name == "bereq.url") {
+    return VString(t.bereq.url);
+  }
+  if (name == "bereq.proto") {
+    return VString(t.bereq.proto);
+  }
+  return t.bereq.headers.get(suffix_of(name, "bereq.http."));
+}
+
+function read_beresp(t: runtime.Txn, name: string): value.Value {
+  if (name == "beresp.status") {
+    return VInt(t.beresp.status);
+  }
+  if (name == "beresp.reason") {
+    return VString(t.beresp.reason);
+  }
+  if (name == "beresp.proto") {
+    return VString(t.beresp.proto);
+  }
+  if (name == "beresp.ttl") {
+    return VDuration(t.beresp_ttl);
+  }
+  if (name == "beresp.grace") {
+    return VDuration(t.beresp_grace);
+  }
+  if (name == "beresp.keep") {
+    return VDuration(t.beresp_keep);
+  }
+  if (name == "beresp.uncacheable") {
+    return VBool(t.beresp_uncacheable);
+  }
+  return t.beresp.headers.get(suffix_of(name, "beresp.http."));
+}
+
+function read_resp(t: runtime.Txn, name: string): value.Value {
+  if (name == "resp.status") {
+    return VInt(t.resp.status);
+  }
+  if (name == "resp.reason") {
+    return VString(t.resp.reason);
+  }
+  if (name == "resp.proto") {
+    return VString(t.resp.proto);
+  }
+  return t.resp.headers.get(suffix_of(name, "resp.http."));
+}
+
+function read_obj(t: runtime.Txn, name: string): value.Value {
+  if (name == "obj.status") {
+    return VInt(t.obj.status);
+  }
+  if (name == "obj.reason") {
+    return VString(t.obj.reason);
+  }
+  if (name == "obj.ttl") {
+    return VDuration(t.obj_ttl);
+  }
+  if (name == "obj.hits") {
+    return VInt(t.obj_hits);
+  }
+  return t.obj.headers.get(suffix_of(name, "obj.http."));
+}
+
+// read fetches a variable, refusing one that the current subroutine may
+// not see.
+pub function read(t: runtime.Txn, sub: string, name: string): Result[value.Value, string] {
+  match (find_spec(name)) {
+    None => {
+      return Err("unknown variable '" + name + "'");
+    },
+    Some(s) => {
+      if (!in_list(sub, s.read_in)) {
+        return Err("'" + name + "' is not readable in " + sub);
+      }
+      return Ok(read_dispatch(t, name));
+    }
+  }
+}
+
+function read_dispatch(t: runtime.Txn, name: string): value.Value {
+  if (name.starts_with("req.")) {
+    return read_req(t, name);
+  }
+  if (name.starts_with("bereq.")) {
+    return read_bereq(t, name);
+  }
+  if (name.starts_with("beresp.")) {
+    return read_beresp(t, name);
+  }
+  if (name.starts_with("resp.")) {
+    return read_resp(t, name);
+  }
+  if (name.starts_with("obj.")) {
+    return read_obj(t, name);
+  }
+  if (name == "client.ip") {
+    return VString(t.client_ip);
+  }
+  return VString(t.server_ip);
+}
+
+// ---------------------------------------------------------------- writing
+function write_req(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
+  if (name == "req.method") {
+    return runtime.Txn { ...t, req: runtime.Msg { ...t.req, method: value.to_str(v) } };
+  }
+  if (name == "req.url") {
+    return runtime.Txn { ...t, req: runtime.Msg { ...t.req, url: value.to_str(v) } };
+  }
+  if (name == "req.backend_hint") {
+    return runtime.Txn { ...t, backend_hint: value.to_str(v) };
+  }
+  var h: runtime.Headers = t.req.headers.set(suffix_of(name, "req.http."), value.to_str(v));
+  return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h } };
+}
+
+function write_bereq(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
+  if (name == "bereq.method") {
+    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, method: value.to_str(v) } };
+  }
+  if (name == "bereq.url") {
+    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, url: value.to_str(v) } };
+  }
+  if (name == "bereq.proto") {
+    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, proto: value.to_str(v) } };
+  }
+  var h: runtime.Headers = t.bereq.headers.set(suffix_of(name, "bereq.http."), value.to_str(v));
+  return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: h } };
+}
+
+// as_int coerces an assigned value for an INT-typed variable.
+function as_int(v: value.Value): i64 {
+  match (v) {
+    VInt(n) => {
+      return n;
+    },
+    VBytes(b) => {
+      return b;
+    },
+    VReal(r) => {
+      return r as i64;
+    },
+    VDuration(d) => {
+      return d as i64;
+    },
+    _ => {
+      match (value.to_str(v).parse_int()) {
+        Some(n) => {
+          return n as i64;
+        },
+        None => {
+          return 0;
+        }
+      }
+    }
+  }
+}
+
+// as_secs coerces an assigned value for a DURATION-typed variable.
+function as_secs(v: value.Value): f64 {
+  match (v) {
+    VDuration(d) => {
+      return d;
+    },
+    VReal(r) => {
+      return r;
+    },
+    VInt(n) => {
+      return n as f64;
+    },
+    _ => {
+      return 0.0;
+    }
+  }
+}
+
+function write_beresp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
+  if (name == "beresp.status") {
+    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, status: as_int(v) } };
+  }
+  if (name == "beresp.reason") {
+    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, reason: value.to_str(v) } };
+  }
+  if (name == "beresp.proto") {
+    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, proto: value.to_str(v) } };
+  }
+  if (name == "beresp.ttl") {
+    return runtime.Txn { ...t, beresp_ttl: as_secs(v) };
+  }
+  if (name == "beresp.grace") {
+    return runtime.Txn { ...t, beresp_grace: as_secs(v) };
+  }
+  if (name == "beresp.keep") {
+    return runtime.Txn { ...t, beresp_keep: as_secs(v) };
+  }
+  if (name == "beresp.uncacheable") {
+    return runtime.Txn { ...t, beresp_uncacheable: value.to_bool(v) };
+  }
+  var h: runtime.Headers = t.beresp.headers.set(suffix_of(name, "beresp.http."), value.to_str(v));
+  return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: h } };
+}
+
+function write_resp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
+  if (name == "resp.status") {
+    return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, status: as_int(v) } };
+  }
+  if (name == "resp.reason") {
+    return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, reason: value.to_str(v) } };
+  }
+  if (name == "resp.proto") {
+    return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, proto: value.to_str(v) } };
+  }
+  var h: runtime.Headers = t.resp.headers.set(suffix_of(name, "resp.http."), value.to_str(v));
+  return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: h } };
+}
+
+// assign stores a variable, refusing one the current subroutine may not
+// modify — including one that is read-only everywhere, like `obj.hits`.
+pub function assign(t: runtime.Txn, sub: string, name: string, v: value.Value): Result[runtime.Txn, string] {
+  match (find_spec(name)) {
+    None => {
+      return Err("unknown variable '" + name + "'");
+    },
+    Some(s) => {
+      if (s.write_in.len() == 0) {
+        return Err("'" + name + "' is read-only");
+      }
+      if (!in_list(sub, s.write_in)) {
+        return Err("'" + name + "' is not writable in " + sub);
+      }
+      return Ok(write_dispatch(t, name, v));
+    }
+  }
+}
+
+function write_dispatch(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
+  if (name.starts_with("req.")) {
+    return write_req(t, name, v);
+  }
+  if (name.starts_with("bereq.")) {
+    return write_bereq(t, name, v);
+  }
+  if (name.starts_with("beresp.")) {
+    return write_beresp(t, name, v);
+  }
+  return write_resp(t, name, v);
+}
+
+// unset removes a header. VCL only allows it on header sets — `unset
+// req.url` is meaningless — so a scalar is rejected by name.
+pub function unset(t: runtime.Txn, sub: string, name: string): Result[runtime.Txn, string] {
+  match (find_spec(name)) {
+    None => {
+      return Err("unknown variable '" + name + "'");
+    },
+    Some(s) => {
+      if (!s.is_prefix) {
+        return Err("'" + name + "' is not a header and cannot be unset");
+      }
+      if (!in_list(sub, s.write_in)) {
+        return Err("'" + name + "' is not writable in " + sub);
+      }
+      return Ok(unset_dispatch(t, name, s.name));
+    }
+  }
+}
+
+function unset_dispatch(t: runtime.Txn, name: string, prefix: string): runtime.Txn {
+  var key: string = suffix_of(name, prefix);
+  if (prefix == "req.http.") {
+    return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: t.req.headers.unset(key) } };
+  }
+  if (prefix == "bereq.http.") {
+    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: t.bereq.headers.unset(key) } };
+  }
+  if (prefix == "beresp.http.") {
+    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: t.beresp.headers.unset(key) } };
+  }
+  return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: t.resp.headers.unset(key) } };
+}

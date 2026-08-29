@@ -274,10 +274,28 @@ function test_parens_regroup_the_tree(): test.TestOutcome {
   return test.assert_eq(cond_shape("(a || b) && c"), "(&& [(|| a b)] c)");
 }
 
-// `!` is a prefix on the operand, not on the comparison it precedes:
-// `!a ~ b` is VCL's ACL-mismatch idiom and groups as `(!a) ~ b`.
-function test_unary_binds_tightest(): test.TestOutcome {
-  return test.assert_eq(cond_shape("!a ~ b"), "(~ (! a) b)");
+// `!` binds LOOSER than the comparison operators, unlike C's. That makes
+// `!client.ip ~ purgers` — the idiomatic Varnish ACL-mismatch test — mean
+// `!(client.ip ~ purgers)`. Reading it the C way inverts the sense of
+// every ACL check written that way, which is why it has its own case.
+function test_not_binds_looser_than_match(): test.TestOutcome {
+  return test.assert_eq(cond_shape("!client.ip ~ purgers"), "(! (~ client.ip purgers))");
+}
+
+// `!` still stops at `&&`: it negates the comparison beside it, not the
+// whole conjunction.
+function test_not_does_not_swallow_and(): test.TestOutcome {
+  return test.assert_eq(cond_shape("!a && b"), "(&& (! a) b)");
+}
+
+// Numeric negation is the opposite case and binds tightly to its operand.
+function test_numeric_negation_binds_tightly(): test.TestOutcome {
+  return test.assert_eq(cond_shape("-a + b"), "(+ (- a) b)");
+}
+
+// A written group is how you get the C reading back.
+function test_parens_restore_tight_not(): test.TestOutcome {
+  return test.assert_eq(cond_shape("(!a) ~ b"), "(~ [(! a)] b)");
 }
 
 // Written parentheses survive, because the tree keeps them rather than
@@ -401,7 +419,10 @@ function main(): i32 {
   r = r.it("comparison and additive precedence", test_comparison_and_additive_precedence);
   r = r.it("binary operators are left associative", test_binary_operators_are_left_associative);
   r = r.it("parens regroup the tree", test_parens_regroup_the_tree);
-  r = r.it("unary binds tightest", test_unary_binds_tightest);
+  r = r.it("not binds looser than match", test_not_binds_looser_than_match);
+  r = r.it("not does not swallow and", test_not_does_not_swallow_and);
+  r = r.it("numeric negation binds tightly", test_numeric_negation_binds_tightly);
+  r = r.it("parens restore tight not", test_parens_restore_tight_not);
   r = r.it("written parens survive", test_written_parens_survive);
   r = r.it("regex match operators", test_regex_match_operators);
   r = r.it("acl match and negation", test_acl_match_and_negation);

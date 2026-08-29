@@ -147,18 +147,6 @@ function parse_primary(toks: lexer.Tok[], i: i32): EParse {
   }
 }
 
-function parse_unary(toks: lexer.Tok[], i: i32): EParse {
-  var t: lexer.Tok = at(toks, i);
-  if (t.punct("!") || t.punct("-")) {
-    var operand: EParse = parse_unary(toks, i + 1);
-    if (!operand.ok) {
-      return operand;
-    }
-    return eok(EUnary(ast.UnExpr { op: t.text, operand: operand.node, line: t.line, col: t.col }), operand.pos);
-  }
-  return parse_primary(toks, i);
-}
-
 // in_list reports whether `s` is one of `items`.
 function in_list(s: string, items: string[]): boolean {
   var i: i32 = 0;
@@ -177,47 +165,29 @@ function comparison_ops(): string[] {
   return ["==", "!=", "<", "<=", ">", ">=", "~", "!~"];
 }
 
-// prec_of gives the binding power of a binary operator, 0 for a token
-// that is not one. `+` on strings is concatenation, which is why it
-// shares a level with arithmetic addition.
-function prec_of(t: lexer.Tok): i32 {
-  if (!t.is_punct()) {
-    return 0;
-  }
-  if (t.text == "||") {
-    return 1;
-  }
-  if (t.text == "&&") {
-    return 2;
-  }
-  if (in_list(t.text, comparison_ops())) {
-    return 3;
-  }
-  if (t.text == "+" || t.text == "-") {
-    return 4;
-  }
-  if (t.text == "*" || t.text == "/") {
-    return 5;
-  }
-  return 0;
-}
-
-// parse_binary is precedence climbing: it folds every operator binding at
-// least as tightly as `min_prec` into a left-leaning tree.
-function parse_binary(toks: lexer.Tok[], i: i32, min_prec: i32): EParse {
-  var left: EParse = parse_unary(toks, i);
+// The grammar below is vcc's, and its one surprise is where `!` sits: it
+// binds LOOSER than the comparison operators, not tighter as it does in
+// C. So `!client.ip ~ purgers` — the idiomatic Varnish ACL-mismatch test
+// — is `!(client.ip ~ purgers)`, not `(!client.ip) ~ purgers`. Numeric
+// negation is the opposite and stays tight against its operand.
+//
+//   or   := and { "||" and }
+//   and  := not { "&&" not }
+//   not  := "!" not | cmp
+//   cmp  := add [ COMPARISON add ]        (non-associative, as in vcc)
+//   add  := mul { ("+" | "-") mul }
+//   mul  := neg { ("*" | "/") neg }
+//   neg  := "-" neg | primary
+function parse_or(toks: lexer.Tok[], i: i32): EParse {
+  var left: EParse = parse_and(toks, i);
   if (!left.ok) {
     return left;
   }
   var node: ast.Expr = left.node;
   var pos: i32 = left.pos;
-  while (true) {
+  while (at(toks, pos).punct("||")) {
     var op: lexer.Tok = at(toks, pos);
-    var p: i32 = prec_of(op);
-    if (p == 0 || p < min_prec) {
-      return eok(node, pos);
-    }
-    var right: EParse = parse_binary(toks, pos + 1, p + 1);
+    var right: EParse = parse_and(toks, pos + 1);
     if (!right.ok) {
       return right;
     }
@@ -227,8 +197,108 @@ function parse_binary(toks: lexer.Tok[], i: i32, min_prec: i32): EParse {
   return eok(node, pos);
 }
 
+function parse_and(toks: lexer.Tok[], i: i32): EParse {
+  var left: EParse = parse_not(toks, i);
+  if (!left.ok) {
+    return left;
+  }
+  var node: ast.Expr = left.node;
+  var pos: i32 = left.pos;
+  while (at(toks, pos).punct("&&")) {
+    var op: lexer.Tok = at(toks, pos);
+    var right: EParse = parse_not(toks, pos + 1);
+    if (!right.ok) {
+      return right;
+    }
+    node = EBinary(ast.BinExpr { op: op.text, lhs: node, rhs: right.node, line: op.line, col: op.col });
+    pos = right.pos;
+  }
+  return eok(node, pos);
+}
+
+function parse_not(toks: lexer.Tok[], i: i32): EParse {
+  var t: lexer.Tok = at(toks, i);
+  if (t.punct("!")) {
+    var operand: EParse = parse_not(toks, i + 1);
+    if (!operand.ok) {
+      return operand;
+    }
+    return eok(EUnary(ast.UnExpr { op: "!", operand: operand.node, line: t.line, col: t.col }), operand.pos);
+  }
+  return parse_cmp(toks, i);
+}
+
+// parse_cmp takes at most ONE comparison: vcc rejects `a == b == c`
+// rather than folding it, and so does this.
+function parse_cmp(toks: lexer.Tok[], i: i32): EParse {
+  var left: EParse = parse_add(toks, i);
+  if (!left.ok) {
+    return left;
+  }
+  var op: lexer.Tok = at(toks, left.pos);
+  if (!op.is_punct() || !in_list(op.text, comparison_ops())) {
+    return left;
+  }
+  var right: EParse = parse_add(toks, left.pos + 1);
+  if (!right.ok) {
+    return right;
+  }
+  var node: ast.Expr = EBinary(ast.BinExpr { op: op.text, lhs: left.node, rhs: right.node, line: op.line, col: op.col });
+  return eok(node, right.pos);
+}
+
+function parse_add(toks: lexer.Tok[], i: i32): EParse {
+  return parse_left_assoc(toks, i, ["+", "-"], true);
+}
+
+function parse_mul(toks: lexer.Tok[], i: i32): EParse {
+  return parse_left_assoc(toks, i, ["*", "/"], false);
+}
+
+// parse_left_assoc folds one arithmetic level. `additive` selects which
+// level supplies the operands, keeping the two tiers in one routine
+// rather than two near-identical ones.
+function parse_left_assoc(toks: lexer.Tok[], i: i32, ops: string[], additive: boolean): EParse {
+  var left: EParse = parse_operand(toks, i, additive);
+  if (!left.ok) {
+    return left;
+  }
+  var node: ast.Expr = left.node;
+  var pos: i32 = left.pos;
+  while (at(toks, pos).is_punct() && in_list(at(toks, pos).text, ops)) {
+    var op: lexer.Tok = at(toks, pos);
+    var right: EParse = parse_operand(toks, pos + 1, additive);
+    if (!right.ok) {
+      return right;
+    }
+    node = EBinary(ast.BinExpr { op: op.text, lhs: node, rhs: right.node, line: op.line, col: op.col });
+    pos = right.pos;
+  }
+  return eok(node, pos);
+}
+
+function parse_operand(toks: lexer.Tok[], i: i32, additive: boolean): EParse {
+  if (additive) {
+    return parse_mul(toks, i);
+  }
+  return parse_neg(toks, i);
+}
+
+// parse_neg is numeric negation, which unlike `!` binds tightly.
+function parse_neg(toks: lexer.Tok[], i: i32): EParse {
+  var t: lexer.Tok = at(toks, i);
+  if (t.punct("-")) {
+    var operand: EParse = parse_neg(toks, i + 1);
+    if (!operand.ok) {
+      return operand;
+    }
+    return eok(EUnary(ast.UnExpr { op: "-", operand: operand.node, line: t.line, col: t.col }), operand.pos);
+  }
+  return parse_primary(toks, i);
+}
+
 pub function parse_expr(toks: lexer.Tok[], i: i32): EParse {
-  return parse_binary(toks, i, 1);
+  return parse_or(toks, i);
 }
 
 // ---------------------------------------------------------------- statements

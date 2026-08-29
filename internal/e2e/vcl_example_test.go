@@ -23,7 +23,7 @@ import (
 // The suites below are the two properties worth pinning: the TAP tests
 // pass, and running the formatter over its own output changes nothing.
 
-// TestVCLExampleTapSuitePasses runs the in-language TAP suite.
+// TestVCLExampleTapSuitePasses runs the front end's in-language TAP suite.
 func TestVCLExampleTapSuitePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/vcl/vcl_test.fern")
@@ -109,5 +109,106 @@ func TestVCLExampleReportsBadSyntax(t *testing.T) {
 	}
 	if !strings.Contains(errOut, ":3:7:") {
 		t.Errorf("diagnostic missing the error position:\n%s", errOut)
+	}
+}
+
+// TestVCLBackendTapSuitePasses runs the evaluator's TAP suite: VCL's
+// coercion rules, ACL matching, the per-subroutine variable scoping, and
+// the request state machine.
+func TestVCLBackendTapSuitePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/vcl/vclbackend_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"TAP version 13", "# Suite: vcl-backend", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "not ok") {
+		t.Errorf("a case failed:\n%s", out)
+	}
+}
+
+// runVclrun runs the evaluator driver from the example's own directory so
+// its relative testdata path resolves.
+func runVclrun(t *testing.T, bin string, args ...string) (int, string, string) {
+	t.Helper()
+	argv := append([]string{"-interp", "vclrun.fern", "--"}, args...)
+	cmd := exec.Command(bin, argv...)
+	cmd.Dir = langSrcAbs(t, "examples/vcl")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
+}
+
+// TestVCLBackendCachesAndPurges drives the sample policy end to end
+// through the driver: the first request misses and stores, the second
+// hits what it stored. This is the whole point of the state machine, so
+// it is worth pinning outside the in-language suite too.
+func TestVCLBackendCachesAndPurges(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	code, out, errOut := runVclrun(t, bin, "testdata/policy.vcl", "GET", "/static/app.css", "-n", "2")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "deliver (miss)") {
+		t.Errorf("first request should miss:\n%s", out)
+	}
+	if !strings.Contains(out, "deliver (HIT)") {
+		t.Errorf("second request should hit what the first stored:\n%s", out)
+	}
+	if !strings.Contains(out, "vcl_recv -> vcl_hash -> vcl_hit -> vcl_deliver") {
+		t.Errorf("hit should take the vcl_hit path:\n%s", out)
+	}
+}
+
+// TestVCLBackendEnforcesACL pins that the sample policy's purge ACL both
+// admits and rejects, including the exclusion that a first-match-wins
+// walk would wrongly admit — `192.0.2.23` is inside the `192.0.2.0/24`
+// the ACL also lists.
+func TestVCLBackendEnforcesACL(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	for _, tc := range []struct {
+		ip   string
+		want string
+	}{
+		{"192.0.2.10", "200 Purged"},
+		{"127.0.0.1", "200 Purged"},
+		{"192.0.2.23", "405 Not allowed"},
+		{"10.0.0.5", "405 Not allowed"},
+	} {
+		code, out, errOut := runVclrun(t, bin, "testdata/policy.vcl", "PURGE", "/static/app.css", tc.ip)
+		if code != 0 {
+			t.Fatalf("%s: exit = %d, want 0\nstderr: %s", tc.ip, code, errOut)
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s: want status %q, got:\n%s", tc.ip, tc.want, out)
+		}
+	}
+}
+
+// TestVCLBackendRejectsOutOfScopeVariable pins the scoping rule VCL
+// authors trip over most: `req` is not readable while fetching from a
+// backend. The driver must exit 1 and name both the variable and the
+// subroutine.
+func TestVCLBackendRejectsOutOfScopeVariable(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	bad := filepath.Join(t.TempDir(), "scope.vcl")
+	src := "vcl 4.1;\nbackend o { .host = \"127.0.0.1\"; }\n" +
+		"sub vcl_backend_response { set beresp.http.X = req.url; return (deliver); }\n"
+	if err := os.WriteFile(bad, []byte(src), 0o644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	code, out, errOut := runVclrun(t, bin, bad, "GET", "/")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "'req.url' is not readable in vcl_backend_response") {
+		t.Errorf("diagnostic should name the variable and the subroutine:\n%s", errOut)
 	}
 }

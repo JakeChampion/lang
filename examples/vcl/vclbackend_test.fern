@@ -1,0 +1,477 @@
+// examples/vcl/vclbackend_test.fern — TAP suite for the VCL evaluator,
+// the variable scoping table, and the request state machine.
+//
+//   fern -interp examples/vcl/vclbackend_test.fern
+//
+// The parser's own suite is `vcl_test.fern`; this one starts from a
+// parsed program and checks what RUNNING it does. Most cases drive a
+// whole request through `machine.run` and assert on the response, the
+// disposition, or the ordered list of subroutines that executed — the
+// path through the state machine is the observable that makes a routing
+// bug legible, so it is the one the tests read.
+import "std/test";
+import "std/string";
+import "std/i64";
+import "std/float";
+import "./ast";
+import "./value";
+import "./runtime";
+import "./parser";
+import "./eval";
+import "./machine";
+
+// A minimal program: a backend, plus whatever subroutines a case needs.
+function program(body: string): string {
+  return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
+}
+
+function decls_of(src: string): ast.Decl[] {
+  return parser.parse(src).decls;
+}
+
+function run_get(body: string, url: string): machine.Outcome {
+  var cache: runtime.Cache = runtime.cache_new();
+  return machine.run(decls_of(program(body)), "GET", url, "127.0.0.1", cache);
+}
+
+function run_as(body: string, method: string, url: string, ip: string): machine.Outcome {
+  var cache: runtime.Cache = runtime.cache_new();
+  return machine.run(decls_of(program(body)), method, url, ip, cache);
+}
+
+// header reads a response header from an outcome, or "" when unset.
+function header(o: machine.Outcome, name: string): string {
+  return value.to_str(o.txn.resp.headers.get(name));
+}
+
+function path_of(o: machine.Outcome): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < o.steps.len()) {
+    if (i > 0) {
+      out = out + " -> ";
+    }
+    out = out + o.steps[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+// expr_result evaluates a VCL expression by assigning it to a response
+// header and reading the header back, which exercises the real coercion
+// path rather than a test-only entry point.
+function expr_result(expr: string): string {
+  var o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = " + expr + "; return (deliver); }", "/e");
+  if (!o.ok) {
+    return "ERR:" + o.err;
+  }
+  return header(o, "R");
+}
+
+// ------------------------------------------------------------ coercions
+// `+` concatenates when either side is a string, so a byte count lands in
+// the header as its number of bytes.
+function test_string_plus_bytes_concatenates(): test.TestOutcome {
+  return test.assert_eq(expr_result("\"\" + 256KB"), "262144");
+}
+
+// Byte units are 1024-based, as VCL's are.
+function test_byte_units_are_binary(): test.TestOutcome {
+  return test.assert_eq(expr_result("\"\" + 1MB"), "1048576");
+}
+
+// Duration arithmetic stays a duration and prints with three decimals.
+function test_duration_arithmetic(): test.TestOutcome {
+  return test.assert_eq(expr_result("\"\" + (1h - 10s)"), "3590.000");
+}
+
+// INT arithmetic stays integral: a status plus one must not become a
+// real and print as "201.000".
+function test_int_arithmetic_stays_integral(): test.TestOutcome {
+  var o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = \"\" + (beresp.status + 1); return (deliver); }", "/i");
+  return test.assert_eq(header(o, "R"), "201");
+}
+
+// INT division truncates.
+function test_int_division_truncates(): test.TestOutcome {
+  return test.assert_eq(expr_result("\"\" + (7 / 2)"), "3");
+}
+
+// A real is a real, and keeps its decimals.
+function test_real_arithmetic(): test.TestOutcome {
+  return test.assert_eq(expr_result("\"\" + (1.5 * 2)"), "3.000");
+}
+
+// An unset header is empty in string context.
+function test_unset_header_is_empty_string(): test.TestOutcome {
+  return test.assert_eq(expr_result("\"[\" + bereq.http.Nope + \"]\""), "[]");
+}
+
+// regsub takes VCL's `\1` capture references.
+function test_regsub_backreference(): test.TestOutcome {
+  return test.assert_eq(expr_result("regsub(\"a-42-b\", \"([0-9]+)\", \"<\\1>\")"), "a-<42>-b");
+}
+
+function test_regsuball_replaces_every_match(): test.TestOutcome {
+  return test.assert_eq(expr_result("regsuball(\"x1y2\", \"[0-9]\", \"#\")"), "x#y#");
+}
+
+// ------------------------------------------------------------------ ACL
+function acl_program(): string {
+  return "acl purgers { \"127.0.0.1\"; \"192.0.2.0\"/24; ! \"192.0.2.23\"; }\n" + "sub vcl_recv {\n" + "  if (client.ip ~ purgers) { return (synth(200, \"in\")); }\n" + "  return (synth(403, \"out\"));\n" + "}\n";
+}
+
+function acl_says(ip: string): string {
+  var o: machine.Outcome = run_as(acl_program(), "GET", "/", ip);
+  if (!o.ok) {
+    return "ERR:" + o.err;
+  }
+  return o.txn.resp.reason;
+}
+
+function test_acl_admits_a_covered_address(): test.TestOutcome {
+  return test.assert_eq(acl_says("192.0.2.10"), "in");
+}
+
+// The most specific entry wins, not the first written. The excluded host
+// is also inside the /24, so a first-match-wins walk would admit it and
+// the `!` line would be dead — which is exactly the bug this pins.
+function test_acl_exclusion_beats_a_broader_inclusion(): test.TestOutcome {
+  return test.assert_eq(acl_says("192.0.2.23"), "out");
+}
+
+function test_acl_rejects_an_uncovered_address(): test.TestOutcome {
+  return test.assert_eq(acl_says("10.0.0.5"), "out");
+}
+
+function test_acl_matches_localhost(): test.TestOutcome {
+  return test.assert_eq(acl_says("127.0.0.1"), "in");
+}
+
+// `!x ~ acl` is the idiomatic mismatch test and must negate the MATCH,
+// not the address.
+function test_acl_negated_match_idiom(): test.TestOutcome {
+  var body: string = "acl a { \"10.0.0.0\"/8; }\n" + "sub vcl_recv { if (!client.ip ~ a) { return (synth(403, \"denied\")); } return (synth(200, \"ok\")); }\n";
+  var out: machine.Outcome = run_as(body, "GET", "/", "192.0.2.1");
+  if (!out.ok) {
+    return test.fail(out.err);
+  }
+  var inside: machine.Outcome = run_as(body, "GET", "/", "10.1.2.3");
+  if (!inside.ok) {
+    return test.fail(inside.err);
+  }
+  if (out.txn.resp.reason != "denied") {
+    return test.fail("outside should be denied: " + out.txn.resp.reason);
+  }
+  return test.assert_eq(inside.txn.resp.reason, "ok");
+}
+
+// ------------------------------------------------------------- scoping
+function scope_error(body: string): string {
+  var o: machine.Outcome = run_get(body, "/s");
+  if (o.ok) {
+    return "NO ERROR";
+  }
+  return o.err;
+}
+
+// `beresp` does not exist on the client side.
+function test_beresp_unreadable_in_recv(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_recv { if (beresp.status == 200) { return (pass); } return (hash); }"), "'beresp.status' is not readable in vcl_recv");
+}
+
+// The classic VCL mistake: `req` is not available while fetching. This is
+// the rule that sends people to `bereq`.
+function test_req_unreadable_in_backend_sub(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_backend_response { set beresp.http.X = req.url; return (deliver); }"), "'req.url' is not readable in vcl_backend_response");
+}
+
+function test_obj_hits_is_read_only(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_deliver { set obj.hits = 5; return (deliver); }"), "'obj.hits' is read-only");
+}
+
+function test_resp_unwritable_in_recv(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_recv { set resp.http.X = \"1\"; return (hash); }"), "'resp.http.X' is not writable in vcl_recv");
+}
+
+// A misspelled variable is rejected by name rather than read as empty.
+function test_unknown_variable_is_rejected(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_recv { set req.hdr.Host = \"x\"; return (hash); }"), "unknown variable 'req.hdr.Host'");
+}
+
+// `unset` is only meaningful on a header.
+function test_unset_scalar_is_rejected(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_recv { unset req.url; return (hash); }"), "is not a header and cannot be unset");
+}
+
+// A `call`ed subroutine runs in its CALLER's scope, so a helper invoked
+// from a backend subroutine still may not see `req`.
+function test_called_sub_inherits_caller_scope(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub helper { set beresp.http.X = req.url; }\n" + "sub vcl_backend_response { call helper; return (deliver); }"), "not readable in vcl_backend_response");
+}
+
+// ------------------------------------------------------- state machine
+// The ordinary cacheable path, and then a hit off what it stored.
+function test_miss_then_hit(): test.TestOutcome {
+  var body: string = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var first: machine.Outcome = machine.run(decls, "GET", "/a", "127.0.0.1", c);
+  if (!first.ok) {
+    return test.fail(first.err);
+  }
+  if (first.hit) {
+    return test.fail("first request should miss");
+  }
+  var second: machine.Outcome = machine.run(decls, "GET", "/a", "127.0.0.1", first.cache);
+  if (!second.ok) {
+    return test.fail(second.err);
+  }
+  if (!second.hit) {
+    return test.fail("second request should hit: " + path_of(second));
+  }
+  return test.assert_eq(path_of(second), "vcl_recv -> vcl_hash -> vcl_hit -> vcl_deliver");
+}
+
+// `obj.hits` counts deliveries from cache: 0 on the miss, 1 on the first
+// hit.
+function test_obj_hits_counts_from_one(): test.TestOutcome {
+  var body: string = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }\n" + "sub vcl_deliver { set resp.http.H = obj.hits; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var a: machine.Outcome = machine.run(decls, "GET", "/h", "127.0.0.1", c);
+  var b: machine.Outcome = machine.run(decls, "GET", "/h", "127.0.0.1", a.cache);
+  if (!a.ok || !b.ok) {
+    return test.fail("run failed");
+  }
+  if (header(a, "H") != "0") {
+    return test.fail("miss should report 0, got " + header(a, "H"));
+  }
+  return test.assert_eq(header(b, "H"), "1");
+}
+
+// A pass never stores, so an identical second request fetches again.
+function test_pass_never_caches(): test.TestOutcome {
+  var body: string = "sub vcl_recv { return (pass); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var a: machine.Outcome = machine.run(decls, "GET", "/p", "127.0.0.1", c);
+  var b: machine.Outcome = machine.run(decls, "GET", "/p", "127.0.0.1", a.cache);
+  if (!a.ok || !b.ok) {
+    return test.fail("run failed");
+  }
+  if (b.hit) {
+    return test.fail("a passed request must not be served from cache");
+  }
+  return test.assert_contains(path_of(b), "vcl_pass");
+}
+
+// The built-in `vcl_recv` runs when the user's falls through without
+// returning — so a cookie-bearing request is passed even though the
+// program never says so. This is the rule VCL authors are caught by most.
+function test_builtin_recv_passes_on_cookie(): test.TestOutcome {
+  var decls: ast.Decl[] = decls_of(program("sub vcl_recv { set req.http.Seen = \"1\"; }"));
+  var c: runtime.Cache = runtime.cache_new();
+  var o: machine.Outcome = machine.run_with_headers(decls, "GET", "/c", "127.0.0.1", ["Cookie"], ["a=1"], c);
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_contains(path_of(o), "vcl_pass");
+}
+
+// Without the cookie the same program hashes, which is what shows the
+// built-in is deciding rather than the path being fixed.
+function test_builtin_recv_hashes_without_cookie(): test.TestOutcome {
+  var o: machine.Outcome = run_get("sub vcl_recv { set req.http.Seen = \"1\"; }", "/c");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_contains(path_of(o), "vcl_hash");
+}
+
+// An unknown method pipes, per the built-in.
+function test_builtin_recv_pipes_unknown_method(): test.TestOutcome {
+  var o: machine.Outcome = run_as("sub vcl_recv { }", "FROBNICATE", "/", "127.0.0.1");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_eq(o.disposition, "pipe");
+}
+
+// A response with no positive TTL is not stored, which is the built-in
+// `vcl_backend_response` decision.
+function test_zero_ttl_is_not_stored(): test.TestOutcome {
+  var body: string = "sub vcl_backend_response { set beresp.ttl = 0s; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var a: machine.Outcome = machine.run(decls, "GET", "/z", "127.0.0.1", c);
+  var b: machine.Outcome = machine.run(decls, "GET", "/z", "127.0.0.1", a.cache);
+  if (!a.ok || !b.ok) {
+    return test.fail("run failed");
+  }
+  return test.assert_false(b.hit);
+}
+
+// `beresp.uncacheable` suppresses storage even with a positive TTL.
+function test_uncacheable_is_not_stored(): test.TestOutcome {
+  var body: string = "sub vcl_backend_response { set beresp.ttl = 1h; set beresp.uncacheable = true; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var a: machine.Outcome = machine.run(decls, "GET", "/u", "127.0.0.1", c);
+  var b: machine.Outcome = machine.run(decls, "GET", "/u", "127.0.0.1", a.cache);
+  if (!a.ok || !b.ok) {
+    return test.fail("run failed");
+  }
+  return test.assert_false(b.hit);
+}
+
+// A purge evicts what was stored, so the next request misses.
+function test_purge_evicts(): test.TestOutcome {
+  var body: string = "sub vcl_recv { if (req.method == \"PURGE\") { return (purge); } return (hash); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var warm: machine.Outcome = machine.run(decls, "GET", "/g", "127.0.0.1", c);
+  var hit: machine.Outcome = machine.run(decls, "GET", "/g", "127.0.0.1", warm.cache);
+  if (!hit.hit) {
+    return test.fail("expected a hit before the purge");
+  }
+  var purged: machine.Outcome = machine.run(decls, "PURGE", "/g", "127.0.0.1", hit.cache);
+  if (!purged.ok) {
+    return test.fail(purged.err);
+  }
+  var after: machine.Outcome = machine.run(decls, "GET", "/g", "127.0.0.1", purged.cache);
+  if (!after.ok) {
+    return test.fail(after.err);
+  }
+  return test.assert_false(after.hit);
+}
+
+// `return (synth(status, reason))` carries both through to the response.
+function test_synth_carries_status_and_reason(): test.TestOutcome {
+  var o: machine.Outcome = run_get("sub vcl_recv { return (synth(405, \"Not allowed\")); }", "/x");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  if (o.txn.resp.status != 405) {
+    return test.fail("status " + o.txn.resp.status.to_string());
+  }
+  return test.assert_eq(o.txn.resp.reason, "Not allowed");
+}
+
+// `vcl_hash` decides the cache key, so hashing the Host separates two
+// requests for the same URL.
+function test_hash_data_separates_by_host(): test.TestOutcome {
+  var body: string = "sub vcl_hash { hash_data(req.url); hash_data(req.http.Host); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  var decls: ast.Decl[] = decls_of(program(body));
+  var c: runtime.Cache = runtime.cache_new();
+  var a: machine.Outcome = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["one.example"], c);
+  var b: machine.Outcome = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["two.example"], a.cache);
+  if (!a.ok || !b.ok) {
+    return test.fail("run failed");
+  }
+  if (b.hit) {
+    return test.fail("a different Host must not hit the first object");
+  }
+  var again: machine.Outcome = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["one.example"], b.cache);
+  return test.assert_true(again.hit);
+}
+
+// A `call` runs the callee's body inline, and a `return` inside it ends
+// the whole subroutine.
+function test_call_returns_from_the_caller(): test.TestOutcome {
+  var body: string = "sub deny { return (synth(403, \"nope\")); }\n" + "sub vcl_recv { call deny; return (hash); }";
+  var o: machine.Outcome = run_get(body, "/call");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_eq(o.txn.resp.reason, "nope");
+}
+
+// Mutually recursive subroutines are bounded rather than exhausting the
+// stack.
+function test_recursive_call_is_bounded(): test.TestOutcome {
+  var body: string = "sub a { call b; }\nsub b { call a; }\nsub vcl_recv { call a; return (hash); }";
+  var o: machine.Outcome = run_get(body, "/r");
+  if (o.ok) {
+    return test.fail("expected the call depth guard to fire");
+  }
+  return test.assert_contains(o.err, "call nesting too deep");
+}
+
+// A restart loop is bounded too.
+function test_restart_is_bounded(): test.TestOutcome {
+  var o: machine.Outcome = run_get("sub vcl_recv { return (restart); }", "/loop");
+  if (o.ok) {
+    return test.fail("expected the restart limit to fire");
+  }
+  return test.assert_contains(o.err, "too many restarts");
+}
+
+// Compound assignment reads the current value first.
+function test_compound_assignment(): test.TestOutcome {
+  var o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = \"a\"; set beresp.http.R += \"b\"; return (deliver); }", "/ca");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_eq(header(o, "R"), "ab");
+}
+
+// `&&` short-circuits, so the right side's effect does not happen when
+// the left is false.
+function test_and_short_circuits(): test.TestOutcome {
+  var body: string = "sub vcl_recv { if (false && std.tolower(\"X\") == \"x\") { return (pass); } return (hash); }";
+  var o: machine.Outcome = run_get(body, "/sc");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_contains(path_of(o), "vcl_hash");
+}
+
+// An unsupported VMOD call is an error naming it, not a silent empty
+// string that would quietly change a policy's behaviour.
+function test_unknown_function_is_rejected(): test.TestOutcome {
+  return test.assert_contains(scope_error("sub vcl_recv { set req.http.X = mystery.thing(\"a\"); return (hash); }"), "unsupported function 'mystery.thing'");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("vcl-backend");
+  r = r.it("string plus bytes concatenates", test_string_plus_bytes_concatenates);
+  r = r.it("byte units are binary", test_byte_units_are_binary);
+  r = r.it("duration arithmetic", test_duration_arithmetic);
+  r = r.it("int arithmetic stays integral", test_int_arithmetic_stays_integral);
+  r = r.it("int division truncates", test_int_division_truncates);
+  r = r.it("real arithmetic", test_real_arithmetic);
+  r = r.it("unset header is empty string", test_unset_header_is_empty_string);
+  r = r.it("regsub backreference", test_regsub_backreference);
+  r = r.it("regsuball replaces every match", test_regsuball_replaces_every_match);
+  r = r.it("acl admits a covered address", test_acl_admits_a_covered_address);
+  r = r.it("acl exclusion beats a broader inclusion", test_acl_exclusion_beats_a_broader_inclusion);
+  r = r.it("acl rejects an uncovered address", test_acl_rejects_an_uncovered_address);
+  r = r.it("acl matches localhost", test_acl_matches_localhost);
+  r = r.it("acl negated match idiom", test_acl_negated_match_idiom);
+  r = r.it("beresp unreadable in recv", test_beresp_unreadable_in_recv);
+  r = r.it("req unreadable in backend sub", test_req_unreadable_in_backend_sub);
+  r = r.it("obj hits is read only", test_obj_hits_is_read_only);
+  r = r.it("resp unwritable in recv", test_resp_unwritable_in_recv);
+  r = r.it("unknown variable is rejected", test_unknown_variable_is_rejected);
+  r = r.it("unset scalar is rejected", test_unset_scalar_is_rejected);
+  r = r.it("called sub inherits caller scope", test_called_sub_inherits_caller_scope);
+  r = r.it("miss then hit", test_miss_then_hit);
+  r = r.it("obj hits counts from one", test_obj_hits_counts_from_one);
+  r = r.it("pass never caches", test_pass_never_caches);
+  r = r.it("builtin recv passes on cookie", test_builtin_recv_passes_on_cookie);
+  r = r.it("builtin recv hashes without cookie", test_builtin_recv_hashes_without_cookie);
+  r = r.it("builtin recv pipes unknown method", test_builtin_recv_pipes_unknown_method);
+  r = r.it("zero ttl is not stored", test_zero_ttl_is_not_stored);
+  r = r.it("uncacheable is not stored", test_uncacheable_is_not_stored);
+  r = r.it("purge evicts", test_purge_evicts);
+  r = r.it("synth carries status and reason", test_synth_carries_status_and_reason);
+  r = r.it("hash data separates by host", test_hash_data_separates_by_host);
+  r = r.it("call returns from the caller", test_call_returns_from_the_caller);
+  r = r.it("recursive call is bounded", test_recursive_call_is_bounded);
+  r = r.it("restart is bounded", test_restart_is_bounded);
+  r = r.it("compound assignment", test_compound_assignment);
+  r = r.it("and short circuits", test_and_short_circuits);
+  r = r.it("unknown function is rejected", test_unknown_function_is_rejected);
+  return r.finish();
+}

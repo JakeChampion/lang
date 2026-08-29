@@ -1,0 +1,852 @@
+// examples/vcl/eval.fern — the VCL evaluator: expressions and statements.
+//
+// Everything threads a `Txn` through and returns a new one, so the whole
+// evaluator is a pure function of (program, transaction, subroutine) and
+// nothing hides in a mutable cell. That is not a Fern workaround — it is
+// what makes the state machine in `machine.fern` able to hand a
+// transaction to one subroutine, take the result, and hand it to the
+// next, with the intermediate states still in hand for the log.
+//
+// Two VCL details drive the shape here:
+//
+//   * `~` is overloaded. Against a string it is a regex match; against an
+//     ACL name it is a subnet membership test. They are distinguished
+//     SYNTACTICALLY — an identifier naming an `acl` block — because there
+//     is no value that could tell them apart afterwards.
+//   * A bare identifier can be a variable, a backend name, or an ACL
+//     name, and only the program can say which.
+import "std/string";
+import "std/i64";
+import "std/float";
+import "std/regex";
+import "./ast";
+import "./value";
+import "./runtime";
+import "./vars";
+
+// The program in scope: the declarations the parser produced. Subroutine,
+// backend, and ACL lookups all run against it.
+pub struct Ctx { decls: ast.Decl[] }
+
+// A `return (…)` and the arguments it carried. `synth(750, "Moved")`
+// fills status and reason; every other action leaves them zero.
+pub struct Action { name: string, status: i64, reason: string }
+
+pub function action(name: string): Action {
+  return Action { name: name, status: 0, reason: "" };
+}
+
+// Whether a statement fell through to the next one or ended the
+// subroutine with an action.
+pub enum Flow { FNext, FReturn(Action) }
+
+pub struct EvalOut { txn: runtime.Txn, val: value.Value, ok: boolean, err: string }
+
+pub struct ExecOut { txn: runtime.Txn, flow: Flow, ok: boolean, err: string }
+
+function eok(t: runtime.Txn, v: value.Value): EvalOut {
+  return EvalOut { txn: t, val: v, ok: true, err: "" };
+}
+
+function eerr(t: runtime.Txn, msg: string): EvalOut {
+  return EvalOut { txn: t, val: VNone, ok: false, err: msg };
+}
+
+function xok(t: runtime.Txn, f: Flow): ExecOut {
+  return ExecOut { txn: t, flow: f, ok: true, err: "" };
+}
+
+function xerr(t: runtime.Txn, msg: string): ExecOut {
+  return ExecOut { txn: t, flow: FNext, ok: false, err: msg };
+}
+
+// ------------------------------------------------------------- lookups
+pub function find_sub(ctx: Ctx, name: string): Option[ast.Block] {
+  var i: i32 = 0;
+  while (i < ctx.decls.len()) {
+    match (ctx.decls[i]) {
+      DSub(s) => {
+        if (s.name == name) {
+          return Some(s.body);
+        }
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+pub function find_acl(ctx: Ctx, name: string): Option[ast.AclDecl] {
+  var i: i32 = 0;
+  while (i < ctx.decls.len()) {
+    match (ctx.decls[i]) {
+      DAcl(a) => {
+        if (a.name == name) {
+          return Some(a);
+        }
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+pub function has_acl(ctx: Ctx, name: string): boolean {
+  match (find_acl(ctx, name)) {
+    Some(a) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+pub function has_backend(ctx: Ctx, name: string): boolean {
+  var i: i32 = 0;
+  while (i < ctx.decls.len()) {
+    match (ctx.decls[i]) {
+      DBackend(b) => {
+        if (b.name == name) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ------------------------------------------------------------ ACL match
+// parse_ipv4 packs a dotted-quad into a 32-bit value, or None. Only IPv4
+// is handled: an IPv6 ACL entry is reported rather than silently failing
+// to match, which is the failure mode that would let a `purge` ACL
+// quietly admit everyone.
+pub function parse_ipv4(s: string): Option[i64] {
+  if (s == "localhost") {
+    return Some(2130706433);
+  }
+  var parts: string[] = s.split(".");
+  if (parts.len() != 4) {
+    return None;
+  }
+  var acc: i64 = 0;
+  var i: i32 = 0;
+  while (i < 4) {
+    match (parts[i].parse_int()) {
+      None => {
+        return None;
+      },
+      Some(n) => {
+        if (n < 0 || n > 255) {
+          return None;
+        }
+        acc = acc * 256 + n as i64;
+      }
+    }
+    i = i + 1;
+  }
+  return Some(acc);
+}
+
+// mask_of returns the high-bit mask for a prefix width, as a packed
+// 32-bit value.
+function mask_of(bits: i32): i64 {
+  if (bits <= 0) {
+    return 0;
+  }
+  if (bits >= 32) {
+    return 4294967295;
+  }
+  var low: i64 = 1;
+  low = low << 32 - bits;
+  return 4294967295 - (low - 1);
+}
+
+// How one ACL line bears on an address: whether it covers it, and how
+// specific it is. `bits` is the prefix width, which is what decides
+// between two entries that both cover the address.
+struct EntryHit { covers: boolean, bits: i32, ok: boolean, err: string }
+
+// entry_matches tests one ACL line against a packed address.
+function entry_matches(e: ast.AclEntry, ip: i64): EntryHit {
+  match (parse_ipv4(e.host)) {
+    None => {
+      return EntryHit { covers: false, bits: 0, ok: false, err: "ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'" };
+    },
+    Some(base) => {
+      var bits: i32 = 32;
+      if (e.mask != "") {
+        match (e.mask.parse_int()) {
+          Some(b) => {
+            bits = b;
+          },
+          None => {
+            return EntryHit { covers: false, bits: 0, ok: false, err: "ACL mask '" + e.mask + "' is not a number" };
+          }
+        }
+      }
+      if (bits < 0 || bits > 32) {
+        return EntryHit { covers: false, bits: 0, ok: false, err: "ACL mask /" + e.mask + " is out of range" };
+      }
+      var m: i64 = mask_of(bits);
+      return EntryHit { covers: (base & m) == (ip & m), bits: bits, ok: true, err: "" };
+    }
+  }
+}
+
+// acl_match tests an address against an ACL.
+//
+// The MOST SPECIFIC entry wins, not the first one written. That is
+// Varnish's rule and it is the only one that makes an exclusion usable:
+// in
+//
+//     acl purgers { "192.0.2.0"/24; ! "192.0.2.23"; }
+//
+// the excluded host is also covered by the /24, so first-match-wins would
+// admit it and the `!` line would never do anything. Comparing prefix
+// widths makes the /32 exclusion beat the /24 inclusion however the two
+// are ordered.
+pub function acl_match(ctx: Ctx, name: string, addr: string): Result[boolean, string] {
+  match (find_acl(ctx, name)) {
+    None => {
+      return Err("unknown ACL '" + name + "'");
+    },
+    Some(a) => {
+      match (parse_ipv4(addr)) {
+        None => {
+          return Err("'" + addr + "' is not an IPv4 address");
+        },
+        Some(ip) => {
+          return acl_walk(a, ip);
+        }
+      }
+    }
+  }
+}
+
+function acl_walk(a: ast.AclDecl, ip: i64): Result[boolean, string] {
+  var best_bits: i32 = 0 - 1;
+  var best_negated: boolean = false;
+  var i: i32 = 0;
+  while (i < a.entries.len()) {
+    var e: ast.AclEntry = a.entries[i];
+    var h: EntryHit = entry_matches(e, ip);
+    if (!h.ok) {
+      return Err(h.err);
+    }
+    if (h.covers && h.bits > best_bits) {
+      best_bits = h.bits;
+      best_negated = e.negated;
+    }
+    i = i + 1;
+  }
+  if (best_bits < 0) {
+    return Ok(false);
+  }
+  return Ok(!best_negated);
+}
+
+// ------------------------------------------------------------- builtins
+// vcl_template rewrites VCL's `\1` capture references into the `$1` form
+// `std/regex` expands, and escapes a literal `$` so it survives.
+function vcl_template(repl: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < repl.len()) {
+    var b: u8 = repl[i];
+    if (b == 36) {
+      out = out + "$$";
+    } else if (b == 92 && i + 1 < repl.len() && repl[i + 1] >= 48 && repl[i + 1] <= 57) {
+      out = out + "$" + slice_unchecked(repl, i + 1, i + 2);
+      i = i + 1;
+    } else {
+      out = out + slice_unchecked(repl, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function arg_str(args: value.Value[], i: i32): string {
+  if (i >= args.len()) {
+    return "";
+  }
+  return value.to_str(args[i]);
+}
+
+// call_text_builtin covers the VCL functions that are pure: they map
+// their arguments to a value and touch nothing. None returned means the
+// name is not one of them.
+function call_text_builtin(name: string, args: value.Value[]): Option[value.Value] {
+  if (name == "regsub") {
+    return Some(VString(regex.regex_replace_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)))));
+  }
+  if (name == "regsuball") {
+    return Some(VString(regex.regex_replace_all_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)))));
+  }
+  if (name == "std.tolower") {
+    return Some(VString(arg_str(args, 0).to_ascii_lower()));
+  }
+  if (name == "std.toupper") {
+    return Some(VString(arg_str(args, 0).to_ascii_upper()));
+  }
+  if (name == "std.integer") {
+    match (arg_str(args, 0).parse_int()) {
+      Some(n) => {
+        return Some(VInt(n as i64));
+      },
+      None => {
+        if (args.len() > 1) {
+          return Some(args[1]);
+        }
+        return Some(VInt(0));
+      }
+    }
+  }
+  return None;
+}
+
+// call_builtin dispatches a VCL function call: the pure ones above, then
+// the three that affect the transaction. Anything else is an error naming
+// the call, rather than a silent empty string that would quietly change
+// what a policy does.
+pub function call_builtin(t: runtime.Txn, name: string, args: value.Value[]): EvalOut {
+  match (call_text_builtin(name, args)) {
+    Some(v) => {
+      return eok(t, v);
+    },
+    None => {}
+  }
+  if (name == "std.log") {
+    return eok(t.note("std.log: " + arg_str(args, 0)), VNone);
+  }
+  if (name == "hash_data") {
+    return eok(t.add_hash(arg_str(args, 0)), VNone);
+  }
+  if (name == "synthetic") {
+    return eok(t.note("synthetic: " + arg_str(args, 0)), VNone);
+  }
+  return eerr(t, "unsupported function '" + name + "'");
+}
+
+// ---------------------------------------------------------- expressions
+// number_of turns a numeric literal's source spelling into a value,
+// keeping INT and REAL apart by whether a decimal point was written.
+function number_of(text: string): Result[value.Value, string] {
+  if (text.contains(".")) {
+    match (text.parse_float()) {
+      Some(f) => {
+        return Ok(VReal(f));
+      },
+      None => {
+        return Err("malformed real '" + text + "'");
+      }
+    }
+  }
+  match (text.parse_int()) {
+    Some(n) => {
+      return Ok(VInt(n as i64));
+    },
+    None => {
+      return Err("malformed integer '" + text + "'");
+    }
+  }
+}
+
+function qty_number(text: string): f64 {
+  match (text.parse_float()) {
+    Some(f) => {
+      return f;
+    },
+    None => {
+      return 0.0;
+    }
+  }
+}
+
+// eval_name resolves a bare identifier: a variable first, then a backend
+// or ACL declared in the program.
+function eval_name(ctx: Ctx, t: runtime.Txn, sub: string, name: string): EvalOut {
+  if (vars.is_var(name)) {
+    match (vars.read(t, sub, name)) {
+      Ok(v) => {
+        return eok(t, v);
+      },
+      Err(m) => {
+        return eerr(t, m);
+      }
+    }
+  }
+  if (has_backend(ctx, name)) {
+    return eok(t, VBackend(name));
+  }
+  if (has_acl(ctx, name)) {
+    return eok(t, VAcl(name));
+  }
+  return eerr(t, "unknown name '" + name + "'");
+}
+
+// eval_call evaluates the arguments left to right, threading the
+// transaction so a nested effect is ordered, then dispatches to a
+// builtin.
+function eval_call(ctx: Ctx, t: runtime.Txn, sub: string, c: ast.CallExpr): EvalOut {
+  var cur: runtime.Txn = t;
+  var out: value.Value[] = [];
+  var i: i32 = 0;
+  while (i < c.args.len()) {
+    var r: EvalOut = eval_expr(ctx, cur, sub, c.args[i]);
+    if (!r.ok) {
+      return r;
+    }
+    cur = r.txn;
+    out = out.append(r.val);
+    i = i + 1;
+  }
+  return call_builtin(cur, c.callee, out);
+}
+
+// is_acl_operand reports whether the right side of `~` names an ACL,
+// which is what selects subnet membership over a regex match.
+function is_acl_operand(ctx: Ctx, e: ast.Expr): string {
+  match (e) {
+    EVar(v) => {
+      if (has_acl(ctx, v.name)) {
+        return v.name;
+      }
+      return "";
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+// eval_match runs `~` / `!~`: an ACL membership test when the right side
+// names an ACL, a regex match otherwise.
+function eval_match(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
+  var negate: boolean = b.op == "!~";
+  var acl: string = is_acl_operand(ctx, b.rhs);
+  var left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  if (!left.ok) {
+    return left;
+  }
+  if (acl != "") {
+    match (acl_match(ctx, acl, value.to_str(left.val))) {
+      Err(m) => {
+        return eerr(left.txn, m);
+      },
+      Ok(hit) => {
+        return eok(left.txn, VBool(hit != negate));
+      }
+    }
+  }
+  var right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  if (!right.ok) {
+    return right;
+  }
+  var hit: boolean = regex.regex_match(value.to_str(right.val), value.to_str(left.val));
+  return eok(right.txn, VBool(hit != negate));
+}
+
+// eval_logical short-circuits `&&` and `||`, which matters because the
+// right side can have effects.
+function eval_logical(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
+  var left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  if (!left.ok) {
+    return left;
+  }
+  var lv: boolean = value.to_bool(left.val);
+  if (b.op == "&&" && !lv) {
+    return eok(left.txn, VBool(false));
+  }
+  if (b.op == "||" && lv) {
+    return eok(left.txn, VBool(true));
+  }
+  var right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  if (!right.ok) {
+    return right;
+  }
+  return eok(right.txn, VBool(value.to_bool(right.val)));
+}
+
+function is_ordering(op: string): boolean {
+  return op == "<" || op == "<=" || op == ">" || op == ">=";
+}
+
+function ordering_holds(op: string, c: i32): boolean {
+  if (op == "<") {
+    return c < 0;
+  }
+  if (op == "<=") {
+    return c <= 0;
+  }
+  if (op == ">") {
+    return c > 0;
+  }
+  return c >= 0;
+}
+
+// eval_compare handles equality and ordering, which share the property
+// that both operands are already evaluated and the result is a boolean.
+function eval_compare(op: string, lv: value.Value, rv: value.Value): Result[value.Value, string] {
+  if (op == "==") {
+    return Ok(VBool(value.equal(lv, rv)));
+  }
+  if (op == "!=") {
+    return Ok(VBool(!value.equal(lv, rv)));
+  }
+  match (value.compare(lv, rv)) {
+    Err(m) => {
+      return Err(m);
+    },
+    Ok(c) => {
+      return Ok(VBool(ordering_holds(op, c)));
+    }
+  }
+}
+
+// op_class names the family a binary operator belongs to, so eval_binary
+// branches once per family rather than once per operator.
+function op_class(op: string): string {
+  if (op == "~" || op == "!~") {
+    return "match";
+  }
+  if (op == "&&" || op == "||") {
+    return "logical";
+  }
+  if (op == "==" || op == "!=" || is_ordering(op)) {
+    return "compare";
+  }
+  return "arith";
+}
+
+// eval_binary routes a binary operator to its family. Match and logical
+// take their operands unevaluated — one needs its right side
+// syntactically, the other must be able to skip it — so they run before
+// anything is evaluated.
+function eval_binary(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
+  var cls: string = op_class(b.op);
+  if (cls == "match") {
+    return eval_match(ctx, t, sub, b);
+  }
+  if (cls == "logical") {
+    return eval_logical(ctx, t, sub, b);
+  }
+  var left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  if (!left.ok) {
+    return left;
+  }
+  var right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  if (!right.ok) {
+    return right;
+  }
+  if (cls == "compare") {
+    match (eval_compare(b.op, left.val, right.val)) {
+      Err(m) => {
+        return eerr(right.txn, m);
+      },
+      Ok(v) => {
+        return eok(right.txn, v);
+      }
+    }
+  }
+  match (value.arith(b.op, left.val, right.val)) {
+    Err(m) => {
+      return eerr(right.txn, m);
+    },
+    Ok(v) => {
+      return eok(right.txn, v);
+    }
+  }
+}
+
+// One arm per Expr variant. A total dispatch over a union counts the same
+// as nested branching to the rule; splitting the arms across two
+// functions would hide half the tree from the reader.
+// fern-lint: allow cyclomatic-complexity
+pub function eval_expr(ctx: Ctx, t: runtime.Txn, sub: string, e: ast.Expr): EvalOut {
+  match (e) {
+    EString(s) => {
+      return eok(t, VString(s.value));
+    },
+    EBool(b) => {
+      return eok(t, VBool(b.value));
+    },
+    EParen(inner) => {
+      return eval_expr(ctx, t, sub, inner);
+    },
+    EVar(v) => {
+      return eval_name(ctx, t, sub, v.name);
+    },
+    ECall(c) => {
+      return eval_call(ctx, t, sub, c);
+    },
+    EBinary(b) => {
+      return eval_binary(ctx, t, sub, b);
+    },
+    EUnary(u) => {
+      return eval_unary(ctx, t, sub, u);
+    },
+    ENumber(n) => {
+      match (number_of(n.text)) {
+        Ok(v) => {
+          return eok(t, v);
+        },
+        Err(m) => {
+          return eerr(t, m);
+        }
+      }
+    },
+    EDuration(q) => {
+      match (value.duration_seconds(qty_number(q.text), q.unit)) {
+        Ok(secs) => {
+          return eok(t, VDuration(secs));
+        },
+        Err(m) => {
+          return eerr(t, m);
+        }
+      }
+    },
+    EBytes(q) => {
+      match (value.byte_count(qty_number(q.text), q.unit)) {
+        Ok(n) => {
+          return eok(t, VBytes(n));
+        },
+        Err(m) => {
+          return eerr(t, m);
+        }
+      }
+    }
+  }
+}
+
+function eval_unary(ctx: Ctx, t: runtime.Txn, sub: string, u: ast.UnExpr): EvalOut {
+  var r: EvalOut = eval_expr(ctx, t, sub, u.operand);
+  if (!r.ok) {
+    return r;
+  }
+  if (u.op == "!") {
+    return eok(r.txn, VBool(!value.to_bool(r.val)));
+  }
+  match (value.arith("-", VInt(0), r.val)) {
+    Ok(v) => {
+      return eok(r.txn, v);
+    },
+    Err(m) => {
+      return eerr(r.txn, m);
+    }
+  }
+}
+
+// ----------------------------------------------------------- statements
+// The `call` nesting limit. VCL subroutines may call each other and
+// nothing in the grammar prevents a cycle, so the evaluator bounds the
+// depth rather than growing the stack until it dies.
+function max_call_depth(): i32 {
+  return 32;
+}
+
+// compound_op strips the `=` from `+=` and friends.
+function compound_op(op: string): string {
+  return slice_unchecked(op, 0, op.len() - 1).to_owned();
+}
+
+// exec_set runs `set <var> <op> <expr>;`, including the compound forms,
+// which read the current value first.
+function exec_set(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.SetStmt): ExecOut {
+  var r: EvalOut = eval_expr(ctx, t, sub, s.value);
+  if (!r.ok) {
+    return xerr(r.txn, r.err);
+  }
+  var v: value.Value = r.val;
+  var cur: runtime.Txn = r.txn;
+  if (s.op != "=") {
+    match (vars.read(cur, sub, s.target)) {
+      Err(m) => {
+        return xerr(cur, m);
+      },
+      Ok(old) => {
+        match (value.arith(compound_op(s.op), old, v)) {
+          Err(m) => {
+            return xerr(cur, m);
+          },
+          Ok(combined) => {
+            v = combined;
+          }
+        }
+      }
+    }
+  }
+  match (vars.assign(cur, sub, s.target, v)) {
+    Err(m) => {
+      return xerr(cur, m);
+    },
+    Ok(next) => {
+      return xok(next, FNext);
+    }
+  }
+}
+
+// exec_return builds the action a `return (…)` names. `synth` carries a
+// status and an optional reason; every other action ignores its
+// arguments, which VCL's grammar allows it to have.
+function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): ExecOut {
+  if (s.action == "") {
+    return xok(t, FReturn(action("none")));
+  }
+  if (!s.has_args || s.args.len() == 0) {
+    return xok(t, FReturn(action(s.action)));
+  }
+  var first: EvalOut = eval_expr(ctx, t, sub, s.args[0]);
+  if (!first.ok) {
+    return xerr(first.txn, first.err);
+  }
+  var status: i64 = 0;
+  match (first.val) {
+    VInt(n) => {
+      status = n;
+    },
+    _ => {
+      status = 0;
+    }
+  }
+  var cur: runtime.Txn = first.txn;
+  var reason: string = "";
+  if (s.args.len() > 1) {
+    var second: EvalOut = eval_expr(ctx, cur, sub, s.args[1]);
+    if (!second.ok) {
+      return xerr(second.txn, second.err);
+    }
+    cur = second.txn;
+    reason = value.to_str(second.val);
+  }
+  return xok(cur, FReturn(Action { name: s.action, status: status, reason: reason }));
+}
+
+// exec_if walks the arms in order and runs the first whose condition
+// holds, or the trailing `else` when none does.
+function exec_if(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.IfStmt, depth: i32): ExecOut {
+  var cur: runtime.Txn = t;
+  var i: i32 = 0;
+  while (i < s.arms.len()) {
+    var c: EvalOut = eval_expr(ctx, cur, sub, s.arms[i].cond);
+    if (!c.ok) {
+      return xerr(c.txn, c.err);
+    }
+    cur = c.txn;
+    if (value.to_bool(c.val)) {
+      return exec_block(ctx, cur, sub, s.arms[i].body, depth);
+    }
+    i = i + 1;
+  }
+  if (s.has_else) {
+    return exec_block(ctx, cur, sub, s.else_blk, depth);
+  }
+  return xok(cur, FNext);
+}
+
+// exec_call runs another subroutine in the CALLER's context: `sub` is
+// passed through unchanged, so a helper called from `vcl_recv` sees
+// exactly what `vcl_recv` may see. A `return` inside it ends the whole
+// subroutine, not just the callee.
+function exec_call(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.CallStmt, depth: i32): ExecOut {
+  if (depth >= max_call_depth()) {
+    return xerr(t, "call nesting too deep at '" + s.name + "' (recursive subroutines?)");
+  }
+  match (find_sub(ctx, s.name)) {
+    None => {
+      return xerr(t, "call to undefined subroutine '" + s.name + "'");
+    },
+    Some(body) => {
+      return exec_block(ctx, t, sub, body, depth + 1);
+    }
+  }
+}
+
+// A total dispatch over Stmt, one arm per variant — see eval_expr.
+// fern-lint: allow cyclomatic-complexity
+pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth: i32): ExecOut {
+  match (s) {
+    SSet(x) => {
+      return exec_set(ctx, t, sub, x);
+    },
+    SUnset(x) => {
+      match (vars.unset(t, sub, x.target)) {
+        Err(m) => {
+          return xerr(t, m);
+        },
+        Ok(next) => {
+          return xok(next, FNext);
+        }
+      }
+    },
+    SIf(x) => {
+      return exec_if(ctx, t, sub, x, depth);
+    },
+    SReturn(x) => {
+      return exec_return(ctx, t, sub, x);
+    },
+    SCall(x) => {
+      return exec_call(ctx, t, sub, x, depth);
+    },
+    SExpr(x) => {
+      var r: EvalOut = eval_expr(ctx, t, sub, x.value);
+      if (!r.ok) {
+        return xerr(r.txn, r.err);
+      }
+      return xok(r.txn, FNext);
+    },
+    SBlock(b) => {
+      return exec_block(ctx, t, sub, b, depth);
+    },
+    SNew(x) => {
+      return xerr(t, "'new " + x.name + "' needs VMOD objects, which this evaluator does not implement");
+    },
+    SInclude(x) => {
+      return xerr(t, "'include' is resolved before evaluation, not during it");
+    },
+    SCSource(x) => {
+      return xerr(t, "inline C cannot be evaluated");
+    }
+  }
+}
+
+// exec_block runs statements until one returns or the block ends.
+pub function exec_block(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.Block, depth: i32): ExecOut {
+  var cur: runtime.Txn = t;
+  var i: i32 = 0;
+  while (i < b.stmts.len()) {
+    var r: ExecOut = exec_stmt(ctx, cur, sub, b.stmts[i], depth);
+    if (!r.ok) {
+      return r;
+    }
+    cur = r.txn;
+    match (r.flow) {
+      FReturn(a) => {
+        return r;
+      },
+      FNext => {}
+    }
+    i = i + 1;
+  }
+  return xok(cur, FNext);
+}
+
+// run_sub executes a `vcl_*` subroutine by name. A program that does not
+// define it is not an error: VCL's built-in default for that subroutine
+// applies, which is the state machine's business, so this reports "no
+// action taken" and lets it decide.
+pub function run_sub(ctx: Ctx, t: runtime.Txn, name: string): ExecOut {
+  match (find_sub(ctx, name)) {
+    None => {
+      return xok(t, FNext);
+    },
+    Some(body) => {
+      return exec_block(ctx, t, name, body, 0);
+    }
+  }
+}
