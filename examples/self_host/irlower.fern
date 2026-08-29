@@ -2588,7 +2588,11 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
                         // lift wrapped it into a `__mkclo$…` env box). One
                         // pointer slot; the match arm marks the binding a
                         // closure local so `f(args)` dispatches env-first.
-                        if (pt == "i32" || pt == "string" || pt == "i64" || pt == "f64" || pt == "boolean" || pt == "clo") {
+                        // elem_ty_is_f64slot, not `== "f64"`: an f32 payload
+                        // rides the same 8-byte slot, and spelling it literally
+                        // dropped the tag for one — which loses the payload type
+                        // rather than widening it (#7756).
+                        if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean" || pt == "clo") {
                             return "Option[" + pt + "]";
                         }
                         return "";
@@ -2620,7 +2624,7 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
 function opt_elem_tag_from_ty(ty: string): string {
     if (ty.len() < 8 || slice_unchecked(ty, 0, 7) != "Option[") { return ""; }
     var pt: string = opt_payload_type(ty, "Some");
-    if (pt == "i32" || pt == "string" || pt == "i64" || pt == "f64" || pt == "boolean") { return ty; }
+    if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean") { return ty; }
     return "";
 }
 
@@ -2886,6 +2890,12 @@ pub function elem_type_tag(e: ast.Expr, s: LowerState): string {
         },
         _ => {}
     }
+    // f32 BEFORE f64, for expr_scalar_type's reason: an f32 value is also
+    // is_f64 (both ride the 8-byte slot), so without this an inferred f32
+    // element is tagged "f64" and loses the width its method dispatch keys on
+    // — the value stored is right, only `to_string` renders at f64 precision
+    // (#7756).
+    if (expr_is_f32(e, s)) { return "f32"; }
     if (expr_is_f64(e, s)) { return "f64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
     // A bare integer literal too big for i32 is an i64 (an i64-typed local /
@@ -9717,7 +9727,12 @@ function lower_opt_make_payload(tag: i32, arg: ast.Expr, s: LowerState): LowerSt
         _ => {}
     }
     if (ptag == "i64") { return so.emit(ir.op_opt_make_w(tag, 64, true)); }
-    if (ptag == "f64") { return so.emit(ir.op_opt_make_w(tag, 64, false)); }
+    // elem_ty_is_f64slot, not `== "f64"`: an f32 payload rides the same 8-byte
+    // slot, and the READ side already asks the helper — so spelling it literally
+    // here stored the narrow 4-byte form under a wide read. On the register
+    // backends that is invisible; wasm validates it and refuses the module
+    // (`expected i32, found f64`). #7756.
+    if (elem_ty_is_f64slot(ptag)) { return so.emit(ir.op_opt_make_w(tag, 64, false)); }
     return so.emit(ir.op_opt_make(tag));
 }
 
@@ -9733,7 +9748,7 @@ function lower_opt_make_payload(tag: i32, arg: ast.Expr, s: LowerState): LowerSt
 // byte-identical to lower_opt_make_payload.
 function lower_opt_make_payload_exp(tag: i32, arg: ast.Expr, exp_tag: string, s: LowerState): LowerState {
     var ptag: string = elem_type_tag(arg, s);
-    var want_i64: boolean = (exp_tag == "i64" || exp_tag == "u64") && ptag != "i64" && ptag != "f64";
+    var want_i64: boolean = (exp_tag == "i64" || exp_tag == "u64") && ptag != "i64" && !elem_ty_is_f64slot(ptag);
     if (!want_i64) { return lower_opt_make_payload(tag, arg, s); }
     // lower_i64 handles a numeric literal (const_i64_text), an `as i64`/`as u64`
     // cast, an i64 slot, and i64 arithmetic; it bails (ok=false) on a bare i32
