@@ -239,3 +239,86 @@ func TestVerifyRcIgnoresFunctionsWithNoReuseSite(t *testing.T) {
 		t.Errorf("a function with no reuse site must be untouched, got %v / %d sites", problems, cov.Sites)
 	}
 }
+
+// concatFuncs builds one function from several op streams laid end to end.
+func concatFuncs(name string, streams ...[]Op) *Func {
+	f := &Func{Name: name}
+	for _, s := range streams {
+		f.Ops = append(f.Ops, s...)
+	}
+	return f
+}
+
+func TestVerifyRcCatchesOneDonorClaimedTwice(t *testing.T) {
+	// Both sites take local 1's box, one after the other, with nothing
+	// rebinding it between. The first gives the allocation away; the
+	// second hands the same memory to a second recipient.
+	f := concatFuncs("twice",
+		selfHostReuse(donor, donor).Ops,
+		selfHostReuse(donor, donor).Ops,
+	)
+	problems, cov := verifyRc(f)
+	if cov.Sites != 2 || cov.Checked != 2 {
+		t.Fatalf("both sites must be modelled, got %d of %d (skips %v)", cov.Checked, cov.Sites, cov.Skipped)
+	}
+	if len(problems) != 1 {
+		t.Fatalf("want one problem, got %d: %v", len(problems), problems)
+	}
+	if !strings.Contains(problems[0].Msg, "one allocation handed to two recipients") {
+		t.Errorf("problem must name the double claim, got %q", problems[0].Msg)
+	}
+}
+
+func TestVerifyRcAllowsSiblingArmsClaimingOneDonor(t *testing.T) {
+	// The false-positive this check exists to avoid. An if-arm's recipient
+	// is an ordinary block-scoped var so sibling arms naturally reuse one
+	// name, and the pairing deliberately restarts the else arm from the
+	// same consumed set (#4402 opt 3). Only one arm runs, so two claims
+	// here are safe — and docs/rc-log/2026-08-29-xblock-recipient-site-key.md
+	// is precisely this shape.
+	f := concatFuncs("siblings",
+		[]Op{{Kind: OpConstI32, I32: 1}, {Kind: OpIf, I32: BlockTypeVoid}},
+		selfHostReuse(donor, donor).Ops,
+		[]Op{{Kind: OpElse}},
+		selfHostReuse(donor, donor).Ops,
+		[]Op{{Kind: OpEnd}},
+	)
+	problems, cov := verifyRc(f)
+	if cov.Checked != 2 {
+		t.Fatalf("both sites must be modelled, got %d of %d (skips %v)", cov.Checked, cov.Sites, cov.Skipped)
+	}
+	if len(problems) != 0 {
+		t.Errorf("exclusive arms must not be reported as a double claim, got %v", problems)
+	}
+}
+
+func TestVerifyRcAllowsAReclaimAfterTheDonorIsRebound(t *testing.T) {
+	// A store to the donor's slot between the two sites makes the second
+	// claim a different box.
+	f := concatFuncs("rebound",
+		selfHostReuse(donor, donor).Ops,
+		[]Op{{Kind: OpConstI32, I32: 0}, {Kind: OpStoreLocal, I32: donor}},
+		selfHostReuse(donor, donor).Ops,
+	)
+	problems, cov := verifyRc(f)
+	if cov.Checked != 2 {
+		t.Fatalf("both sites must be modelled, got %d of %d", cov.Checked, cov.Sites)
+	}
+	if len(problems) != 0 {
+		t.Errorf("a rebound donor must not be reported as a double claim, got %v", problems)
+	}
+}
+
+func TestVerifyRcIgnoresTwoSitesOnDifferentDonors(t *testing.T) {
+	f := concatFuncs("distinct",
+		selfHostReuse(donor, donor).Ops,
+		selfHostReuse(other, other).Ops,
+	)
+	problems, cov := verifyRc(f)
+	if cov.Checked != 2 {
+		t.Fatalf("both sites must be modelled, got %d of %d", cov.Checked, cov.Sites)
+	}
+	if len(problems) != 0 {
+		t.Errorf("distinct donors must not be reported, got %v", problems)
+	}
+}
