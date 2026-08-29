@@ -48,6 +48,26 @@ type RCSite struct {
 	// this op — so the value is still wanted and this is not its last
 	// use. A release here would be premature; a retain here is holding
 	// the value for that later use.
+	//
+	// It is a question about SSA uses, and that is NOT the same question
+	// as "is this reference count balanced". A retain can hand its count
+	// to a data structure rather than to a later use, and then the value
+	// is legitimately dead afterwards. `__map_own_key` in core/map.fern
+	// is the worked example, and it is every one of the 40 retains the
+	// corpus reports as dead:
+	//
+	//	__fern_rc_inc(__load_ptr(boxed));   // result discarded
+	//	return boxed;
+	//
+	// The retain bumps the string's heap buffer while the function
+	// returns the CELL. Nothing uses the retained pointer again, and
+	// nothing is wrong: ownership leaves through the return, because the
+	// buffer is reachable from `boxed` through memory.
+	//
+	// So "dead afterwards" is a filter, not a verdict. Separating a
+	// genuine unbalanced retain from this shape needs reachability
+	// THROUGH MEMORY — whether the retained pointer is reachable from a
+	// value that escapes — which this analysis does not have.
 	LiveAfter bool
 
 	// SrcOp is the source op index this site maps back to, and Mapped
