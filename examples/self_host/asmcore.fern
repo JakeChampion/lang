@@ -911,9 +911,15 @@ pub function rt_src_tcp_connect(t: string): string {
 //
 // `host` is a dotted-quad LITERAL (irlower passes the string, unlike
 // tcp_connect's pre-packed i32), so the quad is parsed here — accumulate each
-// octet, store on '.', store the last after the loop.
+// octet, close a group on '.', and take the last after the loop.
+//
+// The parse runs BEFORE socket(2) and rejects anything that is not four
+// digit-only groups of at most 255, returning -3 (`invalid-argument`) with no
+// descriptor to close. It accumulated every non-'.' byte as (c - 48) until
+// #7740: a hostname reported success and sent to the address its letters
+// happened to make, and a fifth group stored past the 16-byte sockaddr.
 pub function rt_src_udp_send(t: string): string {
-    return "function __fern_udp_send(host: string, port: i32, data: string): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var oct: i32 = 0; var idx: i32 = 0; var i: i32 = 0; var hn: i32 = host.len(); while (i < hn) { var c: i32 = host[i]; if (c == 46) { __raw_store8(sa, 4 + idx, oct & 255); idx = idx + 1; oct = 0; } else { oct = oct * 10 + (c - 48); } i = i + 1; } __raw_store8(sa, 4 + idx, oct & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return rc; } var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_data(data), data.len()); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return w; }";
+    return "function __fern_udp_send(host: string, port: i32, data: string): i32 { var o0: i32 = 0; var o1: i32 = 0; var o2: i32 = 0; var oct: i32 = 0; var idx: i32 = 0; var i: i32 = 0; var bad: i32 = 0; var dig: i32 = 0; var hn: i32 = host.len(); while (i < hn) { var c: i32 = host[i]; if (c == 46) { if (dig == 0) { bad = 1; } if (idx == 0) { o0 = oct; } else if (idx == 1) { o1 = oct; } else if (idx == 2) { o2 = oct; } else { bad = 1; } idx = idx + 1; oct = 0; dig = 0; } else { if (c < 48) { bad = 1; } if (c > 57) { bad = 1; } oct = oct * 10 + (c - 48); dig = dig + 1; if (oct > 255) { bad = 1; } } i = i + 1; } if (bad != 0) { return -3; } if (idx != 3) { return -3; } if (dig == 0) { return -3; } var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, o0); __raw_store8(sa, 5, o1); __raw_store8(sa, 6, o2); __raw_store8(sa, 7, oct); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return rc; } var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_data(data), data.len()); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return w; }";
 }
 
 // rt_src_tcp_send backs `tcp_send(fd, s)` (#2649, syscall-leaf) → bytes written
