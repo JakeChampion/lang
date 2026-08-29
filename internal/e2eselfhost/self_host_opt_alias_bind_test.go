@@ -177,6 +177,124 @@ function round(i: i32): i32 {
 			want: 19, balance: true,
 		},
 		{
+			// THE CHAIN (#7750). `var t = …; var v = t; var u = v;` shares one box
+			// across three names; asking the three conditions one bind at a time
+			// refuses all of them, because the middle link's bare-ident use in the
+			// next bind reads as an escape. Every link retains at its bind and
+			// releases box-only, so N links are N extra retains and N extra box
+			// decs — the single-link arithmetic with more owners.
+			name: "arr_alias_chain",
+			src: `function round(i: i32): i32 {
+    var t: Option[i32[]] = Some([i, i + 1]);
+    var v: Option[i32[]] = t;
+    var u: Option[i32[]] = v;
+    return i % 7;
+}` + optAliasBindMain,
+			want: 46, balance: true,
+		},
+		{
+			// Three links: the closure is transitive, so the rule has no length it
+			// stops at.
+			name: "arr_alias_chain_three_links",
+			src: `function round(i: i32): i32 {
+    var t: Option[i32[]] = Some([i, i + 1]);
+    var v: Option[i32[]] = t;
+    var u: Option[i32[]] = v;
+    var z: Option[i32[]] = u;
+    return i % 7;
+}` + optAliasBindMain,
+			want: 46, balance: true,
+		},
+		{
+			// The last link is MATCHED — the commonest use of a chain, and the row
+			// that needs the match-borrow reading to reach every link rather than
+			// just the first.
+			name: "arr_alias_chain_matched",
+			src: `function round(i: i32): i32 {
+    var t: Option[i32[]] = Some([i, i + 1]);
+    var v: Option[i32[]] = t;
+    var u: Option[i32[]] = v;
+    var n: i32 = 0;
+    match (u) { Some(a) => { n = a.len(); }, None => {} }
+    return n + i;
+}` + optAliasBindMain,
+			want: 4, balance: true,
+		},
+		{
+			// The STRING payload class through a chain.
+			name: "str_alias_chain",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var t: Option[string] = Some(w("ab"));
+    var v: Option[string] = t;
+    var u: Option[string] = v;
+    return i % 7;
+}` + optAliasBindMain,
+			want: 46, balance: true,
+		},
+		{
+			// The NESTED-Option class through a chain — the deepest release in the
+			// family, and the one whose second deep walk would free the inner
+			// string as well as the inner box.
+			name: "optopt_alias_chain",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var t: Option[Option[string]] = Some(Some(w("ab")));
+    var v: Option[Option[string]] = t;
+    var u: Option[Option[string]] = v;
+    return i % 7;
+}` + optAliasBindMain,
+			want: 46, balance: true,
+		},
+		{
+			// The chain lives in an IF ARM while the source outlives it: every link
+			// retains and releases on the taken path, and the source sweeps
+			// unconditionally.
+			name: "arr_alias_chain_conditional",
+			src: `function round(i: i32): i32 {
+    var t: Option[i32[]] = Some([i, i + 1]);
+    var n: i32 = 0;
+    if (i % 2 == 0) {
+        var v: Option[i32[]] = t;
+        var u: Option[i32[]] = v;
+        n = 1;
+    }
+    return n + i;
+}` + optAliasBindMain,
+			want: 20, balance: true,
+		},
+		{
+			// REFUSED: a link hands the PAYLOAD out. All-or-nothing — the escape is
+			// on `u`, and it costs `t` and `v` their credit too.
+			name: "refuses_alias_chain_payload_out",
+			src: `function round(i: i32): i32 {
+    var t: Option[i32[]] = Some([i, i + 1]);
+    var v: Option[i32[]] = t;
+    var u: Option[i32[]] = v;
+    var out: i32[] = [0];
+    match (u) { Some(a) => { out = a; }, None => {} }
+    return out.len() + i;
+}` + optAliasBindMain,
+			want: 4, wantFrees: 200,
+		},
+		{
+			// REFUSED: the last link is RETURNED, so the box outlives the frame and
+			// all three names describe what the caller now holds.
+			name: "refuses_alias_chain_returned",
+			src: `function esc(i: i32): Option[i32[]] {
+    var t: Option[i32[]] = Some([i, i + 1]);
+    var v: Option[i32[]] = t;
+    var u: Option[i32[]] = v;
+    return u;
+}
+function round(i: i32): i32 {
+    var n: i32 = 0;
+    match (esc(i)) { Some(a) => { n = a.len(); }, None => {} }
+    return n + i;
+}` + optAliasBindMain,
+			want: 4, wantFrees: 0,
+		},
+		{
 			// REFUSED, and it must stay refused: the alias carries the PAYLOAD out
 			// of its arm, so the element buffer outlives the source's deep release.
 			// Admitting it is a use-after-free, not a leak — the shape
