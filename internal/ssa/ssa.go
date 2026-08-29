@@ -521,6 +521,47 @@ type Op struct {
 	// loads read. Nil means one 8-byte slot per capture (the uniform layout
 	// hand-built SSA closures assume).
 	CaptureSlots []int32
+
+	// SrcOp is the index in the source ir.Func.Ops this Op was lifted from,
+	// PLUS ONE. Zero means no IR origin.
+	//
+	// The +1 is what makes the zero value mean "unknown" rather than "op 0".
+	// Hand-built SSA — the unit tests, and anything constructing a Func as a
+	// literal — never sets it, and a plain 0 there would otherwise be an
+	// assertion that every such op came from the first IR op. Read it through
+	// SourceOp rather than unpacking the bias at each use.
+	//
+	// It exists so an analysis that runs over the lifted form can put its
+	// results back: a decision about an SSA value maps to a position in the
+	// op stream the emitters consume. That is what lets ownership analysis
+	// use SSA's names, def-use and dominance without moving codegen onto SSA
+	// (docs/SSA-CUTOVER-PLAN.md).
+	//
+	// Only LiftFromIR populates it, and only for ops with a source op to name.
+	// A phi has none — it is synthesised at a join, not lifted — and neither
+	// does anything ssa.Optimize creates, which is why an analysis that needs
+	// total provenance must run on the unoptimised lift.
+	SrcOp int32
+}
+
+// SetSourceOp tells the op constructors which source ir.Func.Ops index to
+// stamp onto everything created next. LiftFromIR calls it once per source op;
+// pass -1 to stamp nothing.
+func (f *Func) SetSourceOp(i int) {
+	if i < 0 {
+		f.curSrcOp = 0
+		return
+	}
+	f.curSrcOp = int32(i + 1)
+}
+
+// SourceOp returns the index in the source ir.Func.Ops this Op was lifted
+// from. ok is false when the Op has no IR origin.
+func (o *Op) SourceOp() (int, bool) {
+	if o.SrcOp == 0 {
+		return 0, false
+	}
+	return int(o.SrcOp - 1), true
 }
 
 // TermKind enumerates terminator shapes. Every Block ends
@@ -594,6 +635,13 @@ type Func struct {
 	Params []Value
 	Blocks []*Block
 	Entry  *Block
+
+	// curSrcOp is the source ir.Func.Ops index (plus one) that the op
+	// constructors stamp onto everything they create. LiftFromIR advances it
+	// once per source op so provenance is total by construction rather than
+	// set at each of its 40-odd construction sites, where one omission would
+	// be a silently unattributed op. Zero for every other builder.
+	curSrcOp int32
 
 	// ParamWidths is the bit-width of each param in `Params`
 	// (excluding the zero sentinel) — 32 by default, 64 when
@@ -679,6 +727,7 @@ func (f *Func) AddOp(b *Block, kind OpKind, args ...Value) Value {
 		Kind:   kind,
 		Result: result,
 		Args:   args,
+		SrcOp:  f.curSrcOp,
 	}
 	b.Ops = append(b.Ops, op)
 	return result
@@ -687,7 +736,7 @@ func (f *Func) AddOp(b *Block, kind OpKind, args ...Value) Value {
 // AddOpNoResult appends a side-effect-only Op (Store, etc.)
 // to block `b`. The Op's Result is the zero sentinel.
 func (f *Func) AddOpNoResult(b *Block, kind OpKind, args ...Value) *Op {
-	op := &Op{Kind: kind, Args: args}
+	op := &Op{Kind: kind, Args: args, SrcOp: f.curSrcOp}
 	b.Ops = append(b.Ops, op)
 	return op
 }
@@ -700,7 +749,7 @@ func (f *Func) AddOpNoResult(b *Block, kind OpKind, args ...Value) *Op {
 func (f *Func) AddCallPair(b *Block, args ...Value) (Value, Value) {
 	tag := f.NewValue()
 	payload := f.NewValue()
-	op := &Op{Kind: OpCallPair, Result: tag, Result2: payload, Args: args}
+	op := &Op{Kind: OpCallPair, Result: tag, Result2: payload, Args: args, SrcOp: f.curSrcOp}
 	b.Ops = append(b.Ops, op)
 	return tag, payload
 }

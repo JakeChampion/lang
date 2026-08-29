@@ -86,6 +86,10 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	l.cur = l.out.NewBlock()
 
 	for i, op := range in.Ops {
+		// Every op the handler creates is stamped with this source index,
+		// so provenance is total without threading it through 40-odd
+		// construction sites (ssa.Op.SrcOp).
+		l.out.SetSourceOp(i)
 		if err := l.handle(i, op); err != nil {
 			return nil, err
 		}
