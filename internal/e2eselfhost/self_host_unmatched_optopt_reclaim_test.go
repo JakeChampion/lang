@@ -196,9 +196,17 @@ function round(i: i32): i32 {
 			want: 13, balance: true,
 		},
 		{
-			// STILL LEAKING, deliberately: the MATCHED rc-inner shape belongs to the
-			// consuming-match family, which reclaims part of it already (800/400).
-			// Pinned so it cannot drift into an over-release while that half waits.
+			// STILL LEAKING, deliberately, and one of THREE matched rc-inner shapes
+			// that behave differently — the split is recorded on #7718:
+			//
+			//	Some(Some("ab"))     literal inner    400/400/0   BALANCED
+			//	Some(Some(w("ab")))  producer inner   800/400     this row
+			//	Some(None)           no inner payload 400/0       rc_inner_matched_none
+			//
+			// So the machinery works; what the producer form loses is the string's
+			// own two blocks, which is the shape of a freshness-proof gap rather
+			// than a missing release. Pinned so it cannot drift into an
+			// over-release while that is worked.
 			name: "rc_inner_matched_still_partial",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -207,6 +215,33 @@ function round(i: i32): i32 {
     return 0;
 }` + unmatchedOptoptMain,
 			want: 19, wantFrees: 400,
+		},
+		{
+			// The LITERAL-inner control for the row above: same shape, inner string
+			// a literal rather than a producer result, and it BALANCES. This is what
+			// says the two-level release is present and working on the matched side,
+			// so the producer form's loss is about proving the inner fresh.
+			name: "rc_inner_matched_literal",
+			src: `function round(i: i32): i32 {
+    var o: Option[Option[string]] = Some(Some("ab"));
+    match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
+    return 0;
+}` + unmatchedOptoptMain,
+			want: 68, balance: true,
+		},
+		{
+			// STILL LEAKING: the matched `Some(None)` rc-inner shape frees NOTHING
+			// (400/0, 16000, doubling with rounds), where the UNMATCHED spelling of
+			// the same program balances via #7718's guarded walk. Unbounded and
+			// sanitizer-clean, so it is an under-release, and it was unpinned until
+			// now — this row is what stops it drifting into an over-release.
+			name: "rc_inner_matched_none",
+			src: `function round(i: i32): i32 {
+    var o: Option[Option[string]] = Some(None);
+    match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
+    return 0;
+}` + unmatchedOptoptMain,
+			want: 19, wantFrees: 0,
 		},
 		{
 			// REFUSED: the inner box is ALIASED from a local the function still
