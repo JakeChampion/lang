@@ -883,34 +883,17 @@ function cell_for(v: Value): Value {
 // original env unchanged when the name isn't bound; the checker
 // is supposed to surface that as a type error, but the interp
 // guards against it via VErr-on-read at the call site.
+// update rebinds the INNERMOST binding of `name`, or returns the env unchanged
+// when there is none. Scanning from the end finds the innermost first, and
+// `.with` is copy-on-write, so only the one slot is written and `names` is
+// untouched — no array is rebuilt.
 function (e: Env) update(name: string, v: Value): Env {
-    var n: i32 = e.names.len();
-    var ns: string[] = [];
-    var vs: Value[] = [];
-    var found: boolean = false;
-    var i: i32 = n - 1;
-    // Walk from the end forward, recording which index to
-    // replace. Then rebuild forward to keep declaration order.
-    var hit_idx: i32 = 0 - 1;
+    var i: i32 = e.names.len() - 1;
     while (i >= 0) {
-        if (!found && e.names[i] == name) {
-            hit_idx = i;
-            found = true;
-        }
+        if (e.names[i] == name) { return Env { ...e, values: e.values.with(i, v) }; }
         i = i - 1;
     }
-    if (!found) { return e; }
-    var j: i32 = 0;
-    while (j < n) {
-        ns = ns.append(e.names[j]);
-        if (j == hit_idx) {
-            vs = vs.append(v);
-        } else {
-            vs = vs.append(e.values[j]);
-        }
-        j = j + 1;
-    }
-    return Env { ...e, names: ns, values: vs };
+    return e;
 }
 
 // =================== EVAL ====================
