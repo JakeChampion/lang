@@ -25936,7 +25936,7 @@ function str_cand_site_of(cands: string[], name: string): string {
 
 function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    var found: string[] = bare_alias_bind_sites_of(stmts, src, []);
+    var found: string[] = bare_alias_bind_sites_of(stmts, src, false, []);
     var reasg: string[] = body_assign_targets(body);
     var fi: i32 = 0;
     while (fi < found.len()) {
@@ -25976,7 +25976,7 @@ function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string
     var names: string[] = [src];
     var ni: i32 = 0;
     while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
         var fi: i32 = 0;
         while (fi < found.len()) {
             if (util.index_of_str(sites, found[fi]) < 0) {
@@ -26051,7 +26051,7 @@ function strarr_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable:
     var names: string[] = [src];
     var ni: i32 = 0;
     while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
         var fi: i32 = 0;
         while (fi < found.len()) {
             if (util.index_of_str(sites, found[fi]) < 0) {
@@ -26132,26 +26132,42 @@ function rcenum_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
 // alias_bind_sites_of uses it to walk the CHAIN: a link is only discoverable
 // before it has been vetted, because vetting a link depends on the links below
 // it (#7386).
-function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, acc: string[]): string[] {
+function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, want_elem: boolean, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
                 match (v.init) {
                     ast.ExprIdent(aid) => {
-                        if (aid.name == src) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                        if (!want_elem && aid.name == src) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                    },
+                    // `var e = src.<i>` — an ELEMENT bind, which is a different
+                    // relation from an alias and so a different question (#7766).
+                    // Same walk because the two differ only in the init they match,
+                    // and one traversal cannot disagree with itself.
+                    ast.ExprFieldAccess(efa) => {
+                        if (want_elem) {
+                            match (efa.obj) {
+                                ast.ExprIdent(eoid) => {
+                                    if (eoid.name == src && util.is_all_digits(efa.field)) {
+                                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
                     },
                     _ => {}
                 }
             },
             ast.StmtIf(f) => {
-                a = bare_alias_bind_sites_of(f.then_body, src, a);
-                a = bare_alias_bind_sites_of(f.else_body, src, a);
+                a = bare_alias_bind_sites_of(f.then_body, src, want_elem, a);
+                a = bare_alias_bind_sites_of(f.else_body, src, want_elem, a);
             },
-            ast.StmtWhile(w) => { a = bare_alias_bind_sites_of(w.body, src, a); },
-            ast.StmtFor(fo) => { a = bare_alias_bind_sites_of(fo.body, src, a); },
+            ast.StmtWhile(w) => { a = bare_alias_bind_sites_of(w.body, src, want_elem, a); },
+            ast.StmtFor(fo) => { a = bare_alias_bind_sites_of(fo.body, src, want_elem, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = bare_alias_bind_sites_of(arm.body, src, a); }
+                for arm in m.arms { a = bare_alias_bind_sites_of(arm.body, src, want_elem, a); }
             },
             _ => {}
         }
@@ -26168,7 +26184,7 @@ function opt_alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
     var names: string[] = [src];
     var ni: i32 = 0;
     while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
         var fi: i32 = 0;
         while (fi < found.len()) {
             if (util.index_of_str(sites, found[fi]) < 0) {
@@ -26252,7 +26268,7 @@ function rcenum_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable:
     var names: string[] = [src];
     var ni: i32 = 0;
     while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
         var fi: i32 = 0;
         while (fi < found.len()) {
             if (util.index_of_str(sites, found[fi]) < 0) {
@@ -26275,6 +26291,34 @@ function rcenum_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable:
     var out: string[] = acc;
     var si: i32 = 0;
     while (si < sites.len()) { out = push_str_unique(out, sites[si]); si = si + 1; }
+    return out;
+}
+
+// tuple_elem_bind_sites_of returns the binding-site keys of every `var e = src.<i>`
+// whose target is a LOCAL that neither is reassigned nor escapes the frame (#7766).
+//
+// Extracting an rc element hands its reference to a new owner, which is why the
+// escape scan refuses the whole tuple credit for it — right for `return src.1`,
+// where the element outlives the frame and the deep free would release it under
+// the caller. It is wrong for a bind the frame keeps: at the exit sweep `e` is
+// dead, so the deep free is releasing memory nothing reads again, and refusing
+// costs the tuple BOX its release as well as the element's.
+//
+// The escape test is the ordinary one on the TARGET, so a bind that is returned,
+// stored or handed to a non-borrowable callee is not in this set and the refusal
+// stands.
+function tuple_elem_bind_sites_of(body: ast.Stmt[], src: string, borrowable: string[]): string[] {
+    var all: string[] = bare_alias_bind_sites_of(body, src, true, []);
+    var reasg: string[] = body_assign_targets(body);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var nm: string = reclaim_site_name(all[i]);
+        if (util.index_of_str(reasg, nm) < 0 && !body_unsafe_for(body, nm, borrowable, [])) {
+            out = out.append(all[i]);
+        }
+        i = i + 1;
+    }
     return out;
 }
 
@@ -30386,7 +30430,7 @@ pub function tuple_elem_ret_dup(e: ast.Expr, name: string, ttype: string): boole
 // the credit. The function-scope sibling measured clean while the block-scoped
 // one sat at exactly its unfixed number — two dec sites missing from the emitted
 // asm, and nothing else to see.
-function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], ret_dup_ok: boolean): boolean {
+function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], elem_ok: string[], ret_dup_ok: boolean): boolean {
     match (st) {
         ast.StmtVar(v) => {
             if (alias_ok.len() > 0) {
@@ -30398,6 +30442,13 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
                     _ => {}
                 }
             }
+            // A vetted ELEMENT bind is not an escape (#7766): the target is a
+            // local the frame keeps, so it is dead by the exit sweep and the deep
+            // free releases memory nothing reads again. tuple_elem_bind_sites_of
+            // admits only targets that are neither reassigned nor escaping, so
+            // `return name.1` and a stored element still land below.
+            if (elem_ok.len() > 0
+                && util.index_of_str(elem_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0) { return false; }
             return rctuple_esc_expr(v.init, name, ttype, structs, borrowable);
         },
         ast.StmtReturn(r) => {
@@ -30409,21 +30460,21 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
         ast.StmtIf(f) => {
             if (rctuple_esc_expr(f.cond, name, ttype, structs, borrowable)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (rctuple_esc_stmt_alias(f.then_body[ti], name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (rctuple_esc_stmt_alias(f.else_body[ei], name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; } ei = ei + 1; }
             return false;
         },
         ast.StmtWhile(w) => {
             if (rctuple_esc_expr(w.cond, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (rctuple_esc_stmt_alias(w.body[i], name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; } i = i + 1; }
             return false;
         },
         ast.StmtFor(fo) => {
             if (rctuple_esc_expr(fo.iter, name, ttype, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (rctuple_esc_stmt_alias(fo.body[i], name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; } i = i + 1; }
             return false;
         },
         ast.StmtMatch(m) => {
@@ -30442,11 +30493,11 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
             for arm in m.arms {
                 if (arm.has_guard && rctuple_esc_expr(arm.guard, name, ttype, structs, borrowable)) { return true; }
                 var bi: i32 = 0;
-                while (bi < arm.body.len()) { if (rctuple_esc_stmt_alias(arm.body[bi], name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } bi = bi + 1; }
+                while (bi < arm.body.len()) { if (rctuple_esc_stmt_alias(arm.body[bi], name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; } bi = bi + 1; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, borrowable, alias_ok, ret_dup_ok); },
+        ast.StmtDefer(d) => { return rctuple_esc_stmt_alias(d.action, name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok); },
         _ => { return false; }
     }
     return false;
@@ -30461,9 +30512,9 @@ function rctuple_esc_stmt_alias(st: ast.Stmt, name: string, ttype: string, struc
 // and forgiving only the first left "TUPRC:" denied and the shape measuring
 // exactly its unfixed 8000 while the scalar-tuple sibling went to 0. Enumerate
 // the scans a class consults, not just the shared one.
-function rctuple_payload_escapes_alias(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], ret_dup_ok: boolean): boolean {
+function rctuple_payload_escapes_alias(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], elem_ok: string[], ret_dup_ok: boolean): boolean {
     for stmt in stmts {
-        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; }
+        if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; }
     }
     return false;
 }
@@ -30479,8 +30530,8 @@ function rctuple_payload_escapes_alias(stmts: ast.Stmt[], name: string, ttype: s
 // gate (body_unsafe_for_alias_ret_ok) already learned — the trap the comment
 // above names. Compound statements recurse HERE so a nested return in an
 // if-arm is forgiven too.
-function rctuple_payload_escapes_alias_ret_ok(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], bare_ret_ok: boolean, ret_dup_ok: boolean): boolean {
-    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, borrowable, alias_ok, ret_dup_ok); }
+function rctuple_payload_escapes_alias_ret_ok(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[], alias_ok: string[], elem_ok: string[], bare_ret_ok: boolean, ret_dup_ok: boolean): boolean {
+    if (!bare_ret_ok) { return rctuple_payload_escapes_alias(stmts, name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok); }
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
@@ -30494,26 +30545,26 @@ function rctuple_payload_escapes_alias_ret_ok(stmts: ast.Stmt[], name: string, t
             },
             ast.StmtIf(f) => {
                 if (rctuple_esc_expr(f.cond, name, ttype, structs, borrowable)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.then_body, name, ttype, structs, borrowable, alias_ok, elem_ok, true, ret_dup_ok)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(f.else_body, name, ttype, structs, borrowable, alias_ok, elem_ok, true, ret_dup_ok)) { return true; }
             },
             ast.StmtWhile(w) => {
                 if (rctuple_esc_expr(w.cond, name, ttype, structs, borrowable)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(w.body, name, ttype, structs, borrowable, alias_ok, elem_ok, true, ret_dup_ok)) { return true; }
             },
             ast.StmtFor(fo) => {
                 if (rctuple_esc_expr(fo.iter, name, ttype, structs, borrowable)) { return true; }
-                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
+                if (rctuple_payload_escapes_alias_ret_ok(fo.body, name, ttype, structs, borrowable, alias_ok, elem_ok, true, ret_dup_ok)) { return true; }
             },
             ast.StmtMatch(m) => {
                 if (rctuple_esc_expr(m.scrutinee, name, ttype, structs, borrowable)) { return true; }
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
-                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, borrowable, alias_ok, true, ret_dup_ok)) { return true; }
+                    if (rctuple_payload_escapes_alias_ret_ok(m.arms[mi].body, name, ttype, structs, borrowable, alias_ok, elem_ok, true, ret_dup_ok)) { return true; }
                     mi = mi + 1;
                 }
             },
-            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok, ret_dup_ok)) { return true; } }
+            _ => { if (rctuple_esc_stmt_alias(stmt, name, ttype, structs, borrowable, alias_ok, elem_ok, ret_dup_ok)) { return true; } }
         }
     }
     return false;
@@ -58707,7 +58758,7 @@ function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): stri
         if (pj < boxflags.len() && boxflags[pj] == b'1'
             && util.is_tuple_type_name(pty) && !util.contains(pty, "=>")) {
             var tal: string[] = rctuple_param_alias_bind_sites(fn.body, fn.params[pj].name, pty, no_structs, fn.body, no_strs);
-            if (!rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, tal, true)) {
+            if (!rctuple_payload_escapes_alias(fn.body, fn.params[pj].name, pty, no_structs, no_strs, tal, [], true)) {
                 tupb = tupb + "1";
                 any1 = true;
             } else { tupb = tupb + "0"; }
@@ -58735,7 +58786,7 @@ function rctuple_param_alias_bind_sites(stmts: ast.Stmt[], src: string, pty: str
             ast.StmtVar(v) => {
                 if let ast.ExprIdent(aid) = v.init {
                     if (aid.name == src
-                        && !rctuple_payload_escapes_alias(body, v.name, pty, structs, no_strs, no_strs, false)) {
+                        && !rctuple_payload_escapes_alias(body, v.name, pty, structs, no_strs, no_strs, [], false)) {
                         a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     }
                 }
@@ -70082,7 +70133,7 @@ while (ti < tups.len()) {
         // extraction, and the wrong guess here is an over-release. An un-annotated
         // tuple keeps "TUP:" and simply does not earn the element release.
         var tupelemty: string = rctuple_type_of_decl(body, tnm);
-        if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal, true)) {
+        if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal, [], true)) {
             out = out.append("TUPELEMOK:" + tups[ti]);
         }
     }
@@ -70104,7 +70155,10 @@ while (rti < rctups.len()) {
     var rcnt: string[] = rctuple_counted_store_sites(body, rnm, structs, msites, []);
     if (!body_unsafe_for_alias_ret_counted(body, rnm, borrowable, recv_borrow, ral, util.index_of_str(tretn, rnm) >= 0, rcnt)) {
         var rctty: string = rctuple_type_of_decl(body, rnm);
-        if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, util.index_of_str(tretn, rnm) >= 0, true)) {
+        // Element binds the frame keeps are not escapes (#7766): refusing them
+        // cost the tuple its whole credit, box included, where native is flat.
+        var relem: string[] = tuple_elem_bind_sites_of(body, rnm, borrowable);
+        if (rctty == "" || !rctuple_payload_escapes_alias_ret_ok(body, rnm, rctty, structs, borrowable, ral, relem, util.index_of_str(tretn, rnm) >= 0, true)) {
             out = out.append("TUPRC:" + rctups[rti]);
             // THE ALIAS TAKES THE BOX-ONLY RELEASE, NEVER THE DEEP ONE, and
             // this is the general rule the struct case taught: only the BOX
