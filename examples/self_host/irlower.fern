@@ -528,14 +528,6 @@ pub struct LowerState {
     // plain call_indirect. A small list (grown only at closure bindings), not a
     // per-slot array.
     closure_locals: string[],
-    // clo_rc: the closure capture-RC registry (#4354): "OK:<name>" rows are
-    // lower_func's approvals, "<name>|<kinds>" rows the build site's
-    // per-capture kinds the exit sweep releases by. A dedicated field, not a
-    // "CLO:"-prefixed slice of reclaimable_names — the 33-field pin that
-    // forced the multiplexing died with the legacy AST backends (#7253
-    // step 2). Still NAME-keyed under a first-match lookup, the collision
-    // hazard add_tup_elem_kinds documents; the slot/site key is a follow-up.
-    clo_rc: string[],
     // tup_elem_kinds: the "TUP:" tuple locals' per-element rc kinds (#7226) —
     // "<slot>|<kinds>" rows, SLOT-keyed (see add_tup_elem_kinds). A dedicated
     // field per #7253 step 2, formerly "TUPELEM:"-multiplexed into
@@ -2036,25 +2028,13 @@ function closure_init_opt_ret(init: ast.Expr, s: LowerState): string {
     }
 }
 
-// add_clo_cap_kinds (#4354): record a closure local's per-capture kinds
-// ("<name>|<kinds>") in the capture-RC registry — see the field doc.
-pub function (s: LowerState) add_clo_cap_kinds(entry: string): LowerState {
-    return LowerState { ...s, clo_rc: s.clo_rc.append(entry) };
-}
-
-// clo_cap_kinds_of returns the registered capture-kinds string for closure
-// local `name` ("" when not registered / approval never consumed).
-pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
-    return tagged_value_of(s.clo_rc, "", name);
-}
-
 // add_tup_elem_kinds (#7226): record a "TUP:" tuple local's per-element rc kinds
 // ("<slot>|<kinds>", one char per position: '.' nothing to release, 'a' an rc
 // container the construction retain inc'd). Written by bind_var_slot from the
 // SAME slot_is_rc_container test that decides the retain, on the same slots, so
 // the retain and the release it owes cannot drift apart.
 //
-// Keyed on the SLOT, not the name, unlike its clo_cap_kinds model. tagged_value_of
+// Keyed on the SLOT, not the name. tagged_value_of
 // returns the FIRST entry matching a key, and two same-named tuple locals in
 // sibling blocks are two slots under one name — so a name key hands one block's
 // kinds to the other block's slot, and a position the second tuple never retained
@@ -2070,12 +2050,6 @@ pub function (s: LowerState) add_tup_elem_kinds(entry: string): LowerState {
 // slot `i` ("" when that tuple retained nothing).
 pub function (s: LowerState) tup_elem_kinds_of(i: i32): string {
     return tagged_value_of(s.tup_elem_kinds, "", util.i32_to_string(i));
-}
-
-// clo_rc_approved reports whether lower_func approved `name` for capture RC
-// (an "OK:<name>" seed entry — see the clo_rc field doc).
-pub function (s: LowerState) clo_rc_approved(name: string): boolean {
-    return reclaim_has(s.clo_rc, "OK:", name);
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -21188,22 +21162,6 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
 // The closure-valued bind: `var f = |x| …` and the fn-typed initialisers that
 // produce a closure BOX rather than a bare function value.
 function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerState): LowerState {
-    // #4354 capture RC: classify BEFORE lowering — closure_captures
-    // resolves against the locals visible at the env-build site.
-    var clo_kinds: string = "";
-    if (s.clo_rc_approved(v.name)) {
-        match (v.init) {
-            ast.ExprLambda(clam) => {
-                var ccaps: string[] = closure_captures(clam, s);
-                var cki: i32 = 0;
-                while (cki < ccaps.len()) {
-                    clo_kinds = clo_kinds + closure_capture_kind(s, ccaps[cki]);
-                    cki = cki + 1;
-                }
-            },
-            _ => {}
-        }
-    }
     var cv: LowerState = lower_expr(v.init, s);
     if (!cv.ok) { return cv; }
     var cvb: LowerState = cv.add_local(v.name);
@@ -21229,30 +21187,6 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
             cvb = cvb.retain(cslot, reclaim_site_key_of(v.name, v.line, v.col));
         },
         _ => {}
-    }
-    // #4354 build-site retain: for each classifiable capture, read it
-    // back from the stored env box (env[ci+1], the same arr_get the
-    // closure call path uses) and __fern_rc_inc it — the rc-aware inc
-    // (null / literal / immortal-view guarded). Balanced by the exit
-    // sweep's env release, driven by the SAME kinds string. Only
-    // emitted when at least one capture is classifiable, so a
-    // scalar-only closure stays byte-identical.
-    var has_rc_cap: boolean = false;
-    var ckj: i32 = 0;
-    while (ckj < clo_kinds.len()) { if (clo_kinds[ckj] != b'.') { has_rc_cap = true; } ckj = ckj + 1; }
-    if (has_rc_cap) {
-        var ckk: i32 = 0;
-        while (ckk < clo_kinds.len()) {
-            if (clo_kinds[ckk] != b'.') {
-                cvb = cvb.emit(ir.op_load_local(cslot));
-                cvb = cvb.emit(ir.op_const_i32(ckk + 1));
-                cvb = cvb.emit(ir.op_arr_get(32));
-                cvb = cvb.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                cvb = cvb.emit(ir.op_drop());
-            }
-            ckk = ckk + 1;
-        }
-        cvb = cvb.add_clo_cap_kinds(v.name + "|" + clo_kinds);
     }
     return cvb;
 }
@@ -25679,7 +25613,7 @@ function struct_lit_rc_field_retained(sl: ast.ExprStructLit, src: string, struct
 // where the field store is a COUNTED share of `src`'s box, for a field of declared
 // type `fty`. Handed to the escape walker so the source's bare-ident use there is
 // read as the share it is rather than as a store into a container — under "SFLD:"
-// in clo_ok for the `string` family, and as the `sfld_ok` list for `string[]`.
+// in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`.
 //
 // The two differ in WHAT the source keeps, not in when it may. A string's release
 // is its box, so the share costs nothing extra; a `string[]`'s release is an
@@ -25728,33 +25662,28 @@ function rc_counted_field_sites(stmts: ast.Stmt[], src: string, structs: parser.
 // special-casing `for x in name` (a borrow iteration, safe) and recursing into
 // nested control-flow bodies. A reassignment of `name` is handled separately by
 // the body_assign_targets bail, so StmtAssign only checks the RHS here.
-// body_unsafe_for_clo (#4354): body_unsafe_for, except a `var c = <lambda>`
-// init where c is capture-RC APPROVED ("OK:c" in clo_ok) does NOT flag the
-// names the lambda captures — the env-build retain makes the capture a counted
-// reference the env sweep releases. Every other statement defers to the plain
-// walker (a lambda in any other position still escape-flags its captures).
-function body_unsafe_for_clo(stmts: ast.Stmt[], name: string, borrowable: string[], clo_ok: string[], recv_borrow: string[]): boolean {
+// body_unsafe_for_tup (#4353): body_unsafe_for, except a `var t = (…, name, …)`
+// init crediting an rc-tuple this pass already admitted does NOT flag `name` —
+// the tuple's element release gives the construction retain back, so the local's
+// own box still reaches 0. Every other statement defers to the plain walker.
+function body_unsafe_for_tup(stmts: ast.Stmt[], name: string, borrowable: string[], tup_ok: string[], recv_borrow: string[]): boolean {
     var no_alias: string[] = [];
-    return body_unsafe_for_clo_alias(stmts, name, borrowable, clo_ok, recv_borrow, no_alias);
+    return body_unsafe_for_tup_alias(stmts, name, borrowable, tup_ok, recv_borrow, no_alias);
 }
 
-// body_unsafe_for_clo_alias is body_unsafe_for_clo carrying body_unsafe_for_alias'
+// body_unsafe_for_tup_alias is body_unsafe_for_tup carrying body_unsafe_for_alias'
 // forgiveness: a plain `var v: T = name` bind whose own site key is in `alias_ok`
 // does not flag `name`. The parameter rather than a second walker because the two
-// forgivenesses are independent and compose — a name may be both captured by an
-// approved closure and aliased — and a copy of this walker would have to be kept
-// in step with the closure and tuple interlocks above forever.
-function body_unsafe_for_clo_alias(stmts: ast.Stmt[], name: string, borrowable: string[], clo_ok: string[], recv_borrow: string[], alias_ok: string[]): boolean {
+// forgivenesses are independent and compose — a name may be both a credited
+// tuple element and aliased — and a copy of this walker would have to be kept
+// in step with the tuple interlock above forever.
+function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: string[], tup_ok: string[], recv_borrow: string[], alias_ok: string[]): boolean {
     for stmt in stmts {
         var skip: boolean = false;
         match (stmt) {
             ast.StmtVar(v) => {
                 match (v.init) {
-                    ast.ExprLambda(_) => {
-                        if (util.index_of_str(clo_ok, "OK:" + v.name) >= 0) { skip = true; }
-                    },
-                    // The TUPLE-ELEMENT twin of the closure interlock above, and
-                    // the same arithmetic: the construction retains the payload
+                    // The construction retains the payload
                     // (rc 2), this sweep's string loop decs the local's ref, and
                     // the element release decs the box's — freed exactly once.
                     // "TUP:" is credited only for a tuple this pass already
@@ -25763,11 +25692,11 @@ function body_unsafe_for_clo_alias(stmts: ast.Stmt[], name: string, borrowable: 
                     // the name anywhere but that one payload position, so a
                     // second, genuinely escaping use is never skipped with it.
                     ast.ExprTuple(_) => {
-                        // clo_ok's tuple entries are seeded from the credits, which
+                        // tup_ok's tuple entries are seeded from the credits, which
                         // carry BINDING-SITE keys (#7272) — so the lookup is keyed on
                         // this `var`'s own site, not on its name.
                         var vsite: string = reclaim_site_key_of(v.name, v.line, v.col);
-                        if (util.index_of_str(clo_ok, "TUP:" + vsite) >= 0
+                        if (util.index_of_str(tup_ok, "TUP:" + vsite) >= 0
                             && tuple_union_payload_sole_use(v.init, name)) { skip = true; }
                         // The BARE-IDENT element twin (#7226's string limb), same
                         // arithmetic one construction shape over: the tuple literal
@@ -25783,7 +25712,7 @@ function body_unsafe_for_clo_alias(stmts: ast.Stmt[], name: string, borrowable: 
                         // interlock: the exit sweep's tuple loop runs BEFORE its
                         // string loop, so the tuple's dec always precedes the
                         // local's free.
-                        if (util.index_of_str(clo_ok, "TUPE:" + vsite) >= 0
+                        if (util.index_of_str(tup_ok, "TUPE:" + vsite) >= 0
                             && tuple_bare_ident_sole_use(v.init, name)) { skip = true; }
                     },
                     // The struct-lit FIELD twin of the two interlocks above, one
@@ -25802,19 +25731,19 @@ function body_unsafe_for_clo_alias(stmts: ast.Stmt[], name: string, borrowable: 
                     // the field drop always precedes the local's free.
                     ast.ExprStructLit(_) => {
                         var svsite: string = reclaim_site_key_of(v.name, v.line, v.col);
-                        if (util.index_of_str(clo_ok, "SFLD:" + svsite) >= 0) { skip = true; }
+                        if (util.index_of_str(tup_ok, "SFLD:" + svsite) >= 0) { skip = true; }
                     },
                     _ => {}
                 }
             },
             ast.StmtIf(iff) => {
                 if (!expr_unsafe_for(iff.cond, name, borrowable, recv_borrow)
-                    && !body_unsafe_for_clo_alias(iff.then_body, name, borrowable, clo_ok, recv_borrow, alias_ok)
-                    && !body_unsafe_for_clo_alias(iff.else_body, name, borrowable, clo_ok, recv_borrow, alias_ok)) { skip = true; }
+                    && !body_unsafe_for_tup_alias(iff.then_body, name, borrowable, tup_ok, recv_borrow, alias_ok)
+                    && !body_unsafe_for_tup_alias(iff.else_body, name, borrowable, tup_ok, recv_borrow, alias_ok)) { skip = true; }
             },
             ast.StmtWhile(w) => {
                 if (!expr_unsafe_for(w.cond, name, borrowable, recv_borrow)
-                    && !body_unsafe_for_clo_alias(w.body, name, borrowable, clo_ok, recv_borrow, alias_ok)) { skip = true; }
+                    && !body_unsafe_for_tup_alias(w.body, name, borrowable, tup_ok, recv_borrow, alias_ok)) { skip = true; }
             },
             _ => {}
         }
@@ -27156,40 +27085,6 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
         if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.reclaimable_names, "ENVCAP:", st.locals[i].slot_name)) {
-            // #4354 closure-env capture release: a registered closure local
-            // (bound once from a literal lambda, non-escaping, kinds recorded
-            // at the build site) releases its classifiable captures BEFORE the
-            // box dec — rc==1-gated so a shared env (aliased binding) only
-            // releases via its LAST owner, and a null slot is a no-op. Each
-            // capture is read back from the env box (env[ci+1]) and released by
-            // its kind: 's' string -> __fern_str_free, 'a' scalar array ->
-            // __fern_rc_dec — the exact inverses of the build-site retains.
-            var clk: string = "";
-            if (st.is_closure_local(st.locals[i].slot_name)) { clk = st.clo_cap_kinds_of(st.locals[i].slot_name); }
-            var clk_any: boolean = false;
-            var clki: i32 = 0;
-            while (clki < clk.len()) { if (clk[clki] != b'.') { clk_any = true; } clki = clki + 1; }
-            if (clk_any) {
-                st = st.emit(ir.op_load_local(i));
-                st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
-                st = st.emit(ir.op_if(0));
-                var clkj: i32 = 0;
-                while (clkj < clk.len()) {
-                    if (clk[clkj] != b'.') {
-                        st = st.emit(ir.op_load_local(i));
-                        st = st.emit(ir.op_const_i32(clkj + 1));
-                        st = st.emit(ir.op_arr_get(32));
-                        if (clk[clkj] == b's') {   // string capture
-                            st = st.emit(ir.op_call_direct("__fern_str_free", 1));
-                        } else {
-                            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                        }
-                        st = st.emit(ir.op_drop());
-                    }
-                    clkj = clkj + 1;
-                }
-                st = st.emit(ir.op_end());
-            }
             // dyn Trait[] ELEMENT reclaim (#4351 slice 3): a credited literal
             // dyn array releases each element box (per-index, kinds recorded
             // at the credit) BEFORE the buffer dec below. rc==1-gated on the
@@ -31648,7 +31543,7 @@ function collect_fresh_string_in_stmt(st: ast.Stmt, acc: string[]): string[] {
 // No new soundness argument: the caller-side release is the same __fern_str_free
 // the fresh-producer credit emits, and reclaimable_names_of applies the SAME two
 // gates to these names as to str_local_binding_is_fresh's (not reassigned, and
-// body_unsafe_for_clo proves non-escape). The freshness half is what
+// body_unsafe_for_tup proves non-escape). The freshness half is what
 // str_fresh_ret_fns_of proves whole-program: every return is fresh, so the
 // result can alias no parameter, field or live local of the callee.
 function collect_str_fresh_ret_call_names(stmts: ast.Stmt[], str_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
@@ -33952,7 +33847,7 @@ function strarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[]
 // `alias_ok` does not flag `name` — the bind retains the shared buffer and the
 // alias site is granted the same "SARR:" credit, so both slots release and
 // __fern_str_arr_free arbitrates (elements walk only at the last owner's
-// rc==1). The parameter rather than a second walker, as body_unsafe_for_clo_alias.
+// rc==1). The parameter rather than a second walker, as body_unsafe_for_tup_alias.
 function strarr_unsafe_for_alias(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], alias_ok: string[], sfld_ok: string[]): boolean {
     for stmt in stmts { if (stmt_strarr_unsafe_for(stmt, name, borrowable, str_fresh, strarr_producers, alias_ok, sfld_ok)) { return true; } }
     return false;
@@ -34083,94 +33978,6 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
         _ => { return false; }
     }
     return false;
-}
-
-// --- closure-env capture RC (#4354, port slice 5) ----------------------------
-//
-// closure_capture_kind classifies capture `name` (a local/param visible at the
-// env-build site) for the capture-RC arc: 's' = a string box (retained via the
-// rc-aware __fern_rc_inc at the build site, released via __fern_str_free by the
-// env sweep), 'a' = a scalar-element array buffer (retained via __fern_rc_inc,
-// released via __fern_rc_dec), '.' = everything else — string[] / struct /
-// enum / map / tuple / nested closure / plain scalars — no inc, no release
-// (scalars are copied; the rest keeps today's sound leak). The SAME kind char
-// drives the build-site inc AND the sweep release, so they balance by
-// construction (the #4354 invariant: incs and drops land together).
-function closure_capture_kind(s: LowerState, name: string): string {
-    var sl: i32 = s.slot_of(name);
-    if (sl < 0 || sl >= s.locals.len()) { return "."; }
-    if (s.locals[sl].is_str) { return "s"; }
-    if (s.locals[sl].is_arr
-        && !s.locals[sl].is_strarr && !s.locals[sl].is_arrarr
-        && !s.locals[sl].is_closurearr && !s.locals[sl].is_fnarr
-        && !s.is_closure_local(name)
-        && s.locals[sl].struct_type == "" && s.locals[sl].opt_type == ""
-        && s.locals[sl].map_type == "" && s.locals[sl].tuple_elems == "") { return "a"; }
-    return ".";
-}
-
-// clo_rc_candidate_names (#4354): closure locals lower_func approves for
-// capture RC — bound ONCE from a LITERAL lambda (`var c = (x) => ...` /
-// `var c = || { ... }`), never reassigned, not shadowed, and clean under
-// body_unsafe_for (no return / container store / non-borrowable call arg —
-// a stored/escaping env may outlive this frame, so its captures must keep
-// the leak). The StmtVar lowering consumes the approval, emits the
-// build-site retains, and registers the kinds the exit sweep releases.
-function clo_rc_candidate_names(body: ast.Stmt[], borrowable: string[]): string[] {
-    var cands: string[] = collect_clo_lambda_names(body, []);
-    var reassigned: string[] = body_assign_targets(body);
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < cands.len()) {
-        var nm: string = cands[i];
-        if (nm.len() > 0
-            && util.index_of_str(reassigned, nm) < 0
-            && !body_unsafe_for(body, nm, borrowable, [])) { out = out.append("OK:" + nm); }
-        i = i + 1;
-    }
-    return out;
-}
-// collect_clo_lambda_names: every `var <name> = <lambda literal>` binding,
-// recursing through nested blocks; a name declared TWICE (shadowed) is
-// recorded as "" so it never qualifies (the two envs' capture sets differ).
-function collect_clo_lambda_names(stmts: ast.Stmt[], acc: string[]): string[] {
-    var a: string[] = acc;
-    for stmt in stmts { a = collect_clo_lambda_in_stmt(stmt, a); }
-    return a;
-}
-function collect_clo_lambda_in_stmt(st: ast.Stmt, acc: string[]): string[] {
-    match (st) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprLambda(_) => {
-                    if (util.index_of_str(acc, v.name) >= 0) {
-                        // shadowed: blank BOTH so neither binding qualifies.
-                        var out: string[] = [];
-                        var i: i32 = 0;
-                        while (i < acc.len()) {
-                            if (acc[i] == v.name) { out = out.append(""); } else { out = out.append(acc[i]); }
-                            i = i + 1;
-                        }
-                        return out.append("");
-                    }
-                    return acc.append(v.name);
-                },
-                _ => { return acc; }
-            }
-        },
-        ast.StmtIf(iff) => {
-            var a: string[] = collect_clo_lambda_names(iff.then_body, acc);
-            return collect_clo_lambda_names(iff.else_body, a);
-        },
-        ast.StmtWhile(w) => { return collect_clo_lambda_names(w.body, acc); },
-        ast.StmtFor(f) => { return collect_clo_lambda_names(f.body, acc); },
-        ast.StmtMatch(m) => {
-            var a: string[] = acc;
-            for arm in m.arms { a = collect_clo_lambda_names(arm.body, a); }
-            return a;
-        },
-        _ => { return acc; },
-    }
 }
 
 // collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <init>` binding,
@@ -35998,19 +35805,11 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     var strs: string[] = collect_fresh_string_names(body, []);
     // …plus the calls a whole-program proof says return a fresh box (#6606).
     strs = collect_str_fresh_ret_call_names(body, str_fresh_ret, reassigned, strs);
-    // #4354 interlock: a fresh string captured into an APPROVED capture-RC
-    // closure (`var c = <lambda>` — single-bind, non-escaping) is no longer an
-    // escape: the build site retains it (rc 2), this sweep's later string loop
-    // decs the local's ref, and the env release decs the env's — freed exactly
-    // once. Ordering makes a classifier mismatch merely a sound leak: the env
-    // release (array loop) runs BEFORE the string loop, so the env's dec always
-    // precedes the local's free. Lambdas anywhere else still escape-flag.
-    var clo_ok: string[] = clo_rc_candidate_names(body, borrowable);
     // #4353: a fresh string handed to a union element of an rc-tuple this pass
     // already credited "TUPRC:" is no longer an escape — see the ExprTuple arm of
-    // body_unsafe_for_clo. Tagged into the same list rather than threaded as a
+    // body_unsafe_for_tup. Tagged into the same list rather than threaded as a
     // seventh parameter, the way every other credit in this function is carried.
-    clo_ok = clo_ok_from_tuple_credits(out, clo_ok);
+    var tup_ok: string[] = tup_ok_from_tuple_credits(out, []);
     // The candidate pool an alias-reassign TARGET must come from: a string local
     // bound by a fresh producer or a literal. A target outside it is some other
     // class and earns nothing here.
@@ -36020,13 +35819,13 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     var lits_pre: string[] = collect_litstr_local_names(body, []);
     var sc1: i32 = 0;
     while (sc1 < lits_pre.len()) { str_cands = push_str_unique(str_cands, lits_pre[sc1]); sc1 = sc1 + 1; }
-    out = reclaimable_string(body, borrowable, clo_ok, msites, reassigned, recv_borrow, sfok, str_cands, strs, structs, out);
+    out = reclaimable_string(body, borrowable, tup_ok, msites, reassigned, recv_borrow, sfok, str_cands, strs, structs, out);
     // Literal-init string locals (#6582) — same two gates as the fresh producers
     // above, plus the `.to_string()` identity-alias exclusion. See the
     // collect_litstr_local_names block for why this is not folded into
     // str_local_binding_is_fresh.
     var lits: string[] = collect_litstr_local_names(body, []);
-    out = reclaimable_litstr_local(body, borrowable, clo_ok, lits, reassigned, recv_borrow, str_cands, strs, out);
+    out = reclaimable_litstr_local(body, borrowable, tup_ok, lits, reassigned, recv_borrow, str_cands, strs, out);
     // `<scalar>.to_string()` string locals (#6599) — same gates as the producers
     // above. See the collect_tostr_scalar_names block for why the receiver-type test
     // cannot live in str_local_binding_is_fresh.
@@ -36035,22 +35834,22 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     var tsn: string[] = param_decl_names(params, tostr_decl_names(body, []));
     var tst: string[] = param_decl_types(params, tostr_decl_vals(body, []));
     var tss: string[] = collect_tostr_scalar_names(body, tsn, tst, []);
-    out = reclaimable_tostr_scalar(body, borrowable, clo_ok, reassigned, recv_borrow, strs, tss, out);
+    out = reclaimable_tostr_scalar(body, borrowable, tup_ok, reassigned, recv_borrow, strs, tss, out);
     // `xs.join(sep)` string locals — same gates again, and the receiver-type test
     // lives here for the same reason the `.to_string()` one does (join_strarr_init).
     var jss: string[] = collect_join_strarr_names(body, tsn, tst, []);
-    out = reclaimable_join_strarr(body, borrowable, clo_ok, jss, reassigned, recv_borrow, strs, out);
+    out = reclaimable_join_strarr(body, borrowable, tup_ok, jss, reassigned, recv_borrow, strs, out);
     // `<string>.trim()` locals — same gates again. Since #7393 the builtin trim
     // returns an owned copy, so the credit is an ordinary "STR:" name with the
     // ordinary full release; the collector's receiver-TYPE test is what keeps a
     // user method named `trim` (which may return a field alias) uncredited.
     var tms: string[] = collect_trim_local_names(body, tsn, tst, []);
-    out = reclaimable_trim_local(body, borrowable, clo_ok, reassigned, recv_borrow, strs, tms, out);
+    out = reclaimable_trim_local(body, borrowable, tup_ok, reassigned, recv_borrow, strs, tms, out);
     // `<string>.replace(old, new)` locals — same gates, released behind the
     // identity guard (the slot's str_identity_src is what carries the receiver to
     // compare against).
     var rps: string[] = collect_replace_local_names(body, tsn, tst, []);
-    out = reclaimable_replace_local(body, borrowable, clo_ok, reassigned, recv_borrow, rps, strs, out);
+    out = reclaimable_replace_local(body, borrowable, tup_ok, reassigned, recv_borrow, rps, strs, out);
     // `var v: str = base.drop(2)` — an SFRRECV method chain in BINDING position
     // (#6544), released behind the same identity guard, pointed at the chain root.
     // Same two gates as its siblings, but credited "SFRCAND:" rather than "STR:":
@@ -36064,7 +35863,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // chain root's slot, and only the binding site can resolve one. An alias has
     // no root walk of its own, so it could not carry the guard the credit assumes.
     var sfrs: string[] = collect_sfrrecv_local_names(body, tsn, tst, str_fresh_ret, []);
-    out = reclaimable_sfrrecv_local(body, borrowable, clo_ok, reassigned, recv_borrow, sfrs, strs, out);
+    out = reclaimable_sfrrecv_local(body, borrowable, tup_ok, reassigned, recv_borrow, sfrs, strs, out);
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
     // a fresh consume-rebind of s and that never escapes (str_accum_unsafe_for —
@@ -52116,12 +51915,6 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
-    // #4354: approve closure locals for capture RC — seeded into the dedicated
-    // clo_rc field. This family used to be "CLO:"-multiplexed into
-    // reclaimable_names to hold LowerState at 33 fields for a legacy AST
-    // backend that miscompiled 34-field structs; that backend is deleted
-    // (#3457/#5972), so the pin is dead and new fact families get fields.
-    var clo_seed: string[] = clo_rc_candidate_names(fn.body, sg.borrowable_params);
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
     // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
     // lower_stmt_assign releases it before storing the new one; the final value is
@@ -52251,7 +52044,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, clo_rc: clo_seed, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fn_dyn: fn_dyn0, fn_sig: fn_sig0, fn_ret: fn_ret0, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -54896,20 +54689,20 @@ function clofld_scan(e: ast.Expr, structs: parser.StructDecl[], acc: string[]): 
                     // emit orchestrations scan the LIFTED module, where every
                     // fn-field lambda has already been wrapped). Both build a
                     // sole-owned rc=1 box at the construction site.
-                    var clo_ok: boolean = false;
+                    var tup_ok: boolean = false;
                     match (sl2.field_values[i]) {
-                        ast.ExprLambda(_) => { clo_ok = true; },
+                        ast.ExprLambda(_) => { tup_ok = true; },
                         ast.ExprCall(cv) => {
                             match (cv.callee) {
                                 ast.ExprIdent(cvid) => {
-                                    if (cvid.name.len() > 8 && slice_unchecked(cvid.name, 0, 8) == "__mkclo$") { clo_ok = true; }
+                                    if (cvid.name.len() > 8 && slice_unchecked(cvid.name, 0, 8) == "__mkclo$") { tup_ok = true; }
                                 },
                                 _ => {}
                             }
                         },
                         _ => {}
                     }
-                    if (!clo_ok) { a = push_str_unique(a, sl2.field_names[i]); }
+                    if (!tup_ok) { a = push_str_unique(a, sl2.field_names[i]); }
                 }
                 a = clofld_scan(sl2.field_values[i], structs, a);
                 i = i + 1;
@@ -62612,7 +62405,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, clo_rc: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fn_dyn: no_strs, fn_sig: no_strs, fn_ret: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -70194,7 +69987,7 @@ while (sei < scenums.len()) {
     return out;
 }
 
-function reclaimable_string(body: ast.Stmt[], borrowable: string[], clo_ok: string[], msites: string[], reassigned: string[], recv_borrow: string[], sfok: string[], str_cands: string[], strs: string[], structs: parser.StructDecl[], out: string[]): string[] {
+function reclaimable_string(body: ast.Stmt[], borrowable: string[], tup_ok: string[], msites: string[], reassigned: string[], recv_borrow: string[], sfok: string[], str_cands: string[], strs: string[], structs: parser.StructDecl[], out: string[]): string[] {
 var si: i32 = 0;
 while (si < strs.len()) {
     // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
@@ -70233,14 +70026,14 @@ while (si < strs.len()) {
     // survives, alongside the alias bind and the alias reassign: the
     // construction retains the box and the holder's field drop decs it, so
     // the source keeps the claim its own release balances. Tagged per
-    // candidate rather than seeded into clo_ok once, because the move gate
+    // candidate rather than seeded into tup_ok once, because the move gate
     // inside is a question about THIS name's use at THIS literal.
     var sfsites: string[] = rc_counted_field_sites(body, snm, structs, sfok, msites, out, "string", []);
-    var str_clo_ok: string[] = clo_ok;
+    var str_tup_ok: string[] = tup_ok;
     var sfi: i32 = 0;
-    while (sfi < sfsites.len()) { str_clo_ok = str_clo_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
+    while (sfi < sfsites.len()) { str_tup_ok = str_tup_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
     if (util.index_of_str(reassigned, snm) < 0
-        && !body_unsafe_for_clo_alias(body, snm, borrowable, str_clo_ok, recv_borrow, sal_all)) {
+        && !body_unsafe_for_tup_alias(body, snm, borrowable, str_tup_ok, recv_borrow, sal_all)) {
         out = out.append("STR:" + strs[si]);
         out = credit_alias_sites(out, "STR:", sal_all);
         if (sra.len() > 0) {
@@ -70255,7 +70048,7 @@ while (si < strs.len()) {
     return out;
 }
 
-function reclaimable_litstr_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], lits: string[], reassigned: string[], recv_borrow: string[], str_cands: string[], strs: string[], out: string[]): string[] {
+function reclaimable_litstr_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], lits: string[], reassigned: string[], recv_borrow: string[], str_cands: string[], strs: string[], out: string[]): string[] {
 var li2: i32 = 0;
 while (li2 < lits.len()) {
     var lnm: string = reclaim_site_name(lits[li2]);
@@ -70266,7 +70059,7 @@ while (li2 < lits.len()) {
     if (util.index_of_str(strs, lits[li2]) < 0
         && util.index_of_str(reassigned, lnm) < 0
         && !litstr_tostring_recv_body(body, lnm)
-        && !body_unsafe_for_clo_alias(body, lnm, borrowable, clo_ok, recv_borrow, lal)) {
+        && !body_unsafe_for_tup_alias(body, lnm, borrowable, tup_ok, recv_borrow, lal)) {
         out = out.append("STR:" + lits[li2]);
         out = credit_alias_sites(out, "STR:", lal);
         if (lra.len() > 0) { out = out.append("STRALIASSRC:" + lits[li2]); }
@@ -70277,14 +70070,14 @@ while (li2 < lits.len()) {
     return out;
 }
 
-function reclaimable_tostr_scalar(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tss: string[], out: string[]): string[] {
+function reclaimable_tostr_scalar(body: ast.Stmt[], borrowable: string[], tup_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tss: string[], out: string[]): string[] {
 var ti2: i32 = 0;
 while (ti2 < tss.len()) {
     var tnm: string = reclaim_site_name(tss[ti2]);
     var tsal: string[] = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, []);
     if (util.index_of_str(strs, tss[ti2]) < 0
         && util.index_of_str(reassigned, tnm) < 0
-        && !body_unsafe_for_clo_alias(body, tnm, borrowable, clo_ok, recv_borrow, tsal)) {
+        && !body_unsafe_for_tup_alias(body, tnm, borrowable, tup_ok, recv_borrow, tsal)) {
         out = out.append("STR:" + tss[ti2]);
         out = credit_alias_sites(out, "STR:", tsal);
     }
@@ -70294,14 +70087,14 @@ while (ti2 < tss.len()) {
     return out;
 }
 
-function reclaimable_join_strarr(body: ast.Stmt[], borrowable: string[], clo_ok: string[], jss: string[], reassigned: string[], recv_borrow: string[], strs: string[], out: string[]): string[] {
+function reclaimable_join_strarr(body: ast.Stmt[], borrowable: string[], tup_ok: string[], jss: string[], reassigned: string[], recv_borrow: string[], strs: string[], out: string[]): string[] {
 var ji: i32 = 0;
 while (ji < jss.len()) {
     var jnm: string = reclaim_site_name(jss[ji]);
     var jal: string[] = alias_bind_sites_of(body, jnm, borrowable, recv_borrow, body, []);
     if (util.index_of_str(strs, jss[ji]) < 0
         && util.index_of_str(reassigned, jnm) < 0
-        && !body_unsafe_for_clo_alias(body, jnm, borrowable, clo_ok, recv_borrow, jal)) {
+        && !body_unsafe_for_tup_alias(body, jnm, borrowable, tup_ok, recv_borrow, jal)) {
         out = out.append("STR:" + jss[ji]);
         out = credit_alias_sites(out, "STR:", jal);
     }
@@ -70311,14 +70104,14 @@ while (ji < jss.len()) {
     return out;
 }
 
-function reclaimable_trim_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tms: string[], out: string[]): string[] {
+function reclaimable_trim_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tms: string[], out: string[]): string[] {
 var tmi: i32 = 0;
 while (tmi < tms.len()) {
     var mnm: string = reclaim_site_name(tms[tmi]);
     var mal: string[] = alias_bind_sites_of(body, mnm, borrowable, recv_borrow, body, []);
     if (util.index_of_str(strs, tms[tmi]) < 0
         && util.index_of_str(reassigned, mnm) < 0
-        && !body_unsafe_for_clo_alias(body, mnm, borrowable, clo_ok, recv_borrow, mal)) {
+        && !body_unsafe_for_tup_alias(body, mnm, borrowable, tup_ok, recv_borrow, mal)) {
         out = out.append("STR:" + tms[tmi]);
         out = credit_alias_sites(out, "STR:", mal);
     }
@@ -70328,14 +70121,14 @@ while (tmi < tms.len()) {
     return out;
 }
 
-function reclaimable_replace_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], rps: string[], strs: string[], out: string[]): string[] {
+function reclaimable_replace_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], reassigned: string[], recv_borrow: string[], rps: string[], strs: string[], out: string[]): string[] {
 var rpi: i32 = 0;
 while (rpi < rps.len()) {
     var rnm: string = reclaim_site_name(rps[rpi]);
     var rpal: string[] = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, []);
     if (util.index_of_str(strs, rps[rpi]) < 0
         && util.index_of_str(reassigned, rnm) < 0
-        && !body_unsafe_for_clo_alias(body, rnm, borrowable, clo_ok, recv_borrow, rpal)) {
+        && !body_unsafe_for_tup_alias(body, rnm, borrowable, tup_ok, recv_borrow, rpal)) {
         out = out.append("STR:" + rps[rpi]);
         out = credit_alias_sites(out, "STR:", rpal);
     }
@@ -70345,13 +70138,13 @@ while (rpi < rps.len()) {
     return out;
 }
 
-function reclaimable_sfrrecv_local(body: ast.Stmt[], borrowable: string[], clo_ok: string[], reassigned: string[], recv_borrow: string[], sfrs: string[], strs: string[], out: string[]): string[] {
+function reclaimable_sfrrecv_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], reassigned: string[], recv_borrow: string[], sfrs: string[], strs: string[], out: string[]): string[] {
 var sfi: i32 = 0;
 while (sfi < sfrs.len()) {
     var fnm: string = reclaim_site_name(sfrs[sfi]);
     if (util.index_of_str(strs, sfrs[sfi]) < 0
         && util.index_of_str(reassigned, fnm) < 0
-        && !body_unsafe_for_clo(body, fnm, borrowable, clo_ok, recv_borrow)) {
+        && !body_unsafe_for_tup(body, fnm, borrowable, tup_ok, recv_borrow)) {
         out = out.append("SFRCAND:" + sfrs[sfi]);
     }
     sfi = sfi + 1;
@@ -70910,23 +70703,23 @@ while (ai2 < fresh.len()) {
     return out;
 }
 
-function clo_ok_from_tuple_credits(out: string[], clo_ok: string[]): string[] {
+function tup_ok_from_tuple_credits(out: string[], tup_ok: string[]): string[] {
 var tprc: i32 = 0;
 while (tprc < out.len()) {
     if (out[tprc].len() > 6 && slice_unchecked(out[tprc], 0, 6) == "TUPRC:") {
-        clo_ok = clo_ok.append("TUP:" + slice_unchecked(out[tprc], 6, out[tprc].len()));
+        tup_ok = tup_ok.append("TUP:" + slice_unchecked(out[tprc], 6, out[tprc].len()));
     }
     // #7226 string limb: a string local at a BARE-IDENT element of a tuple
     // this pass credited "TUPELEMOK:" is likewise no longer an escape — the
     // element release gives the construction retain back, so the local's own
     // box reaches 0. Without this the string never earned "STR:" and its box
     // was never swept: inc 1, dec 0, 32 B/round unbounded. See the ExprTuple
-    // arm of body_unsafe_for_clo.
+    // arm of body_unsafe_for_tup.
     if (out[tprc].len() > 10 && slice_unchecked(out[tprc], 0, 10) == "TUPELEMOK:") {
-        clo_ok = clo_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
+        tup_ok = tup_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
     }
     tprc = tprc + 1;
 }
 
-    return clo_ok;
+    return tup_ok;
 }
