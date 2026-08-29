@@ -9014,7 +9014,11 @@ func (b *builder) expr(e ast.Expr) error {
 					b.emit(Op{Kind: OpAnd})
 				}
 			default:
-				return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
+				// Unreachable: after the usize resolution above,
+				// both widths are one of 8/16/32/64, and the four
+				// cases cover that square exhaustively. A new
+				// integer width would land here.
+				return fmt.Errorf("ir: int cast %s -> %s reached the width table's default (compiler bug)", n.InnerType, n.Target)
 			}
 		case srcIsFloat && dstIsFloat:
 			sw := srcFloat.NormalWidth()
@@ -9181,7 +9185,18 @@ func (b *builder) expr(e ast.Expr) error {
 			if !srcIsNumOrFloat && !dstIsNumOrFloat {
 				return nil
 			}
-			return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
+			// Unreachable: a cast with exactly one numeric side is
+			// only ever accepted by the checker as one of the two
+			// pointer reinterprets lowered above — pointer-shaped
+			// value to i32/usize, or back — and both return before
+			// this point. Everything else is E033 pre-IR, which is
+			// what makes `i64 as string` unreachable rather than
+			// unimplemented: reinterpreting a 64-bit value as a
+			// pointer-shaped handle is the truncation this rejects
+			// (E069), and CONVERTING an i64 to text is `.to_string()`,
+			// not a cast. Widening the checker's accepted set means
+			// widening the lowering above in the same change.
+			return fmt.Errorf("ir: cast %s -> %s has one numeric side but is not a pointer reinterpret; the checker should have rejected it with E033 (compiler bug)", n.InnerType, n.Target)
 		}
 	case *ast.BoolLit:
 		v := int32(0)
@@ -17172,7 +17187,11 @@ func (b *builder) assign(n *ast.Assign) error {
 		b.emit(payloadStoreOpFor(cr.Type, b.ptrW))
 		return nil
 	}
-	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
+	// Unreachable: the parser admits only Ident / Index / FieldAccess as an
+	// lvalue (P003 otherwise), and CaptureRef is closureconv rewriting an
+	// Ident it already accepted — so the four cases above are the whole set
+	// by construction.
+	return fmt.Errorf("ir: assignment target %T is not an lvalue the parser can produce (compiler bug)", n.Target)
 }
 
 // needsRcIncOnAlias returns true iff `e` is an alias expression
