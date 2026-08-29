@@ -6,8 +6,9 @@ write to express caching policy. Written in Fern, depending on nothing
 outside `std`.
 
 ```
-$ fern -interp vclfmt.fern -- testdata/sample.vcl          # parse + reformat
-$ fern -interp vclrun.fern -- testdata/policy.vcl GET /static/app.css -n 2
+$ fern -interp vclfmt.fern   -- testdata/sample.vcl        # parse + reformat
+$ fern -interp vclcheck.fern -- testdata/policy.vcl        # validate, don't run
+$ fern -interp vclrun.fern   -- testdata/policy.vcl GET /static/app.css -n 2
 --- request 1 ---
   path:        vcl_recv -> vcl_hash -> vcl_miss -> vcl_backend_fetch -> vcl_backend_response -> vcl_deliver
   disposition: deliver (miss)
@@ -20,9 +21,10 @@ $ fern -interp vclrun.fern -- testdata/policy.vcl GET /static/app.css -n 2
   disposition: deliver (HIT)
 ```
 
-Two drivers: `vclfmt` parses and reprints, `vclrun` executes a request
-against a policy. Both exit 0 on success, 1 on a VCL error, 2 when the
-file cannot be read or parsed.
+Three drivers: `vclfmt` parses and reprints, `vclcheck` validates without
+running, and `vclrun` executes a request against a policy — checking it
+first, as `varnishd` does at load time. All exit 0 on success, 1 on a VCL
+error, 2 when the file cannot be read or parsed.
 
 ## Layout
 
@@ -35,10 +37,11 @@ file cannot be read or parsed.
 | `value.fern` | VCL's types and its implicit coercion rules. |
 | `runtime.fern` | The five HTTP messages a transaction reads and writes, plus the cache. |
 | `vars.fern` | The variable namespace and its per-subroutine scoping. |
+| `check.fern` | Static validation: scoping, return actions, names, reachability. |
 | `eval.fern` | Expression evaluation, statement execution, ACL and regex matching. |
 | `machine.fern` | The request state machine and the built-in subroutines. |
-| `vclfmt.fern` / `vclrun.fern` | The drivers. |
-| `vcl_test.fern` / `vclbackend_test.fern` | 41 + 38 TAP cases. |
+| `vclfmt.fern` / `vclcheck.fern` / `vclrun.fern` | The drivers. |
+| `vcl_test.fern` / `vclbackend_test.fern` / `vclcheck_test.fern` | 41 + 38 + 32 TAP cases. |
 
 ## The front end
 
@@ -110,6 +113,39 @@ What it implements:
 - **Bounded recursion**: mutually recursive `call`s and `return (restart)`
   loops both stop with an error instead of exhausting the stack.
 
+## The checker
+
+The evaluator enforces scoping as it runs, so a mistake surfaces only on
+the request that reaches it — a `req.url` read in `vcl_backend_response`
+looks fine until something misses the cache. `check.fern` moves those
+checks to load time and reports **every** problem in one pass:
+
+```
+$ fern -interp vclcheck.fern -- broken.vcl
+broken.vcl:8:1:   [] 'vcl_recieve' is not a Varnish subroutine, so it would never run
+broken.vcl:13:5:  [vcl_recv] 'resp.http.X' is not writable in vcl_recv
+broken.vcl:14:21: [vcl_recv] unknown name 'nosuchacl'
+broken.vcl:14:34: [vcl_recv] 'deliver' is not a valid return from vcl_recv (expected one of: hash, pass, pipe, purge, synth, restart, fail)
+broken.vcl:15:5:  [vcl_recv] call to undefined subroutine 'missing_helper'
+broken.vcl:5:29:  [vcl_backend_response] 'req.url' is not readable in vcl_backend_response
+```
+
+The walk is **per entry point, not per subroutine**, because VCL's scoping
+is contextual: a `call`ed subroutine runs in its caller's context. A helper
+reachable from both `vcl_recv` and `vcl_backend_response` is checked twice,
+once in each — which is how the last line above finds a `req.url` read
+written inside a helper and illegal only because of who calls it. No
+per-subroutine walk can see that.
+
+It also checks return actions against each subroutine's legal set (naming
+the alternatives), rejects `vcl_`-prefixed subroutines Varnish would never
+call, catches duplicate and undefined subroutines, requires `hash_data()`
+to sit in `vcl_hash`, and lists subroutines nothing can reach.
+
+Each entry in the variable table carries the subroutines that may read and
+write it, and both the checker and the evaluator consult that one table —
+so they cannot disagree about what is legal.
+
 ## What it does not do
 
 - **No network and no real origin.** `fetch` fabricates a response: 200
@@ -139,6 +175,6 @@ transaction, subroutine), which is what lets the state machine hand a
 transaction between subroutines and keep every intermediate state for the
 log.
 
-`internal/e2e/vcl_example_test.go` runs both TAP suites, the formatter
-fixed-point check, the cache miss/hit path, the ACL matrix, and the scoping
-rejection on every CI run.
+`internal/e2e/vcl_example_test.go` runs all three TAP suites, the formatter
+fixed-point check, the cache miss/hit path, the ACL matrix, and the
+load-time rejection of a bad policy on every CI run.

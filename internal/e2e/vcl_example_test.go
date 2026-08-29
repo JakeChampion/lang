@@ -132,6 +132,86 @@ func TestVCLBackendTapSuitePasses(t *testing.T) {
 	}
 }
 
+// TestVCLCheckTapSuitePasses runs the static checker's TAP suite.
+func TestVCLCheckTapSuitePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/vcl/vclcheck_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"TAP version 13", "# Suite: vcl-check", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "not ok") {
+		t.Errorf("a case failed:\n%s", out)
+	}
+}
+
+// runVclcheck runs the checker driver from the example's own directory.
+func runVclcheck(t *testing.T, bin string, args ...string) (int, string, string) {
+	t.Helper()
+	argv := append([]string{"-interp", "vclcheck.fern", "--"}, args...)
+	cmd := exec.Command(bin, argv...)
+	cmd.Dir = langSrcAbs(t, "examples/vcl")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
+}
+
+// TestVCLCheckAcceptsTheSamplePolicy pins that the shipped policy is
+// clean: a checker that rejected it would make every other gate here
+// meaningless.
+func TestVCLCheckAcceptsTheSamplePolicy(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	code, out, errOut := runVclcheck(t, bin, "testdata/policy.vcl")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "ok: testdata/policy.vcl") {
+		t.Errorf("expected an ok line:\n%s", out)
+	}
+}
+
+// TestVCLCheckReportsEveryProblem pins the checker's two distinctive
+// properties on one file: it reports ALL problems rather than the first,
+// and it finds a helper's illegal access under the entry point that makes
+// it illegal — `tag_it` reads `req.url`, which is fine in principle and
+// wrong because `vcl_backend_response` is what calls it.
+func TestVCLCheckReportsEveryProblem(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	bad := filepath.Join(t.TempDir(), "broken.vcl")
+	src := `vcl 4.1;
+backend origin { .host = "127.0.0.1"; }
+sub tag_it { set beresp.http.X-Tag = req.url; }
+sub vcl_recv {
+    set resp.http.X = "1";
+    return (deliver);
+}
+sub vcl_backend_response { call tag_it; return (deliver); }
+`
+	if err := os.WriteFile(bad, []byte(src), 0o644); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	code, out, errOut := runVclcheck(t, bin, bad)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"[vcl_recv] 'resp.http.X' is not writable in vcl_recv",
+		"[vcl_recv] 'deliver' is not a valid return from vcl_recv",
+		"[vcl_backend_response] 'req.url' is not readable in vcl_backend_response",
+	} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("missing %q\nfull stderr:\n%s", w, errOut)
+		}
+	}
+}
+
 // runVclrun runs the evaluator driver from the example's own directory so
 // its relative testdata path resolves.
 func runVclrun(t *testing.T, bin string, args ...string) (int, string, string) {

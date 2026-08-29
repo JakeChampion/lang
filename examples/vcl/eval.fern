@@ -278,6 +278,26 @@ function arg_str(args: value.Value[], i: i32): string {
   return value.to_str(args[i]);
 }
 
+// The functions `call_builtin` implements. The checker rejects a call to
+// anything else at compile time, so a name listed here that call_builtin
+// does not actually handle would pass the check and fail at run time
+// instead — `vclbackend_test` pins the two together by calling every one.
+pub function builtin_names(): string[] {
+  return ["regsub", "regsuball", "std.tolower", "std.toupper", "std.integer", "std.log", "hash_data", "synthetic"];
+}
+
+pub function is_builtin(name: string): boolean {
+  var names: string[] = builtin_names();
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == name) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 // call_text_builtin covers the VCL functions that are pure: they map
 // their arguments to a value and touch nothing. None returned means the
 // name is not one of them.
@@ -762,7 +782,25 @@ function exec_call(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.CallStmt, depth
       return xerr(t, "call to undefined subroutine '" + s.name + "'");
     },
     Some(body) => {
-      return exec_block(ctx, t, sub, body, depth + 1);
+      var out: ExecOut = exec_block(ctx, t, sub, body, depth + 1);
+      if (!out.ok) {
+        return out;
+      }
+      // A bare `return;` returns from the CALLEE only — the caller carries
+      // on with its next statement. An action-carrying return ends the
+      // whole subroutine, so it propagates unchanged. Conflating the two
+      // makes every early-exit helper terminate the request.
+      match (out.flow) {
+        FReturn(a) => {
+          if (a.name == "none") {
+            return xok(out.txn, FNext);
+          }
+          return out;
+        },
+        FNext => {
+          return out;
+        }
+      }
     }
   }
 }

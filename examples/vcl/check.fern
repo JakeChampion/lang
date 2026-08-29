@@ -1,0 +1,459 @@
+// examples/vcl/check.fern — static validation of a VCL program.
+//
+// The evaluator enforces VCL's scoping as it runs, which means a policy's
+// mistakes surface only on the request that reaches them: a `req.url` read
+// in `vcl_backend_response` is fine until something misses the cache. This
+// module moves those checks to compile time, where `varnishd -C` puts
+// them, and reports every problem in one pass rather than the first one to
+// execute.
+//
+// It is also the front half of compiling VCL to Fern source. Generated
+// code should read `t.req.url` as a struct field rather than look "req.url"
+// up in a table — and it may only do that once something has proven the
+// name is legal in that subroutine. That proof is this module.
+//
+// The walk is per ENTRY POINT, not per subroutine, because VCL's scoping
+// is contextual: a `call`ed subroutine runs in its caller's context. A
+// helper reachable from both `vcl_recv` and `vcl_backend_response` is
+// therefore checked twice, once in each, which is what catches a helper
+// that is correct for one caller and illegal for the other. No
+// per-subroutine walk can see that.
+import "std/string";
+import "std/i64";
+import "./ast";
+import "./vars";
+import "./eval";
+
+// One problem, with the entry point whose context it was found in. The
+// same helper reported under two entry points is not a duplicate: those
+// are different findings about different call paths.
+pub struct Problem { msg: string, line: i32, col: i32, entry: string }
+
+// The walk's context: the program, and the entry point supplying scope.
+struct Ck { decls: ast.Decl[], entry: string }
+
+function problem(c: Ck, msg: string, line: i32, col: i32): Problem {
+  return Problem { msg: msg, line: line, col: col, entry: c.entry };
+}
+
+// The subroutines Varnish calls. A `sub` whose name starts with `vcl_`
+// but is not one of these is a typo that would silently never run, so it
+// is reported rather than treated as a custom subroutine.
+pub function entry_points(): string[] {
+  return ["vcl_init", "vcl_recv", "vcl_pipe", "vcl_pass", "vcl_hash", "vcl_purge", "vcl_miss", "vcl_hit", "vcl_deliver", "vcl_synth", "vcl_backend_fetch", "vcl_backend_response", "vcl_backend_error", "vcl_fini"];
+}
+
+// The return actions each entry point may use. Getting this wrong is a
+// VCL error that Varnish catches at load time, so it is checked here.
+// fern-lint: allow cyclomatic-complexity
+function actions_for(entry: string): string[] {
+  if (entry == "vcl_recv") {
+    return ["hash", "pass", "pipe", "purge", "synth", "restart", "fail"];
+  }
+  if (entry == "vcl_pipe") {
+    return ["pipe", "synth", "fail"];
+  }
+  if (entry == "vcl_pass") {
+    return ["fetch", "synth", "restart", "fail"];
+  }
+  if (entry == "vcl_hash") {
+    return ["lookup"];
+  }
+  if (entry == "vcl_purge") {
+    return ["synth", "restart", "fail"];
+  }
+  if (entry == "vcl_miss") {
+    return ["fetch", "pass", "synth", "restart", "fail"];
+  }
+  if (entry == "vcl_hit") {
+    return ["deliver", "miss", "pass", "synth", "restart", "fail"];
+  }
+  if (entry == "vcl_deliver") {
+    return ["deliver", "restart", "synth", "fail"];
+  }
+  if (entry == "vcl_synth") {
+    return ["deliver", "restart", "fail"];
+  }
+  if (entry == "vcl_backend_fetch") {
+    return ["fetch", "abandon", "error"];
+  }
+  if (entry == "vcl_backend_response") {
+    return ["deliver", "retry", "abandon", "error", "pass"];
+  }
+  if (entry == "vcl_backend_error") {
+    return ["deliver", "retry", "abandon"];
+  }
+  var none: string[] = [];
+  return none;
+}
+
+function in_list(s: string, items: string[]): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i] == s) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function join(items: string[], sep: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (i > 0) {
+      out = out + sep;
+    }
+    out = out + items[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+// ------------------------------------------------------------ name checks
+// check_name validates one identifier appearing in an expression. A name
+// is a variable, a declared backend, or a declared ACL; anything else is
+// a typo, and reading it as empty is how a policy silently stops working.
+function check_name(c: Ck, name: string, line: i32, col: i32, out: Problem[]): Problem[] {
+  match (vars.find_spec(name)) {
+    Some(s) => {
+      if (!in_list(c.entry, s.read_in)) {
+        return out.append(problem(c, "'" + name + "' is not readable in " + c.entry, line, col));
+      }
+      return out;
+    },
+    None => {}
+  }
+  var ctx: eval.Ctx = eval.Ctx { decls: c.decls };
+  if (eval.has_backend(ctx, name) || eval.has_acl(ctx, name)) {
+    return out;
+  }
+  if (name == "true" || name == "false") {
+    return out;
+  }
+  return out.append(problem(c, "unknown name '" + name + "'", line, col));
+}
+
+// check_call validates a function call: the name must be one the
+// evaluator implements, and `hash_data` only means anything in `vcl_hash`.
+function check_call(c: Ck, callee: string, line: i32, col: i32, out: Problem[]): Problem[] {
+  if (!eval.is_builtin(callee)) {
+    return out.append(problem(c, "unknown function '" + callee + "'", line, col));
+  }
+  if (callee == "hash_data" && c.entry != "vcl_hash") {
+    return out.append(problem(c, "hash_data() is only meaningful in vcl_hash", line, col));
+  }
+  return out;
+}
+
+// ------------------------------------------------------------ expressions
+function check_exprs(c: Ck, es: ast.Expr[], out: Problem[]): Problem[] {
+  var acc: Problem[] = out;
+  var i: i32 = 0;
+  while (i < es.len()) {
+    acc = check_expr(c, es[i], acc);
+    i = i + 1;
+  }
+  return acc;
+}
+
+// check_expr walks an expression. The right operand of `~` needs no
+// special case: a bare ACL name resolves through the same check as any
+// other identifier, and a regex is a string literal with nothing to
+// resolve. An ACL that was never declared is reported as the unknown name
+// it is.
+function check_expr(c: Ck, e: ast.Expr, out: Problem[]): Problem[] {
+  match (e) {
+    EVar(v) => {
+      return check_name(c, v.name, v.line, v.col, out);
+    },
+    ECall(call) => {
+      var acc: Problem[] = check_call(c, call.callee, call.line, call.col, out);
+      return check_exprs(c, call.args, acc);
+    },
+    EBinary(b) => {
+      var acc: Problem[] = check_expr(c, b.lhs, out);
+      return check_expr(c, b.rhs, acc);
+    },
+    EUnary(u) => {
+      return check_expr(c, u.operand, out);
+    },
+    EParen(inner) => {
+      return check_expr(c, inner, out);
+    },
+    _ => {
+      return out;
+    }
+  }
+}
+
+// ------------------------------------------------------------- statements
+function check_set(c: Ck, s: ast.SetStmt, out: Problem[]): Problem[] {
+  var acc: Problem[] = check_expr(c, s.value, out);
+  match (vars.find_spec(s.target)) {
+    None => {
+      return acc.append(problem(c, "unknown variable '" + s.target + "'", s.line, s.col));
+    },
+    Some(spec) => {
+      if (spec.write_in.len() == 0) {
+        return acc.append(problem(c, "'" + s.target + "' is read-only", s.line, s.col));
+      }
+      if (!in_list(c.entry, spec.write_in)) {
+        return acc.append(problem(c, "'" + s.target + "' is not writable in " + c.entry, s.line, s.col));
+      }
+      return acc;
+    }
+  }
+}
+
+function check_unset(c: Ck, s: ast.UnsetStmt, out: Problem[]): Problem[] {
+  match (vars.find_spec(s.target)) {
+    None => {
+      return out.append(problem(c, "unknown variable '" + s.target + "'", s.line, s.col));
+    },
+    Some(spec) => {
+      if (!spec.is_prefix) {
+        return out.append(problem(c, "'" + s.target + "' is not a header and cannot be unset", s.line, s.col));
+      }
+      if (!in_list(c.entry, spec.write_in)) {
+        return out.append(problem(c, "'" + s.target + "' is not writable in " + c.entry, s.line, s.col));
+      }
+      return out;
+    }
+  }
+}
+
+// check_return validates a return action against the entry point's set. A
+// bare `return;` is how a custom subroutine ends early; in a `vcl_*`
+// subroutine it names no action and is rejected.
+function check_return(c: Ck, s: ast.ReturnStmt, in_custom: boolean, out: Problem[]): Problem[] {
+  var acc: Problem[] = check_exprs(c, s.args, out);
+  if (s.action == "") {
+    if (in_custom) {
+      return acc;
+    }
+    return acc.append(problem(c, "'return' needs an action in " + c.entry, s.line, s.col));
+  }
+  var allowed: string[] = actions_for(c.entry);
+  if (in_list(s.action, allowed)) {
+    return acc;
+  }
+  return acc.append(problem(c, "'" + s.action + "' is not a valid return from " + c.entry + " (expected one of: " + join(allowed, ", ") + ")", s.line, s.col));
+}
+
+function check_if(c: Ck, s: ast.IfStmt, in_custom: boolean, depth: i32, out: Problem[]): Problem[] {
+  var acc: Problem[] = out;
+  var i: i32 = 0;
+  while (i < s.arms.len()) {
+    acc = check_expr(c, s.arms[i].cond, acc);
+    acc = check_block(c, s.arms[i].body, in_custom, depth, acc);
+    i = i + 1;
+  }
+  if (s.has_else) {
+    acc = check_block(c, s.else_blk, in_custom, depth, acc);
+  }
+  return acc;
+}
+
+// check_call_stmt follows a `call` into the callee, still in this entry
+// point's context. The depth guard stops a recursive subroutine pair from
+// walking forever; the evaluator bounds the same cycle at run time.
+function check_call_stmt(c: Ck, s: ast.CallStmt, depth: i32, out: Problem[]): Problem[] {
+  var ctx: eval.Ctx = eval.Ctx { decls: c.decls };
+  match (eval.find_sub(ctx, s.name)) {
+    None => {
+      return out.append(problem(c, "call to undefined subroutine '" + s.name + "'", s.line, s.col));
+    },
+    Some(body) => {
+      if (depth <= 0) {
+        return out.append(problem(c, "subroutine calls nest too deeply at '" + s.name + "'", s.line, s.col));
+      }
+      return check_block(c, body, true, depth - 1, out);
+    }
+  }
+}
+
+// fern-lint: allow cyclomatic-complexity
+function check_stmt(c: Ck, s: ast.Stmt, in_custom: boolean, depth: i32, out: Problem[]): Problem[] {
+  match (s) {
+    SSet(x) => {
+      return check_set(c, x, out);
+    },
+    SUnset(x) => {
+      return check_unset(c, x, out);
+    },
+    SIf(x) => {
+      return check_if(c, x, in_custom, depth, out);
+    },
+    SReturn(x) => {
+      return check_return(c, x, in_custom, out);
+    },
+    SCall(x) => {
+      return check_call_stmt(c, x, depth, out);
+    },
+    SExpr(x) => {
+      return check_expr(c, x.value, out);
+    },
+    SBlock(b) => {
+      return check_block(c, b, in_custom, depth, out);
+    },
+    SNew(x) => {
+      if (c.entry != "vcl_init") {
+        return out.append(problem(c, "'new' is only allowed in vcl_init", x.line, x.col));
+      }
+      return out.append(problem(c, "'new " + x.name + "' needs VMOD objects, which are not implemented", x.line, x.col));
+    },
+    SInclude(x) => {
+      return out.append(problem(c, "'include' must be resolved before checking", x.line, x.col));
+    },
+    SCSource(x) => {
+      return out.append(problem(c, "inline C cannot be checked or evaluated", x.line, x.col));
+    }
+  }
+}
+
+function check_block(c: Ck, b: ast.Block, in_custom: boolean, depth: i32, out: Problem[]): Problem[] {
+  var acc: Problem[] = out;
+  var i: i32 = 0;
+  while (i < b.stmts.len()) {
+    acc = check_stmt(c, b.stmts[i], in_custom, depth, acc);
+    i = i + 1;
+  }
+  return acc;
+}
+
+// --------------------------------------------------------------- program
+// check_declarations validates the top level: duplicate subroutines, and a
+// `vcl_`-prefixed name that Varnish will never call.
+function check_declarations(decls: ast.Decl[], out: Problem[]): Problem[] {
+  var acc: Problem[] = out;
+  var seen: string[] = [];
+  var c: Ck = Ck { decls: decls, entry: "" };
+  var i: i32 = 0;
+  while (i < decls.len()) {
+    match (decls[i]) {
+      DSub(s) => {
+        if (in_list(s.name, seen)) {
+          acc = acc.append(problem(c, "subroutine '" + s.name + "' is defined more than once", s.line, s.col));
+        }
+        seen = seen.append(s.name);
+        if (s.name.starts_with("vcl_") && !in_list(s.name, entry_points())) {
+          acc = acc.append(problem(c, "'" + s.name + "' is not a Varnish subroutine, so it would never run", s.line, s.col));
+        }
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// max_call_depth bounds the walk through `call` chains.
+function max_call_depth(): i32 {
+  return 32;
+}
+
+// check validates a whole program: the declarations, then each entry point
+// the program defines, walked in its own scope.
+pub function check(decls: ast.Decl[]): Problem[] {
+  var out: Problem[] = [];
+  out = check_declarations(decls, out);
+  var ctx: eval.Ctx = eval.Ctx { decls: decls };
+  var entries: string[] = entry_points();
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    match (eval.find_sub(ctx, entries[i])) {
+      Some(body) => {
+        var c: Ck = Ck { decls: decls, entry: entries[i] };
+        out = check_block(c, body, false, max_call_depth(), out);
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// unreachable_subs lists custom subroutines no entry point can reach. Not
+// an error — a policy may keep one deliberately — but worth reporting,
+// since the usual cause is a `call` that was removed or misspelled.
+pub function unreachable_subs(decls: ast.Decl[]): string[] {
+  var reached: string[] = [];
+  var ctx: eval.Ctx = eval.Ctx { decls: decls };
+  var entries: string[] = entry_points();
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    match (eval.find_sub(ctx, entries[i])) {
+      Some(body) => {
+        reached = mark_reached(ctx, body, reached, max_call_depth());
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  var out: string[] = [];
+  var j: i32 = 0;
+  while (j < decls.len()) {
+    match (decls[j]) {
+      DSub(s) => {
+        if (!s.name.starts_with("vcl_") && !in_list(s.name, reached)) {
+          out = out.append(s.name);
+        }
+      },
+      _ => {}
+    }
+    j = j + 1;
+  }
+  return out;
+}
+
+function mark_reached(ctx: eval.Ctx, b: ast.Block, reached: string[], depth: i32): string[] {
+  var acc: string[] = reached;
+  if (depth <= 0) {
+    return acc;
+  }
+  var i: i32 = 0;
+  while (i < b.stmts.len()) {
+    acc = mark_reached_stmt(ctx, b.stmts[i], acc, depth);
+    i = i + 1;
+  }
+  return acc;
+}
+
+function mark_reached_stmt(ctx: eval.Ctx, s: ast.Stmt, reached: string[], depth: i32): string[] {
+  match (s) {
+    SCall(x) => {
+      if (in_list(x.name, reached)) {
+        return reached;
+      }
+      var acc: string[] = reached.append(x.name);
+      match (eval.find_sub(ctx, x.name)) {
+        Some(body) => {
+          return mark_reached(ctx, body, acc, depth - 1);
+        },
+        None => {
+          return acc;
+        }
+      }
+    },
+    SIf(x) => {
+      var acc: string[] = reached;
+      var i: i32 = 0;
+      while (i < x.arms.len()) {
+        acc = mark_reached(ctx, x.arms[i].body, acc, depth);
+        i = i + 1;
+      }
+      if (x.has_else) {
+        acc = mark_reached(ctx, x.else_blk, acc, depth);
+      }
+      return acc;
+    },
+    SBlock(b) => {
+      return mark_reached(ctx, b, reached, depth);
+    },
+    _ => {
+      return reached;
+    }
+  }
+}
