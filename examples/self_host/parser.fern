@@ -8689,6 +8689,46 @@ function type_str_vars(ty: string, acc: string[]): string[] {
 // bounded-only substitution (the `T` in `sort_key[T, K: Ord](xs, key):
 // T[]`, erased from fd.type_params). A fn-param's own return var is
 // bound from the lambda argument's return type (mirroring infer_inst).
+// lambda_param_types_of returns the DECLARED parameter types of a fn-typed
+// argument — a lambda's own annotations, or a bare function NAME's declared
+// params. The argument-position sibling of lambda_ret_of: `keep: (T) => boolean`
+// puts T in the closure's PARAMETER, which the coarse "fn" type_name tag drops
+// just as it drops the return. A name the env already binds is a LOCAL holding
+// a closure, not the like-named top-level function, so it says nothing here —
+// the same exclusion lambda_ret_of makes.
+function lambda_param_types_of(e: ast.Expr, env: MEnv, funcs: MFns): string[] {
+    var none: string[] = [];
+    match (e) {
+        ast.ExprLambda(lm) => {
+            var out: string[] = [];
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) { out = out.append(lm.params[pi].type_name); pi = pi + 1; }
+            return out;
+        },
+        ast.ExprIdent(fid) => {
+            if (env.elook(fid.name).len() > 0) { return none; }
+            return func_param_types_of(funcs.decls, fid.name);
+        },
+        _ => { return none; }
+    }
+    return none;
+}
+
+// func_param_types_of reads a top-level function's declared parameter types.
+function func_param_types_of(decls: FuncDecl[], name: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < decls.len()) {
+        if (decls[i].name == name && decls[i].receiver_type.len() == 0) {
+            var k: i32 = 0;
+            while (k < decls[i].params.len()) { out = out.append(decls[i].params[k].type_name); k = k + 1; }
+            return out;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, vars: string[]): MEnv {
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
@@ -8702,6 +8742,26 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
                 var lr: string = lambda_ret_of(args[i], env, funcs);
                 if (lr.len() > 0) {
                     binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds);
+                }
+            }
+            // The same for a residual var in the fn-param's ARGUMENT position
+            // (`keep: (T) => boolean`). `filter[T, I: Iterator[T]]` reaches T
+            // only there, so it survived the bounded-only substitution as a
+            // residual, found no binding here, and the caller kept `T[]` as the
+            // element type — a downstream generic then monomorphised at the
+            // type PARAMETER itself (`unknown symbol T.cmp`). The RETURN
+            // sibling directly above exists for exactly this reason; map's U
+            // comes back through it, which is why map chains resolved and
+            // filter chains did not.
+            if (fd.params[i].type_name == "fn") {
+                var fpts: string[] = split_top_commas(fd.params[i].fn_param_types);
+                var lpts: string[] = lambda_param_types_of(args[i], env, funcs);
+                var q: i32 = 0;
+                while (q < fpts.len()) {
+                    if (q < lpts.len() && lpts[q].len() > 0 && tp_index(fpts[q], vars) >= 0) {
+                        binds = bind_unify(fpts[q], lpts[q], vars, binds);
+                    }
+                    q = q + 1;
                 }
             }
         }
