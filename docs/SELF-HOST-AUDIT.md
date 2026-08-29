@@ -232,9 +232,32 @@ findings. Ranked by leverage.
   while array membership is the differently-named `contains_str`
   (`ssa.fern:1773`). Check the parameter shape, not the name.
 
-  Still worth doing: named ASCII constants (`DOT=46`, `LBRACKET=91`,
-  `RBRACKET=93`, `COMMA=44`, `ZERO=48`, `NINE=57`, `SLASH=47`, `DQUOTE=34`,
-  `BACKSLASH=92`) to kill the magic-number comparisons that recur in every file.
+  **The named-ASCII-constants item is answered, but not the way it was
+  written.** It asked for `DOT=46` / `LBRACKET=91` / … to kill magic-number
+  comparisons. The language already has the better answer — BYTE LITERALS,
+  `ch == b'['` — and they had quietly taken over: 505 byte-literal comparisons
+  against a handful of numeric ones when this was re-measured. Adding integer
+  constants would have introduced a third spelling alongside the two in use.
+
+  What kept the residue numeric was a widening at the binding, not a missing
+  constant: `var ch: i32 = s[i] as i32;` makes `b'['` (a `u8`) untypeable
+  against it. Binding at byte type instead — `var ch: u8 = s[i];` — removes the
+  cast AND the magic number, and the char-naming comment each site carried
+  (`// '['`) becomes redundant and goes with it. Converted across `parser`,
+  `irlower`, `ir`, `arm64_native` and `x86_native`: **31 commented ASCII
+  comparisons down to 2**, byte-literal comparisons 505 -> 547. The same
+  function sometimes held both spellings (`parser.fern`'s Result-arity check
+  compared `ret_type[n - 1] != b']'` two lines above `c == 91`).
+
+  _The 2 that stay are correct as they are:_ `arm64_native.fern`'s and
+  `x86_native.fern`'s string-escape decoders, where `c` is a mutable
+  accumulator reassigned to decoded values (`c = 10` for `\n`), so it is an
+  integer that happens to start as a byte, not a byte.
+
+  **Run `-check` before the byte-identity gate on this kind of sweep.** One
+  converted site also parsed digits (`cur = cur * 10 + (ch - 48)`); the checker
+  refused the mixed `i32`/`u8` arithmetic immediately, where a byte-identity
+  run would have cost an order of magnitude more time to say less.
 
   > Note: `core/int.int_to_string`, `parse_int_radix`, and the `std/i32` digit
   > predicates already exist in the stdlib. Prefer importing those if the
@@ -991,10 +1014,40 @@ appendix §6.)
   wrong, so a group helper keyed on the name alone silently changes what
   `write(a, b)` lowers to. Any regrouping has to end each group with the
   generic fallthrough.
-- [ ] **SH-051 — `ssa.fern:1768`** `env_put` mutates in place and is correct only
-  on unaliased scratch, versus the near-identical copying `env_set_at` (`:1750`)
-  — make the aliasing contract type-level (`ScratchVec`) or rename it
-  `env_put_unsafe_owned`.
+- [x] **SH-051 — the premise was wrong: `env_put` has no aliasing hazard.**
+  This row asked for a `ScratchVec` type or an `env_put_unsafe_owned` rename to
+  fence off an in-place write. There is nothing to fence. `env_put` is
+  `vals.with(i, v)`, which lowers through `__method_Array_set` to
+  `__fern_arr_cow_inplace` — **copy-on-write**: the same buffer when the
+  receiver is uniquely owned, a fresh copy when it is shared. Value semantics
+  hold under aliasing, so no alias ever observes the write.
+
+  Measured, not reasoned: a three-element array with a second binding, passed
+  through the same `vals = vals.with(i, v)` shape, leaves both the original and
+  the alias untouched and returns the edit in the result — on the native
+  interpreter AND the compiled x86-64 backend.
+
+  What `env_put` actually carries is a COST contract: O(1) on a locally-owned
+  scratch table, O(len) on a shared one. The comment claimed the opposite of
+  the truth ("index assignment is in place, so the caller's `x = env_put(x, …)`
+  and the mutation refer to the same array") and is rewritten to say what the
+  code does. Naming it `_unsafe_owned` would have enshrined a hazard that does
+  not exist.
+- [ ] **SH-059 — `env_set_at` is a redundant always-copying twin of `env_put`.**
+  Surfaced by SH-051. Given COW (above), `env_set_at` (`ssa.fern:979`) and
+  `env_put` compute the same value; `env_set_at` just always pays O(len).
+  Its 5 call sites are all `x = env_set_at(x, i, v)` in the phi-merge and
+  loop-header paths, where `x` starts aliased to `s.var_vals` — so `env_put`
+  there would copy ONCE on the first write and then run in place, against
+  O(len) per write today.
+
+  _Not a blind swap._ The two differ on an out-of-range index: `env_set_at`
+  loops `k == i` and silently returns an unchanged copy, where `.with` is
+  bounds-checked. Every current index is a loop counter bounded by
+  `s.var_names.len()` against the parallel `s.var_vals`, so they are in range
+  **if the parallel-array length invariant holds** — which is precisely what
+  SH-047 records as unenforced. Wants its own change and its own test, in the
+  phi-merge path, rather than riding along with a comment fix.
 
 ### Emitters / WASM
 - [ ] **SH-052 — `asm_arm64_ir.fern:6738-6859`** `darwinize` is a **122-line**
