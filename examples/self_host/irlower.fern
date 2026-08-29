@@ -39638,6 +39638,47 @@ function rcpayload_option_cand(v: ast.StmtVar, structs: parser.StructDecl[]): Op
     return OptRcCand { variant: "", ptype: "" };
 }
 
+// opt_body_binds_rc_payload: does any match on `name` in `stmts` bind its rc
+// payload to a name that ESCAPES the arm? The Option sibling of
+// enum_body_binds_rc_payload, and the fourth condition
+// opt_match_alias_escape_ok needs.
+//
+// body_unsafe_for_match_borrow reads `match (x)` as a borrow, which is true of
+// the BOX and false of the PAYLOAD: `match (x) { Some(xs) => { out = xs; } }`
+// carries the element out of the frame, and the source's consuming-match free
+// then releases a buffer `out` still holds. Measured as __rc_underflow_count()
+// firing (exit 99) while both oracles exit 68 — and the leak checker cannot see
+// it, because the over-releasing build's census BALANCES.
+//
+// "Ok|Some" is the spelling for a caller that does not know the constructed
+// variant; naming one spelling on a runtime-variant box silently checks
+// nothing. scrut_borrow is false: nothing here proves a nested scrutinee is a
+// borrow, and over-refusing costs a leak while under-refusing dangles.
+function opt_body_binds_rc_payload(stmts: ast.Stmt[], name: string): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtMatch(m) => {
+                var hit: boolean = false;
+                match (m.scrutinee) {
+                    ast.ExprIdent(sid) => { if (sid.name == name) { hit = true; } },
+                    _ => {}
+                }
+                if (hit && opt_arm_binding_escapes(stmt, "Ok|Some", false)) { return true; }
+                for arm in m.arms { if (opt_body_binds_rc_payload(arm.body, name)) { return true; } }
+            },
+            ast.StmtIf(f) => {
+                if (opt_body_binds_rc_payload(f.then_body, name)) { return true; }
+                if (opt_body_binds_rc_payload(f.else_body, name)) { return true; }
+            },
+            ast.StmtWhile(w) => { if (opt_body_binds_rc_payload(w.body, name)) { return true; } },
+            ast.StmtFor(fo) => { if (opt_body_binds_rc_payload(fo.body, name)) { return true; } },
+            ast.StmtDefer(d) => { if (opt_body_binds_rc_payload([d.action], name)) { return true; } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
 // opt_arm_binding_escapes: for the consuming match `st` of an rc-payload option
 // whose constructed variant is `variant` (Some/Ok/Err), does that variant's arm
 // BIND its array payload to a name that ESCAPES the arm (stored / returned /
@@ -47144,6 +47185,11 @@ function opt_match_alias_escape_ok(body: ast.Stmt[], name: string, skip: i32, bo
                             if (aid.name == name
                                 && util.index_of_str(body_assign_targets(body), v.name) < 0
                                 && !body_unsafe_for_match_borrow(body, v.name, borrowable, recv_borrow)
+                                // …and the alias must not carry the PAYLOAD out.
+                                // The scan above reads `match (x)` as a borrow,
+                                // which holds for the box and not for what its
+                                // arm binds.
+                                && !opt_body_binds_rc_payload(body, v.name)
                                 && !name_used_after(body, v.name, skip)) {
                                 is_alias = true;
                                 saw_alias = true;
