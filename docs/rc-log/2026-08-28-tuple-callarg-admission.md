@@ -1,5 +1,33 @@
 # The tuple call-arg row was the same admission gate, one predicate along
 
+> **CORRECTION (added after the fact).** The headline of this entry is WRONG
+> and is kept only so the mistake is legible. `tuple_mixed__callarg__stored_struct`
+> was NOT closed by the change described below. It was closed by the `"TCNT:"`
+> counted tier — the very thing this entry says "was not built" — which landed
+> in main at 19:46, two minutes after I measured the row as leaking at ~19:44
+> and about two hours before my change merged. See
+> `2026-08-28-tuple-callarg-counted-tier.md`, which is the accurate account.
+>
+> How the wrong claim survived: rebase-merge preserves AUTHOR dates, so the
+> tier's commit sorts before mine in the log even though it merged after I
+> started. My "before" measurement was honest when taken and stale by the time
+> I wrote it up. The proof that my change did not flip the row is that this
+> commit never touched the leak-matrix verdict files and CI passed — had the
+> row really moved leak -> clean, the pin would have failed exactly as it did
+> later for `opt_arr__fnscope__alias_match`.
+>
+> What survives from this entry: the `struct_tuple_field_shared` fixture, and
+> the general lesson at the end about admission predicates. The
+> `struct_has_reclaim_array_field` clause it added is redundant — both leak
+> matrices pass as gates and both tuple fixtures pass on all four targets with
+> it removed.
+>
+> The lesson for a session running alongside another: a leak-matrix reading is
+> only valid against the main you actually fetched, and the log's ordering will
+> not tell you when a sibling commit landed. Compare COMMITTER dates, not author
+> dates.
+
+
 `tuple_mixed__callarg__stored_struct` flips **leak → clean** on both
 architectures. Like step 1, it needed neither of the things the plan
 scoped for it.
