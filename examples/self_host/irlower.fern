@@ -5451,7 +5451,23 @@ pub function expr_scalar_type(e: ast.Expr, s: LowerState): string {
     // resolves for the methods a bool actually has (to_string / to_json /
     // to_debug / eq) — any other keys an absent label and bails, safe.
     if (expr_is_bool(e, s)) { return "boolean"; }
+    if (expr_is_char(e, s)) { return "char"; }
     return "i32";
+}
+
+// expr_is_char reports whether `e` is a statically-`char` value, so a method on
+// it dispatches "char.<m>" (std/unicode's to_upper / to_lower / …) rather than
+// falling through to expr_scalar_type's "i32" default — which keys the absent
+// `i32.to_upper` and refuses the module. DISPATCH-ONLY, exactly like
+// expr_is_bool: a char is an i32 value in an i32 slot, and nothing about its
+// storage, width or rc differs.
+function expr_is_char(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        // `97 as char` — an ascription cast, ExprUnary with an `as_<T>` op.
+        ast.ExprUnary(u) => { return u.op == "as_char"; },
+        _ => { return false; }
+    }
+    return false;
 }
 
 pub function expr_recv_prim_type(e: ast.Expr, s: LowerState): string {
