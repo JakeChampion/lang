@@ -848,10 +848,25 @@ appendix §6.)
   than native's "expected X, got Y". Positions are the half that gated
   usability; the message half wants the parser to carry errors and is its own
   change.
-- [ ] **SH-042 — `parser.fern:6033-6373`** `parse_type_name` is a **341-line**
-  giant whose recovery exists "to avoid OOM spin". No `parse_type_atom` /
-  `parse_type_suffixes` split exists. Split it and return structured types
-  (feeds T2).
+- [~] **SH-042 — `parse_type_name` split; the structured-type half is T2.**
+  _Done:_ 350 lines covering five unrelated grammars became an 8-line dispatch
+  on the leading token, plus `parse_type_dyn` (18), `parse_type_handle` (11),
+  `parse_type_punct_led` (27) -> `parse_type_paren` (167), and
+  `parse_type_ident_led` (101).
+
+  `parse_type_paren` stays large deliberately. It is ONE construct, not a pile
+  of them: the tuple collector and the `(dyn T)` unwrap are interleaved because
+  the unwrap exists precisely to stop the collector mashing `dyn Shape` into
+  `(dynShape)`. Splitting it further cuts across the logic rather than along it.
+
+  The split surfaced a stale comment, now deleted: the paragraph above the
+  `own`/`borrow` branch claimed the parser "erases it to i32 ... and return
+  i32", where the code returns `own R` / `borrow R` and the comment INSIDE the
+  branch explains why (`lower_defers_prepass_module` needs the spelling to tell
+  own from borrow). Two comments on one branch stating opposite behaviours.
+
+  _Still open:_ returning structured types rather than the flat string. That is
+  T2/SH-021's endgame, not a second split — track it there.
 - [x] **SH-043 — `lexer.fern`** the C-escape decoder (`\n\t\r\0\"\\\xNN`) was
   copy-pasted between `scan_string` and `scan_fstring`. _Done:_ extracted
   `apply_escape(l, esc) -> EscResult` (`lexer.fern:524`) so both scanners share
@@ -933,13 +948,31 @@ appendix §6.)
   kinds as string-tagged (`"const_int"`, `"binary"`, …) and documents the `imm`
   overload as if it were a feature. Rewrite it against the integer `kind_tag`
   encoding in the same change.
-- [ ] **SH-050 — `ssa.fern:524-1313`** `build_expr` is **790 lines**, and
-  `regalloc_linear` (`ssa.fern:3286-3440`) is 155 lines threading **16 separate
-  `i32[]` locals** (`lo`, `hi`, `calls`, `def_pos`, `blk_ids`, `blk_starts`,
-  `reg_of`, `order`, `act_val`, `act_hi`, `act_reg`, `free`, `nv`, `nh`, `nr`,
-  `nf`) as ad-hoc parallel arrays. Extract per-builtin lowerings from
-  `build_expr`; give the allocator an `Interval` / `ActiveSet` struct so the
-  parallel arrays become fields.
+- [~] **SH-050 — the two giants are split; one builtin chain remains.**
+  _Done:_ `build_expr` was 524 lines (not the 790 this row long quoted), all
+  but 17 of them a single `ExprCall` arm — twelve `build_expr_*` helpers
+  already existed for every other shape. It splits on the boundary already
+  there: `build_call_named` for `f(args)` and `build_call_method` for
+  `recv.m(args)` behind a `build_expr_call` dispatcher, mirroring asmcore's
+  `infer_call_named_type` / `infer_call_method_type`. `build_expr` is now an
+  18-line flat dispatch. `build_call_generic` came out of the tail — the path
+  taken when no builtin claimed the call — which also re-homed a comment that
+  had drifted 25 lines from its subject.
+
+  `regalloc_linear` went 155 -> 82. The two interval fixes read `def_pos` and
+  write only `hi`, so they lift out on a narrow interface
+  (`extend_backedge_phi_intervals`, `extend_loop_invariant_intervals`) with no
+  new struct. The row's `Interval` / `ActiveSet` sketch was not needed for
+  that; the remaining parallel arrays are the scan's own working set and are
+  local to 82 lines.
+
+  _Still open, and a trap worth naming:_ `build_call_named` is 326 lines, a
+  chain of 17 self-contained builtin lowerings. **Regrouping them behind
+  name-keyed predicates is not the tidy-up it looks like** — every arm tests
+  NAME AND ARITY and falls through to the generic call when the arity is
+  wrong, so a group helper keyed on the name alone silently changes what
+  `write(a, b)` lowers to. Any regrouping has to end each group with the
+  generic fallthrough.
 - [ ] **SH-051 — `ssa.fern:1768`** `env_put` mutates in place and is correct only
   on unaliased scratch, versus the near-identical copying `env_set_at` (`:1750`)
   — make the aliasing contract type-level (`ScratchVec`) or rename it
@@ -1075,10 +1108,8 @@ appendix §6.)
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **SH-050** — `build_expr` is the last unsplit giant with no prerequisite
-   (524 lines, down from the 790 this doc long quoted). SH-054 and SH-058 are
-   done, and SH-027 is done everywhere it pays: `wasm_ir.fern` and the SSA
-   backends' `emit_program`. What is left of SH-027 is `printer.fern` (a
+2. **The giant splits are done** — SH-050, SH-042, SH-044's split half, SH-054
+   and SH-058 have all landed. What is left of SH-027 is `printer.fern` (a
    different shape) and the SSA per-instruction chain (deliberately not worth
    it) — see the row.
 3. **T3 visitor** (SH-022) — `parser`'s 12 rewrite passes and `checker`'s 15
