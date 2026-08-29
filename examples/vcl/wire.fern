@@ -1,0 +1,226 @@
+// examples/vcl/wire.fern — HTTP/1.1 on the wire.
+//
+// The mock origin in `machine.fern` fabricates a response struct. A real
+// one answers with bytes, so something has to turn `bereq` into a request
+// and the reply back into a response. That is this module, and it is
+// deliberately free of any I/O: it is string in, string out, which is what
+// lets it be tested under the interpreter while the sockets around it can
+// only run natively.
+//
+// Scope is HTTP/1.1 with an explicit `Content-Length` or a
+// close-delimited body. Chunked transfer-encoding is NOT decoded — the
+// proxy sends `Connection: close` and advertises no `TE`, so a conforming
+// origin will not chunk, and a body that arrives chunked would be passed
+// through with its framing still in it. That is the one wire-level
+// shortcut here and it is why the proxy is a demonstration rather than
+// something to put in front of traffic.
+import "std/string";
+import "std/i64";
+import "std/i32";
+import "std/float";
+import "./runtime";
+
+// hop_by_hop names the headers that belong to a single connection and must
+// not be forwarded (RFC 9110 §7.6.1). `Connection` is reset by us because
+// we always close; `Host` is rebuilt from the backend.
+function hop_by_hop(): string[] {
+  return ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length"];
+}
+
+function is_hop_by_hop(name: string): boolean {
+  var hops: string[] = hop_by_hop();
+  var i: i32 = 0;
+  while (i < hops.len()) {
+    if (name.eq_ignore_ascii_case(hops[i])) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// build_request serialises `bereq` for the wire.
+//
+// `Connection: close` is not politeness: the client reads the response to
+// end-of-stream, so without it the read would block until a timeout. The
+// body's `Content-Length` is recomputed rather than forwarded, because a
+// policy may have rewritten the body.
+pub function build_request(m: runtime.Msg, host: string): string {
+  var method: string = m.method;
+  if (method == "") {
+    method = "GET";
+  }
+  var url: string = m.url;
+  if (url == "") {
+    url = "/";
+  }
+  var out: string = method + " " + url + " HTTP/1.1\r\n";
+  out = out + "Host: " + host + "\r\n";
+  var i: i32 = 0;
+  while (i < m.headers.names.len()) {
+    var n: string = m.headers.names[i];
+    if (!is_hop_by_hop(n)) {
+      out = out + n + ": " + m.headers.values[i] + "\r\n";
+    }
+    i = i + 1;
+  }
+  if (m.body.len() > 0) {
+    out = out + "Content-Length: " + m.body.len().to_string() + "\r\n";
+  }
+  return out + "Connection: close\r\n\r\n" + m.body;
+}
+
+// What an origin's reply parsed into.
+pub struct Parsed { status: i64, reason: string, headers: runtime.Headers, body: string, ok: boolean, err: string }
+
+function parse_err(msg: string): Parsed {
+  return Parsed { status: 0, reason: "", headers: runtime.headers_new(), body: "", ok: false, err: msg };
+}
+
+// split_head finds the end of the header block, tolerating a bare-LF
+// origin. Returns the offset of the body and of the header block's end,
+// or -1 when the reply has no terminator at all.
+struct HeadSplit { head_end: i32, body_start: i32 }
+
+function split_head(raw: string): HeadSplit {
+  var crlf: i32 = raw.index_of("\r\n\r\n");
+  if (crlf >= 0) {
+    return HeadSplit { head_end: crlf, body_start: crlf + 4 };
+  }
+  var lf: i32 = raw.index_of("\n\n");
+  if (lf >= 0) {
+    return HeadSplit { head_end: lf, body_start: lf + 2 };
+  }
+  return HeadSplit { head_end: 0 - 1, body_start: 0 - 1 };
+}
+
+// status_line splits "HTTP/1.1 200 OK" into its code and reason.
+function parse_status_line(line: string): Parsed {
+  var sp1: i32 = line.index_of(" ");
+  if (sp1 < 0) {
+    return parse_err("malformed status line: " + line);
+  }
+  var rest: string = slice_unchecked(line, sp1 + 1, line.len()).to_owned();
+  var code: string = rest;
+  var reason: string = "";
+  var sp2: i32 = rest.index_of(" ");
+  if (sp2 >= 0) {
+    code = slice_unchecked(rest, 0, sp2).to_owned();
+    reason = slice_unchecked(rest, sp2 + 1, rest.len()).to_owned();
+  }
+  match (code.parse_int()) {
+    None => {
+      return parse_err("malformed status code: " + code);
+    },
+    Some(n) => {
+      return Parsed { status: n as i64, reason: reason.trim().to_owned(), headers: runtime.headers_new(), body: "", ok: true, err: "" };
+    }
+  }
+}
+
+// parse_response turns an origin's raw reply into a response. The body is
+// whatever follows the header block, truncated to `Content-Length` when
+// one is present and taken to end-of-stream otherwise.
+pub function parse_response(raw: string): Parsed {
+  if (raw.len() == 0) {
+    return parse_err("empty response from origin");
+  }
+  var split: HeadSplit = split_head(raw);
+  if (split.head_end < 0) {
+    return parse_err("no header terminator in origin response");
+  }
+  var head: string = slice_unchecked(raw, 0, split.head_end).to_owned();
+  var lines: string[] = head.split("\n");
+  if (lines.len() == 0) {
+    return parse_err("empty header block");
+  }
+  var first: Parsed = parse_status_line(lines[0].trim().to_owned());
+  if (!first.ok) {
+    return first;
+  }
+  var h: runtime.Headers = header_lines(lines);
+  var body: string = slice_unchecked(raw, split.body_start, raw.len()).to_owned();
+  return Parsed { status: first.status, reason: first.reason, headers: h, body: framed(body, h), ok: true, err: "" };
+}
+
+// header_lines parses the header block, skipping the status line at index 0.
+function header_lines(lines: string[]): runtime.Headers {
+  var h: runtime.Headers = runtime.headers_new();
+  var i: i32 = 1;
+  while (i < lines.len()) {
+    var line: string = lines[i].trim().to_owned();
+    var colon: i32 = line.index_of(":");
+    if (line.len() > 0 && colon > 0) {
+      var name: string = slice_unchecked(line, 0, colon).to_owned();
+      var value: string = slice_unchecked(line, colon + 1, line.len()).to_owned().trim().to_owned();
+      h = h.set(name, value);
+    }
+    i = i + 1;
+  }
+  return h;
+}
+
+// framed truncates a body to its declared Content-Length. The socket read
+// runs to end-of-stream, so without this a keep-alive origin's next
+// response would be appended to this one's body.
+function framed(body: string, h: runtime.Headers): string {
+  match (h.get("Content-Length")) {
+    VString(cl) => {
+      match (cl.parse_int()) {
+        Some(n) => {
+          if (n >= 0 && n < body.len()) {
+            return slice_unchecked(body, 0, n).to_owned();
+          }
+          return body;
+        },
+        None => {
+          return body;
+        }
+      }
+    },
+    _ => {
+      return body;
+    }
+  }
+}
+
+// leading_digits returns the run of ASCII digits at the start of `s`.
+function leading_digits(s: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: u8 = s[i];
+    if (b < 48 || b > 57) {
+      return out;
+    }
+    out = out + slice_unchecked(s, i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+// max_age reads `Cache-Control: ... max-age=N ...`, which is how a real
+// origin says how long its answer may be kept. `no-store` and `no-cache`
+// answer 0, which the built-in caching rule then reads as uncacheable.
+pub function max_age(cc: string): Option[f64] {
+  var lower: string = cc.to_ascii_lower();
+  if (lower.contains("no-store") || lower.contains("no-cache") || lower.contains("private")) {
+    return Some(0.0);
+  }
+  var at: i32 = lower.index_of("max-age=");
+  if (at < 0) {
+    return None;
+  }
+  var digits: string = leading_digits(slice_unchecked(lower, at + 8, lower.len()).to_owned());
+  if (digits.len() == 0) {
+    return None;
+  }
+  match (digits.parse_int()) {
+    Some(n) => {
+      return Some(n as f64);
+    },
+    None => {
+      return None;
+    }
+  }
+}

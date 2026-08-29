@@ -1,0 +1,206 @@
+// examples/vcl/vclproxy.fern — a real HTTP caching reverse proxy, driven
+// by VCL.
+//
+//   $ fern -target x86-64-linux -o vclproxy vclproxy.fern
+//   $ ./vclproxy testdata/proxy.vcl 8080
+//   $ curl -i http://127.0.0.1:8080/some/path
+//
+// This is the whole stack doing its job at once: a real listening socket,
+// a real HTTP/1.1 request parsed off the wire, the policy's own
+// subroutines deciding what happens, a real TCP fetch from the declared
+// backend on a miss, an in-memory cache that survives between requests,
+// and a real response written back.
+//
+// The policy is parsed and CHECKED once at startup, exactly as `varnishd`
+// loads VCL: a policy with a scoping error never reaches the accept loop.
+//
+// Two honest gaps, both from the runtime rather than the design:
+//
+//   * `tcp_serve` does not surface the peer address, so `client.ip` comes
+//     from `X-Forwarded-For` when the request carries one and is
+//     127.0.0.1 otherwise. An ACL on `client.ip` is therefore only as
+//     trustworthy as that header — which is to say, not, unless something
+//     in front is setting it.
+//   * The accept loop is single-threaded, so the cache needs no locking.
+//     That is why a plain `Cell` is sound here and would not be under
+//     concurrency.
+//
+// The sockets are native builtins: this program compiles and runs, it
+// does not work under `fern -interp`.
+import "std/string";
+import "std/i32";
+import "std/i64";
+import "std/io";
+import "std/http";
+import "std/tcp";
+import "std/fetch";
+import "std/headers";
+import "./ast";
+import "./diag";
+import "./parser";
+import "./check";
+import "./runtime";
+import "./eval";
+import "./machine";
+import "./wire";
+import "./store";
+
+// real_fetch dials the declared backend and speaks HTTP/1.1 to it. This is
+// the one function that separates the proxy from the mock origin the tests
+// use; everything above it is the same code.
+function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
+  var empty: runtime.Headers = runtime.headers_new();
+  var host_be: i32 = fetch.parse_ipv4(b.host);
+  if (host_be == 0) {
+    return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' host '" + b.host + "' is not an IPv4 address" };
+  }
+  var req: string = wire.build_request(t.bereq, b.host + ":" + b.port.to_string());
+  var raw: string = fetch.fetch_raw(host_be, b.port, req);
+  var p: wire.Parsed = wire.parse_response(raw);
+  if (!p.ok) {
+    return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: p.err };
+  }
+  // An origin's Cache-Control is what decides how long its answer may be
+  // kept; without one the built-in default applies.
+  var ttl: f64 = 0.0 - 1.0;
+  match (p.headers.get("Cache-Control")) {
+    VString(cc) => {
+      match (wire.max_age(cc)) {
+        Some(secs) => {
+          ttl = secs;
+        },
+        None => {}
+      }
+    },
+    _ => {}
+  }
+  return machine.FetchOut { status: p.status, reason: p.reason, headers: p.headers, body: p.body, ttl: ttl, ok: true, err: "" };
+}
+
+// client_ip_of reads the forwarded address, since the accept loop does not
+// expose the peer. The FIRST element is the original client, per RFC 7239.
+function client_ip_of(h: HeaderMap): string {
+  match (h.get("X-Forwarded-For")) {
+    Some(v) => {
+      var comma: i32 = v.index_of(",");
+      if (comma > 0) {
+        return slice_unchecked(v, 0, comma).to_owned().trim().to_owned();
+      }
+      return v.trim().to_owned();
+    },
+    None => {
+      return "127.0.0.1";
+    }
+  }
+}
+
+// to_response turns the finished transaction into what goes back on the
+// wire. `Content-Length` and `Connection` are added by the serialiser, so
+// forwarding the origin's copies would duplicate them.
+function to_response(o: machine.Outcome): HttpResponse {
+  var h: HeaderMap = headers.header_map_new();
+  var i: i32 = 0;
+  while (i < o.txn.resp.headers.names.len()) {
+    var n: string = o.txn.resp.headers.names[i];
+    if (!n.eq_ignore_ascii_case("content-length") && !n.eq_ignore_ascii_case("connection")) {
+      h = h.set(n, o.txn.resp.headers.values[i]);
+    }
+    i = i + 1;
+  }
+  var status: i32 = o.txn.resp.status as i32;
+  if (status == 0) {
+    status = 200;
+  }
+  return HttpResponse { status: status, body: o.txn.resp.body, headers: h };
+}
+
+// error_response is what a VCL runtime error produces. 503 with the
+// failing subroutine named, because a proxy that silently 200s on a broken
+// policy is worse than one that says so.
+function error_response(o: machine.Outcome): HttpResponse {
+  var h: HeaderMap = headers.header_map_new();
+  h = h.set("Content-Type", "text/plain");
+  return HttpResponse { status: 503, body: "VCL error: " + o.err + "\n", headers: h };
+}
+
+function report_diags(path: string, diags: diag.Diag[]): void {
+  var i: i32 = 0;
+  while (i < diags.len()) {
+    eprint(diags[i].render(path));
+    i = i + 1;
+  }
+}
+
+function report_problems(path: string, ps: check.Problem[]): void {
+  var i: i32 = 0;
+  while (i < ps.len()) {
+    eprint(path + ":" + ps[i].line.to_string() + ":" + ps[i].col.to_string() + ": [" + ps[i].entry + "] " + ps[i].msg);
+    i = i + 1;
+  }
+}
+
+// serve wires the loaded policy to the socket. The cache lives in a Cell
+// created HERE, before the accept loop, so it survives the per-request
+// arena and every request sees what earlier ones stored.
+function serve(decls: ast.Decl[], port: i32): i32 {
+  var d: machine.Driver = machine.Driver { run_sub: machine.interpreting(decls).run_sub, backends: machine.backends_of(decls), fetch: real_fetch };
+  // The cache outlives each request as a STRING: `Cell` holds a scalar or
+  // a string and nothing composite, so the cache is encoded on the way out
+  // and decoded on the way in. See store.fern for why, and for the cost.
+  var cache: Cell[string] = cell_new("");
+  var handler: (HttpRequest, Platform) => HttpResponse = function(req: HttpRequest, plat: Platform): HttpResponse {
+  var names: string[] = req.headers.names;
+  var values: string[] = req.headers.values;
+  var o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, req.body, store.decode(cache.get()));
+  if (!o.ok) {
+    eprint("vclproxy: " + o.err);
+    return error_response(o);
+  }
+  cache.set(store.encode(o.cache));
+  return to_response(o);
+};
+  return tcp.tcp_serve(port, handler);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  if (argv.len() < 2) {
+    eprint("usage: vclproxy FILE.vcl [PORT]");
+    return 2;
+  }
+  var path: string = argv[1];
+  var port: i32 = 8080;
+  if (argv.len() > 2) {
+    match (argv[2].parse_int()) {
+      Some(n) => {
+        port = n;
+      },
+      None => {
+        eprint("vclproxy: bad port '" + argv[2] + "'");
+        return 2;
+      }
+    }
+  }
+  match (io.read_input(path)) {
+    Err(e) => {
+      eprint("vclproxy: " + path + ": cannot read");
+      return 2;
+    },
+    Ok(src) => {
+      var p: parser.ParseResult = parser.parse(src);
+      if (p.diags.len() > 0) {
+        report_diags(path, p.diags);
+        return 2;
+      }
+      // Checked at load time, as varnishd does: a policy with a scoping
+      // error never reaches the accept loop.
+      var problems: check.Problem[] = check.check(p.decls);
+      if (problems.len() > 0) {
+        report_problems(path, problems);
+        return 1;
+      }
+      eprint("vclproxy: serving " + path + " on port " + port.to_string());
+      return serve(p.decls, port);
+    }
+  }
+}

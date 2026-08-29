@@ -33,6 +33,7 @@ import "./ast";
 import "./value";
 import "./vars";
 import "./eval";
+import "./machine";
 
 // quote renders a string as a Fern literal.
 pub function quote(s: string): string {
@@ -348,7 +349,19 @@ function literal_code(e: ast.Expr): Result[string, string] {
 
 // The program facts codegen needs: which names are ACLs and which are
 // backends, so a bare identifier compiles to the right thing.
-pub struct Env { acls: string[], backends: string[] }
+pub struct Env { acls: string[], backends: machine.Backend[] }
+
+// has_backend reports whether `name` is a declared backend.
+function has_backend(env: Env, name: string): boolean {
+  var i: i32 = 0;
+  while (i < env.backends.len()) {
+    if (env.backends[i].name == name) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
 
 function has(items: string[], s: string): boolean {
   var i: i32 = 0;
@@ -367,7 +380,7 @@ function name_code(env: Env, name: string): Result[string, string] {
   if (vars.is_var(name)) {
     return Ok(read_code(name));
   }
-  if (has(env.backends, name)) {
+  if (has_backend(env, name)) {
     return Ok("VBackend(" + quote(name) + ")");
   }
   if (has(env.acls, name)) {
@@ -798,21 +811,17 @@ function emit_sub(env: Env, s: ast.SubDecl): Result[string, string] {
 // env_of collects the ACL and backend names a program declares.
 pub function env_of(decls: ast.Decl[]): Env {
   var acls: string[] = [];
-  var backends: string[] = [];
   var i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DAcl(a) => {
         acls = acls.append(a.name);
       },
-      DBackend(b) => {
-        backends = backends.append(b.name);
-      },
       _ => {}
     }
     i = i + 1;
   }
-  return Env { acls: acls, backends: backends };
+  return Env { acls: acls, backends: machine.backends_of(decls) };
 }
 
 function sub_names(decls: ast.Decl[]): string[] {
@@ -856,17 +865,21 @@ function join(items: string[], sep: string): string {
   return out;
 }
 
+// backend_list emits the resolved backends as literals: the host and port
+// are read out of the VCL at compile time, so a compiled policy carries no
+// backend-block parsing at all.
 function backend_list(env: Env): string {
-  var quoted: string[] = [];
+  var lits: string[] = [];
   var i: i32 = 0;
   while (i < env.backends.len()) {
-    quoted = quoted.append(quote(env.backends[i]));
+    var b: machine.Backend = env.backends[i];
+    lits = lits.append("machine.Backend { name: " + quote(b.name) + ", host: " + quote(b.host) + ", port: " + b.port.to_string() + " }");
     i = i + 1;
   }
-  if (quoted.len() == 0) {
-    return "var __b: string[] = [];";
+  if (lits.len() == 0) {
+    return "var __b: machine.Backend[] = [];";
   }
-  return "var __b: string[] = [" + join(quoted, ", ") + "];";
+  return "var __b: machine.Backend[] = [" + join(lits, ", ") + "];";
 }
 
 // compile turns a checked program into a Fern module. `prefix` is what the
@@ -909,5 +922,5 @@ pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] 
 // main_code is the generated driver: same command line as `vclrun`, with
 // the policy compiled in rather than parsed.
 function main_code(env: Env): string {
-  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  var argv: string[] = args();\n" + "  " + backend_list(env) + "\n" + "  var d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b };\n" + "  return report.drive(d, argv);\n" + "}\n";
+  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  var argv: string[] = args();\n" + "  " + backend_list(env) + "\n" + "  var d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b, fetch: machine.mock_fetch };\n" + "  return report.drive(d, argv);\n" + "}\n";
 }

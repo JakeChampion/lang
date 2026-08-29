@@ -1,0 +1,43 @@
+// examples/vcl/origin.fern — a tiny origin server to put behind the proxy.
+//
+//   $ fern -target x86-64-linux -o origin origin.fern
+//   $ ./origin 9000
+//
+// It exists to make caching PROVABLE. Every response carries the number of
+// requests this process has actually served, so if the proxy is caching,
+// a second request for the same URL comes back with the SAME counter — the
+// origin was never asked. No amount of reading the proxy's own headers
+// shows that; only the origin can.
+//
+// `Cache-Control: max-age=60` is what a real origin uses to tell a cache
+// how long it may keep the answer, and the proxy reads it.
+import "std/string";
+import "std/i32";
+import "std/http";
+import "std/tcp";
+
+function main(): i32 {
+  var argv: string[] = args();
+  var port: i32 = 9000;
+  if (argv.len() > 1) {
+    match (argv[1].parse_int()) {
+      Some(n) => {
+        port = n;
+      },
+      None => {
+        eprint("origin: bad port '" + argv[1] + "'");
+        return 2;
+      }
+    }
+  }
+  // Created before the accept loop, so it survives the per-request arena
+  // and counts across requests.
+  var served: Cell[i32] = cell_new(0);
+  var handler: (HttpRequest, Platform) => HttpResponse = function(req: HttpRequest, plat: Platform): HttpResponse {
+  served.set(served.get() + 1);
+  var body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
+  return http.http_response_ok(body).with_header("Cache-Control", "max-age=60");
+};
+  eprint("origin: serving on port " + port.to_string());
+  return tcp.tcp_serve(port, handler);
+}

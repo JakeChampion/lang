@@ -1,0 +1,297 @@
+// examples/vcl/vclwire_test.fern — TAP suite for the HTTP wire format and
+// the between-request cache encoding.
+//
+//   fern -interp examples/vcl/vclwire_test.fern
+//
+// Both modules are pure string in, string out, which is the point: the
+// sockets around them are native-only builtins, so this is the layer where
+// the proxy's behaviour can be pinned without opening a port.
+import "std/test";
+import "std/string";
+import "std/i32";
+import "std/i64";
+import "./runtime";
+import "./wire";
+import "./store";
+
+function req_msg(method: string, url: string): runtime.Msg {
+  return runtime.Msg { method: method, url: url, proto: "HTTP/1.1", status: 0, reason: "", headers: runtime.headers_new(), body: "" };
+}
+
+// ------------------------------------------------------- building requests
+function test_request_line_and_host(): test.TestOutcome {
+  var out: string = wire.build_request(req_msg("GET", "/p"), "origin:80");
+  if (!out.starts_with("GET /p HTTP/1.1\r\n")) {
+    return test.fail("bad request line: " + out);
+  }
+  return test.assert_contains(out, "Host: origin:80\r\n");
+}
+
+// The read is to end-of-stream, so without `Connection: close` the client
+// would block until its deadline on every single fetch.
+function test_connection_close_is_sent(): test.TestOutcome {
+  return test.assert_contains(wire.build_request(req_msg("GET", "/"), "h"), "Connection: close\r\n\r\n");
+}
+
+function test_headers_are_forwarded(): test.TestOutcome {
+  var m: runtime.Msg = req_msg("GET", "/");
+  var h: runtime.Headers = m.headers.set("X-Trace", "abc");
+  return test.assert_contains(wire.build_request(runtime.Msg { ...m, headers: h }, "h"), "X-Trace: abc\r\n");
+}
+
+// A hop-by-hop header belongs to one connection and must not be relayed.
+// Forwarding the client's `Connection: keep-alive` would contradict the
+// `Connection: close` we depend on.
+function test_hop_by_hop_headers_are_stripped(): test.TestOutcome {
+  var m: runtime.Msg = req_msg("GET", "/");
+  var h: runtime.Headers = m.headers.set("Connection", "keep-alive");
+  h = h.set("Transfer-Encoding", "chunked");
+  h = h.set("Host", "client-supplied");
+  var out: string = wire.build_request(runtime.Msg { ...m, headers: h }, "real-origin");
+  if (out.contains("keep-alive")) {
+    return test.fail("Connection was relayed");
+  }
+  if (out.contains("chunked")) {
+    return test.fail("Transfer-Encoding was relayed");
+  }
+  if (out.contains("client-supplied")) {
+    return test.fail("client Host was relayed");
+  }
+  return test.assert_contains(out, "Host: real-origin\r\n");
+}
+
+// Content-Length is recomputed, because a policy may have rewritten the
+// body since the client sent it.
+function test_content_length_is_recomputed(): test.TestOutcome {
+  var m: runtime.Msg = req_msg("POST", "/submit");
+  var h: runtime.Headers = m.headers.set("Content-Length", "999");
+  var out: string = wire.build_request(runtime.Msg { ...m, headers: h, body: "hello" }, "h");
+  if (out.contains("999")) {
+    return test.fail("stale Content-Length relayed: " + out);
+  }
+  if (!out.contains("Content-Length: 5\r\n")) {
+    return test.fail("no recomputed length: " + out);
+  }
+  return test.assert_ends_with(out, "\r\n\r\nhello");
+}
+
+// ------------------------------------------------------ parsing responses
+function test_parse_status_and_body(): test.TestOutcome {
+  var p: wire.Parsed = wire.parse_response("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nbody here");
+  if (!p.ok) {
+    return test.fail(p.err);
+  }
+  if (p.status != 200) {
+    return test.fail("status " + p.status.to_string());
+  }
+  if (p.reason != "OK") {
+    return test.fail("reason '" + p.reason + "'");
+  }
+  return test.assert_eq(p.body, "body here");
+}
+
+function test_parse_headers(): test.TestOutcome {
+  var p: wire.Parsed = wire.parse_response("HTTP/1.1 404 Not Found\r\nX-A: 1\r\nX-B: two words\r\n\r\n");
+  if (!p.ok) {
+    return test.fail(p.err);
+  }
+  if (value_of(p, "X-A") != "1") {
+    return test.fail("X-A = " + value_of(p, "X-A"));
+  }
+  return test.assert_eq(value_of(p, "X-B"), "two words");
+}
+
+function value_of(p: wire.Parsed, name: string): string {
+  match (p.headers.get(name)) {
+    VString(s) => {
+      return s;
+    },
+    _ => {
+      return "<unset>";
+    }
+  }
+}
+
+// A reason phrase may be several words, or absent entirely.
+function test_multiword_and_absent_reason(): test.TestOutcome {
+  var a: wire.Parsed = wire.parse_response("HTTP/1.1 404 Not Found\r\n\r\n");
+  if (a.reason != "Not Found") {
+    return test.fail("multiword reason: '" + a.reason + "'");
+  }
+  var b: wire.Parsed = wire.parse_response("HTTP/1.1 204\r\n\r\n");
+  if (!b.ok) {
+    return test.fail(b.err);
+  }
+  return test.assert_eq(b.status, 204);
+}
+
+// A bare-LF origin is out of spec but real; parsing it is cheaper than
+// debugging it.
+function test_bare_lf_terminator(): test.TestOutcome {
+  var p: wire.Parsed = wire.parse_response("HTTP/1.1 200 OK\nX-A: 1\n\nbody");
+  if (!p.ok) {
+    return test.fail(p.err);
+  }
+  return test.assert_eq(p.body, "body");
+}
+
+// Content-Length truncates a body the socket over-read.
+function test_content_length_truncates(): test.TestOutcome {
+  var p: wire.Parsed = wire.parse_response("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcdefgh");
+  if (!p.ok) {
+    return test.fail(p.err);
+  }
+  return test.assert_eq(p.body, "abc");
+}
+
+function test_empty_response_is_an_error(): test.TestOutcome {
+  return test.assert_false(wire.parse_response("").ok);
+}
+
+function test_missing_terminator_is_an_error(): test.TestOutcome {
+  return test.assert_false(wire.parse_response("HTTP/1.1 200 OK\r\nX: 1").ok);
+}
+
+function test_malformed_status_is_an_error(): test.TestOutcome {
+  return test.assert_false(wire.parse_response("NOT-HTTP\r\n\r\n").ok);
+}
+
+// ---------------------------------------------------------- Cache-Control
+function test_max_age_is_read(): test.TestOutcome {
+  match (wire.max_age("public, max-age=600")) {
+    Some(v) => {
+      return test.assert_eq(v, 600.0);
+    },
+    None => {
+      return test.fail("max-age not found");
+    }
+  }
+}
+
+function test_no_store_is_zero(): test.TestOutcome {
+  match (wire.max_age("no-store")) {
+    Some(v) => {
+      return test.assert_eq(v, 0.0);
+    },
+    None => {
+      return test.fail("no-store should be 0");
+    }
+  }
+}
+
+function test_absent_cache_control_has_no_opinion(): test.TestOutcome {
+  match (wire.max_age("public")) {
+    Some(v) => {
+      return test.fail("expected no opinion");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+// ------------------------------------------------------- cache encoding
+function entry(key: string, body: string): runtime.CacheEntry {
+  var h: runtime.Headers = runtime.headers_new();
+  h = h.set("Content-Type", "text/plain");
+  return runtime.CacheEntry { key: key, status: 200, reason: "OK", headers: h, body: body, ttl: 60.0, hits: 3 };
+}
+
+function test_roundtrip_preserves_an_entry(): test.TestOutcome {
+  var c: runtime.Cache = runtime.cache_new().store(entry("/a", "hello"));
+  var back: runtime.Cache = store.decode(store.encode(c));
+  if (back.entries.len() != 1) {
+    return test.fail("lost the entry");
+  }
+  var e: runtime.CacheEntry = back.entries[0];
+  if (e.key != "/a" || e.body != "hello" || e.status != 200 || e.hits != 3) {
+    return test.fail("field lost: " + e.key + "/" + e.body + "/" + e.status.to_string());
+  }
+  return test.assert_eq(e.ttl, 60.0);
+}
+
+// The reason the encoding is length-prefixed rather than delimited: a
+// cached body is arbitrary bytes and WILL eventually contain whatever
+// separator was chosen. A body full of newlines and digits that look like
+// length headers is the adversarial case.
+function test_roundtrip_survives_a_body_that_looks_like_the_encoding(): test.TestOutcome {
+  var nasty: string = "5\nhello\n3\nabc\n\n42\n\r\n\r\n0\n";
+  var c: runtime.Cache = runtime.cache_new().store(entry("/x", nasty));
+  var back: runtime.Cache = store.decode(store.encode(c));
+  if (back.entries.len() != 1) {
+    return test.fail("lost the entry");
+  }
+  return test.assert_eq(back.entries[0].body, nasty);
+}
+
+function test_roundtrip_preserves_several_entries(): test.TestOutcome {
+  var c: runtime.Cache = runtime.cache_new();
+  c = c.store(entry("/a", "one"));
+  c = c.store(entry("/b", "two"));
+  c = c.store(entry("/c", ""));
+  var back: runtime.Cache = store.decode(store.encode(c));
+  if (back.entries.len() != 3) {
+    return test.fail("expected 3, got " + back.entries.len().to_string());
+  }
+  return test.assert_eq(back.entries[2].key, "/c");
+}
+
+function test_roundtrip_preserves_headers(): test.TestOutcome {
+  var c: runtime.Cache = runtime.cache_new().store(entry("/h", "b"));
+  var back: runtime.Cache = store.decode(store.encode(c));
+  match (back.entries[0].headers.get("Content-Type")) {
+    VString(v) => {
+      return test.assert_eq(v, "text/plain");
+    },
+    _ => {
+      return test.fail("header lost");
+    }
+  }
+}
+
+function test_empty_cache_roundtrips(): test.TestOutcome {
+  return test.assert_eq(store.decode(store.encode(runtime.cache_new())).entries.len(), 0);
+}
+
+// A cold start reads an empty string, which must be an empty cache rather
+// than a crash.
+function test_empty_string_decodes_to_an_empty_cache(): test.TestOutcome {
+  return test.assert_eq(store.decode("").entries.len(), 0);
+}
+
+// Corruption yields a cold cache, not garbage: serving a mangled object is
+// worse than serving none.
+function test_corrupt_input_decodes_to_an_empty_cache(): test.TestOutcome {
+  if (store.decode("9\nnot a cache").entries.len() != 0) {
+    return test.fail("truncated input decoded");
+  }
+  return test.assert_eq(store.decode("notanumber").entries.len(), 0);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("vcl-wire");
+  r = r.it("request line and host", test_request_line_and_host);
+  r = r.it("connection close is sent", test_connection_close_is_sent);
+  r = r.it("headers are forwarded", test_headers_are_forwarded);
+  r = r.it("hop by hop headers are stripped", test_hop_by_hop_headers_are_stripped);
+  r = r.it("content length is recomputed", test_content_length_is_recomputed);
+  r = r.it("parse status and body", test_parse_status_and_body);
+  r = r.it("parse headers", test_parse_headers);
+  r = r.it("multiword and absent reason", test_multiword_and_absent_reason);
+  r = r.it("bare lf terminator", test_bare_lf_terminator);
+  r = r.it("content length truncates", test_content_length_truncates);
+  r = r.it("empty response is an error", test_empty_response_is_an_error);
+  r = r.it("missing terminator is an error", test_missing_terminator_is_an_error);
+  r = r.it("malformed status is an error", test_malformed_status_is_an_error);
+  r = r.it("max age is read", test_max_age_is_read);
+  r = r.it("no store is zero", test_no_store_is_zero);
+  r = r.it("absent cache control has no opinion", test_absent_cache_control_has_no_opinion);
+  r = r.it("roundtrip preserves an entry", test_roundtrip_preserves_an_entry);
+  r = r.it("roundtrip survives a body that looks like the encoding", test_roundtrip_survives_a_body_that_looks_like_the_encoding);
+  r = r.it("roundtrip preserves several entries", test_roundtrip_preserves_several_entries);
+  r = r.it("roundtrip preserves headers", test_roundtrip_preserves_headers);
+  r = r.it("empty cache roundtrips", test_empty_cache_roundtrips);
+  r = r.it("empty string decodes to an empty cache", test_empty_string_decodes_to_an_empty_cache);
+  r = r.it("corrupt input decodes to an empty cache", test_corrupt_input_decodes_to_an_empty_cache);
+  return r.finish();
+}

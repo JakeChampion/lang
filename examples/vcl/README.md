@@ -1,4 +1,4 @@
-# A VCL front end and evaluator, in Fern
+# A VCL front end, evaluator, compiler, and proxy — in Fern
 
 A lexer, parser, syntax tree, printer, **and evaluator** for the **Varnish
 Configuration Language** (VCL 4.0 / 4.1) — the language Varnish Cache users
@@ -23,11 +23,23 @@ $ fern -target x86-64-linux -o policy policy.fern && ./policy GET /
   disposition: deliver (HIT)
 ```
 
-Four drivers: `vclfmt` parses and reprints, `vclcheck` validates without
+Five drivers: `vclfmt` parses and reprints, `vclcheck` validates without
 running, `vclrun` executes a request against a policy — checking it first,
-as `varnishd` does at load time — and `vclc` compiles a policy to Fern
-source for `fern` to turn into a native binary. All exit 0 on success, 1 on
-a VCL error, 2 when the file cannot be read or parsed.
+as `varnishd` does at load time — `vclc` compiles a policy to Fern source
+for `fern` to turn into a native binary, and **`vclproxy` is a real HTTP
+caching reverse proxy** you can put in front of an origin and `curl`. The
+first four exit 0 on success, 1 on a VCL error, 2 when the file cannot be
+read or parsed.
+
+```
+$ fern -target x86-64-linux -o vclproxy vclproxy.fern
+$ fern -target x86-64-linux -o origin   origin.fern
+$ ./origin 9000 &
+$ ./vclproxy testdata/proxy.vcl 8080 &
+$ curl -s http://127.0.0.1:8080/page ; curl -s http://127.0.0.1:8080/page
+origin-hit=1 path=/page
+origin-hit=1 path=/page          # unchanged: the origin was never asked again
+```
 
 ## Layout
 
@@ -42,11 +54,14 @@ a VCL error, 2 when the file cannot be read or parsed.
 | `vars.fern` | The variable namespace and its per-subroutine scoping. |
 | `check.fern` | Static validation: scoping, return actions, names, reachability. |
 | `compile.fern` | VCL to Fern source: field accesses, folded constants, ANF. |
+| `wire.fern` | HTTP/1.1 on the wire: build a backend request, parse a reply. |
+| `store.fern` | The cache's between-request encoding. |
 | `report.fern` | The request command line and transaction report, shared by both drivers. |
 | `eval.fern` | Expression evaluation, statement execution, ACL and regex matching. |
 | `machine.fern` | The request state machine and the built-in subroutines. |
-| `vclfmt.fern` / `vclcheck.fern` / `vclrun.fern` / `vclc.fern` | The drivers. |
-| `vcl_test.fern` / `vclbackend_test.fern` / `vclcheck_test.fern` / `vclcompile_test.fern` | 41 + 40 + 32 + 25 TAP cases. |
+| `vclfmt.fern` / `vclcheck.fern` / `vclrun.fern` / `vclc.fern` | The offline drivers. |
+| `vclproxy.fern` / `origin.fern` | The proxy, and a counting origin to put behind it. |
+| `vcl_test` / `vclbackend_test` / `vclcheck_test` / `vclcompile_test` / `vclwire_test` | 41 + 40 + 32 + 26 + 23 TAP cases. |
 
 ## The front end
 
@@ -197,11 +212,68 @@ compiler emitted what was intended; the differential says the emitted code
 *means* the same thing — and it is what catches a codegen table drifting
 from the runtime table it mirrors.
 
+## The proxy
+
+`vclproxy` is the whole stack doing its job at once: a real listening
+socket, an HTTP/1.1 request parsed off the wire, the policy's subroutines
+deciding what happens, a real TCP fetch from the declared `backend` on a
+miss, a cache that survives between requests, and a real response written
+back. The policy is parsed and **checked once at startup**, exactly as
+`varnishd` loads VCL — a policy with a scoping error never reaches the
+accept loop.
+
+`origin.fern` is what makes the caching *provable*. Every response carries
+the number of requests that process has actually served, so a second
+request answered with the **same** counter means the origin was never
+asked. Reading the proxy's own headers could never establish that.
+
+Measured through a real client:
+
+| request | body | meaning |
+|---|---|---|
+| `/a` ×3 | `origin-hit=1` each time | cached — origin contacted **once** |
+| `/b` | `origin-hit=2` | different hash key → separate object |
+| `/nocache` ×3 | `origin-hit=3,4,5` | `return (pass)` never caches |
+| `/a` again | `origin-hit=1` | still cached |
+
+The backend's `.host` and `.port` are read from the VCL. The origin's
+`Cache-Control: max-age` sets the object's TTL, which is how a real origin
+controls a cache. `vcl_deliver` can set `resp.http.X-Cache-Hits` from
+`obj.hits` and watch it climb across requests.
+
+Three things about the runtime are worth knowing, because they shaped the
+design rather than being incidental:
+
+- **`Cell` — the only thing that outlives a request — holds a scalar or a
+  string, nothing composite** (E057: a composite could form a cycle). So
+  the cache persists as an encoded *string*, decoded at the top of each
+  request and re-encoded at the end. `store.fern` uses a length-prefixed
+  encoding rather than a delimited one, because a cached body is arbitrary
+  bytes and will eventually contain whatever separator you picked. The cost
+  is real and stated: encode/decode is O(total cached bytes) per request,
+  so this is a demonstration store, not a storage engine.
+- **`tcp_serve` does not surface the peer address**, so `client.ip` comes
+  from `X-Forwarded-For` when present and is `127.0.0.1` otherwise. An ACL
+  on `client.ip` is therefore only as trustworthy as whatever sets that
+  header.
+- **The accept loop is single-threaded**, which is why an unsynchronised
+  `Cell` is sound here and would not be under concurrency.
+
+The sockets are native builtins, absent from the interpreter: `vclproxy`
+and `origin` compile and run, they do not work under `fern -interp`.
+
 ## What it does not do
 
-- **No network and no real origin.** `fetch` fabricates a response: 200
-  unless the URL is `/status/NNN`, with a default 120s TTL standing in for
-  a real `Cache-Control`. The tests drive error paths through that hook.
+- **The offline drivers still use a mock origin.** `machine.mock_fetch`
+  fabricates a response — 200 unless the URL is `/status/NNN` — so
+  `vclrun`, `vclc` and the test suites need no network. The proxy swaps in
+  a real fetcher through the same `Driver` seam; nothing above it changes.
+- **No chunked transfer-encoding.** The proxy sends `Connection: close` and
+  advertises no `TE`, so a conforming origin will not chunk; a body that
+  arrived chunked would be passed through with its framing still in it.
+  This is the one wire-level shortcut, and it is why the proxy is a
+  demonstration rather than something to put in front of traffic.
+- **No TLS, no keep-alive, no HTTP/2.**
 - **No VMOD objects.** `new rr = directors.round_robin();` parses and is
   then rejected at evaluation: real VMODs are `dlopen`'d shared objects and
   a Fern binary is static. The `std.*` functions above are shims.
@@ -226,7 +298,9 @@ transaction, subroutine), which is what lets the state machine hand a
 transaction between subroutines and keep every intermediate state for the
 log.
 
-`internal/e2e/vcl_example_test.go` runs all four TAP suites, the formatter
-fixed-point check, the cache miss/hit path, the ACL matrix, the load-time
-rejection of a bad policy, the compiled-vs-interpreted differential, and a
-native build of a compiled policy — on every CI run.
+`internal/e2e/vcl_example_test.go` runs all five TAP suites, the formatter
+fixed-point check, the ACL matrix, the load-time rejection of a bad policy,
+the compiled-vs-interpreted differential, and a native build of a compiled
+policy. `internal/e2e/vcl_proxy_test.go` builds the proxy and the origin,
+puts one in front of the other, and drives them with a real HTTP client —
+on every CI run.
