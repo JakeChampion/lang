@@ -387,6 +387,37 @@ function test_call_returns_from_the_caller(): test.TestOutcome {
   return test.assert_eq(o.txn.resp.reason, "nope");
 }
 
+// A bare `return;` returns from the CALLEE only — the caller carries on
+// with the next statement. An action-carrying return ends the whole
+// subroutine, which the case above pins; these are different rules and
+// conflating them makes every early-exit helper terminate the request.
+function test_bare_return_exits_only_the_callee(): test.TestOutcome {
+  var body: string = "sub early { return; }\n" + "sub vcl_recv { call early; set req.http.X = \"reached\"; return (pass); }";
+  var o: machine.Outcome = run_get(body, "/bare");
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_contains(path_of(o), "vcl_pass");
+}
+
+// A bare `return;` reaching the end of a `vcl_*` subroutine names no
+// action, so the built-in default applies just as falling off the end
+// does — here, a pass because the request carries a cookie.
+function test_bare_return_at_entry_falls_through_to_builtin(): test.TestOutcome {
+  // The bare return is in `vcl_recv` ITSELF, not in a helper: a helper's
+  // bare return is already absorbed by the call, so it would not reach the
+  // entry-level rule this case exists to pin. The checker rejects this
+  // spelling; `machine.run` is called directly to reach the evaluator
+  // without it, which is the "program that was never checked" path.
+  var decls: ast.Decl[] = decls_of(program("sub vcl_recv { return; }"));
+  var c: runtime.Cache = runtime.cache_new();
+  var o: machine.Outcome = machine.run_with_headers(decls, "GET", "/bf", "127.0.0.1", ["Cookie"], ["a=1"], c);
+  if (!o.ok) {
+    return test.fail(o.err);
+  }
+  return test.assert_contains(path_of(o), "vcl_pass");
+}
+
 // Mutually recursive subroutines are bounded rather than exhausting the
 // stack.
 function test_recursive_call_is_bounded(): test.TestOutcome {
@@ -468,6 +499,8 @@ function main(): i32 {
   r = r.it("synth carries status and reason", test_synth_carries_status_and_reason);
   r = r.it("hash data separates by host", test_hash_data_separates_by_host);
   r = r.it("call returns from the caller", test_call_returns_from_the_caller);
+  r = r.it("bare return exits only the callee", test_bare_return_exits_only_the_callee);
+  r = r.it("bare return at entry falls through to builtin", test_bare_return_at_entry_falls_through_to_builtin);
   r = r.it("recursive call is bounded", test_recursive_call_is_bounded);
   r = r.it("restart is bounded", test_restart_is_bounded);
   r = r.it("compound assignment", test_compound_assignment);

@@ -1,0 +1,288 @@
+// examples/vcl/vclcheck_test.fern — TAP suite for the static checker.
+//
+//   fern -interp examples/vcl/vclcheck_test.fern
+//
+// The checker's job is to report at compile time what the evaluator would
+// only hit on the request that reaches it, and to report ALL of it in one
+// pass. So most cases assert on the exact set of problems a program
+// produces, not merely that it produced one — a checker that reports the
+// first problem and stops would pass a "did it complain" test.
+import "std/test";
+import "std/string";
+import "std/i64";
+import "./ast";
+import "./parser";
+import "./check";
+
+function program(body: string): string {
+  return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
+}
+
+function problems_of(body: string): check.Problem[] {
+  return check.check(parser.parse(program(body)).decls);
+}
+
+// joined renders every problem as "entry|msg", so a case can assert on
+// the whole set at once and notice an extra or missing finding.
+function joined(ps: check.Problem[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < ps.len()) {
+    if (i > 0) {
+      out = out + "; ";
+    }
+    out = out + ps[i].entry + "|" + ps[i].msg;
+    i = i + 1;
+  }
+  return out;
+}
+
+function only_problem(body: string): string {
+  var ps: check.Problem[] = problems_of(body);
+  if (ps.len() != 1) {
+    return "expected exactly 1 problem, got " + ps.len().to_string() + ": " + joined(ps);
+  }
+  return ps[0].msg;
+}
+
+// -------------------------------------------------------------- clean
+function test_clean_program_has_no_problems(): test.TestOutcome {
+  var body: string = "sub vcl_recv { set req.http.X = \"1\"; return (hash); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  return test.assert_eq(joined(problems_of(body)), "");
+}
+
+// ------------------------------------------------------------- scoping
+function test_out_of_scope_read(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { if (beresp.status == 200) { return (pass); } return (hash); }"), "'beresp.status' is not readable in vcl_recv");
+}
+
+function test_out_of_scope_write(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { set resp.http.X = \"1\"; return (hash); }"), "'resp.http.X' is not writable in vcl_recv");
+}
+
+function test_read_only_write(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_deliver { set obj.hits = 1; return (deliver); }"), "'obj.hits' is read-only");
+}
+
+function test_unset_scalar(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { unset req.url; return (hash); }"), "'req.url' is not a header and cannot be unset");
+}
+
+// A helper is checked in the scope of whatever calls it, so a `req` read
+// inside one is illegal only when a backend subroutine is the caller.
+function test_helper_checked_in_callers_scope(): test.TestOutcome {
+  var body: string = "sub tag { set beresp.http.T = req.url; }\n" + "sub vcl_backend_response { call tag; return (deliver); }";
+  var ps: check.Problem[] = problems_of(body);
+  if (ps.len() != 1) {
+    return test.fail("expected 1 problem: " + joined(ps));
+  }
+  if (ps[0].entry != "vcl_backend_response") {
+    return test.fail("wrong entry: " + ps[0].entry);
+  }
+  return test.assert_eq(ps[0].msg, "'req.url' is not readable in vcl_backend_response");
+}
+
+// The case a per-subroutine walk cannot see: one helper, two callers, and
+// it is legal for exactly one of them. Reported once, against the caller
+// that makes it illegal.
+function test_helper_illegal_for_only_one_caller(): test.TestOutcome {
+  var body: string = "sub touch { set req.http.X = \"1\"; }\n" + "sub vcl_recv { call touch; return (hash); }\n" + "sub vcl_backend_response { call touch; return (deliver); }";
+  var ps: check.Problem[] = problems_of(body);
+  if (ps.len() != 1) {
+    return test.fail("expected exactly 1 problem: " + joined(ps));
+  }
+  return test.assert_eq(ps[0].entry + "|" + ps[0].msg, "vcl_backend_response|'req.http.X' is not writable in vcl_backend_response");
+}
+
+// The same helper reached from two legal contexts is not a finding twice
+// over, or once.
+function test_helper_legal_for_both_callers(): test.TestOutcome {
+  var body: string = "sub mark { set beresp.http.M = \"1\"; }\n" + "sub vcl_backend_response { call mark; return (deliver); }\n" + "sub vcl_backend_error { call mark; return (deliver); }";
+  return test.assert_eq(joined(problems_of(body)), "");
+}
+
+// ------------------------------------------------------- return actions
+function test_bad_return_action(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub vcl_recv { return (deliver); }"), "'deliver' is not a valid return from vcl_recv");
+}
+
+// The message lists what WOULD be valid, which is the part that makes it
+// actionable.
+function test_bad_return_lists_the_alternatives(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub vcl_backend_response { return (lookup); }"), "expected one of: deliver, retry, abandon, error, pass");
+}
+
+// `vcl_hash` is the narrow one: `lookup` is its only action.
+function test_hash_only_returns_lookup(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub vcl_hash { hash_data(req.url); return (hash); }"), "'hash' is not a valid return from vcl_hash");
+}
+
+// A bare `return;` ends a custom subroutine early and is fine there.
+function test_bare_return_is_legal_in_a_custom_sub(): test.TestOutcome {
+  var body: string = "sub early { return; }\nsub vcl_recv { call early; return (hash); }";
+  return test.assert_eq(joined(problems_of(body)), "");
+}
+
+// In a `vcl_*` subroutine it names no action, so it is rejected.
+function test_bare_return_is_rejected_in_an_entry_point(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { return; }"), "'return' needs an action in vcl_recv");
+}
+
+// ---------------------------------------------------------- names
+function test_unknown_variable(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { set req.hdr.Host = \"x\"; return (hash); }"), "unknown variable 'req.hdr.Host'");
+}
+
+function test_unknown_name_in_expression(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { if (client.ip ~ nosuchacl) { return (pass); } return (hash); }"), "unknown name 'nosuchacl'");
+}
+
+// A declared ACL resolves, so the same shape is clean once it exists.
+function test_declared_acl_resolves(): test.TestOutcome {
+  var body: string = "acl ok { \"127.0.0.1\"; }\n" + "sub vcl_recv { if (client.ip ~ ok) { return (pass); } return (hash); }";
+  return test.assert_eq(joined(problems_of(body)), "");
+}
+
+// A backend name is a legal bare identifier too.
+function test_backend_name_resolves(): test.TestOutcome {
+  return test.assert_eq(joined(problems_of("sub vcl_recv { set req.backend_hint = origin; return (hash); }")), "");
+}
+
+function test_unknown_function(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { set req.http.X = mystery.thing(\"a\"); return (hash); }"), "unknown function 'mystery.thing'");
+}
+
+// Every name the checker accepts must be one the evaluator implements.
+// Without this the two lists drift and a call passes the check then fails
+// at run time.
+function test_every_builtin_name_is_accepted(): test.TestOutcome {
+  var names: string[] = eval_builtin_names();
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] != "hash_data") {
+      var body: string = "sub vcl_recv { set req.http.X = " + names[i] + "(\"a\", \"b\", \"c\"); return (hash); }";
+      var ps: check.Problem[] = problems_of(body);
+      if (ps.len() != 0) {
+        return test.fail("builtin " + names[i] + " rejected by the checker: " + joined(ps));
+      }
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+function eval_builtin_names(): string[] {
+  return ["regsub", "regsuball", "std.tolower", "std.toupper", "std.integer", "std.log", "synthetic"];
+}
+
+// `hash_data` outside `vcl_hash` contributes to no key.
+function test_hash_data_outside_vcl_hash(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { hash_data(req.url); return (hash); }"), "hash_data() is only meaningful in vcl_hash");
+}
+
+function test_hash_data_inside_vcl_hash_is_fine(): test.TestOutcome {
+  return test.assert_eq(joined(problems_of("sub vcl_hash { hash_data(req.url); return (lookup); }")), "");
+}
+
+// ---------------------------------------------------- declarations
+function test_misspelled_entry_point(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub vcl_recieve { set req.http.X = \"1\"; }"), "'vcl_recieve' is not a Varnish subroutine, so it would never run");
+}
+
+function test_duplicate_subroutine(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub helper { }\nsub helper { }"), "subroutine 'helper' is defined more than once");
+}
+
+function test_call_to_undefined_subroutine(): test.TestOutcome {
+  return test.assert_eq(only_problem("sub vcl_recv { call nope; return (hash); }"), "call to undefined subroutine 'nope'");
+}
+
+function test_new_outside_vcl_init(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub vcl_recv { new d = directors.round_robin(); return (hash); }"), "'new' is only allowed in vcl_init");
+}
+
+function test_inline_c_is_rejected(): test.TestOutcome {
+  return test.assert_contains(only_problem("sub vcl_recv { C{ VRT_synth(ctx); }C return (hash); }"), "inline C cannot be checked or evaluated");
+}
+
+// ---------------------------------------------------------- reachability
+function test_unreachable_subroutine_is_listed(): test.TestOutcome {
+  var body: string = "sub orphan { }\nsub vcl_recv { return (hash); }";
+  var names: string[] = check.unreachable_subs(parser.parse(program(body)).decls);
+  return test.assert_eq_array(names, ["orphan"]);
+}
+
+// A subroutine reached only through another custom one is still reached.
+function test_transitively_called_sub_is_reachable(): test.TestOutcome {
+  var body: string = "sub inner { }\nsub outer { call inner; }\nsub vcl_recv { call outer; return (hash); }";
+  var names: string[] = check.unreachable_subs(parser.parse(program(body)).decls);
+  return test.assert_eq(names.len(), 0);
+}
+
+// A mutually recursive pair terminates the reachability walk rather than
+// looping.
+function test_recursive_subs_terminate(): test.TestOutcome {
+  var body: string = "sub a { call b; }\nsub b { call a; }\nsub vcl_recv { call a; return (hash); }";
+  var names: string[] = check.unreachable_subs(parser.parse(program(body)).decls);
+  return test.assert_eq(names.len(), 0);
+}
+
+// And the problem walk terminates on the same shape, reporting the depth
+// bound rather than hanging.
+function test_recursive_subs_hit_the_depth_bound(): test.TestOutcome {
+  var body: string = "sub a { call b; }\nsub b { call a; }\nsub vcl_recv { call a; return (hash); }";
+  return test.assert_contains(joined(problems_of(body)), "nest too deeply");
+}
+
+// ----------------------------------------------------------- reporting
+// Every problem in one pass, not just the first.
+function test_reports_every_problem(): test.TestOutcome {
+  var body: string = "sub vcl_recv {\n" + "  set resp.http.A = \"1\";\n" + "  set obj.hits = 2;\n" + "  call nowhere;\n" + "  return (deliver);\n" + "}";
+  return test.assert_eq(problems_of(body).len(), 4);
+}
+
+// Positions point at the offending statement, not the subroutine.
+function test_problem_carries_a_position(): test.TestOutcome {
+  var ps: check.Problem[] = problems_of("sub vcl_recv {\n  set resp.http.A = \"1\";\n  return (hash);\n}");
+  if (ps.len() != 1) {
+    return test.fail("expected 1 problem: " + joined(ps));
+  }
+  return test.assert_eq(ps[0].line.to_string() + ":" + ps[0].col.to_string(), "4:3");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("vcl-check");
+  r = r.it("clean program has no problems", test_clean_program_has_no_problems);
+  r = r.it("out of scope read", test_out_of_scope_read);
+  r = r.it("out of scope write", test_out_of_scope_write);
+  r = r.it("read only write", test_read_only_write);
+  r = r.it("unset scalar", test_unset_scalar);
+  r = r.it("helper checked in callers scope", test_helper_checked_in_callers_scope);
+  r = r.it("helper illegal for only one caller", test_helper_illegal_for_only_one_caller);
+  r = r.it("helper legal for both callers", test_helper_legal_for_both_callers);
+  r = r.it("bad return action", test_bad_return_action);
+  r = r.it("bad return lists the alternatives", test_bad_return_lists_the_alternatives);
+  r = r.it("hash only returns lookup", test_hash_only_returns_lookup);
+  r = r.it("bare return is legal in a custom sub", test_bare_return_is_legal_in_a_custom_sub);
+  r = r.it("bare return is rejected in an entry point", test_bare_return_is_rejected_in_an_entry_point);
+  r = r.it("unknown variable", test_unknown_variable);
+  r = r.it("unknown name in expression", test_unknown_name_in_expression);
+  r = r.it("declared acl resolves", test_declared_acl_resolves);
+  r = r.it("backend name resolves", test_backend_name_resolves);
+  r = r.it("unknown function", test_unknown_function);
+  r = r.it("every builtin name is accepted", test_every_builtin_name_is_accepted);
+  r = r.it("hash data outside vcl_hash", test_hash_data_outside_vcl_hash);
+  r = r.it("hash data inside vcl_hash is fine", test_hash_data_inside_vcl_hash_is_fine);
+  r = r.it("misspelled entry point", test_misspelled_entry_point);
+  r = r.it("duplicate subroutine", test_duplicate_subroutine);
+  r = r.it("call to undefined subroutine", test_call_to_undefined_subroutine);
+  r = r.it("new outside vcl_init", test_new_outside_vcl_init);
+  r = r.it("inline c is rejected", test_inline_c_is_rejected);
+  r = r.it("unreachable subroutine is listed", test_unreachable_subroutine_is_listed);
+  r = r.it("transitively called sub is reachable", test_transitively_called_sub_is_reachable);
+  r = r.it("recursive subs terminate", test_recursive_subs_terminate);
+  r = r.it("recursive subs hit the depth bound", test_recursive_subs_hit_the_depth_bound);
+  r = r.it("reports every problem", test_reports_every_problem);
+  r = r.it("problem carries a position", test_problem_carries_a_position);
+  return r.finish();
+}

@@ -1,0 +1,78 @@
+// examples/vcl/vclcheck.fern — validate a VCL program without running it.
+//
+//   $ fern -interp vclcheck.fern -- testdata/policy.vcl
+//   $ fern -interp vclcheck.fern -- broken.vcl
+//   broken.vcl:4:5: [vcl_backend_response] 'req.url' is not readable in vcl_backend_response
+//
+// This is what `varnishd -C` does for you: every scoping and naming
+// mistake reported in one pass, rather than the first one a request
+// happens to reach. Exit status is 0 when the program is clean, 1 when it
+// has problems, and 2 when the file cannot be read or parsed.
+import "std/string";
+import "std/i64";
+import "std/io";
+import "./ast";
+import "./diag";
+import "./parser";
+import "./check";
+
+// The entry point is part of the message because the same subroutine can
+// be reported twice: a helper reachable from two entry points is checked
+// in each one's scope, and only one of them may be the illegal context.
+function render(path: string, p: check.Problem): string {
+  return path + ":" + p.line.to_string() + ":" + p.col.to_string() + ": [" + p.entry + "] " + p.msg;
+}
+
+function report_parse(path: string, diags: diag.Diag[]): void {
+  var i: i32 = 0;
+  while (i < diags.len()) {
+    eprint(diags[i].render(path));
+    i = i + 1;
+  }
+}
+
+function report_problems(path: string, ps: check.Problem[]): void {
+  var i: i32 = 0;
+  while (i < ps.len()) {
+    eprint(render(path, ps[i]));
+    i = i + 1;
+  }
+}
+
+function report_unreachable(names: string[]): void {
+  var i: i32 = 0;
+  while (i < names.len()) {
+    eprint("note: subroutine '" + names[i] + "' is never called");
+    i = i + 1;
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  if (argv.len() < 2) {
+    eprint("usage: vclcheck FILE.vcl");
+    return 2;
+  }
+  var path: string = argv[1];
+  match (io.read_input(path)) {
+    Err(e) => {
+      eprint("vclcheck: " + path + ": cannot read");
+      return 2;
+    },
+    Ok(src) => {
+      var p: parser.ParseResult = parser.parse(src);
+      if (p.diags.len() > 0) {
+        report_parse(path, p.diags);
+        return 2;
+      }
+      var problems: check.Problem[] = check.check(p.decls);
+      report_unreachable(check.unreachable_subs(p.decls));
+      if (problems.len() == 0) {
+        print("ok: " + path);
+        return 0;
+      }
+      report_problems(path, problems);
+      return 1;
+    }
+  }
+}

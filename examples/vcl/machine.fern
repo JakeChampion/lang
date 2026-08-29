@@ -62,6 +62,13 @@ function run_stage(ctx: eval.Ctx, r: Run, name: string): Staged {
   var next: Run = Run { ...stepped, txn: out.txn };
   match (out.flow) {
     FReturn(a) => {
+      // A bare `return;` at entry level names no action, so the built-in
+      // default applies exactly as falling off the end does. The checker
+      // rejects that spelling in a `vcl_*` subroutine; this keeps the
+      // evaluator sane for a program that was never checked.
+      if (a.name == "none") {
+        return Staged { run: next, act: eval.action("") };
+      }
       return Staged { run: next, act: a };
     },
     FNext => {
