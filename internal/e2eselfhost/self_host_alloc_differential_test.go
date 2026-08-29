@@ -170,6 +170,72 @@ function churn(n: i32): i32 {
 		n:        200,
 		maxRatio: 8,
 	},
+	{
+		// A TUPLE carrying an owned pointer, stored into a struct field and
+		// rebuilt each round. The reclaim credit for this class is recent
+		// (#7702 counted the store, the "TCNT:" tier the call-arg half), and
+		// nothing measures how MUCH either compiler allocates for it — a
+		// credit that fires but releases only the box would leak the element
+		// buffer every round while every leak cell still reads clean.
+		name: "tuple-in-struct-field",
+		decls: `struct Hold { t: (i32, i32[]), n: i32 }
+function churn(n: i32): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < n) {
+        var k: (i32, i32[]) = (i, [i, i + 1]);
+        var h: Hold = Hold { t: k, n: i };
+        s = (s + h.n + h.t.1[1]) % 251;
+        i = i + 1;
+    }
+    return s;
+}`,
+		n:        200,
+		maxRatio: 8,
+	},
+	{
+		// An Option carrying an array, ALIASED and then consumed by a match —
+		// the shape whose reclaim was refused until #7726, because the alias
+		// bind read as an escape. Volume is the half that gate cannot see: the
+		// leak cell proves the box comes back, not that the two compilers hand
+		// out comparable amounts getting there.
+		name: "option-array-alias-match",
+		decls: `function churn(n: i32): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < n) {
+        var src: Option[i32[]] = Some([i, i + 1]);
+        var x: Option[i32[]] = src;
+        match (x) { Some(xs) => { s = (s + xs.len()) % 251; }, None => {} }
+        match (src) { Some(ys) => { s = (s + ys[0]) % 251; }, None => {} }
+        i = i + 1;
+    }
+    return s;
+}`,
+		n:        200,
+		maxRatio: 8,
+	},
+	{
+		// An rc-payload ENUM rebuilt and consumed each round — the family the
+		// Option shapes above are modelled on, and the one whose alias-aware
+		// reading (#6606) the Option side only just caught up with. Present so
+		// the two families are gated symmetrically on volume, not just on
+		// whether the box comes back.
+		name: "enum-rc-payload-per-iteration",
+		decls: `enum E { Full(i32[]), None }
+function churn(n: i32): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < n) {
+        var e: E = E.Full([i, i + 1, i + 2]);
+        match (e) { E.Full(xs) => { s = (s + xs.len() + xs[0]) % 251; }, E.None => {} }
+        i = i + 1;
+    }
+    return s;
+}`,
+		n:        200,
+		maxRatio: 8,
+	},
 }
 
 // bumpSrc returns a program whose EXIT CODE is the per-churn bump growth in
