@@ -4490,14 +4490,18 @@ function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, de
         // are leak-only and ride one i32 slot exactly like i32, so a struct
         // carrying them is leaf-safe and lowers (construction stores / field
         // read loads at the default 32-bit width; a sub-word cast wraps the
-        // value before the store). u64 / f32 are NOT added: they need real
-        // 64-bit / float width handling, so they keep the struct on AST.
+        // value before the store). The 64-bit-slot scalars (i64 / u64 / f64 /
+        // f32 / float) are here too, on the same leak-only reasoning.
+        // `string[][]` is spelled out because is_leaksafe_array_field bottoms
+        // out in the scalar-element arrays, so neither it nor
+        // is_nested_array_field_type reaches a nested STRING array — the same
+        // reason the match-arm payload admission spells the pair out.
         // Thread this proof's depth + visiting set (`nv`) into the Option /
         // tuple field predicates so a self-referential `Option[Node]` /
         // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
         // back-edge check then short-circuits the cycle instead of recursing
         // forever (was a SIGSEGV on any linked list / tree).
-        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
+        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
             fi = fi + 1;
             continue;
         }
