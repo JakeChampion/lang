@@ -86,20 +86,40 @@ backend.** The cutover is much closer than the shelve doc reads.
 | backend | CLI-wired | corpus differential | state |
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
-| `wasmssa` | yes | **no** | unmeasured |
+| `wasmssa` | yes | no | **single user function only** — measured below |
 | `x86_64ssa` | **no** | no | unreachable from the CLI |
+
+The spread is much wider than "arm64 is ahead". One backend is corpus-complete;
+the other two cannot compile an ordinary program at all.
 
 Two concrete blockers, and only two:
 
-1. **wasm is unmeasured.** `SSA-DECISION.md` says so against itself: *"`x86_64ssa`
-   and `-backend ssa` (wasm) still have no corpus differential — their only
-   cover is their own hand-written cases, which is what this sentence claimed
-   for arm64 too until it was checked."* The instrument that took arm64 from
-   four wrong answers to clean is the same one wasm has never had. Note the
-   artifact asymmetry to design around: the default wasm backend emits a WASI
-   command, `-backend ssa` emits a core module exporting `main`, so the
-   comparison needs `-component-wrap-cli` (or an explicit run-mode adapter)
-   before stdout is comparable at all.
+1. **wasm compiles one function.** Measured 2026-08-29, not inferred:
+
+   ```
+   function main(): i32 { ... }                  -> compiles, runs, correct
+   function helper(x: i32): i32 { return x+1; }
+   function main(): i32 { return helper(9); }    -> REFUSED
+   ```
+   ```
+   wasm/ssa: wasmssa: OpCall to "helper" is neither self-recursion
+   (callee == "main") nor a declared import
+   ```
+
+   `wasmssa` supports exactly one user function plus declared imports. Any
+   program that calls another user function is refused, which is every real
+   program — `examples/wasm/shape_area.fern` fails on its first `show_area`
+   call.
+
+   So the corpus differential `SSA-DECISION.md` asks for would come back
+   almost entirely `ssa-refused`: honest, and nearly empty as a gate. **The
+   wasm work is multi-function support in `wasmssa` — a call and
+   module-assembly problem — not a test harness.** Build the differential
+   after, as the proof, not before as the discovery.
+
+   (When it is built, note the artifact asymmetry: the default backend emits
+   a WASI command, `-backend ssa` a core module exporting `main`, so stdout is
+   not comparable without `-component-wrap-cli` or a run-mode adapter.)
 2. **x86-64 is not reachable.** `x86_64ssa` has `EmitModule` (objects) and
    per-function `EmitAsm`, but no module-level assembly emitter matching
    arm64's `EmitAsmModule`, so `-backend ssa` rejects `-target x86-64-linux`
@@ -132,6 +152,37 @@ The staging that follows from the readiness table:
 
 Steps 1 and 2 are ordinary engineering with a measurable finish line. Step 4 is
 the one that changes what is possible.
+
+## The cheaper route to step 4, which may make steps 1-3 optional
+
+Steps 1-3 exist to make SSA the **codegen** path. But the Perceus unlock does
+not need that — it needs SSA as an **analysis** representation.
+
+`ssa.LiftFromIR` already exists, and arm64's differential is evidence the lift
+is faithful over the whole corpus: 281 programs lifted, optimised, re-emitted,
+and behaviourally identical to the flat backend. Nothing about that result
+depends on shipping the SSA backend.
+
+So there is a second path to the thing this plan is actually for:
+
+> Lift IR → SSA for **analysis only**. Run ownership as real dataflow — names,
+> def-use, dominance, phis — and map the decisions back onto op positions for
+> the existing emitters to consume. Keep all four shipping backends exactly as
+> they are.
+
+That closes the 32% blind spot, gives #7786 a representation it can summarise,
+and makes per-path unit accounting reachable — without touching `wasmssa`'s
+single-function limit or writing x86-64 a module assembler.
+
+It is not free: the decisions have to survive the round trip back to op
+positions, and a lift that is faithful for *codegen* is not automatically
+faithful for *ownership* (it must preserve the RC-relevant structure, not just
+the computed answer). That is the thing to prove first, and it is a much
+smaller experiment than either step 1 or step 2.
+
+**Recommendation: try this before committing to the backend cutover.** If the
+round trip holds, the cutover becomes a separate question decided on codegen
+merits alone, and Perceus stops waiting on it.
 
 ## The conflict that has to be resolved with it
 
